@@ -1,12 +1,15 @@
 // Supabase Edge Function: collect-listings
 //
-// New pipeline (parallel to `collect`). Pulls RAW LISTINGS per event,
-// inserts into listings_snapshots, and computes our own event_metrics
-// and section_metrics from the raw data.
+// Pulls broker-portal ticket_groups per event (via /v9/ticket_groups), inserts
+// into listings_snapshots, and computes event_metrics + section_metrics from
+// the raw data. /v9/ticket_groups returns the same inventory as /v9/listings
+// but exposes office/brokerage info, which we use to flag S4K-owned rows.
 //
-// Ancillary detection: primary signal is TEvo's `type` field
-// ("event" vs "parking"). Regex backstop catches hospitality/lounge
-// items that might come back as type=event but aren't seats.
+// Owned flag: a row is_owned when office.brokerage.id == S4K_BROKERAGE_ID (1768).
+// Settings table can override via key 's4k_brokerage_id'.
+//
+// Ancillary detection: primary signal is TEvo's `type` field ('event' vs 'parking').
+// Regex backstop catches hospitality/lounge items that come back as type=event.
 //
 // Query params:
 //   ?window=0-24h | 1-7d | 7-30d | 30-60d | 60d+
@@ -17,6 +20,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const API_HOST = "api.ticketevolution.com";
 const API_BASE = `https://${API_HOST}`;
+const DEFAULT_S4K_BROKERAGE_ID = 1768;
 
 async function hmacSha256Base64(secret: string, message: string): Promise<string> {
   const enc = new TextEncoder();
@@ -79,12 +83,13 @@ class EvoClient {
     return out;
   }
 
-  /** /v9/listings returns everything in one call — no page or per_page params allowed. */
-  async getAllListings(eventId: number): Promise<any[]> {
-    const resp = await this.get("/v9/listings", {
-      event_id: eventId,
-      order_by: "retail_price ASC",
-    });
+  /**
+   * /v9/ticket_groups returns broker-portal ticket groups for an event.
+   * Same inventory as /v9/listings, but with office + brokerage + owned fields.
+   * No pagination params allowed; one call per event returns everything.
+   */
+  async getTicketGroups(eventId: number): Promise<any[]> {
+    const resp = await this.get("/v9/ticket_groups", { event_id: eventId });
     return resp.ticket_groups ?? [];
   }
 }
@@ -142,35 +147,21 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// ------------------------------------------------------------
-// Ancillary detection
-// ------------------------------------------------------------
-// Primary signal: TEvo's `type` field ('event' vs 'parking').
-// Regex backstop catches hospitality/lounge/premium items that
-// come back as type='event' but aren't actual seats.
-// ------------------------------------------------------------
-
 const ANCILLARY_SECTION_PATTERNS = [
   /\bvip lounge\b/i,
   /\bhospitality\b/i,
   /\bpremium lounge\b/i,
   /\bclub lounge\b/i,
-  /\bsuite\b/i,            // hospitality suites
-  /\bmeet.{0,4}greet\b/i,  // meet-and-greet, meet & greet
+  /\bsuite\b/i,
+  /\bmeet.{0,4}greet\b/i,
 ];
 
 function isAncillary(group: any): boolean {
-  // Primary: TEvo type field
   if (group.type && group.type !== "event") return true;
-  // Backstop: section-name patterns for items that might slip through as type=event
   const section = group.section ?? "";
   if (ANCILLARY_SECTION_PATTERNS.some((re) => re.test(section))) return true;
   return false;
 }
-
-// ------------------------------------------------------------
-// Metrics
-// ------------------------------------------------------------
 
 function percentile(sortedNumbers: number[], p: number): number | null {
   if (sortedNumbers.length === 0) return null;
@@ -184,6 +175,11 @@ function percentile(sortedNumbers: number[], p: number): number | null {
 function round2(n: number | null): number | null {
   if (n === null || !isFinite(n)) return null;
   return Math.round(n * 100) / 100;
+}
+
+function round4(n: number | null): number | null {
+  if (n === null || !isFinite(n)) return null;
+  return Math.round(n * 10000) / 10000;
 }
 
 interface ListingRow {
@@ -202,31 +198,53 @@ interface ListingRow {
   eticket: boolean;
   type: string | null;
   is_ancillary: boolean;
+  office_id: number | null;
+  office_name: string | null;
+  brokerage_id: number | null;
+  brokerage_name: string | null;
+  is_owned: boolean;
 }
 
-function buildListingRows(eventId: number, capturedAt: string, groups: any[]): ListingRow[] {
-  return groups.map((g: any) => ({
-    event_id: eventId,
-    captured_at: capturedAt,
-    tevo_ticket_group_id: g.id,
-    section: g.section ?? null,
-    row: g.row ?? null,
-    quantity: g.available_quantity ?? 0,
-    retail_price: g.retail_price != null ? Number(g.retail_price) : null,
-    wholesale_price: g.wholesale_price != null ? Number(g.wholesale_price) : null,
-    format: g.format ?? null,
-    splits: Array.isArray(g.splits) ? g.splits : null,
-    wheelchair: !!g.wheelchair,
-    instant_delivery: !!g.instant_delivery,
-    eticket: !!g.eticket,
-    type: g.type ?? null,
-    is_ancillary: isAncillary(g),
-  }));
+function buildListingRows(
+  eventId: number,
+  capturedAt: string,
+  groups: any[],
+  s4kBrokerageId: number,
+): ListingRow[] {
+  return groups.map((g: any) => {
+    const officeId = g.office?.id ?? null;
+    const officeName = g.office?.name ?? null;
+    const brokerageId = g.office?.brokerage?.id ?? null;
+    const brokerageName = g.office?.brokerage?.name ?? null;
+    return {
+      event_id: eventId,
+      captured_at: capturedAt,
+      tevo_ticket_group_id: g.id,
+      section: g.section ?? null,
+      row: g.row ?? null,
+      quantity: g.available_quantity ?? 0,
+      retail_price: g.retail_price != null ? Number(g.retail_price) : null,
+      wholesale_price: g.wholesale_price != null ? Number(g.wholesale_price) : null,
+      format: g.format ?? null,
+      splits: Array.isArray(g.splits) ? g.splits : null,
+      wheelchair: !!g.wheelchair,
+      instant_delivery: !!g.instant_delivery,
+      eticket: !!g.eticket,
+      type: g.type ?? null,
+      is_ancillary: isAncillary(g),
+      office_id: officeId,
+      office_name: officeName,
+      brokerage_id: brokerageId,
+      brokerage_name: brokerageName,
+      is_owned: brokerageId === s4kBrokerageId,
+    };
+  });
 }
 
 function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: string) {
   const seats = rows.filter((r) => !r.is_ancillary);
   const ancillary = rows.filter((r) => r.is_ancillary);
+  const ownedSeats = seats.filter((r) => r.is_owned);
 
   const retailPrices: number[] = [];
   const wholesalePrices: number[] = [];
@@ -240,6 +258,14 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
   }
   retailPrices.sort((a, b) => a - b);
   wholesalePrices.sort((a, b) => a - b);
+
+  const ownedRetail: number[] = [];
+  for (const r of ownedSeats) {
+    if (r.retail_price != null) {
+      for (let i = 0; i < (r.quantity || 0); i++) ownedRetail.push(r.retail_price);
+    }
+  }
+  ownedRetail.sort((a, b) => a - b);
 
   const ticketsCount = seats.reduce((s, r) => s + (r.quantity || 0), 0);
   const groupsCount = seats.length;
@@ -263,11 +289,30 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
   const top5 = sortedSectionSizes.slice(0, 5).reduce((s, n) => s + n, 0);
   const top5Concentration = ticketsCount > 0 ? top5 / ticketsCount : null;
 
-  const retailP25 = percentile(retailPrices, 0.25);
+  const retailMin    = percentile(retailPrices, 0);
+  const retailP25    = percentile(retailPrices, 0.25);
+  const retailMedian = percentile(retailPrices, 0.5);
+  const retailMean   = retailPrices.length ? retailPrices.reduce((s, n) => s + n, 0) / retailPrices.length : null;
+  const retailP75    = percentile(retailPrices, 0.75);
+  const retailP90    = percentile(retailPrices, 0.9);
+  const retailMax    = percentile(retailPrices, 1);
+
   const wholesaleP25 = percentile(wholesalePrices, 0.25);
   const bidAskProxy = retailP25 && retailP25 > 0 && wholesaleP25 != null
     ? (retailP25 - wholesaleP25) / retailP25
     : null;
+
+  const priceDispersion = retailP25 && retailP25 > 0 && retailP75 != null
+    ? retailP75 / retailP25
+    : null;
+  const tailPremium = retailMedian && retailMedian > 0 && retailP90 != null
+    ? retailP90 / retailMedian
+    : null;
+
+  const ownedTicketsCount = ownedSeats.reduce((s, r) => s + (r.quantity || 0), 0);
+  const ownedGroupsCount = ownedSeats.length;
+  const ownedShare = ticketsCount > 0 ? ownedTicketsCount / ticketsCount : null;
+  const ownedMedianRetail = percentile(ownedRetail, 0.5);
 
   return {
     event_id: eventId,
@@ -278,13 +323,13 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
     median_group_size: round2(medianGroupSize),
     ancillary_groups: ancillary.length,
     ancillary_tickets: ancillary.reduce((s, r) => s + (r.quantity || 0), 0),
-    retail_min: round2(percentile(retailPrices, 0)),
+    retail_min: round2(retailMin),
     retail_p25: round2(retailP25),
-    retail_median: round2(percentile(retailPrices, 0.5)),
-    retail_mean: round2(retailPrices.length ? retailPrices.reduce((s, n) => s + n, 0) / retailPrices.length : null),
-    retail_p75: round2(percentile(retailPrices, 0.75)),
-    retail_p90: round2(percentile(retailPrices, 0.90)),
-    retail_max: round2(percentile(retailPrices, 1)),
+    retail_median: round2(retailMedian),
+    retail_mean: round2(retailMean),
+    retail_p75: round2(retailP75),
+    retail_p90: round2(retailP90),
+    retail_max: round2(retailMax),
     retail_sum: round2(retailPrices.reduce((s, n) => s + n, 0)),
     wholesale_min: round2(percentile(wholesalePrices, 0)),
     wholesale_median: round2(percentile(wholesalePrices, 0.5)),
@@ -293,6 +338,12 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
     getin_price: round2(getinPrice),
     top5_concentration: round2(top5Concentration),
     bid_ask_proxy: round2(bidAskProxy),
+    price_dispersion: round4(priceDispersion),
+    tail_premium: round4(tailPremium),
+    owned_groups_count: ownedGroupsCount,
+    owned_tickets_count: ownedTicketsCount,
+    owned_share: round4(ownedShare),
+    owned_median_retail: round2(ownedMedianRetail),
   };
 }
 
@@ -364,6 +415,17 @@ async function resolveTevoCreds(db: any): Promise<{ token: string; secret: strin
   return { token: t, secret: s };
 }
 
+async function resolveS4kBrokerageId(db: any): Promise<number> {
+  try {
+    const { data } = await db.from("settings").select("value").eq("key", "s4k_brokerage_id").maybeSingle();
+    if (data?.value) {
+      const n = Number(data.value);
+      if (Number.isFinite(n)) return n;
+    }
+  } catch (_) {}
+  return DEFAULT_S4K_BROKERAGE_ID;
+}
+
 Deno.serve(async (req) => {
   const expected = Deno.env.get("CRON_SECRET");
   if (expected && req.headers.get("x-cron-secret") !== expected) {
@@ -376,6 +438,7 @@ Deno.serve(async (req) => {
   try { creds = await resolveTevoCreds(db); }
   catch (e) { return json({ error: String((e as Error).message) }, 500); }
   const evo = new EvoClient(creds.token, creds.secret);
+  const s4kBrokerageId = await resolveS4kBrokerageId(db);
 
   const url = new URL(req.url);
   const windowParam = url.searchParams.get("window");
@@ -384,6 +447,7 @@ Deno.serve(async (req) => {
 
   const startedAt = new Date().toISOString();
   const log: string[] = [];
+  log.push(`s4k_brokerage_id=${s4kBrokerageId}`);
 
   const { data: runRow, error: runErr } = await db.from("runs").insert({ started_at: startedAt }).select().single();
   if (runErr) return json({ error: "could not open run", details: runErr }, 500);
@@ -471,12 +535,13 @@ Deno.serve(async (req) => {
 
   const eventIds = [...byEvent.keys()];
   let totalListingRows = 0;
+  let totalOwnedRows = 0;
 
   const { errors } = await mapPool(
     eventIds, 3,
     async (eid) => {
-      const groups = await withRetry(() => evo.getAllListings(eid));
-      const listingRows = buildListingRows(eid, capturedAt, groups);
+      const groups = await withRetry(() => evo.getTicketGroups(eid));
+      const listingRows = buildListingRows(eid, capturedAt, groups, s4kBrokerageId);
 
       for (let i = 0; i < listingRows.length; i += 500) {
         const chunk = listingRows.slice(i, i + 500);
@@ -484,6 +549,7 @@ Deno.serve(async (req) => {
         if (error) log.push(`listings insert error event ${eid} @${i}: ${error.message}`);
       }
       totalListingRows += listingRows.length;
+      totalOwnedRows += listingRows.filter((r) => r.is_owned).length;
 
       const eMetrics = computeEventMetrics(listingRows, eid, capturedAt);
       const { error: em } = await db.from("event_metrics").upsert(eMetrics, { onConflict: "event_id,captured_at" });
@@ -513,6 +579,7 @@ Deno.serve(async (req) => {
     window: windowParam ?? null,
     events_collected: total,
     listing_rows_written: totalListingRows,
+    owned_rows_written: totalOwnedRows,
     errors: errors.length,
     started_at: startedAt,
     finished_at: finishedAt,

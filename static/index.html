@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   :root {
     --bg:#0a0c0f; --surface:#121519; --surface-2:#181c22;
@@ -725,7 +727,198 @@ function renderEventDetail(d) {
           <th class="num">retail</th><th>splits</th><th>format</th><th>flags</th>
         </tr></thead><tbody>${tgRows || ""}</tbody></table>
       </div>
-    </div>`;
+    </div>
+    ${HISTORY_PANEL_HTML}`;
+  initHistoryPanelHandlers(ev.id);
+}
+
+// -------- HISTORY CHART (event detail) --------
+let _historyChart = null;
+
+const METRIC_OPTIONS = [
+  { value: "retail_median",       label: "retail median" },
+  { value: "retail_mean",         label: "retail mean (tix-weighted)" },
+  { value: "getin_price",         label: "get-in (min pair)" },
+  { value: "retail_min",          label: "retail min" },
+  { value: "retail_p25",          label: "retail p25" },
+  { value: "retail_p75",          label: "retail p75" },
+  { value: "retail_p90",          label: "retail p90" },
+  { value: "retail_max",          label: "retail max" },
+  { value: "tickets_count",       label: "tickets available" },
+  { value: "groups_count",        label: "listing groups" },
+  { value: "sections_count",      label: "distinct sections" },
+  { value: "top5_concentration",  label: "top-5 section concentration" },
+  { value: "price_dispersion",    label: "price dispersion (p75/p25)" },
+  { value: "tail_premium",        label: "tail premium (p90/median)" },
+  { value: "owned_share",         label: "S4K owned share" },
+  { value: "owned_tickets_count", label: "S4K owned tickets" },
+  { value: "owned_median_retail", label: "S4K owned median retail" },
+];
+
+const MONEY_METRICS = new Set([
+  "retail_median","retail_mean","getin_price",
+  "retail_min","retail_p25","retail_p75","retail_p90","retail_max",
+  "owned_median_retail",
+]);
+
+const FRACTION_METRICS = new Set(["top5_concentration","owned_share"]);
+
+// Plain ratios — rendered with two decimals, no unit
+const RATIO_METRICS = new Set(["price_dispersion","tail_premium"]);
+
+function formatMetricValue(metric, v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (MONEY_METRICS.has(metric)) {
+    return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+  if (FRACTION_METRICS.has(metric)) {
+    return (n * 100).toFixed(1) + "%";
+  }
+  if (RATIO_METRICS.has(metric)) {
+    return n.toFixed(2) + "x";
+  }
+  return n.toLocaleString();
+}
+
+const HISTORY_PANEL_HTML = `
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-head">
+      <span>history <span class="count" id="history-summary"></span></span>
+      <div class="actions">
+        <select id="history-metric" style="font-size:11px; padding:3px 8px;">
+          ${METRIC_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join("")}
+        </select>
+        <select id="history-days" style="font-size:11px; padding:3px 8px;">
+          <option value="1">1d</option>
+          <option value="7">7d</option>
+          <option value="30" selected>30d</option>
+          <option value="60">60d</option>
+        </select>
+      </div>
+    </div>
+    <div class="panel-body" style="padding:12px;">
+      <div id="history-status" class="status" style="display:none; margin:0 0 10px 0;"></div>
+      <div id="history-canvas-wrap" style="position:relative; height:280px;">
+        <canvas id="history-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+`;
+
+async function loadHistoryChart(eventId, metric, days) {
+  const statusEl = $("#history-status");
+  const summaryEl = $("#history-summary");
+  const canvas = $("#history-canvas");
+  if (!statusEl || !canvas) return;
+
+  statusEl.style.display = "block";
+  statusEl.className = "status";
+  statusEl.textContent = "loading…";
+
+  try {
+    const data = await api(`/api/events/${eventId}/series?days=${days}`);
+    const series = (data.series || []).filter(p => p[metric] != null);
+
+    if (series.length === 0) {
+      statusEl.textContent = "no data yet for this window";
+      statusEl.className = "status";
+      if (_historyChart) { _historyChart.destroy(); _historyChart = null; }
+      if (summaryEl) summaryEl.innerHTML = "";
+      return;
+    }
+
+    statusEl.style.display = "none";
+
+    const points = series.map(p => ({ x: new Date(p.t), y: Number(p[metric]) }));
+    const metricLabel = (METRIC_OPTIONS.find(o => o.value === metric) || {}).label || metric;
+
+    if (_historyChart) _historyChart.destroy();
+
+    const ctx = canvas.getContext("2d");
+    _historyChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [{
+          label: metricLabel,
+          data: points,
+          borderColor: "#ff9500",
+          backgroundColor: "rgba(255, 149, 0, 0.08)",
+          borderWidth: 1.5,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.15,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            type: "time",
+            time: { tooltipFormat: "MMM d, HH:mm" },
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: { color: "#6b737d", font: { size: 10, family: "JetBrains Mono" } },
+          },
+          y: {
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: {
+              color: "#6b737d",
+              font: { size: 10, family: "JetBrains Mono" },
+              callback: (v) => formatMetricValue(metric, v),
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${metricLabel}: ${formatMetricValue(metric, ctx.parsed.y)}`,
+            },
+          },
+        },
+      },
+    });
+
+    const latest = points[points.length - 1].y;
+    const oldest = points[0].y;
+    const delta  = points.length > 1 ? latest - oldest : null;
+
+    if (summaryEl) {
+      let deltaHtml = "";
+      if (delta != null) {
+        if (delta > 0) {
+          deltaHtml = `<span class="delta-up"> ↑ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
+        } else if (delta < 0) {
+          deltaHtml = `<span class="delta-down"> ↓ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
+        } else {
+          deltaHtml = ` flat`;
+        }
+      }
+      summaryEl.innerHTML =
+        `latest ${formatMetricValue(metric, latest)}` +
+        ` · ${points.length} pts / ${days}d` +
+        deltaHtml;
+    }
+  } catch (err) {
+    statusEl.style.display = "block";
+    statusEl.className = "status err";
+    statusEl.textContent = "error: " + err.message;
+    if (summaryEl) summaryEl.innerHTML = "";
+  }
+}
+
+function initHistoryPanelHandlers(eventId) {
+  const metricSel = $("#history-metric");
+  const daysSel   = $("#history-days");
+  if (!metricSel || !daysSel) return;
+  const rerender = () =>
+    loadHistoryChart(eventId, metricSel.value, Number(daysSel.value));
+  metricSel.addEventListener("change", rerender);
+  daysSel.addEventListener("change", rerender);
+  rerender();
 }
 
 // -------- PERFORMERS --------
@@ -1160,15 +1353,4 @@ async function loadVelocity() {
         <th class="num">tix now</th><th class="num">Δ tix</th>
         <th class="num">avg now</th><th class="num">Δ avg</th><th class="num">Δ min</th>
         <th>prev</th><th>latest</th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
-    $$("#velocity-table tr.row").forEach(tr => {
-      tr.addEventListener("click", () => {
-        switchTab("events");
-        loadEventDetail(Number(tr.dataset.id));
-      });
-    });
-  } catch (err) { $("#velocity-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
-}
-</script>
-</body>
-</html>
+      </tr></thead><tbod
