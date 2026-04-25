@@ -1,0 +1,1359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>evo terminal</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg:#0a0c0f; --surface:#121519; --surface-2:#181c22;
+    --border:#232830; --border-hi:#2e343d;
+    --text:#dfe3e8; --dim:#6b737d; --dimmer:#464c54;
+    --amber:#ff9500; --amber-dim:#b66a00;
+    --green:#22c55e; --red:#ef4444; --blue:#60a5fa;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body {
+    height:100%; background:var(--bg); color:var(--text);
+    font-family:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size:12px; line-height:1.45; font-variant-ligatures:none;
+  }
+  body::before {
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:1000;
+    background:repeating-linear-gradient(0deg, transparent 0, transparent 2px,
+      rgba(255,255,255,0.012) 2px, rgba(255,255,255,0.012) 3px);
+  }
+  a { color:var(--amber); text-decoration:none; }
+  button {
+    font:inherit; color:var(--text); background:transparent;
+    border:1px solid var(--border); padding:4px 10px; cursor:pointer;
+    letter-spacing:0.02em;
+  }
+  button:hover { border-color:var(--amber); color:var(--amber); }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  button.primary {
+    background:var(--amber); color:#000; border-color:var(--amber); font-weight:500;
+  }
+  button.primary:hover { background:#fff; border-color:#fff; color:#000; }
+  button.pivot {
+    border-color:var(--amber-dim); color:var(--amber);
+    font-size:11px; padding:3px 10px;
+  }
+  button.pivot:hover { background:var(--amber); color:#000; }
+  button.danger {
+    border-color:#5a2020; color:var(--red); font-size:11px; padding:2px 8px;
+  }
+  button.danger:hover { background:var(--red); color:#000; border-color:var(--red); }
+  input, select {
+    font:inherit; color:var(--text); background:var(--surface);
+    border:1px solid var(--border); padding:4px 8px; outline:none;
+  }
+  input:focus, select:focus { border-color:var(--amber); }
+  input[type=checkbox] { accent-color:var(--amber); }
+  label {
+    color:var(--dim); font-size:11px;
+    text-transform:uppercase; letter-spacing:0.08em;
+  }
+
+  header.topbar {
+    display:flex; align-items:center; gap:24px;
+    padding:10px 16px; border-bottom:1px solid var(--border);
+    background:var(--surface);
+  }
+  .brand { font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--amber); }
+  .brand::before { content:"▲ "; color:var(--amber); }
+  .topbar .meta {
+    margin-left:auto; display:flex; gap:18px; color:var(--dim);
+    font-size:11px; text-transform:uppercase; letter-spacing:0.12em;
+  }
+  .topbar .meta .dot {
+    display:inline-block; width:7px; height:7px; background:var(--green);
+    margin-right:6px; vertical-align:middle; animation:pulse 2s infinite;
+  }
+  .topbar .meta .dot.off { background:var(--dimmer); animation:none; }
+  @keyframes pulse { 50% { opacity:0.4; } }
+  .topbar .env {
+    padding:2px 8px; border:1px solid var(--border-hi); color:var(--amber); font-size:10px;
+  }
+
+  nav.tabs { display:flex; border-bottom:1px solid var(--border); background:var(--bg); }
+  nav.tabs button {
+    border:none; border-right:1px solid var(--border); border-radius:0;
+    padding:9px 20px; color:var(--dim);
+    text-transform:uppercase; letter-spacing:0.12em; font-size:11px; position:relative;
+  }
+  nav.tabs button:hover { color:var(--text); background:var(--surface); }
+  nav.tabs button.active { color:var(--amber); background:var(--surface); }
+  nav.tabs button.active::after {
+    content:""; position:absolute; left:0; right:0; bottom:-1px;
+    height:2px; background:var(--amber);
+  }
+
+  main { padding:16px; max-width:1400px; margin:0 auto; }
+  section.tab { display:none; }
+  section.tab.active { display:block; }
+
+  .search {
+    display:grid; gap:10px; align-items:end;
+    padding:14px; background:var(--surface); border:1px solid var(--border);
+    margin-bottom:16px;
+  }
+  .search .fields { display:grid; gap:10px 12px; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
+  .search .field { display:flex; flex-direction:column; gap:4px; }
+  .search .field.wide { grid-column:span 2; }
+  .search .actions { display:flex; gap:8px; justify-content:flex-end; }
+  .search .checkrow { display:flex; align-items:center; gap:8px; padding-top:20px; }
+  .search .checkrow label { text-transform:none; letter-spacing:normal; font-size:12px; color:var(--text); }
+
+  .panel { background:var(--surface); border:1px solid var(--border); margin-bottom:16px; }
+  .panel-head {
+    padding:8px 14px; border-bottom:1px solid var(--border);
+    display:flex; justify-content:space-between; align-items:center; gap:12px;
+    text-transform:uppercase; letter-spacing:0.12em; font-size:11px; color:var(--dim);
+  }
+  .panel-head .count { color:var(--amber); }
+  .panel-head .actions { display:flex; gap:8px; align-items:center; }
+  .panel-body { padding:0; }
+  .empty { padding:24px; color:var(--dim); text-align:center; }
+
+  .table-filter {
+    font-size:11px; padding:3px 8px; min-width:180px;
+    background:var(--bg); text-transform:none; letter-spacing:normal;
+  }
+  .table-filter::placeholder { color:var(--dimmer); }
+
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td {
+    padding:6px 12px; text-align:left; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis;
+    border-bottom:1px solid var(--border);
+  }
+  th {
+    color:var(--dim); font-weight:400;
+    text-transform:uppercase; letter-spacing:0.08em; font-size:10px;
+    background:var(--surface-2); position:sticky; top:0;
+  }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.row { cursor:pointer; }
+  tr.row:hover { background:var(--surface-2); }
+  tr.row.sel { background:#261a05; }
+  tr.row.sel td { color:var(--amber); }
+  .ellip { max-width:320px; overflow:hidden; text-overflow:ellipsis; }
+
+  .detail { display:none; }
+  .detail.open { display:block; }
+  .detail-head {
+    padding:12px 16px; border:1px solid var(--amber-dim); border-bottom:none;
+    background:#1a1305;
+    display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;
+  }
+  .detail-head h2 { font-size:14px; font-weight:500; color:var(--amber); letter-spacing:0.04em; margin-bottom:4px; }
+  .detail-head .sub { color:var(--dim); font-size:11px; }
+  .detail-head .pivots { display:flex; gap:6px; flex-wrap:wrap; }
+  .stats-grid {
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));
+    gap:1px; background:var(--border);
+    border:1px solid var(--amber-dim); border-top:none;
+  }
+  .stat { background:var(--surface); padding:10px 14px; }
+  .stat .k { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:0.1em; }
+  .stat .v { color:var(--text); font-size:14px; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .stat .v.amber { color:var(--amber); }
+  .stat .v.green { color:var(--green); }
+
+  .status {
+    padding:6px 14px; background:var(--surface-2); color:var(--dim);
+    border:1px solid var(--border); font-size:11px; margin-bottom:16px;
+  }
+  .status.err { color:var(--red); border-color:var(--red); background:#1c0606; }
+  .status.ok  { color:var(--green); border-color:var(--green); background:#061c0e; }
+
+  #toast {
+    position:fixed; bottom:20px; right:20px; z-index:9999;
+    padding:10px 16px; background:var(--surface); border:1px solid var(--amber);
+    color:var(--amber); font-size:12px; letter-spacing:0.04em;
+    opacity:0; pointer-events:none; transition:opacity 0.2s;
+  }
+  #toast.show { opacity:1; }
+  #toast.err { border-color:var(--red); color:var(--red); }
+
+  .loading { display:inline-block; color:var(--amber); font-size:11px; text-transform:uppercase; letter-spacing:0.12em; }
+  .loading::after { content:" ▮"; animation:blink 0.8s infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  .money { color:var(--green); font-variant-numeric:tabular-nums; }
+  .id-tag { color:var(--dimmer); font-size:11px; }
+  .delta-up   { color:var(--green); }
+  .delta-down { color:var(--red); }
+  .chip {
+    display:inline-block; padding:1px 6px;
+    border:1px solid var(--border-hi); color:var(--dim);
+    font-size:10px; text-transform:uppercase; letter-spacing:0.08em; margin-right:4px;
+  }
+  .chip.hot { color:var(--amber); border-color:var(--amber-dim); }
+  .chip.green { color:var(--green); border-color:#1f4a2c; }
+  .chip.red { color:var(--red); border-color:#4a1f1f; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">evo terminal</div>
+  <div class="meta">
+    <span><span class="dot" id="sb-dot"></span>db</span>
+    <span class="env" id="env-label">—</span>
+    <span id="clock">—</span>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="events"      class="active">events</button>
+  <button data-tab="performers"               >performers</button>
+  <button data-tab="venues"                   >venues</button>
+  <button data-tab="configs"                  >configurations</button>
+  <button data-tab="watchlist"                >watchlist</button>
+</nav>
+
+<main>
+
+<section id="tab-events" class="tab active">
+  <form class="search" id="events-form">
+    <div class="fields">
+      <div class="field wide"><label>query (q)</label><input name="q" placeholder="knicks, taylor swift, yankees..."></div>
+      <div class="field"><label>performer_id</label><input name="performer_id" type="number"></div>
+      <div class="field"><label>venue_id</label><input name="venue_id" type="number"></div>
+      <div class="field"><label>occurs_at ≥</label><input name="occurs_at.gte" placeholder="YYYY-MM-DD"></div>
+      <div class="field"><label>occurs_at ≤</label><input name="occurs_at.lte" placeholder="YYYY-MM-DD"></div>
+      <div class="checkrow">
+        <input type="checkbox" id="ev-tix" name="only_with_available_tickets" checked>
+        <label for="ev-tix">only with available tickets</label>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="reset">clear</button>
+      <button type="submit" class="primary">search</button>
+    </div>
+  </form>
+  <div class="status" id="events-status" style="display:none"></div>
+  <div class="panel" id="events-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="events-count"></span></span>
+      <input class="table-filter" data-target="events-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="events-results"></div>
+  </div>
+  <div class="detail" id="events-detail"></div>
+</section>
+
+<section id="tab-performers" class="tab">
+  <form class="search" id="performers-form">
+    <div class="fields">
+      <div class="field wide"><label>query (q)</label><input name="q" id="pf-q" placeholder="yankees, billie eilish..."></div>
+      <div class="field"><label>category_id</label><input name="category_id" id="pf-catid" type="number" placeholder="e.g. 1"></div>
+      <div class="field"><label>category preset</label>
+        <select id="pf-catpreset">
+          <option value="">—</option>
+          <optgroup label="Sports">
+            <option value="1">Sports (all)</option><option value="2">Baseball</option>
+            <option value="3">MLB</option><option value="4">Minor League Baseball</option>
+          </optgroup>
+          <optgroup label="Concerts">
+            <option value="54">Concerts (all)</option><option value="57">Rock &amp; Pop</option><option value="85">Latin</option>
+          </optgroup>
+          <optgroup label="Theatre">
+            <option value="68">Theatre (all)</option><option value="69">Musicals</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="checkrow"><input type="checkbox" id="pf-tree" name="category_tree" checked><label for="pf-tree">include subcategories</label></div>
+      <div class="checkrow"><input type="checkbox" id="pf-upc" name="only_with_upcoming_events"><label for="pf-upc">only with upcoming events</label></div>
+      <div class="checkrow"><input type="checkbox" id="pf-fuzzy" name="fuzzy"><label for="pf-fuzzy">fuzzy (q only)</label></div>
+    </div>
+    <div class="actions"><button type="reset">clear</button><button type="submit" class="primary">search</button></div>
+  </form>
+  <div class="status" id="performers-status" style="display:none"></div>
+  <div class="panel" id="performers-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="performers-count"></span></span>
+      <input class="table-filter" data-target="performers-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="performers-results"></div>
+  </div>
+  <div class="detail" id="performers-detail"></div>
+</section>
+
+<section id="tab-venues" class="tab">
+  <form class="search" id="venues-form">
+    <div class="fields">
+      <div class="field wide"><label>query (q) — leave blank to use geo</label><input name="q" placeholder="madison square garden..."></div>
+      <div class="field"><label>lat</label><input name="lat" type="number" step="any" placeholder="40.7306"></div>
+      <div class="field"><label>lon</label><input name="lon" type="number" step="any" placeholder="-73.9352"></div>
+      <div class="field"><label>within (mi)</label><input name="within" type="number" placeholder="15"></div>
+      <div class="field"><label>postal_code</label><input name="postal_code" placeholder="11226"></div>
+      <div class="checkrow"><input type="checkbox" id="vn-fuzzy" name="fuzzy"><label for="vn-fuzzy">fuzzy</label></div>
+    </div>
+    <div class="actions"><button type="reset">clear</button><button type="submit" class="primary">search</button></div>
+  </form>
+  <div class="status" id="venues-status" style="display:none"></div>
+  <div class="panel" id="venues-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="venues-count"></span></span>
+      <input class="table-filter" data-target="venues-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="venues-results"></div>
+  </div>
+  <div class="detail" id="venues-detail"></div>
+</section>
+
+<section id="tab-configs" class="tab">
+  <form class="search" id="configs-form">
+    <div class="fields">
+      <div class="field"><label>venue_id</label><input name="venue_id" type="number"></div>
+      <div class="field wide"><label>name</label><input name="name" placeholder="end stage, baseball..."></div>
+    </div>
+    <div class="actions"><button type="reset">clear</button><button type="submit" class="primary">search</button></div>
+  </form>
+  <div class="status" id="configs-status" style="display:none"></div>
+  <div class="panel" id="configs-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="configs-count"></span></span>
+      <input class="table-filter" data-target="configs-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="configs-results"></div>
+  </div>
+  <div class="detail" id="configs-detail"></div>
+</section>
+
+<section id="tab-watchlist" class="tab">
+  <div class="status" id="wl-status" style="display:none"></div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>watchlist <span class="count" id="wl-count"></span></span>
+      <div class="actions">
+        <input class="table-filter" data-target="wl-table" placeholder="filter…">
+        <button onclick="loadWatchlist()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="wl-table"></div>
+  </div>
+
+  <form class="search" id="wl-add-form">
+    <div class="fields">
+      <div class="field"><label>kind</label>
+        <select name="kind"><option value="performer">performer</option><option value="venue">venue</option></select>
+      </div>
+      <div class="field"><label>ext_id</label><input name="ext_id" type="number" required placeholder="e.g. 15533"></div>
+      <div class="field wide"><label>label</label><input name="label" placeholder="optional display name"></div>
+    </div>
+    <div class="actions"><button type="submit" class="primary">add to watchlist</button></div>
+  </form>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>collection runs</span>
+      <div class="actions">
+        <button id="collect-now-btn" onclick="runCollector()">run collector now</button>
+        <button onclick="loadRuns()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="runs-table"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>latest state <span class="count" id="latest-count"></span></span>
+      <div class="actions">
+        <input class="table-filter" data-target="latest-table" placeholder="filter…">
+        <button onclick="loadLatest()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="latest-table"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>velocity (last two snapshots) <span class="count" id="velocity-count"></span></span>
+      <div class="actions">
+        <input class="table-filter" data-target="velocity-table" placeholder="filter…">
+        <button onclick="loadVelocity()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="velocity-table"></div>
+  </div>
+</section>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ===== Auth bootstrap =====
+let SB_CLIENT = null;
+let SESSION = null;
+
+async function loadPublicConfig() {
+  const r = await fetch("/api/public/config");
+  return r.json();
+}
+
+async function initAuth() {
+  const cfg = await loadPublicConfig();
+  SB_CLIENT = supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  const { data } = await SB_CLIENT.auth.getSession();
+  SESSION = data.session;
+  if (!SESSION) { renderLogin(cfg); return false; }
+  const email = (SESSION.user?.email || "").toLowerCase();
+  if (!email.endsWith("@" + cfg.allowed_email_domain)) {
+    renderForbidden(email, cfg); return false;
+  }
+  renderSignedInBadge(email);
+  return true;
+}
+
+function renderLogin(cfg) {
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:20px;font-family:'JetBrains Mono',monospace;background:#0a0c0f;color:#dfe3e8;">
+      <div style="font-size:20px;letter-spacing:0.15em;color:#ff9500;text-transform:uppercase;">&#9650; evo terminal</div>
+      <div style="color:#6b737d;font-size:12px;">restricted to @${cfg.allowed_email_domain}</div>
+      <button onclick="signIn()" style="padding:10px 24px;background:#ff9500;color:#000;border:none;font:inherit;cursor:pointer;font-weight:500;letter-spacing:0.04em;">sign in with google</button>
+    </div>`;
+}
+
+function renderForbidden(email, cfg) {
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;font-family:'JetBrains Mono',monospace;background:#0a0c0f;color:#dfe3e8;">
+      <div style="color:#ef4444;font-size:14px;">access denied</div>
+      <div style="color:#6b737d;font-size:12px;">${email} is not @${cfg.allowed_email_domain}</div>
+      <button onclick="signOut()" style="padding:8px 16px;background:transparent;color:#dfe3e8;border:1px solid #232830;font:inherit;cursor:pointer;">sign out</button>
+    </div>`;
+}
+
+function renderSignedInBadge(email) {
+  setTimeout(() => {
+    const meta = document.querySelector(".topbar .meta");
+    if (!meta) return;
+    const el = document.createElement("span");
+    el.style.cursor = "pointer";
+    el.title = "sign out";
+    el.textContent = email.split("@")[0];
+    el.onclick = signOut;
+    meta.insertBefore(el, meta.firstChild);
+  }, 100);
+}
+
+async function signIn() {
+  const cfg = await loadPublicConfig();
+  await SB_CLIENT.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: window.location.origin, queryParams: { hd: cfg.allowed_email_domain } },
+  });
+}
+
+async function signOut() {
+  if (SB_CLIENT) await SB_CLIENT.auth.signOut();
+  window.location.reload();
+}
+
+const _origFetch = window.fetch;
+window.fetch = async (url, opts = {}) => {
+  if (typeof url === "string" && url.startsWith("/api/") && !url.startsWith("/api/public/") && SESSION) {
+    opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${SESSION.access_token}` };
+  }
+  return _origFetch(url, opts);
+};
+
+(async () => { await initAuth(); })();
+// ===== End auth bootstrap =====
+
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money = (x) => x == null ? "—" : "$" + Number(x).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+const moneyC = (x) => x == null ? "—" : "$" + Math.round(Number(x)).toLocaleString();
+const num = (x) => x == null ? "—" : Number(x).toLocaleString();
+const shortDate = (iso) => {
+  if (!iso) return "—";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return iso;
+  return `${m[2]}/${m[3]} ${m[4]}:${m[5]}`;
+};
+const shortStamp = shortDate;
+
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || data.detail || r.statusText);
+  return data;
+}
+
+function status(tab, msg, kind) {
+  const el = $("#" + tab + "-status");
+  if (!el) return;
+  if (!msg) { el.style.display = "none"; return; }
+  el.textContent = msg;
+  el.className = "status" + (kind ? " " + kind : "");
+  el.style.display = "block";
+}
+
+let _toastTimer = null;
+function toast(msg, isErr=false) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.className = "show" + (isErr ? " err" : "");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.className = "", 2400);
+}
+
+function formToParams(form) {
+  const fd = new FormData(form);
+  const params = new URLSearchParams();
+  for (const [k, v] of fd.entries()) {
+    if (v === "" || v == null) continue;
+    params.append(k, v);
+  }
+  form.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    if (!cb.checked && cb.name) params.set(cb.name, "false");
+  });
+  return params;
+}
+
+function formToObject(form) {
+  const obj = {};
+  const fd = new FormData(form);
+  for (const [k, v] of fd.entries()) {
+    if (v === "" || v == null) continue;
+    obj[k] = v;
+  }
+  return obj;
+}
+
+let CONFIG = { supabase_configured:false, collect_available:false, env:"prod" };
+(async () => {
+  try {
+    CONFIG = await api("/api/config");
+    $("#env-label").textContent = CONFIG.env;
+    const dot = $("#sb-dot");
+    dot.classList.toggle("off", !CONFIG.supabase_configured);
+    if (!CONFIG.collect_available) $("#collect-now-btn").disabled = true;
+  } catch {}
+})();
+
+$("#tabs").addEventListener("click", e => {
+  const btn = e.target.closest("button[data-tab]");
+  if (!btn) return;
+  switchTab(btn.dataset.tab);
+});
+function switchTab(name) {
+  $$("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  $$("main > section.tab").forEach(s => s.classList.toggle("active", s.id === "tab-" + name));
+  if (name === "watchlist") {
+    loadWatchlist(); loadRuns(); loadLatest(); loadVelocity();
+  }
+}
+
+document.addEventListener("click", async e => {
+  const btn = e.target.closest("button.pivot[data-pivot-action]");
+  if (!btn) return;
+  if (btn.dataset.pivotAction === "add-watchlist") {
+    await addToWatchlist(btn.dataset.kind, Number(btn.dataset.extId), btn.dataset.label || null, btn);
+    return;
+  }
+  if (btn.dataset.pivotAction === "pivot-tab") {
+    const tab = btn.dataset.pivotTab;
+    const sets = JSON.parse(btn.dataset.pivotSet || "{}");
+    const form = $(`#${tab}-form`);
+    form.reset();
+    for (const [name, value] of Object.entries(sets)) {
+      const input = form.querySelector(`[name="${name}"]`);
+      if (input) input.value = value;
+    }
+    switchTab(tab);
+    form.dispatchEvent(new Event("submit"));
+  }
+});
+
+async function addToWatchlist(kind, ext_id, label, btn) {
+  try {
+    const resp = await api("/api/watchlist", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({kind, ext_id, label}),
+    });
+    if (resp.ok === false) { toast(resp.error || "failed", true); return; }
+    toast(`+ ${kind} ${ext_id} added to watchlist`);
+    if (btn) { btn.textContent = "✓ added"; setTimeout(() => btn.textContent = "+ watchlist", 1800); }
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+document.addEventListener("input", e => {
+  const f = e.target.closest("input.table-filter");
+  if (!f) return;
+  const target = $("#" + f.dataset.target);
+  if (!target) return;
+  const q = f.value.trim().toLowerCase();
+  $$("tbody tr", target).forEach(tr => {
+    tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+});
+
+function tick() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  $("#clock").textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+setInterval(tick, 1000); tick();
+
+// -------- EVENTS --------
+$("#events-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#events-results-panel").style.display = "none";
+  $("#events-detail").classList.remove("open");
+  status("events", "searching…");
+  try {
+    const data = await api("/api/events?" + params.toString());
+    renderEventsResults(data);
+    status("events");
+  } catch (err) { status("events", "error: " + err.message, "err"); }
+});
+
+function renderEventsResults(data) {
+  $("#events-count").textContent = `(${data.count})`;
+  const rows = data.events.map((ev, i) => {
+    const venue = ev.venue || {};
+    return `<tr class="row" data-id="${ev.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${ev.id}</td>
+      <td class="ellip">${esc(ev.name)}</td>
+      <td>${shortDate(ev.occurs_at_local)}</td>
+      <td class="ellip">${esc(venue.name || "")}</td>
+      <td class="dim">${esc(venue.location || "")}</td>
+      <td class="num">${num(ev.available_count)}</td>
+      <td class="num dim">${(ev.popularity_score || 0).toFixed(2)}</td>
+    </tr>`;
+  }).join("");
+  $("#events-results").innerHTML = data.count === 0 ? `<div class="empty">no events</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>event</th><th>date</th>
+      <th>venue</th><th>city</th><th class="num">avail</th><th class="num">pop</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#events-results-panel").style.display = "block";
+  $$("#events-results-panel .table-filter").forEach(i => i.value = "");
+  $$("#events-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#events-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadEventDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadEventDetail(id) {
+  const detail = $("#events-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading event</span></div>`;
+  detail.classList.add("open");
+  try { renderEventDetail(await api("/api/events/" + id)); }
+  catch (err) { detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`; }
+}
+
+function renderEventDetail(d) {
+  const ev = d.event, s = d.stats, sEvent = d.stats_event_only;
+  const groups = d.ticket_groups || [];
+  const venue = ev.venue || {};
+  const statBlock = (s && s.ticket_groups_count != null) ? `
+    <div class="stats-grid">
+      <div class="stat"><div class="k">groups (all)</div><div class="v amber">${num(s.ticket_groups_count)}</div></div>
+      <div class="stat"><div class="k">tickets (all)</div><div class="v amber">${num(s.tickets_count)}</div></div>
+      <div class="stat"><div class="k">groups (event)</div><div class="v">${num(sEvent ? sEvent.ticket_groups_count : null)}</div></div>
+      <div class="stat"><div class="k">tickets (event)</div><div class="v">${num(sEvent ? sEvent.tickets_count : null)}</div></div>
+      <div class="stat"><div class="k">retail min</div><div class="v green">${moneyC(s.retail_price_min)}</div></div>
+      <div class="stat"><div class="k">retail avg</div><div class="v green">${moneyC(s.retail_price_avg)}</div></div>
+      <div class="stat"><div class="k">retail max</div><div class="v green">${moneyC(s.retail_price_max)}</div></div>
+      <div class="stat"><div class="k">retail sum</div><div class="v green">${moneyC(s.retail_price_sum)}</div></div>
+      <div class="stat"><div class="k">wholesale avg</div><div class="v">${moneyC(s.wholesale_price_avg)}</div></div>
+      <div class="stat"><div class="k">event.available_count</div><div class="v dim">${num(ev.available_count)} <span class="chip">deprecated</span></div></div>
+    </div>` : "";
+  const tgRows = groups.map(tg => `
+    <tr><td class="ellip">${esc(tg.section || "")}</td><td>${esc(tg.row || "")}</td>
+      <td class="num">${tg.available_quantity ?? 0}</td>
+      <td class="num money">${money(tg.retail_price)}</td>
+      <td class="dim">${(tg.splits || []).join(",")}</td>
+      <td class="dim">${esc(tg.format || "")}</td>
+      <td class="dim">${tg.wheelchair ? "♿" : ""}${tg.instant_delivery ? "⚡" : ""}${tg.eticket ? "📱" : ""}</td>
+    </tr>`).join("");
+  const pp = (ev.performances || []).find(p => p.primary)?.performer;
+  const pivots = [];
+  if (venue.id) {
+    pivots.push(`<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+      data-pivot-set='${JSON.stringify({venue_id: venue.id})}'>→ other events here</button>`);
+    pivots.push(`<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="configs"
+      data-pivot-set='${JSON.stringify({venue_id: venue.id})}'>→ venue configs</button>`);
+    pivots.push(`<button class="pivot" data-pivot-action="add-watchlist"
+      data-kind="venue" data-ext-id="${venue.id}" data-label="${esc(venue.name || '')}">+ venue to watchlist</button>`);
+  }
+  if (pp && pp.id) {
+    pivots.push(`<button class="pivot" data-pivot-action="add-watchlist"
+      data-kind="performer" data-ext-id="${pp.id}" data-label="${esc(pp.name || '')}">+ performer to watchlist</button>`);
+  }
+  $("#events-detail").innerHTML = `
+    <div class="detail-head">
+      <div>
+        <h2>${esc(ev.name)}</h2>
+        <div class="sub">
+          <span class="chip hot">${esc(ev.state || "")}</span>
+          <span>${shortDate(ev.occurs_at_local)} · ${esc(venue.name || "")} — ${esc(venue.location || "")}</span>
+          <span class="id-tag" style="margin-left:12px">event_id ${ev.id}</span>
+        </div>
+      </div>
+      <div class="pivots">${pivots.join("")}</div>
+    </div>
+    ${statBlock}
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head">
+        <span>ticket groups <span class="count">(${groups.length})</span></span>
+        <input class="table-filter" data-target="events-tg-table" placeholder="filter rows…">
+      </div>
+      <div class="panel-body" id="events-tg-table">
+        <table><thead><tr>
+          <th>section</th><th>row</th><th class="num">qty</th>
+          <th class="num">retail</th><th>splits</th><th>format</th><th>flags</th>
+        </tr></thead><tbody>${tgRows || ""}</tbody></table>
+      </div>
+    </div>
+    ${HISTORY_PANEL_HTML}`;
+  initHistoryPanelHandlers(ev.id);
+}
+
+// -------- HISTORY CHART (event detail) --------
+let _historyChart = null;
+
+const METRIC_OPTIONS = [
+  { value: "retail_median",      label: "retail median" },
+  { value: "retail_mean",        label: "retail mean (tix-weighted)" },
+  { value: "getin_price",        label: "get-in (min pair)" },
+  { value: "retail_min",         label: "retail min" },
+  { value: "retail_p25",         label: "retail p25" },
+  { value: "retail_p75",         label: "retail p75" },
+  { value: "retail_p90",         label: "retail p90" },
+  { value: "retail_max",         label: "retail max" },
+  { value: "wholesale_median",   label: "wholesale median" },
+  { value: "wholesale_mean",     label: "wholesale mean" },
+  { value: "tickets_count",      label: "tickets available" },
+  { value: "groups_count",       label: "listing groups" },
+  { value: "sections_count",     label: "distinct sections" },
+  { value: "top5_concentration", label: "top-5 section concentration" },
+  { value: "bid_ask_proxy",      label: "bid-ask proxy" },
+];
+
+const MONEY_METRICS = new Set([
+  "retail_median","retail_mean","getin_price",
+  "retail_min","retail_p25","retail_p75","retail_p90","retail_max",
+  "wholesale_median","wholesale_mean",
+]);
+
+const FRACTION_METRICS = new Set(["top5_concentration","bid_ask_proxy"]);
+
+function formatMetricValue(metric, v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (MONEY_METRICS.has(metric)) {
+    return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+  if (FRACTION_METRICS.has(metric)) {
+    return (n * 100).toFixed(1) + "%";
+  }
+  return n.toLocaleString();
+}
+
+const HISTORY_PANEL_HTML = `
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-head">
+      <span>history <span class="count" id="history-summary"></span></span>
+      <div class="actions">
+        <select id="history-metric" style="font-size:11px; padding:3px 8px;">
+          ${METRIC_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join("")}
+        </select>
+        <select id="history-days" style="font-size:11px; padding:3px 8px;">
+          <option value="1">1d</option>
+          <option value="7">7d</option>
+          <option value="30" selected>30d</option>
+          <option value="60">60d</option>
+        </select>
+      </div>
+    </div>
+    <div class="panel-body" style="padding:12px;">
+      <div id="history-status" class="status" style="display:none; margin:0 0 10px 0;"></div>
+      <div id="history-canvas-wrap" style="position:relative; height:280px;">
+        <canvas id="history-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+`;
+
+async function loadHistoryChart(eventId, metric, days) {
+  const statusEl = $("#history-status");
+  const summaryEl = $("#history-summary");
+  const canvas = $("#history-canvas");
+  if (!statusEl || !canvas) return;
+
+  statusEl.style.display = "block";
+  statusEl.className = "status";
+  statusEl.textContent = "loading…";
+
+  try {
+    const data = await api(`/api/events/${eventId}/series?days=${days}`);
+    const series = (data.series || []).filter(p => p[metric] != null);
+
+    if (series.length === 0) {
+      statusEl.textContent = "no data yet for this window";
+      statusEl.className = "status";
+      if (_historyChart) { _historyChart.destroy(); _historyChart = null; }
+      if (summaryEl) summaryEl.innerHTML = "";
+      return;
+    }
+
+    statusEl.style.display = "none";
+
+    const points = series.map(p => ({ x: new Date(p.t), y: Number(p[metric]) }));
+    const metricLabel = (METRIC_OPTIONS.find(o => o.value === metric) || {}).label || metric;
+
+    if (_historyChart) _historyChart.destroy();
+
+    const ctx = canvas.getContext("2d");
+    _historyChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [{
+          label: metricLabel,
+          data: points,
+          borderColor: "#ff9500",
+          backgroundColor: "rgba(255, 149, 0, 0.08)",
+          borderWidth: 1.5,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.15,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            type: "time",
+            time: { tooltipFormat: "MMM d, HH:mm" },
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: { color: "#6b737d", font: { size: 10, family: "JetBrains Mono" } },
+          },
+          y: {
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: {
+              color: "#6b737d",
+              font: { size: 10, family: "JetBrains Mono" },
+              callback: (v) => formatMetricValue(metric, v),
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${metricLabel}: ${formatMetricValue(metric, ctx.parsed.y)}`,
+            },
+          },
+        },
+      },
+    });
+
+    const latest = points[points.length - 1].y;
+    const oldest = points[0].y;
+    const delta  = points.length > 1 ? latest - oldest : null;
+
+    if (summaryEl) {
+      let deltaHtml = "";
+      if (delta != null) {
+        if (delta > 0) {
+          deltaHtml = `<span class="delta-up"> ↑ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
+        } else if (delta < 0) {
+          deltaHtml = `<span class="delta-down"> ↓ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
+        } else {
+          deltaHtml = ` flat`;
+        }
+      }
+      summaryEl.innerHTML =
+        `latest ${formatMetricValue(metric, latest)}` +
+        ` · ${points.length} pts / ${days}d` +
+        deltaHtml;
+    }
+  } catch (err) {
+    statusEl.style.display = "block";
+    statusEl.className = "status err";
+    statusEl.textContent = "error: " + err.message;
+    if (summaryEl) summaryEl.innerHTML = "";
+  }
+}
+
+function initHistoryPanelHandlers(eventId) {
+  const metricSel = $("#history-metric");
+  const daysSel   = $("#history-days");
+  if (!metricSel || !daysSel) return;
+  const rerender = () =>
+    loadHistoryChart(eventId, metricSel.value, Number(daysSel.value));
+  metricSel.addEventListener("change", rerender);
+  daysSel.addEventListener("change", rerender);
+  rerender();
+}
+
+// -------- PERFORMERS --------
+$("#pf-catpreset").addEventListener("change", e => { $("#pf-catid").value = e.target.value; });
+
+$("#performers-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#performers-results-panel").style.display = "none";
+  $("#performers-detail").classList.remove("open");
+  status("performers", "searching…");
+  try {
+    const data = await api("/api/performers?" + params.toString());
+    renderPerformersResults(data);
+    status("performers");
+  } catch (err) { status("performers", "error: " + err.message, "err"); }
+});
+
+function renderPerformersResults(data) {
+  const performers = data.performers || [];
+  $("#performers-count").textContent = `(${performers.length})`;
+  const rows = performers.map((p, i) => {
+    const venue = p.venue || {};
+    const cat = categoryPath(p.category);
+    const upc = p.upcoming_events || {};
+    return `<tr class="row" data-id="${p.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${p.id}</td>
+      <td class="ellip">${esc(p.name)}</td>
+      <td class="dim">${esc(cat)}</td>
+      <td class="dim">${esc(venue.name || "—")}</td>
+      <td class="num dim">${Number(p.popularity_score || 0).toFixed(3)}</td>
+      <td class="dim">${upc.first ? upc.first.slice(0,10) : "—"}</td>
+      <td class="dim">${upc.last ? upc.last.slice(0,10) : "—"}</td>
+    </tr>`;
+  }).join("");
+  $("#performers-results").innerHTML = performers.length === 0 ? `<div class="empty">no performers</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>name</th><th>category</th>
+      <th>home venue</th><th class="num">pop</th><th>first</th><th>last</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#performers-results-panel").style.display = "block";
+  $$("#performers-results-panel .table-filter").forEach(i => i.value = "");
+  $$("#performers-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#performers-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadPerformerDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+function categoryPath(cat) {
+  if (!cat) return "";
+  const parts = [];
+  let c = cat;
+  while (c) { parts.unshift(c.name); c = c.parent; }
+  return parts.join(" · ");
+}
+
+async function loadPerformerDetail(id) {
+  const detail = $("#performers-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading performer</span></div>`;
+  detail.classList.add("open");
+  try {
+    const p = await api("/api/performers/" + id + "?include_opponents=true");
+    const venue = p.venue || {};
+    const upc = p.upcoming_events || {};
+    const opponents = p.opponents || [];
+    const oppRows = opponents.map(o => `<tr><td class="id-tag">${o.id}</td><td>${esc(o.name)}</td></tr>`).join("");
+    const pivots = [
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+        data-pivot-set='${JSON.stringify({performer_id: p.id})}'>→ events by this performer</button>`,
+      `<button class="pivot" data-pivot-action="add-watchlist"
+        data-kind="performer" data-ext-id="${p.id}" data-label="${esc(p.name)}">+ watchlist</button>`,
+    ];
+    detail.innerHTML = `
+      <div class="detail-head">
+        <div>
+          <h2>${esc(p.name)}</h2>
+          <div class="sub">
+            <span class="chip hot">${esc(categoryPath(p.category))}</span>
+            <span class="id-tag">performer_id ${p.id}</span>
+          </div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">popularity</div><div class="v amber">${Number(p.popularity_score || 0).toFixed(3)}</div></div>
+        <div class="stat"><div class="k">home venue</div><div class="v">${esc(venue.name || "—")}</div></div>
+        <div class="stat"><div class="k">venue location</div><div class="v">${esc(venue.address?.locality || "—")}, ${esc(venue.address?.region || "")}</div></div>
+        <div class="stat"><div class="k">first upcoming</div><div class="v">${upc.first ? upc.first.slice(0,10) : "—"}</div></div>
+        <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
+        <div class="stat"><div class="k">keywords</div><div class="v dim">${esc(p.keywords || "—")}</div></div>
+      </div>
+      ${opponents.length ? `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+          <span>opponents <span class="count">(${opponents.length})</span></span>
+          <input class="table-filter" data-target="pf-opp-table" placeholder="filter rows…">
+        </div>
+        <div class="panel-body" id="pf-opp-table"><table><tbody>${oppRows}</tbody></table></div>
+      </div>` : ""}`;
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// -------- VENUES --------
+$("#venues-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#venues-results-panel").style.display = "none";
+  $("#venues-detail").classList.remove("open");
+  status("venues", "searching…");
+  try {
+    const data = await api("/api/venues?" + params.toString());
+    renderVenuesResults(data);
+    status("venues");
+  } catch (err) { status("venues", "error: " + err.message, "err"); }
+});
+
+function renderVenuesResults(data) {
+  const venues = data.venues || [];
+  $("#venues-count").textContent = `(${venues.length})`;
+  const rows = venues.map((v, i) => {
+    const addr = v.address || {};
+    const upc = v.upcoming_events || {};
+    return `<tr class="row" data-id="${v.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${v.id}</td>
+      <td class="ellip">${esc(v.name)}</td>
+      <td class="dim">${esc(v.location || "")}</td>
+      <td class="num dim">${Number(v.popularity_score || 0).toFixed(3)}</td>
+      <td class="dim">${esc(addr.postal_code || "")}</td>
+      <td class="dim">${upc.first ? upc.first.slice(0,10) : "—"}</td>
+      <td class="dim">${upc.last ? upc.last.slice(0,10) : "—"}</td>
+    </tr>`;
+  }).join("");
+  $("#venues-results").innerHTML = venues.length === 0 ? `<div class="empty">no venues</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>name</th><th>location</th>
+      <th class="num">pop</th><th>zip</th><th>first</th><th>last</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#venues-results-panel").style.display = "block";
+  $$("#venues-results-panel .table-filter").forEach(i => i.value = "");
+  $$("#venues-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#venues-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadVenueDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadVenueDetail(id) {
+  const detail = $("#venues-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading venue</span></div>`;
+  detail.classList.add("open");
+  try {
+    const v = await api("/api/venues/" + id);
+    const a = v.address || {};
+    const upc = v.upcoming_events || {};
+    const pivots = [
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ events at this venue</button>`,
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="configs"
+        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ configurations</button>`,
+      `<button class="pivot" data-pivot-action="add-watchlist"
+        data-kind="venue" data-ext-id="${v.id}" data-label="${esc(v.name)}">+ watchlist</button>`,
+    ];
+    detail.innerHTML = `
+      <div class="detail-head">
+        <div>
+          <h2>${esc(v.name)}</h2>
+          <div class="sub"><span>${esc(v.location || "")}</span>
+            <span class="id-tag" style="margin-left:12px">venue_id ${v.id}</span></div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">popularity</div><div class="v amber">${Number(v.popularity_score || 0).toFixed(3)}</div></div>
+        <div class="stat"><div class="k">street</div><div class="v">${esc(a.street_address || "—")}</div></div>
+        <div class="stat"><div class="k">locality</div><div class="v">${esc(a.locality || "—")}, ${esc(a.region || "")}</div></div>
+        <div class="stat"><div class="k">postal</div><div class="v">${esc(a.postal_code || "—")}</div></div>
+        <div class="stat"><div class="k">lat / lon</div><div class="v">${a.latitude || "—"} / ${a.longitude || "—"}</div></div>
+        <div class="stat"><div class="k">first upcoming</div><div class="v">${upc.first ? upc.first.slice(0,10) : "—"}</div></div>
+        <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
+      </div>`;
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// -------- CONFIGURATIONS --------
+$("#configs-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#configs-results-panel").style.display = "none";
+  $("#configs-detail").classList.remove("open");
+  status("configs", "searching…");
+  try {
+    const data = await api("/api/configurations?" + params.toString());
+    renderConfigsResults(data);
+    status("configs");
+  } catch (err) { status("configs", "error: " + err.message, "err"); }
+});
+
+function renderConfigsResults(data) {
+  const configs = data.configurations || [];
+  $("#configs-count").textContent = `(${data.total_entries ?? configs.length})`;
+  const rows = configs.map((c, i) => {
+    const v = c.venue || {};
+    return `<tr class="row" data-id="${c.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${c.id}</td>
+      <td class="ellip">${esc(c.name)}</td>
+      <td>${c.primary ? '<span class="chip hot">primary</span>' : ""}</td>
+      <td>${c.general_admission ? '<span class="chip">GA</span>' : ""}</td>
+      <td class="ellip">${esc(v.name || "—")}</td>
+      <td class="dim">${esc(v.location || "")}</td>
+    </tr>`;
+  }).join("");
+  $("#configs-results").innerHTML = configs.length === 0 ? `<div class="empty">no configurations</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>name</th><th>flags</th><th></th>
+      <th>venue</th><th>location</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#configs-results-panel").style.display = "block";
+  $$("#configs-results-panel .table-filter").forEach(i => i.value = "");
+  $$("#configs-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#configs-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadConfigDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadConfigDetail(id) {
+  const detail = $("#configs-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading configuration</span></div>`;
+  detail.classList.add("open");
+  try {
+    const c = await api("/api/configurations/" + id);
+    const v = c.venue || {};
+    const pivots = v.id ? [
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ events at this venue</button>`,
+    ] : [];
+    detail.innerHTML = `
+      <div class="detail-head">
+        <div><h2>${esc(c.name)}</h2>
+          <div class="sub">
+            ${c.primary ? '<span class="chip hot">primary</span>' : ""}
+            ${c.general_admission ? '<span class="chip">general admission</span>' : ""}
+            <span class="id-tag" style="margin-left:12px">configuration_id ${c.id}</span>
+          </div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">capacity</div><div class="v amber">${num(c.capacity)}</div></div>
+        <div class="stat"><div class="k">venue</div><div class="v">${esc(v.name || "—")}</div></div>
+        <div class="stat"><div class="k">location</div><div class="v">${esc(v.location || "—")}</div></div>
+        <div class="stat"><div class="k">street</div><div class="v">${esc(v.street_address || "—")}</div></div>
+        <div class="stat"><div class="k">updated</div><div class="v dim">${esc(c.updated_at || "—")}</div></div>
+        <div class="stat"><div class="k">venue_id</div><div class="v id-tag">${v.id || "—"}</div></div>
+      </div>`;
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// -------- WATCHLIST --------
+$("#wl-add-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!CONFIG.supabase_configured) { status("wl", "Supabase not configured — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY", "err"); return; }
+  const obj = formToObject(e.target);
+  try {
+    const resp = await api("/api/watchlist", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({kind: obj.kind, ext_id: Number(obj.ext_id), label: obj.label || null}),
+    });
+    if (resp.ok === false) { toast(resp.error || "failed", true); return; }
+    toast("added");
+    e.target.reset();
+    loadWatchlist();
+  } catch (err) { toast(err.message, true); }
+});
+
+async function loadWatchlist() {
+  if (!CONFIG.supabase_configured) { $("#wl-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/watchlist");
+    const items = data.items || [];
+    $("#wl-count").textContent = `(${items.length})`;
+    const rows = items.map(w => `
+      <tr>
+        <td><span class="chip ${w.kind === 'performer' ? 'hot' : ''}">${w.kind}</span></td>
+        <td class="id-tag">${w.ext_id}</td>
+        <td class="ellip">${esc(w.label || '—')}</td>
+        <td class="dim">${shortStamp(w.added_at)}</td>
+        <td><button class="danger" onclick="removeWatchlist(${w.id}, this)">remove</button></td>
+      </tr>`).join("");
+    $("#wl-table").innerHTML = items.length === 0 ? `<div class="empty">empty watchlist</div>` : `
+      <table><thead><tr>
+        <th>kind</th><th>ext_id</th><th>label</th><th>added</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) { $("#wl-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+async function removeWatchlist(id, btn) {
+  if (!confirm("remove from watchlist?")) return;
+  btn.disabled = true;
+  try {
+    await api("/api/watchlist/" + id, {method: "DELETE"});
+    toast("removed");
+    loadWatchlist();
+  } catch (err) { toast(err.message, true); btn.disabled = false; }
+}
+
+async function runCollector() {
+  const btn = $("#collect-now-btn");
+  btn.disabled = true;
+  btn.textContent = "firing…";
+  try {
+    await api("/api/collect/run", {method: "POST"});
+    toast("collector fired — check runs below in ~30-90s");
+    btn.textContent = "fired ✓";
+    setTimeout(() => { btn.textContent = "run collector now"; btn.disabled = false; loadRuns(); }, 3000);
+  } catch (err) {
+    toast(err.message, true);
+    btn.textContent = "run collector now";
+    btn.disabled = false;
+  }
+}
+
+async function loadRuns() {
+  if (!CONFIG.supabase_configured) { $("#runs-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/runs?limit=10");
+    const items = data.items || [];
+    const rows = items.map(r => {
+      const dur = (r.started_at && r.finished_at)
+        ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + "s"
+        : r.finished_at ? "—" : `<span class="loading">running</span>`;
+      const errChip = r.stats_errors > 0
+        ? `<span class="chip red">${r.stats_errors} err</span>`
+        : (r.finished_at ? `<span class="chip green">ok</span>` : "");
+      return `<tr>
+        <td class="id-tag">${r.id}</td>
+        <td class="dim">${shortStamp(r.started_at)}</td>
+        <td class="dim">${shortStamp(r.finished_at)}</td>
+        <td class="num">${dur}</td>
+        <td class="num">${num(r.events_collected)}</td>
+        <td>${errChip}</td>
+      </tr>`;
+    }).join("");
+    $("#runs-table").innerHTML = items.length === 0 ? `<div class="empty">no runs yet</div>` : `
+      <table><thead><tr>
+        <th>id</th><th>started</th><th>finished</th><th class="num">duration</th>
+        <th class="num">events</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) { $("#runs-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+async function loadLatest() {
+  if (!CONFIG.supabase_configured) { $("#latest-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/snapshots/latest");
+    const items = data.items || [];
+    $("#latest-count").textContent = `(${items.length})`;
+    const rows = items.map(s => `
+      <tr class="row" data-id="${s.event_id}">
+        <td class="id-tag">${s.event_id}</td>
+        <td class="ellip">${esc(s.event_name || "—")}</td>
+        <td>${shortDate(s.occurs_at_local)}</td>
+        <td class="ellip dim">${esc(s.venue_name || "")}</td>
+        <td class="num">${num(s.ticket_groups_count)}</td>
+        <td class="num">${num(s.tickets_count)}</td>
+        <td class="num money">${moneyC(s.retail_price_min)}</td>
+        <td class="num money">${moneyC(s.retail_price_avg)}</td>
+        <td class="num money">${moneyC(s.retail_price_max)}</td>
+        <td class="dim">${shortStamp(s.captured_at)}</td>
+      </tr>`).join("");
+    $("#latest-table").innerHTML = items.length === 0 ? `<div class="empty">no snapshots yet — run the collector</div>` : `
+      <table><thead><tr>
+        <th>event_id</th><th>event</th><th>date</th><th>venue</th>
+        <th class="num">groups</th><th class="num">tickets</th>
+        <th class="num">min</th><th class="num">avg</th><th class="num">max</th>
+        <th>captured</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    $$("#latest-table tr.row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        switchTab("events");
+        loadEventDetail(Number(tr.dataset.id));
+      });
+    });
+  } catch (err) { $("#latest-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+function deltaCell(n) {
+  if (n == null) return `<td class="dim num">—</td>`;
+  const v = Number(n);
+  if (v === 0) return `<td class="num dim">0</td>`;
+  const cls = v > 0 ? "delta-up" : "delta-down";
+  const sign = v > 0 ? "+" : "";
+  return `<td class="num ${cls}">${sign}${v.toLocaleString()}</td>`;
+}
+
+async function loadVelocity() {
+  if (!CONFIG.supabase_configured) { $("#velocity-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/snapshots/velocity");
+    const items = (data.items || []).filter(i => i.tickets_delta != null || i.avg_delta != null);
+    $("#velocity-count").textContent = `(${items.length})`;
+    const rows = items.map(s => `
+      <tr class="row" data-id="${s.id}">
+        <td class="id-tag">${s.id}</td>
+        <td class="ellip">${esc(s.name || "")}</td>
+        <td>${shortDate(s.occurs_at_local)}</td>
+        <td class="num">${num(s.tickets_now)}</td>
+        ${deltaCell(s.tickets_delta)}
+        <td class="num money">${moneyC(s.avg_now)}</td>
+        ${deltaCell(s.avg_delta)}
+        ${deltaCell(s.min_delta)}
+        <td class="dim">${shortStamp(s.previous_at)}</td>
+        <td class="dim">${shortStamp(s.latest_at)}</td>
+      </tr>`).join("");
+    $("#velocity-table").innerHTML = items.length === 0 ? `<div class="empty">need ≥2 runs to compute velocity</div>` : `
+      <table><thead><tr>
+        <th>id</th><th>event</th><th>date</th>
+        <th class="num">tix now</th><th class="num">Δ tix</th>
+        <th class="num">avg now</th><th class="num">Δ avg</th><th class="num">Δ min</th>
+        <th>prev</th><th>latest</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    $$("#velocity-table tr.row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        switchTab("events");
+        loadEventDetail(Number(tr.dataset.id));
+      });
+    });
+  } catch (err) { $("#velocity-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+</script>
+</body>
+</html>

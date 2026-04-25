@@ -1,0 +1,249 @@
+<!--
+  ============================================================
+  frontend_patch.html — static/index.html patches
+  ============================================================
+  Adds a "history" Chart.js panel at the bottom of the event
+  detail page. Metric dropdown (15 options) + window selector
+  (1d / 7d / 30d / 60d).
+
+  THREE edits in static/index.html:
+
+    EDIT 1: Two CDN <script> tags in <head>
+    EDIT 2: Two-line change at the END of renderEventDetail(d)
+    EDIT 3: Paste the JS block (METRIC_OPTIONS, loadHistoryChart,
+            HISTORY_PANEL_HTML, initHistoryPanelHandlers,
+            formatMetricValue) into the main <script>
+
+  Do edits in order. Hard-refresh after `railway up`.
+  ============================================================
+-->
+
+
+<!-- =========================================================
+     EDIT 1 — add to <head> AFTER the supabase-js <script> tag
+     ========================================================= -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+
+<!-- =========================================================
+     EDIT 2 — at the END of renderEventDetail(d)
+     =========================================================
+
+     Find the last 3 lines of the function, which look like:
+
+         </tr></thead><tbody>${tgRows || ""}</tbody></table>
+           </div>
+         </div>`;
+     }
+
+     Change them to:
+
+         </tr></thead><tbody>${tgRows || ""}</tbody></table>
+           </div>
+         </div>
+         ${HISTORY_PANEL_HTML}`;
+       initHistoryPanelHandlers(ev.id);
+     }
+
+     (Added ${HISTORY_PANEL_HTML} inside the template literal, and
+     initHistoryPanelHandlers(ev.id); after the closing backtick+semicolon.)
+     ========================================================= -->
+
+
+<!-- =========================================================
+     EDIT 3 — paste this whole <script> block into the main
+     <script> region of index.html. A good place is right AFTER
+     the closing } of renderEventDetail().
+     ========================================================= -->
+
+<script>
+// ============================================================
+// History chart — event detail panel
+// ============================================================
+
+let _historyChart = null;
+
+const METRIC_OPTIONS = [
+  { value: "retail_median",      label: "retail median" },
+  { value: "retail_mean",        label: "retail mean (tix-weighted)" },
+  { value: "getin_price",        label: "get-in (min pair)" },
+  { value: "retail_min",         label: "retail min" },
+  { value: "retail_p25",         label: "retail p25" },
+  { value: "retail_p75",         label: "retail p75" },
+  { value: "retail_p90",         label: "retail p90" },
+  { value: "retail_max",         label: "retail max" },
+  { value: "wholesale_median",   label: "wholesale median" },
+  { value: "wholesale_mean",     label: "wholesale mean" },
+  { value: "tickets_count",      label: "tickets available" },
+  { value: "groups_count",       label: "listing groups" },
+  { value: "sections_count",     label: "distinct sections" },
+  { value: "top5_concentration", label: "top-5 section concentration" },
+  { value: "bid_ask_proxy",      label: "bid-ask proxy" },
+];
+
+const MONEY_METRICS = new Set([
+  "retail_median","retail_mean","getin_price",
+  "retail_min","retail_p25","retail_p75","retail_p90","retail_max",
+  "wholesale_median","wholesale_mean",
+]);
+
+const FRACTION_METRICS = new Set(["top5_concentration","bid_ask_proxy"]);
+
+function formatMetricValue(metric, v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (MONEY_METRICS.has(metric)) {
+    return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+  if (FRACTION_METRICS.has(metric)) {
+    return (n * 100).toFixed(1) + "%";
+  }
+  return n.toLocaleString();
+}
+
+const HISTORY_PANEL_HTML = `
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-head">
+      <span>history <span class="count" id="history-summary"></span></span>
+      <div class="actions">
+        <select id="history-metric" style="font-size:11px; padding:3px 8px;">
+          ${METRIC_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join("")}
+        </select>
+        <select id="history-days" style="font-size:11px; padding:3px 8px;">
+          <option value="1">1d</option>
+          <option value="7">7d</option>
+          <option value="30" selected>30d</option>
+          <option value="60">60d</option>
+        </select>
+      </div>
+    </div>
+    <div class="panel-body" style="padding:12px;">
+      <div id="history-status" class="status" style="display:none; margin:0 0 10px 0;"></div>
+      <div id="history-canvas-wrap" style="position:relative; height:280px;">
+        <canvas id="history-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+`;
+
+async function loadHistoryChart(eventId, metric, days) {
+  const statusEl = document.getElementById("history-status");
+  const summaryEl = document.getElementById("history-summary");
+  const canvas = document.getElementById("history-canvas");
+  if (!statusEl || !canvas) return;
+
+  statusEl.style.display = "block";
+  statusEl.className = "status";
+  statusEl.textContent = "loading…";
+
+  try {
+    const resp = await fetch(`/api/events/${eventId}/series?days=${days}`, {
+      credentials: "include",
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const series = (data.series || []).filter(p => p[metric] != null);
+
+    if (series.length === 0) {
+      statusEl.textContent = "no data yet for this window";
+      statusEl.className = "status dim";
+      if (_historyChart) { _historyChart.destroy(); _historyChart = null; }
+      if (summaryEl) summaryEl.innerHTML = "";
+      return;
+    }
+
+    statusEl.style.display = "none";
+
+    const points = series.map(p => ({ x: new Date(p.t), y: Number(p[metric]) }));
+    const metricLabel = (METRIC_OPTIONS.find(o => o.value === metric) || {}).label || metric;
+
+    if (_historyChart) _historyChart.destroy();
+
+    const ctx = canvas.getContext("2d");
+    _historyChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [{
+          label: metricLabel,
+          data: points,
+          borderColor: "#ffb020",
+          backgroundColor: "rgba(255, 176, 32, 0.08)",
+          borderWidth: 1.5,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.15,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            type: "time",
+            time: { tooltipFormat: "MMM d, HH:mm" },
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: { color: "#888", font: { size: 10 } },
+          },
+          y: {
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: {
+              color: "#888",
+              font: { size: 10 },
+              callback: (v) => formatMetricValue(metric, v),
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${metricLabel}: ${formatMetricValue(metric, ctx.parsed.y)}`,
+            },
+          },
+        },
+      },
+    });
+
+    const latest = points[points.length - 1].y;
+    const oldest = points[0].y;
+    const delta  = points.length > 1 ? latest - oldest : null;
+
+    if (summaryEl) {
+      let deltaHtml = "";
+      if (delta != null) {
+        if (delta > 0) {
+          deltaHtml = `<span class="delta-up"> ↑ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
+        } else if (delta < 0) {
+          deltaHtml = `<span class="delta-down"> ↓ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
+        } else {
+          deltaHtml = `<span class="dim"> flat</span>`;
+        }
+      }
+      summaryEl.innerHTML =
+        `<span>latest: <span class="amber">${formatMetricValue(metric, latest)}</span></span>` +
+        ` · <span class="dim">${points.length} pts / ${days}d</span>` +
+        deltaHtml;
+    }
+  } catch (err) {
+    statusEl.style.display = "block";
+    statusEl.className = "status err";
+    statusEl.textContent = "error: " + err.message;
+    if (summaryEl) summaryEl.innerHTML = "";
+  }
+}
+
+function initHistoryPanelHandlers(eventId) {
+  const metricSel = document.getElementById("history-metric");
+  const daysSel   = document.getElementById("history-days");
+  if (!metricSel || !daysSel) return;
+  const rerender = () =>
+    loadHistoryChart(eventId, metricSel.value, Number(daysSel.value));
+  metricSel.addEventListener("change", rerender);
+  daysSel.addEventListener("change", rerender);
+  rerender();
+}
+</script>

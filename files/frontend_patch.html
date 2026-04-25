@@ -1,0 +1,208 @@
+<!--
+  ============================================================
+  HTML + JS patch for static/index.html
+  ============================================================
+  Adds a "History" chart panel to the event detail page.
+
+  TWO patches required:
+    1. Add Chart.js CDN to <head>
+    2. Replace renderEventDetail() with the new version below
+       (or add the new functions + modify the innerHTML at the end)
+  ============================================================
+-->
+
+<!-- PATCH 1: Add to <head> section, after the supabase-js script -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<!-- ============================================================ -->
+<!-- PATCH 2: Replace renderEventDetail() in the main <script>     -->
+<!-- ============================================================ -->
+
+<script>
+// ===== History chart state =====
+let _historyChart = null;
+
+const METRIC_OPTIONS = [
+  { value: "retail_median",      label: "retail median" },
+  { value: "retail_mean",        label: "retail mean (tix-weighted)" },
+  { value: "getin_price",        label: "get-in (min pair)" },
+  { value: "retail_min",         label: "retail min" },
+  { value: "retail_p25",         label: "retail p25" },
+  { value: "retail_p75",         label: "retail p75" },
+  { value: "retail_p90",         label: "retail p90" },
+  { value: "retail_max",         label: "retail max" },
+  { value: "wholesale_median",   label: "wholesale median" },
+  { value: "wholesale_mean",     label: "wholesale mean" },
+  { value: "tickets_count",      label: "tickets available" },
+  { value: "groups_count",       label: "listing groups" },
+  { value: "sections_count",     label: "distinct sections" },
+  { value: "top5_concentration", label: "top-5 section concentration" },
+  { value: "bid_ask_proxy",      label: "bid-ask proxy" },
+];
+
+const MONEY_METRICS = new Set([
+  "retail_median","retail_mean","getin_price","retail_min","retail_p25",
+  "retail_p75","retail_p90","retail_max","wholesale_median","wholesale_mean",
+]);
+const FRACTION_METRICS = new Set(["top5_concentration","bid_ask_proxy"]);
+
+function formatMetricValue(metric, v) {
+  if (v == null) return "—";
+  if (MONEY_METRICS.has(metric)) return "$" + Number(v).toLocaleString(undefined, {maximumFractionDigits: 0});
+  if (FRACTION_METRICS.has(metric)) return (Number(v) * 100).toFixed(1) + "%";
+  return Number(v).toLocaleString();
+}
+
+async function loadHistoryChart(eventId, metric, days) {
+  const container = document.getElementById("history-canvas-wrap");
+  const statusEl = document.getElementById("history-status");
+  if (!container) return;
+
+  statusEl.textContent = "loading…";
+  statusEl.style.display = "block";
+
+  try {
+    const data = await api(`/api/events/${eventId}/series?days=${days}`);
+    const series = data.series || [];
+
+    if (_historyChart) { _historyChart.destroy(); _historyChart = null; }
+
+    if (series.length === 0) {
+      statusEl.textContent = "no data yet — collector hasn't run for this event";
+      return;
+    }
+
+    statusEl.style.display = "none";
+
+    const labels = series.map(p => p.t);
+    const values = series.map(p => p[metric]);
+
+    const canvas = document.getElementById("history-canvas");
+    _historyChart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: metric,
+          data: values,
+          borderColor: "#ff9500",
+          backgroundColor: "rgba(255, 149, 0, 0.08)",
+          borderWidth: 1.5,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.15,
+          fill: true,
+          spanGaps: true,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "#181c22",
+            borderColor: "#ff9500",
+            borderWidth: 1,
+            titleColor: "#ff9500",
+            bodyColor: "#dfe3e8",
+            callbacks: {
+              title: (items) => new Date(items[0].label).toLocaleString(),
+              label: (item) => ` ${formatMetricValue(metric, item.parsed.y)}`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: "time",
+            time: { tooltipFormat: "MMM d HH:mm" },
+            grid: { color: "#232830" },
+            ticks: { color: "#6b737d", font: { family: "JetBrains Mono", size: 10 } },
+          },
+          y: {
+            grid: { color: "#232830" },
+            ticks: {
+              color: "#6b737d",
+              font: { family: "JetBrains Mono", size: 10 },
+              callback: (v) => formatMetricValue(metric, v),
+            },
+          },
+        },
+      },
+    });
+
+    // Update summary line
+    const latest = values[values.length - 1];
+    const oldest = values[0];
+    const delta = (latest != null && oldest != null) ? latest - oldest : null;
+    const summaryEl = document.getElementById("history-summary");
+    if (summaryEl && latest != null) {
+      const deltaStr = delta == null ? "" :
+        (delta > 0 ? ` ↑ ${formatMetricValue(metric, Math.abs(delta))}` :
+         delta < 0 ? ` ↓ ${formatMetricValue(metric, Math.abs(delta))}` :
+         ` flat`);
+      const deltaClass = delta > 0 ? "delta-up" : delta < 0 ? "delta-down" : "dim";
+      summaryEl.innerHTML =
+        `<span>latest: <span class="amber">${formatMetricValue(metric, latest)}</span></span>` +
+        ` · <span class="${deltaClass}">${series.length} points over ${days}d${deltaStr}</span>`;
+    }
+  } catch (err) {
+    statusEl.textContent = "error: " + err.message;
+    statusEl.className = "status err";
+  }
+}
+
+// Rebind the existing renderEventDetail to also render the history panel
+// by appending this block at the end of its innerHTML template:
+
+const HISTORY_PANEL_HTML = `
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-head">
+      <span>history <span class="count" id="history-summary"></span></span>
+      <div class="actions">
+        <select id="history-metric" style="font-size:11px; padding:3px 8px;">
+          ${METRIC_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join("")}
+        </select>
+        <select id="history-days" style="font-size:11px; padding:3px 8px;">
+          <option value="1">1d</option>
+          <option value="7">7d</option>
+          <option value="30" selected>30d</option>
+          <option value="60">60d</option>
+        </select>
+      </div>
+    </div>
+    <div class="panel-body" style="padding:12px;">
+      <div id="history-status" class="status" style="display:none; margin:0 0 10px 0;"></div>
+      <div id="history-canvas-wrap" style="position:relative; height:280px;">
+        <canvas id="history-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+`;
+
+function initHistoryPanelHandlers(eventId) {
+  const metricSel = document.getElementById("history-metric");
+  const daysSel   = document.getElementById("history-days");
+  if (!metricSel || !daysSel) return;
+  const rerender = () => loadHistoryChart(eventId, metricSel.value, Number(daysSel.value));
+  metricSel.addEventListener("change", rerender);
+  daysSel.addEventListener("change", rerender);
+  rerender();
+}
+
+// ============================================================
+// INSTRUCTIONS:
+// 1. In renderEventDetail(d), append HISTORY_PANEL_HTML to the end of
+//    $("#events-detail").innerHTML = `...`
+// 2. Right after setting innerHTML, call initHistoryPanelHandlers(ev.id)
+//
+// So the pattern is:
+//
+//   $("#events-detail").innerHTML = `
+//     ... existing detail-head + stats-grid + ticket groups panel ...
+//     ${HISTORY_PANEL_HTML}
+//   `;
+//   initHistoryPanelHandlers(ev.id);
+// ============================================================
+</script>
