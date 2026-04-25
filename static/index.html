@@ -665,22 +665,9 @@ async function loadEventDetail(id) {
 }
 
 function renderEventDetail(d) {
-  const ev = d.event, s = d.stats, sEvent = d.stats_event_only;
+  const ev = d.event;
   const groups = d.ticket_groups || [];
   const venue = ev.venue || {};
-  const statBlock = (s && s.ticket_groups_count != null) ? `
-    <div class="stats-grid">
-      <div class="stat"><div class="k">groups (all)</div><div class="v amber">${num(s.ticket_groups_count)}</div></div>
-      <div class="stat"><div class="k">tickets (all)</div><div class="v amber">${num(s.tickets_count)}</div></div>
-      <div class="stat"><div class="k">groups (event)</div><div class="v">${num(sEvent ? sEvent.ticket_groups_count : null)}</div></div>
-      <div class="stat"><div class="k">tickets (event)</div><div class="v">${num(sEvent ? sEvent.tickets_count : null)}</div></div>
-      <div class="stat"><div class="k">retail min</div><div class="v green">${moneyC(s.retail_price_min)}</div></div>
-      <div class="stat"><div class="k">retail avg</div><div class="v green">${moneyC(s.retail_price_avg)}</div></div>
-      <div class="stat"><div class="k">retail max</div><div class="v green">${moneyC(s.retail_price_max)}</div></div>
-      <div class="stat"><div class="k">retail sum</div><div class="v green">${moneyC(s.retail_price_sum)}</div></div>
-      <div class="stat"><div class="k">wholesale avg</div><div class="v">${moneyC(s.wholesale_price_avg)}</div></div>
-      <div class="stat"><div class="k">event.available_count</div><div class="v dim">${num(ev.available_count)} <span class="chip">deprecated</span></div></div>
-    </div>` : "";
   const tgRows = groups.map(tg => `
     <tr><td class="ellip">${esc(tg.section || "")}</td><td>${esc(tg.row || "")}</td>
       <td class="num">${tg.available_quantity ?? 0}</td>
@@ -700,6 +687,8 @@ function renderEventDetail(d) {
       data-kind="venue" data-ext-id="${venue.id}" data-label="${esc(venue.name || '')}">+ venue to watchlist</button>`);
   }
   if (pp && pp.id) {
+    pivots.push(`<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+      data-pivot-set='${JSON.stringify({performer_id: pp.id})}'>→ other events for ${esc(pp.name || "performer")}</button>`);
     pivots.push(`<button class="pivot" data-pivot-action="add-watchlist"
       data-kind="performer" data-ext-id="${pp.id}" data-label="${esc(pp.name || '')}">+ performer to watchlist</button>`);
   }
@@ -715,7 +704,8 @@ function renderEventDetail(d) {
       </div>
       <div class="pivots">${pivots.join("")}</div>
     </div>
-    ${statBlock}
+    ${HERO_PANEL_HTML}
+    ${BREAKDOWN_PANEL_HTML}
     <div class="panel" style="margin-top:16px">
       <div class="panel-head">
         <span>ticket groups <span class="count">(${groups.length})</span></span>
@@ -727,198 +717,364 @@ function renderEventDetail(d) {
           <th class="num">retail</th><th>splits</th><th>format</th><th>flags</th>
         </tr></thead><tbody>${tgRows || ""}</tbody></table>
       </div>
-    </div>
-    ${HISTORY_PANEL_HTML}`;
-  initHistoryPanelHandlers(ev.id);
+    </div>`;
+  initEventHistory(ev.id);
 }
 
-// -------- HISTORY CHART (event detail) --------
-let _historyChart = null;
+// =====================================================================
+// EVENT DETAIL — Robinhood-style hero chart + movement breakdown
+// =====================================================================
 
-const METRIC_OPTIONS = [
-  { value: "retail_median",       label: "retail median" },
-  { value: "retail_mean",         label: "retail mean (tix-weighted)" },
-  { value: "getin_price",         label: "get-in (min pair)" },
-  { value: "retail_min",          label: "retail min" },
-  { value: "retail_p25",          label: "retail p25" },
-  { value: "retail_p75",          label: "retail p75" },
-  { value: "retail_p90",          label: "retail p90" },
-  { value: "retail_max",          label: "retail max" },
-  { value: "tickets_count",       label: "tickets available" },
-  { value: "groups_count",        label: "listing groups" },
-  { value: "sections_count",      label: "distinct sections" },
-  { value: "top5_concentration",  label: "top-5 section concentration" },
-  { value: "price_dispersion",    label: "price dispersion (p75/p25)" },
-  { value: "tail_premium",        label: "tail premium (p90/median)" },
-  { value: "owned_share",         label: "S4K owned share" },
-  { value: "owned_tickets_count", label: "S4K owned tickets" },
-  { value: "owned_median_retail", label: "S4K owned median retail" },
+const HERO_METRIC = "retail_median";
+
+const PERIOD_TABS = [
+  { key: "1H",  hours: 1 },
+  { key: "6H",  hours: 6 },
+  { key: "24H", hours: 24, default: true },
+  { key: "7D",  hours: 24*7 },
+  { key: "30D", hours: 24*30 },
+  { key: "ALL", hours: null },
 ];
 
-const MONEY_METRICS = new Set([
-  "retail_median","retail_mean","getin_price",
-  "retail_min","retail_p25","retail_p75","retail_p90","retail_max",
-  "owned_median_retail",
-]);
+// Metrics shown in the breakdown table. invertColor=true means "down is good"
+// (e.g. inventory dropping = sales happening). polarity=null means neutral / no color.
+const BREAKDOWN_METRICS = [
+  { key: "retail_median",       label: "retail median",      polarity: "up", fmt: "money"   },
+  { key: "getin_price",         label: "get-in (min pair)",  polarity: "up", fmt: "money"   },
+  { key: "retail_p25",          label: "retail p25",         polarity: "up", fmt: "money"   },
+  { key: "retail_p75",          label: "retail p75",         polarity: "up", fmt: "money"   },
+  { key: "retail_p90",          label: "retail p90",         polarity: "up", fmt: "money"   },
+  { key: "retail_max",          label: "retail max",         polarity: "up", fmt: "money"   },
+  { key: "tickets_count",       label: "tickets remaining",  polarity: "down", fmt: "int"   },
+  { key: "groups_count",        label: "listing groups",     polarity: "down", fmt: "int"   },
+  { key: "sections_count",      label: "sections w/ stock",  polarity: null, fmt: "int"     },
+  { key: "price_dispersion",    label: "dispersion p75/p25", polarity: null, fmt: "ratio"   },
+  { key: "tail_premium",        label: "tail premium p90/m", polarity: null, fmt: "ratio"   },
+  { key: "top5_concentration",  label: "top-5 concentration",polarity: null, fmt: "pct"     },
+  { key: "owned_share",         label: "S4K owned share",    polarity: null, fmt: "pct"     },
+  { key: "owned_tickets_count", label: "S4K owned tickets",  polarity: null, fmt: "int"     },
+  { key: "owned_median_retail", label: "S4K owned median",   polarity: "up", fmt: "money"   },
+];
 
-const FRACTION_METRICS = new Set(["top5_concentration","owned_share"]);
-
-// Plain ratios — rendered with two decimals, no unit
-const RATIO_METRICS = new Set(["price_dispersion","tail_premium"]);
-
-function formatMetricValue(metric, v) {
-  if (v == null) return "—";
+function fmtVal(fmt, v) {
+  if (v == null || (typeof v === "number" && !isFinite(v))) return "—";
   const n = Number(v);
-  if (MONEY_METRICS.has(metric)) {
-    return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  }
-  if (FRACTION_METRICS.has(metric)) {
-    return (n * 100).toFixed(1) + "%";
-  }
-  if (RATIO_METRICS.has(metric)) {
-    return n.toFixed(2) + "x";
-  }
-  return n.toLocaleString();
+  if (fmt === "money") return "$" + Math.round(n).toLocaleString();
+  if (fmt === "pct")   return (n * 100).toFixed(1) + "%";
+  if (fmt === "ratio") return n.toFixed(2) + "x";
+  if (fmt === "int")   return Math.round(n).toLocaleString();
+  return String(n);
 }
 
-const HISTORY_PANEL_HTML = `
+function fmtDelta(fmt, delta) {
+  if (delta == null || !isFinite(delta)) return "—";
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  const mag = Math.abs(delta);
+  if (fmt === "money") return sign + "$" + Math.round(mag).toLocaleString();
+  if (fmt === "pct")   return sign + (mag * 100).toFixed(1) + " pp";
+  if (fmt === "ratio") return sign + mag.toFixed(2);
+  if (fmt === "int")   return sign + Math.round(mag).toLocaleString();
+  return sign + String(mag);
+}
+
+function fmtPct(open, now) {
+  if (open == null || now == null || open === 0 || !isFinite(open)) return "—";
+  const pct = ((now - open) / Math.abs(open)) * 100;
+  const sign = pct > 0 ? "+" : pct < 0 ? "−" : "";
+  return sign + Math.abs(pct).toFixed(1) + "%";
+}
+
+function deltaClass(polarity, delta) {
+  if (delta == null || delta === 0 || polarity == null) return "";
+  const isUp = delta > 0;
+  if (polarity === "up")   return isUp ? "delta-up" : "delta-down";
+  if (polarity === "down") return isUp ? "delta-down" : "delta-up";
+  return "";
+}
+
+const HERO_PANEL_HTML = `
   <div class="panel" style="margin-top:16px">
-    <div class="panel-head">
-      <span>history <span class="count" id="history-summary"></span></span>
-      <div class="actions">
-        <select id="history-metric" style="font-size:11px; padding:3px 8px;">
-          ${METRIC_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join("")}
-        </select>
-        <select id="history-days" style="font-size:11px; padding:3px 8px;">
-          <option value="1">1d</option>
-          <option value="7">7d</option>
-          <option value="30" selected>30d</option>
-          <option value="60">60d</option>
-        </select>
+    <div class="panel-body" style="padding:18px 20px;">
+      <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:8px;">
+        <div class="dim" style="font-size:11px; text-transform:uppercase; letter-spacing:0.6px;" id="hero-label">retail median</div>
+        <div class="dim" style="font-size:11px;" id="hero-summary"></div>
       </div>
-    </div>
-    <div class="panel-body" style="padding:12px;">
-      <div id="history-status" class="status" style="display:none; margin:0 0 10px 0;"></div>
-      <div id="history-canvas-wrap" style="position:relative; height:280px;">
-        <canvas id="history-canvas"></canvas>
+      <div style="display:flex; align-items:baseline; gap:14px; margin-bottom:14px;">
+        <div id="hero-value" style="font-size:32px; font-weight:500; line-height:1; font-family:'JetBrains Mono', monospace;">—</div>
+        <div id="hero-delta" style="font-size:13px; font-weight:500; font-family:'JetBrains Mono', monospace;"></div>
       </div>
+      <div id="period-tabs" style="display:flex; gap:4px; margin-bottom:14px; font-family:'JetBrains Mono', monospace; font-size:11px;">
+        ${PERIOD_TABS.map(p => `
+          <button class="period-tab${p.default ? " active" : ""}" data-period="${p.key}"
+                  style="background:transparent; border:1px solid transparent; color:var(--text-dim); padding:3px 10px; border-radius:4px; cursor:pointer; font-family:inherit; font-size:inherit;">
+            ${p.key}
+          </button>`).join("")}
+      </div>
+      <div id="hero-status" class="status" style="display:none; margin:0 0 10px 0;"></div>
+      <div style="position:relative; height:240px;">
+        <canvas id="hero-canvas"></canvas>
+      </div>
+      <div id="hero-stats" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin-top:14px;"></div>
     </div>
   </div>
 `;
 
-async function loadHistoryChart(eventId, metric, days) {
-  const statusEl = $("#history-status");
-  const summaryEl = $("#history-summary");
-  const canvas = $("#history-canvas");
-  if (!statusEl || !canvas) return;
+const BREAKDOWN_PANEL_HTML = `
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-head">
+      <span>movement breakdown <span class="count" id="breakdown-window-label"></span></span>
+    </div>
+    <div class="panel-body" id="breakdown-body" style="padding:0;">
+      <table id="breakdown-table" style="width:100%;">
+        <thead><tr>
+          <th style="text-align:left;">metric</th>
+          <th class="num">open</th>
+          <th class="num">now</th>
+          <th class="num">Δ</th>
+          <th class="num">%</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+`;
 
-  statusEl.style.display = "block";
-  statusEl.className = "status";
-  statusEl.textContent = "loading…";
+let _heroChart = null;
+let _eventSeries = null;     // raw response from /api/events/{id}/series
+let _eventId = null;
+let _activePeriod = "24H";
 
-  try {
-    const data = await api(`/api/events/${eventId}/series?days=${days}`);
-    const series = (data.series || []).filter(p => p[metric] != null);
+async function initEventHistory(eventId) {
+  _eventId = eventId;
+  _activePeriod = (PERIOD_TABS.find(p => p.default) || PERIOD_TABS[2]).key;
+  const status = $("#hero-status");
 
-    if (series.length === 0) {
-      statusEl.textContent = "no data yet for this window";
-      statusEl.className = "status";
-      if (_historyChart) { _historyChart.destroy(); _historyChart = null; }
-      if (summaryEl) summaryEl.innerHTML = "";
-      return;
-    }
-
-    statusEl.style.display = "none";
-
-    const points = series.map(p => ({ x: new Date(p.t), y: Number(p[metric]) }));
-    const metricLabel = (METRIC_OPTIONS.find(o => o.value === metric) || {}).label || metric;
-
-    if (_historyChart) _historyChart.destroy();
-
-    const ctx = canvas.getContext("2d");
-    _historyChart = new Chart(ctx, {
-      type: "line",
-      data: {
-        datasets: [{
-          label: metricLabel,
-          data: points,
-          borderColor: "#ff9500",
-          backgroundColor: "rgba(255, 149, 0, 0.08)",
-          borderWidth: 1.5,
-          pointRadius: 2,
-          pointHoverRadius: 4,
-          tension: 0.15,
-          fill: true,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        scales: {
-          x: {
-            type: "time",
-            time: { tooltipFormat: "MMM d, HH:mm" },
-            grid: { color: "rgba(255,255,255,0.05)" },
-            ticks: { color: "#6b737d", font: { size: 10, family: "JetBrains Mono" } },
-          },
-          y: {
-            grid: { color: "rgba(255,255,255,0.05)" },
-            ticks: {
-              color: "#6b737d",
-              font: { size: 10, family: "JetBrains Mono" },
-              callback: (v) => formatMetricValue(metric, v),
-            },
-          },
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => `${metricLabel}: ${formatMetricValue(metric, ctx.parsed.y)}`,
-            },
-          },
-        },
-      },
+  // Wire period tabs
+  document.querySelectorAll("#period-tabs .period-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      _activePeriod = btn.dataset.period;
+      document.querySelectorAll("#period-tabs .period-tab").forEach(b => b.classList.toggle("active", b === btn));
+      redrawHero();
     });
+  });
 
-    const latest = points[points.length - 1].y;
-    const oldest = points[0].y;
-    const delta  = points.length > 1 ? latest - oldest : null;
-
-    if (summaryEl) {
-      let deltaHtml = "";
-      if (delta != null) {
-        if (delta > 0) {
-          deltaHtml = `<span class="delta-up"> ↑ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
-        } else if (delta < 0) {
-          deltaHtml = `<span class="delta-down"> ↓ ${formatMetricValue(metric, Math.abs(delta))}</span>`;
-        } else {
-          deltaHtml = ` flat`;
-        }
-      }
-      summaryEl.innerHTML =
-        `latest ${formatMetricValue(metric, latest)}` +
-        ` · ${points.length} pts / ${days}d` +
-        deltaHtml;
-    }
+  // Fetch a generous window once; tabs filter client-side
+  try {
+    if (status) { status.style.display = "block"; status.className = "status"; status.textContent = "loading history…"; }
+    _eventSeries = await api(`/api/events/${eventId}/series?days=60`);
+    if (status) status.style.display = "none";
+    redrawHero();
   } catch (err) {
-    statusEl.style.display = "block";
-    statusEl.className = "status err";
-    statusEl.textContent = "error: " + err.message;
-    if (summaryEl) summaryEl.innerHTML = "";
+    if (status) {
+      status.style.display = "block";
+      status.className = "status err";
+      status.textContent = "error loading history: " + err.message;
+    }
   }
 }
 
-function initHistoryPanelHandlers(eventId) {
-  const metricSel = $("#history-metric");
-  const daysSel   = $("#history-days");
-  if (!metricSel || !daysSel) return;
-  const rerender = () =>
-    loadHistoryChart(eventId, metricSel.value, Number(daysSel.value));
-  metricSel.addEventListener("change", rerender);
-  daysSel.addEventListener("change", rerender);
-  rerender();
+function pointsForMetric(series, metric) {
+  return (series || [])
+    .filter(p => p[metric] != null)
+    .map(p => ({ t: new Date(p.t), y: Number(p[metric]) }));
+}
+
+function clipToWindow(points, hoursBack) {
+  if (!hoursBack) return points;
+  const cutoff = Date.now() - hoursBack * 3600 * 1000;
+  return points.filter(p => p.t.getTime() >= cutoff);
+}
+
+function redrawHero() {
+  if (!_eventSeries) return;
+  const series = _eventSeries.series || [];
+  const tab = PERIOD_TABS.find(p => p.key === _activePeriod) || PERIOD_TABS[2];
+
+  const allHero = pointsForMetric(series, HERO_METRIC);
+  const heroPts = clipToWindow(allHero, tab.hours);
+
+  // Hero metric current value + delta
+  const heroNow  = heroPts.length ? heroPts[heroPts.length - 1].y : null;
+  const heroOpen = heroPts.length ? heroPts[0].y : null;
+  const heroDelta = (heroNow != null && heroOpen != null) ? heroNow - heroOpen : null;
+  const heroPctText = fmtPct(heroOpen, heroNow);
+
+  $("#hero-value").textContent = fmtVal("money", heroNow);
+  const dEl = $("#hero-delta");
+  if (heroDelta == null || heroPts.length < 2) {
+    dEl.textContent = ""; dEl.className = "";
+  } else {
+    const cls = heroDelta > 0 ? "delta-up" : heroDelta < 0 ? "delta-down" : "";
+    dEl.className = cls;
+    dEl.innerHTML = `${fmtDelta("money", heroDelta)} <span style="opacity:0.75;">(${heroPctText})</span>`;
+  }
+  const summary = $("#hero-summary");
+  if (summary) {
+    const span = heroPts.length > 1
+      ? `${heroPts.length} pts · ${tab.key}`
+      : (heroPts.length === 1 ? "1 pt" : `no data in ${tab.key}`);
+    summary.textContent = span;
+  }
+
+  // Chart
+  drawHeroChart(heroPts, heroDelta);
+
+  // Stat cards (current snapshot)
+  drawHeroStats(series, tab);
+
+  // Breakdown table
+  drawBreakdown(series, tab);
+
+  const wlbl = $("#breakdown-window-label");
+  if (wlbl) wlbl.textContent = `(${tab.key} window)`;
+}
+
+function drawHeroChart(points, delta) {
+  const canvas = $("#hero-canvas");
+  if (!canvas) return;
+  if (_heroChart) { _heroChart.destroy(); _heroChart = null; }
+  if (points.length === 0) return;
+
+  const positive = delta == null || delta >= 0;
+  const lineColor = positive ? "#1bb55c" : "#e24b4a";
+  const fillColor = positive ? "rgba(27,181,92,0.10)" : "rgba(226,75,74,0.10)";
+
+  const ctx = canvas.getContext("2d");
+  _heroChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [{
+        label: "retail median",
+        data: points.map(p => ({ x: p.t, y: p.y })),
+        borderColor: lineColor,
+        backgroundColor: fillColor,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: lineColor,
+        pointHoverBorderColor: "#fff",
+        pointHoverBorderWidth: 2,
+        tension: 0.25,
+        fill: "origin",
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: {
+          type: "time",
+          time: { tooltipFormat: "MMM d, HH:mm" },
+          grid: { display: false },
+          ticks: { color: "#6b737d", font: { size: 10, family: "JetBrains Mono" }, maxTicksLimit: 6, autoSkip: true, maxRotation: 0 },
+        },
+        y: {
+          position: "right",
+          grid: { color: "rgba(255,255,255,0.05)", drawTicks: false },
+          border: { display: false },
+          ticks: {
+            color: "#6b737d", font: { size: 10, family: "JetBrains Mono" }, padding: 8,
+            callback: v => "$" + Math.round(v),
+          },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "rgba(20,22,26,0.96)",
+          titleColor: "#fff", bodyColor: "#ccc",
+          borderColor: "rgba(255,255,255,0.08)", borderWidth: 1,
+          padding: 10, cornerRadius: 6, displayColors: false,
+          callbacks: { label: c => "$" + Math.round(c.parsed.y).toLocaleString() },
+        },
+      },
+    },
+  });
+}
+
+function drawHeroStats(series, tab) {
+  if (!series.length) { $("#hero-stats").innerHTML = ""; return; }
+  const last = series[series.length - 1];
+
+  // Find a "open" snapshot at the start of the window for delta context
+  const cutoff = tab.hours ? Date.now() - tab.hours * 3600 * 1000 : null;
+  let openSnap = null;
+  for (const p of series) {
+    if (cutoff == null || new Date(p.t).getTime() >= cutoff) { openSnap = p; break; }
+  }
+
+  const cards = [
+    {
+      label: "tickets remaining", value: fmtVal("int", last.tickets_count),
+      delta: openSnap && openSnap.tickets_count != null ? last.tickets_count - openSnap.tickets_count : null,
+      polarity: "down", fmt: "int",
+    },
+    {
+      label: "S4K owned share", value: fmtVal("pct", last.owned_share),
+      sub: last.owned_tickets_count != null
+        ? `${last.owned_tickets_count} of ${last.tickets_count ?? "?"} · ${last.owned_groups_count ?? 0} grps`
+        : "no owned data",
+    },
+    {
+      label: "get-in", value: fmtVal("money", last.getin_price),
+      delta: openSnap && openSnap.getin_price != null && last.getin_price != null ? last.getin_price - openSnap.getin_price : null,
+      polarity: "up", fmt: "money",
+    },
+    {
+      label: "dispersion p75/p25", value: fmtVal("ratio", last.price_dispersion),
+      sub: last.tail_premium != null ? `tail ${fmtVal("ratio", last.tail_premium)}` : "—",
+    },
+  ];
+
+  $("#hero-stats").innerHTML = cards.map(c => {
+    const deltaTxt = c.delta != null ? fmtDelta(c.fmt, c.delta) : "";
+    const cls = c.delta != null ? deltaClass(c.polarity, c.delta) : "";
+    const subRow = c.sub
+      ? `<div class="dim" style="font-size:10px; font-family:'JetBrains Mono', monospace; margin-top:4px;">${esc(c.sub)}</div>`
+      : (deltaTxt
+          ? `<div style="font-size:10px; font-family:'JetBrains Mono', monospace; margin-top:4px;" class="${cls}">${deltaTxt}</div>`
+          : `<div style="font-size:10px; margin-top:4px;">&nbsp;</div>`);
+    return `
+      <div style="background:var(--surface-2); border-radius:6px; padding:10px 12px;">
+        <div class="dim" style="font-size:10px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">${esc(c.label)}</div>
+        <div style="font-size:18px; font-weight:500; font-family:'JetBrains Mono', monospace; line-height:1.1;">${c.value}</div>
+        ${subRow}
+      </div>`;
+  }).join("");
+}
+
+function drawBreakdown(series, tab) {
+  const tbody = document.querySelector("#breakdown-table tbody");
+  if (!tbody) return;
+  if (!series.length) { tbody.innerHTML = `<tr><td colspan="5" class="dim" style="padding:14px; text-align:center;">no data</td></tr>`; return; }
+
+  const cutoff = tab.hours ? Date.now() - tab.hours * 3600 * 1000 : null;
+  const inWindow = cutoff == null ? series : series.filter(p => new Date(p.t).getTime() >= cutoff);
+  if (inWindow.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="dim" style="padding:14px; text-align:center;">no data in ${tab.key}</td></tr>`;
+    return;
+  }
+
+  const open = inWindow[0];
+  const now  = inWindow[inWindow.length - 1];
+
+  tbody.innerHTML = BREAKDOWN_METRICS.map(m => {
+    const o = open[m.key];
+    const n = now[m.key];
+    if (o == null && n == null) return "";
+    const delta = (o != null && n != null) ? n - o : null;
+    const pctText = fmtPct(o, n);
+    const cls = deltaClass(m.polarity, delta);
+    return `
+      <tr>
+        <td>${esc(m.label)}</td>
+        <td class="num dim">${fmtVal(m.fmt, o)}</td>
+        <td class="num">${fmtVal(m.fmt, n)}</td>
+        <td class="num ${cls}">${delta != null ? fmtDelta(m.fmt, delta) : "—"}</td>
+        <td class="num ${cls}" style="font-weight:500;">${pctText}</td>
+      </tr>`;
+  }).join("");
 }
 
 // -------- PERFORMERS --------
@@ -1201,156 +1357,4 @@ $("#wl-add-form").addEventListener("submit", async e => {
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({kind: obj.kind, ext_id: Number(obj.ext_id), label: obj.label || null}),
     });
-    if (resp.ok === false) { toast(resp.error || "failed", true); return; }
-    toast("added");
-    e.target.reset();
-    loadWatchlist();
-  } catch (err) { toast(err.message, true); }
-});
-
-async function loadWatchlist() {
-  if (!CONFIG.supabase_configured) { $("#wl-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
-  try {
-    const data = await api("/api/watchlist");
-    const items = data.items || [];
-    $("#wl-count").textContent = `(${items.length})`;
-    const rows = items.map(w => `
-      <tr>
-        <td><span class="chip ${w.kind === 'performer' ? 'hot' : ''}">${w.kind}</span></td>
-        <td class="id-tag">${w.ext_id}</td>
-        <td class="ellip">${esc(w.label || '—')}</td>
-        <td class="dim">${shortStamp(w.added_at)}</td>
-        <td><button class="danger" onclick="removeWatchlist(${w.id}, this)">remove</button></td>
-      </tr>`).join("");
-    $("#wl-table").innerHTML = items.length === 0 ? `<div class="empty">empty watchlist</div>` : `
-      <table><thead><tr>
-        <th>kind</th><th>ext_id</th><th>label</th><th>added</th><th></th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
-  } catch (err) { $("#wl-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
-}
-
-async function removeWatchlist(id, btn) {
-  if (!confirm("remove from watchlist?")) return;
-  btn.disabled = true;
-  try {
-    await api("/api/watchlist/" + id, {method: "DELETE"});
-    toast("removed");
-    loadWatchlist();
-  } catch (err) { toast(err.message, true); btn.disabled = false; }
-}
-
-async function runCollector() {
-  const btn = $("#collect-now-btn");
-  btn.disabled = true;
-  btn.textContent = "firing…";
-  try {
-    await api("/api/collect/run", {method: "POST"});
-    toast("collector fired — check runs below in ~30-90s");
-    btn.textContent = "fired ✓";
-    setTimeout(() => { btn.textContent = "run collector now"; btn.disabled = false; loadRuns(); }, 3000);
-  } catch (err) {
-    toast(err.message, true);
-    btn.textContent = "run collector now";
-    btn.disabled = false;
-  }
-}
-
-async function loadRuns() {
-  if (!CONFIG.supabase_configured) { $("#runs-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
-  try {
-    const data = await api("/api/runs?limit=10");
-    const items = data.items || [];
-    const rows = items.map(r => {
-      const dur = (r.started_at && r.finished_at)
-        ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + "s"
-        : r.finished_at ? "—" : `<span class="loading">running</span>`;
-      const errChip = r.stats_errors > 0
-        ? `<span class="chip red">${r.stats_errors} err</span>`
-        : (r.finished_at ? `<span class="chip green">ok</span>` : "");
-      return `<tr>
-        <td class="id-tag">${r.id}</td>
-        <td class="dim">${shortStamp(r.started_at)}</td>
-        <td class="dim">${shortStamp(r.finished_at)}</td>
-        <td class="num">${dur}</td>
-        <td class="num">${num(r.events_collected)}</td>
-        <td>${errChip}</td>
-      </tr>`;
-    }).join("");
-    $("#runs-table").innerHTML = items.length === 0 ? `<div class="empty">no runs yet</div>` : `
-      <table><thead><tr>
-        <th>id</th><th>started</th><th>finished</th><th class="num">duration</th>
-        <th class="num">events</th><th></th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
-  } catch (err) { $("#runs-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
-}
-
-async function loadLatest() {
-  if (!CONFIG.supabase_configured) { $("#latest-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
-  try {
-    const data = await api("/api/snapshots/latest");
-    const items = data.items || [];
-    $("#latest-count").textContent = `(${items.length})`;
-    const rows = items.map(s => `
-      <tr class="row" data-id="${s.event_id}">
-        <td class="id-tag">${s.event_id}</td>
-        <td class="ellip">${esc(s.event_name || "—")}</td>
-        <td>${shortDate(s.occurs_at_local)}</td>
-        <td class="ellip dim">${esc(s.venue_name || "")}</td>
-        <td class="num">${num(s.ticket_groups_count)}</td>
-        <td class="num">${num(s.tickets_count)}</td>
-        <td class="num money">${moneyC(s.retail_price_min)}</td>
-        <td class="num money">${moneyC(s.retail_price_avg)}</td>
-        <td class="num money">${moneyC(s.retail_price_max)}</td>
-        <td class="dim">${shortStamp(s.captured_at)}</td>
-      </tr>`).join("");
-    $("#latest-table").innerHTML = items.length === 0 ? `<div class="empty">no snapshots yet — run the collector</div>` : `
-      <table><thead><tr>
-        <th>event_id</th><th>event</th><th>date</th><th>venue</th>
-        <th class="num">groups</th><th class="num">tickets</th>
-        <th class="num">min</th><th class="num">avg</th><th class="num">max</th>
-        <th>captured</th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
-    $$("#latest-table tr.row").forEach(tr => {
-      tr.addEventListener("click", () => {
-        switchTab("events");
-        loadEventDetail(Number(tr.dataset.id));
-      });
-    });
-  } catch (err) { $("#latest-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
-}
-
-function deltaCell(n) {
-  if (n == null) return `<td class="dim num">—</td>`;
-  const v = Number(n);
-  if (v === 0) return `<td class="num dim">0</td>`;
-  const cls = v > 0 ? "delta-up" : "delta-down";
-  const sign = v > 0 ? "+" : "";
-  return `<td class="num ${cls}">${sign}${v.toLocaleString()}</td>`;
-}
-
-async function loadVelocity() {
-  if (!CONFIG.supabase_configured) { $("#velocity-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
-  try {
-    const data = await api("/api/snapshots/velocity");
-    const items = (data.items || []).filter(i => i.tickets_delta != null || i.avg_delta != null);
-    $("#velocity-count").textContent = `(${items.length})`;
-    const rows = items.map(s => `
-      <tr class="row" data-id="${s.id}">
-        <td class="id-tag">${s.id}</td>
-        <td class="ellip">${esc(s.name || "")}</td>
-        <td>${shortDate(s.occurs_at_local)}</td>
-        <td class="num">${num(s.tickets_now)}</td>
-        ${deltaCell(s.tickets_delta)}
-        <td class="num money">${moneyC(s.avg_now)}</td>
-        ${deltaCell(s.avg_delta)}
-        ${deltaCell(s.min_delta)}
-        <td class="dim">${shortStamp(s.previous_at)}</td>
-        <td class="dim">${shortStamp(s.latest_at)}</td>
-      </tr>`).join("");
-    $("#velocity-table").innerHTML = items.length === 0 ? `<div class="empty">need ≥2 runs to compute velocity</div>` : `
-      <table><thead><tr>
-        <th>id</th><th>event</th><th>date</th>
-        <th class="num">tix now</th><th class="num">Δ tix</th>
-        <th class="num">avg now</th><th class="num">Δ avg</th><th class="num">Δ min</th>
-        <th>prev</th><th>latest</th>
-      </tr></thead><tbod
+    if (res
