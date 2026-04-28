@@ -372,6 +372,156 @@ def performer_detail(performer_id: int, include_opponents: bool = True, _=Depend
     return client.get_performer(performer_id, include_opponents=include_opponents)
 
 
+@app.get("/api/portfolio")
+def portfolio(
+    performer_id: int | None = None,
+    venue_id: int | None = None,
+    watchlist_only: bool = False,
+    _=Depends(require_auth),
+):
+    """Aggregated portfolio across multiple events.
+
+    Filters (one required):
+        performer_id    - events where this performer is primary OR in performer_ids[]
+        venue_id        - events at this venue
+        watchlist_only  - events that originated from any watchlist row (via watch_sources)
+
+    Returns: { filter, events: [...latest metric per event...], aggregate: {...rollups...} }
+    """
+    if not (performer_id or venue_id or watchlist_only):
+        raise HTTPException(400, "Provide performer_id, venue_id, or watchlist_only=true")
+
+    db = require_sb()
+
+    # 1) Resolve event_ids matching the filter
+    if performer_id is not None:
+        ev_a = db.table("events").select("id").eq("primary_performer_id", performer_id).execute().data or []
+        ev_b = db.table("events").select("id").contains("performer_ids", [performer_id]).execute().data or []
+        event_ids = list({r["id"] for r in (ev_a + ev_b)})
+    elif venue_id is not None:
+        ev_a = db.table("events").select("id").eq("venue_id", venue_id).execute().data or []
+        event_ids = [r["id"] for r in ev_a]
+    else:
+        ws = db.table("watch_sources").select("event_id").execute().data or []
+        event_ids = list({r["event_id"] for r in ws})
+
+    if not event_ids:
+        return {
+            "filter": {"performer_id": performer_id, "venue_id": venue_id, "watchlist_only": watchlist_only},
+            "events": [],
+            "aggregate": {
+                "events_count": 0, "tickets_total": 0, "owned_tickets_total": 0,
+                "owned_share_weighted": None, "retail_value_total": 0,
+                "owned_retail_value_total": 0, "retail_median_avg_weighted": None,
+                "events_with_owned": 0,
+            },
+        }
+
+    # 2) Pull event metadata
+    ev_meta = (
+        db.table("events")
+        .select("id,name,occurs_at_local,venue_id,venue_name,venue_location,primary_performer_id,primary_performer_name,state")
+        .in_("id", event_ids)
+        .execute()
+    ).data or []
+
+    # 3) Pull latest metrics row per event
+    ev_metrics = (
+        db.table("latest_event_metrics")
+        .select(
+            "event_id,captured_at,tickets_count,groups_count,sections_count,"
+            "retail_min,retail_median,retail_p75,retail_p90,retail_max,retail_sum,"
+            "getin_price,owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
+            "price_dispersion,tail_premium,top5_concentration"
+        )
+        .in_("event_id", event_ids)
+        .execute()
+    ).data or []
+    metrics_by_id = {m["event_id"]: m for m in ev_metrics}
+
+    # 4) Merge per-event
+    out_events = []
+    for ev in ev_meta:
+        m = metrics_by_id.get(ev["id"], {})
+        out_events.append({
+            "id": ev["id"],
+            "name": ev["name"],
+            "occurs_at_local": ev["occurs_at_local"],
+            "state": ev.get("state"),
+            "venue_id": ev["venue_id"],
+            "venue_name": ev["venue_name"],
+            "venue_location": ev["venue_location"],
+            "primary_performer_id": ev["primary_performer_id"],
+            "primary_performer_name": ev["primary_performer_name"],
+            "captured_at": m.get("captured_at"),
+            "tickets_count": m.get("tickets_count"),
+            "groups_count": m.get("groups_count"),
+            "sections_count": m.get("sections_count"),
+            "retail_min": m.get("retail_min"),
+            "retail_median": m.get("retail_median"),
+            "retail_p75": m.get("retail_p75"),
+            "retail_p90": m.get("retail_p90"),
+            "retail_max": m.get("retail_max"),
+            "retail_sum": m.get("retail_sum"),
+            "getin_price": m.get("getin_price"),
+            "owned_groups_count": m.get("owned_groups_count"),
+            "owned_tickets_count": m.get("owned_tickets_count"),
+            "owned_share": m.get("owned_share"),
+            "owned_median_retail": m.get("owned_median_retail"),
+            "price_dispersion": m.get("price_dispersion"),
+            "tail_premium": m.get("tail_premium"),
+            "top5_concentration": m.get("top5_concentration"),
+        })
+
+    # Sort: events with metrics first, soonest first
+    out_events.sort(key=lambda e: (e["captured_at"] is None, e.get("occurs_at_local") or ""))
+
+    # 5) Aggregate
+    def fnum(v):
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    tickets_total = sum(int(e["tickets_count"] or 0) for e in out_events)
+    owned_tickets_total = sum(int(e["owned_tickets_count"] or 0) for e in out_events)
+    retail_value_total = sum(fnum(e["retail_sum"]) for e in out_events)
+    owned_retail_value_total = sum(
+        int(e["owned_tickets_count"] or 0) * fnum(e["owned_median_retail"])
+        for e in out_events
+    )
+    events_with_owned = sum(1 for e in out_events if (e["owned_tickets_count"] or 0) > 0)
+
+    # Quantity-weighted retail median
+    weighted_num = 0.0
+    weighted_den = 0
+    for e in out_events:
+        if e["retail_median"] is not None and (e["tickets_count"] or 0) > 0:
+            weighted_num += fnum(e["retail_median"]) * int(e["tickets_count"])
+            weighted_den += int(e["tickets_count"])
+    retail_median_avg_weighted = (weighted_num / weighted_den) if weighted_den > 0 else None
+
+    return {
+        "filter": {
+            "performer_id": performer_id,
+            "venue_id": venue_id,
+            "watchlist_only": watchlist_only,
+        },
+        "events": out_events,
+        "aggregate": {
+            "events_count": len(out_events),
+            "tickets_total": tickets_total,
+            "owned_tickets_total": owned_tickets_total,
+            "owned_share_weighted": (owned_tickets_total / tickets_total) if tickets_total > 0 else None,
+            "retail_value_total": round(retail_value_total, 2),
+            "owned_retail_value_total": round(owned_retail_value_total, 2),
+            "retail_median_avg_weighted": round(retail_median_avg_weighted, 2) if retail_median_avg_weighted is not None else None,
+            "events_with_owned": events_with_owned,
+        },
+    }
+
+
+
 @app.get("/api/venues")
 def venues_search(
     q: str | None = None,

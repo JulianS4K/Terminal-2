@@ -1169,6 +1169,7 @@ async function loadPerformerDetail(id) {
         <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
         <div class="stat"><div class="k">keywords</div><div class="v dim">${esc(p.keywords || "—")}</div></div>
       </div>
+      <div id="performer-portfolio-mount"></div>
       ${opponents.length ? `
       <div class="panel" style="margin-top:16px">
         <div class="panel-head">
@@ -1177,9 +1178,128 @@ async function loadPerformerDetail(id) {
         </div>
         <div class="panel-body" id="pf-opp-table"><table><tbody>${oppRows}</tbody></table></div>
       </div>` : ""}`;
+    loadPortfolio({ performer_id: p.id, mount: "#performer-portfolio-mount", titleSuffix: p.name });
   } catch (err) {
     detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
   }
+}
+
+// =====================================================================
+// PORTFOLIO PANEL — used by performer / venue / watchlist views
+// =====================================================================
+async function loadPortfolio({ performer_id, venue_id, watchlist_only, mount, titleSuffix }) {
+  const el = document.querySelector(mount);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><span>tracked events portfolio · ${esc(titleSuffix || "")}</span></div>
+      <div class="panel-body"><div class="status">loading portfolio…</div></div>
+    </div>`;
+
+  const params = new URLSearchParams();
+  if (performer_id) params.set("performer_id", performer_id);
+  if (venue_id) params.set("venue_id", venue_id);
+  if (watchlist_only) params.set("watchlist_only", "true");
+
+  let data;
+  try {
+    data = await api("/api/portfolio?" + params.toString());
+  } catch (err) {
+    el.querySelector(".panel-body").innerHTML = `<div class="status err">portfolio error: ${esc(err.message)}</div>`;
+    return;
+  }
+
+  const agg = data.aggregate || {};
+  const events = data.events || [];
+  const tracked = events.filter(e => e.captured_at != null);
+
+  if (tracked.length === 0) {
+    el.querySelector(".panel-body").innerHTML = `
+      <div class="status dim" style="padding:14px;">
+        ${events.length} event(s) match this filter, but none are in our metrics yet.
+        Add this performer to the watchlist and wait for the next collector run.
+      </div>`;
+    return;
+  }
+
+  // Aggregate cards
+  const aggCards = [
+    { label: "events tracked", value: fmtVal("int", agg.events_count), sub: `${agg.events_with_owned} with S4K inventory` },
+    { label: "tickets across slate", value: fmtVal("int", agg.tickets_total), sub: agg.owned_tickets_total ? `${agg.owned_tickets_total} owned` : "no owned" },
+    {
+      label: "S4K owned share",
+      value: fmtVal("pct", agg.owned_share_weighted),
+      sub: agg.owned_share_weighted != null ? `weighted by tickets` : "no owned data",
+    },
+    {
+      label: "retail value (sum)",
+      value: agg.retail_value_total != null
+        ? "$" + Math.round(agg.retail_value_total / 1000).toLocaleString() + "K"
+        : "—",
+      sub: agg.owned_retail_value_total
+        ? "S4K $" + Math.round(agg.owned_retail_value_total / 1000).toLocaleString() + "K est."
+        : "—",
+    },
+  ];
+
+  // Per-event rows (sorted soonest first)
+  const rows = tracked.map(e => {
+    const ownedCell = e.owned_tickets_count
+      ? `<td class="num"><span style="color:var(--green);">${fmtVal("pct", e.owned_share)}</span> <span class="dim" style="font-size:10px;">(${e.owned_tickets_count})</span></td>`
+      : `<td class="num dim">—</td>`;
+    return `
+      <tr data-portfolio-event="${e.id}" style="cursor:pointer;">
+        <td class="ellip" style="max-width:280px;">
+          <div>${esc(e.name)}</div>
+          <div class="dim" style="font-size:10px;">${shortDate(e.occurs_at_local)} · ${esc(e.venue_name || "")}</div>
+        </td>
+        <td class="num">${fmtVal("int", e.tickets_count)}</td>
+        <td class="num">${fmtVal("money", e.retail_median)}</td>
+        <td class="num dim">${fmtVal("money", e.getin_price)}</td>
+        ${ownedCell}
+        <td class="num dim">${fmtVal("ratio", e.price_dispersion)}</td>
+      </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head">
+        <span>tracked events portfolio <span class="count">(${tracked.length} of ${events.length})</span></span>
+      </div>
+      <div class="panel-body" style="padding:14px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:14px;">
+          ${aggCards.map(c => `
+            <div style="background:var(--surface-2); border-radius:6px; padding:10px 12px;">
+              <div class="dim" style="font-size:10px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">${esc(c.label)}</div>
+              <div style="font-size:18px; font-weight:500; font-family:'JetBrains Mono', monospace; line-height:1.1;">${c.value}</div>
+              <div class="dim" style="font-size:10px; font-family:'JetBrains Mono', monospace; margin-top:4px;">${esc(c.sub || "")}</div>
+            </div>`).join("")}
+        </div>
+        <table class="portfolio-table" style="width:100%;">
+          <thead><tr>
+            <th style="text-align:left;">event</th>
+            <th class="num">tickets</th>
+            <th class="num">retail med</th>
+            <th class="num">get-in</th>
+            <th class="num">S4K share</th>
+            <th class="num">disp.</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  // Click row → drill into single-event Robinhood view
+  el.querySelectorAll("tr[data-portfolio-event]").forEach(tr => {
+    tr.addEventListener("mouseenter", () => tr.style.background = "var(--surface-2)");
+    tr.addEventListener("mouseleave", () => tr.style.background = "");
+    tr.addEventListener("click", () => {
+      const eid = tr.dataset.portfolioEvent;
+      // Switch to events tab and open this event
+      document.querySelector('button[data-tab="events"]').click();
+      setTimeout(() => loadEventDetail(eid), 50);
+    });
+  });
 }
 
 // -------- VENUES --------
@@ -1249,112 +1369,4 @@ async function loadVenueDetail(id) {
         <div>
           <h2>${esc(v.name)}</h2>
           <div class="sub"><span>${esc(v.location || "")}</span>
-            <span class="id-tag" style="margin-left:12px">venue_id ${v.id}</span></div>
-        </div>
-        <div class="pivots">${pivots.join("")}</div>
-      </div>
-      <div class="stats-grid">
-        <div class="stat"><div class="k">popularity</div><div class="v amber">${Number(v.popularity_score || 0).toFixed(3)}</div></div>
-        <div class="stat"><div class="k">street</div><div class="v">${esc(a.street_address || "—")}</div></div>
-        <div class="stat"><div class="k">locality</div><div class="v">${esc(a.locality || "—")}, ${esc(a.region || "")}</div></div>
-        <div class="stat"><div class="k">postal</div><div class="v">${esc(a.postal_code || "—")}</div></div>
-        <div class="stat"><div class="k">lat / lon</div><div class="v">${a.latitude || "—"} / ${a.longitude || "—"}</div></div>
-        <div class="stat"><div class="k">first upcoming</div><div class="v">${upc.first ? upc.first.slice(0,10) : "—"}</div></div>
-        <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
-      </div>`;
-  } catch (err) {
-    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
-  }
-}
-
-// -------- CONFIGURATIONS --------
-$("#configs-form").addEventListener("submit", async e => {
-  e.preventDefault();
-  const params = formToParams(e.target);
-  $("#configs-results-panel").style.display = "none";
-  $("#configs-detail").classList.remove("open");
-  status("configs", "searching…");
-  try {
-    const data = await api("/api/configurations?" + params.toString());
-    renderConfigsResults(data);
-    status("configs");
-  } catch (err) { status("configs", "error: " + err.message, "err"); }
-});
-
-function renderConfigsResults(data) {
-  const configs = data.configurations || [];
-  $("#configs-count").textContent = `(${data.total_entries ?? configs.length})`;
-  const rows = configs.map((c, i) => {
-    const v = c.venue || {};
-    return `<tr class="row" data-id="${c.id}">
-      <td class="num">${i+1}</td><td class="id-tag">${c.id}</td>
-      <td class="ellip">${esc(c.name)}</td>
-      <td>${c.primary ? '<span class="chip hot">primary</span>' : ""}</td>
-      <td>${c.general_admission ? '<span class="chip">GA</span>' : ""}</td>
-      <td class="ellip">${esc(v.name || "—")}</td>
-      <td class="dim">${esc(v.location || "")}</td>
-    </tr>`;
-  }).join("");
-  $("#configs-results").innerHTML = configs.length === 0 ? `<div class="empty">no configurations</div>` : `
-    <table><thead><tr>
-      <th class="num">#</th><th>id</th><th>name</th><th>flags</th><th></th>
-      <th>venue</th><th>location</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
-  $("#configs-results-panel").style.display = "block";
-  $$("#configs-results-panel .table-filter").forEach(i => i.value = "");
-  $$("#configs-results tr.row").forEach(tr => {
-    tr.addEventListener("click", () => {
-      $$("#configs-results tr.row").forEach(r => r.classList.remove("sel"));
-      tr.classList.add("sel");
-      loadConfigDetail(Number(tr.dataset.id));
-    });
-  });
-}
-
-async function loadConfigDetail(id) {
-  const detail = $("#configs-detail");
-  detail.innerHTML = `<div class="detail-head"><span class="loading">loading configuration</span></div>`;
-  detail.classList.add("open");
-  try {
-    const c = await api("/api/configurations/" + id);
-    const v = c.venue || {};
-    const pivots = v.id ? [
-      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
-        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ events at this venue</button>`,
-    ] : [];
-    detail.innerHTML = `
-      <div class="detail-head">
-        <div><h2>${esc(c.name)}</h2>
-          <div class="sub">
-            ${c.primary ? '<span class="chip hot">primary</span>' : ""}
-            ${c.general_admission ? '<span class="chip">general admission</span>' : ""}
-            <span class="id-tag" style="margin-left:12px">configuration_id ${c.id}</span>
-          </div>
-        </div>
-        <div class="pivots">${pivots.join("")}</div>
-      </div>
-      <div class="stats-grid">
-        <div class="stat"><div class="k">capacity</div><div class="v amber">${num(c.capacity)}</div></div>
-        <div class="stat"><div class="k">venue</div><div class="v">${esc(v.name || "—")}</div></div>
-        <div class="stat"><div class="k">location</div><div class="v">${esc(v.location || "—")}</div></div>
-        <div class="stat"><div class="k">street</div><div class="v">${esc(v.street_address || "—")}</div></div>
-        <div class="stat"><div class="k">updated</div><div class="v dim">${esc(c.updated_at || "—")}</div></div>
-        <div class="stat"><div class="k">venue_id</div><div class="v id-tag">${v.id || "—"}</div></div>
-      </div>`;
-  } catch (err) {
-    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
-  }
-}
-
-// -------- WATCHLIST --------
-$("#wl-add-form").addEventListener("submit", async e => {
-  e.preventDefault();
-  if (!CONFIG.supabase_configured) { status("wl", "Supabase not configured — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY", "err"); return; }
-  const obj = formToObject(e.target);
-  try {
-    const resp = await api("/api/watchlist", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({kind: obj.kind, ext_id: Number(obj.ext_id), label: obj.label || null}),
-    });
-    if (res
+            <sp
