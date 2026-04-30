@@ -198,7 +198,13 @@ class EvoClient:
         order_by: str | None = None,
         **extra,
     ) -> dict[str, Any]:
-        """GET /v9/listings — all ticket groups for an event.
+        """GET /v9/listings — marketplace view of ticket groups for an event.
+
+        DEPRECATED for our metric pipeline as of 2026-04-25. /v9/listings
+        does not expose office/brokerage attribution, so the collector now
+        uses get_ticket_groups() instead. Still useful for ad-hoc reads
+        where the broker view is not needed.
+
         This endpoint does NOT paginate; every match is returned at once.
         """
         params = {
@@ -212,6 +218,35 @@ class EvoClient:
             **extra,
         }
         return self._get("/v9/listings", params)
+
+    def get_ticket_groups(
+        self,
+        event_id: int,
+        *,
+        owned: bool | None = None,
+        state: str | None = None,           # "available" | "sold" | ...
+        order_by: str | None = None,
+        **extra,
+    ) -> dict[str, Any]:
+        """GET /v9/ticket_groups — broker-portal view of ticket groups for an event.
+
+        Same inventory as /v9/listings but exposes office.brokerage attribution
+        on every row (used by the edge collector to flag is_owned).
+
+        Per TEvo: requires event_id; per_page is NOT allowed; pass owned=true
+        to limit to inventory belonging to your token's brokerage.
+
+        Mirrors the collect-listings edge function's getTicketGroups() so the
+        Python client and TS edge function agree on the source of truth.
+        """
+        params = {
+            "event_id": event_id,
+            "owned": owned,
+            "state": state,
+            "order_by": order_by,
+            **extra,
+        }
+        return self._get("/v9/ticket_groups", params)
 
     # ========== Performers ==========
 

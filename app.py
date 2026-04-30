@@ -32,7 +32,7 @@ from evo_client import EvoClient
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6cml6amVheGxxY3hmcnRjenBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NjE3ODgsImV4cCI6MjA5MjUzNzc4OH0.c-rIrhb-WLzyWAAN1Yf_zJXWnu0E_zZ2XDB_T7urvNc"
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 CRON_SECRET = os.environ.get("CRON_SECRET")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
@@ -144,18 +144,6 @@ def public_config():
         "supabase_anon_key": SUPABASE_ANON_KEY,
         "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
     }
-@app.get("/api/public/debug-key")
-def debug_key():
-    k = os.environ.get("SUPABASE_ANON_KEY")
-    return {
-        "is_none": k is None,
-        "length": len(k) if k else 0,
-        "first_10": k[:10] if k else None,
-        "last_10": k[-10:] if k else None,
-        "has_space": " " in k if k else False,
-        "has_newline": "\n" in k if k else False,
-        "dot_count": k.count(".") if k else 0,
-    }
 
 # ---------- Protected routes ----------
 
@@ -250,7 +238,7 @@ def event_series(
             "tickets_count,groups_count,sections_count,"
             "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,"
             "wholesale_median,wholesale_mean,"
-            "getin_price,top5_concentration,bid_ask_proxy"
+            "getin_price,top5_concentration"
         )
         .eq("event_id", event_id)
         .gte("captured_at", since)
@@ -395,9 +383,14 @@ def portfolio(
 
     # 1) Resolve event_ids matching the filter
     if performer_id is not None:
-        ev_a = db.table("events").select("id").eq("primary_performer_id", performer_id).execute().data or []
-        ev_b = db.table("events").select("id").contains("performer_ids", [performer_id]).execute().data or []
-        event_ids = list({r["id"] for r in (ev_a + ev_b)})
+        # Single query: primary OR in performer_ids[]. PostgREST .or_() takes the filters
+        # comma-separated; cs.{N} is the array-contains operator.
+        ev_a = (
+            db.table("events").select("id")
+            .or_(f"primary_performer_id.eq.{int(performer_id)},performer_ids.cs.{{{int(performer_id)}}}")
+            .execute().data
+        ) or []
+        event_ids = [r["id"] for r in ev_a]
     elif venue_id is not None:
         ev_a = db.table("events").select("id").eq("venue_id", venue_id).execute().data or []
         event_ids = [r["id"] for r in ev_a]

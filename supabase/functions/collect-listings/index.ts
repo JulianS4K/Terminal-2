@@ -297,11 +297,6 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
   const retailP90    = percentile(retailPrices, 0.9);
   const retailMax    = percentile(retailPrices, 1);
 
-  const wholesaleP25 = percentile(wholesalePrices, 0.25);
-  const bidAskProxy = retailP25 && retailP25 > 0 && wholesaleP25 != null
-    ? (retailP25 - wholesaleP25) / retailP25
-    : null;
-
   const priceDispersion = retailP25 && retailP25 > 0 && retailP75 != null
     ? retailP75 / retailP25
     : null;
@@ -337,7 +332,6 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
     wholesale_max: round2(percentile(wholesalePrices, 1)),
     getin_price: round2(getinPrice),
     top5_concentration: round2(top5Concentration),
-    bid_ask_proxy: round2(bidAskProxy),
     price_dispersion: round4(priceDispersion),
     tail_premium: round4(tailPremium),
     owned_groups_count: ownedGroupsCount,
@@ -364,11 +358,15 @@ function computeSectionMetrics(rows: ListingRow[], eventId: number, capturedAt: 
     }
     prices.sort((a, b) => a - b);
     const tickets = items.reduce((s, r) => s + (r.quantity || 0), 0);
+    // is_ancillary on the section is true only when EVERY listing in the section
+    // is ancillary (parking/lounge/etc). A single non-ancillary seat row makes the
+    // whole section "real seats" for downstream filtering.
+    const allAncillary = items.length > 0 && items.every((r) => r.is_ancillary);
     out.push({
       event_id: eventId,
       captured_at: capturedAt,
       section,
-      is_ancillary: items[0]?.is_ancillary ?? false,
+      is_ancillary: allAncillary,
       tickets_count: tickets,
       groups_count: items.length,
       retail_min: round2(percentile(prices, 0)),
@@ -543,22 +541,33 @@ Deno.serve(async (req) => {
       const groups = await withRetry(() => evo.getTicketGroups(eid));
       const listingRows = buildListingRows(eid, capturedAt, groups, s4kBrokerageId);
 
+      // Insert raw listings in chunks. If ANY chunk fails, abort this event so
+      // we don't compute metrics on partial data — throw so mapPool counts it.
       for (let i = 0; i < listingRows.length; i += 500) {
         const chunk = listingRows.slice(i, i + 500);
         const { error } = await db.from("listings_snapshots").insert(chunk);
-        if (error) log.push(`listings insert error event ${eid} @${i}: ${error.message}`);
+        if (error) {
+          log.push(`listings insert FAILED event ${eid} @${i}: ${error.message}`);
+          throw new Error(`listings insert failed for event ${eid}: ${error.message}`);
+        }
       }
       totalListingRows += listingRows.length;
       totalOwnedRows += listingRows.filter((r) => r.is_owned).length;
 
       const eMetrics = computeEventMetrics(listingRows, eid, capturedAt);
       const { error: em } = await db.from("event_metrics").upsert(eMetrics, { onConflict: "event_id,captured_at" });
-      if (em) log.push(`event_metrics upsert error ${eid}: ${em.message}`);
+      if (em) {
+        log.push(`event_metrics upsert FAILED event ${eid}: ${em.message}`);
+        throw new Error(`event_metrics upsert failed for event ${eid}: ${em.message}`);
+      }
 
       const secMetrics = computeSectionMetrics(listingRows, eid, capturedAt);
       if (secMetrics.length) {
         const { error: sm } = await db.from("section_metrics").upsert(secMetrics, { onConflict: "event_id,captured_at,section" });
-        if (sm) log.push(`section_metrics upsert error ${eid}: ${sm.message}`);
+        if (sm) {
+          log.push(`section_metrics upsert FAILED event ${eid}: ${sm.message}`);
+          throw new Error(`section_metrics upsert failed for event ${eid}: ${sm.message}`);
+        }
       }
 
       return { eid, listings: listingRows.length };
