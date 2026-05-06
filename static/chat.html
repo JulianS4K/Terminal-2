@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Find Tickets</title>
+<style>
+:root{--bg:#fafafa;--card:#fff;--fg:#1a1a1a;--accent:#0066ff;--in:#eef1f5;--out:#0066ff;--muted:#7a7f87;--err:#c83232;--border:#e5e7eb}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;min-height:100%;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif}
+
+/* Hero (initial query screen) */
+body.hero{height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fafafa 0%,#f0f4ff 100%)}
+body.hero .wrap{display:none}
+body.hero .hero{display:flex}
+.hero{display:none;flex-direction:column;align-items:center;width:100%;max-width:680px;padding:24px;text-align:center}
+.hero h1{font-size:42px;font-weight:700;margin:0 0 8px;letter-spacing:-0.5px}
+.hero .tagline{font-size:17px;color:var(--muted);margin:0 0 36px}
+.hero form{width:100%;max-width:560px;display:flex;gap:10px;background:#fff;padding:6px;border-radius:32px;border:1px solid var(--border);box-shadow:0 4px 24px rgba(0,0,0,.06);transition:border-color .15s,box-shadow .15s}
+.hero form:focus-within{border-color:var(--accent);box-shadow:0 6px 28px rgba(0,102,255,.16)}
+.hero input[type=text]{flex:1;background:transparent;border:0;outline:0;padding:14px 18px;font:inherit;font-size:16px;color:var(--fg)}
+.hero button{background:var(--accent);color:#fff;border:0;border-radius:26px;padding:0 24px;font:inherit;font-size:15px;font-weight:600;cursor:pointer;transition:opacity .12s}
+.hero button:hover{opacity:.9}
+.hero button:disabled{opacity:.4;cursor:default}
+.hero .pills{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:24px;max-width:560px}
+.hero .pills button{background:#fff;color:var(--fg);border:1px solid var(--border);font:inherit;font-size:13px;border-radius:18px;padding:8px 14px;cursor:pointer;font-weight:400}
+.hero .pills button:hover{border-color:var(--accent);color:var(--accent)}
+.hero .footer{margin-top:32px;font-size:12px;color:var(--muted)}
+
+/* Chat (post first send) */
+.wrap{max-width:680px;margin:0 auto;height:100vh;display:flex;flex-direction:column;background:var(--card)}
+header{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--card);display:flex;align-items:center;justify-content:space-between}
+header h2{margin:0;font-size:16px;font-weight:600}
+header button.reset{background:transparent;border:0;color:var(--muted);font:inherit;font-size:13px;cursor:pointer;padding:4px 8px}
+header button.reset:hover{color:var(--accent)}
+#log{flex:1;overflow-y:auto;padding:18px;background:var(--bg)}
+.bubble{max-width:82%;padding:11px 15px;border-radius:18px;margin:4px 0;white-space:pre-wrap;word-wrap:break-word;font-size:14.5px;line-height:1.45}
+.in{background:var(--in);color:var(--fg);border-bottom-left-radius:6px}
+.out{background:var(--out);color:#fff;border-bottom-right-radius:6px;margin-left:auto}
+.err{background:#fde7e7;color:var(--err);border:1px solid #f4c2c2}
+.bubble a{color:inherit;text-decoration:underline}
+.row{display:flex;margin:6px 0}
+.thinking{color:var(--muted);font-style:italic;padding:8px 14px;font-size:13px}
+form.followup{display:flex;gap:10px;padding:14px;border-top:1px solid var(--border);background:var(--card)}
+form.followup input[type=text]{flex:1;background:#fff;color:var(--fg);border:1px solid var(--border);border-radius:22px;padding:11px 16px;font:inherit;outline:none}
+form.followup input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,102,255,.12)}
+form.followup button{background:var(--accent);color:#fff;border:0;border-radius:22px;padding:0 20px;font:inherit;font-weight:600;cursor:pointer}
+form.followup button:hover{opacity:.9}
+@media (max-width:680px){.wrap{max-width:none}.hero h1{font-size:32px}.hero .tagline{font-size:15px}}
+</style>
+</head>
+<body class="hero">
+
+<!-- Hero: initial query screen -->
+<div class="hero">
+  <h1>🎟️ Find Tickets</h1>
+  <p class="tagline">Tell me what you're looking for — game, concert, date, budget. I'll do the searching.</p>
+  <form id="hero-f">
+    <input id="hero-msg" type="text" placeholder="e.g. cheapest 2 tickets to Knicks tonight under $500" autocomplete="off" autofocus/>
+    <button type="submit">Search</button>
+  </form>
+  <div class="pills" id="pills">
+    <button>Knicks tonight</button>
+    <button>Yankees this weekend</button>
+    <button>Cheapest seats for tonight's Knicks game</button>
+    <button>4 tickets to the next Taylor Swift show</button>
+    <button>Best seats under $300 for any NBA game tonight</button>
+  </div>
+  <div class="footer">Powered by S4K Entertainment · live ticket inventory</div>
+</div>
+
+<!-- Chat: appears after first message -->
+<div class="wrap">
+  <header>
+    <h2>🎟️ Find Tickets</h2>
+    <button class="reset" id="reset" title="Start over">↻ new search</button>
+  </header>
+  <div id="log"></div>
+  <form class="followup" id="followup-f">
+    <input id="msg" type="text" placeholder="Refine, ask follow-up, or search again…" autocomplete="off"/>
+    <button type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+// Endpoint config — fetched from /api/public/config (already exists in app.py)
+let SUPABASE_URL = null;
+let SUPABASE_ANON_KEY = null;
+let API_URL = null;
+
+const heroF = document.getElementById('hero-f');
+const heroMsg = document.getElementById('hero-msg');
+const pills = document.getElementById('pills');
+const followF = document.getElementById('followup-f');
+const followMsg = document.getElementById('msg');
+const log = document.getElementById('log');
+const reset = document.getElementById('reset');
+
+// Bootstrap config from same-origin JSON endpoint
+fetch('/api/public/config')
+  .then(r => r.json())
+  .then(cfg => {
+    SUPABASE_URL = cfg.supabase_url;
+    SUPABASE_ANON_KEY = cfg.supabase_anon_key;
+    API_URL = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1/chat';
+  })
+  .catch(() => {
+    bubble('Setup error: could not load config. Refresh and try again.', 'out err');
+  });
+
+function bubble(text, cls) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const b = document.createElement('div');
+  b.className = 'bubble ' + cls;
+  const html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  b.innerHTML = html;
+  row.appendChild(b);
+  if (cls === 'out' || cls === 'out err') row.style.justifyContent = 'flex-end';
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+let history = [];
+let busy = false;
+
+function transitionToChat() {
+  if (!document.body.classList.contains('hero')) return;
+  document.body.classList.remove('hero');
+}
+
+async function send(text) {
+  if (busy || !text) return;
+  if (!API_URL) {
+    bubble('Still loading — try again in a second.', 'out err');
+    return;
+  }
+  busy = true;
+  transitionToChat();
+  bubble(text, 'in');
+  history.push({ role: 'user', content: text });
+  const thinking = document.createElement('div');
+  thinking.className = 'thinking';
+  thinking.textContent = 'Looking…';
+  log.appendChild(thinking);
+  log.scrollTop = log.scrollHeight;
+  try {
+    const r = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ history }),
+    });
+    thinking.remove();
+    const data = await r.json();
+    if (!r.ok || data.error) {
+      bubble(data.error || ('Something went wrong (' + r.status + ').'), 'out err');
+    } else {
+      bubble(data.reply, 'out');
+      history.push({ role: 'assistant', content: data.reply });
+    }
+  } catch (e) {
+    thinking.remove();
+    bubble('Network error: ' + e.message, 'out err');
+  } finally {
+    busy = false;
+    followMsg.focus();
+  }
+}
+
+heroF.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const text = heroMsg.value.trim();
+  heroMsg.value = '';
+  send(text);
+});
+
+followF.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const text = followMsg.value.trim();
+  followMsg.value = '';
+  send(text);
+});
+
+pills.addEventListener('click', (ev) => {
+  if (ev.target.tagName === 'BUTTON') {
+    heroMsg.value = ev.target.textContent;
+    heroF.requestSubmit();
+  }
+});
+
+reset.addEventListener('click', () => {
+  history = [];
+  log.innerHTML = '';
+  document.body.classList.add('hero');
+  heroMsg.value = '';
+  heroMsg.focus();
+});
+</script>
+</body>
+</html>

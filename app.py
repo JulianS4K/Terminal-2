@@ -145,6 +145,13 @@ def index():
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
+@app.get("/chat", response_class=HTMLResponse)
+def chat_page():
+    """Customer-facing retail chat. Bootstraps from /api/public/config to get
+    the Supabase anon key, then POSTs to the chat Edge Function for replies."""
+    return (STATIC_DIR / "chat.html").read_text(encoding="utf-8")
+
+
 @app.get("/api/public/config")
 def public_config():
     """Browser-safe config for the login page. No secrets."""
