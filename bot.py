@@ -11,6 +11,9 @@ Required env vars (webhook returns 503 if any missing):
 Optional env vars:
   WHATSAPP_BOT_MODEL   — defaults to "claude-sonnet-4-6"
   WHATSAPP_MAX_TURNS   — defaults to 6 (tool-use loop cap)
+  SUPABASE_URL         — required for on-demand event refresh (already needed by app.py)
+  CRON_SECRET          — required for on-demand event refresh (already needed by collect)
+  EVENT_REFRESH_TIMEOUT_S — HTTP timeout for the Edge Function call, default 25
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ import json
 import os
 from typing import Any
 
+import requests
 from fastapi import APIRouter, Form, Request, HTTPException
 from fastapi.responses import Response
 
@@ -25,8 +29,11 @@ router = APIRouter()
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+CRON_SECRET = os.environ.get("CRON_SECRET")
 BOT_MODEL = os.environ.get("WHATSAPP_BOT_MODEL", "claude-sonnet-4-6")
 MAX_TURNS = int(os.environ.get("WHATSAPP_MAX_TURNS", "6"))
+EVENT_REFRESH_TIMEOUT_S = float(os.environ.get("EVENT_REFRESH_TIMEOUT_S", "25"))
 
 SYSTEM_PROMPT = """You are a terse market-intelligence assistant for S4K Entertainment, a secondary ticket broker.
 
@@ -35,14 +42,15 @@ Use abbreviations (KNX@ATL G4, $458 med, +17.7%/24h, own 32%). Never wrap output
 
 You have two sets of tools:
 
-(A) Cached metrics from our Supabase store — refreshed every 20 minutes for events on our watchlist (~488 tracked events). These are richer (S4K owned share, dispersion, tail premium, portfolio rollups) but only cover events we follow.
-  - search_events, get_event_snapshot, get_market_movement, get_portfolio, get_owned_inventory, get_high_value_owned
+(A) Cached metrics from our Supabase store — refreshed every 20 minutes for events on our watchlist (~488 tracked events). These tools go through a rate-limit gate (get_or_authorize_pull): back-to-back queries serve from cache, and any on-demand refresh feeds the same listings_snapshots the terminal UI reads, which keeps TEvo calls down. Richer (S4K owned share, dispersion, tail premium, portfolio rollups) but only cover events we follow.
+  - search_events, get_event_snapshot, get_market_movement, get_portfolio, get_owned_inventory, get_high_value_owned, get_event_zones (internal only)
 
-(B) Live Ticket Evolution API — real-time data for ANY event in TEvo's catalog (millions of events). Slower (~1-2s) but covers events not on our watchlist. Less rich (no owned/dispersion).
+(B) Live Ticket Evolution API — direct read for ANY event in TEvo's catalog (millions). Slower (~1-2s), uses raw TEvo rate budget per call, does NOT update our cache. Less rich (no owned share, no dispersion).
   - tevo_search_events, tevo_event_detail, tevo_event_stats, tevo_listings, tevo_search_performers, tevo_search_venues
 
-Decision rule: prefer (A) when the event is likely on our watchlist (NBA playoffs, Yankees, Knicks, big NYC venues). Use (B) when (A) returns nothing OR when the user's query implies a fresh/live read OR for events we obviously don't track (random concert tour, college football, etc.). When you don't know an event_id, search by name first.
+Decision rule: prefer (A) for any event likely on our watchlist (NBA playoffs, Yankees, Knicks, big NYC venues). Fall back to (B) only when (A) returns nothing OR for events we obviously don't track (random concert tour, college football, etc.). Don't run both (A) and (B) on the same event in one turn — that's a redundant TEvo call. When you don't know an event_id, search by name first; prefer search_events over tevo_search_events for the same reason.
 
+When listing events, always include venue (short form, e.g. MSG, TD Gdn, Xfin) and date/time. Default to upcoming events only — call out explicitly if the user asked for past events. For zone queries call get_event_zones (internal-only, permissions checked server-side); sections without curated rules come back as 'unmapped' — surface that count rather than inventing a zone. Returns zone, tickets, min and max retail per zone (no groups, no median — keep replies tight).
 Always call a tool when the user asks for live numbers; never guess. If a query is ambiguous, ask one short clarifying question.
 
 If a tool returns nothing useful, say so plainly. Don't pad with caveats. Maximum reply length: 320 characters (2 SMS segments)."""
@@ -54,14 +62,35 @@ If a tool returns nothing useful, say so plainly. Don't pad with caveats. Maximu
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "search_events",
-        "description": "Search tracked events by free-text query or filter. Returns id, name, occurs_at_local, venue.",
+        "description": (
+            "Search tracked events by free-text query or filter. "
+            "Defaults to UPCOMING events only (occurs_at_local >= now). "
+            "For past events pass include_past=true OR an explicit start_at in the past. "
+            "Returns id, name, occurs_at_local, venue_name, primary_performer_name."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Free-text match against event name"},
                 "performer_id": {"type": "integer"},
                 "venue_id": {"type": "integer"},
-                "days_ahead": {"type": "integer", "description": "Filter to events occurring within next N days"},
+                "days_ahead": {
+                    "type": "integer",
+                    "description": "Window length in days from now (shorthand: sets end_at = now + N days). Lower bound is still now() unless include_past=true.",
+                },
+                "start_at": {
+                    "type": "string",
+                    "description": "ISO 8601 lower bound on occurs_at_local (e.g. '2026-05-06T00:00:00Z'). Overrides the default now() lower bound.",
+                },
+                "end_at": {
+                    "type": "string",
+                    "description": "ISO 8601 upper bound on occurs_at_local. Overrides days_ahead if both given.",
+                },
+                "include_past": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, drop the default now() lower bound to include past events.",
+                },
                 "limit": {"type": "integer", "default": 10},
             },
         },
@@ -120,7 +149,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "tevo_search_events",
-        "description": "LIVE search Ticket Evolution for events by name, performer_id, or venue_id. Use when the event likely isn't on our watchlist. Returns id, name, date, venue, performer.",
+        "description": "LIVE Ticket Evolution event search. Last-resort fallback when the event isn't on our watchlist; prefer search_events first. Counts against TEvo rate budget and does NOT update our cache.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -133,7 +162,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "tevo_event_detail",
-        "description": "LIVE Ticket Evolution event metadata: name, date, venue, performances. Use when the user asks for basic event info we may not have cached.",
+        "description": "LIVE Ticket Evolution event metadata. Use only when the event isn't on our watchlist; otherwise the cached events row already has this.",
         "input_schema": {
             "type": "object",
             "required": ["event_id"],
@@ -142,7 +171,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "tevo_event_stats",
-        "description": "LIVE Ticket Evolution aggregate stats for one event: tickets_count, ticket_groups_count, retail price min/avg/max, wholesale_avg. Equivalent to TEvo's authoritative numbers right now.",
+        "description": "LIVE Ticket Evolution aggregate stats. Use ONLY for off-watchlist events; for watchlist events use get_event_snapshot — that goes through the cache+rate-limit gate and feeds the terminal UI.",
         "input_schema": {
             "type": "object",
             "required": ["event_id"],
@@ -154,7 +183,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "tevo_listings",
-        "description": "LIVE marketplace listings for one event from Ticket Evolution. Returns the cheapest N ticket groups with section, row, qty, retail_price. Useful for 'what's the get-in right now' or 'show me the cheapest 5 listings for event X'.",
+        "description": "LIVE Ticket Evolution marketplace listings — cheapest N groups for one event. Use only for off-watchlist events; on-watchlist events read from listings_snapshots via get_event_snapshot or get_owned_inventory.",
         "input_schema": {
             "type": "object",
             "required": ["event_id"],
@@ -166,7 +195,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "tevo_search_performers",
-        "description": "LIVE Ticket Evolution performer search by name. Use to look up a performer_id when the user names a team/artist. Returns id, name, category.",
+        "description": "LIVE Ticket Evolution performer search by name. Use to resolve a performer_id when the user names a team/artist not in our watchlist.",
         "input_schema": {
             "type": "object",
             "required": ["query"],
@@ -178,7 +207,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "tevo_search_venues",
-        "description": "LIVE Ticket Evolution venue search by name. Use to look up a venue_id when the user names a venue. Returns id, name, city, state.",
+        "description": "LIVE Ticket Evolution venue search by name. Use to resolve a venue_id when the user names a venue we don't have in our cache.",
         "input_schema": {
             "type": "object",
             "required": ["query"],
@@ -189,14 +218,25 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "get_zone_breakdown",
-        "description": "Per-zone breakdown of a tracked event's current listings: tickets, S4K-owned tickets, share, retail median per zone. Zones are S4K's named groupings of sections+row bands at a venue (e.g. 'Courtside', 'Club Gold', '100 Corner'). Use when the user asks 'how does S4K do in Club Gold tonight' or 'show me a zone-by-zone breakdown'. Only works for events whose home performer has zones defined (currently NYK at MSG).",
+        "name": "get_event_zones",
+        "description": (
+            "INTERNAL ONLY. Zone-level breakdown for one event using the manually curated "
+            "performer_zones + performer_zone_rules tables (Courtside, Club Platinum, '100 Corner', "
+            "'U2 11-25', etc — names vary per performer/venue). Sections without a curated rule "
+            "are bucketed as 'unmapped' (do NOT invent a zone). "
+            "Defaults to S4K-owned only — pass owned_only=false to see the whole market. "
+            "Returns: zone, tickets, min_retail, max_retail (no groups, no median — kept terse for SMS)."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["event_id"],
             "properties": {
                 "event_id": {"type": "integer"},
-                "include_unmapped": {"type": "boolean", "default": False, "description": "If true, include the '(unmapped)' bucket for sections that don't fit any defined zone (SRO, wheelchair, etc.)"},
+                "owned_only": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If true (default), only S4K-owned listings are aggregated.",
+                },
             },
         },
     },
@@ -209,30 +249,101 @@ TOOLS: list[dict[str, Any]] = [
 
 def _tool_search_events(db, query: str | None = None, performer_id: int | None = None,
                         venue_id: int | None = None, days_ahead: int | None = None,
-                        limit: int = 10) -> dict:
+                        start_at: str | None = None, end_at: str | None = None,
+                        include_past: bool = False, limit: int = 10) -> dict:
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+
     q = db.table("events").select("id,name,occurs_at_local,venue_name,primary_performer_name")
+
+    # Lower bound: explicit start_at > include_past escape > default-now
+    if start_at is not None:
+        q = q.gte("occurs_at_local", start_at)
+    elif not include_past:
+        q = q.gte("occurs_at_local", now.isoformat())
+
+    # Upper bound: explicit end_at > days_ahead shorthand > unbounded
+    if end_at is not None:
+        q = q.lte("occurs_at_local", end_at)
+    elif days_ahead is not None:
+        cutoff = (now + timedelta(days=int(days_ahead))).isoformat()
+        q = q.lte("occurs_at_local", cutoff)
+
     if performer_id is not None:
         q = q.or_(f"primary_performer_id.eq.{int(performer_id)},performer_ids.cs.{{{int(performer_id)}}}")
     if venue_id is not None:
         q = q.eq("venue_id", int(venue_id))
     if query:
         q = q.ilike("name", f"%{query}%")
+
     rows = (q.order("occurs_at_local").limit(min(int(limit), 25)).execute().data) or []
-    if days_ahead:
-        from datetime import datetime, timedelta, timezone
-        cutoff = (datetime.now(timezone.utc) + timedelta(days=int(days_ahead))).isoformat()
-        rows = [r for r in rows if (r.get("occurs_at_local") or "") <= cutoff]
     return {"count": len(rows), "events": rows}
 
 
-def _tool_event_snapshot(db, event_id: int) -> dict:
+def _trigger_event_refresh(event_id: int, pull_id: int | None = None) -> dict:
+    """Invoke the collect-listings Edge Function for one event. Returns a small status dict."""
+    if not (SUPABASE_URL and CRON_SECRET):
+        return {"ok": False, "error": "SUPABASE_URL or CRON_SECRET not set"}
+    base = SUPABASE_URL.rstrip("/")
+    if "/functions/v1" not in base:
+        base = f"{base}/functions/v1"
+    url = f"{base}/collect-listings"
+    params = {"event_id": int(event_id)}
+    if pull_id is not None:
+        params["pull_id"] = int(pull_id)
+    try:
+        r = requests.post(url, params=params, headers={"x-cron-secret": CRON_SECRET},
+                          timeout=EVENT_REFRESH_TIMEOUT_S)
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"raw": r.text[:200]}
+        return {"ok": r.ok, "status": r.status_code, **(body if isinstance(body, dict) else {})}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"request failed: {e}"}
+
+
+def _tool_event_snapshot(db, event_id: int, requester: str | None = None,
+                         source: str = "sms", max_age_seconds: int = 300) -> dict:
+    """Latest metrics for one event with cache + rate-limit gating.
+
+    Flow:
+      1. Call get_or_authorize_pull to log the request and decide cache/fresh/limited.
+      2. If fresh: fire the Edge Function, then read latest_event_metrics.
+      3. Always return whatever the latest snapshot is (even if rate-limited / fetch failed),
+         tagged with the served_from + age.
+    """
+    decision = (db.rpc("get_or_authorize_pull", {
+        "p_event_id": int(event_id),
+        "p_source": source,
+        "p_requester": requester,
+        "p_max_age_seconds": int(max_age_seconds),
+    }).execute().data) or {}
+    served = decision.get("decision", "unknown")
+    pull_id = decision.get("pull_id")
+
+    refresh_status = None
+    if served == "fetch_fresh":
+        refresh_status = _trigger_event_refresh(int(event_id), pull_id=pull_id)
+        if not refresh_status.get("ok"):
+            served = "fresh_failed"
+
     ev = (db.table("events").select("id,name,occurs_at_local,venue_name,primary_performer_name")
           .eq("id", int(event_id)).maybeSingle().execute().data) or {}
     m = (db.table("latest_event_metrics").select("*").eq("event_id", int(event_id))
          .maybeSingle().execute().data) or {}
     if not ev and not m:
         return {"error": f"event_id {event_id} not found"}
-    return {"event": ev, "metrics": m}
+
+    return {
+        "event": ev,
+        "metrics": m,
+        "served_from": served,
+        "snapshot_age_seconds": decision.get("age_seconds"),
+        "rate_limit_reason": decision.get("reason"),
+        "retry_after_seconds": decision.get("retry_after_seconds"),
+        "refresh_status": refresh_status,
+    }
 
 
 def _tool_market_movement(db, event_id: int, hours_back: int = 24) -> dict:
@@ -310,6 +421,43 @@ def _tool_owned_inventory(db, event_id: int | None = None, min_retail_price: flo
         q = q.gte("retail_price", float(min_retail_price))
     rows = q.limit(min(int(limit), 50)).execute().data or []
     return {"count": len(rows), "rows": rows}
+
+
+def _tool_event_zones(db, event_id: int, owned_only: bool = True,
+                      requester: str | None = None, source: str = "sms") -> dict:
+    """Zone-level breakdown for one event. Internal-only (checks bot_users.is_internal).
+
+    Output is intentionally narrow: zone, tickets, min_retail, max_retail. No groups
+    or median — those bloat SMS replies without changing decisions.
+    """
+    if not requester:
+        return {"error": "internal data requires an authenticated requester"}
+    user = (db.table("bot_users").select("is_internal,active")
+            .eq("phone", requester).maybeSingle().execute().data) or None
+    if not user or not user.get("is_internal"):
+        return {"error": "not authorized — zone data is internal only"}
+
+    # Use the shared rate-limit / cache layer so on-demand pulls keep the snapshot fresh.
+    decision = (db.rpc("get_or_authorize_pull", {
+        "p_event_id": int(event_id),
+        "p_source": source,
+        "p_requester": requester,
+        "p_max_age_seconds": 300,
+    }).execute().data) or {}
+    if decision.get("decision") == "fetch_fresh":
+        _trigger_event_refresh(int(event_id), pull_id=decision.get("pull_id"))
+
+    rollup = (db.rpc("get_event_zones_rollup", {
+        "p_event_id": int(event_id),
+        "p_owned_only": bool(owned_only),
+    }).execute().data) or []
+    return {
+        "event_id": int(event_id),
+        "owned_only": bool(owned_only),
+        "snapshot_age_seconds": decision.get("age_seconds"),
+        "served_from": decision.get("decision"),
+        "zones": rollup,
+    }
 
 
 def _tool_high_value_owned(db, limit: int = 10) -> dict:
@@ -489,179 +637,6 @@ def _tool_tevo_search_venues(db, query: str, limit: int = 5) -> dict:
     }
 
 
-
-def _tool_get_zone_breakdown(db, event_id: int, include_unmapped: bool = False) -> dict:
-    """Aggregate the latest listings for an event by zone (resolved via match_performer_zone).
-    Returns one row per zone with owned share + retail spread. Zones come from
-    performer_zones — currently only NYK at MSG is seeded.
-    """
-    # Look up the event's home performer + venue
-    ev = (db.table("events").select("id,name,primary_performer_id,venue_id,venue_name,occurs_at_local")
-          .eq("id", int(event_id)).maybeSingle().execute().data) or {}
-    perf_id = ev.get("primary_performer_id")
-    venue_id = ev.get("venue_id")
-    if not perf_id or not venue_id:
-        return {"error": f"event {event_id} missing performer or venue"}
-
-    # Use raw SQL via RPC for the aggregation. Define inline query.
-    sql = """
-      with latest as (
-        select max(captured_at) as cap from listings_snapshots where event_id = :eid
-      ),
-      classified as (
-        select
-          coalesce(match_performer_zone(:pid, :vid, ls.section, ls.row), '(unmapped)') as zone,
-          ls.quantity, ls.retail_price, ls.is_owned
-        from listings_snapshots ls, latest
-        where ls.event_id = :eid
-          and ls.captured_at = latest.cap
-          and not ls.is_ancillary
-      )
-      select
-        zone,
-        count(*)::int as listings,
-        coalesce(sum(quantity), 0)::int as tickets,
-        coalesce(sum(quantity) filter (where is_owned), 0)::int as owned_tickets,
-        count(*) filter (where is_owned)::int as owned_groups,
-        round(min(retail_price)::numeric, 2) as retail_min,
-        round(percentile_cont(0.5) within group (order by retail_price)::numeric, 2) as retail_med,
-        round(max(retail_price)::numeric, 2) as retail_max
-      from classified
-      group by zone
-      order by tickets desc;
-    """
-    # supabase-py doesn't expose ad-hoc SQL with bind params; route through PostgREST RPC.
-    # We avoid creating a server-side function for now and just use execute_sql via the REST
-    # `query` param trick is not standard. Easiest path: call with .table() chains for each
-    # piece. To keep this simple, fall back to a lightweight client-side aggregation.
-    # ----------------------------------------
-    # Fetch latest listings for this event
-    latest = (db.table("listings_snapshots").select("captured_at")
-              .eq("event_id", int(event_id))
-              .order("captured_at", desc=True).limit(1).execute().data) or []
-    if not latest:
-        return {"event_id": int(event_id), "zones": []}
-    cap = latest[0]["captured_at"]
-    rows = (db.table("listings_snapshots")
-            .select("section,row,quantity,retail_price,is_owned,is_ancillary")
-            .eq("event_id", int(event_id))
-            .eq("captured_at", cap)
-            .eq("is_ancillary", False)
-            .execute().data) or []
-    if not rows:
-        return {"event_id": int(event_id), "zones": []}
-
-    # Resolve zones in batch — call the SQL function via RPC for each unique (section,row).
-    # PostgREST doesn't expose match_performer_zone as RPC unless declared, but we can
-    # fetch all rule-zone pairs once and classify in Python.
-    zones_data = (db.table("performer_zones")
-                  .select("id,name,display_order")
-                  .eq("performer_id", int(perf_id))
-                  .eq("venue_id", int(venue_id))
-                  .order("display_order").execute().data) or []
-    if not zones_data:
-        return {"error": f"no zones defined for performer {perf_id} at venue {venue_id}",
-                "event": ev}
-    zone_ids = [z["id"] for z in zones_data]
-    rules = (db.table("performer_zone_rules")
-             .select("zone_id,section_from,section_to,row_from,row_to")
-             .in_("zone_id", zone_ids).execute().data) or []
-    zone_by_id = {z["id"]: z for z in zones_data}
-    # Sort rules by display_order so most-specific wins
-    rules.sort(key=lambda r: zone_by_id[r["zone_id"]]["display_order"])
-
-    import re
-
-    def _norm(s):
-        return re.sub(r"\s+", "", (s or "").lower())
-
-    def _suffix(s):
-        m = re.search(r"([0-9]+)$", _norm(s))
-        return int(m.group(1)) if m else None
-
-    def _prefix(s):
-        return re.sub(r"[0-9]+$", "", _norm(s))
-
-    def _section_match(rule, section):
-        sf, st = rule["section_from"], rule["section_to"]
-        if _norm(sf) == _norm(st):
-            return _norm(section) == _norm(sf)
-        # numeric range
-        if sf.isdigit() and st.isdigit() and (section or "").isdigit():
-            return int(sf) <= int(section) <= int(st)
-        # prefix + numeric suffix range
-        pf_sf, pf_st, pf_sec = _prefix(sf), _prefix(st), _prefix(section)
-        suf_sf, suf_st, suf_sec = _suffix(sf), _suffix(st), _suffix(section)
-        if pf_sf and pf_sf == pf_st == pf_sec and None not in (suf_sf, suf_st, suf_sec):
-            return suf_sf <= suf_sec <= suf_st
-        return False
-
-    def _row_match(rule, row):
-        rf, rt = rule.get("row_from"), rule.get("row_to")
-        if rf is None and rt is None:
-            return True
-        rf_l = (rf or "").strip().lower()
-        rt_l = (rt or "").strip().lower()
-        row_l = (row or "").strip().lower()
-        if rf_l == rt_l:
-            return row_l == rf_l
-        if rf and rt and rf.isdigit() and rt.isdigit() and (row or "").isdigit():
-            return int(rf) <= int(row) <= int(rt)
-        return False
-
-    def _classify(section, row):
-        for r in rules:
-            if _section_match(r, section) and _row_match(r, row):
-                return zone_by_id[r["zone_id"]]["name"]
-        return None
-
-    buckets = {}
-    for r in rows:
-        z = _classify(r.get("section"), r.get("row")) or "(unmapped)"
-        b = buckets.setdefault(z, {
-            "zone": z, "listings": 0, "tickets": 0, "owned_tickets": 0, "owned_groups": 0,
-            "retail_min": None, "retail_max": None, "_prices": [],
-        })
-        qty = int(r.get("quantity") or 0)
-        b["listings"] += 1
-        b["tickets"] += qty
-        if r.get("is_owned"):
-            b["owned_groups"] += 1
-            b["owned_tickets"] += qty
-        rp = r.get("retail_price")
-        if rp is not None:
-            rp = float(rp)
-            b["retail_min"] = rp if b["retail_min"] is None else min(b["retail_min"], rp)
-            b["retail_max"] = rp if b["retail_max"] is None else max(b["retail_max"], rp)
-            for _ in range(qty):
-                b["_prices"].append(rp)
-
-    out = []
-    for b in buckets.values():
-        prices = sorted(b.pop("_prices"))
-        if prices:
-            mid = len(prices) // 2
-            med = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
-            b["retail_med"] = round(med, 2)
-        else:
-            b["retail_med"] = None
-        b["owned_share"] = round(b["owned_tickets"] / b["tickets"], 4) if b["tickets"] else None
-        out.append(b)
-
-    if not include_unmapped:
-        out = [z for z in out if z["zone"] != "(unmapped)"]
-
-    # Sort by display_order (zones defined) then unmapped last
-    order = {z["name"]: z["display_order"] for z in zones_data}
-    out.sort(key=lambda z: (order.get(z["zone"], 9999)))
-
-    return {
-        "event": {"id": ev["id"], "name": ev.get("name"), "venue": ev.get("venue_name"),
-                  "occurs_at_local": ev.get("occurs_at_local")},
-        "zones": out,
-    }
-
-
 TOOL_HANDLERS = {
     "search_events": _tool_search_events,
     "get_event_snapshot": _tool_event_snapshot,
@@ -675,7 +650,7 @@ TOOL_HANDLERS = {
     "tevo_listings": _tool_tevo_listings,
     "tevo_search_performers": _tool_tevo_search_performers,
     "tevo_search_venues": _tool_tevo_search_venues,
-    "get_zone_breakdown": _tool_get_zone_breakdown,
+    "get_event_zones": _tool_event_zones,
 }
 
 # ---------------------------------------------------------------------------
@@ -700,7 +675,13 @@ def _verify_twilio_signature(request_url: str, params: dict[str, str], header_si
 # Anthropic tool-use orchestration
 # ---------------------------------------------------------------------------
 
-def _run_claude_loop(db, user_message: str) -> str:
+# Tools that need caller context (for rate-limiting + audit). The model's tool schema
+# does NOT expose these args, so we force-inject them here regardless of what the
+# model passes — preventing a spoofed requester from circumventing the rate limit.
+_CONTEXT_INJECTED_TOOLS = {"get_event_snapshot", "get_event_zones"}
+
+
+def _run_claude_loop(db, user_message: str, requester: str | None = None, source: str = "sms") -> str:
     """Run the multi-turn tool-use loop. Returns the final text reply."""
     try:
         from anthropic import Anthropic
@@ -720,7 +701,6 @@ def _run_claude_loop(db, user_message: str) -> str:
             messages=messages,
         )
         if resp.stop_reason == "tool_use":
-            # Extract tool_use blocks, run handlers, append tool_result, loop
             tool_results = []
             for block in resp.content:
                 if getattr(block, "type", None) == "tool_use":
@@ -728,8 +708,12 @@ def _run_claude_loop(db, user_message: str) -> str:
                     if handler is None:
                         result_str = json.dumps({"error": f"unknown tool {block.name}"})
                     else:
+                        args = dict(block.input or {})
+                        if block.name in _CONTEXT_INJECTED_TOOLS:
+                            args["requester"] = requester
+                            args["source"] = source
                         try:
-                            result = handler(db, **(block.input or {}))
+                            result = handler(db, **args)
                             result_str = json.dumps(result, default=str)
                         except Exception as e:  # noqa: BLE001
                             result_str = json.dumps({"error": f"tool error: {e}"})
@@ -814,7 +798,7 @@ async def _handle_inbound(request: Request, channel: str):
         reply = "not authorized — contact julian@s4kent.com"
     else:
         try:
-            reply = _run_claude_loop(db, body_in)
+            reply = _run_claude_loop(db, body_in, requester=from_phone, source=channel)
         except Exception as e:  # noqa: BLE001
             reply = f"bot error: {e}"
 

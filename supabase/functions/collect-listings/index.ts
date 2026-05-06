@@ -12,8 +12,14 @@
 // Regex backstop catches hospitality/lounge items that come back as type=event.
 //
 // Query params:
+//   ?event_id=X         -> refresh ONE event only (used by the bot / on-demand UI). Bypasses
+//                          watchlist discovery; the event row must already exist. Updates
+//                          pull_id (event_pulls) with tevo_calls when provided.
 //   ?window=0-24h | 1-7d | 7-30d | 30-60d | 60d+
 //   ?watchlist_id=X
+//   ?min_age_seconds=N  -> skip events whose latest snapshot is younger than N seconds.
+//                          Lets on-demand pulls "count" as the sync — cron jobs pass a value
+//                          ~90% of their cadence to avoid re-pulling fresh data.
 //   (no params)   -> process the entire watchlist
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -439,9 +445,76 @@ Deno.serve(async (req) => {
   const s4kBrokerageId = await resolveS4kBrokerageId(db);
 
   const url = new URL(req.url);
+  const eventIdParam = url.searchParams.get("event_id");
   const windowParam = url.searchParams.get("window");
   const watchlistIdParam = url.searchParams.get("watchlist_id");
+  const minAgeParam = url.searchParams.get("min_age_seconds");
+  const minAgeSeconds = minAgeParam !== null ? Number(minAgeParam) : null;
   const window = parseWindow(windowParam);
+
+  // ---- Single-event refresh path (bot, on-demand UI) ----------------------
+  if (eventIdParam) {
+    const eid = Number(eventIdParam);
+    if (!Number.isFinite(eid)) return json({ error: "invalid event_id" }, 400);
+    const pullId = url.searchParams.get("pull_id");
+
+    const { data: existing, error: evErr } = await db
+      .from("events").select("id,name").eq("id", eid).maybeSingle();
+    if (evErr) return json({ error: "events lookup failed", details: evErr }, 500);
+    if (!existing) return json({ error: `event ${eid} not in events table — run watchlist collect first` }, 404);
+
+    const capturedAt = new Date().toISOString();
+    let listingRowsCount = 0;
+    let ownedRowsCount = 0;
+
+    try {
+      const groups = await withRetry(() => evo.getTicketGroups(eid));
+      const listingRows = buildListingRows(eid, capturedAt, groups, s4kBrokerageId);
+
+      for (let i = 0; i < listingRows.length; i += 500) {
+        const chunk = listingRows.slice(i, i + 500);
+        const { error } = await db.from("listings_snapshots").insert(chunk);
+        if (error) throw new Error(`listings insert failed: ${error.message}`);
+      }
+      listingRowsCount = listingRows.length;
+      ownedRowsCount = listingRows.filter((r) => r.is_owned).length;
+
+      const eMetrics = computeEventMetrics(listingRows, eid, capturedAt);
+      const { error: em } = await db.from("event_metrics")
+        .upsert(eMetrics, { onConflict: "event_id,captured_at" });
+      if (em) throw new Error(`event_metrics upsert failed: ${em.message}`);
+
+      const secMetrics = computeSectionMetrics(listingRows, eid, capturedAt);
+      if (secMetrics.length) {
+        const { error: sm } = await db.from("section_metrics")
+          .upsert(secMetrics, { onConflict: "event_id,captured_at,section" });
+        if (sm) throw new Error(`section_metrics upsert failed: ${sm.message}`);
+      }
+
+      if (pullId) {
+        await db.from("event_pulls").update({ tevo_calls: 1 }).eq("id", Number(pullId));
+      }
+
+      return json({
+        event_id: eid,
+        captured_at: capturedAt,
+        listing_rows_written: listingRowsCount,
+        owned_rows_written: ownedRowsCount,
+        tevo_calls: 1,
+        pull_id: pullId ? Number(pullId) : null,
+      });
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (pullId) {
+        await db.from("event_pulls").update({
+          served_from: "error",
+          meta: { error: msg },
+        }).eq("id", Number(pullId));
+      }
+      return json({ event_id: eid, error: msg }, 502);
+    }
+  }
+  // ------------------------------------------------------------------------
 
   const startedAt = new Date().toISOString();
   const log: string[] = [];
@@ -531,7 +604,26 @@ Deno.serve(async (req) => {
     if (error) log.push(`watch_sources upsert error: ${error.message}`);
   }
 
-  const eventIds = [...byEvent.keys()];
+  let eventIds = [...byEvent.keys()];
+  let skippedFresh = 0;
+  if (minAgeSeconds && minAgeSeconds > 0 && eventIds.length > 0) {
+    const cutoffIso = new Date(Date.now() - minAgeSeconds * 1000).toISOString();
+    const { data: recent, error: recentErr } = await db
+      .from("latest_event_metrics")
+      .select("event_id,captured_at")
+      .in("event_id", eventIds)
+      .gte("captured_at", cutoffIso);
+    if (recentErr) {
+      log.push(`min_age_seconds lookup failed (proceeding without skip): ${recentErr.message}`);
+    } else {
+      const fresh = new Set((recent ?? []).map((r: any) => r.event_id));
+      const before = eventIds.length;
+      eventIds = eventIds.filter((id) => !fresh.has(id));
+      skippedFresh = before - eventIds.length;
+      log.push(`skipped ${skippedFresh}/${before} events with snapshot <${minAgeSeconds}s old (synced by on-demand pulls)`);
+    }
+  }
+
   let totalListingRows = 0;
   let totalOwnedRows = 0;
 
@@ -586,7 +678,10 @@ Deno.serve(async (req) => {
   return json({
     run_id: runId,
     window: windowParam ?? null,
-    events_collected: total,
+    min_age_seconds: minAgeSeconds,
+    events_in_window: total,
+    events_skipped_fresh: skippedFresh,
+    events_collected: eventIds.length,
     listing_rows_written: totalListingRows,
     owned_rows_written: totalOwnedRows,
     errors: errors.length,
