@@ -256,18 +256,26 @@ def _tool_search_events(db, query: str | None = None, performer_id: int | None =
 
     q = db.table("events").select("id,name,occurs_at_local,venue_name,primary_performer_name")
 
-    # Lower bound: explicit start_at > include_past escape > default-now
+    # occurs_at_local is TEXT, so >= comparison is LEXICAL not timestamp-aware.
+    # A 7pm ET game string '2026-05-06T19:00:00-04:00' lexically compares less
+    # than UTC-now string '2026-05-06T19:59:22+00:00' even though the real
+    # instant is hours in the future. Bound by date prefix (YYYY-MM-DD) only —
+    # any event whose stored string starts with the bound date or later passes,
+    # regardless of TZ offset.
+    today_prefix = now.date().isoformat()  # 'YYYY-MM-DD'
+
+    # Lower bound: explicit start_at > include_past escape > default-today
     if start_at is not None:
         q = q.gte("occurs_at_local", start_at)
     elif not include_past:
-        q = q.gte("occurs_at_local", now.isoformat())
+        q = q.gte("occurs_at_local", today_prefix)
 
     # Upper bound: explicit end_at > days_ahead shorthand > unbounded
     if end_at is not None:
         q = q.lte("occurs_at_local", end_at)
     elif days_ahead is not None:
-        cutoff = (now + timedelta(days=int(days_ahead))).isoformat()
-        q = q.lte("occurs_at_local", cutoff)
+        cutoff_date = (now + timedelta(days=int(days_ahead) + 1)).date().isoformat()
+        q = q.lte("occurs_at_local", cutoff_date)
 
     if performer_id is not None:
         q = q.or_(f"primary_performer_id.eq.{int(performer_id)},performer_ids.cs.{{{int(performer_id)}}}")
