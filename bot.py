@@ -33,7 +33,16 @@ SYSTEM_PROMPT = """You are a terse market-intelligence assistant for S4K Enterta
 The user texts you over WhatsApp. Reply in Bloomberg-terminal style: short, dense, numeric. Hard target: under 160 characters per reply (single SMS segment). If more is genuinely needed, split into two segments.
 Use abbreviations (KNX@ATL G4, $458 med, +17.7%/24h, own 32%). Never wrap output in code blocks or markdown.
 
-You have tools to query the live Terminal database (events, snapshots, S4K owned inventory, portfolio rollups).
+You have two sets of tools:
+
+(A) Cached metrics from our Supabase store — refreshed every 20 minutes for events on our watchlist (~488 tracked events). These are richer (S4K owned share, dispersion, tail premium, portfolio rollups) but only cover events we follow.
+  - search_events, get_event_snapshot, get_market_movement, get_portfolio, get_owned_inventory, get_high_value_owned
+
+(B) Live Ticket Evolution API — real-time data for ANY event in TEvo's catalog (millions of events). Slower (~1-2s) but covers events not on our watchlist. Less rich (no owned/dispersion).
+  - tevo_search_events, tevo_event_detail, tevo_event_stats, tevo_listings, tevo_search_performers, tevo_search_venues
+
+Decision rule: prefer (A) when the event is likely on our watchlist (NBA playoffs, Yankees, Knicks, big NYC venues). Use (B) when (A) returns nothing OR when the user's query implies a fresh/live read OR for events we obviously don't track (random concert tour, college football, etc.). When you don't know an event_id, search by name first.
+
 Always call a tool when the user asks for live numbers; never guess. If a query is ambiguous, ask one short clarifying question.
 
 If a tool returns nothing useful, say so plainly. Don't pad with caveats. Maximum reply length: 320 characters (2 SMS segments)."""
@@ -107,6 +116,88 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {"limit": {"type": "integer", "default": 10}},
+        },
+    },
+    {
+        "name": "tevo_search_events",
+        "description": "LIVE search Ticket Evolution for events by name, performer_id, or venue_id. Use when the event likely isn't on our watchlist. Returns id, name, date, venue, performer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "performer_id": {"type": "integer"},
+                "venue_id": {"type": "integer"},
+                "limit": {"type": "integer", "default": 8},
+            },
+        },
+    },
+    {
+        "name": "tevo_event_detail",
+        "description": "LIVE Ticket Evolution event metadata: name, date, venue, performances. Use when the user asks for basic event info we may not have cached.",
+        "input_schema": {
+            "type": "object",
+            "required": ["event_id"],
+            "properties": {"event_id": {"type": "integer"}},
+        },
+    },
+    {
+        "name": "tevo_event_stats",
+        "description": "LIVE Ticket Evolution aggregate stats for one event: tickets_count, ticket_groups_count, retail price min/avg/max, wholesale_avg. Equivalent to TEvo's authoritative numbers right now.",
+        "input_schema": {
+            "type": "object",
+            "required": ["event_id"],
+            "properties": {
+                "event_id": {"type": "integer"},
+                "inventory_type": {"type": "string", "enum": ["event", "parking"], "description": "Filter to seats only ('event') or parking only. Omit for all."},
+            },
+        },
+    },
+    {
+        "name": "tevo_listings",
+        "description": "LIVE marketplace listings for one event from Ticket Evolution. Returns the cheapest N ticket groups with section, row, qty, retail_price. Useful for 'what's the get-in right now' or 'show me the cheapest 5 listings for event X'.",
+        "input_schema": {
+            "type": "object",
+            "required": ["event_id"],
+            "properties": {
+                "event_id": {"type": "integer"},
+                "limit": {"type": "integer", "default": 8},
+            },
+        },
+    },
+    {
+        "name": "tevo_search_performers",
+        "description": "LIVE Ticket Evolution performer search by name. Use to look up a performer_id when the user names a team/artist. Returns id, name, category.",
+        "input_schema": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 5},
+            },
+        },
+    },
+    {
+        "name": "tevo_search_venues",
+        "description": "LIVE Ticket Evolution venue search by name. Use to look up a venue_id when the user names a venue. Returns id, name, city, state.",
+        "input_schema": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 5},
+            },
+        },
+    },
+    {
+        "name": "get_zone_breakdown",
+        "description": "Per-zone breakdown of a tracked event's current listings: tickets, S4K-owned tickets, share, retail median per zone. Zones are S4K's named groupings of sections+row bands at a venue (e.g. 'Courtside', 'Club Gold', '100 Corner'). Use when the user asks 'how does S4K do in Club Gold tonight' or 'show me a zone-by-zone breakdown'. Only works for events whose home performer has zones defined (currently NYK at MSG).",
+        "input_schema": {
+            "type": "object",
+            "required": ["event_id"],
+            "properties": {
+                "event_id": {"type": "integer"},
+                "include_unmapped": {"type": "boolean", "default": False, "description": "If true, include the '(unmapped)' bucket for sections that don't fit any defined zone (SRO, wheelchair, etc.)"},
+            },
         },
     },
 ]
@@ -250,6 +341,327 @@ def _tool_high_value_owned(db, limit: int = 10) -> dict:
     return {"count": len(out), "rows": out}
 
 
+
+# ---------------------------------------------------------------------------
+# Live Ticket Evolution tool handlers (use the EvoClient from app.py)
+# ---------------------------------------------------------------------------
+
+def _evo():
+    """Lazy import the configured EvoClient singleton from app.py."""
+    from app import client as evo
+    return evo
+
+
+def _primary_performer_name(ev: dict) -> str | None:
+    for p in (ev.get("performances") or []):
+        if p.get("primary"):
+            return ((p.get("performer") or {}).get("name"))
+    return None
+
+
+def _tool_tevo_search_events(db, query: str | None = None, performer_id: int | None = None,
+                             venue_id: int | None = None, limit: int = 8) -> dict:
+    try:
+        events = _evo().search_events_all(
+            q=query or None,
+            performer_id=performer_id,
+            venue_id=venue_id,
+            only_with_available_tickets=True,
+            order_by="events.popularity_score DESC",
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"TEvo error: {e}"}
+    events = events[: int(limit)]
+    return {
+        "count": len(events),
+        "events": [
+            {
+                "id": e.get("id"),
+                "name": e.get("name"),
+                "occurs_at_local": e.get("occurs_at_local"),
+                "venue": (e.get("venue") or {}).get("name"),
+                "city": ((e.get("venue") or {}).get("location") or "").split(",")[0] or None,
+                "performer": _primary_performer_name(e),
+            }
+            for e in events
+        ],
+    }
+
+
+def _tool_tevo_event_detail(db, event_id: int) -> dict:
+    try:
+        e = _evo().get_event(int(event_id))
+    except Exception as ex:  # noqa: BLE001
+        return {"error": f"TEvo error: {ex}"}
+    return {
+        "id": e.get("id"),
+        "name": e.get("name"),
+        "occurs_at_local": e.get("occurs_at_local"),
+        "venue": (e.get("venue") or {}).get("name"),
+        "venue_location": (e.get("venue") or {}).get("location"),
+        "performer": _primary_performer_name(e),
+        "state": e.get("state"),
+    }
+
+
+def _tool_tevo_event_stats(db, event_id: int, inventory_type: str | None = None) -> dict:
+    try:
+        s = _evo().get_event_stats(int(event_id), inventory_type=inventory_type)
+    except Exception as ex:  # noqa: BLE001
+        return {"error": f"TEvo error: {ex}"}
+    return {
+        "event_id": int(event_id),
+        "inventory_type": inventory_type,
+        "ticket_groups_count": s.get("ticket_groups_count"),
+        "tickets_count": s.get("tickets_count"),
+        "retail_price_min": s.get("retail_price_min"),
+        "retail_price_avg": s.get("retail_price_avg"),
+        "retail_price_max": s.get("retail_price_max"),
+        "retail_price_sum": s.get("retail_price_sum"),
+        "wholesale_price_avg": s.get("wholesale_price_avg"),
+    }
+
+
+def _tool_tevo_listings(db, event_id: int, limit: int = 8) -> dict:
+    try:
+        resp = _evo().get_listings(int(event_id), order_by="retail_price ASC")
+    except Exception as ex:  # noqa: BLE001
+        return {"error": f"TEvo error: {ex}"}
+    groups = resp.get("ticket_groups") or []
+    out = groups[: int(limit)]
+    return {
+        "event_id": int(event_id),
+        "total_groups": len(groups),
+        "shown": len(out),
+        "cheapest": [
+            {
+                "section": g.get("section"),
+                "row": g.get("row"),
+                "qty": g.get("available_quantity"),
+                "retail": g.get("retail_price"),
+                "format": g.get("format"),
+                "splits": g.get("splits"),
+                "type": g.get("type"),
+            }
+            for g in out
+        ],
+    }
+
+
+def _tool_tevo_search_performers(db, query: str, limit: int = 5) -> dict:
+    try:
+        resp = _evo().search_performers(q=query)
+    except Exception as ex:  # noqa: BLE001
+        return {"error": f"TEvo error: {ex}"}
+    perfs = (resp.get("performers") or [])[: int(limit)]
+    return {
+        "count": len(perfs),
+        "performers": [
+            {
+                "id": p.get("id"),
+                "name": p.get("name"),
+                "category": (p.get("category") or {}).get("name"),
+                "popularity": p.get("popularity_score"),
+            }
+            for p in perfs
+        ],
+    }
+
+
+def _tool_tevo_search_venues(db, query: str, limit: int = 5) -> dict:
+    try:
+        resp = _evo().search_venues(q=query)
+    except Exception as ex:  # noqa: BLE001
+        return {"error": f"TEvo error: {ex}"}
+    venues = (resp.get("venues") or [])[: int(limit)]
+    return {
+        "count": len(venues),
+        "venues": [
+            {
+                "id": v.get("id"),
+                "name": v.get("name"),
+                "city": (v.get("address") or {}).get("locality"),
+                "state": (v.get("address") or {}).get("region"),
+                "country": (v.get("address") or {}).get("country_code"),
+            }
+            for v in venues
+        ],
+    }
+
+
+
+def _tool_get_zone_breakdown(db, event_id: int, include_unmapped: bool = False) -> dict:
+    """Aggregate the latest listings for an event by zone (resolved via match_performer_zone).
+    Returns one row per zone with owned share + retail spread. Zones come from
+    performer_zones — currently only NYK at MSG is seeded.
+    """
+    # Look up the event's home performer + venue
+    ev = (db.table("events").select("id,name,primary_performer_id,venue_id,venue_name,occurs_at_local")
+          .eq("id", int(event_id)).maybeSingle().execute().data) or {}
+    perf_id = ev.get("primary_performer_id")
+    venue_id = ev.get("venue_id")
+    if not perf_id or not venue_id:
+        return {"error": f"event {event_id} missing performer or venue"}
+
+    # Use raw SQL via RPC for the aggregation. Define inline query.
+    sql = """
+      with latest as (
+        select max(captured_at) as cap from listings_snapshots where event_id = :eid
+      ),
+      classified as (
+        select
+          coalesce(match_performer_zone(:pid, :vid, ls.section, ls.row), '(unmapped)') as zone,
+          ls.quantity, ls.retail_price, ls.is_owned
+        from listings_snapshots ls, latest
+        where ls.event_id = :eid
+          and ls.captured_at = latest.cap
+          and not ls.is_ancillary
+      )
+      select
+        zone,
+        count(*)::int as listings,
+        coalesce(sum(quantity), 0)::int as tickets,
+        coalesce(sum(quantity) filter (where is_owned), 0)::int as owned_tickets,
+        count(*) filter (where is_owned)::int as owned_groups,
+        round(min(retail_price)::numeric, 2) as retail_min,
+        round(percentile_cont(0.5) within group (order by retail_price)::numeric, 2) as retail_med,
+        round(max(retail_price)::numeric, 2) as retail_max
+      from classified
+      group by zone
+      order by tickets desc;
+    """
+    # supabase-py doesn't expose ad-hoc SQL with bind params; route through PostgREST RPC.
+    # We avoid creating a server-side function for now and just use execute_sql via the REST
+    # `query` param trick is not standard. Easiest path: call with .table() chains for each
+    # piece. To keep this simple, fall back to a lightweight client-side aggregation.
+    # ----------------------------------------
+    # Fetch latest listings for this event
+    latest = (db.table("listings_snapshots").select("captured_at")
+              .eq("event_id", int(event_id))
+              .order("captured_at", desc=True).limit(1).execute().data) or []
+    if not latest:
+        return {"event_id": int(event_id), "zones": []}
+    cap = latest[0]["captured_at"]
+    rows = (db.table("listings_snapshots")
+            .select("section,row,quantity,retail_price,is_owned,is_ancillary")
+            .eq("event_id", int(event_id))
+            .eq("captured_at", cap)
+            .eq("is_ancillary", False)
+            .execute().data) or []
+    if not rows:
+        return {"event_id": int(event_id), "zones": []}
+
+    # Resolve zones in batch — call the SQL function via RPC for each unique (section,row).
+    # PostgREST doesn't expose match_performer_zone as RPC unless declared, but we can
+    # fetch all rule-zone pairs once and classify in Python.
+    zones_data = (db.table("performer_zones")
+                  .select("id,name,display_order")
+                  .eq("performer_id", int(perf_id))
+                  .eq("venue_id", int(venue_id))
+                  .order("display_order").execute().data) or []
+    if not zones_data:
+        return {"error": f"no zones defined for performer {perf_id} at venue {venue_id}",
+                "event": ev}
+    zone_ids = [z["id"] for z in zones_data]
+    rules = (db.table("performer_zone_rules")
+             .select("zone_id,section_from,section_to,row_from,row_to")
+             .in_("zone_id", zone_ids).execute().data) or []
+    zone_by_id = {z["id"]: z for z in zones_data}
+    # Sort rules by display_order so most-specific wins
+    rules.sort(key=lambda r: zone_by_id[r["zone_id"]]["display_order"])
+
+    import re
+
+    def _norm(s):
+        return re.sub(r"\s+", "", (s or "").lower())
+
+    def _suffix(s):
+        m = re.search(r"([0-9]+)$", _norm(s))
+        return int(m.group(1)) if m else None
+
+    def _prefix(s):
+        return re.sub(r"[0-9]+$", "", _norm(s))
+
+    def _section_match(rule, section):
+        sf, st = rule["section_from"], rule["section_to"]
+        if _norm(sf) == _norm(st):
+            return _norm(section) == _norm(sf)
+        # numeric range
+        if sf.isdigit() and st.isdigit() and (section or "").isdigit():
+            return int(sf) <= int(section) <= int(st)
+        # prefix + numeric suffix range
+        pf_sf, pf_st, pf_sec = _prefix(sf), _prefix(st), _prefix(section)
+        suf_sf, suf_st, suf_sec = _suffix(sf), _suffix(st), _suffix(section)
+        if pf_sf and pf_sf == pf_st == pf_sec and None not in (suf_sf, suf_st, suf_sec):
+            return suf_sf <= suf_sec <= suf_st
+        return False
+
+    def _row_match(rule, row):
+        rf, rt = rule.get("row_from"), rule.get("row_to")
+        if rf is None and rt is None:
+            return True
+        rf_l = (rf or "").strip().lower()
+        rt_l = (rt or "").strip().lower()
+        row_l = (row or "").strip().lower()
+        if rf_l == rt_l:
+            return row_l == rf_l
+        if rf and rt and rf.isdigit() and rt.isdigit() and (row or "").isdigit():
+            return int(rf) <= int(row) <= int(rt)
+        return False
+
+    def _classify(section, row):
+        for r in rules:
+            if _section_match(r, section) and _row_match(r, row):
+                return zone_by_id[r["zone_id"]]["name"]
+        return None
+
+    buckets = {}
+    for r in rows:
+        z = _classify(r.get("section"), r.get("row")) or "(unmapped)"
+        b = buckets.setdefault(z, {
+            "zone": z, "listings": 0, "tickets": 0, "owned_tickets": 0, "owned_groups": 0,
+            "retail_min": None, "retail_max": None, "_prices": [],
+        })
+        qty = int(r.get("quantity") or 0)
+        b["listings"] += 1
+        b["tickets"] += qty
+        if r.get("is_owned"):
+            b["owned_groups"] += 1
+            b["owned_tickets"] += qty
+        rp = r.get("retail_price")
+        if rp is not None:
+            rp = float(rp)
+            b["retail_min"] = rp if b["retail_min"] is None else min(b["retail_min"], rp)
+            b["retail_max"] = rp if b["retail_max"] is None else max(b["retail_max"], rp)
+            for _ in range(qty):
+                b["_prices"].append(rp)
+
+    out = []
+    for b in buckets.values():
+        prices = sorted(b.pop("_prices"))
+        if prices:
+            mid = len(prices) // 2
+            med = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
+            b["retail_med"] = round(med, 2)
+        else:
+            b["retail_med"] = None
+        b["owned_share"] = round(b["owned_tickets"] / b["tickets"], 4) if b["tickets"] else None
+        out.append(b)
+
+    if not include_unmapped:
+        out = [z for z in out if z["zone"] != "(unmapped)"]
+
+    # Sort by display_order (zones defined) then unmapped last
+    order = {z["name"]: z["display_order"] for z in zones_data}
+    out.sort(key=lambda z: (order.get(z["zone"], 9999)))
+
+    return {
+        "event": {"id": ev["id"], "name": ev.get("name"), "venue": ev.get("venue_name"),
+                  "occurs_at_local": ev.get("occurs_at_local")},
+        "zones": out,
+    }
+
+
 TOOL_HANDLERS = {
     "search_events": _tool_search_events,
     "get_event_snapshot": _tool_event_snapshot,
@@ -257,6 +669,13 @@ TOOL_HANDLERS = {
     "get_portfolio": _tool_portfolio,
     "get_owned_inventory": _tool_owned_inventory,
     "get_high_value_owned": _tool_high_value_owned,
+    "tevo_search_events": _tool_tevo_search_events,
+    "tevo_event_detail": _tool_tevo_event_detail,
+    "tevo_event_stats": _tool_tevo_event_stats,
+    "tevo_listings": _tool_tevo_listings,
+    "tevo_search_performers": _tool_tevo_search_performers,
+    "tevo_search_venues": _tool_tevo_search_venues,
+    "get_zone_breakdown": _tool_get_zone_breakdown,
 }
 
 # ---------------------------------------------------------------------------
