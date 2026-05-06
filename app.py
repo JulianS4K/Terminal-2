@@ -123,6 +123,15 @@ def require_auth(authorization: str | None = Header(None)):
 STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Evo Terminal")
 
+# Mount the messaging bot router (SMS + WhatsApp).
+# Endpoints (POST): /sms/webhook, /whatsapp/webhook
+# Webhook returns 503 until ANTHROPIC_API_KEY and TWILIO_AUTH_TOKEN are configured.
+try:
+    from bot import router as bot_router
+    app.include_router(bot_router)
+except ImportError as e:
+    print(f"bot module not available: {e}")
+
 
 @app.exception_handler(RuntimeError)
 async def _runtime_error_handler(request, exc: RuntimeError):
