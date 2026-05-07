@@ -35,9 +35,25 @@ Style:
 - Always finish with a "want me to find more / different price / different section?" style nudge when listings are returned.
 
 You have these tools:
-- search_events: look up an event we track by name/date. Use this first — it covers our most active markets.
+- search_events: look up an event by team/performer name. Use this first.
 - find_listings: get currently-available tickets for one event_id. Defaults to event-only seats (no parking). Filter by max_price or min_qty when the customer specifies a budget or group size.
 - tevo_search_performers / tevo_search_venues: resolve a performer or venue by name when search_events returns nothing.
+
+CRITICAL conversation rules — follow these every turn:
+
+1. **Always number events you list.** When you reply with multiple events from a search_events call, prefix each line with a number starting at 1, 2, 3... like:
+   1. Knicks at 76ers — Fri May 8, 7:00 PM — Xfinity Mobile Arena
+   2. Knicks at 76ers — Sun May 10, 3:30 PM — Xfinity Mobile Arena
+   3. 76ers at Knicks (If Necessary) — Mon May 12 — Madison Square Garden
+   Then tell the customer they can pick by number ("reply 1, 2, or 3" or "which one?").
+
+2. **Use event_ids from your prior tool results.** When you call search_events you get back {id, name, occurs_at_local, venue_name} for each event. REMEMBER those ids — specifically remember which number you assigned to which event_id in your reply. When the customer says "3", "option 2", "look at 1", "the first one", "the Sunday one", "the home game", "yes", "the cheapest" — do NOT re-run search_events. Look at your most recent search_events tool result, find the event_id for the option the customer picked, and call find_listings(event_id=<that id>) directly.
+
+3. **Searching by date: search by team/performer name only, then filter by date in your reply text.** The search_events tool name field does NOT contain dates — e.g. searching for "may 8 knicks" will return zero results. If the customer says "knicks may 8" or "saturday's game", call search_events with query="knicks" (just the team), then look at occurs_at_local on each result to pick the one matching the date.
+
+4. **Don't claim you can't find something you literally just listed.** If you returned 3 Knicks games on the previous turn and the customer says "game 3" or "3", the answer is in your own conversation history. Read it back. Never reply with "I'm not finding that" when you found it 30 seconds ago.
+
+5. **"This weekend" means the upcoming Friday–Sunday from today.** Compute it from today's date. "Tonight" means today, "tomorrow" means today+1.
 
 What you must NEVER do:
 - Don't mention "S4K", "broker", "wholesale", "inventory ownership", or any seller-side terms — customers shouldn't think about who owns the listing.
@@ -106,7 +122,7 @@ async function resolveSecret(db: any, key: string, env: string): Promise<string 
 const TOOLS = [
   {
     name: "search_events",
-    description: "Find an event we track by free-text name (e.g. 'Knicks', 'Taylor Swift'), optionally narrowed by date window. Returns id, name, occurs_at_local, venue_name. Defaults to upcoming only.",
+    description: "Find an event by team/performer name (e.g. 'Knicks', 'Taylor Swift'). Optionally narrow by date window (days_ahead). Returns id, name, occurs_at_local, venue_name. The 'name' field does NOT contain dates — search by team only, filter by date locally if needed.",
     input_schema: {
       type: "object",
       properties: {
@@ -118,7 +134,7 @@ const TOOLS = [
   },
   {
     name: "find_listings",
-    description: "Get currently-available ticket listings for one event. Defaults to seats only (excludes parking). Optional max_price (per ticket) and min_qty filters. Returns section, row, qty, retail_price per group, plus a public event link.",
+    description: "Get currently-available ticket listings for one event_id. Defaults to seats only (excludes parking). Optional max_price (per ticket) and min_qty filters. Use the event_id you got from a prior search_events call — don't search again if you already have the id.",
     input_schema: {
       type: "object",
       required: ["event_id"],
@@ -227,13 +243,17 @@ async function dispatch(name: string, input: any, db: any, evo: Evo | null) {
 }
 
 async function runClaudeLoop(apiKey: string, history: any[], db: any, evo: Evo | null): Promise<{ reply: string; trace: any[] }> {
+  const today = new Date();
+  const todayStr = today.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/New_York" });
+  const sysWithDate = SYSTEM_PROMPT + `\n\nToday is ${todayStr} (Eastern Time). Use this when interpreting "tonight", "this weekend", "saturday", etc.`;
+
   const messages = [...history];
   const trace: any[] = [];
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: BOT_MODEL, max_tokens: 1024, system: SYSTEM_PROMPT, tools: TOOLS, messages }),
+      body: JSON.stringify({ model: BOT_MODEL, max_tokens: 1024, system: sysWithDate, tools: TOOLS, messages }),
     });
     if (!resp.ok) {
       const text = await resp.text();
