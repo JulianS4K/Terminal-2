@@ -18,6 +18,14 @@ const BOT_MODEL = Deno.env.get("WHATSAPP_BOT_MODEL") ?? "claude-sonnet-4-6";
 const MAX_TURNS = parseInt(Deno.env.get("WHATSAPP_MAX_TURNS") ?? "6", 10);
 const PUBLIC_EVENT_URL = (eid: number) => `https://www.ticketevolution.com/events/${eid}`;
 
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+  "Access-Control-Max-Age": "86400",
+  "Vary": "Origin",
+};
+
 const SYSTEM_PROMPT = `You are a friendly ticket-finder assistant for S4K Entertainment, helping customers locate seats for concerts, sports, and live events.
 
 Style:
@@ -427,16 +435,28 @@ reset.addEventListener('click', () => {
 </body></html>`;
 
 function jsonResponse(obj: any, status = 200) {
-  return new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { ...CORS_HEADERS, "content-type": "application/json" },
+  });
 }
 
 Deno.serve(async (req) => {
+  // CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
   const method = req.method.toUpperCase();
   if (method === "GET") {
-    return new Response(CHAT_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(CHAT_HTML, {
+      headers: { ...CORS_HEADERS, "content-type": "text/html; charset=utf-8" },
+    });
   }
   if (method !== "POST") {
-    return new Response("method not allowed", { status: 405 });
+    return new Response("method not allowed", {
+      status: 405,
+      headers: { ...CORS_HEADERS, "content-type": "text/plain" },
+    });
   }
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
