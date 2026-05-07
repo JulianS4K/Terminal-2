@@ -1,9 +1,12 @@
-// Supabase Edge Function: espn
+// Supabase Edge Function: espn (v2 — reads performer_external_ids)
 //
 // Aggregates ESPN's public API data for the Terminal UI. The Terminal opens an
 // ESPN-style side panel ONLY when the selected event/performer has a row in
-// public.team_xref — non-team performers (concerts, comedy, etc) are filtered
-// upstream via the /espn/applicable endpoint.
+// public.performer_external_ids (source='espn') — non-team performers (concerts,
+// comedy, etc) are filtered upstream via the /espn/applicable endpoint.
+//
+// v2 (2026-05-07): switched lookup from deprecated team_xref to canonical
+// performer_external_ids. Coverage went from 38 to 217 teams (big-5 + WNBA + WC).
 //
 // Routes:
 //   GET /espn/applicable?event_id=N        -> { applicable: bool, league?, sport_slug?, espn_team_id? }
@@ -57,7 +60,7 @@ const site = (path: string, query?: Record<string, string>) => espnGet("site.api
 const core = (path: string, query?: Record<string, string>) => espnGet("sports.core.api.espn.com", path, query);
 
 // ---------------------------------------------------------------------------
-// Event ↔ ESPN event resolver (uses team_xref + (team, date))
+// Event ↔ ESPN event resolver (uses performer_external_ids + (team, date))
 // ---------------------------------------------------------------------------
 
 interface XrefHit {
@@ -68,18 +71,25 @@ interface XrefHit {
   espn_abbr: string | null;
 }
 
+// v2: reads performer_external_ids (canonical) instead of deprecated team_xref.
+// Function name kept as lookupTeamXref so callers don't need to change.
+// espn_slug is required for downstream ESPN API calls; if it's missing from
+// meta, treat the lookup as a miss (the row exists but is unusable).
 async function lookupTeamXref(db: any, performerId: number): Promise<XrefHit | null> {
-  const { data } = await db.from("team_xref")
-    .select("tevo_performer_id,espn_team_id,espn_league,espn_slug,espn_abbr")
-    .eq("tevo_performer_id", performerId)
+  const { data } = await db.from("performer_external_ids")
+    .select("performer_id,external_id,league,meta")
+    .eq("performer_id", performerId)
+    .eq("source", "espn")
     .maybeSingle();
   if (!data) return null;
+  const slug = data.meta?.espn_slug as string | undefined;
+  if (!slug) return null;
   return {
-    performer_id: data.tevo_performer_id,
-    espn_team_id: data.espn_team_id,
-    espn_league: data.espn_league,
-    espn_slug: data.espn_slug,
-    espn_abbr: data.espn_abbr,
+    performer_id: data.performer_id,
+    espn_team_id: data.external_id,
+    espn_league: data.league,
+    espn_slug: slug,
+    espn_abbr: data.meta?.espn_abbr ?? null,
   };
 }
 
@@ -280,7 +290,7 @@ async function applicable(db: any, eventId?: number | null, performerId?: number
 
 async function aggregateEvent(db: any, tevoEventId: number) {
   const xref = await getOrPopulateEventXref(db, tevoEventId);
-  if (!xref) return { applicable: false, reason: "no team_xref or no schedule match (date/team)" };
+  if (!xref) return { applicable: false, reason: "no performer_external_ids match or no schedule match (date/team)" };
 
   const summary = await site(`/apis/site/v2/sports/${xref.espn_slug}/summary`, { event: xref.espn_event_id });
 
@@ -310,7 +320,7 @@ async function aggregateEvent(db: any, tevoEventId: number) {
 
 async function aggregatePerformer(db: any, tevoPerformerId: number) {
   const team = await lookupTeamXref(db, tevoPerformerId);
-  if (!team) return { applicable: false, reason: "no team_xref entry" };
+  if (!team) return { applicable: false, reason: "no performer_external_ids entry (source=espn)" };
 
   const [teamData, schedule, news, leagueInjuries] = await Promise.all([
     site(`/apis/site/v2/sports/${team.espn_slug}/teams/${team.espn_team_id}`).catch(() => null),
@@ -411,7 +421,7 @@ Deno.serve(async (req) => {
 
   try {
     if (sub === "/" || sub === "/health") {
-      return json({ ok: true, function: "espn", version: 1 });
+      return json({ ok: true, function: "espn", version: 2 });
     }
 
     if (sub === "/applicable") {
