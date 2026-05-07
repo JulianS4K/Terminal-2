@@ -29,3 +29,6 @@ build/
 
 # Supabase local
 supabase/.temp/
+
+.claude/
+
