@@ -1,19 +1,49 @@
-// Supabase Edge Function: espn-collect
+// Supabase Edge Function: espn-collect (v3 — change-only ingest)
 //
-// Daily batch over team_xref + event_xref → snapshots into:
+// Daily batch over performer_external_ids (source='espn') + event_xref → into:
 //   espn_team_snapshots, espn_injuries_snapshots, espn_news, espn_event_snapshots
 // Logs each run to espn_runs.
 //
+// v3 changes (2026-05-07):
+//  - Reads from performer_external_ids (cowork's canonical table) instead of
+//    deprecated team_xref. Now covers all 217 ESPN-mapped teams (big-5 + WNBA + WC).
+//  - Change-only inserts via upsert_espn_*_snapshot RPCs. Initial run is the
+//    baseline; subsequent runs only INSERT when content_hash differs from latest;
+//    otherwise bumps last_seen_at on the latest row. Storage is bounded.
+//
 // Auth: x-cron-secret (same value as collect-listings).
 //
-// Triggered by pg_cron once per day. Designed to be idempotent within the same
-// captured_at minute so accidental double-fires don't dupe (unique indexes).
+// Triggered by pg_cron. Frequency: as often as we can — defaults to daily but
+// can run hourly without bloat (no-change runs cost one UPDATE per team).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const TEAM_LIMIT_PER_RUN = 80;       // safety cap
+const TEAM_LIMIT_PER_RUN = 250;      // bumped from 80 — we have 217 mapped now
 const EVENT_LOOKAHEAD_DAYS = 60;     // refresh game snapshots out this far
 const ESPN_HOST = "site.api.espn.com";
+
+// md5 over canonicalized fields → content_hash. Keep stable across collector
+// versions: change ONLY when adding a meaningful new field that should trigger
+// a delta. Order matters; coalesce(null,'') ensures hash stability.
+async function md5(s: string): Promise<string> {
+  const buf = new TextEncoder().encode(s);
+  const h = await crypto.subtle.digest("MD5", buf);
+  return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function teamFields(r: any): string {
+  return [r.wins, r.losses, r.ties, r.win_pct, r.games_back, r.playoff_seed,
+          r.conference_rank, r.division_rank, r.record_summary, r.standing_summary, r.streak]
+    .map(v => v == null ? "" : String(v)).join("|");
+}
+function injFields(r: any): string {
+  return [r.athlete_id, r.status, r.injury_type, r.short_comment, r.return_date]
+    .map(v => v == null ? "" : String(v)).join("|");
+}
+function eventFields(r: any): string {
+  return [r.state, r.status_short, r.home_score, r.away_score, r.spread, r.over_under,
+          r.home_ml, r.away_ml, r.home_win_prob, r.attendance]
+    .map(v => v == null ? "" : String(v)).join("|");
+}
 
 async function get(path: string, query?: Record<string, string>) {
   const url = new URL(`https://${ESPN_HOST}${path}`);
@@ -29,9 +59,12 @@ interface CollectorState {
   teams_processed: number;
   events_processed: number;
   team_snaps_inserted: number;
+  team_snaps_unchanged: number;
   injuries_inserted: number;
+  injuries_unchanged: number;
   news_inserted: number;
   event_snaps_inserted: number;
+  event_snaps_unchanged: number;
   errors: number;
   log: string[];
 }
@@ -42,10 +75,21 @@ interface CollectorState {
 // ---------------------------------------------------------------------------
 
 async function collectTeams(db: any, state: CollectorState) {
-  const { data: xref } = await db.from("team_xref")
-    .select("espn_team_id,espn_league,espn_slug,espn_abbr,tevo_name")
-    .order("espn_league");
-  const teams = (xref ?? []) as any[];
+  // v3: read from performer_external_ids (canonical) instead of deprecated team_xref.
+  // espn_slug + espn_abbr live in meta jsonb; flatten into the row shape the rest of
+  // this function expects.
+  const { data: pei } = await db.from("performer_external_ids")
+    .select("performer_id,external_id,external_name,league,meta")
+    .eq("source", "espn");
+  const teams = (pei ?? []).map((r: any) => ({
+    tevo_performer_id: r.performer_id,
+    tevo_name: r.external_name,
+    espn_team_id: r.external_id,
+    espn_league: r.league,
+    espn_slug: r.meta?.espn_slug ?? null,
+    espn_abbr: r.meta?.espn_abbr ?? null,
+  })).filter((t: any) => t.espn_slug);  // need slug to fetch from ESPN
+  state.log.push(`teams loaded from performer_external_ids: ${teams.length}`);
 
   // Fetch standings + injuries once per (league, slug) and reuse across teams
   const leagueData: Record<string, { standings: any; injuries: any }> = {};
@@ -73,8 +117,6 @@ async function collectTeams(db: any, state: CollectorState) {
     if (entry) {
       const stats = Object.fromEntries((entry.stats ?? []).map((s: any) => [s.name, s]));
       const row = {
-        espn_team_id: t.espn_team_id,
-        espn_league: t.espn_league,
         wins:           num(stats.wins?.value),
         losses:         num(stats.losses?.value),
         ties:           num(stats.ties?.value),
@@ -87,28 +129,39 @@ async function collectTeams(db: any, state: CollectorState) {
         standing_summary:  entry.team?.standingSummary,
         streak:            stats.streak?.displayValue,
       };
-      const { error } = await db.from("espn_team_snapshots").insert(row);
-      if (error && !/duplicate/i.test(error.message)) state.errors++;
-      else state.team_snaps_inserted++;
+      const hash = await md5(teamFields(row));
+      const { data: ret, error } = await db.rpc("upsert_espn_team_snapshot", {
+        p_team_id: t.espn_team_id, p_league: t.espn_league, p_hash: hash,
+        p_payload: { ...row, meta: { tevo_performer_id: t.tevo_performer_id, espn_slug: t.espn_slug } },
+      });
+      if (error) { state.errors++; state.log.push(`team upsert FAIL ${t.espn_team_id}: ${error.message}`); }
+      else if (ret?.[0]?.action === "inserted") state.team_snaps_inserted++;
+      else state.team_snaps_unchanged++;
     }
 
-    // Emit per-team injuries from league-wide payload
+    // Emit per-team injuries from league-wide payload (change-only per athlete)
     const teamInj = (ld.injuries?.injuries ?? []).find((x: any) => String(x.id) === String(t.espn_team_id));
     for (const inj of teamInj?.injuries ?? []) {
+      const athleteId = inj.athlete?.id ? String(inj.athlete.id) : null;
+      if (!athleteId) continue;  // need stable key for change-detection
       const row = {
-        espn_team_id: t.espn_team_id,
-        espn_league: t.espn_league,
-        athlete_id: inj.athlete?.id ? String(inj.athlete.id) : null,
+        athlete_id: athleteId,
         athlete_name: inj.athlete?.displayName ?? null,
         position: inj.athlete?.position?.abbreviation ?? null,
         status: inj.status ?? null,
         injury_type: inj.type?.description ?? inj.type ?? null,
         short_comment: inj.shortComment ?? null,
         long_comment: inj.longComment ?? null,
+        return_date: inj.returnDate ?? null,
       };
-      const { error } = await db.from("espn_injuries_snapshots").insert(row);
-      if (error) state.errors++;
-      else state.injuries_inserted++;
+      const hash = await md5(injFields(row));
+      const { data: ret, error } = await db.rpc("upsert_espn_injury", {
+        p_team_id: t.espn_team_id, p_athlete_id: athleteId, p_hash: hash,
+        p_payload: { ...row, espn_league: t.espn_league },
+      });
+      if (error) { state.errors++; }
+      else if (ret?.[0]?.action === "inserted") state.injuries_inserted++;
+      else state.injuries_unchanged++;
     }
   }
 }
@@ -136,8 +189,15 @@ const num = (v: any) => v == null || v === "" ? null : Number(v);
 // ---------------------------------------------------------------------------
 
 async function collectNews(db: any, state: CollectorState) {
-  const { data: teams } = await db.from("team_xref").select("espn_team_id,espn_league,espn_slug").limit(TEAM_LIMIT_PER_RUN);
-  for (const t of (teams ?? []) as any[]) {
+  // v3: read from performer_external_ids
+  const { data: pei } = await db.from("performer_external_ids")
+    .select("external_id,league,meta")
+    .eq("source", "espn")
+    .limit(TEAM_LIMIT_PER_RUN);
+  const teams = (pei ?? []).map((r: any) => ({
+    espn_team_id: r.external_id, espn_league: r.league, espn_slug: r.meta?.espn_slug,
+  })).filter((t: any) => t.espn_slug);
+  for (const t of teams) {
     let articles: any[] = [];
     try {
       const j = await get(`/apis/site/v2/sports/${t.espn_slug}/news`, { team: t.espn_team_id, limit: "5" });
@@ -186,8 +246,13 @@ async function backfillEventXref(db: any, state: CollectorState) {
   let evList: any[] = candidates ?? [];
   if (error) {
     // Fallback: do the join manually with two queries (RPC may not exist yet)
-    const { data: tx } = await db.from("team_xref").select("tevo_performer_id,espn_team_id,espn_league,espn_slug");
-    const txMap = Object.fromEntries((tx ?? []).map((r: any) => [r.tevo_performer_id, r]));
+    const { data: pei } = await db.from("performer_external_ids")
+      .select("performer_id,external_id,league,meta")
+      .eq("source", "espn");
+    const txMap = Object.fromEntries((pei ?? []).map((r: any) => [r.performer_id, {
+      tevo_performer_id: r.performer_id, espn_team_id: r.external_id,
+      espn_league: r.league, espn_slug: r.meta?.espn_slug,
+    }]));
     const performerIds = Object.keys(txMap).map(Number);
     if (!performerIds.length) return;
     const { data: events } = await db.from("events")
@@ -274,8 +339,6 @@ async function collectEventSnapshots(db: any, state: CollectorState) {
     const wp = summary.winprobability ?? [];
     const last = wp[wp.length - 1];
     const row = {
-      espn_event_id: r.espn_event_id,
-      espn_league: r.espn_league,
       state: c?.status?.type?.state ?? null,
       status_short: c?.status?.type?.shortDetail ?? null,
       home_team_id: home?.team?.id ? String(home.team.id) : null,
@@ -290,9 +353,13 @@ async function collectEventSnapshots(db: any, state: CollectorState) {
       home_win_prob: last?.homeWinPercentage != null ? Number(last.homeWinPercentage) : null,
       attendance: summary.gameInfo?.attendance ?? null,
     };
-    const { error } = await db.from("espn_event_snapshots").insert(row);
-    if (error && !/duplicate/i.test(error.message)) state.errors++;
-    else state.event_snaps_inserted++;
+    const hash = await md5(eventFields(row));
+    const { data: ret, error } = await db.rpc("upsert_espn_event_snapshot", {
+      p_event_id: r.espn_event_id, p_league: r.espn_league, p_hash: hash, p_payload: row,
+    });
+    if (error) { state.errors++; state.log.push(`event upsert FAIL ${r.espn_event_id}: ${error.message}`); }
+    else if (ret?.[0]?.action === "inserted") state.event_snaps_inserted++;
+    else state.event_snaps_unchanged++;
     await sleep(80);
   }
 }
@@ -315,7 +382,10 @@ Deno.serve(async (req) => {
 
   const state: CollectorState = {
     teams_processed: 0, events_processed: 0,
-    team_snaps_inserted: 0, injuries_inserted: 0, news_inserted: 0, event_snaps_inserted: 0,
+    team_snaps_inserted: 0, team_snaps_unchanged: 0,
+    injuries_inserted: 0, injuries_unchanged: 0,
+    news_inserted: 0,
+    event_snaps_inserted: 0, event_snaps_unchanged: 0,
     errors: 0, log: [],
   };
 

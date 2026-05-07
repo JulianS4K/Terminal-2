@@ -70,16 +70,18 @@ both agents are free to call any edge fn or read any view. only writes to source
 - bulk-add-watchlist edge fn = v1
 - espn edge fn = v1 (code, claude code 2026-05-07)
 - espn-collect edge fn = v2 (code, daily cron CANCELED pending bridge with performer_external_ids)
-- migrations applied through 20260507000015_espn_extend_to_all_leagues
+- migrations applied through 20260507000017_espn_change_only_ingest
 - watchlist = 48 performers (37 NFL added today)
 - performer_home_venues = 135 (NBA/NHL/NFL/MLB/WNBA; MLS missing — covered via performer_external_ids)
 - chat_aliases = 193 (incl 35 FIFA)
 - product wall enforced via DB views: retail_events / retail_listings / retail_event_metrics / retail_event_zones / retail_event_sections (S4K-owned only) vs broker_* (full)
-- performer_external_ids ESPN coverage = **169/169 across big-5 + WNBA**: NFL 32, NHL 32, NBA 30, MLB 30, MLS 30, WNBA 15 (canonical going forward)
+- performer_external_ids ESPN coverage = **217 teams across 7 leagues**: NFL 32, NHL 32, NBA 30, MLB 30, MLS 30, WNBA 15, World Cup 48 (canonical going forward)
 - team_xref = 38 rows — DEPRECATED. read performer_external_ids where source='espn' instead. drop after espn fn switches reads.
 - event_xref = 1 row (NYK@PHI G3, lazily populated). PHASE 1.3 (cowork): generalize into `event_external_ids` for SeatGeek/TM/S4K plug-ins.
-- espn snapshot tables (last collector run): 38 team snaps, 283 injuries, 190 news, 0 event snaps. Re-run pending espn fn redeploy reading from performer_external_ids.
-- tevo-perf-find edge fn = v2 (code, 2026-05-07) — admin lookup for performer search; used to seed migration 15. Keep around for future expansion teams.
+- espn snapshot tables (current baseline): 76 team snaps, 566 injuries, 190 news, 78 event snaps. All rows have content_hash + is_baseline=true (migration 17). Next collector run is change-only.
+- espn-collect edge fn = **v3 (code, 2026-05-07)** — change-only ingest: reads from performer_external_ids (217 teams), uses upsert_espn_*_snapshot RPCs to skip-if-unchanged. Daily cron still CANCELED — re-enable once the v3 baseline run is verified.
+- espn edge fn = v1 (still reads deprecated team_xref) — **NEXT for code: redeploy v2 reading from performer_external_ids**, then drop team_xref.
+- tevo-perf-find edge fn = v2 (code, 2026-05-07) — admin lookup for TEvo performer search; used to seed migrations 15+16. Keep around for future expansion teams.
 - sms-bot edge fn = DELETED 2026-05-07 (orphan, never used; tombstone v6 returns 410)
 - web-bot edge fn = DELETED 2026-05-07 (orphan, never used; tombstone v2 returns 410)
 
@@ -147,12 +149,14 @@ Mechanics (whoever picks this up):
 
 ### 2026-05-07 code (claude code session)
 
+- DONE <pending-sha> — **World Cup ESPN map (48/48) + change-only ESPN ingest**: pulled ESPN's 48 FIFA national teams; matched 22 against home_venues + 25 via tevo-perf-find + 1 manual (Türkiye→Turkey); migration 16 added 48 World Cup rows to performer_external_ids (now 217 across 7 leagues). Migration 17 added content_hash + last_seen_at + is_baseline columns to espn_team_snapshots / espn_injuries_snapshots / espn_event_snapshots, plus upsert_espn_*_snapshot RPCs. Backfilled all 720 existing rows as baseline. Deployed espn-collect v3 (reads from performer_external_ids, uses change-only RPCs); next run is delta-only. WAIT note added below for cowork's World Cup venue+date sweep.
 - DONE 34d483f — **ESPN coverage full**: pulled all 169 teams from ESPN public API (NFL/NBA/MLB/NHL/MLS/WNBA), name-matched 110 against `performer_home_venues`, deployed `tevo-perf-find` edge fn (admin lookup) to search TEvo for the remaining 59 unmatched teams, manually fixed 2 (Atlanta United, CF Montréal). Migration 15 inserts 131 new rows into performer_external_ids (idempotent NOT EXISTS guard); applied to prod. Final coverage: 169/169 across big-5 + WNBA. Documented venue-shares for future event-key strategy.
 - DONE 77502a3 — drop sms-bot + web-bot dirs from repo (tombstones already live in prod v6/v2 returning 410); migration 14 bridges team_xref → performer_external_ids (38 rows backfilled, applied to prod via MCP); team_xref marked DEPRECATED in DB comment + AGENTS.md STATE; restructure plan documented above.
 - DONE dc14107 — coordination protocol: STATUS BOARD + pre/post-commit rules (8/9/10) + agent↔product mapping clarified (code = broker terminal, cowork = retail chat).
 - DONE d602d18 — retro-doc batch: migrations 12 (team_xref) + 13 (event_xref + espn_*); espn + espn-collect Edge Function source; restored AGENTS.md (architecture diagram + rule 7); resolved fa4739b/38985f0 v2.10 conflict by skipping fa4739b.
 - DONE 2026-05-07 ~20:00 UTC — canceled rogue cron `espn-collect-daily`; abandoned worktree branch `claude/frosty-volhard-a3a6d8` (8 commits behind, on deleted bot.py).
-- WAIT cowork — espn fn (v1) still reads team_xref. Bridge has landed (performer_external_ids has all 38 ESPN rows). Either agent can redeploy espn fn v2 reading from performer_external_ids; until then the deprecated team_xref must stay in DB. Daily collector cron stays unscheduled until cadence confirmed.
+- WAIT cowork — espn fn (v1) still reads team_xref. Bridge has landed (performer_external_ids has all 217 ESPN rows). Either agent can redeploy espn fn v2 reading from performer_external_ids; until then the deprecated team_xref must stay in DB. Daily collector cron stays unscheduled until espn-collect v3 baseline run is verified clean.
+- WAIT cowork — **World Cup venue+date sweep / auto-tracker**. World Cup events don't fit cowork's seed-home-venues (category=performer) flow because they're scattered across venues with no clean "FIFA" TEvo category that returns the event-level performers reliably. Better pattern: TEvo `/v9/events?venue_id=X&occurs_at.gte=Y&occurs_at.lte=Z` for each known World Cup venue, then classify by name/performer match → auto-track. Inputs ready: 22 World Cup venues already in `performer_home_venues` where league='World Cup' (Allegiant, AT&T, Levi's, MetLife, Hard Rock, Sporting Park, Wembley, Olympiastadion Berlin, Allianz, Estadio da Luz, etc.). Suggested fn name: `seed-world-cup-events` or generalize `seed-home-venues` to also do venue-window event sweeps. Once landed, all events at WC venues during tournament window (June 11 – July 19, 2026) get auto-tracked, and the FIFA national teams in the event name get matched to performer_external_ids (source='espn', league='World Cup') for ESPN context. Same pattern can later cover Olympics, NCAA tourney sites, concert venues, etc.
 - WAIT user — repo move from `C:\Users\julia\code\Terminal-2` → `C:\VibeCode\terminal-2` per RESTRUCTURE PLAN above. Filesystem mv + Railway root reconfig are user-driven; in-tree git mv (steps 3-6) is agent-driven once user signals done.
 - NEXT chatbot in broker terminal — embed chat fn but with `audience='broker'` flag + full broker tools. Spec to be written as a GitHub issue. Will need chat fn v20 to accept audience param (cowork's lane).
 
