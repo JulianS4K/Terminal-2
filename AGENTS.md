@@ -70,17 +70,36 @@ both agents are free to call any edge fn or read any view. only writes to source
 - bulk-add-watchlist edge fn = v1
 - espn edge fn = v1 (code, claude code 2026-05-07)
 - espn-collect edge fn = v2 (code, daily cron CANCELED pending bridge with performer_external_ids)
-- migrations applied through 20260507000014_espn_bridge_to_performer_external_ids
+- migrations applied through 20260507000015_espn_extend_to_all_leagues
 - watchlist = 48 performers (37 NFL added today)
-- performer_home_venues = 135 (NBA/NHL/NFL/MLB/WNBA; MLS missing)
+- performer_home_venues = 135 (NBA/NHL/NFL/MLB/WNBA; MLS missing — covered via performer_external_ids)
 - chat_aliases = 193 (incl 35 FIFA)
 - product wall enforced via DB views: retail_events / retail_listings / retail_event_metrics / retail_event_zones / retail_event_sections (S4K-owned only) vs broker_* (full)
-- performer_external_ids = 38 ESPN rows (backfilled from team_xref on 2026-05-07; canonical going forward)
+- performer_external_ids ESPN coverage = **169/169 across big-5 + WNBA**: NFL 32, NHL 32, NBA 30, MLB 30, MLS 30, WNBA 15 (canonical going forward)
 - team_xref = 38 rows — DEPRECATED. read performer_external_ids where source='espn' instead. drop after espn fn switches reads.
-- event_xref = 1 row (NYK@PHI G3, lazily populated)
-- espn snapshot tables (last collector run): 38 team snaps, 283 injuries, 190 news, 0 event snaps
+- event_xref = 1 row (NYK@PHI G3, lazily populated). PHASE 1.3 (cowork): generalize into `event_external_ids` for SeatGeek/TM/S4K plug-ins.
+- espn snapshot tables (last collector run): 38 team snaps, 283 injuries, 190 news, 0 event snaps. Re-run pending espn fn redeploy reading from performer_external_ids.
+- tevo-perf-find edge fn = v2 (code, 2026-05-07) — admin lookup for performer search; used to seed migration 15. Keep around for future expansion teams.
 - sms-bot edge fn = DELETED 2026-05-07 (orphan, never used; tombstone v6 returns 410)
 - web-bot edge fn = DELETED 2026-05-07 (orphan, never used; tombstone v2 returns 410)
+
+### Shared venues (tracked teams) — date+venue alone is NOT a unique event key
+| venue | teams |
+|---|---|
+| MetLife Stadium | NY Giants, NY Jets (NFL) — also hosts NHL Stadium Series |
+| Madison Square Garden | NY Knicks (NBA), NY Rangers (NHL) |
+| American Airlines Center (Dallas) | Mavericks (NBA), Stars (NHL) |
+| Ball Arena (Denver) | Nuggets (NBA), Avalanche (NHL) |
+| Crypto.com Arena (LA) | Lakers (NBA), Sparks (WNBA) — Clippers moved to Intuit Dome |
+| Little Caesars Arena (Detroit) | Pistons (NBA), Red Wings (NHL) |
+| Xfinity Mobile Arena (Philly) | 76ers (NBA), Flyers (NHL) |
+| Gainbridge Fieldhouse (Indy) | Pacers (NBA), Fever (WNBA) |
+| Target Center (Mpls) | Timberwolves (NBA), Lynx (WNBA) |
+| SoFi Stadium (LA) | Chargers, Rams (NFL) |
+| Wrigley Field | Cubs (MLB) — also NHL Winter Classic |
+| Globe Life Field | Rangers (MLB) — also All-Star Game |
+
+For event matching across data sources (TEvo ↔ ESPN ↔ SeatGeek ↔ TM), key on **(date_utc, venue_id, performer_set)** not just (date, venue).
 
 ## RESTRUCTURE PLAN (proposed — not yet executed)
 
@@ -128,6 +147,7 @@ Mechanics (whoever picks this up):
 
 ### 2026-05-07 code (claude code session)
 
+- DONE <pending-sha> — **ESPN coverage full**: pulled all 169 teams from ESPN public API (NFL/NBA/MLB/NHL/MLS/WNBA), name-matched 110 against `performer_home_venues`, deployed `tevo-perf-find` edge fn (admin lookup) to search TEvo for the remaining 59 unmatched teams, manually fixed 2 (Atlanta United, CF Montréal). Migration 15 inserts 131 new rows into performer_external_ids (idempotent NOT EXISTS guard); applied to prod. Final coverage: 169/169 across big-5 + WNBA. Documented venue-shares for future event-key strategy.
 - DONE 77502a3 — drop sms-bot + web-bot dirs from repo (tombstones already live in prod v6/v2 returning 410); migration 14 bridges team_xref → performer_external_ids (38 rows backfilled, applied to prod via MCP); team_xref marked DEPRECATED in DB comment + AGENTS.md STATE; restructure plan documented above.
 - DONE dc14107 — coordination protocol: STATUS BOARD + pre/post-commit rules (8/9/10) + agent↔product mapping clarified (code = broker terminal, cowork = retail chat).
 - DONE d602d18 — retro-doc batch: migrations 12 (team_xref) + 13 (event_xref + espn_*); espn + espn-collect Edge Function source; restored AGENTS.md (architecture diagram + rule 7); resolved fa4739b/38985f0 v2.10 conflict by skipping fa4739b.
