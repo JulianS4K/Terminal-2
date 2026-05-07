@@ -448,6 +448,26 @@ Deno.serve(async (req) => {
   const history = Array.isArray(body?.history) ? body.history : (body?.message ? [{ role: "user", content: body.message }] : []);
   if (!history.length) return jsonResponse({ error: "history or message required" }, 400);
 
+  // Per-IP rate limit (10 req/60s default). check_chat_rate_limit() inserts the
+  // hit on success and prunes >1h old rows. Anonymous endpoint = strict default.
+  const ip = (req.headers.get("x-real-ip")
+            ?? req.headers.get("cf-connecting-ip")
+            ?? (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim()
+            ?? "unknown") || "unknown";
+  try {
+    const { data: allowed } = await db.rpc("check_chat_rate_limit", {
+      p_ip: ip, p_window_sec: 60, p_max_calls: 10,
+    });
+    if (allowed === false) {
+      try { await db.from("bot_messages").insert({ channel: "web", direction: "in", phone: "anon-retail", body: history[history.length-1]?.content?.slice(0, 200) ?? "", meta: { rate_limited: true, ip } }); } catch (_) {}
+      return jsonResponse({ error: "rate limited — try again in a minute" }, 429);
+    }
+  } catch (e) {
+    // If rate-limit check fails, fail open (don't block legitimate users on a check error)
+    // but log so we notice.
+    console.error("rate-limit check failed:", e);
+  }
+
   const creds = await resolveTevoCreds(db);
   const evo = creds ? new Evo(creds.token, creds.secret) : null;
 

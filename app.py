@@ -123,14 +123,8 @@ def require_auth(authorization: str | None = Header(None)):
 STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Evo Terminal")
 
-# Mount the messaging bot router (SMS + WhatsApp).
-# Endpoints (POST): /sms/webhook, /whatsapp/webhook
-# Webhook returns 503 until ANTHROPIC_API_KEY and TWILIO_AUTH_TOKEN are configured.
-try:
-    from bot import router as bot_router
-    app.include_router(bot_router)
-except ImportError as e:
-    print(f"bot module not available: {e}")
+# (SMS / WhatsApp / web bot moved to Supabase Edge Functions in v2.7:
+#  supabase/functions/sms-bot, web-bot, chat. The legacy bot.py is unused.)
 
 
 @app.exception_handler(RuntimeError)
@@ -651,12 +645,31 @@ def _fire_collect(url: str, secret: str) -> None:
         print(f"collect fire error: {e}")
 
 
+# Per-user throttle for /api/collect/run — 1 invocation per 5 min per email.
+# Defends against accidental loops or a leaked JWT being used to spam-fire the
+# collector. Cheap in-process state; resets on Railway redeploy.
+_collect_run_last_call: dict[str, float] = {}
+_COLLECT_RUN_COOLDOWN_SEC = 300
+
+
 @app.post("/api/collect/run")
-def collect_run(watchlist_id: int | None = None, _=Depends(require_auth)):
+def collect_run(watchlist_id: int | None = None, user=Depends(require_auth)):
     if not (SUPABASE_URL and CRON_SECRET):
         raise HTTPException(500, "Set SUPABASE_URL and CRON_SECRET to invoke the collector.")
+    if watchlist_id is not None and watchlist_id < 1:
+        raise HTTPException(400, "watchlist_id must be a positive integer")
+
+    import time
+    email = (user or {}).get("email") or "unknown"
+    now = time.time()
+    last = _collect_run_last_call.get(email, 0)
+    if now - last < _COLLECT_RUN_COOLDOWN_SEC:
+        wait = int(_COLLECT_RUN_COOLDOWN_SEC - (now - last))
+        raise HTTPException(429, f"rate limited — try again in {wait}s")
+    _collect_run_last_call[email] = now
+
     url = f"{SUPABASE_URL}/functions/v1/collect"
     if watchlist_id is not None:
-        url += f"?watchlist_id={watchlist_id}"
+        url += f"?watchlist_id={int(watchlist_id)}"
     threading.Thread(target=_fire_collect, args=(url, CRON_SECRET), daemon=True).start()
     return {"ok": True, "message": "collector fired; poll the runs table"}
