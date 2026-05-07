@@ -6,7 +6,7 @@ both agents read first. both agents append on action. keep cave-man.
 
 | agent  | status | started_at (UTC)    | working on                                   | branch | safe to interrupt? |
 |--------|--------|---------------------|----------------------------------------------|--------|--------------------|
-| code   | DOING  | 2026-05-07 21:00 UTC | orphan cleanup + ESPN bridge + restructure plan | main | no — mid-commit batch |
+| code   | IDLE   | —                   | —                                            | —      | yes                |
 | cowork | IDLE   | —                   | —                                            | —      | yes                |
 
 **Read this table before starting any work.** If the other agent is DOING and your planned work overlaps theirs (same files, related schema), wait or coordinate via a WAIT note in the LOG. If the other agent is IDLE you're clear to start — flip your row to DOING with a timestamp before your first commit.
@@ -70,26 +70,70 @@ both agents are free to call any edge fn or read any view. only writes to source
 - bulk-add-watchlist edge fn = v1
 - espn edge fn = v1 (code, claude code 2026-05-07)
 - espn-collect edge fn = v2 (code, daily cron CANCELED pending bridge with performer_external_ids)
-- migrations applied through 20260507000013_event_xref_and_espn_snapshots
+- migrations applied through 20260507000014_espn_bridge_to_performer_external_ids
 - watchlist = 48 performers (37 NFL added today)
 - performer_home_venues = 135 (NBA/NHL/NFL/MLB/WNBA; MLS missing)
 - chat_aliases = 193 (incl 35 FIFA)
 - product wall enforced via DB views: retail_events / retail_listings / retail_event_metrics / retail_event_zones / retail_event_sections (S4K-owned only) vs broker_* (full)
-- team_xref = 38 rows — TEvo performer ↔ ESPN team (will be bridged into performer_external_ids; deprecation tracked below)
+- performer_external_ids = 38 ESPN rows (backfilled from team_xref on 2026-05-07; canonical going forward)
+- team_xref = 38 rows — DEPRECATED. read performer_external_ids where source='espn' instead. drop after espn fn switches reads.
 - event_xref = 1 row (NYK@PHI G3, lazily populated)
 - espn snapshot tables (last collector run): 38 team snaps, 283 injuries, 190 news, 0 event snaps
-- sms-bot edge fn = DELETED 2026-05-07 (orphan, never used)
-- web-bot edge fn = DELETED 2026-05-07 (orphan, never used)
+- sms-bot edge fn = DELETED 2026-05-07 (orphan, never used; tombstone v6 returns 410)
+- web-bot edge fn = DELETED 2026-05-07 (orphan, never used; tombstone v2 returns 410)
+
+## RESTRUCTURE PLAN (proposed — not yet executed)
+
+Target layout for `C:\VibeCode\terminal-2` once the user moves the directory off OneDrive:
+
+```
+terminal-2/
+├── AGENTS.md                  ← shared (this file)
+├── README.md                  ← shared
+├── .gitignore                 ← shared
+├── Procfile                   ← root, points into broker/ (Railway needs root-level Procfile)
+├── requirements.txt           ← shared (FastAPI + supabase + anthropic — both products import)
+├── broker/                    ← code-owned (terminal admin UI)
+│   ├── app.py                 ← FastAPI routes + cron
+│   ├── evo_client.py          ← TEvo HMAC client
+│   └── static/
+│       └── index.html         ← Google-OAuth-gated terminal
+├── retail/                    ← cowork-owned (find-tickets chatbot)
+│   └── static/
+│       └── chat.html          ← anonymous public landing
+└── backend/                   ← shared (single source of truth)
+    └── supabase/
+        ├── migrations/        ← shared (cross-product schema)
+        └── functions/
+            ├── chat/          ← cowork
+            ├── collect-listings/
+            ├── seed-home-venues/
+            ├── bulk-add-watchlist/
+            ├── probe-tevo-category/
+            ├── espn/          ← code
+            └── espn-collect/  ← code
+```
+
+Mechanics (whoever picks this up):
+1. user moves dir: `mv C:\Users\julia\code\Terminal-2 C:\VibeCode\terminal-2` (closes all editor sessions first)
+2. user updates Railway root path → `broker/` (env vars unchanged)
+3. agent runs `git mv` for the moves above (in-tree; one commit, no content changes)
+4. agent updates Procfile to `web: uvicorn broker.app:app --host 0.0.0.0 --port $PORT` (or adds `cd broker &&` prefix)
+5. agent updates Supabase CLI config if any (`supabase/config.toml` paths) — `backend/supabase/`
+6. agent updates static-file mounts in app.py: serve `broker/static/` for `/`, `retail/static/` for `/chat`
+
+**WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
 
 ### 2026-05-07 code (claude code session)
 
-- DOING 21:00 UTC — orphan cleanup (drop sms-bot + web-bot), ESPN bridge to performer_external_ids, restructure plan for C:\VibeCode\terminal-2. STATUS BOARD set to DOING.
+- DONE <pending-sha> — drop sms-bot + web-bot dirs from repo (tombstones already live in prod v6/v2 returning 410); migration 14 bridges team_xref → performer_external_ids (38 rows backfilled, applied to prod via MCP); team_xref marked DEPRECATED in DB comment + AGENTS.md STATE; restructure plan documented above.
+- DONE dc14107 — coordination protocol: STATUS BOARD + pre/post-commit rules (8/9/10) + agent↔product mapping clarified (code = broker terminal, cowork = retail chat).
 - DONE d602d18 — retro-doc batch: migrations 12 (team_xref) + 13 (event_xref + espn_*); espn + espn-collect Edge Function source; restored AGENTS.md (architecture diagram + rule 7); resolved fa4739b/38985f0 v2.10 conflict by skipping fa4739b.
 - DONE 2026-05-07 ~20:00 UTC — canceled rogue cron `espn-collect-daily`; abandoned worktree branch `claude/frosty-volhard-a3a6d8` (8 commits behind, on deleted bot.py).
-- WAIT cowork — please pick up the espn ingest. team_xref → performer_external_ids bridge migration coming in next code commit. After bridge lands, espn fn will read performer_external_ids; team_xref deprecated. Daily collector cron stays unscheduled until you confirm cadence.
-- WAIT user — repo move from `C:\Users\julia\code\Terminal-2` → `C:\VibeCode\terminal-2`. I'll restructure into broker/ retail/ backend/ in-place via git mv; the actual filesystem-move + Railway-root-reconfig is user-driven (would invalidate my cwd mid-session).
+- WAIT cowork — espn fn (v1) still reads team_xref. Bridge has landed (performer_external_ids has all 38 ESPN rows). Either agent can redeploy espn fn v2 reading from performer_external_ids; until then the deprecated team_xref must stay in DB. Daily collector cron stays unscheduled until cadence confirmed.
+- WAIT user — repo move from `C:\Users\julia\code\Terminal-2` → `C:\VibeCode\terminal-2` per RESTRUCTURE PLAN above. Filesystem mv + Railway root reconfig are user-driven; in-tree git mv (steps 3-6) is agent-driven once user signals done.
 - NEXT chatbot in broker terminal — embed chat fn but with `audience='broker'` flag + full broker tools. Spec to be written as a GitHub issue. Will need chat fn v20 to accept audience param (cowork's lane).
 
 ### 2026-05-07 cowork
