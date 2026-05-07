@@ -1369,4 +1369,275 @@ async function loadVenueDetail(id) {
         <div>
           <h2>${esc(v.name)}</h2>
           <div class="sub"><span>${esc(v.location || "")}</span>
-            <sp
+            <span class="id-tag" style="margin-left:12px">venue_id ${v.id}</span></div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">popularity</div><div class="v amber">${Number(v.popularity_score || 0).toFixed(3)}</div></div>
+        <div class="stat"><div class="k">street</div><div class="v">${esc(a.street_address || "—")}</div></div>
+        <div class="stat"><div class="k">locality</div><div class="v">${esc(a.locality || "—")}, ${esc(a.region || "")}</div></div>
+        <div class="stat"><div class="k">postal</div><div class="v">${esc(a.postal_code || "—")}</div></div>
+        <div class="stat"><div class="k">lat / lon</div><div class="v">${a.latitude || "—"} / ${a.longitude || "—"}</div></div>
+        <div class="stat"><div class="k">first upcoming</div><div class="v">${upc.first ? upc.first.slice(0,10) : "—"}</div></div>
+        <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
+      </div>`;
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// -------- CONFIGURATIONS --------
+$("#configs-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#configs-results-panel").style.display = "none";
+  $("#configs-detail").classList.remove("open");
+  status("configs", "searching…");
+  try {
+    const data = await api("/api/configurations?" + params.toString());
+    renderConfigsResults(data);
+    status("configs");
+  } catch (err) { status("configs", "error: " + err.message, "err"); }
+});
+
+function renderConfigsResults(data) {
+  const configs = data.configurations || [];
+  $("#configs-count").textContent = `(${data.total_entries ?? configs.length})`;
+  const rows = configs.map((c, i) => {
+    const v = c.venue || {};
+    return `<tr class="row" data-id="${c.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${c.id}</td>
+      <td class="ellip">${esc(c.name)}</td>
+      <td>${c.primary ? '<span class="chip hot">primary</span>' : ""}</td>
+      <td>${c.general_admission ? '<span class="chip">GA</span>' : ""}</td>
+      <td class="ellip">${esc(v.name || "—")}</td>
+      <td class="dim">${esc(v.location || "")}</td>
+    </tr>`;
+  }).join("");
+  $("#configs-results").innerHTML = configs.length === 0 ? `<div class="empty">no configurations</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>name</th><th>flags</th><th></th>
+      <th>venue</th><th>location</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#configs-results-panel").style.display = "block";
+  $$("#configs-results-panel .table-filter").forEach(i => i.value = "");
+  $$("#configs-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#configs-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadConfigDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadConfigDetail(id) {
+  const detail = $("#configs-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading configuration</span></div>`;
+  detail.classList.add("open");
+  try {
+    const c = await api("/api/configurations/" + id);
+    const v = c.venue || {};
+    const pivots = v.id ? [
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ events at this venue</button>`,
+    ] : [];
+    detail.innerHTML = `
+      <div class="detail-head">
+        <div><h2>${esc(c.name)}</h2>
+          <div class="sub">
+            ${c.primary ? '<span class="chip hot">primary</span>' : ""}
+            ${c.general_admission ? '<span class="chip">general admission</span>' : ""}
+            <span class="id-tag" style="margin-left:12px">configuration_id ${c.id}</span>
+          </div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">capacity</div><div class="v amber">${num(c.capacity)}</div></div>
+        <div class="stat"><div class="k">venue</div><div class="v">${esc(v.name || "—")}</div></div>
+        <div class="stat"><div class="k">location</div><div class="v">${esc(v.location || "—")}</div></div>
+        <div class="stat"><div class="k">street</div><div class="v">${esc(v.street_address || "—")}</div></div>
+        <div class="stat"><div class="k">updated</div><div class="v dim">${esc(c.updated_at || "—")}</div></div>
+        <div class="stat"><div class="k">venue_id</div><div class="v id-tag">${v.id || "—"}</div></div>
+      </div>`;
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// -------- WATCHLIST --------
+$("#wl-add-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!CONFIG.supabase_configured) { status("wl", "Supabase not configured — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY", "err"); return; }
+  const obj = formToObject(e.target);
+  try {
+    const resp = await api("/api/watchlist", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({kind: obj.kind, ext_id: Number(obj.ext_id), label: obj.label || null}),
+    });
+    if (resp.ok === false) { toast(resp.error || "failed", true); return; }
+    toast("added");
+    e.target.reset();
+    loadWatchlist();
+  } catch (err) { toast(err.message, true); }
+});
+
+async function loadWatchlist() {
+  if (!CONFIG.supabase_configured) { $("#wl-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/watchlist");
+    const items = data.items || [];
+    $("#wl-count").textContent = `(${items.length})`;
+    const rows = items.map(w => `
+      <tr>
+        <td><span class="chip ${w.kind === 'performer' ? 'hot' : ''}">${w.kind}</span></td>
+        <td class="id-tag">${w.ext_id}</td>
+        <td class="ellip">${esc(w.label || '—')}</td>
+        <td class="dim">${shortStamp(w.added_at)}</td>
+        <td><button class="danger" onclick="removeWatchlist(${w.id}, this)">remove</button></td>
+      </tr>`).join("");
+    $("#wl-table").innerHTML = items.length === 0 ? `<div class="empty">empty watchlist</div>` : `
+      <table><thead><tr>
+        <th>kind</th><th>ext_id</th><th>label</th><th>added</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) { $("#wl-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+async function removeWatchlist(id, btn) {
+  if (!confirm("remove from watchlist?")) return;
+  btn.disabled = true;
+  try {
+    await api("/api/watchlist/" + id, {method: "DELETE"});
+    toast("removed");
+    loadWatchlist();
+  } catch (err) { toast(err.message, true); btn.disabled = false; }
+}
+
+async function runCollector() {
+  const btn = $("#collect-now-btn");
+  btn.disabled = true;
+  btn.textContent = "firing…";
+  try {
+    await api("/api/collect/run", {method: "POST"});
+    toast("collector fired — check runs below in ~30-90s");
+    btn.textContent = "fired ✓";
+    setTimeout(() => { btn.textContent = "run collector now"; btn.disabled = false; loadRuns(); }, 3000);
+  } catch (err) {
+    toast(err.message, true);
+    btn.textContent = "run collector now";
+    btn.disabled = false;
+  }
+}
+
+async function loadRuns() {
+  if (!CONFIG.supabase_configured) { $("#runs-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/runs?limit=10");
+    const items = data.items || [];
+    const rows = items.map(r => {
+      const dur = (r.started_at && r.finished_at)
+        ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + "s"
+        : r.finished_at ? "—" : `<span class="loading">running</span>`;
+      const errChip = r.stats_errors > 0
+        ? `<span class="chip red">${r.stats_errors} err</span>`
+        : (r.finished_at ? `<span class="chip green">ok</span>` : "");
+      return `<tr>
+        <td class="id-tag">${r.id}</td>
+        <td class="dim">${shortStamp(r.started_at)}</td>
+        <td class="dim">${shortStamp(r.finished_at)}</td>
+        <td class="num">${dur}</td>
+        <td class="num">${num(r.events_collected)}</td>
+        <td>${errChip}</td>
+      </tr>`;
+    }).join("");
+    $("#runs-table").innerHTML = items.length === 0 ? `<div class="empty">no runs yet</div>` : `
+      <table><thead><tr>
+        <th>id</th><th>started</th><th>finished</th><th class="num">duration</th>
+        <th class="num">events</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) { $("#runs-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+async function loadLatest() {
+  if (!CONFIG.supabase_configured) { $("#latest-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/snapshots/latest");
+    const items = data.items || [];
+    $("#latest-count").textContent = `(${items.length})`;
+    const rows = items.map(s => `
+      <tr class="row" data-id="${s.event_id}">
+        <td class="id-tag">${s.event_id}</td>
+        <td class="ellip">${esc(s.event_name || "—")}</td>
+        <td>${shortDate(s.occurs_at_local)}</td>
+        <td class="ellip dim">${esc(s.venue_name || "")}</td>
+        <td class="num">${num(s.ticket_groups_count)}</td>
+        <td class="num">${num(s.tickets_count)}</td>
+        <td class="num money">${moneyC(s.retail_price_min)}</td>
+        <td class="num money">${moneyC(s.retail_price_avg)}</td>
+        <td class="num money">${moneyC(s.retail_price_max)}</td>
+        <td class="dim">${shortStamp(s.captured_at)}</td>
+      </tr>`).join("");
+    $("#latest-table").innerHTML = items.length === 0 ? `<div class="empty">no snapshots yet — run the collector</div>` : `
+      <table><thead><tr>
+        <th>event_id</th><th>event</th><th>date</th><th>venue</th>
+        <th class="num">groups</th><th class="num">tickets</th>
+        <th class="num">min</th><th class="num">avg</th><th class="num">max</th>
+        <th>captured</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    $$("#latest-table tr.row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        switchTab("events");
+        loadEventDetail(Number(tr.dataset.id));
+      });
+    });
+  } catch (err) { $("#latest-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+function deltaCell(n) {
+  if (n == null) return `<td class="dim num">—</td>`;
+  const v = Number(n);
+  if (v === 0) return `<td class="num dim">0</td>`;
+  const cls = v > 0 ? "delta-up" : "delta-down";
+  const sign = v > 0 ? "+" : "";
+  return `<td class="num ${cls}">${sign}${v.toLocaleString()}</td>`;
+}
+
+async function loadVelocity() {
+  if (!CONFIG.supabase_configured) { $("#velocity-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/snapshots/velocity");
+    const items = (data.items || []).filter(i => i.tickets_delta != null || i.avg_delta != null);
+    $("#velocity-count").textContent = `(${items.length})`;
+    const rows = items.map(s => `
+      <tr class="row" data-id="${s.id}">
+        <td class="id-tag">${s.id}</td>
+        <td class="ellip">${esc(s.name || "")}</td>
+        <td>${shortDate(s.occurs_at_local)}</td>
+        <td class="num">${num(s.tickets_now)}</td>
+        ${deltaCell(s.tickets_delta)}
+        <td class="num money">${moneyC(s.avg_now)}</td>
+        ${deltaCell(s.avg_delta)}
+        ${deltaCell(s.min_delta)}
+        <td class="dim">${shortStamp(s.previous_at)}</td>
+        <td class="dim">${shortStamp(s.latest_at)}</td>
+      </tr>`).join("");
+    $("#velocity-table").innerHTML = items.length === 0 ? `<div class="empty">need ≥2 runs to compute velocity</div>` : `
+      <table><thead><tr>
+        <th>id</th><th>event</th><th>date</th>
+        <th class="num">tix now</th><th class="num">Δ tix</th>
+        <th class="num">avg now</th><th class="num">Δ avg</th><th class="num">Δ min</th>
+        <th>prev</th><th>latest</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    $$("#velocity-table tr.row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        switchTab("events");
+        loadEventDetail(Number(tr.dataset.id));
+      });
+    });
+  } catch (err) { $("#velocity-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+</script>
+</body>
+</html>
