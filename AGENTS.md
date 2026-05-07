@@ -11,6 +11,16 @@ both agents read first. both agents append on action. keep cave-man.
 
 **Read this table before starting any work.** If the other agent is DOING and your planned work overlaps theirs (same files, related schema), wait or coordinate via a WAIT note in the LOG. If the other agent is IDLE you're clear to start — flip your row to DOING with a timestamp before your first commit.
 
+## WIP (files an agent is actively editing — append before edit, clear on commit)
+
+**Read this section before opening any file.** If a file you want to edit is listed under the *other* agent, pick a different file or wait. Append your file paths under your own subsection before you start editing. Clear your subsection back to "(none)" the moment you commit and push.
+
+### code
+- (none)
+
+### cowork
+- (none)
+
 ## ARCHITECTURE
 
 ONE backend. TWO products. TWO front-ends. TWO agents.
@@ -51,13 +61,14 @@ both agents are free to call any edge fn or read any view. only writes to source
 1. `git pull --rebase origin main` before push. always.
 2. no edit other agent's owned path without leaving WAIT note in LOG first.
 3. `.claude/` gitignored. never commit worktrees.
-4. work in `C:\Users\julia\code\Terminal-2`. never OneDrive. **(planned move to `C:\VibeCode\terminal-2` — see WAIT in LOG)**
+4. work in `C:\VibeCode\terminal-2`. never OneDrive, never `C:\Users\julia\Code\Terminal-2` once the move completes. **(repo still physically at `C:\Users\julia\Code\Terminal-2` as of 2026-05-07; user-driven `mv` + Railway root reconfig pending — see WAIT in LOG)**
 5. append to LOG below at end of every session. newest entry on top.
 6. tag tasks: DOING / DONE / WAIT / NEXT / BLOCKED.
 7. broker product = full data. retail product = S4K-owned only. never cross.
 8. **before commit:** flip your STATUS BOARD row to DOING with `started_at` timestamp + brief working-on. if you're going to touch the other agent's owned path or shared SQL, also leave a WAIT note in LOG (top of LOG, your section).
 9. **after commit/push:** flip your STATUS BOARD row back to IDLE with `started_at` cleared, AND append a LOG entry under today's date with: `DONE <SHA> <subject>` (newest first within the day). if your work spans multiple commits in one session, one LOG entry covering all of them is fine — list each SHA.
 10. if the other agent is DOING and you need to start: read their STATUS BOARD row's `working on`. if your planned work overlaps (same file, related table), don't start — leave a `WAIT for code/cowork to finish <topic>` note in the LOG and pick something else.
+11. **before editing ANY file:** append the file path under your subsection in the WIP section above. read the *other* agent's WIP first — if they have your target file listed, pick a different file or wait. **clear your subsection back to "(none)" the instant you commit + push.** This rule is finer-grained than rule 10: STATUS BOARD says "I'm working", WIP says "exactly which files".
 
 ## STATE (truth, not history)
 
@@ -149,6 +160,7 @@ Mechanics (whoever picks this up):
 
 ### 2026-05-07 code (claude code session)
 
+- DONE <pending-sha> — **WIP-section workflow**: added WIP section (between STATUS BOARD and ARCHITECTURE) where each agent appends in-flight file paths before edit and clears on commit. Added rule 11 spelling out the workflow. Updated rule 4: `C:\VibeCode\terminal-2` is now the canonical work-dir directive (still WAIT on user-driven `mv` + Railway root reconfig — git repo physically at `C:\Users\julia\Code\Terminal-2` until then). Noted discrepancy: a hand-seeded starter AGENTS.md exists at `C:\VibeCode\terminal-2\AGENTS.md` (no STATUS BOARD / STATE / LOG sections); when the move happens, the git-tracked one in this commit supersedes it.
 - DONE cbf3a5e — **World Cup ESPN map (48/48) + change-only ESPN ingest**: pulled ESPN's 48 FIFA national teams; matched 22 against home_venues + 25 via tevo-perf-find + 1 manual (Türkiye→Turkey); migration 16 added 48 World Cup rows to performer_external_ids (now 217 across 7 leagues). Migration 17 added content_hash + last_seen_at + is_baseline columns to espn_team_snapshots / espn_injuries_snapshots / espn_event_snapshots, plus upsert_espn_*_snapshot RPCs. Backfilled all 720 existing rows as baseline. Deployed espn-collect v3 (reads from performer_external_ids, uses change-only RPCs); next run is delta-only. WAIT note added below for cowork's World Cup venue+date sweep.
 - DONE 34d483f — **ESPN coverage full**: pulled all 169 teams from ESPN public API (NFL/NBA/MLB/NHL/MLS/WNBA), name-matched 110 against `performer_home_venues`, deployed `tevo-perf-find` edge fn (admin lookup) to search TEvo for the remaining 59 unmatched teams, manually fixed 2 (Atlanta United, CF Montréal). Migration 15 inserts 131 new rows into performer_external_ids (idempotent NOT EXISTS guard); applied to prod. Final coverage: 169/169 across big-5 + WNBA. Documented venue-shares for future event-key strategy.
 - DONE 77502a3 — drop sms-bot + web-bot dirs from repo (tombstones already live in prod v6/v2 returning 410); migration 14 bridges team_xref → performer_external_ids (38 rows backfilled, applied to prod via MCP); team_xref marked DEPRECATED in DB comment + AGENTS.md STATE; restructure plan documented above.
@@ -157,7 +169,7 @@ Mechanics (whoever picks this up):
 - DONE 2026-05-07 ~20:00 UTC — canceled rogue cron `espn-collect-daily`; abandoned worktree branch `claude/frosty-volhard-a3a6d8` (8 commits behind, on deleted bot.py).
 - WAIT cowork — espn fn (v1) still reads team_xref. Bridge has landed (performer_external_ids has all 217 ESPN rows). Either agent can redeploy espn fn v2 reading from performer_external_ids; until then the deprecated team_xref must stay in DB. Daily collector cron stays unscheduled until espn-collect v3 baseline run is verified clean.
 - WAIT cowork — **World Cup venue+date sweep / auto-tracker**. World Cup events don't fit cowork's seed-home-venues (category=performer) flow because they're scattered across venues with no clean "FIFA" TEvo category that returns the event-level performers reliably. Better pattern: TEvo `/v9/events?venue_id=X&occurs_at.gte=Y&occurs_at.lte=Z` for each known World Cup venue, then classify by name/performer match → auto-track. Inputs ready: 22 World Cup venues already in `performer_home_venues` where league='World Cup' (Allegiant, AT&T, Levi's, MetLife, Hard Rock, Sporting Park, Wembley, Olympiastadion Berlin, Allianz, Estadio da Luz, etc.). Suggested fn name: `seed-world-cup-events` or generalize `seed-home-venues` to also do venue-window event sweeps. Once landed, all events at WC venues during tournament window (June 11 – July 19, 2026) get auto-tracked, and the FIFA national teams in the event name get matched to performer_external_ids (source='espn', league='World Cup') for ESPN context. Same pattern can later cover Olympics, NCAA tourney sites, concert venues, etc.
-- WAIT user — repo move from `C:\Users\julia\code\Terminal-2` → `C:\VibeCode\terminal-2` per RESTRUCTURE PLAN above. Filesystem mv + Railway root reconfig are user-driven; in-tree git mv (steps 3-6) is agent-driven once user signals done.
+- WAIT user — repo move from `C:\Users\julia\code\Terminal-2` → `C:\VibeCode\terminal-2` per RESTRUCTURE PLAN above. Filesystem mv + Railway root reconfig are user-driven; in-tree git mv (steps 3-6) is agent-driven once user signals done. **Note:** user has seeded a starter AGENTS.md at the new path. When the move happens, replace it with the git-tracked AGENTS.md (which has STATUS BOARD / WIP / STATE / LOG sections the seed lacks).
 - NEXT chatbot in broker terminal — embed chat fn but with `audience='broker'` flag + full broker tools. Spec to be written as a GitHub issue. Will need chat fn v20 to accept audience param (cowork's lane).
 
 ### 2026-05-07 cowork
