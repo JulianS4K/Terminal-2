@@ -146,6 +146,13 @@ def chat_page():
     return (STATIC_DIR / "chat.html").read_text(encoding="utf-8")
 
 
+@app.get("/event/{event_id}", response_class=HTMLResponse)
+def event_terminal_page(event_id: int):
+    """Broker terminal — single event detail page (Bloomberg/Robinhood hybrid).
+    The event_id is read by the JS via window.location.pathname."""
+    return (STATIC_DIR / "event.html").read_text(encoding="utf-8")
+
+
 @app.get("/api/public/config")
 def public_config():
     """Browser-safe config for the login page. No secrets."""
@@ -673,3 +680,220 @@ def collect_run(watchlist_id: int | None = None, user=Depends(require_auth)):
         url += f"?watchlist_id={int(watchlist_id)}"
     threading.Thread(target=_fire_collect, args=(url, CRON_SECRET), daemon=True).start()
     return {"ok": True, "message": "collector fired; poll the runs table"}
+
+
+# ============================================================================
+# Broker terminal — event-detail page endpoints
+# ----------------------------------------------------------------------------
+# Backs the new /event/{id} terminal (Bloomberg/Robinhood hybrid).
+# Each endpoint returns its own last_pull_at + cadence_seconds so the page
+# can poll independently per data type, cascaded across events.
+# ============================================================================
+
+
+def _listings_cadence_seconds(occurs_at_local: str | None) -> int:
+    """Mirror collect-listings cron windows: closer events poll faster."""
+    if not occurs_at_local:
+        return 60 * 60 * 24
+    try:
+        # occurs_at_local is TEXT not TIMESTAMPTZ — known P1. Slice to date.
+        d = datetime.fromisoformat(occurs_at_local[:10])
+        days_out = (d - datetime.now()).days
+    except Exception:
+        return 60 * 60
+    if days_out <= 1:
+        return 60 * 20      # 20 min
+    if days_out <= 7:
+        return 60 * 60      # 60 min
+    if days_out <= 30:
+        return 60 * 60 * 4  # 4h
+    if days_out <= 60:
+        return 60 * 60 * 12 # 12h
+    return 60 * 60 * 24     # 24h
+
+
+def _delta(curr, prev):
+    """Compute delta + percent for a numeric metric. Returns dict or None."""
+    if curr is None or prev is None:
+        return None
+    try:
+        c = float(curr); p = float(prev)
+    except (TypeError, ValueError):
+        return None
+    if c == p:
+        return {"abs": 0, "pct": 0, "dir": "flat"}
+    diff = c - p
+    pct = (diff / p * 100) if p != 0 else None
+    return {"abs": round(diff, 2), "pct": round(pct, 2) if pct is not None else None,
+            "dir": "up" if diff > 0 else "down"}
+
+
+@app.get("/api/broker/event/{event_id}/overview")
+def broker_event_overview(event_id: int, _=Depends(require_auth)):
+    """Top-left pane: event header + event-level metrics + zone breakdown.
+    Returns latest + prior values so the UI can render delta arrows."""
+    db = require_sb()
+
+    # Event header (use cowork's RPC for the rich payload)
+    detail = db.rpc("get_broker_event_detail", {"p_event_id": event_id}).execute().data or []
+    head = detail[0] if detail else None
+
+    # Latest two event_metrics for delta computation
+    em_rows = (
+        db.table("event_metrics")
+        .select(
+            "captured_at,tickets_count,groups_count,sections_count,"
+            "retail_min,retail_median,retail_p75,retail_p90,retail_max,retail_sum,"
+            "wholesale_median,getin_price,owned_groups_count,owned_tickets_count,"
+            "owned_share,owned_median_retail,price_dispersion,top5_concentration"
+        )
+        .eq("event_id", event_id)
+        .order("captured_at", desc=True)
+        .limit(2)
+        .execute()
+    ).data or []
+    curr = em_rows[0] if len(em_rows) >= 1 else {}
+    prev = em_rows[1] if len(em_rows) >= 2 else {}
+
+    metric_keys = [
+        "tickets_count", "groups_count", "sections_count",
+        "retail_min", "retail_median", "retail_p75", "retail_p90", "retail_max", "retail_sum",
+        "wholesale_median", "getin_price",
+        "owned_groups_count", "owned_tickets_count", "owned_share", "owned_median_retail",
+        "price_dispersion", "top5_concentration",
+    ]
+    metrics = {k: {"v": curr.get(k), "delta": _delta(curr.get(k), prev.get(k))} for k in metric_keys}
+
+    # Zone breakdown — owned + market split via cowork's RPC
+    zones_owned = db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": True}).execute().data or []
+    zones_market = db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": False}).execute().data or []
+
+    cadence = _listings_cadence_seconds(head.get("occurs_at_local") if head else None)
+    last_pull = curr.get("captured_at")
+
+    return {
+        "event": head,
+        "metrics": metrics,
+        "zones": {"owned": zones_owned, "market": zones_market},
+        "last_pull_at": last_pull,
+        "cadence_seconds": cadence,
+    }
+
+
+@app.get("/api/broker/event/{event_id}/section-metrics")
+def broker_event_section_metrics(event_id: int, _=Depends(require_auth)):
+    """Tab 1: section-level metrics with delta vs prior snapshot."""
+    db = require_sb()
+    rows = (
+        db.table("section_metrics")
+        .select("captured_at,section,is_ancillary,tickets_count,groups_count,"
+                "retail_min,retail_median,retail_mean,retail_max")
+        .eq("event_id", event_id)
+        .order("captured_at", desc=True)
+        .limit(2000)
+        .execute()
+    ).data or []
+    # Group by section, take the latest two captured_at per section
+    by_section: dict[str, list] = {}
+    for r in rows:
+        by_section.setdefault(r["section"], []).append(r)
+
+    out = []
+    last_pull = None
+    for section, snaps in by_section.items():
+        snaps.sort(key=lambda x: x["captured_at"], reverse=True)
+        c = snaps[0]
+        p = snaps[1] if len(snaps) >= 2 else {}
+        if last_pull is None or c["captured_at"] > last_pull:
+            last_pull = c["captured_at"]
+        out.append({
+            "section": section,
+            "is_ancillary": bool(c.get("is_ancillary")),
+            "metrics": {k: {"v": c.get(k), "delta": _delta(c.get(k), p.get(k))}
+                        for k in ["tickets_count", "groups_count",
+                                  "retail_min", "retail_median", "retail_mean", "retail_max"]},
+        })
+    out.sort(key=lambda s: (s["is_ancillary"], s["section"]))
+
+    # Cadence matches event listings cadence
+    ev_meta = (db.table("events").select("occurs_at_local").eq("id", event_id).limit(1).execute().data or [{}])[0]
+    cadence = _listings_cadence_seconds(ev_meta.get("occurs_at_local"))
+    return {"sections": out, "last_pull_at": last_pull, "cadence_seconds": cadence}
+
+
+@app.get("/api/broker/event/{event_id}/raw-tevo")
+def broker_event_raw_tevo(event_id: int, force: bool = False, _=Depends(require_auth)):
+    """Tab 3: raw TEvo /v9/ticket_groups payload. Reads cowork's
+    tevo_ticket_groups_cache (90s TTL); fetches fresh if expired or force=1."""
+    db = require_sb()
+    if not force:
+        cached = db.rpc("get_cached_ticket_groups", {"p_event_id": event_id}).execute().data
+        if cached:
+            return {"source": "cache", "groups": (cached or {}).get("ticket_groups", []),
+                    "captured_at": (cached or {}).get("captured_at")}
+    # Cache miss / forced refresh — fetch live
+    try:
+        live = client.get_ticket_groups(event_id)
+    except RuntimeError as e:
+        raise HTTPException(502, f"TEvo fetch failed: {e}")
+    payload = {"ticket_groups": live.get("ticket_groups", []), "captured_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        db.rpc("put_cached_ticket_groups", {"p_event_id": event_id, "p_payload": payload, "p_ttl_seconds": 90}).execute()
+    except Exception:
+        pass
+    return {"source": "live", "groups": payload["ticket_groups"], "captured_at": payload["captured_at"]}
+
+
+@app.get("/api/broker/event/{event_id}/espn")
+def broker_event_espn(event_id: int, _=Depends(require_auth)):
+    """Tab 2: ESPN aggregated data for home + away teams.
+    Calls the espn edge fn server-side to keep the JWT off the wire."""
+    if not (SUPABASE_URL and SUPABASE_ANON_KEY):
+        raise HTTPException(500, "espn fn not reachable: missing SUPABASE_URL/SUPABASE_ANON_KEY")
+    url = f"{SUPABASE_URL}/functions/v1/espn/event/{int(event_id)}"
+    try:
+        r = requests.get(url, headers={"Authorization": f"Bearer {SUPABASE_ANON_KEY}"}, timeout=15)
+        return r.json() if r.ok else {"applicable": False, "error": f"espn fn {r.status_code}"}
+    except Exception as e:
+        return {"applicable": False, "error": str(e)}
+
+
+@app.get("/api/broker/event/{event_id}/cadences")
+def broker_event_cadences(event_id: int, _=Depends(require_auth)):
+    """Per-section poll cadence for the page. Each section reads its own
+    last_pull_at + cadence_seconds; next poll = last + cadence + jitter."""
+    db = require_sb()
+    ev = (db.table("events").select("id,occurs_at_local").eq("id", event_id).limit(1).execute().data or [{}])[0]
+    listings_cad = _listings_cadence_seconds(ev.get("occurs_at_local"))
+    # last_pull_at for listings = most recent event_metrics row
+    last_listings = (
+        db.table("event_metrics").select("captured_at")
+        .eq("event_id", event_id).order("captured_at", desc=True).limit(1)
+        .execute()
+    ).data or []
+    last_listings_at = last_listings[0]["captured_at"] if last_listings else None
+
+    # ESPN injuries cadence = 10 min (espn-roster-10min cron)
+    last_inj = (
+        db.table("espn_injuries_snapshots").select("last_seen_at")
+        .order("last_seen_at", desc=True).limit(1).execute()
+    ).data or []
+    last_inj_at = last_inj[0]["last_seen_at"] if last_inj else None
+
+    # ESPN team standings cadence = daily; ESPN scores/odds for events ±24h = 10 min
+    last_team_snap = (
+        db.table("espn_team_snapshots").select("last_seen_at")
+        .order("last_seen_at", desc=True).limit(1).execute()
+    ).data or []
+    last_team_at = last_team_snap[0]["last_seen_at"] if last_team_snap else None
+
+    return {
+        "event_id": event_id,
+        "sections": {
+            "overview":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
+            "section_metrics": {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
+            "raw_tevo":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
+            "espn_injuries":   {"last_pull_at": last_inj_at,      "cadence_seconds": 60 * 10},
+            "espn_team":       {"last_pull_at": last_team_at,     "cadence_seconds": 60 * 60 * 24},
+        },
+    }

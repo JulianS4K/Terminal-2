@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Terminal · Event</title>
+<style>
+  /* Bloomberg/Robinhood hybrid: dense, monospace numbers, dark, fast.
+     No fluff. Speed > flash. */
+  :root {
+    --bg: #0a0c10;
+    --bg-2: #11151c;
+    --bg-3: #1a2029;
+    --border: #232a36;
+    --fg: #e6edf3;
+    --fg-2: #9aa5b1;
+    --fg-3: #6b7684;
+    --up: #34d399;
+    --down: #f87171;
+    --flat: #6b7684;
+    --owned: #fbbf24;     /* S4K-owned highlight */
+    --flash: rgba(251, 191, 36, 0.18);
+    --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  .num, code, .mono { font-family: "SF Mono", "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* layout */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-2);
+    font-size: 12px;
+  }
+  .topbar .title { font-weight: 600; letter-spacing: 0.02em; }
+  .topbar .meta { display: flex; gap: 16px; color: var(--fg-2); }
+  .countdown { color: var(--fg-3); }
+  .countdown.fresh { color: var(--up); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: minmax(280px, auto) minmax(220px, auto) 1fr;
+    grid-template-areas:
+      "tl tr"
+      "mid mid"
+      "tabs tabs";
+    gap: 1px;
+    background: var(--border);
+    min-height: calc(100vh - 38px);
+  }
+  .pane { background: var(--bg); padding: 12px 14px; overflow: auto; }
+  .pane.tl   { grid-area: tl; }
+  .pane.tr   { grid-area: tr; }
+  .pane.mid  { grid-area: mid; }
+  .pane.tabs { grid-area: tabs; padding: 0; }
+
+  .pane-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+  .pane-head h2 { margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-2); }
+  .pane-head .last-pull { font-size: 11px; color: var(--fg-3); font-family: "SF Mono", monospace; }
+
+  /* metric cards */
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px; }
+  .card  { background: var(--bg-2); border: 1px solid var(--border); padding: 6px 8px; }
+  .card .lbl { font-size: 10px; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.08em; }
+  .card .val { font-family: "SF Mono", monospace; font-size: 17px; font-weight: 600; margin-top: 2px; }
+  .card .delta { font-family: "SF Mono", monospace; font-size: 11px; margin-top: 1px; }
+
+  /* delta semantics */
+  .up    { color: var(--up); }
+  .down  { color: var(--down); }
+  .flat  { color: var(--flat); }
+  .arrow-up::before   { content: "▲ "; }
+  .arrow-down::before { content: "▼ "; }
+  .arrow-flat::before { content: "─ "; }
+
+  /* flash on update */
+  @keyframes flash { from { background-color: var(--flash); } to { background-color: transparent; } }
+  .flashed { animation: flash 1s ease-out; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead th { text-align: left; font-weight: 600; color: var(--fg-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 8px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  tbody td { padding: 4px 8px; border-bottom: 1px solid var(--bg-3); }
+  tbody tr:hover { background: var(--bg-2); }
+  td.num { font-family: "SF Mono", monospace; text-align: right; font-variant-numeric: tabular-nums; }
+  td.delta { font-family: "SF Mono", monospace; text-align: right; font-size: 11px; }
+  tr.owned { background: rgba(251, 191, 36, 0.06); }
+  tr.owned td:first-child { border-left: 2px solid var(--owned); }
+  tr.ancillary td { color: var(--fg-3); }
+
+  /* zone breakdown */
+  .zone-head { font-size: 11px; color: var(--fg-2); text-transform: uppercase; letter-spacing: 0.08em; margin: 14px 0 6px; }
+
+  /* seating chart */
+  .map-frame { display: flex; align-items: center; justify-content: center; min-height: 240px; background: var(--bg-2); border: 1px solid var(--border); }
+  .map-frame img { max-width: 100%; max-height: 360px; object-fit: contain; filter: invert(0.92) hue-rotate(180deg); }
+  .map-empty { color: var(--fg-3); font-size: 12px; }
+  .zone-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .chip { font-size: 11px; padding: 3px 7px; border: 1px solid var(--border); background: var(--bg-2); cursor: pointer; user-select: none; }
+  .chip:hover { background: var(--bg-3); }
+  .chip.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+  /* chart */
+  .chart-wrap { position: relative; height: 200px; }
+  .chart-empty { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--fg-3); }
+
+  /* tabs */
+  .tabs-nav { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+  .tab-btn  { padding: 8px 16px; cursor: pointer; font-size: 12px; color: var(--fg-2); border-right: 1px solid var(--border); user-select: none; }
+  .tab-btn:hover { background: var(--bg-3); }
+  .tab-btn.active { background: var(--bg); color: var(--fg); border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
+  .tab-content { padding: 12px 14px; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* small helpers */
+  .muted { color: var(--fg-3); }
+  .btn { background: var(--bg-3); border: 1px solid var(--border); color: var(--fg); padding: 4px 10px; font-size: 11px; cursor: pointer; }
+  .btn:hover { background: var(--border); }
+  .pill { display: inline-block; padding: 1px 6px; font-size: 10px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg-2); margin-left: 4px; vertical-align: middle; }
+  .pill.owned { color: var(--owned); border-color: var(--owned); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title" id="event-title">Loading event…</div>
+    <div class="meta">
+      <span id="event-date" class="mono"></span>
+      <span id="event-venue"></span>
+      <span class="countdown" id="header-cd"></span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- TOP-LEFT: event metrics + zone breakdown -->
+    <div class="pane tl">
+      <div class="pane-head">
+        <h2>Event metrics → Zones</h2>
+        <span class="last-pull" id="tl-last-pull">—</span>
+      </div>
+      <div class="cards" id="metric-cards"></div>
+      <div class="zone-head">Zones — owned / market</div>
+      <table id="zones-table">
+        <thead>
+          <tr>
+            <th>Zone</th>
+            <th class="num">Owned tix</th>
+            <th class="num">Owned $ range</th>
+            <th class="num">Market tix</th>
+            <th class="num">Market $ range</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="zones-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- TOP-RIGHT: seating chart -->
+    <div class="pane tr">
+      <div class="pane-head">
+        <h2>Seating chart</h2>
+        <span class="last-pull" id="tr-last-pull">—</span>
+      </div>
+      <div class="map-frame" id="map-frame"><span class="map-empty">No chart yet</span></div>
+      <div class="zone-chips" id="zone-chips"></div>
+    </div>
+
+    <!-- MIDDLE: time-series chart placeholder -->
+    <div class="pane mid">
+      <div class="pane-head">
+        <h2>Price over time</h2>
+        <span class="last-pull">Stage 2 — chart wires into /api/events/{id}/series</span>
+      </div>
+      <div class="chart-empty mono">[ time-series chart — coming Stage 2 ]</div>
+    </div>
+
+    <!-- TABS -->
+    <div class="pane tabs">
+      <div class="tabs-nav">
+        <div class="tab-btn active" data-tab="sections">Sections</div>
+        <div class="tab-btn" data-tab="espn">ESPN</div>
+        <div class="tab-btn" data-tab="raw">Raw TEvo</div>
+        <div style="flex:1"></div>
+        <div class="tab-btn" id="raw-refresh-btn" style="display:none" title="Force TEvo round-trip">↻ refresh raw</div>
+      </div>
+      <div class="tab-content">
+        <div class="tab-pane active" data-tab="sections">
+          <table id="sections-table">
+            <thead>
+              <tr>
+                <th>Section</th>
+                <th class="num">Tix</th>
+                <th class="num">Groups</th>
+                <th class="num">Min</th>
+                <th class="num">Median</th>
+                <th class="num">Mean</th>
+                <th class="num">Max</th>
+              </tr>
+            </thead>
+            <tbody id="sections-tbody"></tbody>
+          </table>
+          <div class="last-pull mono" id="sections-last-pull" style="margin-top:8px"></div>
+        </div>
+        <div class="tab-pane" data-tab="espn">
+          <div id="espn-content" class="muted">Loading ESPN context…</div>
+        </div>
+        <div class="tab-pane" data-tab="raw">
+          <div id="raw-meta" class="muted" style="margin-bottom:6px"></div>
+          <div style="overflow:auto; max-height:560px">
+            <table id="raw-table">
+              <thead>
+                <tr>
+                  <th>TG ID</th>
+                  <th>Section</th>
+                  <th>Row</th>
+                  <th class="num">Qty</th>
+                  <th class="num">Retail $</th>
+                  <th class="num">Wholesale $</th>
+                  <th>Format</th>
+                  <th>Brokerage</th>
+                  <th>Type</th>
+                  <th class="num">Splits</th>
+                  <th>In-hand</th>
+                </tr>
+              </thead>
+              <tbody id="raw-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// =============================================================================
+// Event terminal — bootstrap, polling, deltas, flashes
+// =============================================================================
+
+const EVENT_ID = parseInt(window.location.pathname.split("/").pop(), 10);
+
+// --- Auth: pull JWT from same Supabase session the broker terminal uses.
+//     If session not present, redirect to / (login page) keeping intended URL.
+async function getJWT() {
+  const cfg = await fetch("/api/public/config").then(r => r.json());
+  if (!window.supabase) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://esm.sh/@supabase/supabase-js@2";
+      s.type = "module";
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    }).catch(() => null);
+  }
+  // Use REST validation route — supabase-js may not be necessary here since
+  // require_auth on the server already validates the JWT. We just need to
+  // pull the JWT from localStorage where the index page stored it.
+  const stored = localStorage.getItem("sb-" + new URL(cfg.supabase_url).host.split(".")[0] + "-auth-token");
+  if (!stored) {
+    window.location.href = "/?return=" + encodeURIComponent(window.location.pathname);
+    return null;
+  }
+  try { return JSON.parse(stored).access_token; }
+  catch (_) { return null; }
+}
+
+let JWT = null;
+
+async function api(path) {
+  const r = await fetch(path, { headers: { Authorization: "Bearer " + JWT } });
+  if (r.status === 401) { window.location.href = "/"; return null; }
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r.json();
+}
+
+// --- Formatting
+function fmtMoney(v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (!isFinite(n)) return "—";
+  return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+function fmtNum(v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (!isFinite(n)) return "—";
+  return n.toLocaleString();
+}
+function fmtPct(v) {
+  if (v == null) return "—";
+  return (Number(v) * 100).toFixed(1) + "%";
+}
+function fmtAgo(iso) {
+  if (!iso) return "—";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "now";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+function fmtCountdown(secs) {
+  if (secs == null) return "";
+  if (secs <= 0) return "polling…";
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `next pull ${m}:${String(s).padStart(2, "0")}`;
+}
+
+// --- Delta helper
+function renderDelta(d, isMoney) {
+  if (!d) return "";
+  if (d.dir === "flat") return `<span class="flat arrow-flat">0</span>`;
+  const cls = d.dir === "up" ? "up" : "down";
+  const arrow = `arrow-${d.dir}`;
+  const absStr = isMoney ? fmtMoney(Math.abs(d.abs)) : fmtNum(Math.abs(d.abs));
+  const pctStr = d.pct != null ? ` (${d.pct >= 0 ? "+" : ""}${d.pct}%)` : "";
+  const sign = d.dir === "up" ? "+" : "-";
+  return `<span class="${cls} ${arrow}">${sign}${absStr}${pctStr}</span>`;
+}
+
+function flash(el) {
+  if (!el) return;
+  el.classList.remove("flashed");
+  void el.offsetWidth;     // force reflow to restart animation
+  el.classList.add("flashed");
+}
+
+// --- Per-section poller. Each section schedules its own poll based on its
+//     own last_pull_at + cadence + jitter. Cascades naturally per-event.
+function makePoller(name, fn, cadenceMs, lastPullAtIso) {
+  let timer = null;
+  let countdownEl = document.getElementById(name + "-cd") || null;
+  function schedule() {
+    const lastMs = lastPullAtIso ? new Date(lastPullAtIso).getTime() : Date.now();
+    const jitter = Math.floor(Math.random() * 15000);
+    const next = Math.max(2000, (lastMs + cadenceMs + 15000 + jitter) - Date.now());
+    if (countdownEl) {
+      let remaining = Math.floor(next / 1000);
+      countdownEl.textContent = fmtCountdown(remaining);
+      const ticker = setInterval(() => {
+        remaining -= 1;
+        if (countdownEl) countdownEl.textContent = fmtCountdown(remaining);
+        if (remaining <= 0) clearInterval(ticker);
+      }, 1000);
+    }
+    timer = setTimeout(async () => {
+      try {
+        const newLast = await fn();
+        lastPullAtIso = newLast || new Date().toISOString();
+      } catch (e) {
+        console.error(name, e);
+      } finally {
+        schedule();
+      }
+    }, next);
+  }
+  schedule();
+  return { stop: () => timer && clearTimeout(timer) };
+}
+
+// --- Top-left: event metrics + zone breakdown
+const METRIC_CARDS = [
+  { k: "retail_median",       lbl: "Retail median",  money: true  },
+  { k: "getin_price",         lbl: "Get-in",         money: true  },
+  { k: "tickets_count",       lbl: "Listed tix",     money: false },
+  { k: "groups_count",        lbl: "Listings",       money: false },
+  { k: "owned_tickets_count", lbl: "S4K-owned tix",  money: false },
+  { k: "owned_share",         lbl: "S4K share",      pct: true    },
+  { k: "retail_min",          lbl: "Lowest ask",     money: true  },
+  { k: "retail_max",          lbl: "Highest ask",    money: true  },
+];
+
+let _prev_metrics_v = {};
+
+async function loadOverview() {
+  const data = await api(`/api/broker/event/${EVENT_ID}/overview`);
+  if (!data) return null;
+
+  // header
+  if (data.event) {
+    document.getElementById("event-title").textContent = data.event.name || "(unnamed)";
+    document.getElementById("event-date").textContent = (data.event.occurs_at_local || "").slice(0, 16).replace("T", " ");
+    document.getElementById("event-venue").textContent = data.event.venue_name || "";
+  }
+
+  // metric cards
+  const wrap = document.getElementById("metric-cards");
+  wrap.innerHTML = "";
+  for (const cfg of METRIC_CARDS) {
+    const m = data.metrics[cfg.k] || { v: null, delta: null };
+    const valStr = cfg.money ? fmtMoney(m.v) : (cfg.pct ? fmtPct(m.v) : fmtNum(m.v));
+    const card = document.createElement("div");
+    card.className = "card";
+    card.dataset.k = cfg.k;
+    card.innerHTML = `
+      <div class="lbl">${cfg.lbl}</div>
+      <div class="val">${valStr}</div>
+      <div class="delta">${renderDelta(m.delta, cfg.money)}</div>`;
+    wrap.appendChild(card);
+    // Flash if value changed since last render
+    if (_prev_metrics_v[cfg.k] !== undefined && _prev_metrics_v[cfg.k] !== m.v) flash(card);
+    _prev_metrics_v[cfg.k] = m.v;
+  }
+
+  // zones — merge owned + market by zone name
+  const tbody = document.getElementById("zones-tbody");
+  tbody.innerHTML = "";
+  const ownedByZone = Object.fromEntries((data.zones?.owned || []).map(z => [z.zone, z]));
+  const marketByZone = Object.fromEntries((data.zones?.market || []).map(z => [z.zone, z]));
+  const zoneNames = [...new Set([...Object.keys(ownedByZone), ...Object.keys(marketByZone)])];
+  for (const zone of zoneNames) {
+    const o = ownedByZone[zone] || {};
+    const m = marketByZone[zone] || {};
+    const tr = document.createElement("tr");
+    if ((o.tickets || 0) > 0) tr.classList.add("owned");
+    tr.innerHTML = `
+      <td>${zone}</td>
+      <td class="num">${o.tickets ? fmtNum(o.tickets) : "—"}</td>
+      <td class="num">${o.tickets ? `${fmtMoney(o.min_retail)}–${fmtMoney(o.max_retail)}` : "—"}</td>
+      <td class="num">${m.tickets ? fmtNum(m.tickets) : "—"}</td>
+      <td class="num">${m.tickets ? `${fmtMoney(m.min_retail)}–${fmtMoney(m.max_retail)}` : "—"}</td>
+      <td class="muted">${m.source || o.source || ""}</td>`;
+    tbody.appendChild(tr);
+  }
+
+  // zone chips on the map pane (filter UI placeholder for stage 5)
+  const chipsWrap = document.getElementById("zone-chips");
+  chipsWrap.innerHTML = "";
+  for (const z of zoneNames) {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.textContent = z;
+    chip.onclick = () => { chip.classList.toggle("active"); /* stage 5: filter */ };
+    chipsWrap.appendChild(chip);
+  }
+
+  // map (static image for v1)
+  const mapEl = document.getElementById("map-frame");
+  const mapUrl = data.event && data.event.map_medium_url;
+  if (mapUrl) {
+    mapEl.innerHTML = `<img src="${mapUrl}" alt="Seating chart" />`;
+  } else {
+    mapEl.innerHTML = `<span class="map-empty">No chart on file ${data.event?.configuration_id ? `(config ${data.event.configuration_id})` : ""}</span>`;
+  }
+
+  document.getElementById("tl-last-pull").textContent = fmtAgo(data.last_pull_at);
+  document.getElementById("tr-last-pull").textContent = fmtAgo(data.last_pull_at);
+  return data.last_pull_at;
+}
+
+// --- Tab 1: sections
+async function loadSections() {
+  const data = await api(`/api/broker/event/${EVENT_ID}/section-metrics`);
+  if (!data) return null;
+  const tbody = document.getElementById("sections-tbody");
+  tbody.innerHTML = "";
+  for (const s of data.sections || []) {
+    const m = s.metrics;
+    const tr = document.createElement("tr");
+    if (s.is_ancillary) tr.classList.add("ancillary");
+    tr.innerHTML = `
+      <td>${s.section}${s.is_ancillary ? '<span class="pill">anc</span>' : ''}</td>
+      <td class="num">${fmtNum(m.tickets_count.v)}<div class="delta">${renderDelta(m.tickets_count.delta, false)}</div></td>
+      <td class="num">${fmtNum(m.groups_count.v)}<div class="delta">${renderDelta(m.groups_count.delta, false)}</div></td>
+      <td class="num">${fmtMoney(m.retail_min.v)}<div class="delta">${renderDelta(m.retail_min.delta, true)}</div></td>
+      <td class="num">${fmtMoney(m.retail_median.v)}<div class="delta">${renderDelta(m.retail_median.delta, true)}</div></td>
+      <td class="num">${fmtMoney(m.retail_mean.v)}<div class="delta">${renderDelta(m.retail_mean.delta, true)}</div></td>
+      <td class="num">${fmtMoney(m.retail_max.v)}<div class="delta">${renderDelta(m.retail_max.delta, true)}</div></td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById("sections-last-pull").textContent =
+    `${data.sections?.length || 0} sections · last pull ${fmtAgo(data.last_pull_at)} · cadence ${Math.round((data.cadence_seconds || 0) / 60)}m`;
+  return data.last_pull_at;
+}
+
+// --- Tab 2: ESPN
+async function loadEspn() {
+  const data = await api(`/api/broker/event/${EVENT_ID}/espn`);
+  const el = document.getElementById("espn-content");
+  if (!data || !data.applicable) {
+    el.innerHTML = `<div class="muted">${data?.reason || "No ESPN data for this event."}</div>`;
+    return null;
+  }
+  const h = data.header || {};
+  const home = h.competitors?.home || {}, away = h.competitors?.away || {};
+  const odds = data.odds || {};
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em">Home</div>
+        <div style="font-weight:600;font-size:15px;margin:4px 0">${home.name || "—"} <span class="muted mono">${home.abbr || ""}</span></div>
+        <div class="mono">${home.record || ""}</div>
+        <div style="font-size:24px;font-weight:600" class="mono">${home.score ?? ""}</div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em">Away</div>
+        <div style="font-weight:600;font-size:15px;margin:4px 0">${away.name || "—"} <span class="muted mono">${away.abbr || ""}</span></div>
+        <div class="mono">${away.record || ""}</div>
+        <div style="font-size:24px;font-weight:600" class="mono">${away.score ?? ""}</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+      <div class="mono"><strong>${h.status || ""}</strong> · ${h.venue || ""} · ${h.network || ""}</div>
+      ${odds.spread ? `<div class="mono" style="margin-top:4px">${odds.provider}: spread ${odds.spread} · O/U ${odds.over_under} · ML ${odds.home_ml ?? "—"}/${odds.away_ml ?? "—"}</div>` : ""}
+    </div>
+    ${(data.injuries || []).length ? `
+      <div class="zone-head" style="margin-top:14px">Injuries</div>
+      <table>
+        <thead><tr><th>Team</th><th>Athlete</th><th>Pos</th><th>Status</th><th>Comment</th></tr></thead>
+        <tbody>${data.injuries.map(i => `<tr><td>${i.team}</td><td>${i.athlete}</td><td class="muted">${i.position || ""}</td><td>${i.status}</td><td class="muted">${i.comment || ""}</td></tr>`).join("")}</tbody>
+      </table>` : ""}
+    ${data.win_probability?.current_home_win_pct != null ? `<div class="mono" style="margin-top:8px">Home win prob: ${(data.win_probability.current_home_win_pct * 100).toFixed(1)}%</div>` : ""}
+  `;
+  return new Date().toISOString();
+}
+
+// --- Tab 3: raw TEvo
+async function loadRaw(force) {
+  const url = `/api/broker/event/${EVENT_ID}/raw-tevo${force ? "?force=1" : ""}`;
+  const data = await api(url);
+  if (!data) return null;
+  const tbody = document.getElementById("raw-tbody");
+  tbody.innerHTML = "";
+  for (const g of data.groups || []) {
+    const owned = g.office?.brokerage?.id === 1768;
+    const tr = document.createElement("tr");
+    if (owned) tr.classList.add("owned");
+    tr.innerHTML = `
+      <td class="mono">${g.id ?? ""}</td>
+      <td>${g.section ?? ""}</td>
+      <td>${g.row ?? ""}</td>
+      <td class="num">${g.available_quantity ?? g.quantity ?? ""}</td>
+      <td class="num">${fmtMoney(g.retail_price)}</td>
+      <td class="num">${fmtMoney(g.wholesale_price)}</td>
+      <td class="muted">${g.format || ""}</td>
+      <td class="muted">${g.office?.brokerage?.name || ""} ${owned ? '<span class="pill owned">S4K</span>' : ""}</td>
+      <td class="muted">${g.type || ""}</td>
+      <td class="num muted">${(g.splits || []).join(",")}</td>
+      <td class="muted">${g.in_hand ? "yes" : (g.in_hand_on || "—")}</td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById("raw-meta").textContent = `${(data.groups || []).length} ticket groups · source: ${data.source} · ${fmtAgo(data.captured_at)}`;
+  return data.captured_at;
+}
+
+// --- Tab switching
+document.querySelectorAll(".tab-btn[data-tab]").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tab-btn[data-tab]").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    const t = btn.dataset.tab;
+    document.querySelector(`.tab-pane[data-tab="${t}"]`).classList.add("active");
+    document.getElementById("raw-refresh-btn").style.display = t === "raw" ? "block" : "none";
+    if (t === "espn" && !window._espn_loaded) { loadEspn(); window._espn_loaded = true; }
+    if (t === "raw" && !window._raw_loaded) { loadRaw(false); window._raw_loaded = true; }
+  };
+});
+document.getElementById("raw-refresh-btn").onclick = () => loadRaw(true);
+
+// --- Bootstrap + start polling
+(async () => {
+  JWT = await getJWT();
+  if (!JWT) return;
+
+  // Initial fetches
+  const lastOverview = await loadOverview();
+  const lastSections = await loadSections();
+
+  // Poll cadence info to drive per-section schedulers
+  const cad = await api(`/api/broker/event/${EVENT_ID}/cadences`);
+  if (!cad) return;
+
+  makePoller("overview", loadOverview,
+    (cad.sections.overview.cadence_seconds || 1200) * 1000,
+    cad.sections.overview.last_pull_at);
+  makePoller("sections", loadSections,
+    (cad.sections.section_metrics.cadence_seconds || 1200) * 1000,
+    cad.sections.section_metrics.last_pull_at);
+  // ESPN + raw refresh on tab open; ESPN injuries auto-poll at 10m if tab open
+  setInterval(() => {
+    const tab = document.querySelector(".tab-btn.active")?.dataset.tab;
+    if (tab === "espn") loadEspn();
+    if (tab === "raw")  loadRaw(false);
+  }, 60 * 1000); // 1-min check; underlying data caches handle real cadence
+})();
+</script>
+</body>
+</html>
