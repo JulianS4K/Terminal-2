@@ -910,34 +910,36 @@ async function loadEvent(eventId) {
     return `<div class="kpi"><div class="kpi-l">${esc(label)}</div><div class="kpi-v">${vDisp}</div><div class="kpi-d ${dCls}">${dDisp}</div></div>`;
   };
 
-  // Zone ladder — combine owned + market by zone
+  // Zone ladder — combine owned + market by zone.
+  // RPC get_event_zones_rollup returns: zone, source, tickets, min_retail, max_retail
+  // (NOT tickets_count / retail_min / retail_max — verified against prod 2026-05-08).
   const byZone = {};
-  for (const z of zonesMarket) byZone[z.zone || z.zone_name || 'unknown'] = { ...z, market: z };
+  for (const z of zonesMarket) byZone[z.zone || 'unknown'] = { market: z };
   for (const z of zonesOwned) {
-    const k = z.zone || z.zone_name || 'unknown';
+    const k = z.zone || 'unknown';
     byZone[k] = byZone[k] || {};
     byZone[k].owned = z;
   }
   const zoneEntries = Object.entries(byZone);
-  const zoneTotalTix = zoneEntries.reduce((s, [, info]) => s + ((info.market || {}).tickets_count || 0), 0);
+  const zoneTotalTix = zoneEntries.reduce((s, [, info]) => s + ((info.market || {}).tickets || 0), 0);
   // If zones return rows but all zero (sections not mapped to zones for this event),
   // fall back to raw section-metrics so the user still sees the market depth.
   let depthTitle, depthHeader, depthRows, depthCaption;
   if (zoneEntries.length && zoneTotalTix > 0) {
     depthTitle = 'Zone Ladder · Market Depth';
-    depthHeader = '<th>Zone</th><th class="num">Min</th><th class="num">Med</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th>';
+    depthHeader = '<th>Zone</th><th>Source</th><th class="num">Min</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th>';
     depthRows = zoneEntries.map(([name, info]) => {
       const mz = info.market || {}; const oz = info.owned || {};
-      const ownedTix = oz.tickets_count || 0;
-      const totalTix = mz.tickets_count || 0;
+      const ownedTix = oz.tickets || 0;
+      const totalTix = mz.tickets || 0;
       const share = totalTix > 0 ? (ownedTix / totalTix) : 0;
       const isMkt = share >= 0.30;
       const cls = ['', ownedTix > 0 ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
       return `<tr class="${cls}">
         <td>${esc(name)}</td>
-        <td class="num">${moneyC(mz.retail_min)}</td>
-        <td class="num">${moneyC(mz.retail_median)}</td>
-        <td class="num">${moneyC(mz.retail_max)}</td>
+        <td class="dim">${esc(mz.source || '—')}</td>
+        <td class="num">${moneyC(mz.min_retail)}</td>
+        <td class="num">${moneyC(mz.max_retail)}</td>
         <td class="num">${num(totalTix)}</td>
         <td class="num">${num(ownedTix)}</td>
         <td class="num ${isMkt?'warn':''}">${totalTix > 0 ? Math.round(share*100)+'%' : '—'}</td>
@@ -1063,7 +1065,6 @@ async function loadEvent(eventId) {
             <tr><td class="muted">Price dispersion</td><td class="num">${m.price_dispersion?.v != null ? Number(m.price_dispersion.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P75 / P25 — wider = more spread</td></tr>
             <tr><td class="muted">Tail premium</td><td class="num">${m.tail_premium?.v != null ? Number(m.tail_premium.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P90 / median — steeper top end</td></tr>
             <tr><td class="muted">Top-5 concentration</td><td class="num">${m.top5_concentration?.v != null ? Math.round(m.top5_concentration.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">tickets in top-5 sections</td></tr>
-            <tr><td class="muted">Bid/Ask proxy</td><td class="num">${m.bid_ask_proxy?.v != null ? Math.round(m.bid_ask_proxy.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">(retail_p25 − wholesale_p25) / retail_p25</td></tr>
             <tr><td class="muted">Sections active</td><td class="num">${num(m.sections_count?.v)}</td><td class="dim" style="font-size:11px;">non-ancillary</td></tr>
             <tr><td class="muted">Listing groups</td><td class="num">${num(m.groups_count?.v)}</td><td class="dim" style="font-size:11px;">avg ${m.median_group_size?.v != null ? Number(m.median_group_size.v).toFixed(1) : '—'} tix/grp</td></tr>
             <tr><td class="muted">Ancillary tix</td><td class="num">${num(m.ancillary_tickets?.v)}</td><td class="dim" style="font-size:11px;">parking/hospitality, ${num(m.ancillary_groups?.v)} grps</td></tr>

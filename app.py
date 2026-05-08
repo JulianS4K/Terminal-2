@@ -904,7 +904,10 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
             # Wholesale price distribution
             "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
             # Market structure / quality
-            "getin_price,top5_concentration,bid_ask_proxy,"
+            # NOTE: bid_ask_proxy was dropped in mig 20260428000001 (always 0 — TEvo
+            # API doesn't expose true wholesale to this token). Don't re-add to the
+            # select or the query 500s.
+            "getin_price,top5_concentration,"
             "price_dispersion,tail_premium,"
             # Owned (S4K)
             "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail"
@@ -926,7 +929,7 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
         # Wholesale distribution
         "wholesale_min", "wholesale_median", "wholesale_mean", "wholesale_max",
         # Market structure
-        "getin_price", "top5_concentration", "bid_ask_proxy",
+        "getin_price", "top5_concentration",
         "price_dispersion", "tail_premium",
         # Owned
         "owned_groups_count", "owned_tickets_count", "owned_share", "owned_median_retail",
