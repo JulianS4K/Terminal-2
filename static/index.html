@@ -1894,10 +1894,14 @@ async function loadPerformer(performerId) {
     .sort((a, b) => (a.occurs_at_local || '').localeCompare(b.occurs_at_local || ''));
   const agg = portfolio.aggregate || {};
 
-  // Home/Away counts for the panel caption
+  // Home/Away counts — only meaningful for sports performers per TEvo
+  // taxonomy (what_event_type='game'). For concerts/comedy/theater the
+  // backend returns is_home=null on every event; we hide the chips entirely.
+  const isSportsPerf = !!portfolio.is_sports_performer;
   const homeCount = portfolioEvents.filter(e => e.is_home === true).length;
   const awayCount = portfolioEvents.filter(e => e.is_home === false).length;
   const neutralCount = portfolioEvents.filter(e => e.is_home == null).length;
+  const perfClass = portfolio.performer_classification || {};
 
   const eventRows = portfolioEvents.slice(0, 50).map(e => {
     const isOwned = (e.owned_tickets_count || 0) > 0;
@@ -2013,9 +2017,10 @@ async function loadPerformer(performerId) {
         <div class="panel-h">
           <h3>Upcoming Events · with current metrics</h3>
           <div class="actions" style="display:flex;gap:8px;align-items:center;">
-            ${homeCount ? `<span class="badge home" title="Games at performer's home venue">${homeCount} HOME</span>` : ''}
-            ${awayCount ? `<span class="badge road" title="Games at opponent venues">${awayCount} AWAY</span>` : ''}
-            ${neutralCount ? `<span class="badge" title="Venue not classified — neutral / TBD / unknown">${neutralCount} N/A</span>` : ''}
+            ${isSportsPerf && homeCount ? `<span class="badge home" title="Games at performer's home venue">${homeCount} HOME</span>` : ''}
+            ${isSportsPerf && awayCount ? `<span class="badge road" title="Games at opponent venues">${awayCount} AWAY</span>` : ''}
+            ${isSportsPerf && neutralCount ? `<span class="badge" title="Venue not classified — neutral / TBD / unknown">${neutralCount} N/A</span>` : ''}
+            ${!isSportsPerf && perfClass.what_event_type ? `<span class="badge" title="${esc((perfClass.top_category_name || '') + ' · ' + (perfClass.parent_category_name || '') + ' · ' + (perfClass.category_name || ''))}">${esc(perfClass.what_event_type)}${perfClass.genre ? ' · ' + esc(perfClass.genre) : ''}</span>` : ''}
             <span class="dim">${portfolioEvents.length} total</span>
           </div>
         </div>

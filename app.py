@@ -658,8 +658,13 @@ def portfolio(
     ).data or []
 
     # 2b) For performer-filtered queries, look up the performer's home venue(s)
-    # so each event can be tagged is_home (matches home venue) vs away.
+    # AND classification so we can tag is_home for sports only.
+    # HOME/AWAY only applies when what_event_type='game' (per TEvo taxonomy:
+    # Sports=343 maps to 'game', Concerts/Comedy/Theater do not — Taylor
+    # Swift at MSG isn't "home", the venue just hosts).
     home_venue_ids: set[int] = set()
+    is_sports_performer: bool = False
+    perf_classification: dict | None = None
     if performer_id is not None:
         phv_rows = (
             db.table("performer_home_venues")
@@ -668,6 +673,16 @@ def portfolio(
             .execute()
         ).data or []
         home_venue_ids = {int(r["venue_id"]) for r in phv_rows if r.get("venue_id") is not None}
+
+        pm_rows = (
+            db.table("performer_metadata")
+            .select("what_event_type, top_category_name, parent_category_name, category_name, genre")
+            .eq("performer_id", performer_id).limit(1)
+            .execute()
+        ).data or []
+        if pm_rows:
+            perf_classification = pm_rows[0]
+            is_sports_performer = (perf_classification.get("what_event_type") == "game")
 
     # 3) Pull latest metrics row per event
     ev_metrics = (
@@ -687,11 +702,11 @@ def portfolio(
     out_events = []
     for ev in ev_meta:
         m = metrics_by_id.get(ev["id"], {})
-        # is_home: only meaningful for performer-filtered queries. True iff
-        # the event's venue matches one of this performer's home venues.
-        # null for venue_id / watchlist_only filters where 'home' is undefined.
+        # is_home: only meaningful for sports performers. Concerts/comedy/
+        # theater performers don't have a home venue concept (the venue just
+        # hosts). Gate on what_event_type='game' from performer_metadata.
         is_home = None
-        if performer_id is not None:
+        if performer_id is not None and is_sports_performer:
             if ev.get("venue_id") is not None:
                 is_home = int(ev["venue_id"]) in home_venue_ids
         out_events.append({
@@ -759,6 +774,8 @@ def portfolio(
             "venue_id": venue_id,
             "watchlist_only": watchlist_only,
         },
+        "performer_classification": perf_classification,    # null when not perf-filtered
+        "is_sports_performer": is_sports_performer,         # gates the HOME/AWAY UI
         "events": out_events,
         "aggregate": {
             "events_count": len(out_events),

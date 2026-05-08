@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v1`
-**Last verified against prod**: 2026-05-09 ~00:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v2`
+**Last verified against prod**: 2026-05-09 ~01:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 This is a snapshot of every table, function, RPC, cron, and edge-function in
@@ -65,6 +65,89 @@ features so we have shared vocabulary.
 | 8 | **Game context** | espn_event_snapshots | state, status_short, home/away_score, odds_provider, spread, over_under, home_ml/away_ml, home_win_prob, attendance |
 | 9 | **News & narrative** | espn_news, wiki_summary, wiki_rivalries, wiki_seasons, why_signals | headline, type, published_at, rivalry intensity, season records, weather/why signals |
 | 10 | **Map / config / topology** | events, performer_zones (+ rules), zone_rules, venue_assets, performer_metadata | configuration_id/name, seating_chart URLs, fanvenues_key, zone defs, venue capacity/hero, logo_default_url |
+
+---
+
+## TEvo classification taxonomy (audited 2026-05-09)
+
+TEvo pushes us a 3-level category tree per performer plus 2 derived
+classifications. Inventory of distinct values currently in
+`performer_metadata` (883 perfs, 826 with classification):
+
+### `top_category_name` (4 values)
+
+| Value | Count | What it is |
+|---|---|---|
+| **Concerts** | 441 | Music acts |
+| **Sports** | 343 | Teams, leagues, tournaments |
+| **Comedy** | 24 | Stand-up, comedy shows |
+| **Theater** | 18 | Musicals, plays, ballet, movies |
+
+### Sports subtree (`parent_category_name` → `category_name`)
+
+| Parent | Leaves | Counts |
+|---|---|---|
+| **Football** (97) | NCAA Football (53), NFL (36), IFL (6), UFL (1), USFL (1) | |
+| **Soccer** (81) | MLS (33), NWSL (12), USL Championship (11), World Cup (10), EPL (8), Bundesliga (4), Mexico FMF (1), USL One (1), FA Cup (1) | |
+| **Baseball** (44) | MLB (30), MiLB (10), Independent League (4) | |
+| **Sports** (41) | generic catch-all (Soccer/Rodeo/Cricket/Volleyball/Football/Rugby/Lacrosse/Fighting/Hockey/Misc) | |
+| **Basketball** (36) | WNBA (18), NBA (15), CEBL (3) | |
+| **Hockey** (23) | NHL (17), International (2), PWHL (2), NCAA Men's (1), AHL (1) | |
+| **Fighting** (17) | MMA (6), WWE (5), Wrestling (4), Boxing (2) | |
+| **Auto Racing** (4) | Monster Trucks (4) | |
+
+### Concerts subtree (genres)
+
+Rock & Pop (124), Country & Folk (79), Alt Rock (43), R&B/Urban Soul (37),
+Rap & Hip-Hop (36), Hard Rock/Metal (27), Latin (20), Indie (17),
+Dance/Electronic (13), New Age (8), World (7), Misc (7), K-Pop (5),
+Festivals (4), Classical (4), Family (3), Reggae (2), Jazz (2), DJ (1).
+
+### Theater subtree
+
+Musicals (8), Entertainment Shows (5), Plays (2), Movies (1), Ballet & Dance (1).
+
+### Derived classifications (computed by SQL fns from the leaf category)
+
+**`performer_metadata.what_event_type`** (4 values, rolls up the tree):
+- `game` (343) — every Sports performer
+- `concert` (441) — every Concerts performer
+- `comedy` (24) — every Comedy performer
+- `show` (18) — every Theater performer
+
+**`performer_metadata.genre`** (~13 values for non-game performers): rock,
+rnb, metal, comedy, latin, family, broadway, k-pop, classical, festival,
+theater, folk-world, etc. NULL for `game` performers.
+
+**`events.event_type`** (per-event, derived from primary_performer):
+- `game` (612), `concert` (130), `comedy` (1), `show` (1)
+
+### Behavior rules driven by classification
+
+| Feature | Rule | Why |
+|---|---|---|
+| HOME/AWAY badges + row tints | only when `what_event_type='game'` AND performer has `performer_home_venues` rows | Concerts/comedy/theater have no "home" — Taylor Swift at MSG isn't home, the venue just hosts |
+| ESPN context (standings, injuries, news) | only when `what_event_type='game'` AND performer has `performer_external_ids source='espn'` | ESPN doesn't track concerts |
+| Watchlist auto-coverage cron | only insert teams with `performer_external_ids source='espn'` AND `league IN (NFL,NBA,NHL,MLB,MLS,WNBA)` | Big-6 sports leagues only |
+| Zone curation eligibility | sports OR repeat-venue residencies (Pearl Jam at MSG, Phish at MSG) | Curated zones are venue-specific patterns |
+
+### League → ESPN-tracked map
+
+Of the leaf categories above, these have ESPN coverage in `performer_external_ids`:
+
+| TEvo leaf | ESPN coverage | Teams in DB |
+|---|---|---|
+| NFL | ✅ | 32 |
+| NBA | ✅ | 30 |
+| NHL | ✅ | 32 |
+| MLB | ✅ | 30 |
+| MLS | ✅ | 30 |
+| WNBA | ✅ | 15 |
+| World Cup | ✅ | 48 |
+| NCAA Football, MiLB, USL, NWSL, EPL, Bundesliga, etc. | ❌ | none |
+| Fighting (MMA/Boxing/WWE/Wrestling) | ❌ — single-fighter format, no team home/away | n/a |
+
+`watchlist_auto_coverage_daily` (jobid 34) only adds the ✅ rows.
 
 ---
 
@@ -397,6 +480,17 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 
 ## Change log
 
-- **2026-05-09-v1** (this version): initial lock. 47 tables, 73 functions,
-  21 active crons. Drift flagged: 5 migrations applied via MCP not yet in
-  prod migration ledger. Schema verified against prod 2026-05-09 ~00:30 UTC.
+- **2026-05-09-v2**: Added TEvo classification taxonomy — full 3-level
+  category tree (top_category_name → parent_category_name → category_name)
+  with current counts per leaf, plus the two derived classifications
+  (`what_event_type`, `genre`, `event_type`) and the league→ESPN-tracked
+  map. New "Behavior rules driven by classification" table makes explicit
+  that HOME/AWAY UI, ESPN context, and watchlist coverage cron all gate
+  on `what_event_type='game'`. Backend `/api/portfolio?performer_id=` now
+  enforces the gate: returns `is_sports_performer` + `performer_classification`
+  alongside per-event `is_home`. is_home is null for non-sports performers.
+  No new tables/functions/crons.
+
+- **2026-05-09-v1**: initial lock. 47 tables, 73 functions, 21 active
+  crons. Drift flagged: 5 migrations applied via MCP not yet in prod
+  migration ledger. Schema verified against prod 2026-05-09 ~00:30 UTC.

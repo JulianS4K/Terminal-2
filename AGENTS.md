@@ -300,11 +300,11 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v1)
+## SCHEMA LOCK (2026-05-09-v2)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v1`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v2`**.
 >
-> Contents: 47 tables, 73 SQL functions, 21 active crons, all edge functions, the canonical 10-bucket data taxonomy (Pricing / Inventory / Owned / Splits / Structure / Standings / Health / Context / News / Map), API surface, data-flow diagram, and verification queries.
+> Contents: 47 tables, 73 SQL functions, 21 active crons, all edge functions, the canonical 10-bucket data taxonomy (Pricing / Inventory / Owned / Splits / Structure / Standings / Health / Context / News / Map), full TEvo classification tree (Sports/Concerts/Comedy/Theater + sub-genres + ESPN-tracked map), behavior rules driven by classification (HOME/AWAY only for `what_event_type='game'`), API surface, data-flow diagram, and verification queries.
 >
 > **Drift to be reconciled** (5 migrations applied via MCP execute_sql in code-agent session, captured as files in `supabase/migrations/` but not yet in prod migration ledger):
 > - `20260508220000_auto_link_event_xref` (jobid 31)
