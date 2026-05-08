@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>S4K Terminal — v1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   /* night-mode IBKR + Claude restraint */
   :root {
@@ -231,8 +233,8 @@
   </div>
   <nav class="nav">
     <a href="#home" data-view="home" class="active">Portfolio</a>
-    <a href="#performers" data-view="performers">Performers</a>
-    <a href="#venues" data-view="venues">Venues</a>
+    <a href="/movers">Movers</a>
+    <a href="/legacy" title="Legacy terminal — has watchlist add modal, configurations, snapshots, runs">Legacy</a>
   </nav>
   <div class="status" id="status-line">Connecting…</div>
 </header>
@@ -265,7 +267,7 @@
           <div class="wl-tab" data-pane="wl-performers">Performers <span class="dim">· 4</span></div>
           <div class="wl-tab" data-pane="wl-venues">Venues <span class="dim">· 3</span></div>
         </div>
-        <div class="actions"><a>+ Add</a><a>Sort: %Δ ↓</a></div>
+        <div class="actions"><a id="wl-add-btn" style="cursor:pointer;color:var(--accent);">+ Add</a><a id="wl-refresh-btn" style="cursor:pointer;">↻</a></div>
       </div>
 
       <!-- EVENTS pane — populated from /api/broker/watchlist-movers -->
@@ -376,6 +378,41 @@
 </section>
 
 </main>
+
+<!-- Watchlist add modal -->
+<div id="wl-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:200;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--border-strong);border-radius:6px;width:420px;max-width:90vw;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="margin:0;font-size:14px;letter-spacing:0.04em;text-transform:uppercase;color:var(--text);">Add to watchlist</h3>
+      <a id="wl-modal-close" style="cursor:pointer;color:var(--muted);font-size:18px;">×</a>
+    </div>
+    <form id="wl-add-form" style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Kind</label>
+        <select name="kind" required style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;font-size:13px;">
+          <option value="performer">Performer</option>
+          <option value="venue">Venue</option>
+        </select>
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">TEvo ID</label>
+        <input name="ext_id" type="number" required placeholder="e.g. 16303 (Knicks) or 5725 (MSG)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;font-size:13px;">
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Label (optional)</label>
+        <input name="label" placeholder="display name" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;font-size:13px;">
+      </div>
+      <div id="wl-add-status" style="font-size:12px;min-height:16px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">
+        <button type="button" id="wl-cancel" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 14px;border-radius:3px;cursor:pointer;font-size:12px;">Cancel</button>
+        <button type="submit" style="background:var(--accent);border:1px solid var(--accent);color:#000;padding:7px 14px;border-radius:3px;cursor:pointer;font-size:12px;font-weight:500;">Add</button>
+      </div>
+    </form>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--dim);">
+      Tip: search above for a performer or venue, then copy the TEvo ID from the URL hash (e.g. #performer/16303).
+    </div>
+  </div>
+</div>
 
 <script>
 // =====================================================================
@@ -623,42 +660,91 @@ function renderWatchlistEvents(data) {
 function renderWatchlistPerformers(data) {
   const body = document.getElementById('wl-performers-body');
   if (!data || !data.items) {
-    body.innerHTML = '<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Could not load watchlist.</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center;">Could not load watchlist.</td></tr>';
     return;
   }
   const items = data.items.filter(i => i.kind === 'performer');
   if (!items.length) {
-    body.innerHTML = '<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">No performers in watchlist.</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center;">No performers in watchlist. Click <strong>+ Add</strong> above.</td></tr>';
     return;
   }
   body.innerHTML = items.map(i => `
-    <tr onclick="goto('performer/${i.ext_id}')">
-      <td><strong>${esc(i.label || '#'+i.ext_id)}</strong></td>
-      <td class="muted">${esc(i.label || '')}</td>
-      <td class="num">${i.ext_id}</td>
-      <td class="num dim">${shortDate(i.added_at)}</td>
+    <tr>
+      <td onclick="goto('performer/${i.ext_id}')" style="cursor:pointer;"><strong>${esc(i.label || '#'+i.ext_id)}</strong></td>
+      <td class="muted" onclick="goto('performer/${i.ext_id}')" style="cursor:pointer;">${esc(i.label || '')}</td>
+      <td class="num" onclick="goto('performer/${i.ext_id}')" style="cursor:pointer;">${i.ext_id}</td>
+      <td class="num dim" onclick="goto('performer/${i.ext_id}')" style="cursor:pointer;">${shortDate(i.added_at)}</td>
+      <td class="num" style="width:24px;"><a onclick="removeFromWatchlist(${i.id}, this)" title="Remove" style="cursor:pointer;color:var(--neg);font-size:14px;padding:0 6px;">×</a></td>
     </tr>`).join('');
 }
 
 function renderWatchlistVenues(data) {
   const body = document.getElementById('wl-venues-body');
   if (!data || !data.items) {
-    body.innerHTML = '<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Could not load watchlist.</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center;">Could not load watchlist.</td></tr>';
     return;
   }
   const items = data.items.filter(i => i.kind === 'venue');
   if (!items.length) {
-    body.innerHTML = '<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">No venues in watchlist.</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="muted" style="padding:16px;text-align:center;">No venues in watchlist. Click <strong>+ Add</strong> above.</td></tr>';
     return;
   }
   body.innerHTML = items.map(i => `
-    <tr onclick="goto('venue/${i.ext_id}')">
-      <td><strong>${esc(i.label || '#'+i.ext_id)}</strong></td>
-      <td class="muted">${esc(i.label || '')}</td>
-      <td class="num">${i.ext_id}</td>
-      <td class="num dim">${shortDate(i.added_at)}</td>
+    <tr>
+      <td onclick="goto('venue/${i.ext_id}')" style="cursor:pointer;"><strong>${esc(i.label || '#'+i.ext_id)}</strong></td>
+      <td class="muted" onclick="goto('venue/${i.ext_id}')" style="cursor:pointer;">${esc(i.label || '')}</td>
+      <td class="num" onclick="goto('venue/${i.ext_id}')" style="cursor:pointer;">${i.ext_id}</td>
+      <td class="num dim" onclick="goto('venue/${i.ext_id}')" style="cursor:pointer;">${shortDate(i.added_at)}</td>
+      <td class="num" style="width:24px;"><a onclick="removeFromWatchlist(${i.id}, this)" title="Remove" style="cursor:pointer;color:var(--neg);font-size:14px;padding:0 6px;">×</a></td>
     </tr>`).join('');
 }
+
+// Watchlist add/remove handlers — POST /api/watchlist, DELETE /api/watchlist/{id}
+async function removeFromWatchlist(id, anchor) {
+  if (anchor) anchor.style.opacity = '0.5';
+  try {
+    const r = await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+    if (location.hash === '#home' || location.hash === '') loadHome();  // refresh in place
+    else { const wl = await api('/api/watchlist').catch(() => null); renderWatchlistPerformers(wl); renderWatchlistVenues(wl); }
+  } catch (e) {
+    if (anchor) anchor.style.opacity = '1';
+    alert('Remove failed: ' + e.message);
+  }
+}
+
+// Modal show/hide
+function showWlModal() {
+  document.getElementById('wl-modal').style.display = 'flex';
+  document.querySelector('#wl-add-form input[name="ext_id"]').focus();
+  document.getElementById('wl-add-status').textContent = '';
+}
+function hideWlModal() { document.getElementById('wl-modal').style.display = 'none'; }
+
+document.getElementById('wl-add-btn').addEventListener('click', showWlModal);
+document.getElementById('wl-modal-close').addEventListener('click', hideWlModal);
+document.getElementById('wl-cancel').addEventListener('click', hideWlModal);
+document.getElementById('wl-modal').addEventListener('click', e => { if (e.target.id === 'wl-modal') hideWlModal(); });
+document.getElementById('wl-refresh-btn').addEventListener('click', () => { if (location.hash === '#home' || location.hash === '') loadHome(); });
+
+document.getElementById('wl-add-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const status = document.getElementById('wl-add-status');
+  status.textContent = 'Adding…'; status.className = 'muted';
+  const body = { kind: fd.get('kind'), ext_id: parseInt(fd.get('ext_id'), 10), label: fd.get('label') || null };
+  try {
+    const r = await fetch('/api/watchlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || data.error || r.statusText);
+    if (data.ok === false) { status.textContent = data.error; status.className = 'warn'; return; }
+    status.textContent = '✓ Added.'; status.className = 'pos';
+    e.target.reset();
+    setTimeout(() => { hideWlModal(); loadHome(); }, 600);
+  } catch (err) {
+    status.textContent = 'Failed: ' + err.message; status.className = 'neg';
+  }
+});
 
 function renderMovers(data) {
   const blank = '<li class="muted" style="padding:8px;">No data.</li>';
@@ -744,11 +830,12 @@ function renderKPIs(movers, watchlistMovers, watchlist) {
 async function loadEvent(eventId) {
   const mount = document.getElementById('event-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading event #${eventId}…</div>`;
-  let ov, espn;
+  let ov, espn, chart;
   try {
-    [ov, espn] = await Promise.all([
+    [ov, espn, chart] = await Promise.all([
       api(`/api/broker/event/${eventId}/overview`),
       api(`/api/broker/event/${eventId}/espn`).catch(() => null),
+      api(`/api/broker/event/${eventId}/chart-data?days=30`).catch(() => null),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load event ${eventId}: ${esc(e.message)}</div>`;
@@ -794,17 +881,37 @@ async function loadEvent(eventId) {
     </tr>`;
   }).join('') || '<tr><td colspan="7" class="muted" style="padding:16px;">No zone data.</td></tr>';
 
-  // ESPN block
+  // ESPN block — matches espn edge fn shape: { applicable, header:{competitors:{home,away}, status, venue, network}, odds, injuries, win_probability }
   const espnHTML = (() => {
-    if (!espn || (!espn.home && !espn.away)) return '<div class="muted" style="padding:16px;">No ESPN context for this event.</div>';
-    const side = (label, t) => {
-      if (!t) return '';
-      const rec = t.team?.record || t.record || '—';
-      return `<div><h4 class="espn-h">${esc(label)}: ${esc(t.team?.displayName || t.name || '—')}</h4>
-        <div class="espn-row"><span>Record</span><span><strong>${esc(rec)}</strong></span></div>
+    if (!espn || !espn.applicable) {
+      return `<div class="muted" style="padding:16px;">${esc(espn?.reason || espn?.error || 'No ESPN context for this event.')}</div>`;
+    }
+    const h = espn.header || {};
+    const home = h.competitors?.home || {};
+    const away = h.competitors?.away || {};
+    const odds = espn.odds || {};
+    const inj = espn.injuries || [];
+    const winProb = espn.win_probability || {};
+    const side = (label, t) => `
+      <div>
+        <h4 class="espn-h">${esc(label)}</h4>
+        <div style="font-weight:500;font-size:14px;margin:4px 0;">${esc(t.name || '—')} ${t.abbr ? `<span class="dim">${esc(t.abbr)}</span>` : ''}</div>
+        <div class="espn-row"><span>Record</span><span>${esc(t.record || '—')}</span></div>
+        ${t.score != null ? `<div class="espn-row"><span>Score</span><span><strong>${esc(String(t.score))}</strong></span></div>` : ''}
       </div>`;
-    };
-    return `<div class="espn"><div class="espn-grid">${side('Away', espn.away)}${side('Home', espn.home)}</div></div>`;
+    const oddsHTML = odds.spread ? `<div class="espn-row" style="margin-top:8px;"><span>${esc(odds.provider || 'Odds')}</span><span>spread ${esc(String(odds.spread))} · O/U ${esc(String(odds.over_under || '—'))} · ML ${esc(String(odds.home_ml ?? '—'))}/${esc(String(odds.away_ml ?? '—'))}</span></div>` : '';
+    const wpHTML = winProb.current_home_win_pct != null ? `<div class="espn-row"><span>Home win prob</span><span>${(winProb.current_home_win_pct * 100).toFixed(1)}%</span></div>` : '';
+    const injHTML = inj.length ? `
+      <h4 class="espn-h" style="margin-top:14px;">Injuries · ${inj.length}</h4>
+      ${inj.slice(0, 10).map(i => {
+        const cls = (i.status || '').toLowerCase().includes('out') ? 'neg' : (i.status || '').toLowerCase().match(/quest|day/) ? 'warn' : 'muted';
+        return `<div class="espn-row"><span>${esc(i.athlete || '—')} <span class="dim">${esc((i.team || '').toUpperCase())}${i.position ? ' · ' + esc(i.position) : ''}</span></span><span class="${cls}">${esc(i.status || '—')}</span></div>`;
+      }).join('')}` : '';
+    return `<div class="espn">
+      <div class="espn-grid">${side('Home', home)}${side('Away', away)}</div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);">${esc(h.status || '')} · ${esc(h.venue || '')} · ${esc(h.network || '')}</div>
+      ${oddsHTML}${wpHTML}${injHTML}
+    </div>`;
   })();
 
   const occursAt = ev.occurs_at_local || ev.occurs_at;
@@ -829,6 +936,11 @@ async function loadEvent(eventId) {
       ${metricCard('Max ask', 'retail_max', moneyC)}
     </div>
     <div class="panel">
+      <div class="panel-h"><h3>Price &amp; Volume · Last 30d</h3><div class="actions"><span class="dim">${chart ? (chart.prices_market || []).length + ' snapshots' : 'no data'}</span></div></div>
+      <div style="padding:12px;height:280px;position:relative;"><canvas id="event-chart"></canvas></div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="panel">
       <div class="panel-h"><h3>Zone Ladder · Market Depth</h3><div class="actions"><span class="dim">last pull ${shortDate(ov.last_pull_at)}</span></div></div>
       <table class="ibkr">
         <thead><tr><th>Zone</th><th class="num">Min</th><th class="num">Med</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th></tr></thead>
@@ -840,6 +952,42 @@ async function loadEvent(eventId) {
       <div class="panel-h"><h3>ESPN Context</h3></div>
       ${espnHTML}
     </div>`;
+
+  // Render the chart after innerHTML is set
+  if (chart && (chart.prices_market || []).length) renderEventChart(chart);
+}
+
+// Single chart instance per page; destroy before re-creating
+let _eventChartInstance = null;
+function renderEventChart(data) {
+  const canvas = document.getElementById('event-chart');
+  if (!canvas) return;
+  if (_eventChartInstance) { _eventChartInstance.destroy(); _eventChartInstance = null; }
+  const toXY = arr => (arr || []).filter(p => p.v != null).map(p => ({ x: p.t, y: p.v }));
+  const datasets = [
+    { label: 'Market median ($)', data: toXY(data.prices_market), borderColor: '#60a5fa', backgroundColor: 'transparent', yAxisID: 'y$', borderWidth: 1.5, pointRadius: 0, tension: 0.2 },
+    { label: 'S4K owned median ($)', data: toXY(data.prices_owned), borderColor: '#4ade80', backgroundColor: 'transparent', yAxisID: 'y$', borderDash: [4,3], borderWidth: 1.5, pointRadius: 0, tension: 0.2 },
+    { label: 'Market tix', data: toXY(data.counts_market), borderColor: '#f58426', backgroundColor: 'transparent', yAxisID: 'yC', borderWidth: 1, pointRadius: 0, tension: 0.2 },
+    { label: 'S4K owned tix', data: toXY(data.counts_owned), borderColor: '#fbbf24', backgroundColor: 'transparent', yAxisID: 'yC', borderDash: [4,3], borderWidth: 1, pointRadius: 0, tension: 0.2 },
+  ];
+  _eventChartInstance = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { datasets },
+    options: {
+      maintainAspectRatio: false,
+      responsive: true,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#8b8d92', font: { size: 11 }, boxWidth: 16 } },
+        tooltip: { backgroundColor: '#16181b', borderColor: '#34373c', borderWidth: 1 },
+      },
+      scales: {
+        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { color: '#26292d' } },
+        y$: { type: 'linear', position: 'left', ticks: { color: '#8b8d92', font: { size: 10 }, callback: v => '$' + Math.round(v).toLocaleString() }, grid: { color: '#26292d' } },
+        yC: { type: 'linear', position: 'right', ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
 }
 
 // =====================================================================
@@ -868,12 +1016,47 @@ async function loadPerformer(performerId) {
       <td class="num dim">#${e.id}</td>
     </tr>`).join('') || '<tr><td colspan="4" class="muted" style="padding:16px;">No upcoming events with available tickets.</td></tr>';
 
-  const espnHTML = espn && espn.team ? `
-    <div class="espn">
-      <h4 class="espn-h">Standing</h4>
-      <div class="espn-row"><span>Record</span><span><strong>${esc(espn.team.record || '—')}</strong></span></div>
-      <div class="espn-row"><span>League</span><span>${esc(espn.team.league || espn.league || '—')}</span></div>
-    </div>` : '<div class="muted" style="padding:16px;">No ESPN mapping for this performer.</div>';
+  const espnHTML = (() => {
+    if (!espn || !espn.applicable) {
+      return `<div class="muted" style="padding:16px;">${esc(espn?.reason || 'No ESPN mapping for this performer.')}</div>`;
+    }
+    const t = espn.team || {};
+    const inj = espn.injuries || [];
+    const news = espn.news || [];
+    const recent = espn.recent || [];
+    const standingHTML = `
+      <h4 class="espn-h">Standing · ${esc(espn.league || '')}</h4>
+      <div class="espn-row"><span>Record</span><span><strong>${esc(t.record_summary || (t.wins != null ? `${t.wins}-${t.losses}` : '—'))}</strong>${t.streak ? ' · ' + esc(t.streak) : ''}</span></div>
+      <div class="espn-row"><span>Win pct</span><span>${t.win_pct != null ? (t.win_pct * 100).toFixed(1) + '%' : '—'}</span></div>
+      <div class="espn-row"><span>Standing</span><span>${esc(t.standing_summary || '—')}</span></div>
+      ${t.conference_rank ? `<div class="espn-row"><span>Conf rank</span><span>${esc(String(t.conference_rank))}</span></div>` : ''}
+      ${t.playoff_seed ? `<div class="espn-row"><span>Playoff seed</span><span>${esc(String(t.playoff_seed))}</span></div>` : ''}`;
+    const injHTML = inj.length ? `
+      <h4 class="espn-h" style="margin-top:14px;">Injuries · ${inj.length}</h4>
+      ${inj.slice(0, 8).map(i => {
+        const cls = (i.status || '').toLowerCase().includes('out') ? 'neg' : (i.status || '').toLowerCase().match(/quest|day-to-day/) ? 'warn' : 'muted';
+        return `<div class="espn-row"><span>${esc(i.athlete_name || '—')} <span class="dim">${esc(i.position || '')}</span></span><span class="${cls}">${esc(i.status || '—')}${i.injury_type ? ' · ' + esc(i.injury_type) : ''}</span></div>`;
+      }).join('')}` : '<h4 class="espn-h" style="margin-top:14px;">Injuries · 0</h4><div class="muted" style="padding:4px 0;font-size:12px;">No active injuries reported.</div>';
+    const recentHTML = recent.length ? `
+      <h4 class="espn-h" style="margin-top:14px;">Recent games</h4>
+      ${recent.slice(0, 5).map(g => {
+        const isHome = String(g.home_team_id) === String(espn.espn_team_id);
+        const ourScore = isHome ? g.home_score : g.away_score;
+        const oppScore = isHome ? g.away_score : g.home_score;
+        const post = (g.state === 'post');
+        const won = post && ourScore != null && oppScore != null && ourScore > oppScore;
+        const result = post ? (won ? 'W' : 'L') : (g.status_short || g.state || '—');
+        const cls = post ? (won ? 'pos' : 'neg') : 'muted';
+        const score = post ? `${ourScore}-${oppScore}` : '';
+        return `<div class="espn-row"><span>${shortDate(g.captured_at)} ${isHome ? 'vs' : '@'} <span class="dim">opp #${esc(String(isHome ? g.away_team_id : g.home_team_id))}</span></span><span class="${cls}">${esc(result)} ${esc(score)}</span></div>`;
+      }).join('')}` : '';
+    const newsHTML = news.length ? `
+      <h4 class="espn-h" style="margin-top:14px;">News</h4>
+      ${news.slice(0, 4).map(n => `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
+        ${n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline || '—')}</a>` : esc(n.headline || '—')}
+        <div class="dim">${esc(n.type || '')} · ${shortDate(n.published_at)}</div></div>`).join('')}` : '';
+    return `<div class="espn">${standingHTML}${injHTML}${recentHTML}${newsHTML}</div>`;
+  })();
 
   mount.innerHTML = `
     <div class="hero">
