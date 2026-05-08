@@ -300,6 +300,19 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
+## SCHEMA LOCK (2026-05-09-v1)
+
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v1`**.
+>
+> Contents: 47 tables, 73 SQL functions, 21 active crons, all edge functions, the canonical 10-bucket data taxonomy (Pricing / Inventory / Owned / Splits / Structure / Standings / Health / Context / News / Map), API surface, data-flow diagram, and verification queries.
+>
+> **Drift to be reconciled** (5 migrations applied via MCP execute_sql in code-agent session, captured as files in `supabase/migrations/` but not yet in prod migration ledger):
+> - `20260508220000_auto_link_event_xref` (jobid 31)
+> - `20260508230000_event_splits_metrics` (jobid 32)
+> - `20260508240000_crawl_espn_assets_cron` (jobid 33)
+> - `20260508250000_ensure_major_league_watchlist` (jobid 34)
+> - `20260509000000_zone_metrics_backfill_cron` (jobid 35)
+
 ## STATE (truth, not history)
 
 - Live URL terminal (broker) = railway https://terminal-2-production.railway.app  /  (Railway dropped the legacy `.up.` subdomain segment; old `terminal-2-production.up.railway.app` now 404s)
