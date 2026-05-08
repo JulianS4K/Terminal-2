@@ -869,12 +869,13 @@ function renderKPIs(movers, watchlistMovers, watchlist) {
 async function loadEvent(eventId) {
   const mount = document.getElementById('event-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading event #${eventId}…</div>`;
-  let ov, espn, chart;
+  let ov, espn, chart, sections, chartErr = null;
   try {
-    [ov, espn, chart] = await Promise.all([
+    [ov, espn, chart, sections] = await Promise.all([
       api(`/api/broker/event/${eventId}/overview`),
       api(`/api/broker/event/${eventId}/espn`).catch(() => null),
-      api(`/api/broker/event/${eventId}/chart-data?days=30`).catch(() => null),
+      api(`/api/broker/event/${eventId}/chart-data?days=30`).catch(e => { chartErr = e.message; return null; }),
+      api(`/api/broker/event/${eventId}/section-metrics`).catch(() => null),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load event ${eventId}: ${esc(e.message)}</div>`;
@@ -886,14 +887,28 @@ async function loadEvent(eventId) {
   const zonesMarket = (ov.zones && ov.zones.market) || [];
 
   const metricCard = (label, key, formatter) => {
-    const v = (m[key] || {}).v;
-    const d = (m[key] || {}).delta;
-    const dCls = d == null ? 'muted' : (d > 0 ? 'pos' : d < 0 ? 'neg' : 'muted');
-    const dDisp = d == null ? '—' : ((d>=0?'+':'') + (formatter ? formatter(Math.abs(d)) : Math.round(d)));
-    return `<div class="kpi"><div class="kpi-l">${esc(label)}</div><div class="kpi-v">${formatter ? formatter(v) : (v == null ? '—' : Math.round(v))}</div><div class="kpi-d ${dCls}">${dDisp}</div></div>`;
+    const cell = m[key] || {};
+    const v = cell.v;
+    // Backend shape: delta is {abs, pct, dir} | null. Was being treated as scalar → NaN.
+    const dObj = cell.delta;
+    const dAbs = dObj && typeof dObj.abs === 'number' && !isNaN(dObj.abs) ? dObj.abs : null;
+    const dPct = dObj && typeof dObj.pct === 'number' && !isNaN(dObj.pct) ? dObj.pct : null;
+    const dCls = dAbs == null ? 'muted' : (dAbs > 0 ? 'pos' : dAbs < 0 ? 'neg' : 'muted');
+    let dDisp;
+    if (dAbs == null) {
+      dDisp = '—';
+    } else if (dAbs === 0) {
+      dDisp = 'flat';
+    } else {
+      const sign = dAbs > 0 ? '+' : '−';
+      const fmt = formatter ? formatter(Math.abs(dAbs)) : Math.round(Math.abs(dAbs)).toLocaleString();
+      dDisp = sign + fmt + (dPct != null ? ` (${(dPct >= 0 ? '+' : '')}${dPct.toFixed(1)}%)` : '');
+    }
+    const vDisp = v == null ? '—' : (formatter ? formatter(v) : Math.round(v).toLocaleString());
+    return `<div class="kpi"><div class="kpi-l">${esc(label)}</div><div class="kpi-v">${vDisp}</div><div class="kpi-d ${dCls}">${dDisp}</div></div>`;
   };
 
-  // Zone ladder rows — combine owned + market by zone
+  // Zone ladder — combine owned + market by zone
   const byZone = {};
   for (const z of zonesMarket) byZone[z.zone || z.zone_name || 'unknown'] = { ...z, market: z };
   for (const z of zonesOwned) {
@@ -901,24 +916,61 @@ async function loadEvent(eventId) {
     byZone[k] = byZone[k] || {};
     byZone[k].owned = z;
   }
-  const zoneRows = Object.entries(byZone).map(([name, info]) => {
-    const mz = info.market || {};
-    const oz = info.owned || {};
-    const ownedTix = oz.tickets_count || 0;
-    const totalTix = mz.tickets_count || 0;
-    const share = totalTix > 0 ? (ownedTix / totalTix) : 0;
-    const isMkt = share >= 0.30;
-    const cls = ['', ownedTix > 0 ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
-    return `<tr class="${cls}">
-      <td>${esc(name)}</td>
-      <td class="num">${moneyC(mz.retail_min)}</td>
-      <td class="num">${moneyC(mz.retail_median)}</td>
-      <td class="num">${moneyC(mz.retail_max)}</td>
-      <td class="num">${num(totalTix)}</td>
-      <td class="num">${num(ownedTix)}</td>
-      <td class="num ${isMkt?'warn':''}">${totalTix > 0 ? Math.round(share*100)+'%' : '—'}</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="7" class="muted" style="padding:16px;">No zone data.</td></tr>';
+  const zoneEntries = Object.entries(byZone);
+  const zoneTotalTix = zoneEntries.reduce((s, [, info]) => s + ((info.market || {}).tickets_count || 0), 0);
+  // If zones return rows but all zero (sections not mapped to zones for this event),
+  // fall back to raw section-metrics so the user still sees the market depth.
+  let depthTitle, depthHeader, depthRows, depthCaption;
+  if (zoneEntries.length && zoneTotalTix > 0) {
+    depthTitle = 'Zone Ladder · Market Depth';
+    depthHeader = '<th>Zone</th><th class="num">Min</th><th class="num">Med</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th>';
+    depthRows = zoneEntries.map(([name, info]) => {
+      const mz = info.market || {}; const oz = info.owned || {};
+      const ownedTix = oz.tickets_count || 0;
+      const totalTix = mz.tickets_count || 0;
+      const share = totalTix > 0 ? (ownedTix / totalTix) : 0;
+      const isMkt = share >= 0.30;
+      const cls = ['', ownedTix > 0 ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
+      return `<tr class="${cls}">
+        <td>${esc(name)}</td>
+        <td class="num">${moneyC(mz.retail_min)}</td>
+        <td class="num">${moneyC(mz.retail_median)}</td>
+        <td class="num">${moneyC(mz.retail_max)}</td>
+        <td class="num">${num(totalTix)}</td>
+        <td class="num">${num(ownedTix)}</td>
+        <td class="num ${isMkt?'warn':''}">${totalTix > 0 ? Math.round(share*100)+'%' : '—'}</td>
+      </tr>`;
+    }).join('');
+    depthCaption = `${zoneEntries.length} zones · last pull ${shortDate(ov.last_pull_at)}`;
+  } else {
+    // Fallback: raw section-metrics (no zone mapping)
+    depthTitle = 'Section Metrics · Market Depth';
+    depthHeader = '<th>Section</th><th class="num">Min</th><th class="num">Med</th><th class="num">Mean</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Grps</th>';
+    const secList = (sections && sections.sections) || [];
+    if (!secList.length) {
+      depthRows = '<tr><td colspan="7" class="muted" style="padding:16px;">No section data and no zone-mapped depth. Either listings_snapshots is empty for this event or section→zone rules don\'t cover this venue.</td></tr>';
+      depthCaption = 'no data';
+    } else {
+      // Sort by retail_median desc (richest sections first), drop ancillary (parking/etc)
+      const sorted = secList
+        .filter(s => !s.is_ancillary)
+        .filter(s => (s.metrics?.tickets_count?.v || 0) > 0)
+        .sort((a, b) => (b.metrics?.retail_median?.v || 0) - (a.metrics?.retail_median?.v || 0));
+      depthRows = sorted.slice(0, 30).map(s => {
+        const mtx = s.metrics || {};
+        return `<tr>
+          <td>${esc(s.section)}</td>
+          <td class="num">${moneyC(mtx.retail_min?.v)}</td>
+          <td class="num">${moneyC(mtx.retail_median?.v)}</td>
+          <td class="num">${moneyC(mtx.retail_mean?.v)}</td>
+          <td class="num">${moneyC(mtx.retail_max?.v)}</td>
+          <td class="num">${num(mtx.tickets_count?.v)}</td>
+          <td class="num">${num(mtx.groups_count?.v)}</td>
+        </tr>`;
+      }).join('');
+      depthCaption = `${sorted.length} sections (top 30 shown) · zones empty for this event`;
+    }
+  }
 
   // ESPN block — matches espn edge fn shape: { applicable, header:{competitors:{home,away}, status, venue, network}, odds, injuries, win_probability }
   const espnHTML = (() => {
@@ -975,15 +1027,19 @@ async function loadEvent(eventId) {
       ${metricCard('Max ask', 'retail_max', moneyC)}
     </div>
     <div class="panel">
-      <div class="panel-h"><h3>Price &amp; Volume · Last 30d</h3><div class="actions"><span class="dim">${chart ? (chart.prices_market || []).length + ' snapshots' : 'no data'}</span></div></div>
-      <div style="padding:12px;height:280px;position:relative;"><canvas id="event-chart"></canvas></div>
+      <div class="panel-h"><h3>Price &amp; Volume · Last 30d</h3><div class="actions"><span class="dim">${chart ? (chart.prices_market || []).length + ' snapshots' : (chartErr ? 'error' : 'no data')}</span></div></div>
+      <div id="event-chart-wrap" style="padding:12px;height:280px;position:relative;">
+        ${chartErr ? `<div style="padding:48px;text-align:center;color:var(--neg);font-size:12px;">Chart data failed to load: ${esc(chartErr)}</div>` :
+          (!chart || !(chart.prices_market || []).length) ? `<div style="padding:48px;text-align:center;color:var(--muted);font-size:12px;">No price snapshots in the last 30 days. Cron tier collects every 20m–24h depending on event proximity.</div>` :
+          `<canvas id="event-chart"></canvas>`}
+      </div>
     </div>
     <div style="height:12px"></div>
     <div class="panel">
-      <div class="panel-h"><h3>Zone Ladder · Market Depth</h3><div class="actions"><span class="dim">last pull ${shortDate(ov.last_pull_at)}</span></div></div>
+      <div class="panel-h"><h3>${esc(depthTitle)}</h3><div class="actions"><span class="dim">${esc(depthCaption)}</span></div></div>
       <table class="ibkr">
-        <thead><tr><th>Zone</th><th class="num">Min</th><th class="num">Med</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th></tr></thead>
-        <tbody>${zoneRows}</tbody>
+        <thead><tr>${depthHeader}</tr></thead>
+        <tbody>${depthRows}</tbody>
       </table>
     </div>
     <div style="height:12px"></div>
