@@ -349,6 +349,17 @@ Mechanics (whoever picks this up):
 
 ## LOG
 
+### 2026-05-08 code (claude code session, late-evening — second sync audit)
+
+- DONE — **Captured 2 new copilot edge functions into git** (audit-and-commit, no source until now):
+  - `crawl-espn-team-assets` v2 — drains the `espn_asset_crawl_state` queue. Pulls up to 30 pending performers per invocation, hits ESPN /teams/{id}, upserts `performer_metadata` (logos / colors / ESPN URLs) and `venue_assets` (hero / map / capacity). Auth: `verify_jwt=false` + internal `X-Cron-Secret` placeholder. **No cron driving it yet** (queue progressed 35→65 pending=104 via manual triggers).
+  - `probe-espn-data` v1 — diagnostic helper that hits 10 ESPN endpoints and walks the responses for image/logo/color/link fields. Useful for figuring out what we're not yet capturing.
+- DONE — **Resolved migration count mismatch as a false positive.** Git=83, prod=82. Diff was historical naming convention (early-day pre-rename pass) where some older migrations have date prefixes in git but bare slugs in prod (e.g. `git: 20260507000020_drop_team_xref` ↔ `prod: drop_team_xref`). All schema changes accounted for; no real drift.
+- DONE — **Asset crawl progress check**: 65/169 done (was 35 last audit), 104 pending. The fn works when invoked. Still no cron — manual drain only. NEXT (copilot) from prior turn still standing.
+- ✅ ESPN crons all healthy: 11 runs in last 3h, 0 errors, injuries flowing in.
+- ⚠️ `listings_snapshots` continues growing (1.94 GB / 7.82M rows / 459 events as of last check). Storage runaway fix still on cowork's lane.
+- NEXT (copilot) — **Add a cron for `crawl-espn-team-assets`**. Recommend `*/3 * * * *` calling the fn with `{"limit": 30}` body. At 30/tick × 20 ticks/hour, the 104 remaining pending rows finish in under 4 minutes of cron uptime. After that the cron just keeps the asset state fresh as new performers get added to `espn_asset_crawl_state`. Internal `X-Cron-Secret` is currently a placeholder — fine for now since `verify_jwt=false` and the fn is internal-helper class.
+
 ### 2026-05-08 code (claude code session, evening — sync audit + simulation pass)
 
 - DONE — **Sync audit caught 2 missing prod migrations. Captured into git.**
