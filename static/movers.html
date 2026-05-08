@@ -84,6 +84,11 @@
       <button data-s="owned">Owned only</button>
       <button data-s="market">Market only</button>
     </div>
+    <label style="margin-left:16px">rank</label>
+    <div class="seg">
+      <button data-r="pct" class="active">% change</button>
+      <button data-r="value">$ value</button>
+    </div>
     <span class="mono" style="margin-left:auto;color:var(--fg-3)" id="timestamp">—</span>
   </div>
 
@@ -92,7 +97,7 @@
   <div class="grid" id="grid"></div>
 
 <script>
-const STATE = { window: 24, level: "events", segment: "both", data: null };
+const STATE = { window: 24, level: "events", segment: "both", rank: "pct", data: null };
 
 document.querySelectorAll(".seg button").forEach(btn => {
   btn.onclick = () => {
@@ -102,6 +107,7 @@ document.querySelectorAll(".seg button").forEach(btn => {
     if (btn.dataset.w) STATE.window = parseInt(btn.dataset.w);
     if (btn.dataset.l) STATE.level = btn.dataset.l;
     if (btn.dataset.s) STATE.segment = btn.dataset.s;
+    if (btn.dataset.r) STATE.rank = btn.dataset.r;
     if (btn.dataset.w) loadData(); else render();
   };
 });
@@ -144,8 +150,29 @@ function fmtAbs(v)   {
   return ` <span class="mono" style="color:var(--fg-3)">(${n > 0 ? "+" : ""}${fmtMoney(Math.abs(n)).replace("$", "$")})</span>`;
 }
 
-function eventRow(r, segment) {
+function fmtMoneyDelta(v) {
+  if (v == null) return "—";
+  const n = Number(v); if (!isFinite(n)) return "—";
+  const cls = n > 0 ? "up" : n < 0 ? "down" : "";
+  const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+  const abs = Math.abs(n);
+  const fmt = abs >= 1000 ? "$" + Math.round(abs).toLocaleString() : "$" + abs.toFixed(0);
+  return `<span class="${cls}">${sign}${fmt}</span>`;
+}
+
+function eventRow(r, segment, mode) {
   const owned = (r.cur_owned_tix || 0) > 0;
+  if (mode === "value") {
+    return `<tr class="${owned ? 'owned' : ''}">
+      <td><a href="/event/${r.event_id}">${r.name || '—'}</a><div style="color:var(--fg-3);font-size:11px">${r.venue_name || ''} · ${(r.occurs_at_local||'').slice(0,10)}</div></td>
+      <td class="num">${segment !== 'market' ? fmtMoney(r.cur_owned_val) : ''}</td>
+      <td class="num">${segment !== 'market' ? fmtNum(r.cur_owned_tix) : ''}</td>
+      <td class="num">${segment !== 'market' ? fmtMoneyDelta(r.delta_owned_val) : ''}</td>
+      <td class="num">${segment !== 'owned' ? fmtMoney(r.cur_market_val) : ''}</td>
+      <td class="num">${segment !== 'owned' ? fmtNum(r.cur_market_tix) : ''}</td>
+      <td class="num">${segment !== 'owned' ? fmtMoneyDelta(r.delta_market_val) : ''}</td>
+    </tr>`;
+  }
   const market_pct_html = fmtPct(r.delta_market_pct);
   const owned_pct_html  = fmtPct(r.delta_owned_pct);
   return `<tr class="${owned ? 'owned' : ''}">
@@ -169,8 +196,19 @@ function perfVenueRow(r, segment, idKey) {
   </tr>`;
 }
 
-function tableHead(segment, level) {
+function tableHead(segment, level, mode) {
   if (level === "events") {
+    if (mode === "value") {
+      return `<thead><tr>
+        <th>Event</th>
+        <th class="num">${segment !== 'market' ? 'Owned val' : ''}</th>
+        <th class="num">${segment !== 'market' ? 'Owned tix' : ''}</th>
+        <th class="num">${segment !== 'market' ? 'Δ owned $' : ''}</th>
+        <th class="num">${segment !== 'owned' ? 'Market val' : ''}</th>
+        <th class="num">${segment !== 'owned' ? 'Market tix' : ''}</th>
+        <th class="num">${segment !== 'owned' ? 'Δ market $' : ''}</th>
+      </tr></thead>`;
+    }
     return `<thead><tr>
       <th>Event</th>
       <th class="num">${segment !== 'market' ? 'Owned $' : ''}</th>
@@ -190,10 +228,10 @@ function tableHead(segment, level) {
   </tr></thead>`;
 }
 
-function panel(title, kind, rows, segment, level) {
-  const head = tableHead(segment, level);
+function panel(title, kind, rows, segment, level, mode) {
+  const head = tableHead(segment, level, mode);
   const body = rows.length
-    ? rows.map(r => level === 'events' ? eventRow(r, segment) : perfVenueRow(r, segment, level === 'performers' ? 'performer_id' : 'venue_id')).join("")
+    ? rows.map(r => level === 'events' ? eventRow(r, segment, mode) : perfVenueRow(r, segment, level === 'performers' ? 'performer_id' : 'venue_id')).join("")
     : `<tr><td colspan="7" class="empty">No data in this window.</td></tr>`;
   return `<div class="panel ${kind}">
     <h2>${title} <span class="pill">${rows.length}</span></h2>
@@ -206,15 +244,35 @@ function render() {
   if (!STATE.data) { grid.innerHTML = `<div class="panel"><div class="empty">Loading…</div></div>`; return; }
   const d = STATE.data[STATE.level] || {};
   const seg = STATE.segment;
+  const useValue = STATE.rank === "value";
   const panels = [];
-  // Layout: owned winners/losers on top, market winners/losers below — unless segment narrows.
-  if (seg === "both" || seg === "owned") {
-    panels.push(panel("Owned winners",  "winners", d.owned_winners  || [], seg, STATE.level));
-    panels.push(panel("Owned losers",   "losers",  d.owned_losers   || [], seg, STATE.level));
+  // value-rank lists are only computed at the events level for now
+  const valueAvailable = STATE.level === "events";
+  if (useValue && !valueAvailable) {
+    grid.innerHTML = `<div class="panel"><div class="empty">$ value rank only available at Events level. Switch level to Events.</div></div>`;
+    return;
   }
-  if (seg === "both" || seg === "market") {
-    panels.push(panel("Market winners", "winners", d.market_winners || [], seg, STATE.level));
-    panels.push(panel("Market losers",  "losers",  d.market_losers  || [], seg, STATE.level));
+
+  if (useValue) {
+    // Value-mode: owned-value (mark-to-market on owned) + market-value
+    if (seg === "both" || seg === "owned") {
+      panels.push(panel("Owned $ winners (Δ value)", "winners", d.owned_value_winners || [], seg, STATE.level, "value"));
+      panels.push(panel("Owned $ losers (Δ value)",  "losers",  d.owned_value_losers  || [], seg, STATE.level, "value"));
+    }
+    if (seg === "both" || seg === "market") {
+      panels.push(panel("Market $ winners (Δ value)", "winners", d.value_winners || [], seg, STATE.level, "value"));
+      panels.push(panel("Market $ losers (Δ value)",  "losers",  d.value_losers  || [], seg, STATE.level, "value"));
+    }
+  } else {
+    // %-mode (default): owned + market by % change
+    if (seg === "both" || seg === "owned") {
+      panels.push(panel("Owned winners",  "winners", d.owned_winners  || [], seg, STATE.level));
+      panels.push(panel("Owned losers",   "losers",  d.owned_losers   || [], seg, STATE.level));
+    }
+    if (seg === "both" || seg === "market") {
+      panels.push(panel("Market winners", "winners", d.market_winners || [], seg, STATE.level));
+      panels.push(panel("Market losers",  "losers",  d.market_losers  || [], seg, STATE.level));
+    }
   }
   grid.innerHTML = panels.join("");
 }

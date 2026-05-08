@@ -933,6 +933,135 @@ def broker_event_raw_tevo(event_id: int, force: bool = False, _=Depends(require_
     return {"source": "live", "groups": payload["ticket_groups"], "captured_at": payload["captured_at"]}
 
 
+@app.get("/api/broker/performer/{performer_id}/espn")
+def broker_performer_espn(performer_id: int, _=Depends(require_auth)):
+    """ESPN context for a TEvo performer. Resolves performer_id → ESPN team_id
+    via performer_external_ids (source='espn'), then pulls the latest team
+    snapshot, current injuries, recent news, and the last 5 game snapshots
+    involving that team.
+
+    Returns: {
+      applicable, performer_id, espn_team_id, league,
+      team:    { record_summary, standing_summary, streak, win_pct, captured_at },
+      injuries:[{ athlete_name, position, status, injury_type, return_date, ... }],
+      news:    [{ headline, description, url, published_at, type }],
+      recent:  [{ espn_event_id, captured_at, home_team_id, away_team_id, home_score, away_score, status_short }]
+    }
+    """
+    db = require_sb()
+    pei = (db.table("performer_external_ids")
+             .select("performer_id, external_id, league, meta")
+             .eq("performer_id", performer_id).eq("source", "espn")
+             .limit(1).execute().data or [])
+    if not pei:
+        return {"applicable": False, "reason": "no ESPN mapping for this performer"}
+    espn_team_id = str(pei[0]["external_id"])
+    league       = pei[0]["league"]
+
+    # Latest team snapshot (one row, most recent captured_at).
+    team_rows = (db.table("espn_team_snapshots")
+                   .select("captured_at, wins, losses, ties, win_pct, games_back, playoff_seed, conference_rank, division_rank, record_summary, standing_summary, streak")
+                   .eq("espn_team_id", espn_team_id).eq("espn_league", league)
+                   .order("captured_at", desc=True).limit(1).execute().data or [])
+
+    # Current injuries — latest snapshot per athlete (last 24h).
+    injuries = (db.table("espn_injuries_snapshots")
+                  .select("athlete_id, athlete_name, position, status, injury_type, short_comment, return_date, captured_at")
+                  .eq("espn_team_id", espn_team_id).eq("espn_league", league)
+                  .gte("captured_at", (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat())
+                  .order("captured_at", desc=True).limit(50).execute().data or [])
+    seen = set(); inj_dedup = []
+    for x in injuries:
+        k = x.get("athlete_id")
+        if k in seen: continue
+        seen.add(k); inj_dedup.append(x)
+
+    # Recent news (last 30 days, top 8).
+    news = (db.table("espn_news")
+              .select("headline, description, url, published_at, type")
+              .eq("espn_team_id", espn_team_id).eq("espn_league", league)
+              .order("published_at", desc=True).limit(8).execute().data or [])
+
+    # Last 5 finished/upcoming game snapshots where this team is home or away.
+    recent = []
+    try:
+        recent = (db.rpc("get_team_recent_games", {"p_espn_team_id": espn_team_id, "p_league": league, "p_limit": 5}).execute().data or [])
+    except Exception:
+        # Fallback: query espn_event_snapshots directly (latest snap per event).
+        rows_h = (db.table("espn_event_snapshots")
+                    .select("espn_event_id, captured_at, status_short, state, home_team_id, away_team_id, home_score, away_score")
+                    .eq("home_team_id", espn_team_id).eq("espn_league", league)
+                    .order("captured_at", desc=True).limit(15).execute().data or [])
+        rows_a = (db.table("espn_event_snapshots")
+                    .select("espn_event_id, captured_at, status_short, state, home_team_id, away_team_id, home_score, away_score")
+                    .eq("away_team_id", espn_team_id).eq("espn_league", league)
+                    .order("captured_at", desc=True).limit(15).execute().data or [])
+        all_rows = rows_h + rows_a
+        seen_ev = set(); merged = []
+        for x in sorted(all_rows, key=lambda r: r.get("captured_at", ""), reverse=True):
+            ek = x.get("espn_event_id")
+            if ek in seen_ev: continue
+            seen_ev.add(ek); merged.append(x)
+            if len(merged) >= 5: break
+        recent = merged
+
+    return {
+        "applicable": True,
+        "performer_id": performer_id,
+        "espn_team_id": espn_team_id,
+        "league": league,
+        "team":     team_rows[0] if team_rows else None,
+        "injuries": inj_dedup[:20],
+        "news":     news,
+        "recent":   recent,
+    }
+
+
+@app.post("/api/admin/seed-home-venues")
+def admin_seed_home_venues(league: str, _=Depends(require_auth)):
+    """One-shot admin: for every performer in performer_external_ids
+    (source='espn') in the given league that's NOT yet in performer_home_venues,
+    fetch /v9/performers/{id} from TEvo and upsert a home-venue row.
+
+    Used to backfill MLS (which had 0 rows in performer_home_venues despite
+    30 teams in performer_external_ids) and any other league that's missing
+    venue resolution.
+
+    Returns: { league, scanned, added, skipped_no_venue, errors }
+    """
+    db = require_sb()
+    pei = (db.table("performer_external_ids")
+             .select("performer_id, external_id, external_name, league")
+             .eq("source", "espn").eq("league", league).execute().data or [])
+    have = {r["performer_id"] for r in (db.table("performer_home_venues")
+             .select("performer_id").eq("league", league).execute().data or [])}
+    todo = [r for r in pei if r["performer_id"] not in have]
+
+    added = 0; skipped = 0; errors: list[str] = []
+    for r in todo:
+        pid = int(r["performer_id"])
+        try:
+            perf = client.get_performer(pid, include_opponents=False)
+            home = perf.get("home_venue") or {}
+            vid  = home.get("id")
+            if not vid:
+                skipped += 1
+                continue
+            db.table("performer_home_venues").upsert({
+                "performer_id":   pid,
+                "performer_name": perf.get("name") or r.get("external_name"),
+                "venue_id":       int(vid),
+                "venue_name":     home.get("name"),
+                "venue_location": home.get("location"),
+                "league":         league,
+                "source":         "tevo_lookup",
+            }, on_conflict="performer_id,league").execute()
+            added += 1
+        except Exception as e:
+            errors.append(f"performer_id={pid}: {e}")
+    return {"league": league, "scanned": len(todo), "added": added, "skipped_no_venue": skipped, "errors": errors[:10]}
+
+
 @app.get("/api/broker/event/{event_id}/espn")
 def broker_event_espn(event_id: int, _=Depends(require_auth)):
     """Tab 2: ESPN aggregated data for home + away teams.
@@ -1147,8 +1276,17 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
         try: return round(float(cur) - float(prev), 2)
         except (TypeError, ValueError): return None
 
+    def _val(price, tix):
+        if price is None or tix is None: return None
+        try: return float(price) * float(tix)
+        except (TypeError, ValueError): return None
+
     rows_built = []
     for r in rpc_rows:
+        cur_market_val  = _val(r.get("cur_market_med"),  r.get("cur_market_tix"))
+        prev_market_val = _val(r.get("prev_market_med"), r.get("prev_market_tix"))
+        cur_owned_val   = _val(r.get("cur_owned_med"),   r.get("cur_owned_tix"))
+        prev_owned_val  = _val(r.get("prev_owned_med"),  r.get("prev_owned_tix"))
         rows_built.append({
             "event_id":       r.get("event_id"),
             "name":           r.get("name"),
@@ -1165,6 +1303,17 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
             "delta_market_abs": abs_delta(r.get("cur_market_med"), r.get("prev_market_med")),
             "delta_owned_pct":  pct_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
             "delta_owned_abs":  abs_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
+            # Notional ticket inventory marked-to-market — captures both price moves
+            # AND inventory moves in a single number. Treat each event like a position:
+            # value = price × quantity; Δvalue = (cur_price × cur_qty) − (prev_price × prev_qty).
+            "cur_market_val":   round(cur_market_val,  2) if cur_market_val  is not None else None,
+            "prev_market_val":  round(prev_market_val, 2) if prev_market_val is not None else None,
+            "delta_market_val": (None if cur_market_val is None or prev_market_val is None
+                                 else round(cur_market_val - prev_market_val, 2)),
+            "cur_owned_val":    round(cur_owned_val,  2) if cur_owned_val  is not None else None,
+            "prev_owned_val":   round(prev_owned_val, 2) if prev_owned_val is not None else None,
+            "delta_owned_val":  (None if cur_owned_val is None or prev_owned_val is None
+                                 else round(cur_owned_val - prev_owned_val, 2)),
         })
 
     if not rows_built:
@@ -1248,16 +1397,31 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
     vn_mw  = top10(vn_market_dedup, "delta_market_pct", desc=True)
     vn_ml  = top10(vn_market_dedup, "delta_market_pct", desc=False)
 
+    # Notional value movers: rank by abs $ change in (price × tickets) — the
+    # mark-to-market on the inventory position. Captures both price drops and
+    # inventory drawdowns in one score, which is what an options-style P&L would
+    # weight too (no convexity in tickets, so it's pure delta×dS plus dN×price).
+    ev_value_winners = top10([r for r in rows_built if r.get("delta_market_val") is not None], "delta_market_val", desc=True)
+    ev_value_losers  = top10([r for r in rows_built if r.get("delta_market_val") is not None], "delta_market_val", desc=False)
+    ev_owned_value_winners = top10([r for r in rows_built if r.get("delta_owned_val") is not None and (r.get("cur_owned_tix") or 0) > 0], "delta_owned_val", desc=True)
+    ev_owned_value_losers  = top10([r for r in rows_built if r.get("delta_owned_val") is not None and (r.get("cur_owned_tix") or 0) > 0], "delta_owned_val", desc=False)
+
     return {
         "window_hours": window_hours,
         # Caption surfaced by the UI so users understand what they're looking at.
         "ranking": {
             "metric_owned":  "delta_owned_pct",
             "metric_market": "delta_market_pct",
-            "weighting":     "events: unweighted % change. performer/venue rollups: ticket-count-weighted average.",
+            "metric_value":  "delta_market_val (cur_med × cur_tix − prev_med × prev_tix)",
+            "weighting":     "events: unweighted % change. performer/venue rollups: ticket-count-weighted average. Value lists: absolute $ change in inventory mark-to-market.",
             "dedupe_rule":   "market_winners/losers exclude any entity already in owned_winners/losers; market lists fill from next-best non-owned candidates.",
         },
-        "events":     {"owned_winners": ev_ow, "owned_losers": ev_ol, "market_winners": ev_mw, "market_losers": ev_ml},
+        "events": {
+            "owned_winners":  ev_ow,  "owned_losers":  ev_ol,
+            "market_winners": ev_mw,  "market_losers": ev_ml,
+            "value_winners":  ev_value_winners, "value_losers": ev_value_losers,
+            "owned_value_winners": ev_owned_value_winners, "owned_value_losers": ev_owned_value_losers,
+        },
         "performers": {"owned_winners": pf_ow, "owned_losers": pf_ol, "market_winners": pf_mw, "market_losers": pf_ml},
         "venues":     {"owned_winners": vn_ow, "owned_losers": vn_ol, "market_winners": vn_mw, "market_losers": vn_ml},
     }

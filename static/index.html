@@ -1339,6 +1339,7 @@ async function loadPerformerDetail(id) {
         <div class="stat"><div class="k">keywords</div><div class="v dim">${esc(p.keywords || "—")}</div></div>
       </div>
       <div id="performer-portfolio-mount"></div>
+      <div id="performer-espn-mount"></div>
       ${opponents.length ? `
       <div class="panel" style="margin-top:16px">
         <div class="panel-head">
@@ -1348,9 +1349,100 @@ async function loadPerformerDetail(id) {
         <div class="panel-body" id="pf-opp-table"><table><tbody>${oppRows}</tbody></table></div>
       </div>` : ""}`;
     loadPortfolio({ performer_id: p.id, mount: "#performer-portfolio-mount", titleSuffix: p.name });
+    loadPerformerESPN(p.id);
   } catch (err) {
     detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
   }
+}
+
+// =====================================================================
+// PERFORMER ESPN PANEL — surfaces ESPN team context for the selected performer.
+// Resolves performer_id -> espn_team_id via performer_external_ids; quietly
+// hides itself for performers without an ESPN mapping (concerts, theatre, etc.).
+// =====================================================================
+async function loadPerformerESPN(performerId) {
+  const mount = $("#performer-espn-mount");
+  if (!mount) return;
+  mount.innerHTML = "";
+  let d;
+  try { d = await api("/api/broker/performer/" + performerId + "/espn"); }
+  catch (err) { return; }  // silent fail — non-sports performers expected
+  if (!d || !d.applicable) return;
+
+  const t = d.team || {};
+  const injuries = d.injuries || [];
+  const news     = d.news || [];
+  const recent   = d.recent || [];
+
+  const fmtDate = s => s ? String(s).slice(0,10) : "—";
+  const recentRows = recent.map(r => {
+    const isHome = r.home_team_id === d.espn_team_id;
+    const opp = isHome ? r.away_team_id : r.home_team_id;
+    const myScore  = isHome ? r.home_score : r.away_score;
+    const oppScore = isHome ? r.away_score : r.home_score;
+    let result = "—";
+    if (r.state === "post" && myScore != null && oppScore != null) {
+      const w = myScore > oppScore;
+      result = `<span class="${w ? '' : 'dim'}" style="color:${w ? 'var(--green)' : 'var(--red)'}">${w ? 'W' : 'L'} ${myScore}-${oppScore}</span>`;
+    } else if (r.state === "in") {
+      result = `<span class="dim">live ${myScore ?? '-'}–${oppScore ?? '-'}</span>`;
+    } else {
+      result = `<span class="dim">${esc(r.status_short || 'upcoming')}</span>`;
+    }
+    return `<tr>
+      <td class="dim">${fmtDate(r.captured_at)}</td>
+      <td>${isHome ? 'vs' : '@'} <span class="dim">${esc(opp || '')}</span></td>
+      <td>${result}</td>
+    </tr>`;
+  }).join("");
+
+  const injRows = injuries.slice(0, 12).map(i => `
+    <tr>
+      <td>${esc(i.athlete_name || '')}</td>
+      <td class="dim">${esc(i.position || '')}</td>
+      <td><span style="color:${(i.status||'').toLowerCase().includes('out') ? 'var(--red)' : 'var(--amber)'}">${esc(i.status || '')}</span></td>
+      <td class="dim ellip">${esc(i.injury_type || '')}</td>
+      <td class="dim">${i.return_date ? fmtDate(i.return_date) : ''}</td>
+    </tr>`).join("");
+
+  const newsRows = news.slice(0, 6).map(n => `
+    <tr>
+      <td class="dim">${fmtDate(n.published_at)}</td>
+      <td><a href="${esc(n.url || '#')}" target="_blank" rel="noopener">${esc(n.headline || '')}</a></td>
+      <td class="dim">${esc(n.type || '')}</td>
+    </tr>`).join("");
+
+  mount.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head">
+        <span>espn context <span class="count">(${esc(d.league || 'team')})</span></span>
+        <span class="dim" style="font-size:11px">team_id ${esc(d.espn_team_id)} · captured ${fmtDate(t.captured_at)}</span>
+      </div>
+      <div class="panel-body">
+        <div class="stats-grid" style="margin-bottom:8px">
+          <div class="stat"><div class="k">record</div><div class="v amber">${esc(t.record_summary || (t.wins!=null ? `${t.wins}-${t.losses}${t.ties?'-'+t.ties:''}` : '—'))}</div></div>
+          <div class="stat"><div class="k">win %</div><div class="v">${t.win_pct != null ? Number(t.win_pct).toFixed(3) : '—'}</div></div>
+          <div class="stat"><div class="k">standing</div><div class="v dim">${esc(t.standing_summary || '—')}</div></div>
+          <div class="stat"><div class="k">streak</div><div class="v">${esc(t.streak || '—')}</div></div>
+          <div class="stat"><div class="k">seed</div><div class="v">${t.playoff_seed ?? '—'}</div></div>
+          <div class="stat"><div class="k">games back</div><div class="v">${t.games_back ?? '—'}</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">
+          <div>
+            <div style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">last 5</div>
+            <table>${recentRows ? `<tbody>${recentRows}</tbody>` : `<tbody><tr><td class="dim">no game snapshots yet</td></tr></tbody>`}</table>
+          </div>
+          <div>
+            <div style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">injuries (${injuries.length})</div>
+            <table>${injRows ? `<tbody>${injRows}</tbody>` : `<tbody><tr><td class="dim">no current injuries reported</td></tr></tbody>`}</table>
+          </div>
+          <div>
+            <div style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">news</div>
+            <table>${newsRows ? `<tbody>${newsRows}</tbody>` : `<tbody><tr><td class="dim">no recent news</td></tr></tbody>`}</table>
+          </div>
+        </div>
+      </div>
+    </div>`;
 }
 
 // =====================================================================
