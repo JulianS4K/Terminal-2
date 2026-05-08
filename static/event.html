@@ -588,16 +588,44 @@ async function loadRaw(force) {
 // Chart — multi-series time-series w/ overlay markers + cadence chip strip
 // =============================================================================
 
+// =============================================================================
+// METRIC WORKBENCH — Think-or-Swim style. User picks any subset of available
+// series; each series has a source (TEvo / ESPN / ESPN-composite), an axis
+// (price / count / normalized), a color, and a default-on flag. Same global
+// preset for all events; saved to localStorage.
+// =============================================================================
 const CHART_SERIES = [
-  { id: "prices_owned",   label: "Owned median $",  color: "#fbbf24", axis: "y_price",  type: "line", default: true  },
-  { id: "prices_market",  label: "Market median $", color: "#60a5fa", axis: "y_price",  type: "line", default: true  },
-  { id: "counts_owned",   label: "Owned tix",       color: "#f59e0b", axis: "y_count",  type: "line", default: true,  dashed: true },
-  { id: "counts_market",  label: "Market tix",      color: "#3b82f6", axis: "y_count",  type: "line", default: true,  dashed: true },
-  { id: "home_standings", label: "Home win %",      color: "#34d399", axis: "y_pct",    type: "line", default: true  },
-  { id: "away_standings", label: "Away win %",      color: "#a78bfa", axis: "y_pct",    type: "line", default: true  },
+  // ----- TEvo prices -----
+  { id: "prices_owned",   label: "Owned median $",  color: "#fbbf24", axis: "y_price",  type: "line", default: true,  group: "TEvo prices" },
+  { id: "prices_market",  label: "Market median $", color: "#60a5fa", axis: "y_price",  type: "line", default: true,  group: "TEvo prices" },
+  // ----- TEvo counts -----
+  { id: "counts_owned",   label: "Owned tix",       color: "#f59e0b", axis: "y_count",  type: "line", default: true,  group: "TEvo counts", dashed: true },
+  { id: "counts_market",  label: "Market tix",      color: "#3b82f6", axis: "y_count",  type: "line", default: true,  group: "TEvo counts", dashed: true },
+  // ----- ESPN home team standings -----
+  { id: "home_win_pct",   label: "Home win %",      color: "#34d399", axis: "y_norm",   type: "line", default: true,  group: "ESPN home" },
+  { id: "home_wins",      label: "Home wins",       color: "#10b981", axis: "y_count",  type: "line", default: false, group: "ESPN home" },
+  { id: "home_losses",    label: "Home losses",     color: "#ef4444", axis: "y_count",  type: "line", default: false, group: "ESPN home" },
+  { id: "home_games_back",label: "Home games back", color: "#fde68a", axis: "y_norm",   type: "line", default: false, group: "ESPN home" },
+  { id: "home_seed",      label: "Home seed",       color: "#fbbf24", axis: "y_norm",   type: "line", default: false, group: "ESPN home" },
+  { id: "home_conf_rank", label: "Home conf rank",  color: "#84cc16", axis: "y_norm",   type: "line", default: false, group: "ESPN home" },
+  { id: "home_div_rank",  label: "Home div rank",   color: "#65a30d", axis: "y_norm",   type: "line", default: false, group: "ESPN home" },
+  { id: "home_injury_load", label: "Home injuries (active)", color: "#dc2626", axis: "y_count", type: "line", default: false, group: "ESPN home", dashed: true },
+  { id: "home_news_1h",   label: "Home news velocity (1h)", color: "#f97316", axis: "y_count", type: "bar", default: false, group: "ESPN home" },
+  { id: "home_team_index",label: "Home team_index ★", color: "#22c55e", axis: "y_norm", type: "line", default: false, group: "ESPN composite", weighted: true },
+  // ----- ESPN away team standings -----
+  { id: "away_win_pct",   label: "Away win %",      color: "#a78bfa", axis: "y_norm",   type: "line", default: true,  group: "ESPN away" },
+  { id: "away_wins",      label: "Away wins",       color: "#8b5cf6", axis: "y_count",  type: "line", default: false, group: "ESPN away" },
+  { id: "away_losses",    label: "Away losses",     color: "#f87171", axis: "y_count",  type: "line", default: false, group: "ESPN away" },
+  { id: "away_games_back",label: "Away games back", color: "#fcd34d", axis: "y_norm",   type: "line", default: false, group: "ESPN away" },
+  { id: "away_seed",      label: "Away seed",       color: "#f472b6", axis: "y_norm",   type: "line", default: false, group: "ESPN away" },
+  { id: "away_conf_rank", label: "Away conf rank",  color: "#c084fc", axis: "y_norm",   type: "line", default: false, group: "ESPN away" },
+  { id: "away_div_rank",  label: "Away div rank",   color: "#9333ea", axis: "y_norm",   type: "line", default: false, group: "ESPN away" },
+  { id: "away_injury_load", label: "Away injuries (active)", color: "#b91c1c", axis: "y_count", type: "line", default: false, group: "ESPN away", dashed: true },
+  { id: "away_news_1h",   label: "Away news velocity (1h)", color: "#fb923c", axis: "y_count", type: "bar", default: false, group: "ESPN away" },
+  { id: "away_team_index",label: "Away team_index ★", color: "#a3e635", axis: "y_norm", type: "line", default: false, group: "ESPN composite", weighted: true },
 ];
 
-const SERIES_KEY = "evt_series_toggles_v1";
+const SERIES_KEY = "evt_series_toggles_v2";
 function loadToggles() {
   try { return JSON.parse(localStorage.getItem(SERIES_KEY)) || {}; } catch (_) { return {}; }
 }
@@ -612,20 +640,84 @@ function isOn(id) {
 let _chart = null;
 let _chart_data_cache = null;
 
+// Metric workbench: active pills + "+ Add metric" picker grouped by source.
 function buildToggleUI() {
   const wrap = document.getElementById("series-toggles");
   wrap.innerHTML = "";
-  for (const s of CHART_SERIES) {
-    const t = document.createElement("div");
-    t.className = "series-toggle" + (isOn(s.id) ? " on" : "");
-    t.innerHTML = `<span class="swatch" style="background:${s.color}"></span>${s.label}`;
-    t.onclick = () => {
-      _toggles[s.id] = !isOn(s.id);
+  wrap.style.alignItems = "center";
+
+  // 1) Render active pills (each removable on click)
+  const active = CHART_SERIES.filter(s => isOn(s.id));
+  for (const s of active) {
+    const pill = document.createElement("div");
+    pill.className = "series-toggle on";
+    pill.title = "Click to remove from chart";
+    pill.innerHTML = `<span class="swatch" style="background:${s.color}"></span>${s.label} <span style="margin-left:6px;color:var(--dim);font-size:11px">×</span>`;
+    pill.onclick = () => {
+      _toggles[s.id] = false;
       saveToggles(_toggles);
-      t.classList.toggle("on");
+      buildToggleUI();
       renderChart();
     };
-    wrap.appendChild(t);
+    wrap.appendChild(pill);
+  }
+
+  // 2) "+ Add metric" button + dropdown
+  const addBtn = document.createElement("div");
+  addBtn.style.position = "relative";
+  addBtn.innerHTML = `
+    <button id="metric-add-btn" style="background:#2a2a2e;border:1px solid var(--amber-dim);color:var(--amber);padding:4px 10px;font-size:11px;letter-spacing:0.04em;cursor:pointer">+ ADD METRIC</button>
+    <div id="metric-picker" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#0d1117;border:1px solid var(--amber-dim);min-width:280px;max-height:380px;overflow-y:auto;z-index:50;padding:6px;font-size:11px"></div>
+  `;
+  wrap.appendChild(addBtn);
+
+  const btn = addBtn.querySelector("#metric-add-btn");
+  const picker = addBtn.querySelector("#metric-picker");
+  const groups = {};
+  for (const s of CHART_SERIES) {
+    (groups[s.group] = groups[s.group] || []).push(s);
+  }
+  picker.innerHTML = Object.entries(groups).map(([g, list]) => `
+    <div style="color:var(--dim);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:6px 8px 2px">${g}</div>
+    ${list.map(s => {
+      const on = isOn(s.id);
+      return `<div data-id="${s.id}" class="metric-row" style="padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:6px;${on ? 'opacity:0.4' : ''}">
+        <span style="display:inline-block;width:8px;height:8px;background:${s.color}"></span>
+        <span style="flex:1">${s.label}${s.weighted ? ' <span style="color:var(--dim);font-size:10px">(auto-weighted)</span>' : ''}</span>
+        ${on ? '<span style="color:var(--amber)">●</span>' : ''}
+      </div>`;
+    }).join("")}
+  `).join("");
+  btn.onclick = () => {
+    picker.style.display = picker.style.display === "none" ? "block" : "none";
+  };
+  picker.onclick = (e) => {
+    const row = e.target.closest(".metric-row");
+    if (!row) return;
+    const id = row.dataset.id;
+    _toggles[id] = !isOn(id);
+    saveToggles(_toggles);
+    buildToggleUI();
+    renderChart();
+  };
+  document.addEventListener("click", (e) => {
+    if (!addBtn.contains(e.target)) picker.style.display = "none";
+  }, { once: false });
+
+  // 3) Show signal weights when a team_index is on (so user knows what's driving the line)
+  const w = _chart_data_cache?.signal_weights;
+  if (w && (isOn("home_team_index") || isOn("away_team_index"))) {
+    const fmt = (k, v) => `${k} ${(v * 100).toFixed(0)}%`;
+    const home = w.home || {}; const away = w.away || {};
+    const hStr = isOn("home_team_index") && Object.keys(home).length
+      ? `Home: ${["standings", "news", "injury"].map(k => fmt(k, home[k] || 0)).join(" · ")}` : "";
+    const aStr = isOn("away_team_index") && Object.keys(away).length
+      ? `Away: ${["standings", "news", "injury"].map(k => fmt(k, away[k] || 0)).join(" · ")}` : "";
+    const wDiv = document.createElement("div");
+    wDiv.style.cssText = "color:var(--dim);font-size:10px;margin-left:auto;letter-spacing:0.04em";
+    wDiv.textContent = "Index weights — " + [hStr, aStr].filter(Boolean).join(" | ");
+    wDiv.title = w.explainer || "";
+    wrap.appendChild(wDiv);
   }
 }
 
@@ -635,14 +727,29 @@ function pointsFor(seriesId) {
   return arr.filter(p => p.v != null).map(p => ({ x: p.t, y: Number(p.v) }));
 }
 
+// Severity-color injury markers — red for OUT, amber for Questionable / day-to-day,
+// purple for transactions (trades / releases). Each injury_snapshots row becomes
+// its own marker, so hovering shows exactly which athlete + status flipped at
+// that timestamp — the "timestamp injury news to price" requirement.
+function injSeverityColor(status) {
+  const s = String(status || "").toLowerCase();
+  if (/out|injured reserve|ir/.test(s))     return "#dc2626";
+  if (/quest|day-to-day|prob/.test(s))      return "#f59e0b";
+  if (/active|return|cleared/.test(s))      return "#10b981";
+  return "#a78bfa";
+}
 function buildAnnotations() {
-  // Vertical lines for injuries + roster moves. Chart.js doesn't have a
-  // first-class annotation in the UMD bundle, so we hand-draw via plugin.
   const inj = (_chart_data_cache?.overlays?.injuries || []).map(o => ({
-    x: o.t, color: "#f87171", label: `inj: ${o.athlete} (${o.status})${o.team === 'home' ? ' [H]' : ' [A]'}`,
+    x: o.t,
+    color: injSeverityColor(o.status),
+    label: `${o.team === 'home' ? '[H]' : '[A]'} ${o.athlete}: ${o.status}${o.comment ? ' — ' + o.comment : ''}`,
+    kind: "injury",
   }));
   const rm = (_chart_data_cache?.overlays?.roster_moves || []).map(o => ({
-    x: o.t, color: "#a78bfa", label: `${o.type}: athlete ${o.athlete_id || '?'}`,
+    x: o.t,
+    color: "#a78bfa",
+    label: `${o.type}: athlete ${o.athlete_id || '?'}${o.notes ? ' (' + o.notes + ')' : ''}`,
+    kind: "transaction",
   }));
   return [...inj, ...rm];
 }
@@ -660,17 +767,70 @@ const overlayPlugin = {
       const x = xScale.getPixelForValue(new Date(a.x).getTime());
       if (x < chartArea.left || x > chartArea.right) continue;
       ctx.strokeStyle = a.color;
-      ctx.globalAlpha = 0.35;
+      ctx.globalAlpha = 0.45;
       ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
+      ctx.setLineDash(a.kind === "transaction" ? [2, 4] : [3, 3]);
       ctx.beginPath();
       ctx.moveTo(x, chartArea.top);
       ctx.lineTo(x, chartArea.bottom);
       ctx.stroke();
+      // Small triangle at the top edge so markers are findable without hover
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = a.color;
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x - 3, chartArea.top - 5);
+      ctx.lineTo(x + 3, chartArea.top - 5);
+      ctx.closePath();
+      ctx.fill();
     }
     ctx.restore();
   },
 };
+
+// Hover handler: when the cursor is near a marker, surface its label in a
+// floating tooltip pinned above the chart so the user can read the athlete
+// + status without depending on the dataset tooltip being open.
+let _markerTooltip = null;
+function ensureMarkerTooltip() {
+  if (_markerTooltip) return _markerTooltip;
+  _markerTooltip = document.createElement("div");
+  _markerTooltip.style.cssText = "position:absolute;display:none;background:#11151c;border:1px solid #232a36;color:#e6edf3;padding:4px 8px;font-size:11px;pointer-events:none;z-index:30;max-width:300px;line-height:1.3";
+  document.body.appendChild(_markerTooltip);
+  return _markerTooltip;
+}
+function setupMarkerHover() {
+  const canvas = document.getElementById("chart-canvas");
+  if (!canvas || canvas._markerHoverWired) return;
+  canvas._markerHoverWired = true;
+  canvas.addEventListener("mousemove", (e) => {
+    if (!_chart) return;
+    const ann = buildAnnotations();
+    if (!ann.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const xPx = e.clientX - rect.left;
+    const xScale = _chart.scales.x;
+    if (!xScale) return;
+    let nearest = null; let nearestDx = 8;
+    for (const a of ann) {
+      const px = xScale.getPixelForValue(new Date(a.x).getTime());
+      const dx = Math.abs(px - xPx);
+      if (dx < nearestDx) { nearestDx = dx; nearest = a; }
+    }
+    const tip = ensureMarkerTooltip();
+    if (nearest) {
+      tip.style.display = "block";
+      tip.style.left = (e.clientX + 10) + "px";
+      tip.style.top  = (e.clientY + 10) + "px";
+      tip.innerHTML = `<div style="color:${nearest.color};font-weight:500">${nearest.kind.toUpperCase()}</div>${nearest.label}<div style="color:#6b7684;font-size:10px;margin-top:2px">${new Date(nearest.x).toLocaleString()}</div>`;
+    } else {
+      tip.style.display = "none";
+    }
+  });
+  canvas.addEventListener("mouseleave", () => {
+    if (_markerTooltip) _markerTooltip.style.display = "none";
+  });
+}
 
 function renderChart() {
   const canvas = document.getElementById("chart-canvas");
@@ -680,17 +840,32 @@ function renderChart() {
     if (!isOn(s.id)) continue;
     const pts = pointsFor(s.id);
     if (!pts.length) continue;
-    datasets.push({
-      label: s.label,
-      data: pts,
-      borderColor: s.color,
-      backgroundColor: s.color + "22",
-      yAxisID: s.axis,
-      borderWidth: 1.5,
-      borderDash: s.dashed ? [4, 3] : undefined,
-      pointRadius: 0,
-      tension: 0.25,
-    });
+    if (s.type === "bar") {
+      datasets.push({
+        label: s.label,
+        data: pts,
+        backgroundColor: s.color + "55",
+        borderColor: s.color,
+        borderWidth: 1,
+        yAxisID: s.axis,
+        type: "bar",
+        barPercentage: 0.9,
+        categoryPercentage: 1.0,
+      });
+    } else {
+      datasets.push({
+        label: s.label,
+        data: pts,
+        borderColor: s.color,
+        backgroundColor: s.color + "22",
+        yAxisID: s.axis,
+        borderWidth: 1.5,
+        borderDash: s.dashed ? [4, 3] : undefined,
+        pointRadius: 0,
+        tension: 0.25,
+        type: "line",
+      });
+    }
   }
 
   if (_chart) _chart.destroy();
@@ -708,6 +883,8 @@ function renderChart() {
              grid:  { color: "#1a2029" } },
         y_price: { position: "left",  ticks: { color: "#fbbf24", callback: v => "$" + Number(v).toFixed(0) }, grid: { color: "#1a2029" } },
         y_count: { position: "right", ticks: { color: "#60a5fa" }, grid: { drawOnChartArea: false } },
+        y_norm:  { position: "right", display: true, ticks: { color: "#a78bfa" }, grid: { drawOnChartArea: false } },
+        // Legacy alias for backwards compat: anything still tagged y_pct routes here.
         y_pct:   { position: "right", display: false, min: 0, max: 1 },
       },
       plugins: {
@@ -720,6 +897,7 @@ function renderChart() {
     },
     plugins: [overlayPlugin],
   });
+  setupMarkerHover();
 }
 
 function renderLast5() {

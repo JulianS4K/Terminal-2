@@ -1250,18 +1250,32 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
             return []
         rows = (
             db.table("espn_team_snapshots")
-            .select("captured_at,win_pct,wins,losses,playoff_seed,record_summary")
+            .select("captured_at,win_pct,wins,losses,games_back,playoff_seed,conference_rank,division_rank,record_summary,streak")
             .eq("espn_team_id", team_id)
             .gte("captured_at", since_iso)
             .order("captured_at")
             .execute()
         ).data or []
-        return [{"t": r["captured_at"], "v": r.get("win_pct"),
-                 "wins": r.get("wins"), "losses": r.get("losses"),
-                 "seed": r.get("playoff_seed"), "rec": r.get("record_summary")} for r in rows]
+        return rows
 
-    home_standings = _team_standings(home_team_id)
-    away_standings = _team_standings(away_team_id)
+    home_standings_rows = _team_standings(home_team_id)
+    away_standings_rows = _team_standings(away_team_id)
+
+    def _stand_series(rows: list, field: str) -> list:
+        """Pluck one ESPN standings field into a t,v time-series."""
+        return [{"t": r["captured_at"], "v": r.get(field)} for r in rows]
+
+    # Legacy field kept for backwards-compat: home_standings/away_standings are
+    # the win_pct series with extra metadata. New per-field series are emitted
+    # separately so the chart workbench can plot any combination.
+    home_standings = [{"t": r["captured_at"], "v": r.get("win_pct"),
+                       "wins": r.get("wins"), "losses": r.get("losses"),
+                       "seed": r.get("playoff_seed"), "rec": r.get("record_summary")}
+                      for r in home_standings_rows]
+    away_standings = [{"t": r["captured_at"], "v": r.get("win_pct"),
+                       "wins": r.get("wins"), "losses": r.get("losses"),
+                       "seed": r.get("playoff_seed"), "rec": r.get("record_summary")}
+                      for r in away_standings_rows]
 
     # 3) Injury changes (only rows where is_baseline=false → real status flip)
     inj_rows = (
@@ -1325,16 +1339,143 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
     last5_home = _last5(home_team_id)
     last5_away = _last5(away_team_id)
 
+    # ----- News velocity per team (rows per hour bucket) -----
+    def _news_series(team_id: str | None) -> list:
+        if not team_id: return []
+        nrows = (
+            db.table("espn_news")
+            .select("published_at")
+            .eq("espn_team_id", team_id).eq("espn_league", home_league or "")
+            .gte("published_at", since_iso)
+            .order("published_at")
+            .execute()
+        ).data or []
+        # Bucket to UTC hours for a clean stairstep series
+        from collections import Counter
+        buckets: Counter = Counter()
+        for r in nrows:
+            ts = r.get("published_at") or ""
+            buckets[ts[:13]] += 1   # YYYY-MM-DDTHH
+        return [{"t": k + ":00:00+00:00", "v": v} for k, v in sorted(buckets.items())]
+
+    home_news = _news_series(home_team_id)
+    away_news = _news_series(away_team_id)
+
+    # ----- Active-injury count over time (per team) -----
+    # For each injury status change, we don't easily know "is this player still
+    # injured at time T" without a reverse pass. Approximation: count distinct
+    # athlete_ids whose latest status change before T was not 'Active'. Cheap
+    # forward-fill in Python — these tables are small.
+    def _injury_load_series(team_id: str | None) -> list:
+        if not team_id: return []
+        rows = (
+            db.table("espn_injuries_snapshots")
+            .select("captured_at,athlete_id,status")
+            .eq("espn_team_id", team_id).eq("espn_league", home_league or "")
+            .gte("captured_at", since_iso)
+            .order("captured_at")
+            .execute()
+        ).data or []
+        # State: athlete_id -> latest status. Each row mutates state, emit count.
+        state: dict[str, str] = {}
+        out = []
+        for r in rows:
+            aid = r.get("athlete_id"); st = (r.get("status") or "").lower()
+            if not aid: continue
+            state[aid] = st
+            active_injured = sum(1 for s in state.values() if s and s != "active")
+            out.append({"t": r["captured_at"], "v": active_injured})
+        return out
+
+    home_injury_load = _injury_load_series(home_team_id)
+    away_injury_load = _injury_load_series(away_team_id)
+
+    # ----- Composite team_index with window-content-derived weights -----
+    # Weight each signal by how much CONTENT (snapshots) it generated during
+    # the visible window. Heavy injury-news day → injuries dominate the index.
+    # Quiet news week → standings drive it. Per user spec.
+    def _team_index_series(stand_rows, news_rows, inj_load_rows, team_id: str | None) -> tuple[list, dict]:
+        if not team_id:
+            return [], {}
+        n_stand = len(stand_rows)
+        n_news  = len(news_rows)
+        n_inj   = len(inj_load_rows)
+        total = max(n_stand + n_news + n_inj, 1)
+        w = {"standings": n_stand/total, "news": n_news/total, "injury": n_inj/total}
+
+        # Build a unified hourly grid from all three sources
+        keypoints = sorted({r["t"] for r in (stand_rows + news_rows + inj_load_rows)})
+        if not keypoints: return [], w
+
+        # Forward-fill helpers
+        def ff_value(rows, t):
+            v = None
+            for r in rows:
+                if r["t"] <= t: v = r.get("v")
+                else: break
+            return v
+
+        # Normalize each series to 0-100 within the window
+        def vals(rs): return [r.get("v") for r in rs if r.get("v") is not None]
+        s_vals = vals(stand_rows); n_vals = vals(news_rows); i_vals = vals(inj_load_rows)
+        def norm(v, vs):
+            if v is None or not vs: return 50.0  # neutral if no data
+            mn, mx = min(vs), max(vs)
+            if mx == mn: return 50.0
+            return (float(v) - mn) / (mx - mn) * 100.0
+
+        out = []
+        for t in keypoints:
+            s = norm(ff_value(stand_rows, t), s_vals)            # higher win% = higher
+            n = norm(ff_value(news_rows,  t), n_vals)            # more news = higher (popularity proxy)
+            i = 100.0 - norm(ff_value(inj_load_rows, t), i_vals) # MORE injuries = LOWER index
+            idx = w["standings"]*s + w["news"]*n + w["injury"]*i
+            out.append({"t": t, "v": round(idx, 2)})
+        return out, w
+
+    home_index, home_weights = _team_index_series(home_standings_rows, home_news, home_injury_load, home_team_id)
+    away_index, away_weights = _team_index_series(away_standings_rows, away_news, away_injury_load, away_team_id)
+
     return {
         "event_id": event_id,
         "days": days,
         "series": {
+            # ===== TEvo: prices and counts (legacy IDs preserved) =====
             "prices_owned":   prices_owned,
             "prices_market":  prices_market,
             "counts_owned":   counts_owned,
             "counts_market":  counts_market,
-            "home_standings": home_standings,
+            # ===== ESPN standings: legacy combined + new per-field per-team =====
+            "home_standings": home_standings,   # legacy alias for home_win_pct
             "away_standings": away_standings,
+            "home_win_pct":     _stand_series(home_standings_rows, "win_pct"),
+            "home_wins":        _stand_series(home_standings_rows, "wins"),
+            "home_losses":      _stand_series(home_standings_rows, "losses"),
+            "home_games_back":  _stand_series(home_standings_rows, "games_back"),
+            "home_seed":        _stand_series(home_standings_rows, "playoff_seed"),
+            "home_conf_rank":   _stand_series(home_standings_rows, "conference_rank"),
+            "home_div_rank":    _stand_series(home_standings_rows, "division_rank"),
+            "away_win_pct":     _stand_series(away_standings_rows, "win_pct"),
+            "away_wins":        _stand_series(away_standings_rows, "wins"),
+            "away_losses":      _stand_series(away_standings_rows, "losses"),
+            "away_games_back":  _stand_series(away_standings_rows, "games_back"),
+            "away_seed":        _stand_series(away_standings_rows, "playoff_seed"),
+            "away_conf_rank":   _stand_series(away_standings_rows, "conference_rank"),
+            "away_div_rank":    _stand_series(away_standings_rows, "division_rank"),
+            # ===== ESPN news velocity =====
+            "home_news_1h":     home_news,
+            "away_news_1h":     away_news,
+            # ===== ESPN injury load over time =====
+            "home_injury_load": home_injury_load,
+            "away_injury_load": away_injury_load,
+            # ===== ESPN composite "team_index" (window-content-weighted) =====
+            "home_team_index":  home_index,
+            "away_team_index":  away_index,
+        },
+        "signal_weights": {
+            "home": home_weights,
+            "away": away_weights,
+            "explainer": "Composite team_index = sum(weight_i * normalized_signal_i). Weights derived from how many content rows each signal source produced during the visible window — heavy news → news dominates; quiet news week → standings drive it.",
         },
         "overlays": {
             "injuries":     injuries,
