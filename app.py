@@ -952,8 +952,11 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
     }
 
 
+_PARKING_ZONE_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park)\b", re.IGNORECASE)
+
+
 @app.get("/api/broker/event/{event_id}/zones")
-def broker_event_zones(event_id: int, _=Depends(require_auth)):
+def broker_event_zones(event_id: int, include_parking: bool = False, _=Depends(require_auth)):
     """Per-zone latest metrics with full distribution.
 
     Picks ONE zone_source per event by priority: curated > fallback > unmapped.
@@ -1000,11 +1003,17 @@ def broker_event_zones(event_id: int, _=Depends(require_auth)):
 
     seen = set()
     out = []
+    parking_count = 0
     for r in rows:
         if r.get("zone_source") != chosen_source:
             continue
         z = r.get("zone")
         if z in seen:
+            continue
+        # Auto-hide parking/garage/hospitality unless caller explicitly opts in.
+        # Zone names like "Parking East", "Garage A", "Premium Parking", "Hospitality Tent".
+        if not include_parking and z and _PARKING_ZONE_RE.search(z):
+            parking_count += 1
             continue
         seen.add(z)
         out.append(r)
@@ -1017,6 +1026,8 @@ def broker_event_zones(event_id: int, _=Depends(require_auth)):
         "count": len(out),
         "source": chosen_source,
         "available_sources": sorted(sources_present),
+        "parking_hidden": parking_count,
+        "include_parking": include_parking,
     }
 
 
@@ -1309,7 +1320,13 @@ def broker_event_espn(event_id: int, _=Depends(require_auth)):
 
 
 @app.get("/api/broker/event/{event_id}/chart-data")
-def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_auth)):
+def broker_event_chart_data(
+    event_id: int,
+    days: int = 30,
+    hours: int | None = None,
+    range: str | None = None,   # "6h" "24h" "3d" "7d" "30d" "all"
+    _=Depends(require_auth),
+):
     """Stage 2 chart data: 4 default time-series + 4 overlay event streams.
 
     Series:
@@ -1328,9 +1345,28 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
       espn_event_snapshots state='post' for either team, last 5 by captured_at,
       W/L computed from home_team_id + scores.
     """
-    days = max(1, min(int(days), 180))
+    # Time range: prefer `range` (preset string) over `hours` over `days`.
+    # Presets: 6h, 24h, 3d, 7d, 30d, all. Min 6h, max 30d (cap user-driven
+    # views; 'all' bypasses the cap and pulls everything we have).
+    range_hours: int | None = None
+    if range:
+        rmap = {"6h": 6, "24h": 24, "1d": 24, "3d": 72, "7d": 168, "30d": 720, "all": None}
+        if range.lower() not in rmap:
+            raise HTTPException(400, f"range must be one of {list(rmap)}")
+        range_hours = rmap[range.lower()]
+    elif hours is not None:
+        range_hours = max(6, min(int(hours), 720))
+    else:
+        days = max(1, min(int(days), 180))
+        range_hours = days * 24
+
     db = require_sb()
-    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    if range_hours is None:
+        # 'all' — pick a far-past floor so SELECTs still index well
+        since_iso = "1970-01-01T00:00:00+00:00"
+    else:
+        since_iso = (datetime.now(timezone.utc) - timedelta(hours=range_hours)).isoformat()
+    days = (range_hours // 24) if range_hours else 9999  # back-compat for any consumer reading `days`
 
     # 1) Full event_metrics distribution as time series — chart workbench
     # toggles any subset on/off. SELECT every column we collect.

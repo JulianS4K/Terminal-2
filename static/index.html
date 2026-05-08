@@ -874,11 +874,11 @@ async function loadEvent(eventId) {
     [ov, espn, chart, sections, rawTevo, news, zonesRich] = await Promise.all([
       api(`/api/broker/event/${eventId}/overview`),
       api(`/api/broker/event/${eventId}/espn`).catch(() => null),
-      api(`/api/broker/event/${eventId}/chart-data?days=30`).catch(e => { chartErr = e.message; return null; }),
+      api(`/api/broker/event/${eventId}/chart-data?range=${encodeURIComponent(localStorage.getItem('evt_chart_range_v1') || '30d')}`).catch(e => { chartErr = e.message; return null; }),
       api(`/api/broker/event/${eventId}/section-metrics`).catch(() => null),
       api(`/api/broker/event/${eventId}/raw-tevo`).catch(() => null),
       api(`/api/broker/news?limit=12`).catch(() => null),
-      api(`/api/broker/event/${eventId}/zones`).catch(() => null),
+      api(`/api/broker/event/${eventId}/zones?include_parking=${localStorage.getItem('evt_zone_parking_v1') === '1' ? 'true' : 'false'}`).catch(() => null),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load event ${eventId}: ${esc(e.message)}</div>`;
@@ -994,15 +994,20 @@ async function loadEvent(eventId) {
       depthRows = '<tr><td colspan="7" class="muted" style="padding:16px;">No section data and no zone-mapped depth. Either listings_snapshots is empty for this event or section→zone rules don\'t cover this venue.</td></tr>';
       depthCaption = 'no data';
     } else {
-      // Sort by retail_median desc (richest sections first), drop ancillary (parking/etc)
+      // Sort by retail_median desc (richest first). Drop ancillary unless user
+      // ticked "Show parking/ancillary" (state shared with zone ladder via
+      // localStorage 'evt_zone_parking_v1').
+      const showParking = localStorage.getItem('evt_zone_parking_v1') === '1';
+      const ancillaryCount = secList.filter(s => s.is_ancillary).length;
       const sorted = secList
-        .filter(s => !s.is_ancillary)
+        .filter(s => showParking || !s.is_ancillary)
         .filter(s => (s.metrics?.tickets_count?.v || 0) > 0)
         .sort((a, b) => (b.metrics?.retail_median?.v || 0) - (a.metrics?.retail_median?.v || 0));
       depthRows = sorted.slice(0, 30).map(s => {
         const mtx = s.metrics || {};
-        return `<tr>
-          <td>${esc(s.section)}</td>
+        const tagCls = s.is_ancillary ? 'warn' : '';
+        return `<tr class="${tagCls}">
+          <td>${esc(s.section)}${s.is_ancillary ? ' <span class="badge warn" style="font-size:9px;">ANC</span>' : ''}</td>
           <td class="num">${moneyC(mtx.retail_min?.v)}</td>
           <td class="num">${moneyC(mtx.retail_median?.v)}</td>
           <td class="num">${moneyC(mtx.retail_mean?.v)}</td>
@@ -1011,7 +1016,8 @@ async function loadEvent(eventId) {
           <td class="num">${num(mtx.groups_count?.v)}</td>
         </tr>`;
       }).join('');
-      depthCaption = `${sorted.length} sections (top 30 shown) · zones empty for this event`;
+      const hidden = (!showParking && ancillaryCount) ? ` · ${ancillaryCount} ancillary hidden` : '';
+      depthCaption = `${sorted.length} sections (top 30 shown) · zones empty for this event${hidden}`;
     }
   }
 
@@ -1126,17 +1132,39 @@ async function loadEvent(eventId) {
       </table>
     </div>
     <div class="panel">
-      <div class="panel-h"><h3>Price &amp; Volume · Last 30d</h3><div class="actions"><span class="dim">${chart && chart.series ? (chart.series.prices_market || []).length + ' snapshots' : (chartErr ? 'error' : 'no data')}</span></div></div>
+      <div class="panel-h">
+        <h3>Price &amp; Volume</h3>
+        <div class="actions" style="display:flex;align-items:center;gap:8px;">
+          <span id="chart-range-buttons" data-event-id="${eventId}" style="display:inline-flex;gap:2px;border:1px solid var(--border);border-radius:3px;overflow:hidden;">
+            <a class="rng" data-rng="6h"  style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">6h</a>
+            <a class="rng" data-rng="24h" style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">24h</a>
+            <a class="rng" data-rng="3d"  style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">3d</a>
+            <a class="rng" data-rng="7d"  style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">7d</a>
+            <a class="rng active" data-rng="30d" style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);background:var(--accent);color:#000;">30d</a>
+            <a class="rng" data-rng="all" style="padding:3px 8px;font-size:11px;cursor:pointer;">ALL</a>
+          </span>
+          <span id="chart-range-meta" class="dim">${chart && chart.series ? (chart.series.prices_market || []).length + ' snaps' : (chartErr ? 'error' : 'no data')}</span>
+        </div>
+      </div>
       <div id="event-chart-toggles" style="padding:8px 12px 0;display:flex;flex-wrap:wrap;gap:4px;font-size:11px;"></div>
       <div id="event-chart-wrap" style="padding:12px;height:320px;position:relative;">
         ${chartErr ? `<div style="padding:48px;text-align:center;color:var(--neg);font-size:12px;">Chart data failed to load: ${esc(chartErr)}</div>` :
-          (!chart || !chart.series || !(chart.series.prices_market || []).length) ? `<div style="padding:48px;text-align:center;color:var(--muted);font-size:12px;">No price snapshots in the last 30 days. Cron tier collects every 20m–24h depending on event proximity.</div>` :
+          (!chart || !chart.series || !(chart.series.prices_market || []).length) ? `<div style="padding:48px;text-align:center;color:var(--muted);font-size:12px;">No price snapshots in the last 30d. Try a smaller range, or check that listings are being collected.</div>` :
           `<canvas id="event-chart"></canvas>`}
       </div>
     </div>
     <div style="height:12px"></div>
-    <div class="panel">
-      <div class="panel-h"><h3>${esc(depthTitle)}</h3><div class="actions"><span class="dim">${esc(depthCaption)}</span></div></div>
+    <div class="panel" id="zone-ladder-panel" data-event-id="${eventId}">
+      <div class="panel-h">
+        <h3>${esc(depthTitle)}</h3>
+        <div class="actions" style="display:flex;align-items:center;gap:10px;">
+          <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;">
+            <input type="checkbox" id="zone-show-parking" ${localStorage.getItem('evt_zone_parking_v1') === '1' ? 'checked' : ''} style="margin:0;">
+            Show parking/ancillary${(zonesRich && zonesRich.parking_hidden) ? ' <span class="dim">(' + zonesRich.parking_hidden + ' hidden)</span>' : ''}
+          </label>
+          <span class="dim">${esc(depthCaption)}</span>
+        </div>
+      </div>
       <table class="ibkr">
         <thead><tr>${depthHeader}</tr></thead>
         <tbody>${depthRows}</tbody>
@@ -1201,6 +1229,16 @@ async function loadEvent(eventId) {
 
   // Render the chart after innerHTML is set. Pass through the full chart payload.
   if (chart && chart.series && (chart.series.prices_market || []).length) renderEventChart(chart);
+
+  // Wire the "Show parking/ancillary" checkbox: persist + reload event so
+  // both /zones and /section-metrics renders re-fetch with the new pref.
+  const parkingCb = document.getElementById('zone-show-parking');
+  if (parkingCb) {
+    parkingCb.addEventListener('change', () => {
+      localStorage.setItem('evt_zone_parking_v1', parkingCb.checked ? '1' : '0');
+      loadEvent(eventId);
+    });
+  }
 }
 
 // Series catalog — each entry knows its data path, color, axis, dash style, default visibility.
@@ -1268,8 +1306,48 @@ let _eventChartData = null;
 const ZONE_PALETTE = ['#60a5fa','#4ade80','#fbbf24','#f472b6','#a78bfa','#22d3ee','#f87171','#34d399','#fb923c','#c4b5fd','#84cc16','#5eead4','#facc15','#a3e635','#fb7185','#93c5fd','#7dd3fc','#bfdbfe','#ddd6fe','#10b981'];
 function _zoneColor(idx) { return ZONE_PALETTE[idx % ZONE_PALETTE.length]; }
 
+// Persist chosen time-range across navigation. Default '30d' per spec.
+const CHART_RANGE_KEY = 'evt_chart_range_v1';
+function _loadChartRange() { return localStorage.getItem(CHART_RANGE_KEY) || '30d'; }
+function _saveChartRange(r) { localStorage.setItem(CHART_RANGE_KEY, r); }
+
+function _wireRangeButtons() {
+  const wrap = document.getElementById('chart-range-buttons');
+  if (!wrap) return;
+  const eventId = parseInt(wrap.dataset.eventId, 10);
+  const current = _loadChartRange();
+  wrap.querySelectorAll('a.rng').forEach(el => {
+    const r = el.dataset.rng;
+    if (r === current) {
+      el.classList.add('active');
+      el.style.background = 'var(--accent)';
+      el.style.color = '#000';
+    } else {
+      el.classList.remove('active');
+      el.style.background = '';
+      el.style.color = '';
+    }
+    el.addEventListener('click', async () => {
+      _saveChartRange(r);
+      // Visual immediate update
+      wrap.querySelectorAll('a.rng').forEach(b => { b.style.background=''; b.style.color=''; b.classList.remove('active'); });
+      el.style.background = 'var(--accent)'; el.style.color = '#000'; el.classList.add('active');
+      const meta = document.getElementById('chart-range-meta');
+      if (meta) meta.textContent = 'loading…';
+      try {
+        const fresh = await api(`/api/broker/event/${eventId}/chart-data?range=${encodeURIComponent(r)}`);
+        if (meta) meta.textContent = ((fresh.series?.prices_market || []).length) + ' snaps';
+        renderEventChart(fresh);
+      } catch (e) {
+        if (meta) meta.textContent = 'error: ' + e.message;
+      }
+    });
+  });
+}
+
 function renderEventChart(data) {
   _eventChartData = data;
+  _wireRangeButtons();
   // Build dynamic zone series catalog from data.zone_series.zones
   const zoneSeriesEntries = [];
   const zonesPayload = data.zone_series || {};
