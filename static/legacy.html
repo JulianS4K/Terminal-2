@@ -1,0 +1,2274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>evo terminal</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg:#0a0c0f; --surface:#121519; --surface-2:#181c22;
+    --border:#232830; --border-hi:#2e343d;
+    --text:#dfe3e8; --dim:#6b737d; --dimmer:#464c54;
+    --amber:#ff9500; --amber-dim:#b66a00;
+    --green:#22c55e; --red:#ef4444; --blue:#60a5fa;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body {
+    height:100%; background:var(--bg); color:var(--text);
+    font-family:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size:12px; line-height:1.45; font-variant-ligatures:none;
+  }
+  body::before {
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:1000;
+    background:repeating-linear-gradient(0deg, transparent 0, transparent 2px,
+      rgba(255,255,255,0.012) 2px, rgba(255,255,255,0.012) 3px);
+  }
+  a { color:var(--amber); text-decoration:none; }
+  button {
+    font:inherit; color:var(--text); background:transparent;
+    border:1px solid var(--border); padding:4px 10px; cursor:pointer;
+    letter-spacing:0.02em;
+  }
+  button:hover { border-color:var(--amber); color:var(--amber); }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  button.primary {
+    background:var(--amber); color:#000; border-color:var(--amber); font-weight:500;
+  }
+  button.primary:hover { background:#fff; border-color:#fff; color:#000; }
+  button.pivot {
+    border-color:var(--amber-dim); color:var(--amber);
+    font-size:11px; padding:3px 10px;
+  }
+  button.pivot:hover { background:var(--amber); color:#000; }
+  button.danger {
+    border-color:#5a2020; color:var(--red); font-size:11px; padding:2px 8px;
+  }
+  button.danger:hover { background:var(--red); color:#000; border-color:var(--red); }
+  input, select {
+    font:inherit; color:var(--text); background:var(--surface);
+    border:1px solid var(--border); padding:4px 8px; outline:none;
+  }
+  input:focus, select:focus { border-color:var(--amber); }
+  input[type=checkbox] { accent-color:var(--amber); }
+  label {
+    color:var(--dim); font-size:11px;
+    text-transform:uppercase; letter-spacing:0.08em;
+  }
+
+  header.topbar {
+    display:flex; align-items:center; gap:24px;
+    padding:10px 16px; border-bottom:1px solid var(--border);
+    background:var(--surface);
+  }
+  .brand { font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--amber); }
+  .brand::before { content:"▲ "; color:var(--amber); }
+  .topbar .meta {
+    margin-left:auto; display:flex; gap:18px; color:var(--dim);
+    font-size:11px; text-transform:uppercase; letter-spacing:0.12em;
+  }
+  .topbar .meta .dot {
+    display:inline-block; width:7px; height:7px; background:var(--green);
+    margin-right:6px; vertical-align:middle; animation:pulse 2s infinite;
+  }
+  .topbar .meta .dot.off { background:var(--dimmer); animation:none; }
+  @keyframes pulse { 50% { opacity:0.4; } }
+  .topbar .env {
+    padding:2px 8px; border:1px solid var(--border-hi); color:var(--amber); font-size:10px;
+  }
+
+  nav.tabs { display:flex; border-bottom:1px solid var(--border); background:var(--bg); }
+  nav.tabs button {
+    border:none; border-right:1px solid var(--border); border-radius:0;
+    padding:9px 20px; color:var(--dim);
+    text-transform:uppercase; letter-spacing:0.12em; font-size:11px; position:relative;
+  }
+  nav.tabs button:hover { color:var(--text); background:var(--surface); }
+  nav.tabs button.active { color:var(--amber); background:var(--surface); }
+  nav.tabs button.active::after {
+    content:""; position:absolute; left:0; right:0; bottom:-1px;
+    height:2px; background:var(--amber);
+  }
+
+  main { padding:16px; max-width:1400px; margin:0 auto; }
+  section.tab { display:none; }
+  section.tab.active { display:block; }
+
+  .search {
+    display:grid; gap:10px; align-items:end;
+    padding:14px; background:var(--surface); border:1px solid var(--border);
+    margin-bottom:16px;
+  }
+  .search .fields { display:grid; gap:10px 12px; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
+  .search .field { display:flex; flex-direction:column; gap:4px; }
+  .search .field.wide { grid-column:span 2; }
+  .search .actions { display:flex; gap:8px; justify-content:flex-end; }
+  .search .checkrow { display:flex; align-items:center; gap:8px; padding-top:20px; }
+  .search .checkrow label { text-transform:none; letter-spacing:normal; font-size:12px; color:var(--text); }
+
+  .panel { background:var(--surface); border:1px solid var(--border); margin-bottom:16px; }
+  .panel-head {
+    padding:8px 14px; border-bottom:1px solid var(--border);
+    display:flex; justify-content:space-between; align-items:center; gap:12px;
+    text-transform:uppercase; letter-spacing:0.12em; font-size:11px; color:var(--dim);
+  }
+  .panel-head .count { color:var(--amber); }
+  .panel-head .actions { display:flex; gap:8px; align-items:center; }
+  .panel-body { padding:0; }
+  .empty { padding:24px; color:var(--dim); text-align:center; }
+
+  .table-filter {
+    font-size:11px; padding:3px 8px; min-width:180px;
+    background:var(--bg); text-transform:none; letter-spacing:normal;
+  }
+  .table-filter::placeholder { color:var(--dimmer); }
+
+  table { width:100%; border-collapse:collapse; font-size:12px; table-layout:auto; }
+  th, td {
+    padding:6px 12px; text-align:left; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis;
+    border-bottom:1px solid var(--border);
+    vertical-align:top;
+  }
+  th {
+    color:var(--dim); font-weight:400;
+    text-transform:uppercase; letter-spacing:0.08em; font-size:10px;
+    background:var(--surface-2); position:sticky; top:0;
+  }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  tr.row { cursor:pointer; }
+  tr.row:hover { background:var(--surface-2); }
+  tr.row.sel { background:#261a05; }
+  tr.row.sel td { color:var(--amber); }
+
+  /* Auto line-break helpers — long event names should wrap to 2 lines, then ellipsize.
+     Prevents the (Game 5, Home Game 3) (If Necessary) tail from getting silently lost. */
+  .ellip {
+    max-width:320px; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .cell-wrap {
+    white-space:normal; word-break:break-word; overflow-wrap:anywhere;
+    line-height:1.3;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; max-width:420px;
+  }
+  .cell-wrap-3 {
+    white-space:normal; word-break:break-word; overflow-wrap:anywhere;
+    line-height:1.3;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+    overflow:hidden;
+  }
+  /* venue + city columns get a slightly tighter ellipsis */
+  td.cell-venue { max-width:200px; }
+  td.cell-city  { max-width:140px; }
+  /* S4K-owned row highlight in raw ticket-group tables. Amber left-stripe +
+     warm-tinted background so the eye finds 'what we own vs the rest of the
+     market' instantly. */
+  tr.owned-row { background: rgba(255, 149, 0, 0.05); }
+  tr.owned-row td:first-child { border-left: 2px solid var(--amber); padding-left: 10px; }
+  tr.owned-row td.money { color: var(--amber); font-weight: 500; }
+
+  /* Subline meta text under event names */
+  td .meta-sub {
+    color:var(--dim); font-size:11px; line-height:1.2; margin-top:2px;
+    white-space:normal; word-break:break-word; overflow-wrap:anywhere;
+  }
+
+  .detail { display:none; }
+  .detail.open { display:block; }
+  .detail-head {
+    padding:12px 16px; border:1px solid var(--amber-dim); border-bottom:none;
+    background:#1a1305;
+    display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;
+  }
+  .detail-head h2 { font-size:14px; font-weight:500; color:var(--amber); letter-spacing:0.04em; margin-bottom:4px; }
+  .detail-head .sub { color:var(--dim); font-size:11px; }
+  .detail-head .pivots { display:flex; gap:6px; flex-wrap:wrap; }
+  .stats-grid {
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));
+    gap:1px; background:var(--border);
+    border:1px solid var(--amber-dim); border-top:none;
+  }
+  .stat { background:var(--surface); padding:10px 14px; }
+  .stat .k { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:0.1em; }
+  .stat .v { color:var(--text); font-size:14px; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .stat .v.amber { color:var(--amber); }
+  .stat .v.green { color:var(--green); }
+
+  .status {
+    padding:6px 14px; background:var(--surface-2); color:var(--dim);
+    border:1px solid var(--border); font-size:11px; margin-bottom:16px;
+  }
+  .status.err { color:var(--red); border-color:var(--red); background:#1c0606; }
+  .status.ok  { color:var(--green); border-color:var(--green); background:#061c0e; }
+
+  #toast {
+    position:fixed; bottom:20px; right:20px; z-index:9999;
+    padding:10px 16px; background:var(--surface); border:1px solid var(--amber);
+    color:var(--amber); font-size:12px; letter-spacing:0.04em;
+    opacity:0; pointer-events:none; transition:opacity 0.2s;
+  }
+  #toast.show { opacity:1; }
+  #toast.err { border-color:var(--red); color:var(--red); }
+
+  .loading { display:inline-block; color:var(--amber); font-size:11px; text-transform:uppercase; letter-spacing:0.12em; }
+  .loading::after { content:" ▮"; animation:blink 0.8s infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  .money { color:var(--green); font-variant-numeric:tabular-nums; }
+  .id-tag { color:var(--dimmer); font-size:11px; }
+  .delta-up   { color:var(--green); }
+  .delta-down { color:var(--red); }
+  .chip {
+    display:inline-block; padding:1px 6px;
+    border:1px solid var(--border-hi); color:var(--dim);
+    font-size:10px; text-transform:uppercase; letter-spacing:0.08em; margin-right:4px;
+  }
+  .chip.hot { color:var(--amber); border-color:var(--amber-dim); }
+  .chip.green { color:var(--green); border-color:#1f4a2c; }
+  .chip.red { color:var(--red); border-color:#4a1f1f; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">evo terminal</div>
+  <div class="meta">
+    <a href="/movers" style="color:var(--amber);text-decoration:none;border:1px solid var(--amber-dim);padding:2px 8px;font-size:11px;letter-spacing:0.04em">📈 movers</a>
+    <a href="/chat" style="color:var(--dim);text-decoration:none;border:1px solid var(--border);padding:2px 8px;font-size:11px;letter-spacing:0.04em">💬 retail chat</a>
+    <span><span class="dot" id="sb-dot"></span>db</span>
+    <span class="env" id="env-label">—</span>
+    <span id="clock">—</span>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="events"      class="active">events</button>
+  <button data-tab="performers"               >performers</button>
+  <button data-tab="venues"                   >venues</button>
+  <button data-tab="configs"                  >configurations</button>
+  <button data-tab="watchlist"                >watchlist</button>
+</nav>
+
+<main>
+
+<section id="tab-events" class="tab active">
+  <form class="search" id="events-form">
+    <div class="fields">
+      <div class="field wide"><label>query (q)</label><input name="q" placeholder="knicks, taylor swift, yankees..."></div>
+      <div class="field"><label>performer_id</label><input name="performer_id" type="number"></div>
+      <div class="field"><label>venue_id</label><input name="venue_id" type="number"></div>
+      <div class="field"><label>occurs_at ≥</label><input name="occurs_at.gte" placeholder="YYYY-MM-DD"></div>
+      <div class="field"><label>occurs_at ≤</label><input name="occurs_at.lte" placeholder="YYYY-MM-DD"></div>
+      <div class="checkrow">
+        <input type="checkbox" id="ev-tix" name="only_with_available_tickets" checked>
+        <label for="ev-tix">only with available tickets</label>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="reset">clear</button>
+      <button type="submit" class="primary">search</button>
+    </div>
+  </form>
+  <div class="status" id="events-status" style="display:none"></div>
+
+  <!-- DASHBOARD: watchlist + movers shown by default; both hide on manual search -->
+  <div id="events-dashboard" style="margin-top:12px;display:flex;flex-direction:column;gap:12px">
+    <div class="panel" id="events-watchlist-panel">
+      <div class="panel-head">
+        <span>your watchlist <span class="count" id="events-watchlist-count">—</span></span>
+        <span class="dim" style="font-size:11px">sorted by 24h Δ market value · click any row for detail</span>
+      </div>
+      <div class="panel-body" id="events-watchlist"><div class="status">loading watchlist…</div></div>
+    </div>
+    <div class="panel" id="events-movers-panel">
+      <div class="panel-head">
+        <span>top movers · 24h <span class="count" id="events-movers-count">—</span></span>
+        <span class="dim" style="font-size:11px">winners + losers by Δ market value · <a href="/movers" style="color:var(--amber)">full report ↗</a></span>
+      </div>
+      <div class="panel-body" id="events-movers"><div class="status">loading movers…</div></div>
+    </div>
+  </div>
+
+  <div class="panel" id="events-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="events-count"></span></span>
+      <input class="table-filter" data-target="events-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="events-results"></div>
+  </div>
+  <div class="detail" id="events-detail"></div>
+</section>
+
+<section id="tab-performers" class="tab">
+  <form class="search" id="performers-form">
+    <div class="fields">
+      <div class="field wide"><label>query (q)</label><input name="q" id="pf-q" placeholder="yankees, billie eilish..."></div>
+      <div class="field"><label>category_id</label><input name="category_id" id="pf-catid" type="number" placeholder="e.g. 1"></div>
+      <div class="field"><label>category preset</label>
+        <select id="pf-catpreset">
+          <option value="">—</option>
+          <optgroup label="Sports">
+            <option value="1">Sports (all)</option><option value="2">Baseball</option>
+            <option value="3">MLB</option><option value="4">Minor League Baseball</option>
+          </optgroup>
+          <optgroup label="Concerts">
+            <option value="54">Concerts (all)</option><option value="57">Rock &amp; Pop</option><option value="85">Latin</option>
+          </optgroup>
+          <optgroup label="Theatre">
+            <option value="68">Theatre (all)</option><option value="69">Musicals</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="checkrow"><input type="checkbox" id="pf-tree" name="category_tree" checked><label for="pf-tree">include subcategories</label></div>
+      <div class="checkrow"><input type="checkbox" id="pf-upc" name="only_with_upcoming_events"><label for="pf-upc">only with upcoming events</label></div>
+      <div class="checkrow"><input type="checkbox" id="pf-fuzzy" name="fuzzy"><label for="pf-fuzzy">fuzzy (q only)</label></div>
+    </div>
+    <div class="actions"><button type="reset">clear</button><button type="submit" class="primary">search</button></div>
+  </form>
+  <div class="status" id="performers-status" style="display:none"></div>
+
+  <!-- League browser: ESPN-tracked teams w/ home+away price metrics. Hidden once user does a manual q-search. -->
+  <div id="leagues-zone" style="margin-top:12px">
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 12px;border:1px solid var(--border);background:var(--surface)">
+      <span style="color:var(--dim);font-size:11px;letter-spacing:0.08em;text-transform:uppercase">browse by league</span>
+      <div id="leagues-chips" style="display:flex;gap:6px;flex-wrap:wrap;flex:1"></div>
+      <span id="leagues-meta" style="color:var(--dim);font-size:11px"></span>
+    </div>
+    <div class="panel" id="leagues-results-panel" style="display:none;margin-top:8px">
+      <div class="panel-head">
+        <span><span id="leagues-results-title">teams</span> <span class="count" id="leagues-results-count"></span></span>
+        <input class="table-filter" data-target="leagues-results" placeholder="filter rows…">
+      </div>
+      <div class="panel-body" id="leagues-results"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="performers-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="performers-count"></span></span>
+      <input class="table-filter" data-target="performers-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="performers-results"></div>
+  </div>
+  <div class="detail" id="performers-detail"></div>
+</section>
+
+<section id="tab-venues" class="tab">
+  <form class="search" id="venues-form">
+    <div class="fields">
+      <div class="field wide"><label>query (q) — leave blank to use geo</label><input name="q" placeholder="madison square garden..."></div>
+      <div class="field"><label>lat</label><input name="lat" type="number" step="any" placeholder="40.7306"></div>
+      <div class="field"><label>lon</label><input name="lon" type="number" step="any" placeholder="-73.9352"></div>
+      <div class="field"><label>within (mi)</label><input name="within" type="number" placeholder="15"></div>
+      <div class="field"><label>postal_code</label><input name="postal_code" placeholder="11226"></div>
+      <div class="checkrow"><input type="checkbox" id="vn-fuzzy" name="fuzzy"><label for="vn-fuzzy">fuzzy</label></div>
+    </div>
+    <div class="actions"><button type="reset">clear</button><button type="submit" class="primary">search</button></div>
+  </form>
+  <div class="status" id="venues-status" style="display:none"></div>
+  <div class="panel" id="venues-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="venues-count"></span></span>
+      <input class="table-filter" data-target="venues-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="venues-results"></div>
+  </div>
+  <div class="detail" id="venues-detail"></div>
+</section>
+
+<section id="tab-configs" class="tab">
+  <form class="search" id="configs-form">
+    <div class="fields">
+      <div class="field"><label>venue_id</label><input name="venue_id" type="number"></div>
+      <div class="field wide"><label>name</label><input name="name" placeholder="end stage, baseball..."></div>
+    </div>
+    <div class="actions"><button type="reset">clear</button><button type="submit" class="primary">search</button></div>
+  </form>
+  <div class="status" id="configs-status" style="display:none"></div>
+  <div class="panel" id="configs-results-panel" style="display:none">
+    <div class="panel-head">
+      <span>results <span class="count" id="configs-count"></span></span>
+      <input class="table-filter" data-target="configs-results" placeholder="filter rows…">
+    </div>
+    <div class="panel-body" id="configs-results"></div>
+  </div>
+  <div class="detail" id="configs-detail"></div>
+</section>
+
+<section id="tab-watchlist" class="tab">
+  <div class="status" id="wl-status" style="display:none"></div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>watchlist <span class="count" id="wl-count"></span></span>
+      <div class="actions">
+        <input class="table-filter" data-target="wl-table" placeholder="filter…">
+        <button onclick="loadWatchlist()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="wl-table"></div>
+  </div>
+
+  <form class="search" id="wl-add-form">
+    <div class="fields">
+      <div class="field"><label>kind</label>
+        <select name="kind"><option value="performer">performer</option><option value="venue">venue</option></select>
+      </div>
+      <div class="field"><label>ext_id</label><input name="ext_id" type="number" required placeholder="e.g. 15533"></div>
+      <div class="field wide"><label>label</label><input name="label" placeholder="optional display name"></div>
+    </div>
+    <div class="actions"><button type="submit" class="primary">add to watchlist</button></div>
+  </form>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>collection runs</span>
+      <div class="actions">
+        <button id="collect-now-btn" onclick="runCollector()">run collector now</button>
+        <button onclick="loadRuns()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="runs-table"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>latest state <span class="count" id="latest-count"></span></span>
+      <div class="actions">
+        <input class="table-filter" data-target="latest-table" placeholder="filter…">
+        <button onclick="loadLatest()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="latest-table"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span>velocity (last two snapshots) <span class="count" id="velocity-count"></span></span>
+      <div class="actions">
+        <input class="table-filter" data-target="velocity-table" placeholder="filter…">
+        <button onclick="loadVelocity()">refresh</button>
+      </div>
+    </div>
+    <div class="panel-body" id="velocity-table"></div>
+  </div>
+</section>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ===== Auth bootstrap =====
+let SB_CLIENT = null;
+let SESSION = null;
+
+async function loadPublicConfig() {
+  const r = await fetch("/api/public/config");
+  return r.json();
+}
+
+async function initAuth() {
+  const cfg = await loadPublicConfig();
+  SB_CLIENT = supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  const { data } = await SB_CLIENT.auth.getSession();
+  SESSION = data.session;
+  if (!SESSION) { renderLogin(cfg); return false; }
+  const email = (SESSION.user?.email || "").toLowerCase();
+  if (!email.endsWith("@" + cfg.allowed_email_domain)) {
+    renderForbidden(email, cfg); return false;
+  }
+  renderSignedInBadge(email);
+  return true;
+}
+
+function renderLogin(cfg) {
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:20px;font-family:'JetBrains Mono',monospace;background:#0a0c0f;color:#dfe3e8;">
+      <div style="font-size:20px;letter-spacing:0.15em;color:#ff9500;text-transform:uppercase;">&#9650; evo terminal</div>
+      <div style="color:#6b737d;font-size:12px;">restricted to @${cfg.allowed_email_domain}</div>
+      <button onclick="signIn()" style="padding:10px 24px;background:#ff9500;color:#000;border:none;font:inherit;cursor:pointer;font-weight:500;letter-spacing:0.04em;">sign in with google</button>
+    </div>`;
+}
+
+function renderForbidden(email, cfg) {
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;font-family:'JetBrains Mono',monospace;background:#0a0c0f;color:#dfe3e8;">
+      <div style="color:#ef4444;font-size:14px;">access denied</div>
+      <div style="color:#6b737d;font-size:12px;">${email} is not @${cfg.allowed_email_domain}</div>
+      <button onclick="signOut()" style="padding:8px 16px;background:transparent;color:#dfe3e8;border:1px solid #232830;font:inherit;cursor:pointer;">sign out</button>
+    </div>`;
+}
+
+function renderSignedInBadge(email) {
+  setTimeout(() => {
+    const meta = document.querySelector(".topbar .meta");
+    if (!meta) return;
+    const el = document.createElement("span");
+    el.style.cursor = "pointer";
+    el.title = "sign out";
+    el.textContent = email.split("@")[0];
+    el.onclick = signOut;
+    meta.insertBefore(el, meta.firstChild);
+  }, 100);
+}
+
+async function signIn() {
+  const cfg = await loadPublicConfig();
+  await SB_CLIENT.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: window.location.origin, queryParams: { hd: cfg.allowed_email_domain } },
+  });
+}
+
+async function signOut() {
+  if (SB_CLIENT) await SB_CLIENT.auth.signOut();
+  window.location.reload();
+}
+
+const _origFetch = window.fetch;
+window.fetch = async (url, opts = {}) => {
+  if (typeof url === "string" && url.startsWith("/api/") && !url.startsWith("/api/public/") && SESSION) {
+    opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${SESSION.access_token}` };
+  }
+  return _origFetch(url, opts);
+};
+
+(async () => { await initAuth(); })();
+// ===== End auth bootstrap =====
+
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/**
+ * Auto line-break / overflow helper. After rendering a table or panel call
+ * attachOverflowTooltips('#some-mount') and any cell whose rendered text is
+ * wider/taller than its box gets a `title` attribute so hover reveals the
+ * full content. Prevents silently truncated event names like
+ * "Philadelphia 76ers at New York Knicks (Game 5, ... ) (If Necessary)"
+ * from losing the part after the parenthesis.
+ *
+ * Also re-applies after the next animation frame to catch CSS line-clamp
+ * truncation that scrollHeight reflects only after layout settles.
+ */
+function attachOverflowTooltips(scope) {
+  requestAnimationFrame(() => {
+    const root = typeof scope === "string" ? document.querySelector(scope) : (scope || document);
+    if (!root) return;
+    root.querySelectorAll("td, th").forEach(c => {
+      if (c.title) return;
+      const overflowX = c.scrollWidth  > c.clientWidth + 1;
+      const overflowY = c.scrollHeight > c.clientHeight + 1;
+      if (overflowX || overflowY) c.title = c.innerText.trim();
+    });
+  });
+}
+const money = (x) => x == null ? "—" : "$" + Number(x).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+const moneyC = (x) => x == null ? "—" : "$" + Math.round(Number(x)).toLocaleString();
+const num = (x) => x == null ? "—" : Number(x).toLocaleString();
+const shortDate = (iso) => {
+  if (!iso) return "—";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return iso;
+  return `${m[2]}/${m[3]} ${m[4]}:${m[5]}`;
+};
+const shortStamp = shortDate;
+
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || data.detail || r.statusText);
+  return data;
+}
+
+function status(tab, msg, kind) {
+  const el = $("#" + tab + "-status");
+  if (!el) return;
+  if (!msg) { el.style.display = "none"; return; }
+  el.textContent = msg;
+  el.className = "status" + (kind ? " " + kind : "");
+  el.style.display = "block";
+}
+
+let _toastTimer = null;
+function toast(msg, isErr=false) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.className = "show" + (isErr ? " err" : "");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.className = "", 2400);
+}
+
+function formToParams(form) {
+  const fd = new FormData(form);
+  const params = new URLSearchParams();
+  for (const [k, v] of fd.entries()) {
+    if (v === "" || v == null) continue;
+    params.append(k, v);
+  }
+  form.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    if (!cb.checked && cb.name) params.set(cb.name, "false");
+  });
+  return params;
+}
+
+function formToObject(form) {
+  const obj = {};
+  const fd = new FormData(form);
+  for (const [k, v] of fd.entries()) {
+    if (v === "" || v == null) continue;
+    obj[k] = v;
+  }
+  return obj;
+}
+
+let CONFIG = { supabase_configured:false, collect_available:false, env:"prod" };
+(async () => {
+  try {
+    CONFIG = await api("/api/config");
+    $("#env-label").textContent = CONFIG.env;
+    const dot = $("#sb-dot");
+    dot.classList.toggle("off", !CONFIG.supabase_configured);
+    if (!CONFIG.collect_available) $("#collect-now-btn").disabled = true;
+  } catch {}
+})();
+
+$("#tabs").addEventListener("click", e => {
+  const btn = e.target.closest("button[data-tab]");
+  if (!btn) return;
+  switchTab(btn.dataset.tab);
+});
+function switchTab(name) {
+  $$("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  $$("main > section.tab").forEach(s => s.classList.toggle("active", s.id === "tab-" + name));
+  if (name === "watchlist") {
+    loadWatchlist(); loadRuns(); loadLatest(); loadVelocity();
+  }
+}
+
+document.addEventListener("click", async e => {
+  const btn = e.target.closest("button.pivot[data-pivot-action]");
+  if (!btn) return;
+  if (btn.dataset.pivotAction === "add-watchlist") {
+    await addToWatchlist(btn.dataset.kind, Number(btn.dataset.extId), btn.dataset.label || null, btn);
+    return;
+  }
+  if (btn.dataset.pivotAction === "pivot-tab") {
+    const tab = btn.dataset.pivotTab;
+    const sets = JSON.parse(btn.dataset.pivotSet || "{}");
+    const form = $(`#${tab}-form`);
+    form.reset();
+    for (const [name, value] of Object.entries(sets)) {
+      const input = form.querySelector(`[name="${name}"]`);
+      if (input) input.value = value;
+    }
+    switchTab(tab);
+    form.dispatchEvent(new Event("submit"));
+  }
+});
+
+async function addToWatchlist(kind, ext_id, label, btn) {
+  try {
+    const resp = await api("/api/watchlist", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({kind, ext_id, label}),
+    });
+    if (resp.ok === false) { toast(resp.error || "failed", true); return; }
+    toast(`+ ${kind} ${ext_id} added to watchlist`);
+    if (btn) { btn.textContent = "✓ added"; setTimeout(() => btn.textContent = "+ watchlist", 1800); }
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+document.addEventListener("input", e => {
+  const f = e.target.closest("input.table-filter");
+  if (!f) return;
+  const target = $("#" + f.dataset.target);
+  if (!target) return;
+  const q = f.value.trim().toLowerCase();
+  $$("tbody tr", target).forEach(tr => {
+    tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+});
+
+function tick() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  $("#clock").textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+setInterval(tick, 1000); tick();
+
+// -------- EVENTS --------
+function showEventsDashboard(visible) {
+  const dash = $("#events-dashboard");
+  if (dash) dash.style.display = visible ? "" : "none";
+}
+
+$("#events-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#events-results-panel").style.display = "none";
+  $("#events-detail").classList.remove("open");
+  showEventsDashboard(false); // clutter-free during search
+  status("events", "searching…");
+  try {
+    const data = await api("/api/events?" + params.toString());
+    renderEventsResults(data);
+    status("events");
+  } catch (err) { status("events", "error: " + err.message, "err"); }
+});
+
+// "clear" on the events form restores the dashboard view
+$("#events-form").addEventListener("reset", () => {
+  $("#events-results-panel").style.display = "none";
+  $("#events-detail").classList.remove("open");
+  setTimeout(() => showEventsDashboard(true), 0);
+});
+
+// ------- EVENTS DASHBOARD: watchlist + top movers --------
+function fmtMoneyShort(v) {
+  if (v == null) return `<span class="dim">—</span>`;
+  const n = Number(v); if (!isFinite(n)) return `<span class="dim">—</span>`;
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return "$" + (n/1_000_000).toFixed(1) + "M";
+  if (abs >= 1_000)     return "$" + (n/1_000).toFixed(1) + "K";
+  return "$" + n.toFixed(0);
+}
+function fmtMoneyDeltaShort(v) {
+  if (v == null) return "—";
+  const n = Number(v); if (!isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+  const color = n > 0 ? "var(--green)" : n < 0 ? "var(--red)" : "var(--dim)";
+  return `<span style="color:${color}">${sign}${fmtMoneyShort(Math.abs(n)).replace('$','$')}</span>`;
+}
+function fmtPctShort(v) {
+  if (v == null) return "—";
+  const n = Number(v); if (!isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  const color = n > 0 ? "var(--green)" : n < 0 ? "var(--red)" : "var(--dim)";
+  return `<span style="color:${color}">${sign}${n.toFixed(1)}%</span>`;
+}
+
+function contingentChip(name) {
+  if (!name) return "";
+  if (/if\s*necessary/i.test(name)) return ` <span style="background:#3a1010;color:#fca5a5;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="Series-contingent: this game only occurs if the series is still alive">CONTINGENT</span>`;
+  if (/\bTBD\b/i.test(name))         return ` <span style="background:#332512;color:#fcd34d;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="Date or matchup not yet finalized">TBD</span>`;
+  return "";
+}
+
+// "We ARE the market" badge — flags events where S4K's screen quote is
+// reflexive because we own enough of the post-parking ticket supply to move
+// the median by changing our own ask. >=50% renders red, 30-50% amber.
+// Hover for the exact share. Discovered necessary in the 2026-05-08 Knicks
+// deep-dive (R3 G2 = 63% owned, anyone reading the screen as market price
+// was reading our own quote back to themselves).
+function ownedShareBadge(share) {
+  if (share == null) return "";
+  const n = Number(share);
+  if (!isFinite(n) || n < 0.30) return "";
+  const pct = (n * 100).toFixed(0);
+  if (n >= 0.50) {
+    return ` <span style="background:#3a1010;color:#fca5a5;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="S4K owns ${pct}% of post-parking supply — screen median is our own quote">WE ARE THE MARKET ${pct}%</span>`;
+  }
+  return ` <span style="background:#332512;color:#fcd34d;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="S4K owns ${pct}% of post-parking supply — meaningful price-setting power">HEAVY ${pct}%</span>`;
+}
+
+// Freshness chip — green/amber/red dot based on age of the metric snap.
+function freshnessChip(latestAt) {
+  if (!latestAt) return "";
+  const ageMs = Date.now() - new Date(latestAt).getTime();
+  if (!isFinite(ageMs)) return "";
+  const m = Math.round(ageMs / 60000);
+  if (m < 60)      return ` <span style="color:#34d399;font-size:10px" title="${m}m ago">●</span>`;
+  if (m < 24 * 60) return ` <span style="color:#fbbf24;font-size:10px" title="${(m/60).toFixed(1)}h ago">●</span>`;
+  return ` <span style="color:#f87171;font-size:10px" title="${(m/1440).toFixed(1)}d ago — stale">●</span>`;
+}
+
+function moverRow(r) {
+  const venue = r.venue_name || "";
+  const date = r.occurs_at_local ? r.occurs_at_local.slice(0,10) : "";
+  return `<tr class="row" data-id="${r.event_id}">
+    <td><a href="/event/${r.event_id}" style="color:var(--amber)" onclick="event.stopPropagation()">↗</a></td>
+    <td class="cell-wrap" style="max-width:380px"><a href="#" data-event-id="${r.event_id}">${esc(r.name || '—')}</a>${contingentChip(r.name)}${ownedShareBadge(r.cur_owned_share)}${freshnessChip(r.latest_at)}<div class="meta-sub">${esc(venue)} · ${esc(date)}</div></td>
+    <td class="num">${fmtMoneyShort(r.cur_market_med)}</td>
+    <td class="num">${num(r.cur_market_tix)}</td>
+    <td class="num">${fmtMoneyDeltaShort(r.delta_market_val)}</td>
+    <td class="num">${fmtPctShort(r.delta_market_pct)}</td>
+  </tr>`;
+}
+
+function moverTable(rows, emptyMsg) {
+  if (!rows.length) return `<div class="empty">${emptyMsg || "no rows"}</div>`;
+  return `<table>
+    <thead><tr>
+      <th></th><th>event</th>
+      <th class="num">cur $</th><th class="num">tix</th>
+      <th class="num">Δ value</th><th class="num">Δ %</th>
+    </tr></thead>
+    <tbody>${rows.map(moverRow).join("")}</tbody>
+  </table>`;
+}
+
+function bindMoverRows(scope) {
+  $$(`${scope} tr.row`).forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$(`${scope} tr.row`).forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadEventDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadEventsDashboard() {
+  // Fire both in parallel
+  const [wl, mv] = await Promise.all([
+    api("/api/broker/watchlist-movers?window_hours=24&sort=value&limit=15").catch(() => ({events: []})),
+    api("/api/broker/movers?window_hours=24").catch(() => null),
+  ]);
+
+  // ---- Watchlist ----
+  const wlEvents = wl.events || [];
+  $("#events-watchlist-count").textContent = `(${wlEvents.length})`;
+  $("#events-watchlist").innerHTML = moverTable(wlEvents, "watchlist is empty — add performers/venues from their detail panels");
+  bindMoverRows("#events-watchlist");
+  attachOverflowTooltips("#events-watchlist");
+
+  // ---- Top movers (events level, both winners + losers from market lists) ----
+  if (!mv || !mv.events) {
+    $("#events-movers").innerHTML = `<div class="empty">no mover data yet</div>`;
+    $("#events-movers-count").textContent = `(0)`;
+    return;
+  }
+  const winners = (mv.events.market_winners || []).slice(0, 5);
+  const losers  = (mv.events.market_losers  || []).slice(0, 5);
+  $("#events-movers-count").textContent = `(${winners.length + losers.length})`;
+  $("#events-movers").innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div style="color:var(--green);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">winners</div>
+        ${moverTable(winners, "no winners in window")}
+      </div>
+      <div>
+        <div style="color:var(--red);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">losers</div>
+        ${moverTable(losers, "no losers in window")}
+      </div>
+    </div>`;
+  bindMoverRows("#events-movers");
+  attachOverflowTooltips("#events-movers");
+}
+
+// Run on page load (events tab is default-active) and on tab click.
+loadEventsDashboard();
+document.querySelectorAll('#tabs button[data-tab="events"]').forEach(b => {
+  b.addEventListener("click", () => {
+    showEventsDashboard(true);
+    loadEventsDashboard();
+  });
+});
+
+function renderEventsResults(data) {
+  $("#events-count").textContent = `(${data.count})`;
+  const rows = data.events.map((ev, i) => {
+    const venue = ev.venue || {};
+    return `<tr class="row" data-id="${ev.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${ev.id}</td>
+      <td class="cell-wrap">${esc(ev.name)}</td>
+      <td>${shortDate(ev.occurs_at_local)}</td>
+      <td class="cell-venue ellip">${esc(venue.name || "")}</td>
+      <td class="cell-city dim ellip">${esc(venue.location || "")}</td>
+      <td class="num">${num(ev.available_count)}</td>
+      <td class="num dim">${(ev.popularity_score || 0).toFixed(2)}</td>
+    </tr>`;
+  }).join("");
+  $("#events-results").innerHTML = data.count === 0 ? `<div class="empty">no events</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>event</th><th>date</th>
+      <th>venue</th><th>city</th><th class="num">avail</th><th class="num">pop</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#events-results-panel").style.display = "block";
+  $$("#events-results-panel .table-filter").forEach(i => i.value = "");
+  attachOverflowTooltips("#events-results");
+  $$("#events-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#events-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadEventDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadEventDetail(id) {
+  const detail = $("#events-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading event</span></div>`;
+  detail.classList.add("open");
+  try { renderEventDetail(await api("/api/events/" + id)); }
+  catch (err) { detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`; }
+}
+
+// Trader-priority sort: zone DESC, qty DESC, row DESC, section DESC.
+// Pricing decisions are made at zone level so we bucket there first; within
+// a zone, more inventory wins; row + section are tiebreakers.
+const ZONE_RANK = ["Floor / Pit / GA","Premium / VIP","Box","Loge","Lower (100s)","Club (200s)","Upper (300s)","Upper (400s)","Upper (500s+)","Balcony","Grandstand","Bleachers","Lawn / Terrace","Special"];
+function classifyZone(section) {
+  if (!section) return "Special";
+  const s = String(section).toLowerCase().replace(/\s+/g, "");
+  if (/(courtside|^crt|^cside|^floor|^fl\d|^ga$|^pit$)/.test(s)) return "Floor / Pit / GA";
+  if (/(^vip|^vip\d|vipsuite|premium|hospitality|clublounge|skybox)/.test(s)) return "Premium / VIP";
+  if (/(^box|box$)/.test(s)) return "Box";
+  if (/loge/.test(s)) return "Loge";
+  if (/(balcony|^bal\d|^bal$)/.test(s)) return "Balcony";
+  if (/(grandstand|^gs)/.test(s)) return "Grandstand";
+  if (/bleach/.test(s)) return "Bleachers";
+  if (/(lawn|terrace)/.test(s)) return "Lawn / Terrace";
+  const m = String(section).match(/(\d+)/);
+  if (m) { const n = parseInt(m[1]);
+    if (n >= 1 && n <= 199) return "Lower (100s)";
+    if (n <= 299) return "Club (200s)";
+    if (n <= 399) return "Upper (300s)";
+    if (n <= 499) return "Upper (400s)";
+    if (n >= 500) return "Upper (500s+)";
+  }
+  return "Special";
+}
+function isS4kOwned(tg) {
+  // S4K brokerage_id = 1768 (matches what the chat fn uses).
+  return Number(tg && tg.office && tg.office.brokerage && tg.office.brokerage.id) === 1768;
+}
+function sortTicketGroupsTrader(groups) {
+  // zone DESC, qty DESC, row DESC, section DESC — exactly per user spec.
+  return [...(groups || [])].sort((a, b) => {
+    const az = classifyZone(a.section), bz = classifyZone(b.section);
+    if (az !== bz) return bz.localeCompare(az);   // zone DESC
+    const aq = a.available_quantity || 0, bq = b.available_quantity || 0;
+    if (aq !== bq) return bq - aq;                 // qty DESC
+    const ar = String(a.row||""), br = String(b.row||"");
+    if (ar !== br) return br.localeCompare(ar);    // row DESC
+    return String(b.section||"").localeCompare(String(a.section||""));  // sec DESC
+  });
+}
+
+function renderEventDetail(d) {
+  const ev = d.event;
+  const groups = sortTicketGroupsTrader(d.ticket_groups || []);
+  const venue = ev.venue || {};
+  const tgRows = groups.map(tg => {
+    const owned = isS4kOwned(tg);
+    const zone = classifyZone(tg.section);
+    return `<tr class="${owned ? 'owned-row' : ''}">
+      <td class="dim" style="font-size:11px">${owned ? '<span style="background:#3a2a10;color:var(--amber);padding:1px 5px;font-size:10px;letter-spacing:0.06em">S4K</span>' : ''}</td>
+      <td>${esc(zone)}</td>
+      <td class="ellip">${esc(tg.section || "")}</td>
+      <td>${esc(tg.row || "")}</td>
+      <td class="num">${tg.available_quantity ?? 0}</td>
+      <td class="num money">${money(tg.retail_price)}</td>
+      <td class="dim">${(tg.splits || []).join(",")}</td>
+      <td class="dim">${esc(tg.format || "")}</td>
+      <td class="dim">${tg.wheelchair ? "♿" : ""}${tg.instant_delivery ? "⚡" : ""}${tg.eticket ? "📱" : ""}</td>
+    </tr>`;
+  }).join("");
+  const ownedCount = groups.filter(isS4kOwned).length;
+  const pp = (ev.performances || []).find(p => p.primary)?.performer;
+  const pivots = [];
+  pivots.push(`<a class="pivot" href="/event/${ev.id}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;background:var(--amber);color:#000;border-color:var(--amber);font-weight:500">↗ event terminal</a>`);
+  if (venue.id) {
+    pivots.push(`<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+      data-pivot-set='${JSON.stringify({venue_id: venue.id})}'>→ other events here</button>`);
+    pivots.push(`<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="configs"
+      data-pivot-set='${JSON.stringify({venue_id: venue.id})}'>→ venue configs</button>`);
+    pivots.push(`<button class="pivot" data-pivot-action="add-watchlist"
+      data-kind="venue" data-ext-id="${venue.id}" data-label="${esc(venue.name || '')}">+ venue to watchlist</button>`);
+  }
+  if (pp && pp.id) {
+    pivots.push(`<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+      data-pivot-set='${JSON.stringify({performer_id: pp.id})}'>→ other events for ${esc(pp.name || "performer")}</button>`);
+    pivots.push(`<button class="pivot" data-pivot-action="add-watchlist"
+      data-kind="performer" data-ext-id="${pp.id}" data-label="${esc(pp.name || '')}">+ performer to watchlist</button>`);
+  }
+  $("#events-detail").innerHTML = `
+    <div class="detail-head">
+      <div>
+        <h2>${esc(ev.name)}</h2>
+        <div class="sub">
+          <span class="chip hot">${esc(ev.state || "")}</span>
+          <span>${shortDate(ev.occurs_at_local)} · ${esc(venue.name || "")} — ${esc(venue.location || "")}</span>
+          <span class="id-tag" style="margin-left:12px">event_id ${ev.id}</span>
+        </div>
+      </div>
+      <div class="pivots">${pivots.join("")}</div>
+    </div>
+    <!-- TRADER PRIORITY 1-3: ESPN alerts (injuries / trades / standings) at TOP -->
+    <div id="event-espn-alerts-mount"></div>
+    ${HERO_PANEL_HTML}
+    ${BREAKDOWN_PANEL_HTML}
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head">
+        <span><span style="font-size:10px;background:#3a2a10;color:var(--amber);padding:2px 6px;margin-right:8px;letter-spacing:0.08em">TEVO</span>ticket groups <span class="count">(${groups.length}${ownedCount ? ` · <span style="color:var(--amber)">${ownedCount} S4K</span>` : ''})</span></span>
+        <span class="dim" style="font-size:11px">sorted: zone ↓ · qty ↓ · row ↓ · section ↓</span>
+        <input class="table-filter" data-target="events-tg-table" placeholder="filter rows…">
+      </div>
+      <div class="panel-body" id="events-tg-table">
+        <table><thead><tr>
+          <th></th><th>zone</th><th>section</th><th>row</th><th class="num">qty</th>
+          <th class="num">retail</th><th>splits</th><th>format</th><th>flags</th>
+        </tr></thead><tbody>${tgRows || ""}</tbody></table>
+      </div>
+    </div>`;
+  initEventHistory(ev.id);
+  loadEventEspnAlerts(ev.id);
+  attachOverflowTooltips("#events-detail");
+}
+
+// Load top-of-detail ESPN alerts: pulls /api/broker/performer/{id}/espn for
+// each performer attached to the event (typically home team + away team) and
+// renders both side-by-side. Skips silently for non-sports events.
+async function loadEventEspnAlerts(eventId) {
+  const mount = $("#event-espn-alerts-mount");
+  if (!mount) return;
+  // Pull event detail to get the performer list — already fetched in
+  // renderEventDetail but we don't have it here, so re-fetch from cache.
+  let ev;
+  try { ev = (await api("/api/events/" + eventId)).event; }
+  catch (err) { return; }
+  if (!ev) return;
+  const performers = (ev.performances || []).map(p => p.performer).filter(p => p && p.id);
+  if (!performers.length) return;
+
+  // Fetch ESPN context for each in parallel; quietly drop the ones with no mapping.
+  const teams = await Promise.all(performers.map(async p => {
+    try {
+      const d = await api("/api/broker/performer/" + p.id + "/espn");
+      return d && d.applicable ? { name: p.name, ...d } : null;
+    } catch (_) { return null; }
+  }));
+  const valid = teams.filter(Boolean);
+  if (!valid.length) { mount.innerHTML = ''; return; }
+
+  const sevColor = s => /out/i.test(s||"") ? "#f87171" : (/quest|day-to-day|prob/i.test(s||"") ? "#fbbf24" : "var(--dim)");
+  const injItem = (inj) => `<div style="font-size:11px;padding:3px 0">
+    <span style="background:${sevColor(inj.status)};color:#000;padding:1px 4px;font-size:10px;font-weight:500">${esc((inj.status||'?').slice(0,4).toUpperCase())}</span>
+    <span style="color:var(--text);margin-left:6px">${esc(inj.athlete_name || '')}</span>
+    <span class="dim">${esc(inj.position || '')}</span>
+    <span class="dim" style="margin-left:6px">${esc(inj.injury_type || '')}</span>
+  </div>`;
+
+  const teamCol = t => {
+    const tt = t.team || {};
+    const record = tt.record_summary || (tt.wins!=null ? `${tt.wins}-${tt.losses}` : '—');
+    const streak = tt.streak ? `<span class="dim">· ${esc(tt.streak)}</span>` : '';
+    const inj = (t.injuries || []).slice(0, 6);
+    return `<div>
+      <div style="color:#93c5fd;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">${esc(t.name)} · ${esc(record)} ${streak}</div>
+      ${inj.length ? inj.map(injItem).join('') : '<div class="dim" style="font-size:11px">no current injuries reported</div>'}
+    </div>`;
+  };
+
+  const totalInj = valid.reduce((n, t) => n + (t.injuries || []).length, 0);
+  const cols = Math.min(valid.length, 2);
+  mount.innerHTML = `
+    <div class="panel panel-espn" style="margin-top:0;border:1px solid #2a4a6e;background:linear-gradient(180deg, rgba(96,165,250,0.04), transparent 80px)">
+      <div class="panel-head" style="background:#0d1a2b;border-bottom:1px solid #2a4a6e">
+        <span style="color:#60a5fa;letter-spacing:0.04em">
+          <span style="font-size:10px;background:#1e3a5f;color:#93c5fd;padding:2px 6px;margin-right:8px;letter-spacing:0.08em">ESPN</span>
+          alerts &amp; standings
+          ${totalInj ? ` <span class="count" style="color:#f87171">${totalInj} injury</span>` : ''}
+        </span>
+      </div>
+      <div class="panel-body" style="padding:12px">
+        <div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:16px">
+          ${valid.map(teamCol).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+// =====================================================================
+// EVENT DETAIL — Robinhood-style hero chart + movement breakdown
+// =====================================================================
+
+const HERO_METRIC = "retail_median";
+
+const PERIOD_TABS = [
+  { key: "1H",  hours: 1 },
+  { key: "6H",  hours: 6 },
+  { key: "24H", hours: 24, default: true },
+  { key: "7D",  hours: 24*7 },
+  { key: "30D", hours: 24*30 },
+  { key: "ALL", hours: null },
+];
+
+// Metrics shown in the breakdown table. invertColor=true means "down is good"
+// (e.g. inventory dropping = sales happening). polarity=null means neutral / no color.
+const BREAKDOWN_METRICS = [
+  { key: "retail_median",       label: "retail median",      polarity: "up", fmt: "money"   },
+  { key: "getin_price",         label: "get-in (min pair)",  polarity: "up", fmt: "money"   },
+  { key: "retail_p25",          label: "retail p25",         polarity: "up", fmt: "money"   },
+  { key: "retail_p75",          label: "retail p75",         polarity: "up", fmt: "money"   },
+  { key: "retail_p90",          label: "retail p90",         polarity: "up", fmt: "money"   },
+  { key: "retail_max",          label: "retail max",         polarity: "up", fmt: "money"   },
+  { key: "tickets_count",       label: "tickets remaining",  polarity: "down", fmt: "int"   },
+  { key: "groups_count",        label: "listing groups",     polarity: "down", fmt: "int"   },
+  { key: "sections_count",      label: "sections w/ stock",  polarity: null, fmt: "int"     },
+  { key: "price_dispersion",    label: "dispersion p75/p25", polarity: null, fmt: "ratio"   },
+  { key: "tail_premium",        label: "tail premium p90/m", polarity: null, fmt: "ratio"   },
+  { key: "top5_concentration",  label: "top-5 concentration",polarity: null, fmt: "pct"     },
+  { key: "owned_share",         label: "S4K owned share",    polarity: null, fmt: "pct"     },
+  { key: "owned_tickets_count", label: "S4K owned tickets",  polarity: null, fmt: "int"     },
+  { key: "owned_median_retail", label: "S4K owned median",   polarity: "up", fmt: "money"   },
+];
+
+function fmtVal(fmt, v) {
+  if (v == null || (typeof v === "number" && !isFinite(v))) return "—";
+  const n = Number(v);
+  if (fmt === "money") return "$" + Math.round(n).toLocaleString();
+  if (fmt === "pct")   return (n * 100).toFixed(1) + "%";
+  if (fmt === "ratio") return n.toFixed(2) + "x";
+  if (fmt === "int")   return Math.round(n).toLocaleString();
+  return String(n);
+}
+
+function fmtDelta(fmt, delta) {
+  if (delta == null || !isFinite(delta)) return "—";
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  const mag = Math.abs(delta);
+  if (fmt === "money") return sign + "$" + Math.round(mag).toLocaleString();
+  if (fmt === "pct")   return sign + (mag * 100).toFixed(1) + " pp";
+  if (fmt === "ratio") return sign + mag.toFixed(2);
+  if (fmt === "int")   return sign + Math.round(mag).toLocaleString();
+  return sign + String(mag);
+}
+
+function fmtPct(open, now) {
+  if (open == null || now == null || open === 0 || !isFinite(open)) return "—";
+  const pct = ((now - open) / Math.abs(open)) * 100;
+  const sign = pct > 0 ? "+" : pct < 0 ? "−" : "";
+  return sign + Math.abs(pct).toFixed(1) + "%";
+}
+
+function deltaClass(polarity, delta) {
+  if (delta == null || delta === 0 || polarity == null) return "";
+  const isUp = delta > 0;
+  if (polarity === "up")   return isUp ? "delta-up" : "delta-down";
+  if (polarity === "down") return isUp ? "delta-down" : "delta-up";
+  return "";
+}
+
+const HERO_PANEL_HTML = `
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-body" style="padding:18px 20px;">
+      <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:8px;">
+        <div class="dim" style="font-size:11px; text-transform:uppercase; letter-spacing:0.6px;" id="hero-label">retail median</div>
+        <div class="dim" style="font-size:11px;" id="hero-summary"></div>
+      </div>
+      <div style="display:flex; align-items:baseline; gap:14px; margin-bottom:14px;">
+        <div id="hero-value" style="font-size:32px; font-weight:500; line-height:1; font-family:'JetBrains Mono', monospace;">—</div>
+        <div id="hero-delta" style="font-size:13px; font-weight:500; font-family:'JetBrains Mono', monospace;"></div>
+      </div>
+      <div id="period-tabs" style="display:flex; gap:4px; margin-bottom:14px; font-family:'JetBrains Mono', monospace; font-size:11px;">
+        ${PERIOD_TABS.map(p => `
+          <button class="period-tab${p.default ? " active" : ""}" data-period="${p.key}"
+                  style="background:transparent; border:1px solid transparent; color:var(--text-dim); padding:3px 10px; border-radius:4px; cursor:pointer; font-family:inherit; font-size:inherit;">
+            ${p.key}
+          </button>`).join("")}
+      </div>
+      <div id="hero-status" class="status" style="display:none; margin:0 0 10px 0;"></div>
+      <div style="position:relative; height:240px;">
+        <canvas id="hero-canvas"></canvas>
+      </div>
+      <div id="hero-stats" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin-top:14px;"></div>
+    </div>
+  </div>
+`;
+
+const BREAKDOWN_PANEL_HTML = `
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-head">
+      <span>movement breakdown <span class="count" id="breakdown-window-label"></span></span>
+    </div>
+    <div class="panel-body" id="breakdown-body" style="padding:0;">
+      <table id="breakdown-table" style="width:100%;">
+        <thead><tr>
+          <th style="text-align:left;">metric</th>
+          <th class="num">open</th>
+          <th class="num">now</th>
+          <th class="num">Δ</th>
+          <th class="num">%</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+`;
+
+let _heroChart = null;
+let _eventSeries = null;     // raw response from /api/events/{id}/series
+let _eventId = null;
+let _activePeriod = "24H";
+
+async function initEventHistory(eventId) {
+  _eventId = eventId;
+  _activePeriod = (PERIOD_TABS.find(p => p.default) || PERIOD_TABS[2]).key;
+  const status = $("#hero-status");
+
+  // Wire period tabs
+  document.querySelectorAll("#period-tabs .period-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      _activePeriod = btn.dataset.period;
+      document.querySelectorAll("#period-tabs .period-tab").forEach(b => b.classList.toggle("active", b === btn));
+      redrawHero();
+    });
+  });
+
+  // Fetch a generous window once; tabs filter client-side
+  try {
+    if (status) { status.style.display = "block"; status.className = "status"; status.textContent = "loading history…"; }
+    _eventSeries = await api(`/api/events/${eventId}/series?days=60`);
+    if (status) status.style.display = "none";
+    redrawHero();
+  } catch (err) {
+    if (status) {
+      status.style.display = "block";
+      status.className = "status err";
+      status.textContent = "error loading history: " + err.message;
+    }
+  }
+}
+
+function pointsForMetric(series, metric) {
+  return (series || [])
+    .filter(p => p[metric] != null)
+    .map(p => ({ t: new Date(p.t), y: Number(p[metric]) }));
+}
+
+function clipToWindow(points, hoursBack) {
+  if (!hoursBack) return points;
+  const cutoff = Date.now() - hoursBack * 3600 * 1000;
+  return points.filter(p => p.t.getTime() >= cutoff);
+}
+
+function redrawHero() {
+  if (!_eventSeries) return;
+  const series = _eventSeries.series || [];
+  const tab = PERIOD_TABS.find(p => p.key === _activePeriod) || PERIOD_TABS[2];
+
+  const allHero = pointsForMetric(series, HERO_METRIC);
+  const heroPts = clipToWindow(allHero, tab.hours);
+
+  // Hero metric current value + delta
+  const heroNow  = heroPts.length ? heroPts[heroPts.length - 1].y : null;
+  const heroOpen = heroPts.length ? heroPts[0].y : null;
+  const heroDelta = (heroNow != null && heroOpen != null) ? heroNow - heroOpen : null;
+  const heroPctText = fmtPct(heroOpen, heroNow);
+
+  $("#hero-value").textContent = fmtVal("money", heroNow);
+  const dEl = $("#hero-delta");
+  if (heroDelta == null || heroPts.length < 2) {
+    dEl.textContent = ""; dEl.className = "";
+  } else {
+    const cls = heroDelta > 0 ? "delta-up" : heroDelta < 0 ? "delta-down" : "";
+    dEl.className = cls;
+    dEl.innerHTML = `${fmtDelta("money", heroDelta)} <span style="opacity:0.75;">(${heroPctText})</span>`;
+  }
+  const summary = $("#hero-summary");
+  if (summary) {
+    const span = heroPts.length > 1
+      ? `${heroPts.length} pts · ${tab.key}`
+      : (heroPts.length === 1 ? "1 pt" : `no data in ${tab.key}`);
+    summary.textContent = span;
+  }
+
+  // Chart
+  drawHeroChart(heroPts, heroDelta);
+
+  // Stat cards (current snapshot)
+  drawHeroStats(series, tab);
+
+  // Breakdown table
+  drawBreakdown(series, tab);
+
+  const wlbl = $("#breakdown-window-label");
+  if (wlbl) wlbl.textContent = `(${tab.key} window)`;
+}
+
+function drawHeroChart(points, delta) {
+  const canvas = $("#hero-canvas");
+  if (!canvas) return;
+  if (_heroChart) { _heroChart.destroy(); _heroChart = null; }
+  if (points.length === 0) return;
+
+  const positive = delta == null || delta >= 0;
+  const lineColor = positive ? "#1bb55c" : "#e24b4a";
+  const fillColor = positive ? "rgba(27,181,92,0.10)" : "rgba(226,75,74,0.10)";
+
+  const ctx = canvas.getContext("2d");
+  _heroChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [{
+        label: "retail median",
+        data: points.map(p => ({ x: p.t, y: p.y })),
+        borderColor: lineColor,
+        backgroundColor: fillColor,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: lineColor,
+        pointHoverBorderColor: "#fff",
+        pointHoverBorderWidth: 2,
+        tension: 0.25,
+        fill: "origin",
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: {
+          type: "time",
+          time: { tooltipFormat: "MMM d, HH:mm" },
+          grid: { display: false },
+          ticks: { color: "#6b737d", font: { size: 10, family: "JetBrains Mono" }, maxTicksLimit: 6, autoSkip: true, maxRotation: 0 },
+        },
+        y: {
+          position: "right",
+          grid: { color: "rgba(255,255,255,0.05)", drawTicks: false },
+          border: { display: false },
+          ticks: {
+            color: "#6b737d", font: { size: 10, family: "JetBrains Mono" }, padding: 8,
+            callback: v => "$" + Math.round(v),
+          },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "rgba(20,22,26,0.96)",
+          titleColor: "#fff", bodyColor: "#ccc",
+          borderColor: "rgba(255,255,255,0.08)", borderWidth: 1,
+          padding: 10, cornerRadius: 6, displayColors: false,
+          callbacks: { label: c => "$" + Math.round(c.parsed.y).toLocaleString() },
+        },
+      },
+    },
+  });
+}
+
+function drawHeroStats(series, tab) {
+  if (!series.length) { $("#hero-stats").innerHTML = ""; return; }
+  const last = series[series.length - 1];
+
+  // Find a "open" snapshot at the start of the window for delta context
+  const cutoff = tab.hours ? Date.now() - tab.hours * 3600 * 1000 : null;
+  let openSnap = null;
+  for (const p of series) {
+    if (cutoff == null || new Date(p.t).getTime() >= cutoff) { openSnap = p; break; }
+  }
+
+  const cards = [
+    {
+      label: "tickets remaining", value: fmtVal("int", last.tickets_count),
+      delta: openSnap && openSnap.tickets_count != null ? last.tickets_count - openSnap.tickets_count : null,
+      polarity: "down", fmt: "int",
+    },
+    {
+      label: "S4K owned share", value: fmtVal("pct", last.owned_share),
+      sub: last.owned_tickets_count != null
+        ? `${last.owned_tickets_count} of ${last.tickets_count ?? "?"} · ${last.owned_groups_count ?? 0} grps`
+        : "no owned data",
+    },
+    {
+      label: "get-in", value: fmtVal("money", last.getin_price),
+      delta: openSnap && openSnap.getin_price != null && last.getin_price != null ? last.getin_price - openSnap.getin_price : null,
+      polarity: "up", fmt: "money",
+    },
+    {
+      label: "dispersion p75/p25", value: fmtVal("ratio", last.price_dispersion),
+      sub: last.tail_premium != null ? `tail ${fmtVal("ratio", last.tail_premium)}` : "—",
+    },
+  ];
+
+  $("#hero-stats").innerHTML = cards.map(c => {
+    const deltaTxt = c.delta != null ? fmtDelta(c.fmt, c.delta) : "";
+    const cls = c.delta != null ? deltaClass(c.polarity, c.delta) : "";
+    const subRow = c.sub
+      ? `<div class="dim" style="font-size:10px; font-family:'JetBrains Mono', monospace; margin-top:4px;">${esc(c.sub)}</div>`
+      : (deltaTxt
+          ? `<div style="font-size:10px; font-family:'JetBrains Mono', monospace; margin-top:4px;" class="${cls}">${deltaTxt}</div>`
+          : `<div style="font-size:10px; margin-top:4px;">&nbsp;</div>`);
+    return `
+      <div style="background:var(--surface-2); border-radius:6px; padding:10px 12px;">
+        <div class="dim" style="font-size:10px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">${esc(c.label)}</div>
+        <div style="font-size:18px; font-weight:500; font-family:'JetBrains Mono', monospace; line-height:1.1;">${c.value}</div>
+        ${subRow}
+      </div>`;
+  }).join("");
+}
+
+function drawBreakdown(series, tab) {
+  const tbody = document.querySelector("#breakdown-table tbody");
+  if (!tbody) return;
+  if (!series.length) { tbody.innerHTML = `<tr><td colspan="5" class="dim" style="padding:14px; text-align:center;">no data</td></tr>`; return; }
+
+  const cutoff = tab.hours ? Date.now() - tab.hours * 3600 * 1000 : null;
+  const inWindow = cutoff == null ? series : series.filter(p => new Date(p.t).getTime() >= cutoff);
+  if (inWindow.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="dim" style="padding:14px; text-align:center;">no data in ${tab.key}</td></tr>`;
+    return;
+  }
+
+  const open = inWindow[0];
+  const now  = inWindow[inWindow.length - 1];
+
+  tbody.innerHTML = BREAKDOWN_METRICS.map(m => {
+    const o = open[m.key];
+    const n = now[m.key];
+    if (o == null && n == null) return "";
+    const delta = (o != null && n != null) ? n - o : null;
+    const pctText = fmtPct(o, n);
+    const cls = deltaClass(m.polarity, delta);
+    return `
+      <tr>
+        <td>${esc(m.label)}</td>
+        <td class="num dim">${fmtVal(m.fmt, o)}</td>
+        <td class="num">${fmtVal(m.fmt, n)}</td>
+        <td class="num ${cls}">${delta != null ? fmtDelta(m.fmt, delta) : "—"}</td>
+        <td class="num ${cls}" style="font-weight:500;">${pctText}</td>
+      </tr>`;
+  }).join("");
+}
+
+// -------- PERFORMERS --------
+$("#pf-catpreset").addEventListener("change", e => { $("#pf-catid").value = e.target.value; });
+
+// ---- league browser (ESPN teams w/ home+away holistic metrics) ----
+let LEAGUES_LOADED = false;
+let CURRENT_LEAGUE = null;
+
+async function loadLeagues() {
+  if (LEAGUES_LOADED) return;
+  try {
+    const d = await api("/api/broker/leagues");
+    const chips = (d.leagues || []).map(l => `
+      <button type="button" class="league-chip" data-league="${esc(l.key)}"
+        style="padding:4px 10px;font-size:11px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);letter-spacing:0.04em;cursor:pointer">
+        ${esc(l.label)} <span style="color:var(--dim)">·${l.teams}</span>
+      </button>`).join("");
+    $("#leagues-chips").innerHTML = chips;
+    $$("#leagues-chips .league-chip").forEach(b => {
+      b.addEventListener("click", () => loadLeague(b.dataset.league));
+    });
+    LEAGUES_LOADED = true;
+  } catch (err) { /* tab not yet visible to user / auth pending; harmless */ }
+}
+
+async function loadLeague(league) {
+  CURRENT_LEAGUE = league;
+  $$("#leagues-chips .league-chip").forEach(b => {
+    const sel = b.dataset.league === league;
+    b.style.background = sel ? "var(--amber)" : "var(--surface-2)";
+    b.style.color      = sel ? "#000"        : "var(--text)";
+    b.style.borderColor = sel ? "var(--amber)" : "var(--border)";
+  });
+  $("#leagues-results-panel").style.display = "block";
+  $("#leagues-results").innerHTML = `<div class="empty">loading ${esc(league)}…</div>`;
+  try {
+    const d = await api("/api/broker/performers/by-league/" + encodeURIComponent(league));
+    renderLeagueGrid(d);
+  } catch (err) {
+    $("#leagues-results").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`;
+  }
+}
+
+function fmtMoney(v) {
+  if (v == null) return `<span class="dim">—</span>`;
+  const n = Number(v); if (!isFinite(n)) return `<span class="dim">—</span>`;
+  return `$${n.toLocaleString(undefined,{maximumFractionDigits:0})}`;
+}
+function fmtInt(v) {
+  if (v == null) return `<span class="dim">—</span>`;
+  const n = Number(v); if (!isFinite(n) || n === 0) return `<span class="dim">0</span>`;
+  return n.toLocaleString();
+}
+// Renders a small trend arrow + Δ% next to a value. Green for +, red for −, dim for flat/missing.
+function fmtTrend(deltaPct) {
+  if (deltaPct == null) return ``;
+  const n = Number(deltaPct); if (!isFinite(n)) return ``;
+  if (Math.abs(n) < 0.01) return ` <span style="color:var(--dim);font-size:10px">·</span>`;
+  const arrow = n > 0 ? "▲" : "▼";
+  const color = n > 0 ? "var(--green)" : "var(--red)";
+  const sign  = n > 0 ? "+" : "";
+  return ` <span style="color:${color};font-size:10px;margin-left:4px">${arrow}${sign}${n.toFixed(1)}%</span>`;
+}
+
+function renderLeagueGrid(d) {
+  const performers = d.performers || [];
+  $("#leagues-results-title").textContent = `${d.league} teams`;
+  $("#leagues-results-count").textContent = `(${performers.length})`;
+  $("#leagues-meta").textContent = `${d.league} · ${performers.length} teams · home + away (last 24h metrics)`;
+
+  if (!performers.length) {
+    $("#leagues-results").innerHTML = `<div class="empty">no teams in ${esc(d.league)}</div>`;
+    return;
+  }
+
+  const rows = performers.map((p, i) => {
+    const owned = (p.home.owned_tix || 0) + (p.road.owned_tix || 0);
+    const trClass = owned > 0 ? "row owned-team" : "row";
+    return `<tr class="${trClass}" data-id="${p.performer_id}">
+      <td class="num dim">${i+1}</td>
+      <td class="id-tag">${p.performer_id}</td>
+      <td class="ellip">${esc(p.performer_name || "")}</td>
+      <td class="ellip dim">${esc(p.home_venue_name || "—")}</td>
+      <!-- HOME -->
+      <td class="num">${fmtInt(p.home.events)}</td>
+      <td class="num money">${fmtMoney(p.home.market_med)}${fmtTrend(p.home.delta_market_pct)}</td>
+      <td class="num">${fmtInt(p.home.market_tix)}</td>
+      <td class="num" style="color:var(--amber)">${fmtInt(p.home.owned_tix)}</td>
+      <!-- ROAD -->
+      <td class="num">${fmtInt(p.road.events)}</td>
+      <td class="num money">${fmtMoney(p.road.market_med)}${fmtTrend(p.road.delta_market_pct)}</td>
+      <td class="num">${fmtInt(p.road.market_tix)}</td>
+      <td class="num" style="color:var(--amber)">${fmtInt(p.road.owned_tix)}</td>
+    </tr>`;
+  }).join("");
+
+  $("#leagues-results").innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th class="num">#</th><th>id</th><th>team</th><th>home venue</th>
+          <th class="num" colspan="4" style="border-left:1px solid var(--border-hi);background:var(--surface-2);text-align:center">HOME</th>
+          <th class="num" colspan="4" style="border-left:1px solid var(--border-hi);background:var(--surface-2);text-align:center">ROAD</th>
+        </tr>
+        <tr>
+          <th></th><th></th><th></th><th></th>
+          <th class="num" style="border-left:1px solid var(--border-hi)">events</th>
+          <th class="num">median $</th>
+          <th class="num">market tix</th>
+          <th class="num">owned tix</th>
+          <th class="num" style="border-left:1px solid var(--border-hi)">events</th>
+          <th class="num">median $</th>
+          <th class="num">market tix</th>
+          <th class="num">owned tix</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  $$("#leagues-results-panel .table-filter").forEach(i => i.value = "");
+  attachOverflowTooltips("#leagues-results");
+
+  // Click row to populate the regular performer detail panel
+  $$("#leagues-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#leagues-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadPerformerDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+// Hide league browser when user starts a manual q search; show again when they clear.
+function syncLeaguesVisibility() {
+  const q = ($("#pf-q").value || "").trim();
+  const hasManualSearch = q.length > 0;
+  $("#leagues-zone").style.display = hasManualSearch ? "none" : "";
+}
+$("#pf-q").addEventListener("input", syncLeaguesVisibility);
+
+$("#performers-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#performers-results-panel").style.display = "none";
+  $("#performers-detail").classList.remove("open");
+  $("#leagues-zone").style.display = "none";  // manual search wins over league browse
+  status("performers", "searching…");
+  try {
+    const data = await api("/api/performers?" + params.toString());
+    renderPerformersResults(data);
+    status("performers");
+  } catch (err) { status("performers", "error: " + err.message, "err"); }
+});
+
+// "clear" button on the performers form resets the search and brings the league strip back.
+$("#performers-form").addEventListener("reset", () => {
+  $("#performers-results-panel").style.display = "none";
+  $("#performers-detail").classList.remove("open");
+  setTimeout(() => { syncLeaguesVisibility(); }, 0);
+});
+
+// Lazy-load leagues the first time the user clicks the Performers tab.
+document.querySelectorAll('#tabs button[data-tab="performers"]').forEach(b => {
+  b.addEventListener("click", () => loadLeagues());
+});
+// Also try on initial page load (in case Performers is the active tab).
+loadLeagues();
+
+function renderPerformersResults(data) {
+  const performers = data.performers || [];
+  $("#performers-count").textContent = `(${performers.length})`;
+  const rows = performers.map((p, i) => {
+    const venue = p.venue || {};
+    const cat = categoryPath(p.category);
+    const upc = p.upcoming_events || {};
+    return `<tr class="row" data-id="${p.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${p.id}</td>
+      <td class="ellip">${esc(p.name)}</td>
+      <td class="dim">${esc(cat)}</td>
+      <td class="dim">${esc(venue.name || "—")}</td>
+      <td class="num dim">${Number(p.popularity_score || 0).toFixed(3)}</td>
+      <td class="dim">${upc.first ? upc.first.slice(0,10) : "—"}</td>
+      <td class="dim">${upc.last ? upc.last.slice(0,10) : "—"}</td>
+    </tr>`;
+  }).join("");
+  $("#performers-results").innerHTML = performers.length === 0 ? `<div class="empty">no performers</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>name</th><th>category</th>
+      <th>home venue</th><th class="num">pop</th><th>first</th><th>last</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#performers-results-panel").style.display = "block";
+  $$("#performers-results-panel .table-filter").forEach(i => i.value = "");
+  attachOverflowTooltips("#performers-results");
+  $$("#performers-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#performers-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadPerformerDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+function categoryPath(cat) {
+  if (!cat) return "";
+  const parts = [];
+  let c = cat;
+  while (c) { parts.unshift(c.name); c = c.parent; }
+  return parts.join(" · ");
+}
+
+async function loadPerformerDetail(id) {
+  const detail = $("#performers-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading performer</span></div>`;
+  detail.classList.add("open");
+  try {
+    const p = await api("/api/performers/" + id + "?include_opponents=true");
+    const venue = p.venue || {};
+    const upc = p.upcoming_events || {};
+    const opponents = p.opponents || [];
+    // Opponents are clickable: click drops you into that opponent's detail view
+    // so you can hop around a league (e.g. NFC East rivalry quick-flip).
+    const oppRows = opponents.map(o => `<tr class="row" data-opp-id="${o.id}" style="cursor:pointer">
+      <td class="id-tag">${o.id}</td>
+      <td><a href="#" data-opp-id="${o.id}" style="color:var(--amber)">${esc(o.name)}</a></td>
+      <td class="dim" style="font-size:11px">→ events</td>
+    </tr>`).join("");
+    const pivots = [
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+        data-pivot-set='${JSON.stringify({performer_id: p.id})}'>→ events by this performer</button>`,
+      `<button class="pivot" data-pivot-action="add-watchlist"
+        data-kind="performer" data-ext-id="${p.id}" data-label="${esc(p.name)}">+ watchlist</button>`,
+    ];
+    detail.innerHTML = `
+      <div class="detail-head">
+        <div>
+          <h2>${esc(p.name)}</h2>
+          <div class="sub">
+            <span class="chip hot">${esc(categoryPath(p.category))}</span>
+            <span class="id-tag">performer_id ${p.id}</span>
+          </div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">popularity</div><div class="v amber">${Number(p.popularity_score || 0).toFixed(3)}</div></div>
+        <div class="stat"><div class="k">home venue</div><div class="v">${esc(venue.name || "—")}</div></div>
+        <div class="stat"><div class="k">venue location</div><div class="v">${esc(venue.address?.locality || "—")}, ${esc(venue.address?.region || "")}</div></div>
+        <div class="stat"><div class="k">first upcoming</div><div class="v">${upc.first ? upc.first.slice(0,10) : "—"}</div></div>
+        <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
+        <div class="stat"><div class="k">keywords</div><div class="v dim">${esc(p.keywords || "—")}</div></div>
+      </div>
+      <div id="performer-espn-mount"></div>
+      <div id="performer-portfolio-mount"></div>
+      ${opponents.length ? `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+          <span><span style="font-size:10px;background:#3a2a10;color:var(--amber);padding:2px 6px;margin-right:8px;letter-spacing:0.08em">TEVO</span>opponents <span class="count">(${opponents.length})</span></span>
+          <input class="table-filter" data-target="pf-opp-table" placeholder="filter rows…">
+        </div>
+        <div class="panel-body" id="pf-opp-table"><table><tbody>${oppRows}</tbody></table></div>
+      </div>` : ""}`;
+    // Wire opponent click → load that opponent's detail (chain through teams)
+    $$("#pf-opp-table tr.row").forEach(tr => {
+      tr.addEventListener("click", e => {
+        const oppId = Number(tr.dataset.oppId);
+        if (oppId) loadPerformerDetail(oppId);
+      });
+    });
+    loadPortfolio({ performer_id: p.id, mount: "#performer-portfolio-mount", titleSuffix: p.name });
+    loadPerformerESPN(p.id);
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// =====================================================================
+// PERFORMER ESPN PANEL — surfaces ESPN team context for the selected performer.
+// Resolves performer_id -> espn_team_id via performer_external_ids; quietly
+// hides itself for performers without an ESPN mapping (concerts, theatre, etc.).
+// =====================================================================
+async function loadPerformerESPN(performerId) {
+  const mount = $("#performer-espn-mount");
+  if (!mount) return;
+  mount.innerHTML = "";
+  let d;
+  try { d = await api("/api/broker/performer/" + performerId + "/espn"); }
+  catch (err) { return; }  // silent fail — non-sports performers expected
+  if (!d || !d.applicable) return;
+
+  const t = d.team || {};
+  const injuries = d.injuries || [];
+  const news     = d.news || [];
+  const recent   = d.recent || [];
+
+  const fmtDate = s => s ? String(s).slice(0,10) : "—";
+  const recentRows = recent.map(r => {
+    const isHome = r.home_team_id === d.espn_team_id;
+    const opp = isHome ? r.away_team_id : r.home_team_id;
+    const myScore  = isHome ? r.home_score : r.away_score;
+    const oppScore = isHome ? r.away_score : r.home_score;
+    let result = "—";
+    if (r.state === "post" && myScore != null && oppScore != null) {
+      const w = myScore > oppScore;
+      result = `<span class="${w ? '' : 'dim'}" style="color:${w ? 'var(--green)' : 'var(--red)'}">${w ? 'W' : 'L'} ${myScore}-${oppScore}</span>`;
+    } else if (r.state === "in") {
+      result = `<span class="dim">live ${myScore ?? '-'}–${oppScore ?? '-'}</span>`;
+    } else {
+      result = `<span class="dim">${esc(r.status_short || 'upcoming')}</span>`;
+    }
+    return `<tr>
+      <td class="dim">${fmtDate(r.captured_at)}</td>
+      <td>${isHome ? 'vs' : '@'} <span class="dim">${esc(opp || '')}</span></td>
+      <td>${result}</td>
+    </tr>`;
+  }).join("");
+
+  const injRows = injuries.slice(0, 12).map(i => `
+    <tr>
+      <td>${esc(i.athlete_name || '')}</td>
+      <td class="dim">${esc(i.position || '')}</td>
+      <td><span style="color:${(i.status||'').toLowerCase().includes('out') ? 'var(--red)' : 'var(--amber)'}">${esc(i.status || '')}</span></td>
+      <td class="dim ellip">${esc(i.injury_type || '')}</td>
+      <td class="dim">${i.return_date ? fmtDate(i.return_date) : ''}</td>
+    </tr>`).join("");
+
+  const newsRows = news.slice(0, 6).map(n => `
+    <tr>
+      <td class="dim">${fmtDate(n.published_at)}</td>
+      <td><a href="${esc(n.url || '#')}" target="_blank" rel="noopener">${esc(n.headline || '')}</a></td>
+      <td class="dim">${esc(n.type || '')}</td>
+    </tr>`).join("");
+
+  // Visual distinction: ESPN blocks get a blue accent border/header so they
+  // don't visually collide with TEvo (amber) data in the same view.
+  mount.innerHTML = `
+    <div class="panel panel-espn" style="margin-top:16px;border-color:#2a4a6e;background:linear-gradient(180deg, rgba(96,165,250,0.04), transparent 80px)">
+      <div class="panel-head" style="background:#0d1a2b;border-bottom:1px solid #2a4a6e">
+        <span style="color:#60a5fa;letter-spacing:0.04em">
+          <span style="font-size:10px;background:#1e3a5f;color:#93c5fd;padding:2px 6px;margin-right:8px;letter-spacing:0.08em">ESPN</span>
+          team context <span class="count">(${esc(d.league || 'team')})</span>
+        </span>
+        <span class="dim" style="font-size:11px">team_id ${esc(d.espn_team_id)} · captured ${fmtDate(t.captured_at)}</span>
+      </div>
+      <div class="panel-body">
+        <div class="stats-grid" style="margin-bottom:8px">
+          <div class="stat"><div class="k">record</div><div class="v amber">${esc(t.record_summary || (t.wins!=null ? `${t.wins}-${t.losses}${t.ties?'-'+t.ties:''}` : '—'))}</div></div>
+          <div class="stat"><div class="k">win %</div><div class="v">${t.win_pct != null ? Number(t.win_pct).toFixed(3) : '—'}</div></div>
+          <div class="stat"><div class="k">standing</div><div class="v dim">${esc(t.standing_summary || '—')}</div></div>
+          <div class="stat"><div class="k">streak</div><div class="v">${esc(t.streak || '—')}</div></div>
+          <div class="stat"><div class="k">seed</div><div class="v">${t.playoff_seed ?? '—'}</div></div>
+          <div class="stat"><div class="k">games back</div><div class="v">${t.games_back ?? '—'}</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">
+          <div>
+            <div style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">last 5</div>
+            <table>${recentRows ? `<tbody>${recentRows}</tbody>` : `<tbody><tr><td class="dim">no game snapshots yet</td></tr></tbody>`}</table>
+          </div>
+          <div>
+            <div style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">injuries (${injuries.length})</div>
+            <table>${injRows ? `<tbody>${injRows}</tbody>` : `<tbody><tr><td class="dim">no current injuries reported</td></tr></tbody>`}</table>
+          </div>
+          <div>
+            <div style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">news</div>
+            <table>${newsRows ? `<tbody>${newsRows}</tbody>` : `<tbody><tr><td class="dim">no recent news</td></tr></tbody>`}</table>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// =====================================================================
+// PORTFOLIO PANEL — used by performer / venue / watchlist views
+// =====================================================================
+async function loadPortfolio({ performer_id, venue_id, watchlist_only, mount, titleSuffix }) {
+  const el = document.querySelector(mount);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><span><span style="font-size:10px;background:#3a2a10;color:var(--amber);padding:2px 6px;margin-right:8px;letter-spacing:0.08em">TEVO</span>tracked events portfolio · ${esc(titleSuffix || "")}</span></div>
+      <div class="panel-body"><div class="status">loading portfolio…</div></div>
+    </div>`;
+
+  const params = new URLSearchParams();
+  if (performer_id) params.set("performer_id", performer_id);
+  if (venue_id) params.set("venue_id", venue_id);
+  if (watchlist_only) params.set("watchlist_only", "true");
+
+  let data;
+  try {
+    data = await api("/api/portfolio?" + params.toString());
+  } catch (err) {
+    el.querySelector(".panel-body").innerHTML = `<div class="status err">portfolio error: ${esc(err.message)}</div>`;
+    return;
+  }
+
+  const agg = data.aggregate || {};
+  const events = data.events || [];
+  const tracked = events.filter(e => e.captured_at != null);
+
+  if (tracked.length === 0) {
+    el.querySelector(".panel-body").innerHTML = `
+      <div class="status dim" style="padding:14px;">
+        ${events.length} event(s) match this filter, but none are in our metrics yet.
+        Add this performer to the watchlist and wait for the next collector run.
+      </div>`;
+    return;
+  }
+
+  // Aggregate cards
+  const aggCards = [
+    { label: "events tracked", value: fmtVal("int", agg.events_count), sub: `${agg.events_with_owned} with S4K inventory` },
+    { label: "tickets across slate", value: fmtVal("int", agg.tickets_total), sub: agg.owned_tickets_total ? `${agg.owned_tickets_total} owned` : "no owned" },
+    {
+      label: "S4K owned share",
+      value: fmtVal("pct", agg.owned_share_weighted),
+      sub: agg.owned_share_weighted != null ? `weighted by tickets` : "no owned data",
+    },
+    {
+      label: "retail value (sum)",
+      value: agg.retail_value_total != null
+        ? "$" + Math.round(agg.retail_value_total / 1000).toLocaleString() + "K"
+        : "—",
+      sub: agg.owned_retail_value_total
+        ? "S4K $" + Math.round(agg.owned_retail_value_total / 1000).toLocaleString() + "K est."
+        : "—",
+    },
+  ];
+
+  // Per-event rows (sorted soonest first)
+  const rows = tracked.map(e => {
+    const ownedCell = e.owned_tickets_count
+      ? `<td class="num"><span style="color:var(--green);">${fmtVal("pct", e.owned_share)}</span> <span class="dim" style="font-size:10px;">(${e.owned_tickets_count})</span></td>`
+      : `<td class="num dim">—</td>`;
+    return `
+      <tr data-portfolio-event="${e.id}" style="cursor:pointer;">
+        <td class="ellip" style="max-width:280px;">
+          <div>${esc(e.name)}</div>
+          <div class="dim" style="font-size:10px;">${shortDate(e.occurs_at_local)} · ${esc(e.venue_name || "")}</div>
+        </td>
+        <td class="num">${fmtVal("int", e.tickets_count)}</td>
+        <td class="num">${fmtVal("money", e.retail_median)}</td>
+        <td class="num dim">${fmtVal("money", e.getin_price)}</td>
+        ${ownedCell}
+        <td class="num dim">${fmtVal("ratio", e.price_dispersion)}</td>
+      </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head">
+        <span>tracked events portfolio <span class="count">(${tracked.length} of ${events.length})</span></span>
+      </div>
+      <div class="panel-body" style="padding:14px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:14px;">
+          ${aggCards.map(c => `
+            <div style="background:var(--surface-2); border-radius:6px; padding:10px 12px;">
+              <div class="dim" style="font-size:10px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">${esc(c.label)}</div>
+              <div style="font-size:18px; font-weight:500; font-family:'JetBrains Mono', monospace; line-height:1.1;">${c.value}</div>
+              <div class="dim" style="font-size:10px; font-family:'JetBrains Mono', monospace; margin-top:4px;">${esc(c.sub || "")}</div>
+            </div>`).join("")}
+        </div>
+        <table class="portfolio-table" style="width:100%;">
+          <thead><tr>
+            <th style="text-align:left;">event</th>
+            <th class="num">tickets</th>
+            <th class="num">retail med</th>
+            <th class="num">get-in</th>
+            <th class="num">S4K share</th>
+            <th class="num">disp.</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  // Click row → drill into single-event Robinhood view
+  el.querySelectorAll("tr[data-portfolio-event]").forEach(tr => {
+    tr.addEventListener("mouseenter", () => tr.style.background = "var(--surface-2)");
+    tr.addEventListener("mouseleave", () => tr.style.background = "");
+    tr.addEventListener("click", () => {
+      const eid = tr.dataset.portfolioEvent;
+      // Switch to events tab and open this event
+      document.querySelector('button[data-tab="events"]').click();
+      setTimeout(() => loadEventDetail(eid), 50);
+    });
+  });
+}
+
+// -------- VENUES --------
+$("#venues-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#venues-results-panel").style.display = "none";
+  $("#venues-detail").classList.remove("open");
+  status("venues", "searching…");
+  try {
+    const data = await api("/api/venues?" + params.toString());
+    renderVenuesResults(data);
+    status("venues");
+  } catch (err) { status("venues", "error: " + err.message, "err"); }
+});
+
+function renderVenuesResults(data) {
+  const venues = data.venues || [];
+  $("#venues-count").textContent = `(${venues.length})`;
+  const rows = venues.map((v, i) => {
+    const addr = v.address || {};
+    const upc = v.upcoming_events || {};
+    return `<tr class="row" data-id="${v.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${v.id}</td>
+      <td class="ellip">${esc(v.name)}</td>
+      <td class="dim">${esc(v.location || "")}</td>
+      <td class="num dim">${Number(v.popularity_score || 0).toFixed(3)}</td>
+      <td class="dim">${esc(addr.postal_code || "")}</td>
+      <td class="dim">${upc.first ? upc.first.slice(0,10) : "—"}</td>
+      <td class="dim">${upc.last ? upc.last.slice(0,10) : "—"}</td>
+    </tr>`;
+  }).join("");
+  $("#venues-results").innerHTML = venues.length === 0 ? `<div class="empty">no venues</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>name</th><th>location</th>
+      <th class="num">pop</th><th>zip</th><th>first</th><th>last</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#venues-results-panel").style.display = "block";
+  $$("#venues-results-panel .table-filter").forEach(i => i.value = "");
+  $$("#venues-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#venues-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadVenueDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadVenueDetail(id) {
+  const detail = $("#venues-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading venue</span></div>`;
+  detail.classList.add("open");
+  try {
+    const v = await api("/api/venues/" + id);
+    const a = v.address || {};
+    const upc = v.upcoming_events || {};
+    const pivots = [
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ events at this venue</button>`,
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="configs"
+        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ configurations</button>`,
+      `<button class="pivot" data-pivot-action="add-watchlist"
+        data-kind="venue" data-ext-id="${v.id}" data-label="${esc(v.name)}">+ watchlist</button>`,
+    ];
+    detail.innerHTML = `
+      <div class="detail-head">
+        <div>
+          <h2>${esc(v.name)}</h2>
+          <div class="sub"><span>${esc(v.location || "")}</span>
+            <span class="id-tag" style="margin-left:12px">venue_id ${v.id}</span></div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">popularity</div><div class="v amber">${Number(v.popularity_score || 0).toFixed(3)}</div></div>
+        <div class="stat"><div class="k">street</div><div class="v">${esc(a.street_address || "—")}</div></div>
+        <div class="stat"><div class="k">locality</div><div class="v">${esc(a.locality || "—")}, ${esc(a.region || "")}</div></div>
+        <div class="stat"><div class="k">postal</div><div class="v">${esc(a.postal_code || "—")}</div></div>
+        <div class="stat"><div class="k">lat / lon</div><div class="v">${a.latitude || "—"} / ${a.longitude || "—"}</div></div>
+        <div class="stat"><div class="k">first upcoming</div><div class="v">${upc.first ? upc.first.slice(0,10) : "—"}</div></div>
+        <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
+      </div>`;
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// -------- CONFIGURATIONS --------
+$("#configs-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = formToParams(e.target);
+  $("#configs-results-panel").style.display = "none";
+  $("#configs-detail").classList.remove("open");
+  status("configs", "searching…");
+  try {
+    const data = await api("/api/configurations?" + params.toString());
+    renderConfigsResults(data);
+    status("configs");
+  } catch (err) { status("configs", "error: " + err.message, "err"); }
+});
+
+function renderConfigsResults(data) {
+  const configs = data.configurations || [];
+  $("#configs-count").textContent = `(${data.total_entries ?? configs.length})`;
+  const rows = configs.map((c, i) => {
+    const v = c.venue || {};
+    return `<tr class="row" data-id="${c.id}">
+      <td class="num">${i+1}</td><td class="id-tag">${c.id}</td>
+      <td class="ellip">${esc(c.name)}</td>
+      <td>${c.primary ? '<span class="chip hot">primary</span>' : ""}</td>
+      <td>${c.general_admission ? '<span class="chip">GA</span>' : ""}</td>
+      <td class="ellip">${esc(v.name || "—")}</td>
+      <td class="dim">${esc(v.location || "")}</td>
+    </tr>`;
+  }).join("");
+  $("#configs-results").innerHTML = configs.length === 0 ? `<div class="empty">no configurations</div>` : `
+    <table><thead><tr>
+      <th class="num">#</th><th>id</th><th>name</th><th>flags</th><th></th>
+      <th>venue</th><th>location</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  $("#configs-results-panel").style.display = "block";
+  $$("#configs-results-panel .table-filter").forEach(i => i.value = "");
+  $$("#configs-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#configs-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadConfigDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadConfigDetail(id) {
+  const detail = $("#configs-detail");
+  detail.innerHTML = `<div class="detail-head"><span class="loading">loading configuration</span></div>`;
+  detail.classList.add("open");
+  try {
+    const c = await api("/api/configurations/" + id);
+    const v = c.venue || {};
+    const pivots = v.id ? [
+      `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
+        data-pivot-set='${JSON.stringify({venue_id: v.id})}'>→ events at this venue</button>`,
+    ] : [];
+    detail.innerHTML = `
+      <div class="detail-head">
+        <div><h2>${esc(c.name)}</h2>
+          <div class="sub">
+            ${c.primary ? '<span class="chip hot">primary</span>' : ""}
+            ${c.general_admission ? '<span class="chip">general admission</span>' : ""}
+            <span class="id-tag" style="margin-left:12px">configuration_id ${c.id}</span>
+          </div>
+        </div>
+        <div class="pivots">${pivots.join("")}</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">capacity</div><div class="v amber">${num(c.capacity)}</div></div>
+        <div class="stat"><div class="k">venue</div><div class="v">${esc(v.name || "—")}</div></div>
+        <div class="stat"><div class="k">location</div><div class="v">${esc(v.location || "—")}</div></div>
+        <div class="stat"><div class="k">street</div><div class="v">${esc(v.street_address || "—")}</div></div>
+        <div class="stat"><div class="k">updated</div><div class="v dim">${esc(c.updated_at || "—")}</div></div>
+        <div class="stat"><div class="k">venue_id</div><div class="v id-tag">${v.id || "—"}</div></div>
+      </div>`;
+  } catch (err) {
+    detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`;
+  }
+}
+
+// -------- WATCHLIST --------
+$("#wl-add-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!CONFIG.supabase_configured) { status("wl", "Supabase not configured — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY", "err"); return; }
+  const obj = formToObject(e.target);
+  try {
+    const resp = await api("/api/watchlist", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({kind: obj.kind, ext_id: Number(obj.ext_id), label: obj.label || null}),
+    });
+    if (resp.ok === false) { toast(resp.error || "failed", true); return; }
+    toast("added");
+    e.target.reset();
+    loadWatchlist();
+  } catch (err) { toast(err.message, true); }
+});
+
+async function loadWatchlist() {
+  if (!CONFIG.supabase_configured) { $("#wl-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/watchlist");
+    const items = data.items || [];
+    $("#wl-count").textContent = `(${items.length})`;
+    const rows = items.map(w => `
+      <tr>
+        <td><span class="chip ${w.kind === 'performer' ? 'hot' : ''}">${w.kind}</span></td>
+        <td class="id-tag">${w.ext_id}</td>
+        <td class="ellip">${esc(w.label || '—')}</td>
+        <td class="dim">${shortStamp(w.added_at)}</td>
+        <td><button class="danger" onclick="removeWatchlist(${w.id}, this)">remove</button></td>
+      </tr>`).join("");
+    $("#wl-table").innerHTML = items.length === 0 ? `<div class="empty">empty watchlist</div>` : `
+      <table><thead><tr>
+        <th>kind</th><th>ext_id</th><th>label</th><th>added</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) { $("#wl-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+async function removeWatchlist(id, btn) {
+  if (!confirm("remove from watchlist?")) return;
+  btn.disabled = true;
+  try {
+    await api("/api/watchlist/" + id, {method: "DELETE"});
+    toast("removed");
+    loadWatchlist();
+  } catch (err) { toast(err.message, true); btn.disabled = false; }
+}
+
+async function runCollector() {
+  const btn = $("#collect-now-btn");
+  btn.disabled = true;
+  btn.textContent = "firing…";
+  try {
+    await api("/api/collect/run", {method: "POST"});
+    toast("collector fired — check runs below in ~30-90s");
+    btn.textContent = "fired ✓";
+    setTimeout(() => { btn.textContent = "run collector now"; btn.disabled = false; loadRuns(); }, 3000);
+  } catch (err) {
+    toast(err.message, true);
+    btn.textContent = "run collector now";
+    btn.disabled = false;
+  }
+}
+
+async function loadRuns() {
+  if (!CONFIG.supabase_configured) { $("#runs-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/runs?limit=10");
+    const items = data.items || [];
+    const rows = items.map(r => {
+      const dur = (r.started_at && r.finished_at)
+        ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + "s"
+        : r.finished_at ? "—" : `<span class="loading">running</span>`;
+      const errChip = r.stats_errors > 0
+        ? `<span class="chip red">${r.stats_errors} err</span>`
+        : (r.finished_at ? `<span class="chip green">ok</span>` : "");
+      return `<tr>
+        <td class="id-tag">${r.id}</td>
+        <td class="dim">${shortStamp(r.started_at)}</td>
+        <td class="dim">${shortStamp(r.finished_at)}</td>
+        <td class="num">${dur}</td>
+        <td class="num">${num(r.events_collected)}</td>
+        <td>${errChip}</td>
+      </tr>`;
+    }).join("");
+    $("#runs-table").innerHTML = items.length === 0 ? `<div class="empty">no runs yet</div>` : `
+      <table><thead><tr>
+        <th>id</th><th>started</th><th>finished</th><th class="num">duration</th>
+        <th class="num">events</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) { $("#runs-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+async function loadLatest() {
+  if (!CONFIG.supabase_configured) { $("#latest-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/snapshots/latest");
+    const items = data.items || [];
+    $("#latest-count").textContent = `(${items.length})`;
+    const rows = items.map(s => `
+      <tr class="row" data-id="${s.event_id}">
+        <td class="id-tag">${s.event_id}</td>
+        <td class="ellip">${esc(s.event_name || "—")}</td>
+        <td>${shortDate(s.occurs_at_local)}</td>
+        <td class="ellip dim">${esc(s.venue_name || "")}</td>
+        <td class="num">${num(s.ticket_groups_count)}</td>
+        <td class="num">${num(s.tickets_count)}</td>
+        <td class="num money">${moneyC(s.retail_price_min)}</td>
+        <td class="num money">${moneyC(s.retail_price_avg)}</td>
+        <td class="num money">${moneyC(s.retail_price_max)}</td>
+        <td class="dim">${shortStamp(s.captured_at)}</td>
+      </tr>`).join("");
+    $("#latest-table").innerHTML = items.length === 0 ? `<div class="empty">no snapshots yet — run the collector</div>` : `
+      <table><thead><tr>
+        <th>event_id</th><th>event</th><th>date</th><th>venue</th>
+        <th class="num">groups</th><th class="num">tickets</th>
+        <th class="num">min</th><th class="num">avg</th><th class="num">max</th>
+        <th>captured</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    $$("#latest-table tr.row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        switchTab("events");
+        loadEventDetail(Number(tr.dataset.id));
+      });
+    });
+  } catch (err) { $("#latest-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+
+function deltaCell(n) {
+  if (n == null) return `<td class="dim num">—</td>`;
+  const v = Number(n);
+  if (v === 0) return `<td class="num dim">0</td>`;
+  const cls = v > 0 ? "delta-up" : "delta-down";
+  const sign = v > 0 ? "+" : "";
+  return `<td class="num ${cls}">${sign}${v.toLocaleString()}</td>`;
+}
+
+async function loadVelocity() {
+  if (!CONFIG.supabase_configured) { $("#velocity-table").innerHTML = `<div class="empty">Supabase not configured</div>`; return; }
+  try {
+    const data = await api("/api/snapshots/velocity");
+    const items = (data.items || []).filter(i => i.tickets_delta != null || i.avg_delta != null);
+    $("#velocity-count").textContent = `(${items.length})`;
+    const rows = items.map(s => `
+      <tr class="row" data-id="${s.id}">
+        <td class="id-tag">${s.id}</td>
+        <td class="ellip">${esc(s.name || "")}</td>
+        <td>${shortDate(s.occurs_at_local)}</td>
+        <td class="num">${num(s.tickets_now)}</td>
+        ${deltaCell(s.tickets_delta)}
+        <td class="num money">${moneyC(s.avg_now)}</td>
+        ${deltaCell(s.avg_delta)}
+        ${deltaCell(s.min_delta)}
+        <td class="dim">${shortStamp(s.previous_at)}</td>
+        <td class="dim">${shortStamp(s.latest_at)}</td>
+      </tr>`).join("");
+    $("#velocity-table").innerHTML = items.length === 0 ? `<div class="empty">need ≥2 runs to compute velocity</div>` : `
+      <table><thead><tr>
+        <th>id</th><th>event</th><th>date</th>
+        <th class="num">tix now</th><th class="num">Δ tix</th>
+        <th class="num">avg now</th><th class="num">Δ avg</th><th class="num">Δ min</th>
+        <th>prev</th><th>latest</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    $$("#velocity-table tr.row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        switchTab("events");
+        loadEventDetail(Number(tr.dataset.id));
+      });
+    });
+  } catch (err) { $("#velocity-table").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`; }
+}
+</script>
+</body>
+</html>

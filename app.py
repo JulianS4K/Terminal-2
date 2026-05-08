@@ -161,12 +161,19 @@ def movers_page():
 
 
 @app.get("/terminal/v1", response_class=HTMLResponse)
-def terminal_v1_preview():
-    """Preview of the proposed terminal redesign (claude design + copilot collab,
-    captured from copilot's sandbox 2026-05-08). Existing terminal at `/` stays
-    untouched so it can be compared side-by-side. Source lives under
-    static/_proposals/ — underscore prefix = WIP, not yet promoted to /."""
-    return (STATIC_DIR / "_proposals" / "terminal-v1.html").read_text(encoding="utf-8")
+def terminal_v1_alias():
+    """Backward-compat alias — terminal-v1 was promoted to `/` on 2026-05-08.
+    Old bookmarks still resolve. Returns the same HTML as `/`."""
+    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/legacy", response_class=HTMLResponse)
+def index_legacy():
+    """Pre-2026-05-08 terminal. Preserved here because it has features the new
+    design hasn't reabsorbed yet: watchlist add/remove modal, configurations
+    browse, snapshots/velocity views, run history. Reachable for power users
+    until parity is restored."""
+    return (STATIC_DIR / "legacy.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/public/config")
