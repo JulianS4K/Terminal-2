@@ -956,14 +956,15 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
 def broker_event_zones(event_id: int, _=Depends(require_auth)):
     """Per-zone latest metrics with full distribution.
 
-    The existing get_event_zones_rollup RPC returns a slim shape (zone,
-    source, tickets, min_retail, max_retail). zone_metrics has way more —
-    full percentile distribution + owned breakdown — so this endpoint
-    surfaces all of it for the event page Zone Ladder panel.
+    Picks ONE zone_source per event by priority: curated > fallback > unmapped.
+    User spec: never show two competing zone classifications side-by-side.
+    If the event has any curated zones, only curated rows surface; the fallback
+    layer is redundant noise in that case (mostly leftover sections that didn't
+    match a curated rule, with tiny ticket counts).
 
-    Returns latest snapshot per (zone, zone_source) tuple. zone_source
-    distinguishes curated (manual performer_zones config), fallback
-    (keyword-derived), and unmapped (no rule matched).
+    Returns latest snapshot per zone within the chosen source. zone_metrics has
+    the same shape as event_metrics (full percentile distribution + owned
+    breakdown).
     """
     db = require_sb()
     rows = (
@@ -978,22 +979,45 @@ def broker_event_zones(event_id: int, _=Depends(require_auth)):
         )
         .eq("event_id", event_id)
         .order("captured_at", desc=True)
-        .limit(500)
+        .limit(1000)
         .execute()
     ).data or []
-    # Take latest per (zone, zone_source)
+
+    # 1) Decide which source to use. Priority: curated > fallback > unmapped.
+    sources_present = {r.get("zone_source") for r in rows}
+    if "curated" in sources_present:
+        chosen_source = "curated"
+    elif "fallback" in sources_present:
+        chosen_source = "fallback"
+    elif "unmapped" in sources_present:
+        chosen_source = "unmapped"
+    else:
+        chosen_source = None
+
+    # 2) Filter to chosen source, then take latest per zone (rows are pre-sorted desc).
+    if chosen_source is None:
+        return {"zones": [], "count": 0, "source": None, "available_sources": []}
+
     seen = set()
     out = []
     for r in rows:
-        k = (r.get("zone"), r.get("zone_source"))
-        if k in seen:
+        if r.get("zone_source") != chosen_source:
             continue
-        seen.add(k)
+        z = r.get("zone")
+        if z in seen:
+            continue
+        seen.add(z)
         out.append(r)
-    # Sort: curated first, then fallback, then unmapped; within each by tickets desc
-    src_order = {"curated": 0, "fallback": 1, "unmapped": 2}
-    out.sort(key=lambda r: (src_order.get(r.get("zone_source"), 9), -(r.get("tickets_count") or 0)))
-    return {"zones": out, "count": len(out)}
+
+    # 3) Sort by tickets_count desc within the chosen source
+    out.sort(key=lambda r: -(r.get("tickets_count") or 0))
+
+    return {
+        "zones": out,
+        "count": len(out),
+        "source": chosen_source,
+        "available_sources": sorted(sources_present),
+    }
 
 
 @app.get("/api/broker/event/{event_id}/section-metrics")
@@ -1548,6 +1572,39 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
     home_index, home_weights = _team_index_series(home_standings_rows, home_news, home_injury_load, home_team_id)
     away_index, away_weights = _team_index_series(away_standings_rows, away_news, away_injury_load, away_team_id)
 
+    # ----- Per-zone time series (curated > fallback > unmapped, single source) -----
+    # User spec: only render ONE zone classification, prefer curated. Returns one
+    # series per zone with retail_median + tickets_count time points so the
+    # chart workbench can plot any subset.
+    zm_rows = (
+        db.table("zone_metrics")
+        .select("captured_at, zone, zone_source, retail_median, tickets_count, owned_tickets_count, owned_median_retail")
+        .eq("event_id", event_id)
+        .gte("captured_at", since_iso)
+        .order("captured_at")
+        .execute()
+    ).data or []
+    zm_sources = {r.get("zone_source") for r in zm_rows}
+    if "curated" in zm_sources:   zm_chosen = "curated"
+    elif "fallback" in zm_sources: zm_chosen = "fallback"
+    elif "unmapped" in zm_sources: zm_chosen = "unmapped"
+    else:                           zm_chosen = None
+    zone_series: dict[str, dict] = {}
+    if zm_chosen:
+        for r in zm_rows:
+            if r.get("zone_source") != zm_chosen: continue
+            zname = r.get("zone") or "unmapped"
+            ent = zone_series.setdefault(zname, {
+                "zone": zname, "source": zm_chosen,
+                "prices_market": [], "counts_market": [],
+                "prices_owned":  [], "counts_owned":  [],
+            })
+            ent["prices_market"].append({"t": r["captured_at"], "v": r.get("retail_median")})
+            ent["counts_market"].append({"t": r["captured_at"], "v": r.get("tickets_count")})
+            ent["prices_owned"].append({"t": r["captured_at"], "v": r.get("owned_median_retail")})
+            ent["counts_owned"].append({"t": r["captured_at"], "v": r.get("owned_tickets_count")})
+    zone_series_list = sorted(zone_series.values(), key=lambda z: -sum(p.get("v") or 0 for p in z["counts_market"]))
+
     return {
         "event_id": event_id,
         "days": days,
@@ -1627,6 +1684,11 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
             "home_team_id": home_team_id,
             "away_team_id": away_team_id,
             "league":       home_league,
+        },
+        "zone_series": {
+            "source":    zm_chosen,
+            "available": sorted([s for s in zm_sources if s]),
+            "zones":     zone_series_list,
         },
     }
 

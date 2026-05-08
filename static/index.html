@@ -933,9 +933,13 @@ async function loadEvent(eventId) {
   let depthTitle, depthHeader, depthRows, depthCaption;
 
   if (richZones.length && richTotalTix > 0) {
-    // RICH PATH — full per-zone distribution including curated/fallback/unmapped
-    depthTitle = 'Zone Ladder · Market Depth (full distribution)';
-    depthHeader = '<th>Zone</th><th>Source</th>'
+    // RICH PATH — single source per spec (curated > fallback > unmapped).
+    // Endpoint already filtered; we just title which source we got.
+    const chosenSource = (zonesRich && zonesRich.source) || (richZones[0] && richZones[0].zone_source) || '?';
+    const otherSources = (zonesRich && zonesRich.available_sources) || [];
+    const otherSrcLabel = otherSources.filter(s => s !== chosenSource).join(', ');
+    depthTitle = `Zone Ladder · ${chosenSource === 'curated' ? 'Curated' : chosenSource === 'fallback' ? 'System (fallback)' : 'Unmapped'}`;
+    depthHeader = '<th>Zone</th>'
                 + '<th class="num">Min</th><th class="num">P25</th><th class="num">Med</th><th class="num">P75</th><th class="num">P90</th><th class="num">Max</th>'
                 + '<th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th><th class="num">Owned med</th>';
     depthRows = richZones.map(z => {
@@ -943,11 +947,9 @@ async function loadEvent(eventId) {
       const ownedTix = z.owned_tickets_count || 0;
       const share = z.owned_share != null ? Number(z.owned_share) : (totalTix > 0 ? ownedTix / totalTix : 0);
       const isMkt = share >= 0.30;
-      const srcCls = z.zone_source === 'curated' ? 'pos' : z.zone_source === 'fallback' ? 'warn' : 'muted';
       const cls = ['', ownedTix > 0 ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
       return `<tr class="${cls}">
         <td><strong>${esc(z.zone || '—')}</strong></td>
-        <td class="${srcCls}" style="font-size:11px;">${esc(z.zone_source || '—')}</td>
         <td class="num">${moneyC(z.retail_min)}</td>
         <td class="num">${moneyC(z.retail_p25)}</td>
         <td class="num"><strong>${moneyC(z.retail_median)}</strong></td>
@@ -960,9 +962,7 @@ async function loadEvent(eventId) {
         <td class="num">${moneyC(z.owned_median_retail)}</td>
       </tr>`;
     }).join('');
-    const sourceCounts = richZones.reduce((acc, z) => { acc[z.zone_source||'?'] = (acc[z.zone_source||'?']||0)+1; return acc; }, {});
-    const sourceSummary = Object.entries(sourceCounts).map(([s,c]) => `${c} ${s}`).join(' · ');
-    depthCaption = `${richZones.length} zones (${sourceSummary}) · ${num(richTotalTix)} tix · last pull ${shortDate(ov.last_pull_at)}`;
+    depthCaption = `${richZones.length} ${chosenSource} zones · ${num(richTotalTix)} tix · last pull ${shortDate(ov.last_pull_at)}${otherSrcLabel ? ' · also has ' + otherSrcLabel + ' (suppressed)' : ''}`;
   } else if (zoneEntries.length && zoneTotalTix > 0) {
     // FALLBACK 1 — slim rollup
     depthTitle = 'Zone Ladder · Market Depth';
@@ -1264,24 +1264,61 @@ function _getPath(obj, path) {
 let _eventChartInstance = null;
 let _eventChartData = null;
 
+// Color palette for dynamic zone pills (cycles through hues)
+const ZONE_PALETTE = ['#60a5fa','#4ade80','#fbbf24','#f472b6','#a78bfa','#22d3ee','#f87171','#34d399','#fb923c','#c4b5fd','#84cc16','#5eead4','#facc15','#a3e635','#fb7185','#93c5fd','#7dd3fc','#bfdbfe','#ddd6fe','#10b981'];
+function _zoneColor(idx) { return ZONE_PALETTE[idx % ZONE_PALETTE.length]; }
+
 function renderEventChart(data) {
   _eventChartData = data;
-  // Render toggle pills
+  // Build dynamic zone series catalog from data.zone_series.zones
+  const zoneSeriesEntries = [];
+  const zonesPayload = data.zone_series || {};
+  (zonesPayload.zones || []).forEach((z, i) => {
+    const c = _zoneColor(i);
+    zoneSeriesEntries.push({
+      id: 'zone_price:' + z.zone,
+      label: 'Zone $: ' + z.zone,
+      _zoneRef: z, _zoneField: 'prices_market',
+      color: c, axis: 'y$', dash: null,
+    });
+    zoneSeriesEntries.push({
+      id: 'zone_count:' + z.zone,
+      label: 'Zone tix: ' + z.zone,
+      _zoneRef: z, _zoneField: 'counts_market',
+      color: c, axis: 'yC', dash: [4,3],
+    });
+  });
+  _eventChartData._zoneSeries = zoneSeriesEntries;
+
   const togglesEl = document.getElementById('event-chart-toggles');
   if (togglesEl) {
     const visible = _loadChartVis();
     const pills = [];
+
     pills.push('<span class="dim" style="margin-right:6px;">Series:</span>');
     for (const s of CHART_SERIES) {
-      const onCls = visible.has('s:' + s.id) ? '' : 'style="opacity:0.4;"';
-      pills.push(`<a class="pill" data-toggle="s:${s.id}" ${onCls} style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${visible.has('s:'+s.id)?'background:var(--surface-2);':''}">
+      const on = visible.has('s:' + s.id);
+      pills.push(`<a class="pill" data-toggle="s:${esc(s.id)}" style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${on?'background:var(--surface-2);':'opacity:0.4;'}">
         <span style="display:inline-block;width:8px;height:2px;background:${s.color};${s.dash?'border-top:1px dashed '+s.color+';height:0;':''}"></span>${esc(s.label)}</a>`);
     }
+
     pills.push('<span class="dim" style="margin:0 6px 0 12px;">Overlays:</span>');
     for (const o of CHART_OVERLAYS) {
-      pills.push(`<a class="pill" data-toggle="o:${o.id}" style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${visible.has('o:'+o.id)?'background:var(--surface-2);':'opacity:0.4;'}">
+      const on = visible.has('o:' + o.id);
+      pills.push(`<a class="pill" data-toggle="o:${esc(o.id)}" style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${on?'background:var(--surface-2);':'opacity:0.4;'}">
         <span style="display:inline-block;width:6px;height:6px;background:${o.color};border-radius:50%;"></span>${esc(o.label)}</a>`);
     }
+
+    if (zoneSeriesEntries.length) {
+      pills.push(`<span class="dim" style="margin:0 6px 0 12px;">Zones (${esc(zonesPayload.source || '?')}):</span>`);
+      for (const z of zoneSeriesEntries) {
+        const on = visible.has('z:' + z.id);
+        const isPrice = z._zoneField === 'prices_market';
+        pills.push(`<a class="pill" data-toggle="z:${esc(z.id)}" title="${esc(z.label)}" style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${on?'background:var(--surface-2);':'opacity:0.4;'}">
+          <span style="display:inline-block;width:8px;height:2px;background:${z.color};${z.dash?'border-top:1px dashed '+z.color+';height:0;':''}"></span>${esc(z._zoneRef.zone)}${isPrice?' $':' tix'}</a>`);
+      }
+    }
+
     togglesEl.innerHTML = pills.join('');
     togglesEl.querySelectorAll('a.pill').forEach(el => {
       el.addEventListener('click', () => {
@@ -1314,6 +1351,20 @@ function _drawChart() {
       borderColor: s.color, backgroundColor: 'transparent',
       yAxisID: s.axis, borderWidth: 1.5, pointRadius: 0, tension: 0.2,
       ...(s.dash ? { borderDash: s.dash } : {}),
+    });
+  }
+
+  // Per-zone series — same shape as event-level but data path goes through
+  // _zoneRef + _zoneField (set in renderEventChart from data.zone_series).
+  for (const z of (data._zoneSeries || [])) {
+    if (!visible.has('z:' + z.id)) continue;
+    const series = z._zoneRef[z._zoneField];
+    if (!series || !series.length) continue;
+    datasets.push({
+      label: z.label, data: toXY(series),
+      borderColor: z.color, backgroundColor: 'transparent',
+      yAxisID: z.axis, borderWidth: 1.2, pointRadius: 0, tension: 0.2,
+      ...(z.dash ? { borderDash: z.dash } : {}),
     });
   }
 
