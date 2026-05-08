@@ -87,6 +87,8 @@
     <span class="mono" style="margin-left:auto;color:var(--fg-3)" id="timestamp">—</span>
   </div>
 
+  <div id="ranking-caption" style="padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-2);font-size:11px;color:var(--fg-3);line-height:1.5">—</div>
+
   <div class="grid" id="grid"></div>
 
 <script>
@@ -119,6 +121,11 @@ async function loadData() {
   if (r.status === 401) { window.location.href = "/"; return; }
   STATE.data = await r.json();
   document.getElementById("timestamp").textContent = `as of ${new Date().toLocaleTimeString()} · window: ${STATE.window}h`;
+  const rk = STATE.data.ranking || {};
+  document.getElementById("ranking-caption").innerHTML =
+    `<strong style="color:var(--fg-2)">ranking:</strong> events ranked by % change in retail median over the window (unweighted). ` +
+    `Performer/venue rollups use ticket-count-weighted averages. ` +
+    `<strong style="color:var(--fg-2)">dedupe:</strong> market lists exclude entities already shown in owned lists.`;
   render();
 }
 

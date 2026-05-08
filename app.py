@@ -417,6 +417,16 @@ def broker_performers_by_league(league: str, _=Depends(require_auth)):
     """
     db = require_sb()
     rows = db.rpc("get_performers_by_league", {"p_league": league}).execute().data or []
+
+    def _delta_pct(cur, prev):
+        if cur is None or prev is None: return None
+        try:
+            c = float(cur); p = float(prev)
+        except (TypeError, ValueError):
+            return None
+        if p == 0: return None
+        return round((c - p) / p * 100, 2)
+
     performers = [
         {
             "performer_id":    r.get("performer_id"),
@@ -425,22 +435,30 @@ def broker_performers_by_league(league: str, _=Depends(require_auth)):
             "home_venue_id":   r.get("home_venue_id"),
             "home_venue_name": r.get("home_venue_name"),
             "home": {
-                "events":     r.get("home_events") or 0,
-                "market_med": r.get("home_market_med"),
-                "owned_med":  r.get("home_owned_med"),
-                "market_tix": r.get("home_market_tix") or 0,
-                "owned_tix":  r.get("home_owned_tix")  or 0,
-                "first_event": r.get("home_first_event"),
-                "last_event":  r.get("home_last_event"),
+                "events":          r.get("home_events") or 0,
+                "market_med":      r.get("home_market_med"),
+                "owned_med":       r.get("home_owned_med"),
+                "market_tix":      r.get("home_market_tix") or 0,
+                "owned_tix":       r.get("home_owned_tix")  or 0,
+                "first_event":     r.get("home_first_event"),
+                "last_event":      r.get("home_last_event"),
+                "prev_market_med": r.get("home_prev_market_med"),
+                "prev_owned_med":  r.get("home_prev_owned_med"),
+                "delta_market_pct": _delta_pct(r.get("home_market_med"), r.get("home_prev_market_med")),
+                "delta_owned_pct":  _delta_pct(r.get("home_owned_med"),  r.get("home_prev_owned_med")),
             },
             "road": {
-                "events":     r.get("road_events") or 0,
-                "market_med": r.get("road_market_med"),
-                "owned_med":  r.get("road_owned_med"),
-                "market_tix": r.get("road_market_tix") or 0,
-                "owned_tix":  r.get("road_owned_tix")  or 0,
-                "first_event": r.get("road_first_event"),
-                "last_event":  r.get("road_last_event"),
+                "events":          r.get("road_events") or 0,
+                "market_med":      r.get("road_market_med"),
+                "owned_med":       r.get("road_owned_med"),
+                "market_tix":      r.get("road_market_tix") or 0,
+                "owned_tix":       r.get("road_owned_tix")  or 0,
+                "first_event":     r.get("road_first_event"),
+                "last_event":      r.get("road_last_event"),
+                "prev_market_med": r.get("road_prev_market_med"),
+                "prev_owned_med":  r.get("road_prev_owned_med"),
+                "delta_market_pct": _delta_pct(r.get("road_market_med"), r.get("road_prev_market_med")),
+                "delta_owned_pct":  _delta_pct(r.get("road_owned_med"),  r.get("road_prev_owned_med")),
             },
         }
         for r in rows
@@ -1205,26 +1223,43 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
     venue_owned  = rollup(owned,  "venue_id", "venue_name", "venue_id")
     venue_market = rollup(market, "venue_id", "venue_name", "venue_id")
 
+    # Build owned lists first, then exclude those entities from the market candidate
+    # pool so a single Knicks game doesn't show up twice (top owned-winner AND top
+    # market-winner). Market lists fill from the next-best non-owned candidates.
+    def dedupe_market(market_pool, owned_w, owned_l, key):
+        excluded = {r.get(key) for r in (owned_w + owned_l) if r.get(key) is not None}
+        return [r for r in market_pool if r.get(key) not in excluded]
+
+    ev_ow  = top10(owned,  "delta_owned_pct",  desc=True)
+    ev_ol  = top10(owned,  "delta_owned_pct",  desc=False)
+    ev_market_dedup = dedupe_market(market, ev_ow, ev_ol, "event_id")
+    ev_mw  = top10(ev_market_dedup, "delta_market_pct", desc=True)
+    ev_ml  = top10(ev_market_dedup, "delta_market_pct", desc=False)
+
+    pf_ow  = top10(perf_owned,  "delta_owned_pct",  desc=True)
+    pf_ol  = top10(perf_owned,  "delta_owned_pct",  desc=False)
+    pf_market_dedup = dedupe_market(perf_market, pf_ow, pf_ol, "performer_id")
+    pf_mw  = top10(pf_market_dedup, "delta_market_pct", desc=True)
+    pf_ml  = top10(pf_market_dedup, "delta_market_pct", desc=False)
+
+    vn_ow  = top10(venue_owned,  "delta_owned_pct",  desc=True)
+    vn_ol  = top10(venue_owned,  "delta_owned_pct",  desc=False)
+    vn_market_dedup = dedupe_market(venue_market, vn_ow, vn_ol, "venue_id")
+    vn_mw  = top10(vn_market_dedup, "delta_market_pct", desc=True)
+    vn_ml  = top10(vn_market_dedup, "delta_market_pct", desc=False)
+
     return {
         "window_hours": window_hours,
-        "events": {
-            "owned_winners":  top10(owned,  "delta_owned_pct",  desc=True),
-            "owned_losers":   top10(owned,  "delta_owned_pct",  desc=False),
-            "market_winners": top10(market, "delta_market_pct", desc=True),
-            "market_losers":  top10(market, "delta_market_pct", desc=False),
+        # Caption surfaced by the UI so users understand what they're looking at.
+        "ranking": {
+            "metric_owned":  "delta_owned_pct",
+            "metric_market": "delta_market_pct",
+            "weighting":     "events: unweighted % change. performer/venue rollups: ticket-count-weighted average.",
+            "dedupe_rule":   "market_winners/losers exclude any entity already in owned_winners/losers; market lists fill from next-best non-owned candidates.",
         },
-        "performers": {
-            "owned_winners":  top10(perf_owned,  "delta_owned_pct",  desc=True),
-            "owned_losers":   top10(perf_owned,  "delta_owned_pct",  desc=False),
-            "market_winners": top10(perf_market, "delta_market_pct", desc=True),
-            "market_losers":  top10(perf_market, "delta_market_pct", desc=False),
-        },
-        "venues": {
-            "owned_winners":  top10(venue_owned,  "delta_owned_pct",  desc=True),
-            "owned_losers":   top10(venue_owned,  "delta_owned_pct",  desc=False),
-            "market_winners": top10(venue_market, "delta_market_pct", desc=True),
-            "market_losers":  top10(venue_market, "delta_market_pct", desc=False),
-        },
+        "events":     {"owned_winners": ev_ow, "owned_losers": ev_ol, "market_winners": ev_mw, "market_losers": ev_ml},
+        "performers": {"owned_winners": pf_ow, "owned_losers": pf_ol, "market_winners": pf_mw, "market_losers": pf_ml},
+        "venues":     {"owned_winners": vn_ow, "owned_losers": vn_ol, "market_winners": vn_mw, "market_losers": vn_ml},
     }
 
 
