@@ -128,23 +128,50 @@
   }
   .table-filter::placeholder { color:var(--dimmer); }
 
-  table { width:100%; border-collapse:collapse; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; table-layout:auto; }
   th, td {
     padding:6px 12px; text-align:left; white-space:nowrap;
     overflow:hidden; text-overflow:ellipsis;
     border-bottom:1px solid var(--border);
+    vertical-align:top;
   }
   th {
     color:var(--dim); font-weight:400;
     text-transform:uppercase; letter-spacing:0.08em; font-size:10px;
     background:var(--surface-2); position:sticky; top:0;
   }
-  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
   tr.row { cursor:pointer; }
   tr.row:hover { background:var(--surface-2); }
   tr.row.sel { background:#261a05; }
   tr.row.sel td { color:var(--amber); }
-  .ellip { max-width:320px; overflow:hidden; text-overflow:ellipsis; }
+
+  /* Auto line-break helpers — long event names should wrap to 2 lines, then ellipsize.
+     Prevents the (Game 5, Home Game 3) (If Necessary) tail from getting silently lost. */
+  .ellip {
+    max-width:320px; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .cell-wrap {
+    white-space:normal; word-break:break-word; overflow-wrap:anywhere;
+    line-height:1.3;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; max-width:420px;
+  }
+  .cell-wrap-3 {
+    white-space:normal; word-break:break-word; overflow-wrap:anywhere;
+    line-height:1.3;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+    overflow:hidden;
+  }
+  /* venue + city columns get a slightly tighter ellipsis */
+  td.cell-venue { max-width:200px; }
+  td.cell-city  { max-width:140px; }
+  /* Subline meta text under event names */
+  td .meta-sub {
+    color:var(--dim); font-size:11px; line-height:1.2; margin-top:2px;
+    white-space:normal; word-break:break-word; overflow-wrap:anywhere;
+  }
 
   .detail { display:none; }
   .detail.open { display:block; }
@@ -513,6 +540,30 @@ window.fetch = async (url, opts = {}) => {
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/**
+ * Auto line-break / overflow helper. After rendering a table or panel call
+ * attachOverflowTooltips('#some-mount') and any cell whose rendered text is
+ * wider/taller than its box gets a `title` attribute so hover reveals the
+ * full content. Prevents silently truncated event names like
+ * "Philadelphia 76ers at New York Knicks (Game 5, ... ) (If Necessary)"
+ * from losing the part after the parenthesis.
+ *
+ * Also re-applies after the next animation frame to catch CSS line-clamp
+ * truncation that scrollHeight reflects only after layout settles.
+ */
+function attachOverflowTooltips(scope) {
+  requestAnimationFrame(() => {
+    const root = typeof scope === "string" ? document.querySelector(scope) : (scope || document);
+    if (!root) return;
+    root.querySelectorAll("td, th").forEach(c => {
+      if (c.title) return;
+      const overflowX = c.scrollWidth  > c.clientWidth + 1;
+      const overflowY = c.scrollHeight > c.clientHeight + 1;
+      if (overflowX || overflowY) c.title = c.innerText.trim();
+    });
+  });
+}
 const money = (x) => x == null ? "—" : "$" + Number(x).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
 const moneyC = (x) => x == null ? "—" : "$" + Math.round(Number(x)).toLocaleString();
 const num = (x) => x == null ? "—" : Number(x).toLocaleString();
@@ -701,12 +752,30 @@ function fmtPctShort(v) {
   return `<span style="color:${color}">${sign}${n.toFixed(1)}%</span>`;
 }
 
+function contingentChip(name) {
+  if (!name) return "";
+  if (/if\s*necessary/i.test(name)) return ` <span style="background:#3a1010;color:#fca5a5;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="Series-contingent: this game only occurs if the series is still alive">CONTINGENT</span>`;
+  if (/\bTBD\b/i.test(name))         return ` <span style="background:#332512;color:#fcd34d;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="Date or matchup not yet finalized">TBD</span>`;
+  return "";
+}
+
+// Freshness chip — green/amber/red dot based on age of the metric snap.
+function freshnessChip(latestAt) {
+  if (!latestAt) return "";
+  const ageMs = Date.now() - new Date(latestAt).getTime();
+  if (!isFinite(ageMs)) return "";
+  const m = Math.round(ageMs / 60000);
+  if (m < 60)      return ` <span style="color:#34d399;font-size:10px" title="${m}m ago">●</span>`;
+  if (m < 24 * 60) return ` <span style="color:#fbbf24;font-size:10px" title="${(m/60).toFixed(1)}h ago">●</span>`;
+  return ` <span style="color:#f87171;font-size:10px" title="${(m/1440).toFixed(1)}d ago — stale">●</span>`;
+}
+
 function moverRow(r) {
   const venue = r.venue_name || "";
   const date = r.occurs_at_local ? r.occurs_at_local.slice(0,10) : "";
   return `<tr class="row" data-id="${r.event_id}">
     <td><a href="/event/${r.event_id}" style="color:var(--amber)" onclick="event.stopPropagation()">↗</a></td>
-    <td class="ellip"><a href="#" data-event-id="${r.event_id}">${esc(r.name || '—')}</a><div class="dim" style="font-size:11px">${esc(venue)} · ${esc(date)}</div></td>
+    <td class="cell-wrap" style="max-width:380px"><a href="#" data-event-id="${r.event_id}">${esc(r.name || '—')}</a>${contingentChip(r.name)}${freshnessChip(r.latest_at)}<div class="meta-sub">${esc(venue)} · ${esc(date)}</div></td>
     <td class="num">${fmtMoneyShort(r.cur_market_med)}</td>
     <td class="num">${num(r.cur_market_tix)}</td>
     <td class="num">${fmtMoneyDeltaShort(r.delta_market_val)}</td>
@@ -748,6 +817,7 @@ async function loadEventsDashboard() {
   $("#events-watchlist-count").textContent = `(${wlEvents.length})`;
   $("#events-watchlist").innerHTML = moverTable(wlEvents, "watchlist is empty — add performers/venues from their detail panels");
   bindMoverRows("#events-watchlist");
+  attachOverflowTooltips("#events-watchlist");
 
   // ---- Top movers (events level, both winners + losers from market lists) ----
   if (!mv || !mv.events) {
@@ -770,6 +840,7 @@ async function loadEventsDashboard() {
       </div>
     </div>`;
   bindMoverRows("#events-movers");
+  attachOverflowTooltips("#events-movers");
 }
 
 // Run on page load (events tab is default-active) and on tab click.
@@ -787,10 +858,10 @@ function renderEventsResults(data) {
     const venue = ev.venue || {};
     return `<tr class="row" data-id="${ev.id}">
       <td class="num">${i+1}</td><td class="id-tag">${ev.id}</td>
-      <td class="ellip">${esc(ev.name)}</td>
+      <td class="cell-wrap">${esc(ev.name)}</td>
       <td>${shortDate(ev.occurs_at_local)}</td>
-      <td class="ellip">${esc(venue.name || "")}</td>
-      <td class="dim">${esc(venue.location || "")}</td>
+      <td class="cell-venue ellip">${esc(venue.name || "")}</td>
+      <td class="cell-city dim ellip">${esc(venue.location || "")}</td>
       <td class="num">${num(ev.available_count)}</td>
       <td class="num dim">${(ev.popularity_score || 0).toFixed(2)}</td>
     </tr>`;
@@ -802,6 +873,7 @@ function renderEventsResults(data) {
     </tr></thead><tbody>${rows}</tbody></table>`;
   $("#events-results-panel").style.display = "block";
   $$("#events-results-panel .table-filter").forEach(i => i.value = "");
+  attachOverflowTooltips("#events-results");
   $$("#events-results tr.row").forEach(tr => {
     tr.addEventListener("click", () => {
       $$("#events-results tr.row").forEach(r => r.classList.remove("sel"));
@@ -1351,6 +1423,7 @@ function renderLeagueGrid(d) {
       <tbody>${rows}</tbody>
     </table>`;
   $$("#leagues-results-panel .table-filter").forEach(i => i.value = "");
+  attachOverflowTooltips("#leagues-results");
 
   // Click row to populate the regular performer detail panel
   $$("#leagues-results tr.row").forEach(tr => {
@@ -1422,6 +1495,7 @@ function renderPerformersResults(data) {
     </tr></thead><tbody>${rows}</tbody></table>`;
   $("#performers-results-panel").style.display = "block";
   $$("#performers-results-panel .table-filter").forEach(i => i.value = "");
+  attachOverflowTooltips("#performers-results");
   $$("#performers-results tr.row").forEach(tr => {
     tr.addEventListener("click", () => {
       $$("#performers-results tr.row").forEach(r => r.classList.remove("sel"));
