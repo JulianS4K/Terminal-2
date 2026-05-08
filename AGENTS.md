@@ -131,6 +131,27 @@ All three agents are free to call any edge fn or read any view. Only writes to s
 
 **Push gate**: Code does not push to `main` (the prod-pushing branch) until all three agents have ACK'd the change set in the LOG. The proxy-commit protocol (RULE #12) creates the ACK trail naturally — if a copilot or design diff has been reviewed and committed by code, that's their ACK. Code's own changes additionally need a review pass from at least one of the other agents on cross-product items (anything touching the product wall).
 
+## TEST SCHEMAS (Option C, picked 2026-05-08)
+
+> Schema-level isolation in the prod project. Free, no infra, weakest of the three test-env options. Convention enforced by AGENTS.md + code's audit pass — Postgres doesn't physically prevent any agent from writing to `public`.
+
+| schema          | owner          | purpose                                                |
+|-----------------|----------------|--------------------------------------------------------|
+| `code_staging`  | code           | Stage migrations + project simulations before promoting to `public`. |
+| `copilot_test`  | copilot        | Chat-side schema iteration (chat_aliases additions, new RPCs, NLU experiments). |
+| `design_test`   | claude design  | Stub tables / mock data for UI prototypes. Mostly empty (design rarely needs DB). |
+
+Each schema has a `._readme` table with usage notes. Run `SELECT * FROM <schema>._readme;` to recall the workflow.
+
+**No crons run in test schemas. No edge fn deploys point at them.** They're DB sandboxes only.
+
+**Promotion workflow** (test schema → public):
+1. Agent iterates in their own schema.
+2. When ready, agent writes a migration file targeting `public.*` with the final shape and drops it as `FROM <agent> · timestamp` block in the LOG (proxy-commit, RULE 12).
+3. Code reviews the migration, applies to `public` via Supabase MCP, deploys any associated edge fn changes, and pushes to git.
+
+**Read access**: any agent can `SELECT FROM public.*` for diagnostic / reference purposes. The lockdown is on writes.
+
 ## STORAGE LAYOUT (Supabase Storage)
 
 **`chat` bucket** — created 2026-05-08 (mig `20260508110000_storage_chat_bucket`). Public read, all 3 agents can read+write via service-role.

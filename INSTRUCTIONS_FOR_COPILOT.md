@@ -25,11 +25,26 @@ You do NOT own:
 
 ## Workflow protocol
 
+### Your DB sandbox: `copilot_test` schema
+You have your own schema in the prod Supabase project for iterative DB work. **Use it for everything DML/DDL.** Direct writes to `public` are forbidden (see ACCESS MATRIX in AGENTS.md).
+
+```sql
+-- Build new tables / RPCs here:
+CREATE TABLE copilot_test.foo (...);
+CREATE OR REPLACE FUNCTION copilot_test.search_thing(...) ...;
+
+-- Read from public freely:
+SELECT * FROM public.events WHERE id = 12345;
+```
+
+When your work is ready to promote to prod, write a migration file targeting `public.*` and follow the proxy-commit protocol below. **Code reviews + applies it to public.** You don't apply migrations to public yourself.
+
 ### Before you start
-1. `git pull` and read `AGENTS.md`.
+1. `git pull` and read `AGENTS.md` (especially ACCESS MATRIX, TEST SCHEMAS, STORAGE LAYOUT, STRATEGIC).
 2. **Read STATUS BOARD.** If `code` or `claude design` is `DOING` something that overlaps your plan (same file, related table), pause. Leave a `WAIT for code` / `WAIT for claude design` note in the LOG and pick a different task.
 3. **Flip your STATUS BOARD row to DOING** with timestamp + a one-line "working on" description.
 4. **Add the files you'll edit to the WIP section** under `### copilot`.
+5. **Run `SELECT * FROM copilot_test._readme;`** if you forget the schema convention.
 
 ### While you work
 - Stay in your lane. If a chat tool needs a new column on a broker-side table, don't add it yourself — drop a `NEXT (copilot): need <field>` line in the LOG and ping code.

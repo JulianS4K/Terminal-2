@@ -32,8 +32,19 @@ If a UI change requires a new endpoint, new field, modified data shape, or new R
 
 ## Workflow protocol
 
+### Your DB sandbox: `design_test` schema
+You probably won't use this often — most of your work is in `static/*.html`. But for UI prototypes that need fixture data or stub RPCs, **use `design_test`**, never write to `public`.
+
+```sql
+-- Stub fixture for a UI prototype:
+CREATE TABLE design_test.mock_events (...);
+INSERT INTO design_test.mock_events VALUES (...);
+```
+
+When the UI needs a real backend endpoint, **don't write the backend yourself**. Drop a `NEXT (claude design): need /api/<endpoint> returning {field, ...}` line in the LOG and code or copilot will pick it up.
+
 ### Before you start
-1. `git pull` and read `AGENTS.md`.
+1. `git pull` and read `AGENTS.md` (especially ACCESS MATRIX, TEST SCHEMAS, STORAGE LAYOUT, STRATEGIC).
 2. **Read STATUS BOARD.** If anyone else is `DOING` something that touches the same HTML file, pause. Leave a `WAIT for <agent>` note in LOG and pick a different task.
 3. **Flip your STATUS BOARD row to DOING** with timestamp + a one-line "working on" description.
 4. **Add the files you'll edit to the WIP section** under `### claude design`.
