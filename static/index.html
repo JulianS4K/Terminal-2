@@ -243,6 +243,25 @@
     </div>
   </form>
   <div class="status" id="events-status" style="display:none"></div>
+
+  <!-- DASHBOARD: watchlist + movers shown by default; both hide on manual search -->
+  <div id="events-dashboard" style="margin-top:12px;display:flex;flex-direction:column;gap:12px">
+    <div class="panel" id="events-watchlist-panel">
+      <div class="panel-head">
+        <span>your watchlist <span class="count" id="events-watchlist-count">—</span></span>
+        <span class="dim" style="font-size:11px">sorted by 24h Δ market value · click any row for detail</span>
+      </div>
+      <div class="panel-body" id="events-watchlist"><div class="status">loading watchlist…</div></div>
+    </div>
+    <div class="panel" id="events-movers-panel">
+      <div class="panel-head">
+        <span>top movers · 24h <span class="count" id="events-movers-count">—</span></span>
+        <span class="dim" style="font-size:11px">winners + losers by Δ market value · <a href="/movers" style="color:var(--amber)">full report ↗</a></span>
+      </div>
+      <div class="panel-body" id="events-movers"><div class="status">loading movers…</div></div>
+    </div>
+  </div>
+
   <div class="panel" id="events-results-panel" style="display:none">
     <div class="panel-head">
       <span>results <span class="count" id="events-count"></span></span>
@@ -632,17 +651,134 @@ function tick() {
 setInterval(tick, 1000); tick();
 
 // -------- EVENTS --------
+function showEventsDashboard(visible) {
+  const dash = $("#events-dashboard");
+  if (dash) dash.style.display = visible ? "" : "none";
+}
+
 $("#events-form").addEventListener("submit", async e => {
   e.preventDefault();
   const params = formToParams(e.target);
   $("#events-results-panel").style.display = "none";
   $("#events-detail").classList.remove("open");
+  showEventsDashboard(false); // clutter-free during search
   status("events", "searching…");
   try {
     const data = await api("/api/events?" + params.toString());
     renderEventsResults(data);
     status("events");
   } catch (err) { status("events", "error: " + err.message, "err"); }
+});
+
+// "clear" on the events form restores the dashboard view
+$("#events-form").addEventListener("reset", () => {
+  $("#events-results-panel").style.display = "none";
+  $("#events-detail").classList.remove("open");
+  setTimeout(() => showEventsDashboard(true), 0);
+});
+
+// ------- EVENTS DASHBOARD: watchlist + top movers --------
+function fmtMoneyShort(v) {
+  if (v == null) return `<span class="dim">—</span>`;
+  const n = Number(v); if (!isFinite(n)) return `<span class="dim">—</span>`;
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return "$" + (n/1_000_000).toFixed(1) + "M";
+  if (abs >= 1_000)     return "$" + (n/1_000).toFixed(1) + "K";
+  return "$" + n.toFixed(0);
+}
+function fmtMoneyDeltaShort(v) {
+  if (v == null) return "—";
+  const n = Number(v); if (!isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+  const color = n > 0 ? "var(--green)" : n < 0 ? "var(--red)" : "var(--dim)";
+  return `<span style="color:${color}">${sign}${fmtMoneyShort(Math.abs(n)).replace('$','$')}</span>`;
+}
+function fmtPctShort(v) {
+  if (v == null) return "—";
+  const n = Number(v); if (!isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  const color = n > 0 ? "var(--green)" : n < 0 ? "var(--red)" : "var(--dim)";
+  return `<span style="color:${color}">${sign}${n.toFixed(1)}%</span>`;
+}
+
+function moverRow(r) {
+  const venue = r.venue_name || "";
+  const date = r.occurs_at_local ? r.occurs_at_local.slice(0,10) : "";
+  return `<tr class="row" data-id="${r.event_id}">
+    <td><a href="/event/${r.event_id}" style="color:var(--amber)" onclick="event.stopPropagation()">↗</a></td>
+    <td class="ellip"><a href="#" data-event-id="${r.event_id}">${esc(r.name || '—')}</a><div class="dim" style="font-size:11px">${esc(venue)} · ${esc(date)}</div></td>
+    <td class="num">${fmtMoneyShort(r.cur_market_med)}</td>
+    <td class="num">${num(r.cur_market_tix)}</td>
+    <td class="num">${fmtMoneyDeltaShort(r.delta_market_val)}</td>
+    <td class="num">${fmtPctShort(r.delta_market_pct)}</td>
+  </tr>`;
+}
+
+function moverTable(rows, emptyMsg) {
+  if (!rows.length) return `<div class="empty">${emptyMsg || "no rows"}</div>`;
+  return `<table>
+    <thead><tr>
+      <th></th><th>event</th>
+      <th class="num">cur $</th><th class="num">tix</th>
+      <th class="num">Δ value</th><th class="num">Δ %</th>
+    </tr></thead>
+    <tbody>${rows.map(moverRow).join("")}</tbody>
+  </table>`;
+}
+
+function bindMoverRows(scope) {
+  $$(`${scope} tr.row`).forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$(`${scope} tr.row`).forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadEventDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+async function loadEventsDashboard() {
+  // Fire both in parallel
+  const [wl, mv] = await Promise.all([
+    api("/api/broker/watchlist-movers?window_hours=24&sort=value&limit=15").catch(() => ({events: []})),
+    api("/api/broker/movers?window_hours=24").catch(() => null),
+  ]);
+
+  // ---- Watchlist ----
+  const wlEvents = wl.events || [];
+  $("#events-watchlist-count").textContent = `(${wlEvents.length})`;
+  $("#events-watchlist").innerHTML = moverTable(wlEvents, "watchlist is empty — add performers/venues from their detail panels");
+  bindMoverRows("#events-watchlist");
+
+  // ---- Top movers (events level, both winners + losers from market lists) ----
+  if (!mv || !mv.events) {
+    $("#events-movers").innerHTML = `<div class="empty">no mover data yet</div>`;
+    $("#events-movers-count").textContent = `(0)`;
+    return;
+  }
+  const winners = (mv.events.market_winners || []).slice(0, 5);
+  const losers  = (mv.events.market_losers  || []).slice(0, 5);
+  $("#events-movers-count").textContent = `(${winners.length + losers.length})`;
+  $("#events-movers").innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div style="color:var(--green);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">winners</div>
+        ${moverTable(winners, "no winners in window")}
+      </div>
+      <div>
+        <div style="color:var(--red);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">losers</div>
+        ${moverTable(losers, "no losers in window")}
+      </div>
+    </div>`;
+  bindMoverRows("#events-movers");
+}
+
+// Run on page load (events tab is default-active) and on tab click.
+loadEventsDashboard();
+document.querySelectorAll('#tabs button[data-tab="events"]').forEach(b => {
+  b.addEventListener("click", () => {
+    showEventsDashboard(true);
+    loadEventsDashboard();
+  });
 });
 
 function renderEventsResults(data) {

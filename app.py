@@ -933,6 +933,81 @@ def broker_event_raw_tevo(event_id: int, force: bool = False, _=Depends(require_
     return {"source": "live", "groups": payload["ticket_groups"], "captured_at": payload["captured_at"]}
 
 
+@app.get("/api/broker/watchlist-movers")
+def broker_watchlist_movers(
+    window_hours: int = 24,
+    sort: str = "value",       # "value" → Δ market_val, "pct" → Δ market_pct
+    limit: int = 25,
+    _=Depends(require_auth),
+):
+    """Watchlisted events ordered by movement. Backs the WATCHLIST panel
+    on the Events tab. Same row shape as /api/broker/movers events list,
+    so the front-end can render it with shared code.
+
+    Pulls get_event_movers for the window, filters to events present in
+    watch_sources, then sorts by either notional Δ value or Δ %.
+    """
+    window_hours = max(1, min(int(window_hours), 168))
+    db = require_sb()
+
+    # 1. Watchlisted event_ids
+    watch = (db.table("watch_sources").select("event_id").execute().data or [])
+    watch_ids = {int(r["event_id"]) for r in watch if r.get("event_id") is not None}
+    if not watch_ids:
+        return {"window_hours": window_hours, "sort": sort, "count": 0, "events": []}
+
+    # 2. Latest+prior aggregation via the existing RPC
+    rpc_rows = db.rpc("get_event_movers", {"p_window_hours": window_hours}).execute().data or []
+
+    def pct_delta(cur, prev):
+        if cur is None or prev is None: return None
+        try: c = float(cur); p = float(prev)
+        except (TypeError, ValueError): return None
+        if p == 0: return None
+        return round((c - p) / p * 100, 2)
+    def val(price, tix):
+        if price is None or tix is None: return None
+        try: return float(price) * float(tix)
+        except (TypeError, ValueError): return None
+
+    rows = []
+    for r in rpc_rows:
+        if int(r.get("event_id") or 0) not in watch_ids:
+            continue
+        cur_market_val  = val(r.get("cur_market_med"),  r.get("cur_market_tix"))
+        prev_market_val = val(r.get("prev_market_med"), r.get("prev_market_tix"))
+        cur_owned_val   = val(r.get("cur_owned_med"),   r.get("cur_owned_tix"))
+        prev_owned_val  = val(r.get("prev_owned_med"),  r.get("prev_owned_tix"))
+        rows.append({
+            "event_id": r.get("event_id"),
+            "name": r.get("name"),
+            "venue_id": r.get("venue_id"),
+            "venue_name": r.get("venue_name"),
+            "occurs_at_local": r.get("occurs_at_local"),
+            "cur_market_med": r.get("cur_market_med"),
+            "cur_market_tix": r.get("cur_market_tix"),
+            "cur_owned_med":  r.get("cur_owned_med"),
+            "cur_owned_tix":  r.get("cur_owned_tix"),
+            "delta_market_pct": pct_delta(r.get("cur_market_med"), r.get("prev_market_med")),
+            "delta_owned_pct":  pct_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
+            "cur_market_val":  round(cur_market_val,  2) if cur_market_val  is not None else None,
+            "cur_owned_val":   round(cur_owned_val,   2) if cur_owned_val   is not None else None,
+            "delta_market_val": (None if cur_market_val is None or prev_market_val is None
+                                 else round(cur_market_val - prev_market_val, 2)),
+            "delta_owned_val":  (None if cur_owned_val is None or prev_owned_val is None
+                                 else round(cur_owned_val - prev_owned_val, 2)),
+        })
+
+    # Sort: events with no movement signal sink to the bottom
+    sort_key = "delta_market_val" if sort == "value" else "delta_market_pct"
+    rows_with = [r for r in rows if r.get(sort_key) is not None]
+    rows_with.sort(key=lambda r: abs(r[sort_key]), reverse=True)
+    rows_without = [r for r in rows if r.get(sort_key) is None]
+    out = (rows_with + rows_without)[: max(1, min(int(limit), 100))]
+
+    return {"window_hours": window_hours, "sort": sort, "count": len(out), "events": out}
+
+
 @app.get("/api/broker/performer/{performer_id}/espn")
 def broker_performer_espn(performer_id: int, _=Depends(require_auth)):
     """ESPN context for a TEvo performer. Resolves performer_id → ESPN team_id
