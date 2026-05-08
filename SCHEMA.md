@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v4`
-**Last verified against prod**: 2026-05-09 ~02:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v5`
+**Last verified against prod**: 2026-05-09 ~02:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -310,23 +310,35 @@ theater, folk-world, etc. NULL for `game` performers.
 | Watchlist auto-coverage cron | only insert teams with `performer_external_ids source='espn'` AND `league IN (NFL,NBA,NHL,MLB,MLS,WNBA)` | Big-6 sports leagues only |
 | Zone curation eligibility | sports OR repeat-venue residencies (Pearl Jam at MSG, Phish at MSG) | Curated zones are venue-specific patterns |
 
-### League → ESPN-tracked map
+### League → ESPN-tracked map (4-layer matrix, audited 2026-05-09)
 
-Of the leaf categories above, these have ESPN coverage in `performer_external_ids`:
+ESPN coverage is layered. A "team mapping" is sufficient for performer pages
+(standings, season record), but event pages need event-level snapshots +
+xref to surface live game state. These are two separate ingestion paths
+(espn-collect's `team_daily` vs `gameday` scopes).
 
-| TEvo leaf | ESPN coverage | Teams in DB |
-|---|---|---|
-| NFL | ✅ | 32 |
-| NBA | ✅ | 30 |
-| NHL | ✅ | 32 |
-| MLB | ✅ | 30 |
-| MLS | ✅ | 30 |
-| WNBA | ✅ | 15 |
-| World Cup | ✅ | 48 |
-| NCAA Football, MiLB, USL, NWSL, EPL, Bundesliga, etc. | ❌ | none |
-| Fighting (MMA/Boxing/WWE/Wrestling) | ❌ — single-fighter format, no team home/away | n/a |
+| TEvo leaf | Performer mapping (`performer_external_ids`) | Team standings (`espn_team_snapshots`) | Game-day snapshots (`espn_event_snapshots`) | Event xref (`event_xref`) | Where coverage applies |
+|---|---|---|---|---|---|
+| **NBA** | ✅ 30 | ✅ 30 | ✅ 18 | ✅ 27 | full pipeline — performer + event pages get ESPN |
+| **MLB** | ✅ 30 | ✅ 30 | ✅ 56 | ✅ 96 | full pipeline — performer + event pages get ESPN |
+| **NFL** | ✅ 32 | ✅ 32 | ❌ | ❌ | performer page only — standings / record show; no live game data |
+| **NHL** | ✅ 32 | ✅ 32 | ❌ | ❌ | performer page only |
+| **MLS** | ✅ 30 | ✅ 30 | ❌ | ❌ | performer page only — `/api/broker/performer/{id}/espn` returns standings; event page falls back to "ESPN coverage not applicable" since no event xref |
+| **WNBA** | ✅ 15 | ✅ 15 | ❌ | ❌ | performer page only |
+| **World Cup** | ✅ 48 | ✅ 48 | ❌ | ❌ | performer page only |
+| NCAA Football, MiLB, USL, NWSL, EPL, Bundesliga, etc. | ❌ | ❌ | ❌ | ❌ | none — no ESPN ingest |
+| Fighting (MMA/Boxing/WWE/Wrestling) | ❌ | ❌ | ❌ | ❌ | none — single-fighter format, ESPN endpoint structure differs |
 
-`watchlist_auto_coverage_daily` (jobid 34) only adds the ✅ rows.
+**Key gap (copilot lane)**: `espn-collect.gameday` scope only pulls NBA + MLB
+events. To get game-day snapshots + auto-link xref for MLS/NHL/NFL/WNBA/WC,
+extend the `gameday` scope to iterate those leagues' `events?league=...`
+endpoints. Same change unlocks all 5 leagues since the underlying
+`upsert_espn_event_snapshot()` RPC is league-agnostic.
+
+**`watchlist_auto_coverage_daily`** (jobid 34) adds performer-mapped teams
+across all 7 leagues regardless of game-day coverage, since standings still
+populate and the watchlist drives TEvo collect-listings (which doesn't
+need ESPN at all).
 
 ---
 
@@ -658,6 +670,21 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v5**: Replaced the single-checkmark "League → ESPN-tracked
+  map" with a 4-layer matrix (performer mapping / team standings /
+  game-day snapshots / event xref), audited live against prod.
+  Reality vs prior doc:
+  - **MLS** has 30 teams mapped + 30 team-standings rows but **0 game-day
+    snapshots and 0 event xrefs**. Performer page works (standings show);
+    event page falls back to "ESPN coverage not applicable" by design.
+  - Same partial coverage for **NFL, NHL, WNBA, World Cup**: full at
+    performer level, empty at event level.
+  - Only **NBA + MLB** have full pipeline (gameday + xref).
+  Root cause: `espn-collect.gameday` scope (jobid 25) only iterates NBA +
+  MLB events. Extending it to MLS/NHL/NFL/WNBA/WC = ~80% of the gap.
+  Logged as copilot-lane NEXT in the matrix's "Key gap" callout.
+  No code or schema change in v5 — just doc accuracy fix.
 
 - **2026-05-09-v4**: Added **Bucket 17 (Major event calendar)** + new
   table `major_event_calendar` (mig 20260509010000) seeded with 14
