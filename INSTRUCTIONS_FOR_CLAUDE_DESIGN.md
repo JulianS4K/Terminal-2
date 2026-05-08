@@ -32,6 +32,18 @@ If a UI change requires a new endpoint, new field, modified data shape, or new R
 
 ## Workflow protocol
 
+### Your design source-of-truth: `design/main.fig.md`
+
+`design/` is your workspace for everything outside `static/*.html` runtime files:
+
+- **`design/main.fig.md`** — the markdown stand-in for a Figma file. Mirrors what would be in Figma: design system tokens, layout patterns, chip conventions, layout sketches. **Maintain this whenever you ship UI changes** so the rest of the team can see the design without Figma access.
+- **`design/exports/`** (when needed) — drop PNG/SVG exports from Figma here for reference.
+- **`design/README.md`** — folder readme.
+
+If you work in actual Figma:
+- Paste the Figma share link in `main.fig.md` under `Figma source`.
+- Export key frames to `design/exports/` so reviewers without Figma access can see them.
+
 ### Your DB sandbox: `design_test` schema
 You probably won't use this often — most of your work is in `static/*.html`. But for UI prototypes that need fixture data or stub RPCs, **use `design_test`**, never write to `public`.
 

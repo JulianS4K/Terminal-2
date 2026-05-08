@@ -1,0 +1,757 @@
+[
+  {
+    "league": "NBA",
+    "espn_id": "1",
+    "espn_name": "Atlanta Hawks",
+    "tevo_id": 16311,
+    "tevo_name": "Atlanta Hawks",
+    "tevo_category": "NBA",
+    "venue_id": 1228,
+    "venue_name": "State Farm Arena - GA",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "2",
+    "espn_name": "Boston Celtics",
+    "tevo_id": 16301,
+    "tevo_name": "Boston Celtics",
+    "tevo_category": "NBA",
+    "venue_id": 507,
+    "venue_name": "TD Garden",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "NBA",
+    "espn_id": "17",
+    "espn_name": "Brooklyn Nets",
+    "tevo_id": 16302,
+    "tevo_name": "Brooklyn Nets",
+    "tevo_category": "NBA",
+    "venue_id": 27950,
+    "venue_name": "Barclays Center",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "30",
+    "espn_name": "Charlotte Hornets",
+    "tevo_id": 16312,
+    "tevo_name": "Charlotte Hornets",
+    "tevo_category": "NBA",
+    "venue_id": 3535,
+    "venue_name": "Spectrum Center",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "4",
+    "espn_name": "Chicago Bulls",
+    "tevo_id": 16306,
+    "tevo_name": "Chicago Bulls",
+    "tevo_category": "NBA",
+    "venue_id": 1633,
+    "venue_name": "United Center",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "NBA",
+    "espn_id": "9",
+    "espn_name": "Golden State Warriors",
+    "tevo_id": 16326,
+    "tevo_name": "Golden State Warriors",
+    "tevo_category": "NBA",
+    "venue_id": 34130,
+    "venue_name": "Chase Center",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "10",
+    "espn_name": "Houston Rockets",
+    "tevo_id": 16318,
+    "tevo_name": "Houston Rockets",
+    "tevo_category": "NBA",
+    "venue_id": 2786,
+    "venue_name": "Toyota Center - TX",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "12",
+    "espn_name": "LA Clippers",
+    "tevo_id": 16327,
+    "tevo_name": "Los Angeles Clippers",
+    "tevo_category": "NBA",
+    "venue_id": 48249,
+    "venue_name": "Intuit Dome",
+    "match_quality": "category-fallback",
+    "all_hits_count": 1,
+    "alternates": [
+      {
+        "id": 16327,
+        "name": "Los Angeles Clippers",
+        "category": "NBA"
+      }
+    ]
+  },
+  {
+    "league": "NBA",
+    "espn_id": "29",
+    "espn_name": "Memphis Grizzlies",
+    "tevo_id": 16319,
+    "tevo_name": "Memphis Grizzlies",
+    "tevo_category": "NBA",
+    "venue_id": 3123,
+    "venue_name": "FedExForum",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "14",
+    "espn_name": "Miami Heat",
+    "tevo_id": 16313,
+    "tevo_name": "Miami Heat",
+    "tevo_category": "NBA",
+    "venue_id": 44,
+    "venue_name": "Kaseya Center",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "15",
+    "espn_name": "Milwaukee Bucks",
+    "tevo_id": 16310,
+    "tevo_name": "Milwaukee Bucks",
+    "tevo_category": "NBA",
+    "venue_id": 33662,
+    "venue_name": "Fiserv Forum",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "19",
+    "espn_name": "Orlando Magic",
+    "tevo_id": 16314,
+    "tevo_name": "Orlando Magic",
+    "tevo_category": "NBA",
+    "venue_id": 1537,
+    "venue_name": "Kia Center",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "21",
+    "espn_name": "Phoenix Suns",
+    "tevo_id": 16329,
+    "tevo_name": "Phoenix Suns",
+    "tevo_category": "NBA",
+    "venue_id": 43,
+    "venue_name": "Mortgage Matchup Center",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "22",
+    "espn_name": "Portland Trail Blazers",
+    "tevo_id": 16324,
+    "tevo_name": "Portland Trail Blazers",
+    "tevo_category": "NBA",
+    "venue_id": 1343,
+    "venue_name": "Moda Center at the Rose Quarter",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "NBA",
+    "espn_id": "23",
+    "espn_name": "Sacramento Kings",
+    "tevo_id": 16330,
+    "tevo_name": "Sacramento Kings",
+    "tevo_category": "NBA",
+    "venue_id": 32836,
+    "venue_name": "Golden 1 Center",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "NBA",
+    "espn_id": "28",
+    "espn_name": "Toronto Raptors",
+    "tevo_id": 16305,
+    "tevo_name": "Toronto Raptors",
+    "tevo_category": "NBA",
+    "venue_id": 17,
+    "venue_name": "Scotiabank Arena",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "26",
+    "espn_name": "Utah Jazz",
+    "tevo_id": 16325,
+    "tevo_name": "Utah Jazz",
+    "tevo_category": "NBA",
+    "venue_id": 399,
+    "venue_name": "Delta Center",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NBA",
+    "espn_id": "27",
+    "espn_name": "Washington Wizards",
+    "tevo_id": 16315,
+    "tevo_name": "Washington Wizards",
+    "tevo_category": "NBA",
+    "venue_id": 955,
+    "venue_name": "Capital One Arena",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NHL",
+    "espn_id": "1",
+    "espn_name": "Boston Bruins",
+    "tevo_id": 16400,
+    "tevo_name": "Boston Bruins",
+    "tevo_category": "NHL",
+    "venue_id": 507,
+    "venue_name": "TD Garden",
+    "match_quality": "exact",
+    "all_hits_count": 3
+  },
+  {
+    "league": "NHL",
+    "espn_id": "3",
+    "espn_name": "Calgary Flames",
+    "tevo_id": 16415,
+    "tevo_name": "Calgary Flames",
+    "tevo_category": "NHL",
+    "venue_id": 1367,
+    "venue_name": "Scotiabank Saddledome",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NHL",
+    "espn_id": "29",
+    "espn_name": "Columbus Blue Jackets",
+    "tevo_id": 16411,
+    "tevo_name": "Columbus Blue Jackets",
+    "tevo_category": "NHL",
+    "venue_id": 1790,
+    "venue_name": "Nationwide Arena",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NHL",
+    "espn_id": "6",
+    "espn_name": "Edmonton Oilers",
+    "tevo_id": 16417,
+    "tevo_name": "Edmonton Oilers",
+    "tevo_category": "NHL",
+    "venue_id": 33142,
+    "venue_name": "Rogers Place",
+    "match_quality": "exact",
+    "all_hits_count": 3
+  },
+  {
+    "league": "NHL",
+    "espn_id": "8",
+    "espn_name": "Los Angeles Kings",
+    "tevo_id": 16422,
+    "tevo_name": "Los Angeles Kings",
+    "tevo_category": "NHL",
+    "venue_id": 1480,
+    "venue_name": "Crypto.com Arena",
+    "match_quality": "exact",
+    "all_hits_count": 3
+  },
+  {
+    "league": "NHL",
+    "espn_id": "27",
+    "espn_name": "Nashville Predators",
+    "tevo_id": 16413,
+    "tevo_name": "Nashville Predators",
+    "tevo_category": "NHL",
+    "venue_id": 1080,
+    "venue_name": "Bridgestone Arena",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NHL",
+    "espn_id": "18",
+    "espn_name": "San Jose Sharks",
+    "tevo_id": 16424,
+    "tevo_name": "San Jose Sharks",
+    "tevo_category": "NHL",
+    "venue_id": 1384,
+    "venue_name": "SAP Center",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "NHL",
+    "espn_id": "124292",
+    "espn_name": "Seattle Kraken",
+    "tevo_id": 77948,
+    "tevo_name": "Seattle Kraken",
+    "tevo_category": "NHL",
+    "venue_id": 781,
+    "venue_name": "Climate Pledge Arena",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "NHL",
+    "espn_id": "22",
+    "espn_name": "Vancouver Canucks",
+    "tevo_id": 16419,
+    "tevo_name": "Vancouver Canucks",
+    "tevo_category": "NHL",
+    "venue_id": 557,
+    "venue_name": "Rogers Arena",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "18418",
+    "espn_name": "Atlanta United FC",
+    "status": "no-hits"
+  },
+  {
+    "league": "MLS",
+    "espn_id": "20906",
+    "espn_name": "Austin FC",
+    "tevo_id": 76389,
+    "tevo_name": "Austin FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 39212,
+    "venue_name": "Q2 Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 3
+  },
+  {
+    "league": "MLS",
+    "espn_id": "9720",
+    "espn_name": "CF Montréal",
+    "status": "no-hits"
+  },
+  {
+    "league": "MLS",
+    "espn_id": "21300",
+    "espn_name": "Charlotte FC",
+    "tevo_id": 80451,
+    "tevo_name": "Charlotte FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 457,
+    "venue_name": "Bank of America Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "182",
+    "espn_name": "Chicago Fire FC",
+    "tevo_id": 13581,
+    "tevo_name": "Chicago Fire FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 1444,
+    "venue_name": "Soldier Field",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "184",
+    "espn_name": "Colorado Rapids",
+    "tevo_id": 13621,
+    "tevo_name": "Colorado Rapids",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 4537,
+    "venue_name": "Dick's Sporting Goods Park",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "183",
+    "espn_name": "Columbus Crew",
+    "tevo_id": 13624,
+    "tevo_name": "Columbus Crew SC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 39211,
+    "venue_name": "Lower.com Field",
+    "match_quality": "category-fallback",
+    "all_hits_count": 3,
+    "alternates": [
+      {
+        "id": 13624,
+        "name": "Columbus Crew SC",
+        "category": "MLS (Major League Soccer)"
+      },
+      {
+        "id": 87649,
+        "name": "Columbus Crew 2",
+        "category": "MLS Next Pro"
+      },
+      {
+        "id": 113117,
+        "name": "Columbus Crew II",
+        "category": "Soccer"
+      }
+    ]
+  },
+  {
+    "league": "MLS",
+    "espn_id": "193",
+    "espn_name": "D.C. United",
+    "tevo_id": 13659,
+    "tevo_name": "DC United",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 33655,
+    "venue_name": "Audi Field",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "18267",
+    "espn_name": "FC Cincinnati",
+    "tevo_id": 49635,
+    "tevo_name": "FC Cincinnati",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 39210,
+    "venue_name": "TQL Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 3
+  },
+  {
+    "league": "MLS",
+    "espn_id": "185",
+    "espn_name": "FC Dallas",
+    "tevo_id": 13731,
+    "tevo_name": "FC Dallas",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 3640,
+    "venue_name": "Toyota Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "6077",
+    "espn_name": "Houston Dynamo FC",
+    "tevo_id": 13873,
+    "tevo_name": "Houston Dynamo FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 19292,
+    "venue_name": "Shell Energy Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "MLS",
+    "espn_id": "20232",
+    "espn_name": "Inter Miami CF",
+    "tevo_id": 72393,
+    "tevo_name": "Inter Miami CF",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 859,
+    "venue_name": "Chase Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "187",
+    "espn_name": "LA Galaxy",
+    "tevo_id": 26150,
+    "tevo_name": "Los Angeles Galaxy",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 2566,
+    "venue_name": "Dignity Health Sports Park - Stadium",
+    "match_quality": "category-fallback",
+    "all_hits_count": 2,
+    "alternates": [
+      {
+        "id": 26150,
+        "name": "Los Angeles Galaxy",
+        "category": "MLS (Major League Soccer)"
+      },
+      {
+        "id": 41578,
+        "name": "Los Angeles Galaxy II",
+        "category": "USL Championship"
+      }
+    ]
+  },
+  {
+    "league": "MLS",
+    "espn_id": "18966",
+    "espn_name": "LAFC",
+    "tevo_id": 55771,
+    "tevo_name": "Los Angeles FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 33676,
+    "venue_name": "BMO Stadium",
+    "match_quality": "category-fallback",
+    "all_hits_count": 2,
+    "alternates": [
+      {
+        "id": 55771,
+        "name": "Los Angeles FC",
+        "category": "MLS (Major League Soccer)"
+      },
+      {
+        "id": 88387,
+        "name": "Los Angeles FC 2",
+        "category": "MLS Next Pro"
+      }
+    ]
+  },
+  {
+    "league": "MLS",
+    "espn_id": "17362",
+    "espn_name": "Minnesota United FC",
+    "tevo_id": 39115,
+    "tevo_name": "Minnesota United FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 34053,
+    "venue_name": "Allianz Field",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "18986",
+    "espn_name": "Nashville SC",
+    "tevo_id": 55828,
+    "tevo_name": "Nashville SC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 42114,
+    "venue_name": "GEODIS Park",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "MLS",
+    "espn_id": "189",
+    "espn_name": "New England Revolution",
+    "tevo_id": 14225,
+    "tevo_name": "New England Revolution",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 2236,
+    "venue_name": "Gillette Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "12011",
+    "espn_name": "Orlando City SC",
+    "tevo_id": 31136,
+    "tevo_name": "Orlando City SC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 48292,
+    "venue_name": "Inter&Co Stadium",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "MLS",
+    "espn_id": "10739",
+    "espn_name": "Philadelphia Union",
+    "tevo_id": 14328,
+    "tevo_name": "Philadelphia Union",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 7236,
+    "venue_name": "Subaru Park",
+    "match_quality": "exact",
+    "all_hits_count": 3
+  },
+  {
+    "league": "MLS",
+    "espn_id": "9723",
+    "espn_name": "Portland Timbers",
+    "tevo_id": 21917,
+    "tevo_name": "Portland Timbers",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 2788,
+    "venue_name": "Providence Park",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "4771",
+    "espn_name": "Real Salt Lake",
+    "tevo_id": 14374,
+    "tevo_name": "Real Salt Lake",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 5867,
+    "venue_name": "America First Field",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "MLS",
+    "espn_id": "190",
+    "espn_name": "Red Bull New York",
+    "tevo_id": 14232,
+    "tevo_name": "New York Red Bulls",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 7054,
+    "venue_name": "Sports Illustrated Stadium",
+    "match_quality": "category-fallback",
+    "all_hits_count": 3,
+    "alternates": [
+      {
+        "id": 14232,
+        "name": "New York Red Bulls",
+        "category": "MLS (Major League Soccer)"
+      },
+      {
+        "id": 46237,
+        "name": "New York Red Bulls II",
+        "category": "MLS Next Pro"
+      },
+      {
+        "id": 42038,
+        "name": "New York Red Bulls Reserves",
+        "category": "Soccer"
+      }
+    ]
+  },
+  {
+    "league": "MLS",
+    "espn_id": "22529",
+    "espn_name": "San Diego FC",
+    "tevo_id": 116308,
+    "tevo_name": "San Diego FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "191",
+    "espn_name": "San Jose Earthquakes",
+    "tevo_id": 16155,
+    "tevo_name": "San Jose Earthquakes",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 32076,
+    "venue_name": "PayPal Park",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "9726",
+    "espn_name": "Seattle Sounders FC",
+    "tevo_id": 16159,
+    "tevo_name": "Seattle Sounders FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 2246,
+    "venue_name": "Lumen Field",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "MLS",
+    "espn_id": "186",
+    "espn_name": "Sporting Kansas City",
+    "tevo_id": 13963,
+    "tevo_name": "Sporting Kansas City",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 7722,
+    "venue_name": "Sporting Park",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "21812",
+    "espn_name": "St. Louis CITY SC",
+    "tevo_id": 84946,
+    "tevo_name": "St. Louis City SC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 43457,
+    "venue_name": "Energizer Park",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "7318",
+    "espn_name": "Toronto FC",
+    "tevo_id": 16206,
+    "tevo_name": "Toronto FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 4523,
+    "venue_name": "BMO Field",
+    "match_quality": "exact",
+    "all_hits_count": 2
+  },
+  {
+    "league": "MLS",
+    "espn_id": "9727",
+    "espn_name": "Vancouver Whitecaps",
+    "tevo_id": 30243,
+    "tevo_name": "Vancouver Whitecaps FC",
+    "tevo_category": "MLS (Major League Soccer)",
+    "venue_id": 2518,
+    "venue_name": "BC Place Stadium",
+    "match_quality": "category-fallback",
+    "all_hits_count": 2,
+    "alternates": [
+      {
+        "id": 30243,
+        "name": "Vancouver Whitecaps FC",
+        "category": "MLS (Major League Soccer)"
+      },
+      {
+        "id": 45761,
+        "name": "Vancouver Whitecaps FC 2",
+        "category": "MLS Next Pro"
+      }
+    ]
+  },
+  {
+    "league": "WNBA",
+    "espn_id": "132052",
+    "espn_name": "Portland Fire",
+    "tevo_id": 132616,
+    "tevo_name": "Portland Fire",
+    "tevo_category": "WNBA",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  },
+  {
+    "league": "WNBA",
+    "espn_id": "131935",
+    "espn_name": "Toronto Tempo",
+    "tevo_id": 132615,
+    "tevo_name": "Toronto Tempo",
+    "tevo_category": "WNBA",
+    "match_quality": "exact",
+    "all_hits_count": 1
+  }
+]

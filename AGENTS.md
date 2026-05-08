@@ -131,6 +131,32 @@ All three agents are free to call any edge fn or read any view. Only writes to s
 
 **Push gate**: Code does not push to `main` (the prod-pushing branch) until all three agents have ACK'd the change set in the LOG. The proxy-commit protocol (RULE #12) creates the ACK trail naturally — if a copilot or design diff has been reviewed and committed by code, that's their ACK. Code's own changes additionally need a review pass from at least one of the other agents on cross-product items (anything touching the product wall).
 
+## DRIFT DETECTION (automated as of 2026-05-08)
+
+`bin/sync-check.sh` + `.github/workflows/sync-check.yml` run on every push to `main` and on a daily 06:17 UTC cron.
+
+**What it catches**:
+- Prod migrations not in git (the dominant historical drift case).
+- Edge functions deployed but not in git (requires `SUPABASE_PAT` secret; without it, only migration drift is checked — covers ~80% of cases).
+- Git migrations not yet applied to prod (heads-up, not blocking).
+
+**What it does on drift**:
+- Writes a markdown report.
+- Opens (or updates) a GitHub issue labeled `sync-check`.
+- Auto-closes the issue when drift is cleared.
+
+**Required GitHub secrets** (Settings → Secrets and variables → Actions):
+- `SUPABASE_URL` — `https://hzrizjeaxlqcxfrtczpq.supabase.co`
+- `SUPABASE_SERVICE_ROLE_KEY` — service-role key
+- `SUPABASE_PAT` — optional; enables edge-fn diff (sbp_... PAT from Supabase Account → Tokens)
+
+**Manual run**:
+```bash
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... bin/sync-check.sh --report-md /tmp/r.md
+```
+
+Backed by `public.__sync_check_list_migrations()` RPC (mig `20260508130000`, service-role only).
+
 ## TEST SCHEMAS (Option C, picked 2026-05-08)
 
 > Schema-level isolation in the prod project. Free, no infra, weakest of the three test-env options. Convention enforced by AGENTS.md + code's audit pass — Postgres doesn't physically prevent any agent from writing to `public`.
