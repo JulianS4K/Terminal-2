@@ -113,6 +113,42 @@ All three agents are free to call any edge fn or read any view. Only writes to s
 13. **code's audit pass** (post-commit): every commit landed by anyone, code spot-checks the diff against (a) the product wall (no broker→retail leak), (b) AGENTS.md ownership, (c) common bug classes (parking inclusion, ghost events, content_hash gaps, cross-product schema collisions). Findings go in `docs/<date>-audit.md` + LOG.
 14. **claude design ↔ backend boundary**: if a UI change needs a new endpoint, new field, new RPC, or modified data shape — design DOES NOT add the backend code. Drop a `NEXT (claude design): need <endpoint/field>` line in the LOG. Either code (terminal endpoints) or copilot (chat endpoints) picks it up next session.
 
+## ACCESS MATRIX (who writes what — 2026-05-08 onward)
+
+> **Read this before any prod-side work.** Lockdown shipped 2026-05-08 in response to drift caught in the sync audit (`docs/sync-audit-2026-05-08.md`).
+
+| surface              | code (me)        | copilot        | claude design  | rationale                                                    |
+|----------------------|------------------|----------------|----------------|--------------------------------------------------------------|
+| **Prod DB (writes)** | ✅ only writer    | ❌ test env only| ❌ test env only| Backend + data pipelines must not break — single writer.     |
+| Prod DB (reads)      | ✅                | ✅              | ✅              | Read-only diagnostic access for all agents.                  |
+| **Prod edge fn deploys** | ✅ only deployer | ❌ test env    | ❌ test env    | Same — pipelines can't go down silently.                     |
+| **Prod cron schedules** | ✅ only writer | ❌ test env    | ❌ test env    | Same.                                                        |
+| **Supabase Storage** (all buckets) | ✅ | ✅ | ✅ | Mostly read-only static assets — low blast radius.           |
+| Test env (own)       | ✅ (`branch:code-staging` / TBD) | ✅ (own env)   | ✅ (own env)   | Each agent gets their own sandbox to iterate freely.         |
+| static/*.html / CSS  | review only      | review only    | ✅ owner        | claude design's lane.                                        |
+| supabase/functions/chat/ | review only  | ✅ owner        | review only    | copilot's lane.                                              |
+| app.py / evo_client.py / broker SQL | ✅ owner | review only | review only    | code's lane.                                                 |
+
+**Push gate**: Code does not push to `main` (the prod-pushing branch) until all three agents have ACK'd the change set in the LOG. The proxy-commit protocol (RULE #12) creates the ACK trail naturally — if a copilot or design diff has been reviewed and committed by code, that's their ACK. Code's own changes additionally need a review pass from at least one of the other agents on cross-product items (anything touching the product wall).
+
+## STORAGE LAYOUT (Supabase Storage)
+
+**`chat` bucket** — created 2026-05-08 (mig `20260508110000_storage_chat_bucket`). Public read, all 3 agents can read+write via service-role.
+
+Folder convention inside `chat/`:
+```
+chat/
+  default/        retail Find Tickets chatbot (existing static/chat.html)
+  broker/         broker-side admin chat (future, terminal-embedded)
+  support/        customer support chat (future)
+  sales/          outbound sales chat (future)
+  _shared/        cross-variant assets (logos, default avatars)
+```
+
+When a new chat variant is needed, create a new subfolder rather than a new bucket. Code does spot-checks during sync audits to keep the convention.
+
+5 MB file limit. Allowed types: png/jpeg/gif/webp/svg, mpeg/webm/ogg audio, pdf, plain text.
+
 ## STRATEGIC (project-level context every agent should know)
 
 > **Read this before planning new feature work.** These are things that change priorities and tradeoffs across the whole codebase, not narrow tasks. Surfaced from `docs/sync-audit-2026-05-08.md` after code (auditor) found the SeatGeek planning docs sitting unread in `docs/seatgeek/`.
