@@ -1120,7 +1120,6 @@ async function loadEvent(eventId) {
         <div class="panel-h"><h3>Retail price distribution</h3><div class="actions"><span class="dim">${(m.retail_median?.v != null && m.retail_min?.v != null) ? `range ${moneyC(m.retail_min.v)}–${moneyC(m.retail_max?.v)}` : ''}</span></div></div>
         <table class="ibkr">
           <thead><tr>
-            <th title="Row source — retail (asks shown to buyers) or wholesale (between brokers).">Pctile</th>
             <th class="num" title="Cheapest ask in the entire book — including obstructed-view, garbage, etc.">Min</th>
             <th class="num" title="25th percentile: 25% of listings price below this.">P25</th>
             <th class="num" title="50th percentile / median: half of listings cheaper, half more expensive. Most-quoted price.">Median</th>
@@ -1130,7 +1129,6 @@ async function loadEvent(eventId) {
             <th class="num" title="Most-expensive ask in the book — usually courtside / suite.">Max</th>
           </tr></thead>
           <tbody><tr>
-            <td class="muted">Retail ($)</td>
             <td class="num">${moneyC(m.retail_min?.v)}</td>
             <td class="num">${moneyC(m.retail_p25?.v)}</td>
             <td class="num"><strong>${moneyC(m.retail_median?.v)}</strong></td>
@@ -1138,17 +1136,49 @@ async function loadEvent(eventId) {
             <td class="num">${moneyC(m.retail_p75?.v)}</td>
             <td class="num">${moneyC(m.retail_p90?.v)}</td>
             <td class="num">${moneyC(m.retail_max?.v)}</td>
-          </tr><tr>
-            <td class="muted">Wholesale ($)</td>
-            <td class="num">${moneyC(m.wholesale_min?.v)}</td>
-            <td class="num dim">—</td>
-            <td class="num"><strong>${moneyC(m.wholesale_median?.v)}</strong></td>
-            <td class="num">${moneyC(m.wholesale_mean?.v)}</td>
-            <td class="num dim">—</td>
-            <td class="num dim">—</td>
-            <td class="num">${moneyC(m.wholesale_max?.v)}</td>
           </tr></tbody>
         </table>
+        ${(() => {
+          // Derived retail-only summary stats. All from existing event_metrics
+          // columns — no extra fetch. Filling the space the wholesale row used.
+          const v = (k) => m[k]?.v;
+          const f = (n) => { const x = Number(n); return Number.isFinite(x) ? x : null; };
+          const min = f(v('retail_min')); const p25 = f(v('retail_p25'));
+          const med = f(v('retail_median')); const mean = f(v('retail_mean'));
+          const p75 = f(v('retail_p75')); const p90 = f(v('retail_p90'));
+          const max = f(v('retail_max')); const sum = f(v('retail_sum'));
+          const tix = f(v('tickets_count'));
+          const iqr   = (p75 != null && p25 != null) ? p75 - p25 : null;
+          const range = (max != null && min != null) ? max - min : null;
+          const skew  = (mean != null && med != null && med > 0) ? mean / med : null;
+          const cv    = (iqr != null && med != null && med > 0)  ? iqr / med  : null;
+          const tail  = (p90 != null && med != null && med > 0)  ? p90 / med  : null;
+          const skewLbl = skew == null ? '—'
+            : skew > 1.10 ? `${skew.toFixed(2)}× right-skewed (premium asks)`
+            : skew < 0.90 ? `${skew.toFixed(2)}× left-skewed`
+            : `${skew.toFixed(2)}× symmetric`;
+          return `
+          <table class="ibkr" style="border-top:1px solid var(--border);">
+            <thead><tr>
+              <th class="num" title="Interquartile range in dollars: P75 − P25. Width of the middle 50% price band.">IQR ($)</th>
+              <th class="num" title="Total dollar range: Max − Min. Full sweep cheap-seat → courtside.">Range ($)</th>
+              <th class="num" title="Coefficient of variation = IQR/Median. Higher % = more relative price spread.">CV</th>
+              <th class="num" title="Mean / Median ratio. >1 = right-skewed (a few premium asks lift the mean).">Skew</th>
+              <th class="num" title="Tail premium = P90 / Median. How much more the top-10% asks demand.">Tail × Med</th>
+              <th class="num" title="Average price per ticket = retail_sum / tickets_count.">Avg / tix</th>
+              <th class="num" title="Get-in: cheapest ask where you can buy a pair (qty ≥ 2). What you actually quote a real buyer.">Get-in</th>
+            </tr></thead>
+            <tbody><tr>
+              <td class="num">${iqr   == null ? '—' : moneyC(iqr)}</td>
+              <td class="num">${range == null ? '—' : moneyC(range)}</td>
+              <td class="num">${cv    == null ? '—' : (cv * 100).toFixed(1) + '%'}</td>
+              <td class="num" title="${esc(skewLbl)}">${skew == null ? '—' : skew.toFixed(2) + '×'}</td>
+              <td class="num">${tail  == null ? '—' : tail.toFixed(2) + '×'}</td>
+              <td class="num">${(sum != null && tix != null && tix > 0) ? moneyC(sum / tix) : '—'}</td>
+              <td class="num"><strong>${moneyC(m.getin_price?.v)}</strong></td>
+            </tr></tbody>
+          </table>`;
+        })()}
       </div>
       <div class="panel">
         <div class="panel-h"><h3>Market structure</h3></div>
@@ -1627,15 +1657,16 @@ function _autoDiscoverSeries(data) {
     const path = 'series.' + key;
     if (known.has(path)) continue;
     if (!Array.isArray(series) || !series.length) continue;
-    if (series[0] && typeof series[0].t === 'undefined') continue;  // not a time-series shape
-    // Heuristics for axis: $ if values look big, % if all in [0,1], else yIdx
-    const sampleVals = series.slice(0, 10).map(p => p.v).filter(v => v != null);
+    // Time-series shape: each point has {t, v}. Skip overlay/object shapes.
+    const first = series[0];
+    if (!first || typeof first !== 'object' || !('t' in first) || !('v' in first)) continue;
+    const sampleVals = series.slice(0, 10).map(p => Number(p.v)).filter(v => Number.isFinite(v));
     const allFraction = sampleVals.length && sampleVals.every(v => v >= 0 && v <= 1);
     const looksDollar = /price|retail|wholesale|notional|getin|\$|sum/i.test(key);
     const axis = allFraction ? 'y%' : (looksDollar ? 'y$' : 'yIdx');
     auto.push({
       id: 'auto:' + key,
-      label: key.replace(/_/g, ' '),  // human-ish
+      label: key.replace(/_/g, ' '),
       path: path,
       color: ZONE_PALETTE[colorIdx++ % ZONE_PALETTE.length],
       axis,
@@ -1648,7 +1679,23 @@ function _autoDiscoverSeries(data) {
 }
 
 function renderEventChart(data) {
+  try {
+    _renderEventChartImpl(data);
+  } catch (err) {
+    console.error('renderEventChart failed', err);
+    const wrapEl = document.getElementById('event-chart-wrap');
+    if (wrapEl) {
+      wrapEl.innerHTML = `<div style="padding:24px;color:var(--neg);font-size:12px;">Chart render error: ${esc(err.message)} <span class="dim">(check console for stack)</span></div>`;
+    }
+  }
+}
+
+function _renderEventChartImpl(data) {
   _eventChartData = data;
+  if (!data || !data.series) {
+    console.warn('chart data missing or has no series', data);
+    return;
+  }
   // Build dynamic zone series catalog from data.zone_series.zones
   const zoneSeriesEntries = [];
   const zonesPayload = data.zone_series || {};
@@ -1719,10 +1766,21 @@ function renderEventChart(data) {
 }
 
 function _drawChart() {
+  try { _drawChartImpl(); }
+  catch (err) {
+    console.error('_drawChart failed', err);
+    const wrapEl = document.getElementById('event-chart-wrap');
+    if (wrapEl) wrapEl.innerHTML = `<div style="padding:24px;color:var(--neg);font-size:12px;">Chart draw error: ${esc(err.message)}</div>`;
+  }
+}
+function _drawChartImpl() {
   const data = _eventChartData;
   const canvas = document.getElementById('event-chart');
   if (!canvas || !data) return;
-  if (_eventChartInstance) { _eventChartInstance.destroy(); _eventChartInstance = null; }
+  if (_eventChartInstance) {
+    try { _eventChartInstance.destroy(); } catch {}
+    _eventChartInstance = null;
+  }
   const visible = _loadChartVis();
   const toXY = (arr, scale) => (arr || []).filter(p => p.v != null).map(p => ({ x: p.t, y: scale ? Number(p.v) * scale : Number(p.v) }));
 
