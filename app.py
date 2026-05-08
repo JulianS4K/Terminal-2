@@ -153,6 +153,12 @@ def event_terminal_page(event_id: int):
     return (STATIC_DIR / "event.html").read_text(encoding="utf-8")
 
 
+@app.get("/movers", response_class=HTMLResponse)
+def movers_page():
+    """Top winners + losers report — across event/performer/venue, owned vs market."""
+    return (STATIC_DIR / "movers.html").read_text(encoding="utf-8")
+
+
 @app.get("/api/public/config")
 def public_config():
     """Browser-safe config for the login page. No secrets."""
@@ -1020,6 +1026,200 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
             "home_team_id": home_team_id,
             "away_team_id": away_team_id,
             "league":       home_league,
+        },
+    }
+
+
+@app.get("/api/broker/movers")
+def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
+    """Top 10 winners + losers at event / performer / venue level, owned vs market.
+    Window: compare latest event_metrics row vs latest row from `window_hours` ago.
+
+    Owned segment    = events with owned_tickets_count > 0 in current window
+    Market segment   = events with market listings (regardless of owned)
+    Returns 12 lists total: {events,performers,venues} × {owned,market} × {winners,losers}
+    """
+    window_hours = max(1, min(int(window_hours), 168))
+    db = require_sb()
+
+    # Latest + prior captured_at per event (pure SQL, single round-trip via RPC).
+    # Falls back to client-side aggregation if the RPC isn't there yet.
+    sql_query = """
+    with latest as (
+      select distinct on (event_id) event_id, captured_at,
+        retail_median, owned_median_retail, tickets_count, owned_tickets_count
+      from event_metrics
+      order by event_id, captured_at desc
+    ),
+    prior as (
+      select distinct on (event_id) event_id, captured_at,
+        retail_median, owned_median_retail, tickets_count, owned_tickets_count
+      from event_metrics
+      where captured_at < now() - (%s || ' hours')::interval
+      order by event_id, captured_at desc
+    )
+    select
+      l.event_id, e.name, e.primary_performer_id, e.primary_performer_name,
+      e.venue_id, e.venue_name,
+      e.occurs_at_local,
+      l.captured_at as latest_at,
+      l.retail_median        as cur_market_med,
+      p.retail_median        as prev_market_med,
+      l.owned_median_retail  as cur_owned_med,
+      p.owned_median_retail  as prev_owned_med,
+      l.tickets_count        as cur_market_tix,
+      p.tickets_count        as prev_market_tix,
+      l.owned_tickets_count  as cur_owned_tix,
+      p.owned_tickets_count  as prev_owned_tix
+    from latest l
+    join events e on e.id = l.event_id
+    left join prior p using (event_id)
+    where e.occurs_at_local::timestamptz >= now()
+    """
+    # PostgREST/supabase-py doesn't expose raw SQL; we'll use pg_net-equivalent via rpc or
+    # break into two PostgREST calls. Cleanest: ad-hoc rpc helper isn't worth it for this
+    # one read — pull all event_metrics rows in window + aggregate in Python. Fast enough
+    # for ~22k rows.
+
+    rows = (
+        db.table("event_metrics")
+        .select("event_id,captured_at,retail_median,owned_median_retail,tickets_count,owned_tickets_count")
+        .gte("captured_at", (datetime.now(timezone.utc) - timedelta(hours=window_hours * 3)).isoformat())
+        .order("captured_at", desc=True)
+        .limit(50000)
+        .execute()
+    ).data or []
+
+    # Group by event_id; first row per group = latest, find prior > window_hours ago.
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    by_ev: dict[int, dict] = {}
+    for r in rows:
+        eid = r["event_id"]
+        ts = r["captured_at"]
+        if eid not in by_ev:
+            by_ev[eid] = {"latest": r, "prior": None}
+        else:
+            ent = by_ev[eid]
+            if ent["prior"] is None and ts < cutoff.isoformat():
+                ent["prior"] = r
+
+    # Pull event metadata for the events we have
+    event_ids = list(by_ev.keys())
+    if not event_ids:
+        return {"window_hours": window_hours, "events": {}, "performers": {}, "venues": {}}
+    ev_meta = (
+        db.table("events")
+        .select("id,name,primary_performer_id,primary_performer_name,venue_id,venue_name,occurs_at_local")
+        .in_("id", event_ids)
+        .execute()
+    ).data or []
+    meta_by_id = {m["id"]: m for m in ev_meta}
+
+    def pct_delta(cur, prev):
+        if cur is None or prev is None: return None
+        try: c = float(cur); p = float(prev)
+        except (TypeError, ValueError): return None
+        if p == 0: return None
+        return round((c - p) / p * 100, 2)
+
+    rows_built = []
+    for eid, ent in by_ev.items():
+        if eid not in meta_by_id: continue
+        m = meta_by_id[eid]
+        # filter: only future-dated events
+        if m.get("occurs_at_local") and m["occurs_at_local"] < datetime.now().date().isoformat():
+            continue
+        cur, prev = ent["latest"], (ent["prior"] or {})
+        rows_built.append({
+            "event_id": eid,
+            "name": m.get("name"),
+            "performer_id": m.get("primary_performer_id"),
+            "performer_name": m.get("primary_performer_name"),
+            "venue_id": m.get("venue_id"),
+            "venue_name": m.get("venue_name"),
+            "occurs_at_local": m.get("occurs_at_local"),
+            "cur_market_med": cur.get("retail_median"),
+            "cur_market_tix": cur.get("tickets_count"),
+            "cur_owned_med":  cur.get("owned_median_retail"),
+            "cur_owned_tix":  cur.get("owned_tickets_count"),
+            "delta_market_pct": pct_delta(cur.get("retail_median"), prev.get("retail_median")),
+            "delta_market_abs": (None if cur.get("retail_median") is None or prev.get("retail_median") is None
+                                 else round(float(cur["retail_median"]) - float(prev["retail_median"]), 2)),
+            "delta_owned_pct":  pct_delta(cur.get("owned_median_retail"), prev.get("owned_median_retail")),
+            "delta_owned_abs":  (None if cur.get("owned_median_retail") is None or prev.get("owned_median_retail") is None
+                                 else round(float(cur["owned_median_retail"]) - float(prev["owned_median_retail"]), 2)),
+        })
+
+    def top10(items, key, desc=True):
+        filtered = [r for r in items if r.get(key) is not None]
+        filtered.sort(key=lambda r: r[key], reverse=desc)
+        return filtered[:10]
+
+    # Owned segment = events where current owned tix > 0
+    owned = [r for r in rows_built if (r.get("cur_owned_tix") or 0) > 0]
+    market = rows_built  # all events being tracked (may or may not have owned)
+
+    # Performer + venue rollups: weight by current market tickets
+    def rollup(rows_in, group_key, name_key, id_key):
+        agg: dict = {}
+        for r in rows_in:
+            gid = r.get(group_key)
+            if gid is None: continue
+            slot = agg.setdefault(gid, {
+                id_key: gid, name_key: r.get(name_key.replace("name", "name")),
+                "weighted_market_pct_num": 0.0, "weighted_market_pct_den": 0,
+                "weighted_owned_pct_num": 0.0,  "weighted_owned_pct_den":  0,
+                "events_count": 0, "owned_tix_total": 0, "market_tix_total": 0,
+            })
+            slot["events_count"] += 1
+            slot["market_tix_total"] += int(r.get("cur_market_tix") or 0)
+            slot["owned_tix_total"]  += int(r.get("cur_owned_tix") or 0)
+            if r.get("delta_market_pct") is not None and (r.get("cur_market_tix") or 0) > 0:
+                slot["weighted_market_pct_num"] += float(r["delta_market_pct"]) * int(r["cur_market_tix"])
+                slot["weighted_market_pct_den"] += int(r["cur_market_tix"])
+            if r.get("delta_owned_pct") is not None and (r.get("cur_owned_tix") or 0) > 0:
+                slot["weighted_owned_pct_num"] += float(r["delta_owned_pct"]) * int(r["cur_owned_tix"])
+                slot["weighted_owned_pct_den"] += int(r["cur_owned_tix"])
+        out = []
+        for slot in agg.values():
+            slot["delta_market_pct"] = (round(slot["weighted_market_pct_num"] / slot["weighted_market_pct_den"], 2)
+                                       if slot["weighted_market_pct_den"] else None)
+            slot["delta_owned_pct"]  = (round(slot["weighted_owned_pct_num"]  / slot["weighted_owned_pct_den"], 2)
+                                       if slot["weighted_owned_pct_den"]  else None)
+            out.append({
+                id_key: slot[id_key], "name": slot.get(name_key.replace("name", "name")),
+                "events_count": slot["events_count"],
+                "market_tix_total": slot["market_tix_total"],
+                "owned_tix_total": slot["owned_tix_total"],
+                "delta_market_pct": slot["delta_market_pct"],
+                "delta_owned_pct":  slot["delta_owned_pct"],
+            })
+        return out
+
+    perf_owned  = rollup(owned,  "performer_id", "performer_name", "performer_id")
+    perf_market = rollup(market, "performer_id", "performer_name", "performer_id")
+    venue_owned  = rollup(owned,  "venue_id", "venue_name", "venue_id")
+    venue_market = rollup(market, "venue_id", "venue_name", "venue_id")
+
+    return {
+        "window_hours": window_hours,
+        "events": {
+            "owned_winners":  top10(owned,  "delta_owned_pct",  desc=True),
+            "owned_losers":   top10(owned,  "delta_owned_pct",  desc=False),
+            "market_winners": top10(market, "delta_market_pct", desc=True),
+            "market_losers":  top10(market, "delta_market_pct", desc=False),
+        },
+        "performers": {
+            "owned_winners":  top10(perf_owned,  "delta_owned_pct",  desc=True),
+            "owned_losers":   top10(perf_owned,  "delta_owned_pct",  desc=False),
+            "market_winners": top10(perf_market, "delta_market_pct", desc=True),
+            "market_losers":  top10(perf_market, "delta_market_pct", desc=False),
+        },
+        "venues": {
+            "owned_winners":  top10(venue_owned,  "delta_owned_pct",  desc=True),
+            "owned_losers":   top10(venue_owned,  "delta_owned_pct",  desc=False),
+            "market_winners": top10(venue_market, "delta_market_pct", desc=True),
+            "market_losers":  top10(venue_market, "delta_market_pct", desc=False),
         },
     }
 
