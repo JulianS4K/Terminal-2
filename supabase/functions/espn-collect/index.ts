@@ -1,4 +1,17 @@
-// Supabase Edge Function: espn-collect (v5 — fix injury dedup key)
+// Supabase Edge Function: espn-collect (v6 — verify_jwt=false fix)
+//
+// v6 (2026-05-08): Fixed silent 16-hour outage. Function was deployed with
+// verify_jwt=true so Supabase's edge gateway demanded an Authorization
+// Bearer header before routing to the function. The pg_cron command sends
+// only X-Cron-Secret (the function's own auth check) but no Authorization
+// header → every cron invocation got 401 at the gateway and never reached
+// the function. cron logged "succeeded" because the HTTP POST itself
+// completed (with a 401 body). Discovered 2026-05-08 in Knicks deep-dive
+// when only 5 espn_runs rows existed despite 99 cron invocations.
+//
+// Fix: redeploy with verify_jwt=false, mirroring collect-listings. The
+// function's internal X-Cron-Secret check is the right auth boundary for
+// an internal cron-invoked helper.
 //
 // v5 (2026-05-07): ESPN's league-injuries endpoint populates inj.id (injury
 // record id, e.g. "630675") but NOT inj.athlete.id (only displayName). v4
