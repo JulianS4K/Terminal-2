@@ -1,35 +1,49 @@
 # AGENTS.md
 
-both agents read first. both agents append on action. keep cave-man.
+three agents now. all three read first, all three append on action. keep cave-man.
+
+## ROSTER (2026-05-08 onward)
+
+| agent           | role                                                                                  | reports to git via |
+|-----------------|---------------------------------------------------------------------------------------|--------------------|
+| **code**        | auditor of the entire codebase · terminal backend (FastAPI/SQL) · git proxy for everyone · runs project simulations + deep-dives + audits to surface issues | self (has direct push access) |
+| **copilot**     | retail chat backend (chat edge fn) · ML / NLU pipeline for the chatbot · listings/data ingest fns it already owns | code (proxy commits) |
+| **claude design** | front-end for BOTH products: terminal admin UI (`static/index.html`, `static/event.html`, `static/movers.html`) and chatbot UI (`static/chat.html`) · CSS / layout / interactions / accessibility | code (proxy commits) |
+
+**code is the only agent with git push.** copilot and claude design write code locally / via PR; code reviews, audits, and pushes. code also keeps running scenario simulations (broker audits, workflow audits, Knicks-style deep-dives) to find issues neither feature-builder agent would catch on their own.
 
 ## STATUS BOARD (live, read first, update on every state change)
 
-| agent  | status | started_at (UTC)    | working on                                   | branch | safe to interrupt? |
-|--------|--------|---------------------|----------------------------------------------|--------|--------------------|
-| code   | IDLE   | —                   | —                                            | —      | yes                |
-| cowork | IDLE   | —                   | —                                            | —      | yes                |
+| agent           | status | started_at (UTC)    | working on                                   | branch | safe to interrupt? |
+|-----------------|--------|---------------------|----------------------------------------------|--------|--------------------|
+| code            | IDLE   | —                   | —                                            | main   | yes                |
+| copilot         | IDLE   | —                   | —                                            | —      | yes                |
+| claude design   | IDLE   | —                   | —                                            | —      | yes                |
 
-**Read this table before starting any work.** If the other agent is DOING and your planned work overlaps theirs (same files, related schema), wait or coordinate via a WAIT note in the LOG. If the other agent is IDLE you're clear to start — flip your row to DOING with a timestamp before your first commit.
+**Read this table before starting any work.** If another agent is DOING and your planned work overlaps theirs (same files, related schema), wait or coordinate via a WAIT note in the LOG. If everyone else is IDLE you're clear to start — flip your row to DOING with a timestamp before your first edit.
 
 ## WIP (files an agent is actively editing — append before edit, clear on commit)
 
-**Read this section before opening any file.** If a file you want to edit is listed under the *other* agent, pick a different file or wait. Append your file paths under your own subsection before you start editing. Clear your subsection back to "(none)" the moment you commit and push.
+**Read this section before opening any file.** If a file you want to edit is listed under another agent, pick a different file or wait. Append your file paths under your own subsection before editing. Clear your subsection back to "(none)" the moment your work hits `main`.
 
 ### code
 - (none)
 
-### cowork
+### copilot
+- (none — git access via code)
+
+### claude design
 - (none — git access via code)
 
 ## ARCHITECTURE
 
-ONE backend. TWO products. TWO front-ends. TWO agents.
+ONE backend. TWO products. TWO front-ends. THREE agents.
 
 ```
                   ┌─────────────────────────────────────┐
                   │   BACKEND (shared, single source)   │
-                  │  - Supabase Postgres + edge fns     │  ← cowork-owned
-                  │  - app.py FastAPI routes + cron     │  ← code-owned
+                  │  - Supabase Postgres + edge fns     │  ← split: copilot owns chat fn + ingest
+                  │  - app.py FastAPI routes + cron     │  ← code-owned (terminal backend)
                   │  - TEvo connector, Anthropic client │  ← shared
                   └──────────┬──────────────┬───────────┘
                              │              │
@@ -39,37 +53,65 @@ ONE backend. TWO products. TWO front-ends. TWO agents.
     │ PRODUCT 1: BROKER    │               │ PRODUCT 2: RETAIL    │
     │ Terminal admin UI    │               │ Find Tickets chatbot │
     │ static/index.html    │               │ static/chat.html     │
+    │ static/event.html    │               │ ─ FE: claude design  │
+    │ static/movers.html   │               │ ─ BE+ML: copilot     │
+    │ ─ FE: claude design  │               │                      │
+    │ ─ BE+SQL: code       │               │                      │
     │ Google OAuth gated   │               │ anonymous public     │
     │ Full inventory view  │               │ S4K-owned only       │
     │ broker_* DB views    │               │ retail_* DB views    │
-    │ owned by: code       │               │ owned by: cowork     │
     └──────────────────────┘               └──────────────────────┘
+
+                         code = auditor across all of the above
 ```
 
 never leak data across the wall. retail UI must never see wholesale, brokerage names, or non-S4K listings. broker UI sees everything.
 
 ## OWN
 
-- **code** (broker / terminal) = app.py · evo_client.py · static/index.html · requirements.txt · Procfile · supabase/functions/espn/ · supabase/functions/espn-collect/ · supabase/functions/tevo-perf-find/ · ESPN ingest schema (espn_*, event_xref, performer_external_ids source='espn')
-  - **also: code is git proxy for cowork** — cowork has no git auth, so code captures cowork's prod migrations + edge fn deploys into git via audit-and-commit. cowork's source files in git are read-only updates from prod, not edits to merge.
-- **cowork** (retail / chat) = supabase/functions/chat/ · supabase/functions/collect-listings/ · supabase/functions/seed-home-venues/ · supabase/functions/bulk-add-watchlist/ · supabase/functions/probe-tevo-category/ · supabase/functions/wiki-collect/ · supabase/functions/espn-rosters/ · supabase/functions/probe-seating-charts/ · supabase/functions/backfill-event-configurations/ · static/chat.html · docs/ · SESSION_*.md · most schema migrations (zone metrics, chat infra, athlete history, wiki context, broker helpers)
-- **shared** (ask before edit, leave WAIT note) = AGENTS.md (this file) · README.md · .gitignore · cross-product schema changes
+### code (auditor + terminal backend + git proxy)
+- **app.py · evo_client.py · requirements.txt · Procfile** — terminal HTTP routes, FastAPI, cron, deploys.
+- **supabase/functions/espn/ · supabase/functions/espn-collect/ · supabase/functions/tevo-perf-find/** — ESPN ingest stack and TEvo lookup helper.
+- **supabase/migrations/** — code is the canonical author for broker-side schema (zone RPCs, movers RPCs, league-grid RPCs, ghost-event filters, owned-share plumbing). copilot's chat-side migrations land here too via code's proxy.
+- **ESPN ingest schema** = `espn_*` tables, `event_xref`, `performer_external_ids` (source='espn').
+- **Audit responsibility**: review every commit (mine or proxied). Run scenario simulations (broker audits, workflow audits, Knicks-style deep-dives) to find issues. Document findings in `docs/` + LOG.
+- **Git proxy**: copilot and claude design have no direct push. They produce diffs / files; code reviews, runs sanity tests, commits, and pushes. Audit-and-commit pattern same as cowork era.
 
-both agents are free to call any edge fn or read any view. only writes to source files in the other agent's OWN list need a WAIT note first.
+### copilot (retail chat backend + chatbot ML/NLU)
+- **supabase/functions/chat/** — retail chat edge function (Claude tool-use loop, find_listings, comprehensive_search, all chat tools).
+- **supabase/functions/collect-listings/ · supabase/functions/seed-home-venues/ · supabase/functions/bulk-add-watchlist/ · supabase/functions/probe-tevo-category/ · supabase/functions/probe-tevo-performer/ · supabase/functions/probe-tevo-events-by-venue/ · supabase/functions/probe-seating-charts/ · supabase/functions/wiki-collect/ · supabase/functions/why-noaa-weather-alerts/ · supabase/functions/crawl-venues-and-performers/ · supabase/functions/backfill-event-configurations/ · supabase/functions/espn-rosters/** — ingest + admin helpers.
+- **chatbot NLU/ML** = chat_aliases corpus mining (`chat_term_freq_in/out`, dictionary seeding, alias promotion), tokenizer + entity extractor RPCs, suggestion-chip generation, ranking signals.
+- **chat-side schema migrations** = chat_aliases / chat_term_freq / chat_corpus / venue_crawl_state / why_signals / etc. Land in `supabase/migrations/` via code's proxy.
+
+### claude design (front-end across both products)
+- **static/index.html** — broker terminal home page (events / performers / venues / configs / watchlist tabs).
+- **static/event.html** — Stage 1+2 event terminal (chart workbench, zone breakdown, ESPN tab, raw TEvo tab).
+- **static/movers.html** — full Movers report.
+- **static/chat.html** — retail chatbot UI.
+- Future: any new HTML/CSS/JS surfaces, design system tokens, theme variables, accessibility passes.
+- **Does NOT touch**: app.py routes, edge functions, SQL migrations. If a UI change needs a new endpoint or new field, write a one-line spec in the LOG (`NEXT (claude design)` entry) and code or copilot picks it up.
+
+### shared (ask before edit, leave WAIT note)
+- **AGENTS.md** (this file) · README.md · .gitignore · cross-product schema changes that touch both retail and broker views.
+
+All three agents are free to call any edge fn or read any view. Only writes to source files in another agent's OWN list need a WAIT note first.
 
 ## RULES
 
-1. `git pull --rebase origin main` before push. always.
+1. `git pull --rebase origin main` before push. always. (code's responsibility on proxy commits; copilot/design work from their own working copy.)
 2. no edit other agent's owned path without leaving WAIT note in LOG first.
 3. `.claude/` gitignored. never commit worktrees.
 4. work in `C:\VibeCode\terminal-2`. never OneDrive, never `C:\Users\julia\Code\Terminal-2` once the move completes. **(repo still physically at `C:\Users\julia\Code\Terminal-2` as of 2026-05-07; user-driven `mv` + Railway root reconfig pending — see WAIT in LOG)**
 5. append to LOG below at end of every session. newest entry on top.
 6. tag tasks: DOING / DONE / WAIT / NEXT / BLOCKED.
 7. broker product = full data. retail product = S4K-owned only. never cross.
-8. **before commit:** flip your STATUS BOARD row to DOING with `started_at` timestamp + brief working-on. if you're going to touch the other agent's owned path or shared SQL, also leave a WAIT note in LOG (top of LOG, your section).
+8. **before commit:** flip your STATUS BOARD row to DOING with `started_at` timestamp + brief working-on. if you're going to touch another agent's owned path or shared SQL, also leave a WAIT note in LOG (top of LOG, your section).
 9. **after commit/push:** flip your STATUS BOARD row back to IDLE with `started_at` cleared, AND append a LOG entry under today's date with: `DONE <SHA> <subject>` (newest first within the day). if your work spans multiple commits in one session, one LOG entry covering all of them is fine — list each SHA.
-10. if the other agent is DOING and you need to start: read their STATUS BOARD row's `working on`. if your planned work overlaps (same file, related table), don't start — leave a `WAIT for code/cowork to finish <topic>` note in the LOG and pick something else.
-11. **before editing ANY file:** append the file path under your subsection in the WIP section above. read the *other* agent's WIP first — if they have your target file listed, pick a different file or wait. **clear your subsection back to "(none)" the instant you commit + push.** This rule is finer-grained than rule 10: STATUS BOARD says "I'm working", WIP says "exactly which files".
+10. if another agent is DOING and you need to start: read their STATUS BOARD row's `working on`. if your planned work overlaps (same file, related table), don't start — leave a `WAIT for <agent> to finish <topic>` note in the LOG and pick something else.
+11. **before editing ANY file:** append the file path under your subsection in the WIP section above. read the *other agents'* WIP first — if any of them have your target file listed, pick a different file or wait. **clear your subsection back to "(none)" the instant your work hits `main`.** This rule is finer-grained than rule 10: STATUS BOARD says "I'm working", WIP says "exactly which files".
+12. **proxy-commit protocol** (copilot + claude design): you produce a working tree. drop your changes into the repo (or a paste in the LOG with a "FROM copilot/design" header) + a one-line summary of what you touched + intent. code reviews, runs validators (`py -3 -c "import ast; ast.parse(open('app.py').read())"` for backend, manual eyeball for HTML), then commits in your name (`Co-Authored-By: copilot` or `claude design` in the trailer) and pushes. If code finds a bug it doesn't ship — leaves a comment in LOG (`BLOCKED for <agent>: <bug>`).
+13. **code's audit pass** (post-commit): every commit landed by anyone, code spot-checks the diff against (a) the product wall (no broker→retail leak), (b) AGENTS.md ownership, (c) common bug classes (parking inclusion, ghost events, content_hash gaps, cross-product schema collisions). Findings go in `docs/<date>-audit.md` + LOG.
+14. **claude design ↔ backend boundary**: if a UI change needs a new endpoint, new field, new RPC, or modified data shape — design DOES NOT add the backend code. Drop a `NEXT (claude design): need <endpoint/field>` line in the LOG. Either code (terminal endpoints) or copilot (chat endpoints) picks it up next session.
 
 ## STATE (truth, not history)
 
