@@ -1019,6 +1019,7 @@ def broker_watchlist_movers(
             "cur_market_tix": r.get("cur_market_tix"),
             "cur_owned_med":  r.get("cur_owned_med"),
             "cur_owned_tix":  r.get("cur_owned_tix"),
+            "cur_owned_share": r.get("cur_owned_share"),  # v3: for "we ARE the market" badge
             "delta_market_pct": pct_delta(r.get("cur_market_med"), r.get("prev_market_med")),
             "delta_owned_pct":  pct_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
             "cur_market_val":  round(cur_market_val,  2) if cur_market_val  is not None else None,
@@ -1551,6 +1552,7 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
             "cur_market_tix": r.get("cur_market_tix"),
             "cur_owned_med":  r.get("cur_owned_med"),
             "cur_owned_tix":  r.get("cur_owned_tix"),
+            "cur_owned_share": r.get("cur_owned_share"),  # v3: for "we ARE the market" badge
             "delta_market_pct": pct_delta(r.get("cur_market_med"), r.get("prev_market_med")),
             "delta_market_abs": abs_delta(r.get("cur_market_med"), r.get("prev_market_med")),
             "delta_owned_pct":  pct_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),

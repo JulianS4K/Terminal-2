@@ -160,11 +160,23 @@ function fmtMoneyDelta(v) {
   return `<span class="${cls}">${sign}${fmt}</span>`;
 }
 
+function ownedShareBadge(share) {
+  if (share == null) return "";
+  const n = Number(share);
+  if (!isFinite(n) || n < 0.30) return "";
+  const pct = (n * 100).toFixed(0);
+  if (n >= 0.50) {
+    return ` <span style="background:#3a1010;color:#fca5a5;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="S4K owns ${pct}% of post-parking supply — screen median is our own quote">WE ARE THE MARKET ${pct}%</span>`;
+  }
+  return ` <span style="background:#332512;color:#fcd34d;padding:1px 5px;font-size:10px;letter-spacing:0.06em" title="S4K owns ${pct}% of post-parking supply — meaningful price-setting power">HEAVY ${pct}%</span>`;
+}
+
 function eventRow(r, segment, mode) {
   const owned = (r.cur_owned_tix || 0) > 0;
+  const badge = ownedShareBadge(r.cur_owned_share);
   if (mode === "value") {
     return `<tr class="${owned ? 'owned' : ''}">
-      <td><a href="/event/${r.event_id}">${r.name || '—'}</a><div style="color:var(--fg-3);font-size:11px">${r.venue_name || ''} · ${(r.occurs_at_local||'').slice(0,10)}</div></td>
+      <td><a href="/event/${r.event_id}">${r.name || '—'}</a>${badge}<div style="color:var(--fg-3);font-size:11px">${r.venue_name || ''} · ${(r.occurs_at_local||'').slice(0,10)}</div></td>
       <td class="num">${segment !== 'market' ? fmtMoney(r.cur_owned_val) : ''}</td>
       <td class="num">${segment !== 'market' ? fmtNum(r.cur_owned_tix) : ''}</td>
       <td class="num">${segment !== 'market' ? fmtMoneyDelta(r.delta_owned_val) : ''}</td>
@@ -176,7 +188,7 @@ function eventRow(r, segment, mode) {
   const market_pct_html = fmtPct(r.delta_market_pct);
   const owned_pct_html  = fmtPct(r.delta_owned_pct);
   return `<tr class="${owned ? 'owned' : ''}">
-    <td><a href="/event/${r.event_id}">${r.name || '—'}</a><div style="color:var(--fg-3);font-size:11px">${r.venue_name || ''} · ${(r.occurs_at_local||'').slice(0,10)}</div></td>
+    <td><a href="/event/${r.event_id}">${r.name || '—'}</a>${badge}<div style="color:var(--fg-3);font-size:11px">${r.venue_name || ''} · ${(r.occurs_at_local||'').slice(0,10)}</div></td>
     <td class="num">${segment !== 'market' ? fmtMoney(r.cur_owned_med) : ''}</td>
     <td class="num">${segment !== 'market' ? fmtNum(r.cur_owned_tix) : ''}</td>
     <td class="num">${segment !== 'market' ? owned_pct_html : ''}</td>
