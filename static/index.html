@@ -940,24 +940,30 @@ async function loadEvent(eventId) {
     const otherSources = (zonesRich && zonesRich.available_sources) || [];
     const otherSrcLabel = otherSources.filter(s => s !== chosenSource).join(', ');
     depthTitle = `Zone Ladder · ${chosenSource === 'curated' ? 'Curated' : chosenSource === 'fallback' ? 'System (fallback)' : 'Unmapped'}`;
-    depthHeader = '<th title="Zone name (curated label or system-derived).">Zone</th>'
-                + '<th class="num" title="Cheapest ask in the zone.">Min</th>'
-                + '<th class="num" title="25th percentile retail.">P25</th>'
-                + '<th class="num" title="Median retail in the zone — most-quoted price.">Med</th>'
-                + '<th class="num" title="75th percentile retail.">P75</th>'
-                + '<th class="num" title="90th percentile retail — top tier asks.">P90</th>'
-                + '<th class="num" title="Highest ask in the zone.">Max</th>'
-                + '<th class="num" title="Total tickets on market in this zone (right now).">Vol</th>'
-                + '<th class="num" title="S4K-owned tickets in the zone (brokerage_id 1768).">Owned</th>'
-                + '<th class="num" title="S4K share of the zone: owned tix / total tix. ≥30% = we are the market.">Share</th>'
-                + '<th class="num" title="Median price of S4K-owned listings in the zone.">Owned med</th>';
+    depthHeader = '<th data-sort-key="zone" title="Zone name (curated label or system-derived).">Zone <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="rmin" title="Cheapest ask in the zone.">Min <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="rp25" title="25th percentile retail.">P25 <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="rmed" title="Median retail in the zone — most-quoted price.">Med <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="rp75" title="75th percentile retail.">P75 <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="rp90" title="90th percentile retail — top tier asks.">P90 <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="rmax" title="Highest ask in the zone.">Max <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="vol" title="Total tickets on market in this zone (right now).">Vol <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="owned" title="S4K-owned tickets in the zone (brokerage_id 1768).">Owned <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="share" title="S4K share of the zone: owned tix / total tix. ≥30% = we are the market.">Share <span class="sort-ind"></span></th>'
+                + '<th class="num" data-sort-key="ownedmed" title="Median price of S4K-owned listings in the zone.">Owned med <span class="sort-ind"></span></th>';
     depthRows = richZones.map(z => {
       const totalTix = z.tickets_count || 0;
       const ownedTix = z.owned_tickets_count || 0;
       const share = z.owned_share != null ? Number(z.owned_share) : (totalTix > 0 ? ownedTix / totalTix : 0);
       const isMkt = share >= 0.30;
       const cls = ['', ownedTix > 0 ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
-      return `<tr class="${cls}">
+      return `<tr class="${cls}"
+        data-zone="${esc(z.zone || '')}"
+        data-rmin="${z.retail_min ?? ''}" data-rp25="${z.retail_p25 ?? ''}"
+        data-rmed="${z.retail_median ?? ''}" data-rp75="${z.retail_p75 ?? ''}"
+        data-rp90="${z.retail_p90 ?? ''}" data-rmax="${z.retail_max ?? ''}"
+        data-vol="${totalTix}" data-owned="${ownedTix}"
+        data-share="${share}" data-ownedmed="${z.owned_median_retail ?? ''}">
         <td><strong>${esc(z.zone || '—')}</strong></td>
         <td class="num">${moneyC(z.retail_min)}</td>
         <td class="num">${moneyC(z.retail_p25)}</td>
@@ -1065,12 +1071,37 @@ async function loadEvent(eventId) {
 
   const occursAt = ev.occurs_at_local || ev.occurs_at;
   const venueName = ev.venue_name || ev.venue?.name || '—';
+  // Logo strip — home + away from ov.assets, falls back to "?" placeholder
+  // when performer_metadata isn't populated yet (crawl in progress).
+  const homeAsset = ov.assets?.home;
+  const awayAsset = ov.assets?.away;
+  const _logoHTML = (asset, side) => {
+    const url = asset?.logo_default_url;
+    const cp = asset?.color_primary;
+    const bg = cp ? '#' + cp : '#26292d';
+    if (!url) return `<div class="logo-lg" title="No ESPN logo for ${side}" style="background:${bg};display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;">?</div>`;
+    return `<div class="logo-lg" title="${esc(asset?.name || side)}" style="background-color:${bg};background-image:url('${esc(url)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
+  };
+  // Build accent-bar from team primary colors (home + away + S4K orange)
+  const accentColors = [
+    homeAsset?.color_primary && '#' + homeAsset.color_primary,
+    awayAsset?.color_primary && '#' + awayAsset.color_primary,
+    '#f58426',
+  ].filter(Boolean);
+
   mount.innerHTML = `
     <div class="hero">
       <div class="hero-left">
-        <div class="hero-title">${esc(ev.name || ('Event #' + eventId))}</div>
-        <div class="hero-sub">${esc(occursAt || '')} · ${esc(venueName)}</div>
-        <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
+        <div class="hero-logos" style="display:flex;align-items:center;gap:12px;">
+          ${_logoHTML(awayAsset, 'away')}
+          <div class="hero-vs" style="font-size:13px;color:var(--muted);">@</div>
+          ${_logoHTML(homeAsset, 'home')}
+          <div style="margin-left:8px;">
+            <div class="hero-title">${esc(ev.name || ('Event #' + eventId))}</div>
+            <div class="hero-sub">${esc(occursAt || '')} · ${esc(venueName)}</div>
+          </div>
+        </div>
+        <div class="accent-bar" style="margin-top:8px;">${accentColors.map(c => `<span style="background:${c}"></span>`).join('')}</div>
       </div>
       <div class="hero-right" style="background:linear-gradient(135deg,#16181b,#1c1e22);">
         <div class="map-pin">Venue Map · ${esc(ev.configuration_name || ('config #' + (ev.configuration_id || '—')))}</div>
@@ -1203,10 +1234,10 @@ async function loadEvent(eventId) {
             <input type="checkbox" id="zone-show-parking" ${localStorage.getItem('evt_zone_parking_v1') === '1' ? 'checked' : ''} style="margin:0;">
             Show parking/ancillary${(zonesRich && zonesRich.parking_hidden) ? ' <span class="dim">(' + zonesRich.parking_hidden + ' hidden)</span>' : ''}
           </label>
-          <span class="dim">${esc(depthCaption)}</span>
+          <span class="dim" title="Click any header to sort. Shift-click to add a secondary sort key.">${esc(depthCaption)} · click hdr to sort</span>
         </div>
       </div>
-      <table class="ibkr">
+      <table class="ibkr sortable" data-default-sort-col="7" data-default-sort-dir="desc">
         <thead><tr>${depthHeader}</tr></thead>
         <tbody>${depthRows}</tbody>
       </table>
@@ -1259,25 +1290,49 @@ async function loadEvent(eventId) {
       </div>
     </div>
     <div style="height:12px"></div>
-    ${rawTevo && (rawTevo.groups || []).length ? `
-    <div class="panel">
+    ${rawTevo && (rawTevo.groups || []).length ? (() => {
+      // Parking detection on the raw ticket_groups: TEvo's `type` field is the
+      // canonical signal — anything not 'event' is parking/hospitality. Backup:
+      // section name regex for cases where type is missing.
+      const showParking = localStorage.getItem('evt_depth_parking_v1') === '1';
+      const parkingRe = /\b(parking|garage|valet|lot|hospitality|premium\s*park|prepaid|preferred\s*parking|guest\s*parking|vip\s*lot|vip\s*parking)\b/i;
+      const isParking = (g) => {
+        const t = (g.type || 'event').toLowerCase();
+        if (t !== 'event') return true;
+        const sec = (g.section || '');
+        if (parkingRe.test(sec)) return true;
+        const fmt = (g.format || '').toLowerCase();
+        if (/parking/.test(fmt)) return true;
+        return false;
+      };
+      const totalParking = rawTevo.groups.filter(isParking).length;
+      const visibleGroups = showParking ? rawTevo.groups : rawTevo.groups.filter(g => !isParking(g));
+      const sortedGroups = visibleGroups.slice().sort((a,b) => (a.retail_price||0) - (b.retail_price||0));
+      return `
+    <div class="panel" id="depth-panel" data-event-id="${eventId}">
       <div class="panel-h">
-        <h3>Market vs Owned Depth · ${rawTevo.groups.length} listings</h3>
-        <div class="actions"><span class="dim">source: ${esc(rawTevo.source || 'live')} · ${shortDate(rawTevo.captured_at)}${sectionZones?.source_mix ? ' · zones: ' + Object.entries(sectionZones.source_mix).map(([s,c])=>`${c} ${s}`).join(' / ') : ''}</span></div>
+        <h3>Market vs Owned Depth · ${visibleGroups.length} listings${(!showParking && totalParking) ? ` <span class="dim" style="font-size:11px;">(${totalParking} parking hidden)</span>` : ''}</h3>
+        <div class="actions" style="display:flex;align-items:center;gap:10px;">
+          <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;">
+            <input type="checkbox" id="depth-show-parking" ${showParking ? 'checked' : ''} style="margin:0;">
+            Show parking/ancillary
+          </label>
+          <span class="dim">source: ${esc(rawTevo.source || 'live')} · ${shortDate(rawTevo.captured_at)}${sectionZones?.source_mix ? ' · zones: ' + Object.entries(sectionZones.source_mix).map(([s,c])=>`${c} ${s}`).join(' / ') : ''}</span>
+        </div>
       </div>
-      <table class="ibkr">
+      <table class="ibkr sortable" data-default-sort-col="4" data-default-sort-dir="asc">
         <thead><tr>
-          <th title="Zone the section maps into (curated rules first, then keyword/digit fallback). 'unmapped' means no rule matched.">Zone</th>
-          <th title="Raw section label from TEvo.">Section</th>
-          <th title="Row label within the section.">Row</th>
-          <th class="num" title="Tickets available in this row group (consecutive seats).">Qty</th>
-          <th class="num" title="Asking price per ticket (retail).">Retail</th>
-          <th class="num" title="Wholesale price per ticket — broker-to-broker.">Wholesale</th>
-          <th title="Delivery format: e-tkt, flash, paper, mobile, etc.">Format</th>
-          <th title="Allowed split sizes — which quantities a buyer can purchase (e.g. [2,4] = pairs or all-four only).">Splits</th>
+          <th data-sort-key="zone" title="Zone the section maps into (curated rules first, then keyword/digit fallback). 'unmapped' means no rule matched.">Zone <span class="sort-ind"></span></th>
+          <th data-sort-key="section" title="Raw section label from TEvo.">Section <span class="sort-ind"></span></th>
+          <th data-sort-key="row" title="Row label within the section.">Row <span class="sort-ind"></span></th>
+          <th class="num" data-sort-key="qty" title="Tickets available in this row group (consecutive seats).">Qty <span class="sort-ind"></span></th>
+          <th class="num" data-sort-key="retail" title="Asking price per ticket (retail).">Retail <span class="sort-ind"></span></th>
+          <th class="num" data-sort-key="wholesale" title="Wholesale price per ticket — broker-to-broker.">Wholesale <span class="sort-ind"></span></th>
+          <th data-sort-key="format" title="Delivery format: e-tkt, flash, paper, mobile, etc.">Format <span class="sort-ind"></span></th>
+          <th data-sort-key="splits" title="Allowed split sizes — which quantities a buyer can purchase (e.g. [2,4] = pairs or all-four only).">Splits <span class="sort-ind"></span></th>
         </tr></thead>
         <tbody>
-          ${rawTevo.groups.slice().sort((a,b) => (a.retail_price||0) - (b.retail_price||0)).slice(0, 200).map(g => {
+          ${sortedGroups.slice(0, 250).map(g => {
             const owned = g.office?.brokerage?.id === 1768;
             const sec = g.section || '';
             const zoneInfo = (sectionZones?.map || {})[sec] || {};
@@ -1288,11 +1343,15 @@ async function loadEvent(eventId) {
             const splitsTitle = splits.length === 0 ? 'No split rules — quantity is sold all-or-nothing.'
               : splits.length === 1 ? `Only sells in groups of ${splits[0]}.`
               : `Buyer can purchase any of: ${splits.join(', ')}.`;
-            return `<tr class="${owned ? 'owned' : ''}">
+            const qty = g.available_quantity ?? g.quantity ?? 0;
+            return `<tr class="${owned ? 'owned' : ''}"
+              data-zone="${esc(zoneLabel)}" data-section="${esc(sec)}" data-row="${esc(g.row || '')}"
+              data-qty="${qty}" data-retail="${g.retail_price||0}" data-wholesale="${g.wholesale_price||0}"
+              data-format="${esc(g.format || '')}" data-splits="${(splits[0]||0)}">
               <td class="${zoneCls}" style="font-size:11px;" title="${esc(zoneInfo.source || '—')}">${esc(zoneLabel)}</td>
               <td>${esc(sec || '—')}${owned ? ' <span class="badge warn" style="font-size:9px;">S4K</span>' : ''}</td>
               <td>${esc(g.row || '—')}</td>
-              <td class="num">${num(g.available_quantity ?? g.quantity)}</td>
+              <td class="num">${num(qty)}</td>
               <td class="num"><strong>${moneyC(g.retail_price)}</strong></td>
               <td class="num dim">${moneyC(g.wholesale_price)}</td>
               <td class="dim">${esc(g.format || '')}</td>
@@ -1301,10 +1360,16 @@ async function loadEvent(eventId) {
           }).join('')}
         </tbody>
       </table>
-      ${rawTevo.groups.length > 200 ? `<div class="dim" style="padding:6px 12px;font-size:11px;">Showing first 200 of ${rawTevo.groups.length} listings (sorted by retail asc).</div>` : ''}
-    </div>` : ''}`;
+      ${sortedGroups.length > 250 ? `<div class="dim" style="padding:6px 12px;font-size:11px;">Showing first 250 of ${sortedGroups.length} listings.</div>` : ''}
+    </div>`;
+    })() : ''}`;
 
-  // Render the chart after innerHTML is set. Pass through the full chart payload.
+  // Always wire the range buttons after innerHTML is set, regardless of whether
+  // chart data exists. (Previously _wireRangeButtons() was only called from
+  // renderEventChart, so when chart data was empty the buttons did nothing.)
+  _wireRangeButtons(eventId);
+
+  // Render the chart after innerHTML is set, if data is present.
   if (chart && chart.series && (chart.series.prices_market || []).length) renderEventChart(chart);
 
   // Wire the "Show parking/ancillary" checkbox: persist + reload event so
@@ -1316,45 +1381,71 @@ async function loadEvent(eventId) {
       loadEvent(eventId);
     });
   }
+
+  // Same checkbox lives on the Market vs Owned Depth panel — wire that too.
+  const depthParkingCb = document.getElementById('depth-show-parking');
+  if (depthParkingCb) {
+    depthParkingCb.addEventListener('change', () => {
+      localStorage.setItem('evt_depth_parking_v1', depthParkingCb.checked ? '1' : '0');
+      loadEvent(eventId);  // simplest; could re-render in place
+    });
+  }
+
+  // Sortable column headers on Zone Ladder + Market vs Owned Depth
+  _wireSortableTables();
 }
 
 // Series catalog — each entry knows its data path, color, axis, dash style, default visibility.
 // Group: '$' (price-y axis), 'count' (count-y axis), '%' (right %-axis), 'idx' (right index axis 0-100).
 // `defaults` set per user spec: market median + owned median (price), home/away standings (%),
 // injuries + roster_moves overlays. Everything else off by default; toggle to enable.
+// CHART_SERIES is the EXPLICIT catalog: known sources/metrics with curated
+// label, color, axis, dash, default visibility. Future sources (e.g.
+// SeatGeek_Market) just add new entries with an SG_ prefix.
+//
+// Anything in chart.series that does NOT appear here gets auto-rendered as
+// a fallback toggle pill (see CHART_AUTO logic below) so new backend series
+// surface in the workbench without UI code changes.
+//
+// Naming convention: '<SOURCE>_<scope> <metric>' where SOURCE is the
+// upstream data provider (EVO=Ticket Evolution; ESPN; future: SG=SeatGeek,
+// TM=Ticketmaster, etc.). Scope is Market / Owned / Stand / etc.
 const CHART_SERIES = [
-  { id: 'prices_market',   label: 'Market median ($)',     path: 'series.prices_market',   color: '#60a5fa', axis: 'y$', def: true },
-  { id: 'prices_owned',    label: 'S4K owned median ($)',  path: 'series.prices_owned',    color: '#4ade80', axis: 'y$', def: true, dash:[4,3] },
-  { id: 'retail_min',      label: 'Retail min ($)',        path: 'series.retail_min',      color: '#7dd3fc', axis: 'y$', def: false },
-  { id: 'retail_p25',      label: 'Retail P25 ($)',        path: 'series.retail_p25',      color: '#93c5fd', axis: 'y$', def: false },
-  { id: 'retail_p75',      label: 'Retail P75 ($)',        path: 'series.retail_p75',      color: '#a78bfa', axis: 'y$', def: false },
-  { id: 'retail_p90',      label: 'Retail P90 ($)',        path: 'series.retail_p90',      color: '#c4b5fd', axis: 'y$', def: false },
-  { id: 'retail_max',      label: 'Retail max ($)',        path: 'series.retail_max',      color: '#ddd6fe', axis: 'y$', def: false },
-  { id: 'retail_mean',     label: 'Retail mean ($)',       path: 'series.retail_mean',     color: '#bfdbfe', axis: 'y$', def: false },
-  { id: 'wholesale_median',label: 'Wholesale median ($)',  path: 'series.wholesale_median',color: '#5eead4', axis: 'y$', def: false, dash:[4,3] },
-  { id: 'getin_price',     label: 'Get-in ($)',            path: 'series.getin_price',     color: '#facc15', axis: 'y$', def: false },
-  { id: 'retail_sum',      label: 'Notional ($)',          path: 'series.retail_sum',      color: '#fb923c', axis: 'y$', def: false },
-  { id: 'counts_market',   label: 'Market tix',            path: 'series.counts_market',   color: '#f58426', axis: 'yC', def: false },
-  { id: 'counts_owned',    label: 'S4K owned tix',         path: 'series.counts_owned',    color: '#fbbf24', axis: 'yC', def: false, dash:[4,3] },
-  { id: 'groups_count',    label: 'Listing groups',        path: 'series.groups_count',    color: '#fb7185', axis: 'yC', def: false },
-  { id: 'sections_count',  label: 'Sections active',       path: 'series.sections_count',  color: '#f472b6', axis: 'yC', def: false },
-  { id: 'owned_share',     label: 'S4K share',             path: 'series.owned_share',     color: '#fbbf24', axis: 'y%', def: false, scale: 100 },
-  { id: 'top5_concentration', label: 'Top-5 concentration', path: 'series.top5_concentration', color: '#a3e635', axis: 'y%', def: false, scale: 100 },
-  { id: 'price_dispersion',label: 'Price dispersion',      path: 'series.price_dispersion',color: '#22d3ee', axis: 'yIdx', def: false },
-  { id: 'tail_premium',    label: 'Tail premium',          path: 'series.tail_premium',    color: '#34d399', axis: 'yIdx', def: false },
-  // Splits inventory
-  { id: 'splits_pct_pairs',  label: 'Pairs available %',  path: 'series.splits_pct_pairs',   color: '#fb923c', axis: 'y%', def: false, scale: 100 },
-  { id: 'splits_pct_singles',label: 'Singles available %',path: 'series.splits_pct_singles', color: '#f472b6', axis: 'y%', def: false, scale: 100 },
-  { id: 'splits_min_q',      label: 'Min buyable qty',    path: 'series.splits_min_q',       color: '#facc15', axis: 'yIdx', def: false },
-  // ESPN
-  { id: 'home_win_pct',    label: 'Home win %',            path: 'series.home_win_pct',    color: '#10b981', axis: 'y%', def: true,  scale: 100, hint: 'home_team' },
-  { id: 'away_win_pct',    label: 'Away win %',            path: 'series.away_win_pct',    color: '#ef4444', axis: 'y%', def: true,  scale: 100, hint: 'away_team' },
-  { id: 'home_seed',       label: 'Home seed',             path: 'series.home_seed',       color: '#10b981', axis: 'yIdx', def: false, hint: 'home_team' },
-  { id: 'away_seed',       label: 'Away seed',             path: 'series.away_seed',       color: '#ef4444', axis: 'yIdx', def: false, hint: 'away_team' },
-  { id: 'home_injury_load',label: 'Home injuries (#)',     path: 'series.home_injury_load',color: '#f87171', axis: 'yIdx', def: false, hint: 'home_team' },
-  { id: 'away_injury_load',label: 'Away injuries (#)',     path: 'series.away_injury_load',color: '#fca5a5', axis: 'yIdx', def: false, hint: 'away_team' },
-  { id: 'home_team_index', label: 'Home composite',        path: 'series.home_team_index', color: '#84cc16', axis: 'yIdx', def: false, hint: 'home_team' },
-  { id: 'away_team_index', label: 'Away composite',        path: 'series.away_team_index', color: '#fb923c', axis: 'yIdx', def: false, hint: 'away_team' },
+  // Ticket Evolution — market & owned ($) ===================================
+  { id: 'prices_market',   label: 'EVO_Market median ($)',     path: 'series.prices_market',   color: '#60a5fa', axis: 'y$', def: true },
+  { id: 'prices_owned',    label: 'EVO_Owned median ($)',      path: 'series.prices_owned',    color: '#4ade80', axis: 'y$', def: true, dash:[4,3] },
+  { id: 'retail_min',      label: 'EVO_Market P0 / min ($)',   path: 'series.retail_min',      color: '#7dd3fc', axis: 'y$', def: false },
+  { id: 'retail_p25',      label: 'EVO_Market P25 ($)',        path: 'series.retail_p25',      color: '#93c5fd', axis: 'y$', def: false },
+  { id: 'retail_p75',      label: 'EVO_Market P75 ($)',        path: 'series.retail_p75',      color: '#a78bfa', axis: 'y$', def: false },
+  { id: 'retail_p90',      label: 'EVO_Market P90 ($)',        path: 'series.retail_p90',      color: '#c4b5fd', axis: 'y$', def: false },
+  { id: 'retail_max',      label: 'EVO_Market P100 / max ($)', path: 'series.retail_max',      color: '#ddd6fe', axis: 'y$', def: false },
+  { id: 'retail_mean',     label: 'EVO_Market mean ($)',       path: 'series.retail_mean',     color: '#bfdbfe', axis: 'y$', def: false },
+  { id: 'wholesale_median',label: 'EVO_Wholesale median ($)',  path: 'series.wholesale_median',color: '#5eead4', axis: 'y$', def: false, dash:[4,3] },
+  { id: 'getin_price',     label: 'EVO_Get-in ($)',            path: 'series.getin_price',     color: '#facc15', axis: 'y$', def: false },
+  { id: 'retail_sum',      label: 'EVO_Notional ($)',          path: 'series.retail_sum',      color: '#fb923c', axis: 'y$', def: false },
+  // Ticket Evolution — counts ==============================================
+  { id: 'counts_market',   label: 'EVO_Market tix',            path: 'series.counts_market',   color: '#f58426', axis: 'yC', def: false },
+  { id: 'counts_owned',    label: 'EVO_Owned tix',             path: 'series.counts_owned',    color: '#fbbf24', axis: 'yC', def: false, dash:[4,3] },
+  { id: 'groups_count',    label: 'EVO_Listing groups',        path: 'series.groups_count',    color: '#fb7185', axis: 'yC', def: false },
+  { id: 'sections_count',  label: 'EVO_Sections active',       path: 'series.sections_count',  color: '#f472b6', axis: 'yC', def: false },
+  // Ticket Evolution — structure & ratios ==================================
+  { id: 'owned_share',         label: 'EVO_Owned share',         path: 'series.owned_share',         color: '#fbbf24', axis: 'y%',   def: false, scale: 100 },
+  { id: 'top5_concentration',  label: 'EVO_Top-5 concentration', path: 'series.top5_concentration',  color: '#a3e635', axis: 'y%',   def: false, scale: 100 },
+  { id: 'price_dispersion',    label: 'EVO_Price dispersion',    path: 'series.price_dispersion',    color: '#22d3ee', axis: 'yIdx', def: false },
+  { id: 'tail_premium',        label: 'EVO_Tail premium',        path: 'series.tail_premium',        color: '#34d399', axis: 'yIdx', def: false },
+  // Ticket Evolution — splits inventory ====================================
+  { id: 'splits_pct_pairs',    label: 'EVO_Pairs available %',   path: 'series.splits_pct_pairs',    color: '#fb923c', axis: 'y%',   def: false, scale: 100 },
+  { id: 'splits_pct_singles',  label: 'EVO_Singles available %', path: 'series.splits_pct_singles',  color: '#f472b6', axis: 'y%',   def: false, scale: 100 },
+  { id: 'splits_min_q',        label: 'EVO_Min buyable qty',     path: 'series.splits_min_q',        color: '#facc15', axis: 'yIdx', def: false },
+  // ESPN — standings + rank ================================================
+  { id: 'home_win_pct',     label: 'ESPN_Home win %',     path: 'series.home_win_pct',     color: '#10b981', axis: 'y%',   def: true,  scale: 100 },
+  { id: 'away_win_pct',     label: 'ESPN_Away win %',     path: 'series.away_win_pct',     color: '#ef4444', axis: 'y%',   def: true,  scale: 100 },
+  { id: 'home_seed',        label: 'ESPN_Home seed',      path: 'series.home_seed',        color: '#10b981', axis: 'yIdx', def: false },
+  { id: 'away_seed',        label: 'ESPN_Away seed',      path: 'series.away_seed',        color: '#ef4444', axis: 'yIdx', def: false },
+  { id: 'home_injury_load', label: 'ESPN_Home injuries (#)', path: 'series.home_injury_load', color: '#f87171', axis: 'yIdx', def: false },
+  { id: 'away_injury_load', label: 'ESPN_Away injuries (#)', path: 'series.away_injury_load', color: '#fca5a5', axis: 'yIdx', def: false },
+  { id: 'home_team_index',  label: 'ESPN_Home composite', path: 'series.home_team_index',  color: '#84cc16', axis: 'yIdx', def: false },
+  { id: 'away_team_index',  label: 'ESPN_Away composite', path: 'series.away_team_index',  color: '#fb923c', axis: 'yIdx', def: false },
 ];
 
 // Overlays: injuries + roster_moves render as vertical markers (not series). On by default.
@@ -1383,6 +1474,101 @@ function _getPath(obj, path) {
 let _eventChartInstance = null;
 let _eventChartData = null;
 
+// =====================================================================
+// Sortable tables: any <table class="ibkr sortable"> with <th data-sort-key>
+// in the header gets click-to-sort. Plain click resets to that single
+// column; Shift-click adds the column to the multi-key sort. Sort state
+// is held on the table element via dataset (data-sort-cols, data-sort-dirs).
+// Row values come from <tr data-{key}="..."> attributes — render path tags
+// each row with whatever fields it knows about (numeric where possible).
+// =====================================================================
+function _parseRowVal(tr, key) {
+  const v = tr.dataset[key];
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && /^[-+]?[0-9.]+$/.test(v) ? n : v;
+}
+function _applyTableSort(table) {
+  const cols = (table.dataset.sortCols || '').split(',').filter(Boolean);
+  const dirs = (table.dataset.sortDirs || '').split(',').filter(Boolean);
+  if (!cols.length) return;
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    for (let i = 0; i < cols.length; i++) {
+      const k = cols[i]; const dir = (dirs[i] || 'asc');
+      const av = _parseRowVal(a, k); const bv = _parseRowVal(b, k);
+      if (av == null && bv == null) continue;
+      if (av == null) return dir === 'asc' ? 1 : -1;
+      if (bv == null) return dir === 'asc' ? -1 : 1;
+      let cmp = 0;
+      if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+      if (cmp !== 0) return dir === 'asc' ? cmp : -cmp;
+    }
+    return 0;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+  // Indicators
+  table.querySelectorAll('th[data-sort-key]').forEach(th => {
+    const ind = th.querySelector('.sort-ind');
+    if (!ind) return;
+    const idx = cols.indexOf(th.dataset.sortKey);
+    if (idx < 0) { ind.textContent = ''; ind.style.opacity = ''; return; }
+    const arrow = (dirs[idx] === 'desc') ? ' ▼' : ' ▲';
+    ind.textContent = (cols.length > 1 ? `${idx + 1}` : '') + arrow;
+    ind.style.opacity = '1';
+  });
+}
+function _wireSortableTables() {
+  document.querySelectorAll('table.ibkr.sortable').forEach(table => {
+    if (table.dataset.sortWired === '1') return;
+    table.dataset.sortWired = '1';
+    // Apply default sort if defined
+    const defCol = table.dataset.defaultSortCol;
+    const defDir = table.dataset.defaultSortDir || 'asc';
+    if (defCol != null) {
+      const ths = table.querySelectorAll('th[data-sort-key]');
+      const def = ths[parseInt(defCol, 10)];
+      if (def) {
+        table.dataset.sortCols = def.dataset.sortKey;
+        table.dataset.sortDirs = defDir;
+        _applyTableSort(table);
+      }
+    }
+    table.querySelectorAll('th[data-sort-key]').forEach(th => {
+      th.style.cursor = 'pointer';
+      th.style.userSelect = 'none';
+      th.addEventListener('click', e => {
+        const k = th.dataset.sortKey;
+        const cols = (table.dataset.sortCols || '').split(',').filter(Boolean);
+        const dirs = (table.dataset.sortDirs || '').split(',').filter(Boolean);
+        if (e.shiftKey) {
+          // Multi-key: append or flip direction
+          const idx = cols.indexOf(k);
+          if (idx >= 0) {
+            dirs[idx] = (dirs[idx] === 'asc') ? 'desc' : 'asc';
+          } else {
+            cols.push(k); dirs.push('asc');
+          }
+        } else {
+          // Single-key: replace
+          if (cols[0] === k && cols.length === 1) {
+            dirs[0] = (dirs[0] === 'asc') ? 'desc' : 'asc';
+          } else {
+            cols.length = 0; dirs.length = 0;
+            cols.push(k); dirs.push('asc');
+          }
+        }
+        table.dataset.sortCols = cols.join(',');
+        table.dataset.sortDirs = dirs.join(',');
+        _applyTableSort(table);
+      });
+    });
+  });
+}
+
 // Color palette for dynamic zone pills (cycles through hues)
 const ZONE_PALETTE = ['#60a5fa','#4ade80','#fbbf24','#f472b6','#a78bfa','#22d3ee','#f87171','#34d399','#fb923c','#c4b5fd','#84cc16','#5eead4','#facc15','#a3e635','#fb7185','#93c5fd','#7dd3fc','#bfdbfe','#ddd6fe','#10b981'];
 function _zoneColor(idx) { return ZONE_PALETTE[idx % ZONE_PALETTE.length]; }
@@ -1392,33 +1578,35 @@ const CHART_RANGE_KEY = 'evt_chart_range_v1';
 function _loadChartRange() { return localStorage.getItem(CHART_RANGE_KEY) || '30d'; }
 function _saveChartRange(r) { localStorage.setItem(CHART_RANGE_KEY, r); }
 
-function _wireRangeButtons() {
+function _wireRangeButtons(eventId) {
   const wrap = document.getElementById('chart-range-buttons');
   if (!wrap) return;
-  const eventId = parseInt(wrap.dataset.eventId, 10);
+  // Clone to drop any prior listeners from earlier loadEvent calls.
+  const fresh = wrap.cloneNode(true);
+  wrap.parentNode.replaceChild(fresh, wrap);
+  const realWrap = document.getElementById('chart-range-buttons');
   const current = _loadChartRange();
-  wrap.querySelectorAll('a.rng').forEach(el => {
+  realWrap.querySelectorAll('a.rng').forEach(el => {
     const r = el.dataset.rng;
-    if (r === current) {
-      el.classList.add('active');
-      el.style.background = 'var(--accent)';
-      el.style.color = '#000';
-    } else {
-      el.classList.remove('active');
-      el.style.background = '';
-      el.style.color = '';
-    }
+    const isActive = r === current;
+    el.classList.toggle('active', isActive);
+    el.style.background = isActive ? 'var(--accent)' : '';
+    el.style.color      = isActive ? '#000'         : '';
     el.addEventListener('click', async () => {
       _saveChartRange(r);
-      // Visual immediate update
-      wrap.querySelectorAll('a.rng').forEach(b => { b.style.background=''; b.style.color=''; b.classList.remove('active'); });
+      realWrap.querySelectorAll('a.rng').forEach(b => { b.style.background=''; b.style.color=''; b.classList.remove('active'); });
       el.style.background = 'var(--accent)'; el.style.color = '#000'; el.classList.add('active');
       const meta = document.getElementById('chart-range-meta');
       if (meta) meta.textContent = 'loading…';
       try {
-        const fresh = await api(`/api/broker/event/${eventId}/chart-data?range=${encodeURIComponent(r)}`);
-        if (meta) meta.textContent = ((fresh.series?.prices_market || []).length) + ' snaps';
-        renderEventChart(fresh);
+        const data = await api(`/api/broker/event/${eventId}/chart-data?range=${encodeURIComponent(r)}`);
+        if (meta) meta.textContent = ((data.series?.prices_market || []).length) + ' snaps';
+        // Replace the canvas wrapper if it was the empty-state placeholder
+        const wrapEl = document.getElementById('event-chart-wrap');
+        if (wrapEl && !document.getElementById('event-chart')) {
+          wrapEl.innerHTML = '<canvas id="event-chart"></canvas>';
+        }
+        renderEventChart(data);
       } catch (e) {
         if (meta) meta.textContent = 'error: ' + e.message;
       }
@@ -1426,9 +1614,41 @@ function _wireRangeButtons() {
   });
 }
 
+// Auto-derive entries for any series in `chart.series` that aren't in the
+// explicit CHART_SERIES catalog. Lets the backend ship new sources/metrics
+// without a frontend deploy — they show up as togglable pills with auto-
+// assigned colors and reasonable axis defaults.
+function _autoDiscoverSeries(data) {
+  if (!data || !data.series) return [];
+  const known = new Set(CHART_SERIES.map(s => s.path));
+  const auto = [];
+  let colorIdx = 0;
+  for (const [key, series] of Object.entries(data.series)) {
+    const path = 'series.' + key;
+    if (known.has(path)) continue;
+    if (!Array.isArray(series) || !series.length) continue;
+    if (series[0] && typeof series[0].t === 'undefined') continue;  // not a time-series shape
+    // Heuristics for axis: $ if values look big, % if all in [0,1], else yIdx
+    const sampleVals = series.slice(0, 10).map(p => p.v).filter(v => v != null);
+    const allFraction = sampleVals.length && sampleVals.every(v => v >= 0 && v <= 1);
+    const looksDollar = /price|retail|wholesale|notional|getin|\$|sum/i.test(key);
+    const axis = allFraction ? 'y%' : (looksDollar ? 'y$' : 'yIdx');
+    auto.push({
+      id: 'auto:' + key,
+      label: key.replace(/_/g, ' '),  // human-ish
+      path: path,
+      color: ZONE_PALETTE[colorIdx++ % ZONE_PALETTE.length],
+      axis,
+      def: false,
+      scale: allFraction ? 100 : null,
+      _auto: true,
+    });
+  }
+  return auto;
+}
+
 function renderEventChart(data) {
   _eventChartData = data;
-  _wireRangeButtons();
   // Build dynamic zone series catalog from data.zone_series.zones
   const zoneSeriesEntries = [];
   const zonesPayload = data.zone_series || {};
@@ -1454,11 +1674,17 @@ function renderEventChart(data) {
     const visible = _loadChartVis();
     const pills = [];
 
+    // Combined series catalog: explicit + auto-discovered.
+    const autoSeries = _autoDiscoverSeries(data);
+    const allSeries = [...CHART_SERIES, ...autoSeries];
+    data._allSeries = allSeries;  // stashed so _drawChart picks up the same list
+
     pills.push('<span class="dim" style="margin-right:6px;">Series:</span>');
-    for (const s of CHART_SERIES) {
+    for (const s of allSeries) {
       const on = visible.has('s:' + s.id);
-      pills.push(`<a class="pill" data-toggle="s:${esc(s.id)}" style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${on?'background:var(--surface-2);':'opacity:0.4;'}">
-        <span style="display:inline-block;width:8px;height:2px;background:${s.color};${s.dash?'border-top:1px dashed '+s.color+';height:0;':''}"></span>${esc(s.label)}</a>`);
+      const labelMark = s._auto ? ' <span class="dim" style="font-size:9px;">[auto]</span>' : '';
+      pills.push(`<a class="pill" data-toggle="s:${esc(s.id)}" title="${esc(s.label)}${s._auto ? ' — auto-detected from new backend series' : ''}" style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${on?'background:var(--surface-2);':'opacity:0.4;'}">
+        <span style="display:inline-block;width:8px;height:2px;background:${s.color};${s.dash?'border-top:1px dashed '+s.color+';height:0;':''}"></span>${esc(s.label)}${labelMark}</a>`);
     }
 
     pills.push('<span class="dim" style="margin:0 6px 0 12px;">Overlays:</span>');
@@ -1501,7 +1727,9 @@ function _drawChart() {
   const toXY = (arr, scale) => (arr || []).filter(p => p.v != null).map(p => ({ x: p.t, y: scale ? Number(p.v) * scale : Number(p.v) }));
 
   const datasets = [];
-  for (const s of CHART_SERIES) {
+  // Use the combined catalog stashed during pill render (CHART_SERIES + auto).
+  const drawSeries = data._allSeries || CHART_SERIES;
+  for (const s of drawSeries) {
     if (!visible.has('s:' + s.id)) continue;
     const series = _getPath(data, s.path);
     if (!series || !series.length) continue;
@@ -1590,12 +1818,13 @@ function _drawChart() {
 async function loadPerformer(performerId) {
   const mount = document.getElementById('performer-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading performer #${performerId}…</div>`;
-  let perf, espn, portfolio;
+  let perf, espn, portfolio, assets;
   try {
-    [perf, espn, portfolio] = await Promise.all([
+    [perf, espn, portfolio, assets] = await Promise.all([
       api(`/api/performers/${performerId}`),
       api(`/api/broker/performer/${performerId}/espn`).catch(() => null),
       api(`/api/portfolio?performer_id=${performerId}`).catch(() => ({events:[], aggregate:{}})),
+      api(`/api/broker/performer/${performerId}/assets`).catch(() => null),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load performer ${performerId}: ${esc(e.message)}</div>`;
@@ -1676,15 +1905,29 @@ async function loadPerformer(performerId) {
       <div class="kpi"><div class="kpi-l">Avg ask (wt)</div><div class="kpi-v">${moneyC(agg.retail_median_avg_weighted)}</div><div class="kpi-d muted">tickets-weighted</div></div>
     </div>`;
 
+  // Team logo from ESPN if available; placeholder otherwise.
+  const logoUrl = assets?.logo_default_url;
+  const colorPrimary = assets?.color_primary ? '#' + assets.color_primary : null;
+  const colorAlt     = assets?.color_alternate ? '#' + assets.color_alternate : null;
+  const heroLogo = logoUrl
+    ? `<div class="logo-lg" title="${esc(assets?.name || perf.name || '')}" style="background-color:${colorPrimary || '#26292d'};background-image:url('${esc(logoUrl)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`
+    : `<div class="logo-lg" style="background:#26292d;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;">?</div>`;
+  const accentBar = `<div class="accent-bar">${[colorPrimary, colorAlt, '#f58426'].filter(Boolean).map(c => `<span style="background:${c}"></span>`).join('')}</div>`;
+
   mount.innerHTML = `
     <div class="hero">
       <div class="hero-left">
-        <div class="hero-title">${esc(perf.name || ('Performer #' + performerId))}</div>
-        <div class="hero-sub">${esc(perf.category?.name || '')} · ${num(agg.events_count)} tracked events · ${num(agg.events_with_owned)} with S4K inventory</div>
-        <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
+        <div class="hero-logos" style="display:flex;align-items:center;gap:12px;">
+          ${heroLogo}
+          <div>
+            <div class="hero-title">${esc(perf.name || ('Performer #' + performerId))}</div>
+            <div class="hero-sub">${esc(perf.category?.name || '')} · ${num(agg.events_count)} tracked events · ${num(agg.events_with_owned)} with S4K inventory${assets?.espn_team_id ? ' · <span class="dim">ESPN ' + esc(assets.espn_league || '') + ' #' + esc(String(assets.espn_team_id)) + '</span>' : ''}</div>
+          </div>
+        </div>
+        ${accentBar}
       </div>
       <div class="hero-right" style="background:linear-gradient(135deg,#16181b,#1c1e22);">
-        <div class="map-pin">performer #${performerId}</div>
+        <div class="map-pin">${assets?.espn_team_url ? `<a href="${esc(assets.espn_team_url)}" target="_blank" rel="noopener" style="color:inherit;">ESPN team page →</a>` : 'performer #' + performerId}</div>
       </div>
     </div>
     ${aggKPIs}

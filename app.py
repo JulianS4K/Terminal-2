@@ -449,6 +449,39 @@ def broker_leagues(_=Depends(require_auth)):
     return {"leagues": _ESPN_LEAGUES}
 
 
+@app.get("/api/broker/performer/{performer_id}/assets")
+def broker_performer_assets(performer_id: int, _=Depends(require_auth)):
+    """ESPN team logo + colors + URLs for a TEvo performer. Backed by
+    performer_metadata (populated by crawl-espn-team-assets fn — drained
+    every 3 min by cron 'crawl-espn-team-assets-3min').
+
+    Returns null fields for performers without ESPN mapping (e.g. concerts
+    or playoff bracket placeholders). 65/866 populated as of 2026-05-08.
+    """
+    db = require_sb()
+    row = (db.table("performer_metadata")
+             .select("performer_id, name, espn_team_id, espn_league, "
+                     "color_primary, color_alternate, "
+                     "logo_default_url, logo_dark_url, logo_scoreboard_url, logo_4k_primary_url, logo_secondary_url, "
+                     "espn_team_url, espn_roster_url, espn_schedule_url, espn_fetched_at")
+             .eq("performer_id", performer_id).limit(1).execute().data or [])
+    return row[0] if row else {"performer_id": performer_id, "logo_default_url": None}
+
+
+def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
+    """Fetch performer_metadata for many performer_ids at once. Returns map
+    {performer_id: {logo_default_url, color_primary, ...}}. Used by event
+    overview to attach home + away logos in a single roundtrip."""
+    if not performer_ids:
+        return {}
+    rows = (db.table("performer_metadata")
+              .select("performer_id, name, espn_team_id, espn_league, "
+                      "color_primary, color_alternate, logo_default_url, logo_dark_url")
+              .in_("performer_id", performer_ids)
+              .execute()).data or []
+    return {int(r["performer_id"]): r for r in rows}
+
+
 @app.get("/api/broker/news")
 def broker_news(
     limit: int = 20,
@@ -989,16 +1022,38 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
     cadence = _listings_cadence_seconds(head.get("occurs_at_local") if head else None)
     last_pull = curr.get("captured_at")
 
+    # Attach home + away assets (logos, colors). Resolve teams via:
+    # 1) primary_performer_id is "home" (per AGENTS.md performer_home_venues semantics)
+    # 2) other performer_ids[] entries are away/opponent
+    # If event_xref maps to ESPN, additional team_ids come back from espn_event_snapshots.
+    perf_ids: list[int] = []
+    if head:
+        if head.get("primary_performer_id"):
+            perf_ids.append(int(head["primary_performer_id"]))
+        for pid in (head.get("performer_ids") or []):
+            if pid and pid not in perf_ids:
+                perf_ids.append(int(pid))
+    assets_by_id = _bulk_performer_assets(db, perf_ids)
+    home_perf_id = head.get("primary_performer_id") if head else None
+    home_assets = assets_by_id.get(int(home_perf_id)) if home_perf_id else None
+    away_assets_list = [assets_by_id.get(int(p)) for p in perf_ids if p != home_perf_id and assets_by_id.get(int(p))]
+
     return {
         "event": head,
         "metrics": metrics,
         "zones": {"owned": zones_owned, "market": zones_market},
         "last_pull_at": last_pull,
         "cadence_seconds": cadence,
+        "assets": {
+            "home": home_assets,
+            "away": away_assets_list[0] if away_assets_list else None,
+            "all": list(assets_by_id.values()),
+        },
     }
 
 
 _PARKING_ZONE_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park)\b", re.IGNORECASE)
+_PARKING_SECTION_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park|prepaid|preferred\s*parking|guest\s*parking|vip\s*lot|vip\s*parking)\b", re.IGNORECASE)
 
 
 @app.get("/api/broker/event/{event_id}/section-zones")
