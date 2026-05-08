@@ -35,37 +35,91 @@ three agents now. all three read first, all three append on action. keep cave-ma
 ### claude design
 - (none — git access via code)
 
-## ARCHITECTURE
+## ARCHITECTURE (confirmed 2026-05-08)
 
-ONE backend. TWO products. TWO front-ends. THREE agents.
+TWO data sources. ONE running backbone. TWO products with separate retail backends. THREE agents.
 
 ```
-                  ┌─────────────────────────────────────┐
-                  │   BACKEND (shared, single source)   │
-                  │  - Supabase Postgres + edge fns     │  ← split: copilot owns chat fn + ingest
-                  │  - app.py FastAPI routes + cron     │  ← code-owned (terminal backend)
-                  │  - TEvo connector, Anthropic client │  ← shared
-                  └──────────┬──────────────┬───────────┘
-                             │              │
-                ┌────────────┘              └────────────┐
-                ▼                                        ▼
-    ┌──────────────────────┐               ┌──────────────────────┐
-    │ PRODUCT 1: BROKER    │               │ PRODUCT 2: RETAIL    │
-    │ Terminal admin UI    │               │ Find Tickets chatbot │
-    │ static/index.html    │               │ static/chat.html     │
-    │ static/event.html    │               │ ─ FE: claude design  │
-    │ static/movers.html   │               │ ─ BE+ML: copilot     │
-    │ ─ FE: claude design  │               │                      │
-    │ ─ BE+SQL: code       │               │                      │
-    │ Google OAuth gated   │               │ anonymous public     │
-    │ Full inventory view  │               │ S4K-owned only       │
-    │ broker_* DB views    │               │ retail_* DB views    │
-    └──────────────────────┘               └──────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ DATA SOURCES                                                           │
+│  TEvo API (live + cron pulls)   ESPN scoreboard/injuries/news (cron)   │
+└────────┬───────────────────────────────────┬───────────────────────────┘
+         │                                   │
+         ▼                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ CRON-COLLECTED HISTORICAL TABLES (the running backbone)                │
+│  listings_snapshots · event_metrics · zone_metrics · section_metrics   │
+│  espn_team_snapshots · espn_injuries_snapshots · espn_news · espn_*    │
+│  Cadence dialed by event time: 20m / 1h / 4h / 12h / daily             │
+└────────┬───────────────────────────────────┬───────────────────────────┘
+         │                                   │
+         ▼                                   ▼
+┌──────────────────────────┐    ┌───────────────────────────────────────┐
+│ BROKER TERMINAL          │    │ RETAIL                                │
+│ (broker_*, full data)    │    │ (retail_*, S4K-owned only)            │
+│                          │    │                                       │
+│ FE: claude design        │    │ Two backends:                         │
+│ BE+SQL: code             │    │  A. Chatbot — chat edge fn, live      │
+│ ESPN: overlay layer      │    │     TEvo per query w/ 90s per-event   │
+│   (chart workbench,      │    │     cache. ESPN aliases used in       │
+│    event detail alerts,  │    │     RETRIEVAL (athlete→performer).   │
+│    performer detail)     │    │     ESPN content NOT yet in tool      │
+│                          │    │     responses — see NEXT in LOG.      │
+│ static/index.html        │    │                                       │
+│ static/event.html        │    │  B. *_public REST RPCs — read from    │
+│ static/movers.html       │    │     cron-collected listings_snapshots │
+│                          │    │     (fast, freshness = cron tier      │
+│ Google OAuth @s4kent.com │    │     interval). NOT live every render. │
+│                          │    │                                       │
+│                          │    │ FE: claude design                     │
+│                          │    │ BE+ML: copilot                        │
+│                          │    │ static/chat.html · landing TBD        │
+└──────────────────────────┘    └───────────────────────────────────────┘
 
-                         code = auditor across all of the above
+                  code = auditor across all of the above
 ```
 
 never leak data across the wall. retail UI must never see wholesale, brokerage names, or non-S4K listings. broker UI sees everything.
+
+## DATA FLOW (cadence + cache truth)
+
+**TEvo cron tiers (collect-listings)** — picks event polling frequency based on how soon the event is:
+
+| tier                       | schedule       | runs/day | event window |
+|---------------------------|----------------|----------|--------------|
+| `collect-listings-0-24h`   | every 20 min   | 72       | events ≤ 24h away (high-volatility book) |
+| `collect-listings-1-7d`    | hourly @ :05   | 24       | 1–7 days out |
+| `collect-listings-7-30d`   | every 4h       | 6        | 7–30 days |
+| `collect-listings-30-60d`  | every 12h      | 2        | 30–60 days |
+| `collect-listings-60d+`    | daily 02:20    | 1        | 60+ days |
+
+**Each pull writes**:
+- `listings_snapshots` — raw per-listing rows (section, row, qty, retail_price, is_owned, type, splits, format, in_hand, etc.)
+- `event_metrics` — aggregated per-event medians/percentiles/counts derived from the above
+- `zone_metrics` + `section_metrics` — same aggregation at finer grains
+
+**ESPN cron tiers (espn-collect)**:
+- `espn-roster-10min` — injuries every 10 min
+- `espn-gameday-10min` — event scores+odds for events ±24h, every 10 min
+- `espn-team-daily` — standings + news, daily 05:00 UTC
+
+All change-only ingest (content_hash dedup) so quiet periods don't bloat the tables.
+
+**Per-surface cache TTLs**:
+
+| surface | TTL | live-every-render? |
+|---|---|---|
+| Chatbot `find_listings` / `find_better_seats` / `get_event_zones` | 90s per event (`get_cached_ticket_groups` RPC) | yes-ish (90s feels live for human chat) |
+| Broker terminal raw TEvo tab (`/api/events/{id}`) | per-request live TEvo (no cache) | yes |
+| Broker terminal metric workbench / movers / league grid | reads `event_metrics` (cron-collected) | no — as fresh as cron tier |
+| Retail `*_public` RPCs (web-store flow) | reads `listings_snapshots` (cron-collected) | no — as fresh as cron tier |
+
+**ESPN as overlay layer**:
+- Broker terminal: surfaced inline (event-detail ESPN alerts, performer-detail ESPN block, chart workbench team_index series, news velocity, per-injury markers).
+- Chatbot: ESPN data drives RETRIEVAL only (s4k_popularity_boost from big-5 venue performers, athlete aliases mapping 857 ESPN players → team performer_id). **ESPN content does not appear in the chatbot's responses to users.** That's a NEXT for copilot.
+
+**TEvo rate limits**:
+Documented per call site in code (chat fn handles 429 + retry-after; espn-collect paces 80-120ms between calls). Centralized doc not yet written — `docs/tevo-rate-limits.md` is a NEXT for code (will pull copilot's collect-listings source first to capture its pacing).
 
 ## OWN
 
@@ -294,6 +348,13 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-08 code (claude code session, evening)
+
+- DONE — **ARCHITECTURE confirmed with user + locked into AGENTS.md**. New diagram, new DATA FLOW section (cron tier table, per-surface cache TTLs, ESPN-as-overlay caveat). Two retail backends now explicit (chatbot live-with-90s-cache vs `*_public` RPCs reading cron-collected data). ESPN-context-in-chat called out as aspirational (retrieval only today; content not threaded into tool responses). TEvo rate limits noted as needing a centralized doc.
+- NEXT (copilot) — **decide retail web-store freshness**: either keep current cron-collected `*_public` RPCs (fast, freshness = cron tier) OR switch to live TEvo per render (slower, always fresh, more rate-limit pressure). User flagged as open question. Current path is cron-collected; see `*_public` RPCs in mig 20260508023000.
+- NEXT (copilot) — **thread ESPN context into chatbot tool responses**. Today: ESPN drives RETRIEVAL only (s4k_popularity_boost, athlete aliases). Chatbot doesn't surface ESPN content (injuries, standings, news) in tool results. Possible enhancement: add an ESPN-context tool to the chat fn loop, OR thread relevant injuries into `find_listings` results when an event's home/away team has active injuries. Open scope; coordinate with user before building.
+- NEXT (code) — **write `docs/tevo-rate-limits.md`** after pulling `collect-listings` source into git via the proxy-commit / audit-and-capture pattern. Need to document: chat fn 90s cache + 429 retry-after, espn-collect 80-120ms pacing, collect-listings cron tier pacing (TBD pending source pull), centralized "if you call TEvo, here's your budget" reference.
 
 ### 2026-05-08 code (claude code session)
 
