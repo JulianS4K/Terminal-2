@@ -32,13 +32,38 @@ Write-Host "  source: $source"
 Write-Host "  target: $target"
 Write-Host ""
 
-# Sanity: source must exist
+# Pre-flight 1: cwd must NOT be inside source or target (or any descendant).
+# The shell holds an exclusive handle on its cwd; Move-Item will fail with
+# "in use" if we try to move a directory that's a parent of the cwd.
+$cwd = (Get-Location).Path
+function Is-Inside($child, $parent) {
+    $c = (Resolve-Path -LiteralPath $child -ErrorAction SilentlyContinue).Path
+    $p = (Resolve-Path -LiteralPath $parent -ErrorAction SilentlyContinue).Path
+    if (-not $c -or -not $p) { return $false }
+    return ($c -eq $p) -or $c.StartsWith("$p\", [StringComparison]::OrdinalIgnoreCase)
+}
+if ((Is-Inside $cwd $source) -or (Is-Inside $cwd $target)) {
+    Write-Error @"
+Cannot move while you are sitting inside the source or target path.
+
+  current cwd: $cwd
+  source:      $source
+  target:      $target
+
+Fix: cd out of both directories first (e.g. `cd C:\` or `cd $env:USERPROFILE`)
+then re-run this script.
+"@
+    exit 1
+}
+Write-Host "  cwd OK: $cwd"
+
+# Pre-flight 2: source must exist.
 if (-not (Test-Path $source)) {
     Write-Error "Source path does not exist: $source"
     exit 1
 }
 
-# Sanity: source git tree must be clean
+# Pre-flight 3: source git tree must be clean.
 Push-Location $source
 $gitStatus = git status --porcelain
 Pop-Location
@@ -49,16 +74,47 @@ if ($gitStatus) {
     if ($continue -ne "y") { exit 1 }
 }
 
-# Make sure C:\VibeCode parent exists
+# Make sure C:\VibeCode parent exists.
 New-Item -ItemType Directory -Force -Path "C:\VibeCode" | Out-Null
 
-# If target already exists (copilot's sandbox mount), back it up first
+# Pre-flight 4: if target exists, test it's actually moveable BEFORE we
+# attempt the real move. Catches the "in use by copilot's sandbox" case
+# with a clear error instead of a generic Move-Item failure.
 if (Test-Path $target) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmm"
     $backup = "C:\VibeCode\terminal-2-pre-move-backup-$stamp"
-    Write-Host "Target $target already exists - backing up to $backup" -ForegroundColor Yellow
-    Move-Item -LiteralPath $target -Destination $backup
-    Write-Host "  backup created. The mockup + copilot's docs from this backup were already pulled into git in commit e3f1138, so nothing should be lost." -ForegroundColor Green
+
+    Write-Host "Target $target already exists - testing if it's moveable..." -ForegroundColor Yellow
+    try {
+        # The actual move attempt is the test.
+        Move-Item -LiteralPath $target -Destination $backup -ErrorAction Stop
+        Write-Host "  backup created at $backup" -ForegroundColor Green
+        Write-Host "  (the mockup + copilot's docs from this backup were already pulled into git in e3f1138, so nothing should be lost.)" -ForegroundColor Green
+    } catch {
+        Write-Error @"
+Could not move existing $target out of the way:
+
+  $($_.Exception.Message)
+
+This usually means another process has a file handle inside that directory.
+Most likely culprits:
+  - copilot's sandbox / cowork session is still active and mounted at this path
+  - another PowerShell window has cd'd into it
+  - VS Code / editor has a file open from there
+  - antivirus is scanning files in there
+
+Fix:
+  1. Close all Claude Code sessions (yours AND copilot's if running)
+  2. Close any editor/terminal with files in C:\VibeCode\terminal-2 open
+  3. Optionally: reboot if you cannot identify the locker
+  4. Re-run this script
+
+If you are 100% sure nothing is using it, you can also try:
+  - Open Resource Monitor -> CPU tab -> 'Associated Handles' search box -> paste 'C:\VibeCode\terminal-2'
+    and end any process holding handles.
+"@
+        exit 1
+    }
 }
 
 # THE MOVE
