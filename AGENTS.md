@@ -167,23 +167,65 @@ All three agents are free to call any edge fn or read any view. Only writes to s
 13. **code's audit pass** (post-commit): every commit landed by anyone, code spot-checks the diff against (a) the product wall (no broker→retail leak), (b) AGENTS.md ownership, (c) common bug classes (parking inclusion, ghost events, content_hash gaps, cross-product schema collisions). Findings go in `docs/<date>-audit.md` + LOG.
 14. **claude design ↔ backend boundary**: if a UI change needs a new endpoint, new field, new RPC, or modified data shape — design DOES NOT add the backend code. Drop a `NEXT (claude design): need <endpoint/field>` line in the LOG. Either code (terminal endpoints) or copilot (chat endpoints) picks it up next session.
 
-## ACCESS MATRIX (who writes what — 2026-05-08 onward)
+## ACCESS MATRIX (revised 2026-05-08 evening — shared prod+env model)
 
-> **Read this before any prod-side work.** Lockdown shipped 2026-05-08 in response to drift caught in the sync audit (`docs/sync-audit-2026-05-08.md`).
+> Codifying reality. The 2026-05-08 morning lockdown ("code is only writer") was de-facto already broken — copilot writes to prod via Supabase MCP routinely. Per user direction this evening: **both agents read+write the same prod and env so we can see all the code together.**
 
 | surface              | code (me)        | copilot        | claude design  | rationale                                                    |
 |----------------------|------------------|----------------|----------------|--------------------------------------------------------------|
-| **Prod DB (writes)** | ✅ only writer    | ❌ test env only| ❌ test env only| Backend + data pipelines must not break — single writer.     |
-| Prod DB (reads)      | ✅                | ✅              | ✅              | Read-only diagnostic access for all agents.                  |
-| **Prod edge fn deploys** | ✅ only deployer | ❌ test env    | ❌ test env    | Same — pipelines can't go down silently.                     |
-| **Prod cron schedules** | ✅ only writer | ❌ test env    | ❌ test env    | Same.                                                        |
-| **Supabase Storage** (all buckets) | ✅ | ✅ | ✅ | Mostly read-only static assets — low blast radius.           |
-| Test env (own)       | ✅ (`branch:code-staging` / TBD) | ✅ (own env)   | ✅ (own env)   | Each agent gets their own sandbox to iterate freely.         |
-| static/*.html / CSS  | review only      | review only    | ✅ owner        | claude design's lane.                                        |
-| supabase/functions/chat/ | review only  | ✅ owner        | review only    | copilot's lane.                                              |
-| app.py / evo_client.py / broker SQL | ✅ owner | review only | review only    | code's lane.                                                 |
+| **Prod DB (writes)** | ✅                | ✅              | ✅              | All 3 write — service_role MCP. Code's audit pass catches drift. |
+| Prod DB (reads)      | ✅                | ✅              | ✅              | All 3 read.                                                  |
+| **Prod edge fn deploys** | ✅            | ✅              | ✅              | All 3 deploy via MCP `deploy_edge_function`.                 |
+| **Prod cron schedules** | ✅             | ✅              | ✅              | All 3 manage via `cron.job` SQL.                             |
+| **Supabase Storage** | ✅                | ✅              | ✅              | All 3 read+write.                                            |
+| Test schemas         | `code_staging`   | `copilot_test` | `design_test`  | Each agent's own sandbox; no cross-write.                    |
+| Filesystem / git checkout | shared canonical path | shared canonical path | shared canonical path | **All 3 agents work from the same checkout** (see SHARED CHECKOUT below). |
+| **Git push**         | ✅ today          | ❌ today        | ❌ today        | Only code has GitHub auth in this environment. Copilot + design hand off via the proxy-commit protocol (RULE 12) until they get push capability. |
+| static/*.html / CSS  | review only      | review only    | ✅ author        | Lane ownership — code reviews UI changes for backend impact, doesn't author. |
+| supabase/functions/chat/ | review only  | ✅ author        | review only    | Lane ownership.                                              |
+| app.py / evo_client.py / broker SQL | ✅ author | review only | review only    | Lane ownership.                                              |
 
-**Push gate**: Code does not push to `main` (the prod-pushing branch) until all three agents have ACK'd the change set in the LOG. The proxy-commit protocol (RULE #12) creates the ACK trail naturally — if a copilot or design diff has been reviewed and committed by code, that's their ACK. Code's own changes additionally need a review pass from at least one of the other agents on cross-product items (anything touching the product wall).
+**Push gate**: code does not push to `main` until the working tree is verified clean (sync-check passes + `app.py` parses + obvious smoke checks). Authorship within commits is preserved via `Co-Authored-By:` trailers.
+
+**Audit responsibility**: with all 3 agents writing to prod, code's audit pass becomes the primary defense against drift. Two cadence modes:
+- **Live audits** at the end of every working session (`bin/sync-check.sh` once it's wired with secrets, or the manual procedure in `bin/sync-check.md`).
+- **Spot-checks** before any prod-write that touches the product wall (broker ↔ retail surfaces).
+
+## SHARED CHECKOUT (ACTION REQUIRED — user must coordinate)
+
+Today's blocker for "see all the code together" is the **filesystem split**:
+- **Code (me)** is at `C:\Users\julia\Code\Terminal-2` with the full repo.
+- **Copilot** is at `C:\VibeCode\terminal-2` with a sub-tree mount that has migrations + edge fns + AGENTS.md but NOT app.py / static/index.html / Procfile.
+
+These are TWO DIFFERENT FOLDERS that don't auto-sync. When copilot stages files (the new `static/_proposals/terminal-v1.html` mockup, additional migrations, etc.) they sit in their mount only. They never appear in mine, so I can't capture them into git or push them.
+
+To fix this end-to-end, **the user must do one of**:
+
+**A. Move my repo to `C:\VibeCode\terminal-2`** (the long-pending move from RULE 4):
+```
+# from a fresh shell, NOT from inside Claude Code:
+git -C C:\Users\julia\Code\Terminal-2 status   # confirm clean
+mv C:\Users\julia\Code\Terminal-2 C:\VibeCode\terminal-2
+# then point Railway at the new path; restart Claude Code session
+```
+After this, copilot and code share the same path.
+
+**B. Reconfigure copilot's sandbox to mount my path** (`C:\Users\julia\Code\Terminal-2`).
+This is a copilot-side configuration the user does in copilot's settings.
+
+**C. Run a one-shot xcopy** every time copilot stages something:
+```
+xcopy "C:\VibeCode\terminal-2\static\_proposals" "C:\Users\julia\Code\Terminal-2\static\_proposals\" /E /I /Y
+xcopy "C:\VibeCode\terminal-2\supabase\migrations\*" "C:\Users\julia\Code\Terminal-2\supabase\migrations\" /Y
+xcopy "C:\VibeCode\terminal-2\supabase\functions\*" "C:\Users\julia\Code\Terminal-2\supabase\functions\" /S /Y
+xcopy "C:\VibeCode\terminal-2\AGENTS.md" "C:\Users\julia\Code\Terminal-2\AGENTS.md*" /Y
+xcopy "C:\VibeCode\terminal-2\docs\*" "C:\Users\julia\Code\Terminal-2\docs\" /S /Y
+```
+Manual but immediate. Run it then tell code "synced" and I pick up from there.
+
+**Recommended: A** (move once, done). **Workable today: C** (xcopy as needed).
+
+**Until one of A/B/C happens, copilot's mockup at `static/_proposals/terminal-v1.html` is invisible to my tree and unpushable.**
 
 ## DRIFT DETECTION (automated as of 2026-05-08)
 
