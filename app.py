@@ -1042,78 +1042,15 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
     window_hours = max(1, min(int(window_hours), 168))
     db = require_sb()
 
-    # Latest + prior captured_at per event (pure SQL, single round-trip via RPC).
-    # Falls back to client-side aggregation if the RPC isn't there yet.
-    sql_query = """
-    with latest as (
-      select distinct on (event_id) event_id, captured_at,
-        retail_median, owned_median_retail, tickets_count, owned_tickets_count
-      from event_metrics
-      order by event_id, captured_at desc
-    ),
-    prior as (
-      select distinct on (event_id) event_id, captured_at,
-        retail_median, owned_median_retail, tickets_count, owned_tickets_count
-      from event_metrics
-      where captured_at < now() - (%s || ' hours')::interval
-      order by event_id, captured_at desc
-    )
-    select
-      l.event_id, e.name, e.primary_performer_id, e.primary_performer_name,
-      e.venue_id, e.venue_name,
-      e.occurs_at_local,
-      l.captured_at as latest_at,
-      l.retail_median        as cur_market_med,
-      p.retail_median        as prev_market_med,
-      l.owned_median_retail  as cur_owned_med,
-      p.owned_median_retail  as prev_owned_med,
-      l.tickets_count        as cur_market_tix,
-      p.tickets_count        as prev_market_tix,
-      l.owned_tickets_count  as cur_owned_tix,
-      p.owned_tickets_count  as prev_owned_tix
-    from latest l
-    join events e on e.id = l.event_id
-    left join prior p using (event_id)
-    where e.occurs_at_local::timestamptz >= now()
-    """
-    # PostgREST/supabase-py doesn't expose raw SQL; we'll use pg_net-equivalent via rpc or
-    # break into two PostgREST calls. Cleanest: ad-hoc rpc helper isn't worth it for this
-    # one read — pull all event_metrics rows in window + aggregate in Python. Fast enough
-    # for ~22k rows.
-
-    rows = (
-        db.table("event_metrics")
-        .select("event_id,captured_at,retail_median,owned_median_retail,tickets_count,owned_tickets_count")
-        .gte("captured_at", (datetime.now(timezone.utc) - timedelta(hours=window_hours * 3)).isoformat())
-        .order("captured_at", desc=True)
-        .limit(50000)
-        .execute()
-    ).data or []
-
-    # Group by event_id; first row per group = latest, find prior > window_hours ago.
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
-    by_ev: dict[int, dict] = {}
-    for r in rows:
-        eid = r["event_id"]
-        ts = r["captured_at"]
-        if eid not in by_ev:
-            by_ev[eid] = {"latest": r, "prior": None}
-        else:
-            ent = by_ev[eid]
-            if ent["prior"] is None and ts < cutoff.isoformat():
-                ent["prior"] = r
-
-    # Pull event metadata for the events we have
-    event_ids = list(by_ev.keys())
-    if not event_ids:
-        return {"window_hours": window_hours, "events": {}, "performers": {}, "venues": {}}
-    ev_meta = (
-        db.table("events")
-        .select("id,name,primary_performer_id,primary_performer_name,venue_id,venue_name,occurs_at_local")
-        .in_("id", event_ids)
-        .execute()
-    ).data or []
-    meta_by_id = {m["id"]: m for m in ev_meta}
+    # Pre-aggregated in SQL via get_event_movers RPC (mig 20260508040000).
+    # Returns one row per future-dated event with cur+prior values for
+    # market_median / owned_median / market_tix / owned_tix. ~300 rows
+    # max — small enough to top10/rollup in Python.
+    #
+    # Old approach (Python aggregation over a 50k-row window) was silently
+    # capped at 1000 rows by PostgREST's per-request row limit, producing
+    # an empty Movers report even when the underlying data was rich.
+    rpc_rows = db.rpc("get_event_movers", {"p_window_hours": window_hours}).execute().data or []
 
     def pct_delta(cur, prev):
         if cur is None or prev is None: return None
@@ -1122,33 +1059,35 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
         if p == 0: return None
         return round((c - p) / p * 100, 2)
 
+    def abs_delta(cur, prev):
+        if cur is None or prev is None: return None
+        try: return round(float(cur) - float(prev), 2)
+        except (TypeError, ValueError): return None
+
     rows_built = []
-    for eid, ent in by_ev.items():
-        if eid not in meta_by_id: continue
-        m = meta_by_id[eid]
-        # filter: only future-dated events
-        if m.get("occurs_at_local") and m["occurs_at_local"] < datetime.now().date().isoformat():
-            continue
-        cur, prev = ent["latest"], (ent["prior"] or {})
+    for r in rpc_rows:
         rows_built.append({
-            "event_id": eid,
-            "name": m.get("name"),
-            "performer_id": m.get("primary_performer_id"),
-            "performer_name": m.get("primary_performer_name"),
-            "venue_id": m.get("venue_id"),
-            "venue_name": m.get("venue_name"),
-            "occurs_at_local": m.get("occurs_at_local"),
-            "cur_market_med": cur.get("retail_median"),
-            "cur_market_tix": cur.get("tickets_count"),
-            "cur_owned_med":  cur.get("owned_median_retail"),
-            "cur_owned_tix":  cur.get("owned_tickets_count"),
-            "delta_market_pct": pct_delta(cur.get("retail_median"), prev.get("retail_median")),
-            "delta_market_abs": (None if cur.get("retail_median") is None or prev.get("retail_median") is None
-                                 else round(float(cur["retail_median"]) - float(prev["retail_median"]), 2)),
-            "delta_owned_pct":  pct_delta(cur.get("owned_median_retail"), prev.get("owned_median_retail")),
-            "delta_owned_abs":  (None if cur.get("owned_median_retail") is None or prev.get("owned_median_retail") is None
-                                 else round(float(cur["owned_median_retail"]) - float(prev["owned_median_retail"]), 2)),
+            "event_id":       r.get("event_id"),
+            "name":           r.get("name"),
+            "performer_id":   r.get("primary_performer_id"),
+            "performer_name": r.get("primary_performer_name"),
+            "venue_id":       r.get("venue_id"),
+            "venue_name":     r.get("venue_name"),
+            "occurs_at_local": r.get("occurs_at_local"),
+            "cur_market_med": r.get("cur_market_med"),
+            "cur_market_tix": r.get("cur_market_tix"),
+            "cur_owned_med":  r.get("cur_owned_med"),
+            "cur_owned_tix":  r.get("cur_owned_tix"),
+            "delta_market_pct": pct_delta(r.get("cur_market_med"), r.get("prev_market_med")),
+            "delta_market_abs": abs_delta(r.get("cur_market_med"), r.get("prev_market_med")),
+            "delta_owned_pct":  pct_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
+            "delta_owned_abs":  abs_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
         })
+
+    if not rows_built:
+        return {"window_hours": window_hours, "events": {"owned_winners": [], "owned_losers": [], "market_winners": [], "market_losers": []},
+                "performers": {"owned_winners": [], "owned_losers": [], "market_winners": [], "market_losers": []},
+                "venues": {"owned_winners": [], "owned_losers": [], "market_winners": [], "market_losers": []}}
 
     def top10(items, key, desc=True):
         filtered = [r for r in items if r.get(key) is not None]
