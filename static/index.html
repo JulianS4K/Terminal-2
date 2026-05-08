@@ -869,16 +869,17 @@ function renderKPIs(movers, watchlistMovers, watchlist) {
 async function loadEvent(eventId) {
   const mount = document.getElementById('event-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading event #${eventId}…</div>`;
-  let ov, espn, chart, sections, rawTevo, news, zonesRich, chartErr = null;
+  let ov, espn, chart, sections, rawTevo, news, zonesRich, sectionZones, chartErr = null;
   try {
-    [ov, espn, chart, sections, rawTevo, news, zonesRich] = await Promise.all([
+    [ov, espn, chart, sections, rawTevo, news, zonesRich, sectionZones] = await Promise.all([
       api(`/api/broker/event/${eventId}/overview`),
       api(`/api/broker/event/${eventId}/espn`).catch(() => null),
       api(`/api/broker/event/${eventId}/chart-data?range=${encodeURIComponent(localStorage.getItem('evt_chart_range_v1') || '30d')}`).catch(e => { chartErr = e.message; return null; }),
       api(`/api/broker/event/${eventId}/section-metrics`).catch(() => null),
       api(`/api/broker/event/${eventId}/raw-tevo`).catch(() => null),
-      api(`/api/broker/news?limit=12`).catch(() => null),
+      api(`/api/broker/news?limit=12&event_id=${eventId}`).catch(() => null),
       api(`/api/broker/event/${eventId}/zones?include_parking=${localStorage.getItem('evt_zone_parking_v1') === '1' ? 'true' : 'false'}`).catch(() => null),
+      api(`/api/broker/event/${eventId}/section-zones`).catch(() => null),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load event ${eventId}: ${esc(e.message)}</div>`;
@@ -939,9 +940,17 @@ async function loadEvent(eventId) {
     const otherSources = (zonesRich && zonesRich.available_sources) || [];
     const otherSrcLabel = otherSources.filter(s => s !== chosenSource).join(', ');
     depthTitle = `Zone Ladder · ${chosenSource === 'curated' ? 'Curated' : chosenSource === 'fallback' ? 'System (fallback)' : 'Unmapped'}`;
-    depthHeader = '<th>Zone</th>'
-                + '<th class="num">Min</th><th class="num">P25</th><th class="num">Med</th><th class="num">P75</th><th class="num">P90</th><th class="num">Max</th>'
-                + '<th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th><th class="num">Owned med</th>';
+    depthHeader = '<th title="Zone name (curated label or system-derived).">Zone</th>'
+                + '<th class="num" title="Cheapest ask in the zone.">Min</th>'
+                + '<th class="num" title="25th percentile retail.">P25</th>'
+                + '<th class="num" title="Median retail in the zone — most-quoted price.">Med</th>'
+                + '<th class="num" title="75th percentile retail.">P75</th>'
+                + '<th class="num" title="90th percentile retail — top tier asks.">P90</th>'
+                + '<th class="num" title="Highest ask in the zone.">Max</th>'
+                + '<th class="num" title="Total tickets on market in this zone (right now).">Vol</th>'
+                + '<th class="num" title="S4K-owned tickets in the zone (brokerage_id 1768).">Owned</th>'
+                + '<th class="num" title="S4K share of the zone: owned tix / total tix. ≥30% = we are the market.">Share</th>'
+                + '<th class="num" title="Median price of S4K-owned listings in the zone.">Owned med</th>';
     depthRows = richZones.map(z => {
       const totalTix = z.tickets_count || 0;
       const ownedTix = z.owned_tickets_count || 0;
@@ -1064,7 +1073,7 @@ async function loadEvent(eventId) {
         <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
       </div>
       <div class="hero-right" style="background:linear-gradient(135deg,#16181b,#1c1e22);">
-        <div class="map-pin">venue #${ev.venue_id || '—'} · config #${ev.configuration_id || '—'}</div>
+        <div class="map-pin">Venue Map · ${esc(ev.configuration_name || ('config #' + (ev.configuration_id || '—')))}</div>
       </div>
     </div>
     <div class="kpis">
@@ -1079,7 +1088,16 @@ async function loadEvent(eventId) {
       <div class="panel">
         <div class="panel-h"><h3>Retail price distribution</h3><div class="actions"><span class="dim">${(m.retail_median?.v != null && m.retail_min?.v != null) ? `range ${moneyC(m.retail_min.v)}–${moneyC(m.retail_max?.v)}` : ''}</span></div></div>
         <table class="ibkr">
-          <thead><tr><th>Pctile</th><th class="num">Min</th><th class="num">P25</th><th class="num">Median</th><th class="num">Mean</th><th class="num">P75</th><th class="num">P90</th><th class="num">Max</th></tr></thead>
+          <thead><tr>
+            <th title="Row source — retail (asks shown to buyers) or wholesale (between brokers).">Pctile</th>
+            <th class="num" title="Cheapest ask in the entire book — including obstructed-view, garbage, etc.">Min</th>
+            <th class="num" title="25th percentile: 25% of listings price below this.">P25</th>
+            <th class="num" title="50th percentile / median: half of listings cheaper, half more expensive. Most-quoted price.">Median</th>
+            <th class="num" title="Arithmetic average price across all listings (skewed by outliers).">Mean</th>
+            <th class="num" title="75th percentile: 25% of listings price above this. Top of the standard band.">P75</th>
+            <th class="num" title="90th percentile: top 10% premium asks.">P90</th>
+            <th class="num" title="Most-expensive ask in the book — usually courtside / suite.">Max</th>
+          </tr></thead>
           <tbody><tr>
             <td class="muted">Retail ($)</td>
             <td class="num">${moneyC(m.retail_min?.v)}</td>
@@ -1105,22 +1123,45 @@ async function loadEvent(eventId) {
         <div class="panel-h"><h3>Market structure</h3></div>
         <table class="ibkr">
           <tbody>
-            <tr><td class="muted">Get-in price</td><td class="num"><strong>${moneyC(m.getin_price?.v)}</strong></td><td class="dim" style="font-size:11px;">cheapest ask, qty ≥ 2</td></tr>
-            <tr><td class="muted">Notional ($)</td><td class="num">${m.retail_sum?.v != null ? '$' + (m.retail_sum.v/1000000 >= 1 ? (m.retail_sum.v/1000000).toFixed(2)+'M' : m.retail_sum.v/1000 >= 1 ? Math.round(m.retail_sum.v/1000)+'k' : Math.round(m.retail_sum.v).toLocaleString()) : '—'}</td><td class="dim" style="font-size:11px;">sum of all retail asks</td></tr>
-            <tr><td class="muted">Price dispersion</td><td class="num">${m.price_dispersion?.v != null ? Number(m.price_dispersion.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P75 / P25 — wider = more spread</td></tr>
-            <tr><td class="muted">Tail premium</td><td class="num">${m.tail_premium?.v != null ? Number(m.tail_premium.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P90 / median — steeper top end</td></tr>
-            <tr><td class="muted">Top-5 concentration</td><td class="num">${m.top5_concentration?.v != null ? Math.round(m.top5_concentration.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">tickets in top-5 sections</td></tr>
-            <tr><td class="muted">Sections active</td><td class="num">${num(m.sections_count?.v)}</td><td class="dim" style="font-size:11px;">non-ancillary</td></tr>
-            <tr><td class="muted">Listing groups</td><td class="num">${num(m.groups_count?.v)}</td><td class="dim" style="font-size:11px;">avg ${m.median_group_size?.v != null ? Number(m.median_group_size.v).toFixed(1) : '—'} tix/grp</td></tr>
-            <tr><td class="muted">Ancillary tix</td><td class="num">${num(m.ancillary_tickets?.v)}</td><td class="dim" style="font-size:11px;">parking/hospitality, ${num(m.ancillary_groups?.v)} grps</td></tr>
+            <tr><td class="muted" title="Cheapest ask in the book where the listing supports a quantity of 2 or more — the price you actually quote a real buyer who needs a pair.">Get-in price</td><td class="num"><strong>${moneyC(m.getin_price?.v)}</strong></td><td class="dim" style="font-size:11px;">cheapest ask, qty ≥ 2</td></tr>
+            <tr><td class="muted" title="Notional book value: sum of (retail_price × quantity) across every listing. Combines price and inventory in a single $ figure.">Notional ($)</td><td class="num">${m.retail_sum?.v != null ? '$' + (m.retail_sum.v/1000000 >= 1 ? (m.retail_sum.v/1000000).toFixed(2)+'M' : m.retail_sum.v/1000 >= 1 ? Math.round(m.retail_sum.v/1000)+'k' : Math.round(m.retail_sum.v).toLocaleString()) : '—'}</td><td class="dim" style="font-size:11px;">sum of all retail asks</td></tr>
+            <tr><td class="muted" title="Price dispersion = retail_p75 / retail_p25. >2x means cheap and expensive seats are very far apart (lots of spread).">Price dispersion</td><td class="num">${m.price_dispersion?.v != null ? Number(m.price_dispersion.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P75 / P25 — wider = more spread</td></tr>
+            <tr><td class="muted" title="Tail premium = retail_p90 / retail_median. Higher = a few premium asks pull the top end up sharply.">Tail premium</td><td class="num">${m.tail_premium?.v != null ? Number(m.tail_premium.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P90 / median — steeper top end</td></tr>
+            <tr><td class="muted" title="Top-5 concentration: share of tickets in the 5 most-stocked sections. >50% means the book is concentrated in a few sections.">Top-5 concentration</td><td class="num">${m.top5_concentration?.v != null ? Math.round(m.top5_concentration.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">tickets in top-5 sections</td></tr>
+            <tr><td class="muted" title="Number of distinct seat sections with at least one active listing (parking/hospitality excluded).">Sections active</td><td class="num">${num(m.sections_count?.v)}</td><td class="dim" style="font-size:11px;">non-ancillary</td></tr>
+            <tr><td class="muted" title="Total ticket-group rows. Each group is one row of consecutive seats. avg tix/grp = how many seats per row on average.">Listing groups</td><td class="num">${num(m.groups_count?.v)}</td><td class="dim" style="font-size:11px;">avg ${m.median_group_size?.v != null ? Number(m.median_group_size.v).toFixed(1) : '—'} tix/grp</td></tr>
+            <tr><td class="muted" title="Parking, valet, hospitality, suites — anything that is not an event seat. Filtered out of the main metrics.">Ancillary tix</td><td class="num">${num(m.ancillary_tickets?.v)}</td><td class="dim" style="font-size:11px;">parking/hospitality, ${num(m.ancillary_groups?.v)} grps</td></tr>
           </tbody>
         </table>
       </div>
     </div>
     <div class="panel" style="margin-top:12px;">
+      <div class="panel-h">
+        <h3>Splits Inventory</h3>
+        <div class="actions"><span class="dim" title="Splits are TEvo's per-listing 'buyer can purchase any of these quantities' rule. We aggregate across non-ancillary listings.">how flexible is this book</span></div>
+      </div>
+      <table class="ibkr">
+        <tbody>
+          <tr><td class="muted" title="Median across non-ancillary listings of the smallest quantity a buyer is allowed to purchase. 1 = singles available, 2 = pair-or-more market, ≥3 = group-buy market.">Min buyable qty (med)</td><td class="num"><strong>${m.splits_min_q?.v ?? '—'}</strong></td><td class="dim" style="font-size:11px;">typical minimum a buyer must purchase</td></tr>
+          <tr><td class="muted" title="Share of listings whose splits[] contains 1. Higher = more single-ticket inventory.">Pct supporting singles</td><td class="num">${m.splits_pct_singles?.v != null ? Math.round(m.splits_pct_singles.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">${num(m.splits_listings_with_singles?.v)} listings allow qty=1</td></tr>
+          <tr><td class="muted" title="Share of listings whose splits[] contains 2. Most common market shape — pairs of seats.">Pct supporting pairs</td><td class="num"><strong>${m.splits_pct_pairs?.v != null ? Math.round(m.splits_pct_pairs.v * 100) + '%' : '—'}</strong></td><td class="dim" style="font-size:11px;">${num(m.splits_listings_with_pairs?.v)} listings allow qty=2</td></tr>
+          <tr><td class="muted" title="Listings with splits[] containing 3 — typical for trios / group buyers.">Listings supporting 3</td><td class="num">${num(m.splits_listings_with_3?.v)}</td><td class="dim" style="font-size:11px;">qty=3 buyer support</td></tr>
+          <tr><td class="muted" title="Listings whose splits include any value ≥ 4 — group blocks for parties.">Listings supporting 4+</td><td class="num">${num(m.splits_listings_with_4plus?.v)}</td><td class="dim" style="font-size:11px;">qty=4 or more buyer support</td></tr>
+          <tr><td class="muted" title="Listings with no splits at all — sold all-or-nothing.">All-or-nothing listings</td><td class="num">${num(m.splits_listings_no_split?.v)}</td><td class="dim" style="font-size:11px;">no splits / whole group only</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="panel" style="margin-top:12px;">
       <div class="panel-h"><h3>S4K owned inventory</h3><div class="actions"><span class="dim">brokerage_id 1768</span></div></div>
       <table class="ibkr">
-        <thead><tr><th class="num">Owned tix</th><th class="num">Owned grps</th><th class="num">Share of mkt</th><th class="num">Owned median ask</th><th class="num">Premium vs mkt</th><th class="num">Notional</th></tr></thead>
+        <thead><tr>
+          <th class="num" title="S4K-owned tickets currently on the market (brokerage_id 1768).">Owned tix</th>
+          <th class="num" title="Number of S4K listing rows. Each row is consecutive seats together.">Owned grps</th>
+          <th class="num" title="Owned tix / total tix. ≥30% means we ARE the market on this event.">Share of mkt</th>
+          <th class="num" title="Median price S4K is asking. Compare to market median to see whether we're priced above/below the book.">Owned median ask</th>
+          <th class="num" title="(owned_median / market_median) − 1. Positive = we're charging above the market.">Premium vs mkt</th>
+          <th class="num" title="Notional value of S4K's book on this event = owned_median × owned_tickets.">Notional</th>
+        </tr></thead>
         <tbody><tr class="${(m.owned_share?.v || 0) >= 0.30 ? 'we-are-mkt' : ''}">
           <td class="num">${num(m.owned_tickets_count?.v)}</td>
           <td class="num">${num(m.owned_groups_count?.v)}</td>
@@ -1188,38 +1229,74 @@ async function loadEvent(eventId) {
         ${espnHTML}
       </div>
       <div class="panel">
-        <div class="panel-h"><h3>Related News</h3><div class="actions"><span class="dim">${news?.count || 0} items</span></div></div>
+        <div class="panel-h">
+          <h3>Related News</h3>
+          <div class="actions">
+            <span class="dim" title="${news?.filter?.team_ids?.length ? 'Filtered to ESPN team_ids ' + news.filter.team_ids.join(', ') + ' · league ' + (news.filter.league || '?') : 'No team filter — global ESPN feed'}">
+              ${news?.filter?.team_ids?.length ? 'home + away · ' + esc(news.filter.league || '?') : 'global'} · ${news?.count || 0} items
+            </span>
+          </div>
+        </div>
         <ul class="news" style="max-height:520px;">
-          ${(news?.items || []).slice(0, 12).map(n => `
+          ${(news?.items || []).slice(0, 12).map(n => {
+            const teamIds = (news?.filter?.team_ids || []);
+            const homeTeamId = teamIds[0]; const awayTeamId = teamIds[1];
+            const isHome = String(n.espn_team_id) === String(homeTeamId);
+            const isAway = String(n.espn_team_id) === String(awayTeamId);
+            const teamTag = isHome ? '<span class="badge home" style="font-size:9px;">HOME</span>' : isAway ? '<span class="badge road" style="font-size:9px;">AWAY</span>' : '';
+            const typeTag = n.type ? `<span class="badge" style="font-size:9px;">${esc(n.type)}</span>` : '';
+            return `
             <li>
               <span class="news-when">${ageMinutes(n.published_at)}</span>
               <span class="logo-sm" style="background:#26292d;border:1px solid var(--border-strong);"></span>
               <div class="news-text">
                 ${n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline || '—')}</a>` : esc(n.headline || '—')}
-                <br><span class="src">${esc(n.espn_league || 'ESPN')}${n.type ? ' · ' + esc(n.type) : ''}</span>
+                <br><span class="src">${esc(n.espn_league || 'ESPN')} ${teamTag} ${typeTag}</span>
               </div>
-            </li>`).join('') || '<li style="grid-template-columns:1fr;"><div class="muted" style="padding:8px;">No recent news.</div></li>'}
+            </li>`;
+          }).join('') || '<li style="grid-template-columns:1fr;"><div class="muted" style="padding:8px;">No recent news for these teams.</div></li>'}
         </ul>
       </div>
     </div>
     <div style="height:12px"></div>
     ${rawTevo && (rawTevo.groups || []).length ? `
     <div class="panel">
-      <div class="panel-h"><h3>Market vs Owned Depth · ${rawTevo.groups.length} listings</h3><div class="actions"><span class="dim">source: ${esc(rawTevo.source || 'live')} · ${shortDate(rawTevo.captured_at)}</span></div></div>
+      <div class="panel-h">
+        <h3>Market vs Owned Depth · ${rawTevo.groups.length} listings</h3>
+        <div class="actions"><span class="dim">source: ${esc(rawTevo.source || 'live')} · ${shortDate(rawTevo.captured_at)}${sectionZones?.source_mix ? ' · zones: ' + Object.entries(sectionZones.source_mix).map(([s,c])=>`${c} ${s}`).join(' / ') : ''}</span></div>
+      </div>
       <table class="ibkr">
-        <thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th><th class="num">Retail</th><th class="num">Wholesale</th><th>Format</th><th>Brokerage</th><th>In hand</th></tr></thead>
+        <thead><tr>
+          <th title="Zone the section maps into (curated rules first, then keyword/digit fallback). 'unmapped' means no rule matched.">Zone</th>
+          <th title="Raw section label from TEvo.">Section</th>
+          <th title="Row label within the section.">Row</th>
+          <th class="num" title="Tickets available in this row group (consecutive seats).">Qty</th>
+          <th class="num" title="Asking price per ticket (retail).">Retail</th>
+          <th class="num" title="Wholesale price per ticket — broker-to-broker.">Wholesale</th>
+          <th title="Delivery format: e-tkt, flash, paper, mobile, etc.">Format</th>
+          <th title="Allowed split sizes — which quantities a buyer can purchase (e.g. [2,4] = pairs or all-four only).">Splits</th>
+        </tr></thead>
         <tbody>
           ${rawTevo.groups.slice().sort((a,b) => (a.retail_price||0) - (b.retail_price||0)).slice(0, 200).map(g => {
             const owned = g.office?.brokerage?.id === 1768;
+            const sec = g.section || '';
+            const zoneInfo = (sectionZones?.map || {})[sec] || {};
+            const zoneLabel = zoneInfo.zone || '—';
+            const zoneCls = zoneInfo.source === 'curated' ? 'pos' : zoneInfo.source === 'fallback' ? 'warn' : 'muted';
+            const splits = Array.isArray(g.splits) ? g.splits : [];
+            const splitsLabel = splits.length ? splits.join(',') : '—';
+            const splitsTitle = splits.length === 0 ? 'No split rules — quantity is sold all-or-nothing.'
+              : splits.length === 1 ? `Only sells in groups of ${splits[0]}.`
+              : `Buyer can purchase any of: ${splits.join(', ')}.`;
             return `<tr class="${owned ? 'owned' : ''}">
-              <td>${esc(g.section || '—')}</td>
+              <td class="${zoneCls}" style="font-size:11px;" title="${esc(zoneInfo.source || '—')}">${esc(zoneLabel)}</td>
+              <td>${esc(sec || '—')}${owned ? ' <span class="badge warn" style="font-size:9px;">S4K</span>' : ''}</td>
               <td>${esc(g.row || '—')}</td>
               <td class="num">${num(g.available_quantity ?? g.quantity)}</td>
               <td class="num"><strong>${moneyC(g.retail_price)}</strong></td>
               <td class="num dim">${moneyC(g.wholesale_price)}</td>
               <td class="dim">${esc(g.format || '')}</td>
-              <td class="${owned ? 'pos' : 'muted'}">${esc(g.office?.brokerage?.name || '—')}${owned ? ' <span class="badge warn" style="font-size:9px;">S4K</span>' : ''}</td>
-              <td class="dim">${g.in_hand ? '✓' : esc(g.in_hand_on || '—')}</td>
+              <td class="dim" title="${esc(splitsTitle)}">${esc(splitsLabel)}</td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -1265,6 +1342,10 @@ const CHART_SERIES = [
   { id: 'top5_concentration', label: 'Top-5 concentration', path: 'series.top5_concentration', color: '#a3e635', axis: 'y%', def: false, scale: 100 },
   { id: 'price_dispersion',label: 'Price dispersion',      path: 'series.price_dispersion',color: '#22d3ee', axis: 'yIdx', def: false },
   { id: 'tail_premium',    label: 'Tail premium',          path: 'series.tail_premium',    color: '#34d399', axis: 'yIdx', def: false },
+  // Splits inventory
+  { id: 'splits_pct_pairs',  label: 'Pairs available %',  path: 'series.splits_pct_pairs',   color: '#fb923c', axis: 'y%', def: false, scale: 100 },
+  { id: 'splits_pct_singles',label: 'Singles available %',path: 'series.splits_pct_singles', color: '#f472b6', axis: 'y%', def: false, scale: 100 },
+  { id: 'splits_min_q',      label: 'Min buyable qty',    path: 'series.splits_min_q',       color: '#facc15', axis: 'yIdx', def: false },
   // ESPN
   { id: 'home_win_pct',    label: 'Home win %',            path: 'series.home_win_pct',    color: '#10b981', axis: 'y%', def: true,  scale: 100, hint: 'home_team' },
   { id: 'away_win_pct',    label: 'Away win %',            path: 'series.away_win_pct',    color: '#ef4444', axis: 'y%', def: true,  scale: 100, hint: 'away_team' },
@@ -1678,7 +1759,7 @@ async function loadVenue(venueId) {
         <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
       </div>
       <div class="hero-right" style="background:linear-gradient(135deg,#16181b,#1c1e22);">
-        <div class="map-pin">venue #${venueId}${venue.timezone ? ' · ' + esc(venue.timezone) : ''}</div>
+        <div class="map-pin">${esc(venue.name || 'Venue')}${venue.timezone ? ' · ' + esc(venue.timezone) : ''}</div>
       </div>
     </div>
     ${aggKPIs}

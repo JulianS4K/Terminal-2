@@ -450,19 +450,57 @@ def broker_leagues(_=Depends(require_auth)):
 
 
 @app.get("/api/broker/news")
-def broker_news(limit: int = 20, league: str | None = None, _=Depends(require_auth)):
-    """Recent ESPN news across all tracked teams. Backs the ESPN News panel
-    on the broker terminal home view. Reads `espn_news` table directly —
-    no joins, just chronological feed."""
+def broker_news(
+    limit: int = 20,
+    league: str | None = None,
+    team_ids: str | None = None,
+    event_id: int | None = None,
+    _=Depends(require_auth),
+):
+    """Recent ESPN news. Modes:
+      - no filter         → global feed (home view).
+      - league=NBA        → single league.
+      - team_ids=20,18    → comma-separated espn_team_ids (event level page).
+      - event_id=N        → resolves event_xref → home/away ESPN team_ids and
+                            scopes news to those two teams + their league.
+    """
     limit = max(1, min(int(limit), 100))
     db = require_sb()
+
+    resolved_teams: list[str] = []
+    resolved_league: str | None = league
+
+    if event_id is not None and not team_ids:
+        xref = (db.table("event_xref")
+                  .select("espn_event_id, espn_league")
+                  .eq("tevo_event_id", event_id).limit(1).execute().data or [])
+        if xref:
+            resolved_league = xref[0]["espn_league"]
+            snap = (db.table("espn_event_snapshots")
+                      .select("home_team_id, away_team_id")
+                      .eq("espn_event_id", xref[0]["espn_event_id"])
+                      .order("captured_at", desc=True).limit(1).execute().data or [])
+            if snap:
+                for k in ("home_team_id", "away_team_id"):
+                    v = snap[0].get(k)
+                    if v: resolved_teams.append(str(v))
+    elif team_ids:
+        resolved_teams = [t.strip() for t in team_ids.split(",") if t.strip()]
+
     q = (db.table("espn_news")
            .select("headline, description, url, published_at, type, espn_team_id, espn_league")
            .order("published_at", desc=True).limit(limit))
-    if league:
-        q = q.eq("espn_league", league)
+    if resolved_league:
+        q = q.eq("espn_league", resolved_league)
+    if resolved_teams:
+        q = q.in_("espn_team_id", resolved_teams)
     rows = q.execute().data or []
-    return {"count": len(rows), "items": rows}
+
+    return {
+        "count": len(rows),
+        "items": rows,
+        "filter": {"league": resolved_league, "team_ids": resolved_teams, "event_id": event_id},
+    }
 
 
 @app.get("/api/broker/performers/by-league/{league}")
@@ -910,7 +948,11 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
             "getin_price,top5_concentration,"
             "price_dispersion,tail_premium,"
             # Owned (S4K)
-            "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail"
+            "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
+            # Splits inventory metrics (mig 20260508230000)
+            "splits_min_q,splits_listings_with_singles,splits_listings_with_pairs,"
+            "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split,"
+            "splits_pct_pairs,splits_pct_singles"
         )
         .eq("event_id", event_id)
         .order("captured_at", desc=True)
@@ -933,6 +975,10 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
         "price_dispersion", "tail_premium",
         # Owned
         "owned_groups_count", "owned_tickets_count", "owned_share", "owned_median_retail",
+        # Splits inventory
+        "splits_min_q", "splits_listings_with_singles", "splits_listings_with_pairs",
+        "splits_listings_with_3", "splits_listings_with_4plus", "splits_listings_no_split",
+        "splits_pct_pairs", "splits_pct_singles",
     ]
     metrics = {k: {"v": curr.get(k), "delta": _delta(curr.get(k), prev.get(k))} for k in metric_keys}
 
@@ -953,6 +999,100 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
 
 
 _PARKING_ZONE_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park)\b", re.IGNORECASE)
+
+
+@app.get("/api/broker/event/{event_id}/section-zones")
+def broker_event_section_zones(event_id: int, _=Depends(require_auth)):
+    """Section → zone lookup map for an event. Used by the Market vs Owned
+    Depth panel to render a Zone column next to each ticket_group.
+
+    Resolution: curated performer_zones (priority) → derive_zone_fallback()
+    keyword/numeric heuristic → null.
+    """
+    db = require_sb()
+    ev = (db.table("events")
+            .select("primary_performer_id, venue_id")
+            .eq("id", event_id).limit(1).execute().data or [])
+    if not ev:
+        return {"map": {}, "source_mix": {}}
+    primary_perf = ev[0].get("primary_performer_id")
+    venue_id = ev[0].get("venue_id")
+
+    # Distinct (section, row) pairs in the event's latest listings snapshot
+    latest = (db.table("listings_snapshots")
+                .select("captured_at").eq("event_id", event_id)
+                .order("captured_at", desc=True).limit(1).execute().data or [])
+    if not latest:
+        return {"map": {}, "source_mix": {}}
+    latest_at = latest[0]["captured_at"]
+    sec_rows = (db.table("listings_snapshots")
+                  .select("section, row")
+                  .eq("event_id", event_id).eq("captured_at", latest_at)
+                  .execute().data or [])
+    secs = list({(r.get("section"), r.get("row")) for r in sec_rows})
+
+    # Build map. For each (section, row), call derive_zone_fallback for the system
+    # answer; also check performer_zones for curated. Curated wins.
+    section_map: dict[str, dict] = {}
+    source_mix: dict[str, int] = {}
+
+    # Curated lookups (in batch) — query performer_zone_section_rules joined with performer_zones
+    if primary_perf and venue_id:
+        cur_rules = (db.table("performer_zones")
+                       .select("id, zone, performer_zone_section_rules(section_pattern, match_type, row_pattern, priority)")
+                       .eq("performer_id", primary_perf).eq("venue_id", venue_id)
+                       .eq("source", "curated")
+                       .execute().data or [])
+        # Flatten rules: list of (zone, pattern, match_type, row_pattern, priority)
+        rules: list[tuple] = []
+        for cz in cur_rules:
+            for rule in (cz.get("performer_zone_section_rules") or []):
+                rules.append((cz["zone"], rule.get("section_pattern") or "",
+                              rule.get("match_type") or "exact",
+                              rule.get("row_pattern"), rule.get("priority") or 0))
+        rules.sort(key=lambda r: -r[4])  # priority desc
+
+        def _curated_match(section: str | None, row: str | None) -> str | None:
+            if not section: return None
+            sec = section
+            for zone, patt, mtype, rpatt, _pri in rules:
+                hit = False
+                if mtype == "exact":     hit = sec == patt
+                elif mtype == "prefix":  hit = sec.lower().startswith(patt.lower())
+                elif mtype == "suffix":  hit = sec.lower().endswith(patt.lower())
+                elif mtype == "substring": hit = patt.lower() in sec.lower()
+                elif mtype == "regex":
+                    try: hit = bool(re.search(patt, sec, re.IGNORECASE))
+                    except re.error: hit = False
+                if hit and rpatt and row:
+                    try: hit = bool(re.search(rpatt, row, re.IGNORECASE))
+                    except re.error: pass
+                if hit: return zone
+            return None
+    else:
+        def _curated_match(section, row): return None
+
+    # Resolve each section
+    for section, row in secs:
+        z_curated = _curated_match(section, row)
+        if z_curated:
+            section_map[section] = {"zone": z_curated, "source": "curated"}
+            source_mix["curated"] = source_mix.get("curated", 0) + 1
+            continue
+        # Fallback: derive_zone_fallback RPC
+        try:
+            res = db.rpc("derive_zone_fallback", {"p_section": section, "p_row": row}).execute().data
+            zfall = res if isinstance(res, str) else None
+        except Exception:
+            zfall = None
+        if zfall:
+            section_map[section] = {"zone": zfall, "source": "fallback"}
+            source_mix["fallback"] = source_mix.get("fallback", 0) + 1
+        else:
+            section_map[section] = {"zone": None, "source": "unmapped"}
+            source_mix["unmapped"] = source_mix.get("unmapped", 0) + 1
+
+    return {"map": section_map, "source_mix": source_mix}
 
 
 @app.get("/api/broker/event/{event_id}/zones")
@@ -1379,7 +1519,10 @@ def broker_event_chart_data(
             "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
             "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
             "getin_price,top5_concentration,price_dispersion,tail_premium,"
-            "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail"
+            "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
+            "splits_min_q,splits_pct_pairs,splits_pct_singles,"
+            "splits_listings_with_singles,splits_listings_with_pairs,"
+            "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split"
         )
         .eq("event_id", event_id)
         .gte("captured_at", since_iso)
@@ -1676,6 +1819,15 @@ def broker_event_chart_data(
             # ===== TEvo: owned aggregates =====
             "owned_groups_count":   _series("owned_groups_count"),
             "owned_share":          _series("owned_share"),
+            # ===== TEvo: splits inventory =====
+            "splits_min_q":         _series("splits_min_q"),
+            "splits_pct_pairs":     _series("splits_pct_pairs"),
+            "splits_pct_singles":   _series("splits_pct_singles"),
+            "splits_with_singles":  _series("splits_listings_with_singles"),
+            "splits_with_pairs":    _series("splits_listings_with_pairs"),
+            "splits_with_3":        _series("splits_listings_with_3"),
+            "splits_with_4plus":    _series("splits_listings_with_4plus"),
+            "splits_no_split":      _series("splits_listings_no_split"),
             # ===== ESPN standings: legacy combined + new per-field per-team =====
             "home_standings": home_standings,   # legacy alias for home_win_pct
             "away_standings": away_standings,
