@@ -111,8 +111,33 @@
   .chip.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 
   /* chart */
-  .chart-wrap { position: relative; height: 200px; }
+  .chart-wrap { position: relative; height: 280px; }
   .chart-empty { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--fg-3); }
+  .cad-strip {
+    display: flex; gap: 8px; flex-wrap: wrap; padding: 6px 0 8px;
+    border-bottom: 1px solid var(--border); margin-bottom: 8px;
+    font-family: "SF Mono", monospace; font-size: 10px;
+  }
+  .cad-chip {
+    padding: 2px 8px; background: var(--bg-2); border: 1px solid var(--border); color: var(--fg-2);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .cad-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-3); }
+  .cad-chip.fresh .dot { background: var(--up); box-shadow: 0 0 6px var(--up); }
+  .cad-chip.due .dot   { background: var(--accent); }
+  .series-toggles { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+  .series-toggle {
+    padding: 3px 8px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-2);
+    color: var(--fg-3); cursor: pointer; user-select: none;
+  }
+  .series-toggle.on { color: var(--fg); border-color: var(--accent); background: rgba(96, 165, 250, 0.08); }
+  .series-toggle .swatch { display: inline-block; width: 8px; height: 8px; margin-right: 5px; vertical-align: middle; }
+  .last5-strip { display: flex; gap: 4px; align-items: center; font-size: 11px; }
+  .last5-team { color: var(--fg-2); margin-right: 6px; }
+  .last5-game { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600; color: var(--bg); }
+  .last5-game.W { background: var(--up); }
+  .last5-game.L { background: var(--down); }
 
   /* tabs */
   .tabs-nav { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-2); }
@@ -175,13 +200,15 @@
       <div class="zone-chips" id="zone-chips"></div>
     </div>
 
-    <!-- MIDDLE: time-series chart placeholder -->
+    <!-- MIDDLE: time-series chart -->
     <div class="pane mid">
       <div class="pane-head">
-        <h2>Price over time</h2>
-        <span class="last-pull">Stage 2 — chart wires into /api/events/{id}/series</span>
+        <h2>Price + inventory + signals</h2>
+        <div class="last5-strip" id="last5-strip"></div>
       </div>
-      <div class="chart-empty mono">[ time-series chart — coming Stage 2 ]</div>
+      <div class="cad-strip" id="cad-strip"></div>
+      <div class="series-toggles" id="series-toggles"></div>
+      <div class="chart-wrap"><canvas id="chart-canvas"></canvas></div>
     </div>
 
     <!-- TABS -->
@@ -241,9 +268,11 @@
     </div>
   </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script>
 // =============================================================================
-// Event terminal — bootstrap, polling, deltas, flashes
+// Event terminal — bootstrap, polling, deltas, flashes, chart
 // =============================================================================
 
 const EVENT_ID = parseInt(window.location.pathname.split("/").pop(), 10);
@@ -554,6 +583,208 @@ async function loadRaw(force) {
   return data.captured_at;
 }
 
+// =============================================================================
+// Chart — multi-series time-series w/ overlay markers + cadence chip strip
+// =============================================================================
+
+const CHART_SERIES = [
+  { id: "prices_owned",   label: "Owned median $",  color: "#fbbf24", axis: "y_price",  type: "line", default: true  },
+  { id: "prices_market",  label: "Market median $", color: "#60a5fa", axis: "y_price",  type: "line", default: true  },
+  { id: "counts_owned",   label: "Owned tix",       color: "#f59e0b", axis: "y_count",  type: "line", default: true,  dashed: true },
+  { id: "counts_market",  label: "Market tix",      color: "#3b82f6", axis: "y_count",  type: "line", default: true,  dashed: true },
+  { id: "home_standings", label: "Home win %",      color: "#34d399", axis: "y_pct",    type: "line", default: true  },
+  { id: "away_standings", label: "Away win %",      color: "#a78bfa", axis: "y_pct",    type: "line", default: true  },
+];
+
+const SERIES_KEY = "evt_series_toggles_v1";
+function loadToggles() {
+  try { return JSON.parse(localStorage.getItem(SERIES_KEY)) || {}; } catch (_) { return {}; }
+}
+function saveToggles(t) { localStorage.setItem(SERIES_KEY, JSON.stringify(t)); }
+
+const _toggles = loadToggles();
+function isOn(id) {
+  const cfg = CHART_SERIES.find(s => s.id === id);
+  return _toggles[id] === undefined ? !!(cfg && cfg.default) : !!_toggles[id];
+}
+
+let _chart = null;
+let _chart_data_cache = null;
+
+function buildToggleUI() {
+  const wrap = document.getElementById("series-toggles");
+  wrap.innerHTML = "";
+  for (const s of CHART_SERIES) {
+    const t = document.createElement("div");
+    t.className = "series-toggle" + (isOn(s.id) ? " on" : "");
+    t.innerHTML = `<span class="swatch" style="background:${s.color}"></span>${s.label}`;
+    t.onclick = () => {
+      _toggles[s.id] = !isOn(s.id);
+      saveToggles(_toggles);
+      t.classList.toggle("on");
+      renderChart();
+    };
+    wrap.appendChild(t);
+  }
+}
+
+function pointsFor(seriesId) {
+  if (!_chart_data_cache) return [];
+  const arr = _chart_data_cache.series[seriesId] || [];
+  return arr.filter(p => p.v != null).map(p => ({ x: p.t, y: Number(p.v) }));
+}
+
+function buildAnnotations() {
+  // Vertical lines for injuries + roster moves. Chart.js doesn't have a
+  // first-class annotation in the UMD bundle, so we hand-draw via plugin.
+  const inj = (_chart_data_cache?.overlays?.injuries || []).map(o => ({
+    x: o.t, color: "#f87171", label: `inj: ${o.athlete} (${o.status})${o.team === 'home' ? ' [H]' : ' [A]'}`,
+  }));
+  const rm = (_chart_data_cache?.overlays?.roster_moves || []).map(o => ({
+    x: o.t, color: "#a78bfa", label: `${o.type}: athlete ${o.athlete_id || '?'}`,
+  }));
+  return [...inj, ...rm];
+}
+
+const overlayPlugin = {
+  id: "vertical-overlays",
+  afterDraw(chart) {
+    const ann = buildAnnotations();
+    if (!ann.length) return;
+    const { ctx, chartArea, scales } = chart;
+    const xScale = scales.x;
+    if (!xScale) return;
+    ctx.save();
+    for (const a of ann) {
+      const x = xScale.getPixelForValue(new Date(a.x).getTime());
+      if (x < chartArea.left || x > chartArea.right) continue;
+      ctx.strokeStyle = a.color;
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+};
+
+function renderChart() {
+  const canvas = document.getElementById("chart-canvas");
+  if (!canvas || !_chart_data_cache) return;
+  const datasets = [];
+  for (const s of CHART_SERIES) {
+    if (!isOn(s.id)) continue;
+    const pts = pointsFor(s.id);
+    if (!pts.length) continue;
+    datasets.push({
+      label: s.label,
+      data: pts,
+      borderColor: s.color,
+      backgroundColor: s.color + "22",
+      yAxisID: s.axis,
+      borderWidth: 1.5,
+      borderDash: s.dashed ? [4, 3] : undefined,
+      pointRadius: 0,
+      tension: 0.25,
+    });
+  }
+
+  if (_chart) _chart.destroy();
+  _chart = new Chart(canvas, {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: { type: "time", time: { tooltipFormat: "MMM d HH:mm" },
+             ticks: { color: "#6b7684", maxRotation: 0 },
+             grid:  { color: "#1a2029" } },
+        y_price: { position: "left",  ticks: { color: "#fbbf24", callback: v => "$" + Number(v).toFixed(0) }, grid: { color: "#1a2029" } },
+        y_count: { position: "right", ticks: { color: "#60a5fa" }, grid: { drawOnChartArea: false } },
+        y_pct:   { position: "right", display: false, min: 0, max: 1 },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#11151c", borderColor: "#232a36", borderWidth: 1,
+          titleColor: "#e6edf3", bodyColor: "#9aa5b1", cornerRadius: 0,
+        },
+      },
+    },
+    plugins: [overlayPlugin],
+  });
+}
+
+function renderLast5() {
+  const wrap = document.getElementById("last5-strip");
+  if (!_chart_data_cache?.last5) { wrap.innerHTML = ""; return; }
+  const home = (_chart_data_cache.last5.home || []).slice().reverse();
+  const away = (_chart_data_cache.last5.away || []).slice().reverse();
+  const cell = (g) => `<span class="last5-game ${g.result}" title="${g.score}${g.home ? ' (H)' : ' (A)'}">${g.result}</span>`;
+  wrap.innerHTML =
+    (home.length ? `<span class="last5-team">H</span>` + home.map(cell).join("") : "") +
+    (away.length ? `<span class="last5-team" style="margin-left:10px">A</span>` + away.map(cell).join("") : "");
+}
+
+async function loadChartData() {
+  const data = await api(`/api/broker/event/${EVENT_ID}/chart-data?days=30`);
+  if (!data) return null;
+  _chart_data_cache = data;
+  renderChart();
+  renderLast5();
+  return new Date().toISOString();
+}
+
+// --- Cadence chips over the chart pane (independent per data type)
+const CAD_CONFIG = [
+  { key: "overview",        label: "listings",   driver: loadOverview },
+  { key: "espn_injuries",   label: "espn inj",   driver: () => { loadChartData(); return null; } },
+  { key: "espn_team",       label: "espn team",  driver: () => { loadChartData(); return null; } },
+];
+
+function setupCadStrip(cadResp) {
+  const strip = document.getElementById("cad-strip");
+  strip.innerHTML = "";
+  for (const cfg of CAD_CONFIG) {
+    const c = (cadResp.sections || {})[cfg.key];
+    if (!c) continue;
+    const chip = document.createElement("div");
+    chip.className = "cad-chip";
+    chip.id = "cad-" + cfg.key;
+    chip.innerHTML = `<span class="dot"></span><span>${cfg.label}: <span class="cad-cd mono">—</span></span>`;
+    strip.appendChild(chip);
+    // Tick the countdown each second; refire driver when it hits zero.
+    const lastMs = c.last_pull_at ? new Date(c.last_pull_at).getTime() : Date.now();
+    const cadMs  = (c.cadence_seconds || 1200) * 1000;
+    let nextAt = lastMs + cadMs + 15000 + Math.floor(Math.random() * 15000);
+    const cdEl = chip.querySelector(".cad-cd");
+    setInterval(() => {
+      const remaining = Math.floor((nextAt - Date.now()) / 1000);
+      if (remaining <= 0) {
+        chip.classList.add("due");
+        cdEl.textContent = "polling…";
+        const r = cfg.driver(); // may be a Promise or null
+        Promise.resolve(r).then(() => {
+          chip.classList.remove("due"); chip.classList.add("fresh");
+          setTimeout(() => chip.classList.remove("fresh"), 2000);
+          nextAt = Date.now() + cadMs + 15000 + Math.floor(Math.random() * 15000);
+        }).catch(() => {
+          nextAt = Date.now() + 30000; // back off
+        });
+        return;
+      }
+      const m = Math.floor(remaining / 60), s = remaining % 60;
+      cdEl.textContent = `↻ in ${m}:${String(s).padStart(2, "0")}`;
+    }, 1000);
+  }
+}
+
 // --- Tab switching
 document.querySelectorAll(".tab-btn[data-tab]").forEach(btn => {
   btn.onclick = () => {
@@ -574,20 +805,24 @@ document.getElementById("raw-refresh-btn").onclick = () => loadRaw(true);
   JWT = await getJWT();
   if (!JWT) return;
 
-  // Initial fetches
+  // Build chart UI + initial fetches
+  buildToggleUI();
   const lastOverview = await loadOverview();
   const lastSections = await loadSections();
+  await loadChartData();
 
-  // Poll cadence info to drive per-section schedulers
+  // Poll cadence info to drive per-section schedulers + cad-chip strip
   const cad = await api(`/api/broker/event/${EVENT_ID}/cadences`);
   if (!cad) return;
 
+  setupCadStrip(cad);
   makePoller("overview", loadOverview,
     (cad.sections.overview.cadence_seconds || 1200) * 1000,
     cad.sections.overview.last_pull_at);
   makePoller("sections", loadSections,
     (cad.sections.section_metrics.cadence_seconds || 1200) * 1000,
     cad.sections.section_metrics.last_pull_at);
+
   // ESPN + raw refresh on tab open; ESPN injuries auto-poll at 10m if tab open
   setInterval(() => {
     const tab = document.querySelector(".tab-btn.active")?.dataset.tab;

@@ -858,6 +858,172 @@ def broker_event_espn(event_id: int, _=Depends(require_auth)):
         return {"applicable": False, "error": str(e)}
 
 
+@app.get("/api/broker/event/{event_id}/chart-data")
+def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_auth)):
+    """Stage 2 chart data: 4 default time-series + 4 overlay event streams.
+
+    Series:
+      prices_owned   — event_metrics.owned_median_retail
+      prices_market  — event_metrics.retail_median
+      counts_owned   — event_metrics.owned_tickets_count
+      counts_market  — event_metrics.tickets_count
+      home_standings — espn_team_snapshots filtered to home team (win_pct over time)
+      away_standings — espn_team_snapshots filtered to away team (win_pct over time)
+
+    Overlay events (vertical markers):
+      injuries     — espn_injuries_snapshots, only is_baseline=false rows (real changes)
+      roster_moves — espn_athlete_team_history with transaction_type in (traded, released)
+
+    Last-5 record:
+      espn_event_snapshots state='post' for either team, last 5 by captured_at,
+      W/L computed from home_team_id + scores.
+    """
+    days = max(1, min(int(days), 180))
+    db = require_sb()
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    # 1) Price + count series from event_metrics
+    em = (
+        db.table("event_metrics")
+        .select("captured_at,retail_median,owned_median_retail,tickets_count,owned_tickets_count")
+        .eq("event_id", event_id)
+        .gte("captured_at", since_iso)
+        .order("captured_at")
+        .execute()
+    ).data or []
+    prices_owned  = [{"t": r["captured_at"], "v": r.get("owned_median_retail")} for r in em]
+    prices_market = [{"t": r["captured_at"], "v": r.get("retail_median")}        for r in em]
+    counts_owned  = [{"t": r["captured_at"], "v": r.get("owned_tickets_count")}  for r in em]
+    counts_market = [{"t": r["captured_at"], "v": r.get("tickets_count")}        for r in em]
+
+    # 2) Resolve home + away ESPN team ids from event_xref → espn_event_snapshots
+    home_team_id = away_team_id = home_slug = away_slug = home_league = None
+    xref = (
+        db.table("event_xref").select("espn_event_id,espn_slug,espn_league")
+        .eq("tevo_event_id", event_id).limit(1).execute()
+    ).data or []
+    if xref:
+        x = xref[0]
+        home_league = x["espn_league"]
+        snap = (
+            db.table("espn_event_snapshots")
+            .select("home_team_id,away_team_id")
+            .eq("espn_event_id", x["espn_event_id"])
+            .order("captured_at", desc=True).limit(1)
+            .execute()
+        ).data or []
+        if snap:
+            home_team_id = snap[0].get("home_team_id")
+            away_team_id = snap[0].get("away_team_id")
+            home_slug = away_slug = x["espn_slug"]
+
+    def _team_standings(team_id: str | None) -> list:
+        if not team_id:
+            return []
+        rows = (
+            db.table("espn_team_snapshots")
+            .select("captured_at,win_pct,wins,losses,playoff_seed,record_summary")
+            .eq("espn_team_id", team_id)
+            .gte("captured_at", since_iso)
+            .order("captured_at")
+            .execute()
+        ).data or []
+        return [{"t": r["captured_at"], "v": r.get("win_pct"),
+                 "wins": r.get("wins"), "losses": r.get("losses"),
+                 "seed": r.get("playoff_seed"), "rec": r.get("record_summary")} for r in rows]
+
+    home_standings = _team_standings(home_team_id)
+    away_standings = _team_standings(away_team_id)
+
+    # 3) Injury changes (only rows where is_baseline=false → real status flip)
+    inj_rows = (
+        db.table("espn_injuries_snapshots")
+        .select("captured_at,athlete_name,status,injury_type,short_comment,espn_team_id")
+        .in_("espn_team_id", [t for t in (home_team_id, away_team_id) if t])
+        .eq("is_baseline", False)
+        .gte("captured_at", since_iso)
+        .order("captured_at")
+        .execute()
+    ).data or [] if (home_team_id or away_team_id) else []
+    injuries = [{"t": r["captured_at"], "athlete": r.get("athlete_name"),
+                 "status": r.get("status"), "team": "home" if r.get("espn_team_id") == home_team_id else "away",
+                 "comment": r.get("short_comment")} for r in inj_rows]
+
+    # 4) Roster moves (trades + releases)
+    rm_rows = []
+    if home_team_id or away_team_id:
+        rm_rows = (
+            db.table("espn_athlete_team_history")
+            .select("detected_at,transaction_type,prior_team_id,espn_team_id,espn_athlete_id,notes")
+            .in_("transaction_type", ["traded", "released"])
+            .gte("detected_at", since_iso)
+            .or_(",".join(filter(None, [
+                f"espn_team_id.eq.{home_team_id}" if home_team_id else None,
+                f"espn_team_id.eq.{away_team_id}" if away_team_id else None,
+                f"prior_team_id.eq.{home_team_id}" if home_team_id else None,
+                f"prior_team_id.eq.{away_team_id}" if away_team_id else None,
+            ])) or "espn_team_id.eq.NULL")
+            .order("detected_at")
+            .execute()
+        ).data or []
+    roster_moves = [{"t": r["detected_at"], "type": r["transaction_type"],
+                     "athlete_id": r.get("espn_athlete_id"),
+                     "from_team": r.get("prior_team_id"), "to_team": r.get("espn_team_id"),
+                     "notes": r.get("notes")} for r in rm_rows]
+
+    # 5) Last-5 record per team
+    def _last5(team_id: str | None) -> list:
+        if not team_id:
+            return []
+        rows = (
+            db.table("espn_event_snapshots")
+            .select("captured_at,espn_event_id,home_team_id,away_team_id,home_score,away_score,state")
+            .or_(f"home_team_id.eq.{team_id},away_team_id.eq.{team_id}")
+            .eq("state", "post")
+            .order("captured_at", desc=True).limit(5)
+            .execute()
+        ).data or []
+        out = []
+        for r in rows:
+            h, a = r.get("home_score"), r.get("away_score")
+            if h is None or a is None:
+                continue
+            is_home = r.get("home_team_id") == team_id
+            won = (is_home and h > a) or (not is_home and a > h)
+            out.append({"t": r["captured_at"], "result": "W" if won else "L",
+                        "score": f"{h}-{a}", "home": is_home})
+        return out
+
+    last5_home = _last5(home_team_id)
+    last5_away = _last5(away_team_id)
+
+    return {
+        "event_id": event_id,
+        "days": days,
+        "series": {
+            "prices_owned":   prices_owned,
+            "prices_market":  prices_market,
+            "counts_owned":   counts_owned,
+            "counts_market":  counts_market,
+            "home_standings": home_standings,
+            "away_standings": away_standings,
+        },
+        "overlays": {
+            "injuries":     injuries,
+            "roster_moves": roster_moves,
+        },
+        "last5": {
+            "home": last5_home,
+            "away": last5_away,
+        },
+        "teams": {
+            "home_team_id": home_team_id,
+            "away_team_id": away_team_id,
+            "league":       home_league,
+        },
+    }
+
+
 @app.get("/api/broker/event/{event_id}/cadences")
 def broker_event_cadences(event_id: int, _=Depends(require_auth)):
     """Per-section poll cadence for the page. Each section reads its own
