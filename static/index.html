@@ -1448,7 +1448,13 @@ async function loadPerformerDetail(id) {
     const venue = p.venue || {};
     const upc = p.upcoming_events || {};
     const opponents = p.opponents || [];
-    const oppRows = opponents.map(o => `<tr><td class="id-tag">${o.id}</td><td>${esc(o.name)}</td></tr>`).join("");
+    // Opponents are clickable: click drops you into that opponent's detail view
+    // so you can hop around a league (e.g. NFC East rivalry quick-flip).
+    const oppRows = opponents.map(o => `<tr class="row" data-opp-id="${o.id}" style="cursor:pointer">
+      <td class="id-tag">${o.id}</td>
+      <td><a href="#" data-opp-id="${o.id}" style="color:var(--amber)">${esc(o.name)}</a></td>
+      <td class="dim" style="font-size:11px">→ events</td>
+    </tr>`).join("");
     const pivots = [
       `<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
         data-pivot-set='${JSON.stringify({performer_id: p.id})}'>→ events by this performer</button>`,
@@ -1474,16 +1480,23 @@ async function loadPerformerDetail(id) {
         <div class="stat"><div class="k">last upcoming</div><div class="v">${upc.last ? upc.last.slice(0,10) : "—"}</div></div>
         <div class="stat"><div class="k">keywords</div><div class="v dim">${esc(p.keywords || "—")}</div></div>
       </div>
-      <div id="performer-portfolio-mount"></div>
       <div id="performer-espn-mount"></div>
+      <div id="performer-portfolio-mount"></div>
       ${opponents.length ? `
       <div class="panel" style="margin-top:16px">
         <div class="panel-head">
-          <span>opponents <span class="count">(${opponents.length})</span></span>
+          <span><span style="font-size:10px;background:#3a2a10;color:var(--amber);padding:2px 6px;margin-right:8px;letter-spacing:0.08em">TEVO</span>opponents <span class="count">(${opponents.length})</span></span>
           <input class="table-filter" data-target="pf-opp-table" placeholder="filter rows…">
         </div>
         <div class="panel-body" id="pf-opp-table"><table><tbody>${oppRows}</tbody></table></div>
       </div>` : ""}`;
+    // Wire opponent click → load that opponent's detail (chain through teams)
+    $$("#pf-opp-table tr.row").forEach(tr => {
+      tr.addEventListener("click", e => {
+        const oppId = Number(tr.dataset.oppId);
+        if (oppId) loadPerformerDetail(oppId);
+      });
+    });
     loadPortfolio({ performer_id: p.id, mount: "#performer-portfolio-mount", titleSuffix: p.name });
     loadPerformerESPN(p.id);
   } catch (err) {
@@ -1548,10 +1561,15 @@ async function loadPerformerESPN(performerId) {
       <td class="dim">${esc(n.type || '')}</td>
     </tr>`).join("");
 
+  // Visual distinction: ESPN blocks get a blue accent border/header so they
+  // don't visually collide with TEvo (amber) data in the same view.
   mount.innerHTML = `
-    <div class="panel" style="margin-top:16px">
-      <div class="panel-head">
-        <span>espn context <span class="count">(${esc(d.league || 'team')})</span></span>
+    <div class="panel panel-espn" style="margin-top:16px;border-color:#2a4a6e;background:linear-gradient(180deg, rgba(96,165,250,0.04), transparent 80px)">
+      <div class="panel-head" style="background:#0d1a2b;border-bottom:1px solid #2a4a6e">
+        <span style="color:#60a5fa;letter-spacing:0.04em">
+          <span style="font-size:10px;background:#1e3a5f;color:#93c5fd;padding:2px 6px;margin-right:8px;letter-spacing:0.08em">ESPN</span>
+          team context <span class="count">(${esc(d.league || 'team')})</span>
+        </span>
         <span class="dim" style="font-size:11px">team_id ${esc(d.espn_team_id)} · captured ${fmtDate(t.captured_at)}</span>
       </div>
       <div class="panel-body">
@@ -1589,7 +1607,7 @@ async function loadPortfolio({ performer_id, venue_id, watchlist_only, mount, ti
   if (!el) return;
   el.innerHTML = `
     <div class="panel" style="margin-top:16px">
-      <div class="panel-head"><span>tracked events portfolio · ${esc(titleSuffix || "")}</span></div>
+      <div class="panel-head"><span><span style="font-size:10px;background:#3a2a10;color:var(--amber);padding:2px 6px;margin-right:8px;letter-spacing:0.08em">TEVO</span>tracked events portfolio · ${esc(titleSuffix || "")}</span></div>
       <div class="panel-body"><div class="status">loading portfolio…</div></div>
     </div>`;
 

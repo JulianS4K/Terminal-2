@@ -17,6 +17,7 @@ Optional:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
@@ -202,8 +203,30 @@ def events_search(
     return {"count": len(events), "events": events}
 
 
+_PARKING_RE = re.compile(r"\b(parking|garage|valet|lot)\b", re.IGNORECASE)
+
+def _is_event_seat(tg: dict) -> bool:
+    """True if this ticket_group is a real event seat (not parking / suite /
+    hospitality). TEvo's `type` field is the canonical signal — defaults to
+    'event' for actual seats. As a backup, scan section/format strings for
+    parking-style tokens."""
+    t = (tg.get("type") or "event").lower()
+    if t != "event":
+        return False
+    section = (tg.get("section") or "")
+    if _PARKING_RE.search(section):
+        return False
+    fmt = (tg.get("format") or "").lower()
+    if "parking" in fmt:
+        return False
+    return True
+
+
 @app.get("/api/events/{event_id}")
-def event_detail(event_id: int, _=Depends(require_auth)):
+def event_detail(event_id: int, include_ancillary: bool = False, _=Depends(require_auth)):
+    """Event detail. By default filters out parking/suite/hospitality
+    ticket_groups so the per-event view shows only real seats.
+    Pass include_ancillary=true to see everything."""
     event = client.get_event(event_id)
     try:
         stats = client.get_event_stats(event_id)
@@ -214,11 +237,18 @@ def event_detail(event_id: int, _=Depends(require_auth)):
     except RuntimeError:
         stats_event_only = None
     listings = client.get_listings(event_id, order_by="retail_price ASC")
+    raw_groups = listings.get("ticket_groups", []) or []
+    if include_ancillary:
+        groups = raw_groups
+    else:
+        groups = [tg for tg in raw_groups if _is_event_seat(tg)]
     return {
         "event": event,
         "stats": stats,
         "stats_event_only": stats_event_only,
-        "ticket_groups": listings.get("ticket_groups", []),
+        "ticket_groups": groups,
+        "ticket_groups_total": len(raw_groups),
+        "ticket_groups_filtered_parking": len(raw_groups) - len(groups),
     }
 
 
