@@ -73,7 +73,10 @@ both agents are free to call any edge fn or read any view. only writes to source
 
 ## STATE (truth, not history)
 
-- Live URL terminal (broker) = railway https://terminal-2-production.up.railway.app  /
+- Live URL terminal (broker) = railway https://terminal-2-production.railway.app  /  (Railway dropped the legacy `.up.` subdomain segment; old `terminal-2-production.up.railway.app` now 404s)
+- Railway project = **glorious-appreciation** (1/1 service online) — both terminal AND `/chat` page served from same FastAPI app on this project. Sibling project `fantastic-magic` (0/1 online) is abandoned/stale, candidate for deletion.
+- ⚠️ **Railway deploy is lagging main** as of 2026-05-08: `/`, `/event/{id}` work; `/chat`, `/movers`, `/healthz` return 404 even though routes exist in `app.py`. Either auto-deploy from GitHub `main` is disconnected/broken or Railway is on a stale build. Need to trigger redeploy from Railway dashboard so movers page + chat page go live.
+- Trial countdown: 8 days / $4.58 remaining as of 2026-05-08 — must upgrade to Hobby ($5/mo) before then or terminal goes dark.
 - Live URL chatbot (retail)  = same domain  /chat
 - Supabase project = hzrizjeaxlqcxfrtczpq (Terminal .5)
 - chat edge fn = v19
