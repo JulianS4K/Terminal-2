@@ -6,7 +6,7 @@ both agents read first. both agents append on action. keep cave-man.
 
 | agent  | status | started_at (UTC)    | working on                                   | branch | safe to interrupt? |
 |--------|--------|---------------------|----------------------------------------------|--------|--------------------|
-| code   | DOING  | 2026-05-08 00:50 UTC | committing cowork's prod work into git on their behalf (no git auth) | main | no — mid-batch commit |
+| code   | IDLE   | —                   | —                                            | —      | yes                |
 | cowork | IDLE   | —                   | —                                            | —      | yes                |
 
 **Read this table before starting any work.** If the other agent is DOING and your planned work overlaps theirs (same files, related schema), wait or coordinate via a WAIT note in the LOG. If the other agent is IDLE you're clear to start — flip your row to DOING with a timestamp before your first commit.
@@ -16,9 +16,7 @@ both agents read first. both agents append on action. keep cave-man.
 **Read this section before opening any file.** If a file you want to edit is listed under the *other* agent, pick a different file or wait. Append your file paths under your own subsection before you start editing. Clear your subsection back to "(none)" the moment you commit and push.
 
 ### code
-- AGENTS.md (audit + ping resolution)
-- supabase/migrations/* (cowork-authored migrations 12-17, 22-30 — code committing on cowork's behalf)
-- supabase/functions/* (cowork-authored: chat v26, espn-rosters v2, wiki-collect v1, probe-seating-charts v1, backfill-event-configurations v2 — code committing on cowork's behalf)
+- (none)
 
 ### cowork
 - (none — git access via code)
@@ -163,7 +161,7 @@ Mechanics (whoever picks this up):
 
 ### 2026-05-07 code (claude code session)
 
-- DONE <pending-sha> — **Audit + commit cowork's prod work as their git proxy**: pulled SQL of 14 cowork migrations and source of 5 cowork edge fns from prod via MCP. Wrote them to git verbatim. Resolved migration version collisions: cowork's originals 18, 19, 20, 21, 25 were renumbered in git to 25, 26, 27, 28, 29 to avoid conflict with code's 18, 19, 20, 21. Added migration 30 (`team_xref_compat_view`) which resurrects team_xref as a read-only view over performer_external_ids — fixes all cowork RPCs (get_team_context, broker_event_intel, etc.) and the espn-rosters fn that referenced the dropped table. Updated OWN to reflect cowork's expanded surface (athlete history, wiki context, broker dashboard helpers, seating charts) and the "code is git proxy" arrangement.
+- DONE d44ab45 — **Audit + commit cowork's prod work as their git proxy**: pulled SQL of 14 cowork migrations and source of 5 cowork edge fns from prod via MCP. Wrote them to git verbatim. Resolved migration version collisions: cowork's originals 18, 19, 20, 21, 25 were renumbered in git to 25, 26, 27, 28, 29 to avoid conflict with code's 18, 19, 20, 21. Added migration 30 (`team_xref_compat_view`) which resurrects team_xref as a read-only view over performer_external_ids — fixes all cowork RPCs (get_team_context, broker_event_intel, etc.) and the espn-rosters fn that referenced the dropped table. Updated OWN to reflect cowork's expanded surface (athlete history, wiki context, broker dashboard helpers, seating charts) and the "code is git proxy" arrangement.
 - DONE 772ba18 — **PING cowork** (see ⚠️ at top of cowork section): flagged migration version collisions on 18-21, 13 cowork migrations + 5 edge fn deploys not in git, broken `espn-rosters` (reads dropped team_xref), and broker-lane crossings on `broker_dashboard_helpers_v2` / `broker_event_map_rpcs`. Asking them to commit + renumber + WIP-tag.
 - DONE 89f911c — **espn-collect v5 + pg_cron schedules**: split espn-collect into 4 scopes via `?scope=` (roster / gameday / team_daily / all). Bugfixes mid-flight: v3 used MD5 (Deno doesn't support); v4 used inj.athlete.id (ESPN doesn't populate it in league-injuries). v5 uses SHA-256 + inj.id dedup key. Smoke-test verified change-only behavior live: first run 1404 inserts, re-run 30s later showed 2 inserts + 1402 unchanged (real ESPN data changed during the gap). Migration 21 scheduled three pg_cron jobs at the cadence you specified: roster every 10 min, gameday every 10 min (offset by 5 min), team_daily at 05:00 UTC. Old `espn-rosters-10min` (called nonexistent fn) + `espn-collect-daily` crons unscheduled.
 - DONE 199fb15 — **espn fn v2 + slug bug fix + team_xref drop**: refactored `lookupTeamXref` to read from `performer_external_ids` (canonical, 217 teams). Deployed espn fn v2. Smoke-test caught a bug: `meta.espn_slug` mixed sport-slugs ("basketball/nba", correct) with team-slugs ("new-england-patriots", "bra", wrong) — Patriots/Brazil/etc. returned empty data because espn fn called bogus paths. Migration 18 fixed all 217 rows: `meta.espn_slug` is now always the sport-slug; the prior team-slug is preserved as `meta.espn_team_slug`. Migration 19 dropped now-redundant `unique (team_id, league, captured_at)` constraints (change-only ingest already prevents semantic dupes via content_hash). Verified change-only RPC end-to-end via SQL test (3 calls, 2 rows persisted, "unchanged" path correctly UPDATEs last_seen_at). Migration 20 dropped `team_xref` table. WIP cleared. NEXT note added for Twitter/social alerts feature.
