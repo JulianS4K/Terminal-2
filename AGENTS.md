@@ -159,6 +159,10 @@ Mechanics (whoever picks this up):
 
 ## LOG
 
+### 2026-05-08 code (claude code session)
+
+- DONE <pending-sha> — **Second-pass audit + commit (chat + remaining gaps)**: re-checked prod vs git state. chat fn v26 source already in git from prior pass — verified intact (785 lines, full retail chat including TEvo lookup, Anthropic tool loop, audience-aware filters). Captured 3 cowork edge fns that were missing from git: `bulk-add-watchlist` v1, `probe-tevo-category` v1, `diag-ticket-groups` v6. Captured 2 cowork migrations missing from git: `20260425000002_store_github_pat` (token REDACTED in committed file — real token stays only in prod settings table) and `20260506000003_layered_zones_curated_first_keyword_fallback` (zone_rules + derive_zone_fallback + get_event_zones_rollup). Confirmed git's existing performer_zones/chat_aliases/fifa_aliases files contain the v2/v3 content cowork applied (no overwrite needed).
+
 ### 2026-05-07 code (claude code session)
 
 - DONE d44ab45 — **Audit + commit cowork's prod work as their git proxy**: pulled SQL of 14 cowork migrations and source of 5 cowork edge fns from prod via MCP. Wrote them to git verbatim. Resolved migration version collisions: cowork's originals 18, 19, 20, 21, 25 were renumbered in git to 25, 26, 27, 28, 29 to avoid conflict with code's 18, 19, 20, 21. Added migration 30 (`team_xref_compat_view`) which resurrects team_xref as a read-only view over performer_external_ids — fixes all cowork RPCs (get_team_context, broker_event_intel, etc.) and the espn-rosters fn that referenced the dropped table. Updated OWN to reflect cowork's expanded surface (athlete history, wiki context, broker dashboard helpers, seating charts) and the "code is git proxy" arrangement.
