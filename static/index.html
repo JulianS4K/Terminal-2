@@ -1836,13 +1836,32 @@ async function loadPerformer(performerId) {
     .sort((a, b) => (a.occurs_at_local || '').localeCompare(b.occurs_at_local || ''));
   const agg = portfolio.aggregate || {};
 
+  // Home/Away counts for the panel caption
+  const homeCount = portfolioEvents.filter(e => e.is_home === true).length;
+  const awayCount = portfolioEvents.filter(e => e.is_home === false).length;
+  const neutralCount = portfolioEvents.filter(e => e.is_home == null).length;
+
   const eventRows = portfolioEvents.slice(0, 50).map(e => {
     const isOwned = (e.owned_tickets_count || 0) > 0;
     const isMkt = (e.owned_share || 0) >= 0.30;
-    const cls = ['', isOwned ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
+    const haCls = e.is_home === true ? 'is-home' : e.is_home === false ? 'is-away' : '';
+    const cls = ['', isOwned ? 'owned' : '', isMkt ? 'we-are-mkt' : '', haCls].filter(Boolean).join(' ');
+    const haStyle = e.is_home === true ? 'background:rgba(74,222,128,0.05);box-shadow:inset 4px 0 0 var(--pos);'
+                  : e.is_home === false ? 'background:rgba(96,165,250,0.04);box-shadow:inset 4px 0 0 var(--info);'
+                  : '';
+    const haBadge = e.is_home === true ? ' <span class="badge home" title="Home game — at performer\'s home venue">HOME</span>'
+                  : e.is_home === false ? ' <span class="badge road" title="Away game — visiting opponent\'s venue">AWAY</span>'
+                  : '';
     const sharePct = e.owned_share != null ? Math.round(e.owned_share * 100) + '%' : '—';
-    return `<tr class="${cls}" onclick="goto('event/${e.id}')">
-      <td>${esc(shortDate(e.occurs_at_local))}</td>
+    return `<tr class="${cls}" style="${haStyle}cursor:pointer;" onclick="goto('event/${e.id}')"
+      data-date="${esc(e.occurs_at_local || '')}"
+      data-ev="${esc((e.name||'').slice(0,72))}"
+      data-venue="${esc(e.venue_name || '')}"
+      data-med="${e.retail_median ?? ''}"
+      data-vol="${e.tickets_count ?? 0}"
+      data-owned="${e.owned_tickets_count ?? 0}"
+      data-share="${e.owned_share ?? 0}">
+      <td>${esc(shortDate(e.occurs_at_local))}${haBadge}</td>
       <td>${esc((e.name||'').slice(0,72))}</td>
       <td class="dim">${esc(e.venue_name || '—')}</td>
       <td class="num">${moneyC(e.retail_median)}</td>
@@ -1933,9 +1952,25 @@ async function loadPerformer(performerId) {
     ${aggKPIs}
     <div class="grid g-2-1">
       <div class="panel">
-        <div class="panel-h"><h3>Upcoming Events · with current metrics</h3><div class="actions"><span class="dim">${portfolioEvents.length} total</span></div></div>
-        <table class="ibkr">
-          <thead><tr><th>Date</th><th>Event</th><th>Venue</th><th class="num">Med</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th></tr></thead>
+        <div class="panel-h">
+          <h3>Upcoming Events · with current metrics</h3>
+          <div class="actions" style="display:flex;gap:8px;align-items:center;">
+            ${homeCount ? `<span class="badge home" title="Games at performer's home venue">${homeCount} HOME</span>` : ''}
+            ${awayCount ? `<span class="badge road" title="Games at opponent venues">${awayCount} AWAY</span>` : ''}
+            ${neutralCount ? `<span class="badge" title="Venue not classified — neutral / TBD / unknown">${neutralCount} N/A</span>` : ''}
+            <span class="dim">${portfolioEvents.length} total</span>
+          </div>
+        </div>
+        <table class="ibkr sortable" data-default-sort-col="0" data-default-sort-dir="asc">
+          <thead><tr>
+            <th data-sort-key="date">Date <span class="sort-ind"></span></th>
+            <th data-sort-key="ev">Event <span class="sort-ind"></span></th>
+            <th data-sort-key="venue">Venue <span class="sort-ind"></span></th>
+            <th class="num" data-sort-key="med">Med <span class="sort-ind"></span></th>
+            <th class="num" data-sort-key="vol">Vol <span class="sort-ind"></span></th>
+            <th class="num" data-sort-key="owned">Owned <span class="sort-ind"></span></th>
+            <th class="num" data-sort-key="share">Share <span class="sort-ind"></span></th>
+          </tr></thead>
           <tbody>${eventRows}</tbody>
         </table>
       </div>
@@ -1944,6 +1979,9 @@ async function loadPerformer(performerId) {
         ${espnHTML}
       </div>
     </div>`;
+
+  // Performer page also has a sortable Upcoming Events table now.
+  _wireSortableTables();
 }
 
 // =====================================================================

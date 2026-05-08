@@ -657,6 +657,18 @@ def portfolio(
         .execute()
     ).data or []
 
+    # 2b) For performer-filtered queries, look up the performer's home venue(s)
+    # so each event can be tagged is_home (matches home venue) vs away.
+    home_venue_ids: set[int] = set()
+    if performer_id is not None:
+        phv_rows = (
+            db.table("performer_home_venues")
+            .select("venue_id")
+            .eq("performer_id", performer_id)
+            .execute()
+        ).data or []
+        home_venue_ids = {int(r["venue_id"]) for r in phv_rows if r.get("venue_id") is not None}
+
     # 3) Pull latest metrics row per event
     ev_metrics = (
         db.table("latest_event_metrics")
@@ -675,6 +687,13 @@ def portfolio(
     out_events = []
     for ev in ev_meta:
         m = metrics_by_id.get(ev["id"], {})
+        # is_home: only meaningful for performer-filtered queries. True iff
+        # the event's venue matches one of this performer's home venues.
+        # null for venue_id / watchlist_only filters where 'home' is undefined.
+        is_home = None
+        if performer_id is not None:
+            if ev.get("venue_id") is not None:
+                is_home = int(ev["venue_id"]) in home_venue_ids
         out_events.append({
             "id": ev["id"],
             "name": ev["name"],
@@ -685,6 +704,7 @@ def portfolio(
             "venue_location": ev["venue_location"],
             "primary_performer_id": ev["primary_performer_id"],
             "primary_performer_name": ev["primary_performer_name"],
+            "is_home": is_home,
             "captured_at": m.get("captured_at"),
             "tickets_count": m.get("tickets_count"),
             "groups_count": m.get("groups_count"),
