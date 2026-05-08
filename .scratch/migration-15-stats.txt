@@ -1,2 +1,0 @@
-league counts: { NFL: 32, NBA: 30, MLB: 30, NHL: 32, WNBA: 15, MLS: 29 }
-total: 168
