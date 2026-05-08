@@ -111,6 +111,12 @@ Reply pattern when ONE event is locked:
 
 If user gave qty + budget in same message, jump straight to find_listings.
 
+LISTING OVERFLOW: find_listings caps at 10 results. If `total_matching_filters > count`, do NOT show all 10 — instead, ask ONE filtering question to narrow:
+  - More than 10 with similar prices → ask quantity / row preference / accessibility (e.g. "Want me to narrow to a specific row, qty, or budget?")
+  - Wide price spread → ask price ceiling ("What's your top per-ticket budget?")
+  - Multiple sections in same zone → ask section preference ("Center court or corner sections?")
+Show the first 10 only AFTER they answer the filter question. Never dump 10+ raw listings.
+
 HOME vs ROAD: each event from search comes with home_or_away. Mark home (HOME) and road (road).
 
 ZONES: get_event_zones returns each zone with source='curated' or 'system'. Use names verbatim.
@@ -364,7 +370,7 @@ const TOOLS = [
   { name: "search_events", description: "Cached event lookup by team name. Each result includes home_or_away.", input_schema: { type: "object", properties: { query: { type: "string" }, days_ahead: { type: "integer" }, limit: { type: "integer", default: 8 } } } },
   { name: "tevo_search_events", description: "LIVE event lookup. Pass performer_id when known.", input_schema: { type: "object", properties: { query: { type: "string" }, performer_id: { type: "integer" }, venue_id: { type: "integer" }, limit: { type: "integer", default: 10 } } } },
   { name: "get_event_zones", description: "Aggregate listings into price zones. event_id MUST come from RESOLVED_CONTEXT or a previous result. Pass confirm_switch=true ONLY after user has explicitly agreed to switch to a different event.", input_schema: { type: "object", required: ["event_id"], properties: { event_id: { type: "integer" }, include_all: { type: "boolean", default: false }, confirm_switch: { type: "boolean", default: false } } } },
-  { name: "find_listings", description: "Get individual listings. Returns view_type, in_hand, public_notes, format. event_id MUST come from a previous result. Pass confirm_switch=true ONLY after user has explicitly agreed to switch to a different event.", input_schema: { type: "object", required: ["event_id"], properties: { event_id: { type: "integer" }, zone: { type: "string" }, max_price: { type: "number" }, min_qty: { type: "integer", default: 1 }, limit: { type: "integer", default: 6 }, include_all: { type: "boolean", default: false }, confirm_switch: { type: "boolean", default: false } } } },
+  { name: "find_listings", description: "Get up to 10 individual listings. Returns view_type, in_hand, public_notes, format. event_id MUST come from a previous result. Pass confirm_switch=true ONLY after user has explicitly agreed to switch to a different event. If total_matching_filters exceeds count, the user must be asked to narrow before all listings are shown.", input_schema: { type: "object", required: ["event_id"], properties: { event_id: { type: "integer" }, zone: { type: "string" }, max_price: { type: "number" }, min_qty: { type: "integer", default: 1 }, limit: { type: "integer", default: 10 }, include_all: { type: "boolean", default: false }, confirm_switch: { type: "boolean", default: false } } } },
   { name: "find_better_seats", description: "Upgrade options. Pass confirm_switch=true ONLY after user has explicitly agreed to switch to a different event.", input_schema: { type: "object", required: ["event_id", "current_section", "current_row"], properties: { event_id: { type: "integer" }, current_section: { type: "string" }, current_row: { type: "string" }, min_row_improvement: { type: "integer", default: MIN_ROW_UPGRADE }, max_price: { type: "number" }, min_qty: { type: "integer", default: 1 }, limit: { type: "integer", default: 6 }, include_all: { type: "boolean", default: false }, confirm_switch: { type: "boolean", default: false } } } },
   { name: "tevo_search_performers", description: "Look up a performer.", input_schema: { type: "object", required: ["query"], properties: { query: { type: "string" }, limit: { type: "integer", default: 5 } } } },
   { name: "tevo_search_venues", description: "Look up a venue.", input_schema: { type: "object", required: ["query"], properties: { query: { type: "string" }, limit: { type: "integer", default: 5 } } } },
@@ -495,7 +501,9 @@ async function toolFindListings(evo: Evo | null, db: any, args: any, gate: Valid
       if (fa !== fb) return fa - fb;
       return Number(a.retail_price) - Number(b.retail_price);
     });
-    const top = groups.slice(0, Math.min(args.limit ?? 6, 12));
+    // v27: cap at 10. If total_matching_filters > 10, the system prompt tells the
+    // model to ask a filter question instead of just truncating silently.
+    const top = groups.slice(0, Math.min(args.limit ?? 10, 10));
     return {
       event_id: v.id, zone: args.zone ?? null, scope: includeAll ? "all" : "direct", count: top.length,
       total_matching_filters: groups.length,
