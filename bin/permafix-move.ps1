@@ -118,16 +118,51 @@ If you are 100% sure nothing is using it, you can also try:
 }
 
 # THE MOVE
-Write-Host "Moving $source -> $target ..." -ForegroundColor Cyan
-Move-Item -LiteralPath $source -Destination $target
+# Use robocopy /MOVE with /XD exclusions on .claude and .scratch to skip
+# Claude Code session lock files in .claude/worktrees/ that would otherwise
+# block Move-Item. .claude/ and .scratch/ are gitignored runtime cruft - the
+# new location will create a fresh .claude/ when you reopen Claude Code at it.
+#
+# robocopy exit codes 0-7 = success, 8+ = failure. (1 = files copied,
+# 2 = extra files skipped, 4 = mismatched, etc.)
+Write-Host "Moving $source -> $target via robocopy /MOVE (skipping .claude/ + .scratch/) ..." -ForegroundColor Cyan
+$rcArgs = @(
+    "$source", "$target",
+    "/E",                       # all subdirs incl empty
+    "/MOVE",                    # copy then delete source
+    "/XD", ".claude", ".scratch",  # skip these directories
+    "/R:1", "/W:1",             # retry once, wait 1 second (don't hang)
+    "/NFL", "/NDL", "/NP",      # less verbose output
+    "/NJH", "/NJS"              # no header, no summary
+)
+& robocopy @rcArgs | Out-Null
+$rcExit = $LASTEXITCODE
+if ($rcExit -ge 8) {
+    Write-Error "robocopy failed with exit code $rcExit. Source may be partially moved."
+    exit 1
+}
+Write-Host "  [OK] robocopy completed (exit $rcExit; codes < 8 are success)" -ForegroundColor Green
+
+# Source folder may still exist with .claude/ leftover (Claude Code's own
+# session lock files). Tell the user how to clean it up later, but don't try
+# to delete now (this very script may be running from a Claude Code process
+# that holds the lock).
+if (Test-Path $source) {
+    $leftovers = Get-ChildItem -LiteralPath $source -Force | Select-Object -ExpandProperty Name
+    Write-Host ""
+    Write-Host "  NOTE: $source still exists with leftover items: $($leftovers -join ', ')" -ForegroundColor Yellow
+    Write-Host "        These are Claude Code session locks (.claude/) and/or .scratch/ working files."
+    Write-Host "        After you close ALL Claude Code sessions, you can delete the leftover with:"
+    Write-Host "          Remove-Item -Recurse -Force '$source'"
+}
 
 # Verify git still works at the new location
 Push-Location $target
 $head = git rev-parse --short HEAD
 $branch = git branch --show-current
 Pop-Location
-Write-Host "  [OK] moved." -ForegroundColor Green
-Write-Host "  git HEAD at new location: $head on $branch"
+Write-Host ""
+Write-Host "  git HEAD at new location: $head on $branch" -ForegroundColor Green
 Write-Host ""
 
 # Quick post-move smoke checks
