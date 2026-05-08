@@ -1,8 +1,18 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v3`
-**Last verified against prod**: 2026-05-09 ~01:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v4`
+**Last verified against prod**: 2026-05-09 ~02:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
+
+> **Process discipline (RULE 0)**: Any time we add new data — new table,
+> new column, new external feed, new ingest source, new derived metric,
+> new price source — it MUST be categorized into a bucket here, with a
+> new bucket created if no existing one fits. **Including all price data
+> sources** (TEvo, future SeatGeek, future Ticketmaster, etc.).
+> Bumping the version label below + appending to the change log is part
+> of the same commit as the schema change. SCHEMA.md is the canonical
+> source of truth; if it disagrees with prod, this file is wrong and
+> needs an update PR.
 
 This is a snapshot of every table, function, RPC, cron, and edge-function in
 the Terminal-2 backend at the time of writing. **It is intended to drift** —
@@ -81,6 +91,7 @@ as feature groups.
 | **14** | **External signals (non-ESPN)** | why_signals | scope (event/performer/venue), signal_kind (weather/news/etc), signal_value, weight, source, expires_at — currently NOAA weather alerts via why-noaa-weather-alerts fn; extensible to traffic/news/social |
 | **15** | **Brokerage microstructure** | listings_snapshots aggregated | distinct office_id count per event, distinct brokerage_id count, S4K share vs everyone-else, owned/non-owned price spread, brokerage diversity index (HHI on share). NOT yet aggregated into a metrics table — feature would need a SQL view or dedicated columns. |
 | **16** | **Classification / taxonomy** *(already documented below)* | performer_metadata, events | top_category_name, parent_category_name, category_name, what_event_type (game/concert/comedy/show), genre, event_type. See "TEvo classification taxonomy" section below. |
+| **17** | **Major event calendar (curated)** | major_event_calendar | event_class (F1/NASCAR/Tennis_Major/Golf_Major/Olympics/etc), event_name, venue_name, venue_city, venue_country, tevo_venue_id, window_start/end, recurrence. Tracks non-team-sport events that don't have a TEvo team performer to watchlist. |
 
 ### Implementation status of buckets 11-16 for ML
 
@@ -156,6 +167,41 @@ top_category_idx (one-hot), parent_category_idx, league_idx, genre_idx, what_eve
 5. Reference / target: `/api/broker/ml-feature-row?event_id=N&captured_at=T` returning the joined row above
 
 These are all incremental additions on top of the existing schema — no breaking changes needed.
+
+### Major event calendar workflow (Bucket 17)
+
+For events that don't have a "team performer" in TEvo (F1 races, NASCAR
+crown jewels, tennis & golf majors, Olympics), use `major_event_calendar`
+as the source of truth.
+
+**Current seed** (mig 20260509010000_major_event_calendar):
+
+| event_class | count | examples |
+|---|---|---|
+| F1 | 4 | Miami GP (May), Canadian GP (June), US GP / COTA (Oct), Las Vegas GP (Nov) |
+| NASCAR | 5 | Daytona 500 (Feb), Coca-Cola 600 (May), Brickyard 400 (Aug), Bristol Night Race (Sep), Talladega 500 (Apr) |
+| Tennis_Major | 1 | US Open Tennis (Aug 24 – Sep 6, 14-day window) |
+| Golf_Major | 4 | The Masters (Apr), PGA Championship (May), US Open Golf (June), The Players (March) |
+
+**Manual workflow per event** (to bring it into the broker terminal):
+
+1. Look up the venue in TEvo via `/api/venues?q=<venue_name>` and find the
+   `tevo_venue_id`. Update `major_event_calendar.tevo_venue_id` in place.
+2. Add a watchlist row: `INSERT INTO watchlist (kind, ext_id, label) VALUES ('venue', tevo_venue_id, venue_name)`. The next collect-listings cron tick will pull events at the venue.
+3. The expanded `watch_sources` rows then drive listings_snapshots / event_metrics / zone_metrics population for every TEvo event at that venue (including non-target events at the same venue — filter UI by date window if needed).
+4. ESPN context will NOT apply (no ESPN team xref); the event page falls back to "External context: ESPN coverage not applicable" — by design.
+
+**Future automation (NEXT for copilot)**: extend collect-listings or write a
+new `discover-major-events` edge fn that scans TEvo by venue + date window
+in a single pass, auto-populates `major_event_calendar.tevo_venue_id`, and
+inserts watchlist rows. Single source of truth = this table.
+
+**Schema bump rule for new event classes**: if a new event class (Olympics,
+PWHL playoffs, NCAA tournaments, etc.) is added to this table, no schema
+change is needed. If a new field is added to the table itself (e.g.
+`broadcast_partner`, `prize_money_tier`), bump SCHEMA.md.
+
+---
 
 ### Non-big-6 ESPN coverage gap (recommended next)
 
@@ -612,6 +658,22 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v4**: Added **Bucket 17 (Major event calendar)** + new
+  table `major_event_calendar` (mig 20260509010000) seeded with 14
+  curated entries: 4 F1 races (Miami/Canadian/US/Las Vegas), 5 NASCAR
+  crown jewels (Daytona 500, Coca-Cola 600, Brickyard 400, Bristol Night,
+  Talladega 500), US Open Tennis, 4 Golf majors (Masters, PGA, US Open,
+  The Players). Pattern: store venue + date window per major event;
+  manual TEvo lookup populates tevo_venue_id; watchlist (kind=venue)
+  drives the existing collect-listings pipeline; ESPN context auto-hides
+  per v3 gating since no team xref. New section "Major event calendar
+  workflow" documents the manual workflow and future automation NEXT
+  for copilot.
+  Added **RULE 0 (Process discipline)** at the top of the doc making it
+  explicit: any new data — table, column, external feed, derived metric,
+  or **price source** — must be categorized into a bucket here in the
+  same commit, with a new bucket added if no existing one fits.
 
 - **2026-05-09-v3**: Added 6 ML-training feature buckets (11 Temporal,
   12 Demand, 13 Historical, 14 External, 15 Brokerage microstructure,

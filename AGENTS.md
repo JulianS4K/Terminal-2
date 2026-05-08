@@ -300,11 +300,13 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v3)
+## SCHEMA LOCK (2026-05-09-v4)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v3`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v4`**.
 >
-> Contents: 47 tables, 73 SQL functions, 21 active crons, all edge functions, the canonical **16-bucket data taxonomy** (10 core buckets + 6 ML-training buckets: Temporal, Demand, Historical, External, Brokerage microstructure, Classification), full TEvo classification tree (Sports/Concerts/Comedy/Theater + sub-genres + ESPN-tracked map), behavior rules driven by classification (HOME/AWAY only for `what_event_type='game'`, ESPN UI only when ESPN xref exists), recommended ML feature row, non-big-6 ESPN coverage gap + roadmap, API surface, data-flow diagram, and verification queries.
+> **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
+>
+> Contents: 48 tables (now incl. `major_event_calendar`), 73+ SQL functions, 21 active crons, all edge functions, the canonical **17-bucket data taxonomy** (10 core + 6 ML-training + 1 major event calendar), full TEvo classification tree, behavior rules (HOME/AWAY + ESPN UI gates), recommended ML feature row, non-big-6 ESPN coverage gap + roadmap, major event calendar workflow (F1/NASCAR/Tennis/Golf seeded), API surface, data-flow diagram, and verification queries.
 >
 > **Drift to be reconciled** (5 migrations applied via MCP execute_sql in code-agent session, captured as files in `supabase/migrations/` but not yet in prod migration ledger):
 > - `20260508220000_auto_link_event_xref` (jobid 31)
