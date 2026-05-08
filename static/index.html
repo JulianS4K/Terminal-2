@@ -1284,6 +1284,25 @@ async function loadEvent(eventId) {
       </div>
     </div>
     <div style="height:12px"></div>` : ''}
+    ${(() => {
+      // ESPN context only makes sense when at least one of home/away
+      // performers maps to an ESPN team (per SCHEMA.md classification rules
+      // — concerts/comedy/theater don't have ESPN coverage, and not every
+      // sport is in our big-6 ESPN xref set yet).
+      const hasEspnHome = !!(ov.assets?.home?.espn_team_id);
+      const hasEspnAway = !!(ov.assets?.away?.espn_team_id);
+      const showEspn = hasEspnHome || hasEspnAway;
+      if (!showEspn) {
+        const reason = ov.assets?.home || ov.assets?.away
+          ? 'neither performer maps to ESPN (typically: non-big-6 sport, concert, or theater)'
+          : 'no performer assets resolved (event_xref or performer_external_ids missing)';
+        return `
+        <div class="panel">
+          <div class="panel-h"><h3>External context</h3><div class="actions"><span class="dim">ESPN coverage not applicable</span></div></div>
+          <div class="muted" style="padding:16px;font-size:12px;">${esc(reason)}.</div>
+        </div>`;
+      }
+      return `
     <div class="grid g-2-1">
       <div class="panel">
         <div class="panel-h"><h3>ESPN Context</h3></div>
@@ -1318,7 +1337,8 @@ async function loadEvent(eventId) {
           }).join('') || '<li style="grid-template-columns:1fr;"><div class="muted" style="padding:8px;">No recent news for these teams.</div></li>'}
         </ul>
       </div>
-    </div>
+    </div>`;
+    })()}
     <div style="height:12px"></div>
     ${rawTevo && (rawTevo.groups || []).length ? (() => {
       // Parking detection on the raw ticket_groups: TEvo's `type` field is the

@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v2`
-**Last verified against prod**: 2026-05-09 ~01:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v3`
+**Last verified against prod**: 2026-05-09 ~01:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 This is a snapshot of every table, function, RPC, cron, and edge-function in
@@ -65,6 +65,139 @@ features so we have shared vocabulary.
 | 8 | **Game context** | espn_event_snapshots | state, status_short, home/away_score, odds_provider, spread, over_under, home_ml/away_ml, home_win_prob, attendance |
 | 9 | **News & narrative** | espn_news, wiki_summary, wiki_rivalries, wiki_seasons, why_signals | headline, type, published_at, rivalry intensity, season records, weather/why signals |
 | 10 | **Map / config / topology** | events, performer_zones (+ rules), zone_rules, venue_assets, performer_metadata | configuration_id/name, seating_chart URLs, fanvenues_key, zone defs, venue capacity/hero, logo_default_url |
+
+### Additional ML-training buckets (non-duplicated, audited 2026-05-09)
+
+These are signals we already collect that don't fit cleanly in the 10 core
+buckets but matter for predictive models (price/demand forecasting, sell-through
+likelihood, mispricing detection, etc.). Future ML pipeline should use these
+as feature groups.
+
+| # | Bucket | Source tables | Cardinal columns / signals |
+|---|---|---|---|
+| **11** | **Temporal & calendar** | events.occurs_at_local (text, ISO), event_metrics.captured_at | event_date, event_dow (day-of-week), event_hour (local), days_to_event (computed at request time), is_weekend, is_evening, season tag (winter/spring/summer/fall), holiday window flag (computed) |
+| **12** | **Demand & popularity** | performer_metadata, events, watchlist, watch_sources | popularity_score (TEvo), long_term_popularity_score (TEvo), s4k_popularity_boost (manual), is_chat_tracked, chat_ping_count, chat_first_pinged_at (interest signal from retail), upcoming_first / upcoming_last (performer activity window) |
+| **13** | **Historical / narrative depth** | wiki_summary, wiki_seasons, wiki_rivalries | wiki extract, founded_year, championships count, season records (wins/losses/finish/postseason), rivalry intensity 0-10, rivalry_name, all_time_summary, notable_moments[], notable_players[] |
+| **14** | **External signals (non-ESPN)** | why_signals | scope (event/performer/venue), signal_kind (weather/news/etc), signal_value, weight, source, expires_at — currently NOAA weather alerts via why-noaa-weather-alerts fn; extensible to traffic/news/social |
+| **15** | **Brokerage microstructure** | listings_snapshots aggregated | distinct office_id count per event, distinct brokerage_id count, S4K share vs everyone-else, owned/non-owned price spread, brokerage diversity index (HHI on share). NOT yet aggregated into a metrics table — feature would need a SQL view or dedicated columns. |
+| **16** | **Classification / taxonomy** *(already documented below)* | performer_metadata, events | top_category_name, parent_category_name, category_name, what_event_type (game/concert/comedy/show), genre, event_type. See "TEvo classification taxonomy" section below. |
+
+### Implementation status of buckets 11-16 for ML
+
+| Bucket | Already collected? | Already aggregated for ML access? |
+|---|---|---|
+| 11 Temporal | ✅ raw timestamp | ❌ — needs computed feature columns (dow/hour/days_to/season). Recommend a SQL view `event_temporal_features(event_id) → row` |
+| 12 Demand | ✅ all fields populated | ⚠️ partially — chat_ping_count is on events, popularity_score on performer_metadata; not joined into a single feature row yet |
+| 13 Historical | ✅ wiki_* tables populated by wiki-collect fn | ⚠️ — fields exist but not surfaced in any broker endpoint; chat fn uses them via `get_wiki_context` and `is_rivalry_game` |
+| 14 External | ✅ why_signals populated by why-noaa-weather-alerts | ❌ — not yet surfaced in event page or chart workbench. Could be overlay markers on chart |
+| 15 Brokerage microstructure | ⚠️ partial — listings_snapshots has office_id/brokerage_id; no rollup | ❌ — needs new `event_brokerage_metrics` table or columns on event_metrics |
+| 16 Classification | ✅ all fields populated | ✅ used for HOME/AWAY gate, ESPN context gate, watchlist coverage |
+
+### Recommended ML feature derivation (out of scope to build now, documented for future)
+
+For a price/demand model, the feature row per (event_id, captured_at) would be:
+
+```
+# Bucket 1 (target / current price)
+retail_median, retail_p25, retail_p75, getin_price, retail_sum
+
+# Bucket 2 (current inventory)
+tickets_count, groups_count, sections_count, ancillary_tickets
+
+# Bucket 3 (S4K position)
+owned_share, owned_tickets_count, owned_median_retail_premium
+
+# Bucket 4 (splits / format)
+splits_pct_pairs, splits_pct_singles, splits_min_q
+
+# Bucket 5 (microstructure)
+top5_concentration, price_dispersion, tail_premium
+
+# Bucket 6 (standings — needs xref join)
+home_win_pct, home_seed, home_streak_int, away_win_pct, away_seed, away_streak_int
+
+# Bucket 7 (health)
+home_active_injuries, away_active_injuries, home_starter_out_count
+
+# Bucket 8 (game context)
+spread, over_under, home_ml, home_win_prob, is_playoff, series_state
+
+# Bucket 9 (news / narrative)
+home_news_24h_count, away_news_24h_count, rivalry_intensity
+
+# Bucket 10 (config)
+venue_capacity, has_seating_chart (bool), zone_curated_count
+
+# Bucket 11 (temporal)
+days_to_event, event_dow, event_hour_local, is_weekend, is_evening
+
+# Bucket 12 (demand)
+performer_popularity, performer_long_term_popularity, chat_ping_count_30d
+
+# Bucket 13 (historical)
+performer_championships, all_time_record_pct, wiki_extract_length (proxy for fame)
+
+# Bucket 14 (external)
+weather_severity, weather_kind (rain/snow/clear), traffic_alert_active
+
+# Bucket 15 (brokerage)
+distinct_brokerages, brokerage_HHI, s4k_premium_vs_market
+
+# Bucket 16 (classification)
+top_category_idx (one-hot), parent_category_idx, league_idx, genre_idx, what_event_type_idx
+```
+
+**Open work** to make this feature row constructible:
+
+1. Bucket 11 view: `CREATE VIEW event_temporal_features AS SELECT event_id, occurs_at_local::timestamptz - NOW() AS days_to_event, EXTRACT(DOW FROM occurs_at_local::timestamptz), ...`
+2. Bucket 13 join: surface wiki via `/api/broker/event/{id}/wiki` (cheap — wiki_summary is small)
+3. Bucket 14 overlay: add why_signals to chart-data overlay payload, render as markers
+4. Bucket 15 rollup: new SQL fn `compute_event_brokerage_metrics(event_id)` aggregating listings_snapshots by brokerage_id. Add columns to event_metrics: `distinct_brokerages`, `brokerage_hhi`, `non_s4k_share`
+5. Reference / target: `/api/broker/ml-feature-row?event_id=N&captured_at=T` returning the joined row above
+
+These are all incremental additions on top of the existing schema — no breaking changes needed.
+
+### Non-big-6 ESPN coverage gap (recommended next)
+
+User asked to "MAP F1 FACING TO ESPN F1 AND ALL OTHER ESPN PERFORMERS TO THEIR
+TEVO PERFORMERS." Audit (2026-05-09) showed:
+
+- **No F1, NASCAR, IndyCar, golf, tennis, or Olympics performers exist in
+  TEvo's category tree right now.** The Auto Racing parent has only 4
+  Monster Trucks performers. Nothing to map until TEvo adds these.
+
+- **Non-big-6 sports without any ESPN coverage** (despite TEvo having performers):
+  - NCAA Football (53 perfs) — ESPN has /college-football API
+  - NWSL (12), USL Championship (11), MiLB (10), EPL (8), Bundesliga (4),
+    NCAA Hockey (1), AHL (1), CEBL (3), PWHL (2), Intl Hockey (2)
+  - MMA (6 individual fighters), Boxing (2), Wrestling (4 NCAA), WWE (5)
+  - Cricket (7), Rodeo (8), Volleyball (5), Rugby (2), Lacrosse (1)
+
+- **Big-6 partial gaps** (NFL 32/36, NBA 8/15, NHL 9/17, MLB 30/30, MLS 29/33,
+  WNBA 15/18) — most uncovered are **placeholder performers** like
+  "NBA Finals", "WNBA All Star Game", "NBA Eastern Conference Finals" which
+  shouldn't have a single-team ESPN xref. Current behavior is correct.
+
+**Recommended roadmap** (not implemented in this session):
+
+1. Extend `espn-collect` v6 with new scopes:
+   `?scope=ncaa-football` (uses /college-football endpoint, 53 teams)
+   `?scope=ncaa-basketball` (when March Madness performers appear)
+   `?scope=racing` (when F1/NASCAR appear)
+   `?scope=fighting` (UFC, boxing — different shape, fighter-by-fighter)
+
+2. Extend `performer_external_ids` schema: currently keyed `(performer_id,
+   source)`. For sports with single performers (UFC fighter, F1 driver), the
+   `external_id` is a person id, not a team id. Schema works, just needs
+   convention `meta.individual_sport=true` flag.
+
+3. Extend `auto_link_event_xref()` to handle non-team sports — for racing,
+   match on race date + circuit name; for fighting, match on event card name.
+
+4. Each new scope = a new bulk-mapping migration. Pattern from
+   `20260507000015_espn_world_cup_team_mapping.sql` shows the shape.
+
+This is copilot/code lane work; estimate 1 week per league family.
 
 ---
 
@@ -479,6 +612,19 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v3**: Added 6 ML-training feature buckets (11 Temporal,
+  12 Demand, 13 Historical, 14 External, 15 Brokerage microstructure,
+  16 Classification — already in v2 but now formalized as bucket #16),
+  with implementation status per bucket and a recommended ML feature row
+  spanning all 16 buckets. Added "Non-big-6 ESPN coverage gap" section
+  documenting that F1/NASCAR/golf/tennis don't exist in TEvo yet (so
+  there's nothing to map), plus the 100+ non-big-6 sports performers that
+  don't have ESPN coverage (NCAA Football, MiLB, NWSL, etc.) with a
+  recommended roadmap for extending espn-collect. Frontend: ESPN Context
+  + Related News panels on event page now hide when neither home nor
+  away performer has an ESPN xref — replaced with single concise
+  "External context: ESPN coverage not applicable" panel.
 
 - **2026-05-09-v2**: Added TEvo classification taxonomy — full 3-level
   category tree (top_category_name → parent_category_name → category_name)
