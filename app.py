@@ -449,6 +449,22 @@ def broker_leagues(_=Depends(require_auth)):
     return {"leagues": _ESPN_LEAGUES}
 
 
+@app.get("/api/broker/news")
+def broker_news(limit: int = 20, league: str | None = None, _=Depends(require_auth)):
+    """Recent ESPN news across all tracked teams. Backs the ESPN News panel
+    on the broker terminal home view. Reads `espn_news` table directly —
+    no joins, just chronological feed."""
+    limit = max(1, min(int(limit), 100))
+    db = require_sb()
+    q = (db.table("espn_news")
+           .select("headline, description, url, published_at, type, espn_team_id, espn_league")
+           .order("published_at", desc=True).limit(limit))
+    if league:
+        q = q.eq("espn_league", league)
+    rows = q.execute().data or []
+    return {"count": len(rows), "items": rows}
+
+
 @app.get("/api/broker/performers/by-league/{league}")
 def broker_performers_by_league(league: str, _=Depends(require_auth)):
     """Per-team HOME/ROAD price metrics for ESPN-tracked teams in a league.

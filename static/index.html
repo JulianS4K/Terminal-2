@@ -316,11 +316,11 @@
       </div>
     </div>
 
-    <!-- ESPN NEWS — placeholder; no /api endpoint exists yet (TODO: copilot to ship) -->
+    <!-- ESPN NEWS — populated from /api/broker/news -->
     <div class="panel">
-      <div class="panel-h"><h3>ESPN News</h3><div class="actions"><span class="dim">awaiting endpoint</span></div></div>
+      <div class="panel-h"><h3>ESPN News</h3><div class="actions"><span id="news-count" class="dim">—</span></div></div>
       <ul class="news" id="news-list">
-        <li style="grid-template-columns: 1fr;"><div class="news-text muted" style="padding: 8px;">No <code>/api/news</code> endpoint shipped yet. Backed by <code>espn_news</code> table; copilot owns. Listed as <strong>NEXT</strong> in AGENTS.md LOG.</div></li>
+        <li style="grid-template-columns: 1fr;"><div class="news-text muted" style="padding: 8px;">Loading…</div></li>
       </ul>
     </div>
   </div>
@@ -611,15 +611,15 @@ document.querySelectorAll('.wl-tab').forEach(tab => {
 // HOME VIEW LOADER
 // =====================================================================
 async function loadHome() {
-  // Movers feeds the events tab + price/volume mover panels + KPIs
-  let movers = null;
-  let watchlistMovers = null;
-  let watchlist = null;
+  // 4 endpoints in parallel: movers (price+vol panels + KPIs),
+  // watchlist-movers (events tab), watchlist (perf+venue tabs), news.
+  let movers = null, watchlistMovers = null, watchlist = null, news = null;
   try {
-    [movers, watchlistMovers, watchlist] = await Promise.all([
+    [movers, watchlistMovers, watchlist, news] = await Promise.all([
       api('/api/broker/movers?window_hours=24').catch(e => { console.warn('movers', e); return null; }),
       api('/api/broker/watchlist-movers?window_hours=24&sort=value&limit=25').catch(e => { console.warn('watchlist-movers', e); return null; }),
       api('/api/watchlist').catch(e => { console.warn('watchlist', e); return null; }),
+      api('/api/broker/news?limit=20').catch(e => { console.warn('news', e); return null; }),
     ]);
   } catch (e) {
     document.getElementById('wl-events-body').innerHTML = `<tr><td colspan="8" class="neg" style="padding:16px;">Error: ${esc(e.message)}</td></tr>`;
@@ -631,6 +631,45 @@ async function loadHome() {
   renderWatchlistVenues(watchlist);
   renderMovers(movers);
   renderKPIs(movers, watchlistMovers, watchlist);
+  renderNews(news);
+}
+
+function ageMinutes(iso) {
+  if (!iso) return '—';
+  const ms = Date.now() - Date.parse(iso);
+  if (isNaN(ms)) return '—';
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24);
+  return d + 'd';
+}
+
+function renderNews(data) {
+  const list = document.getElementById('news-list');
+  const count = document.getElementById('news-count');
+  if (!data || !data.items) {
+    list.innerHTML = '<li style="grid-template-columns:1fr;"><div class="news-text muted" style="padding:8px;">News endpoint failed to load.</div></li>';
+    count.textContent = '—';
+    return;
+  }
+  if (!data.items.length) {
+    list.innerHTML = '<li style="grid-template-columns:1fr;"><div class="news-text muted" style="padding:8px;">No recent news.</div></li>';
+    count.textContent = '0';
+    return;
+  }
+  count.textContent = data.count + ' items';
+  list.innerHTML = data.items.map(n => `
+    <li>
+      <span class="news-when">${ageMinutes(n.published_at)}</span>
+      <span class="logo-sm" style="background:#26292d;display:inline-block;border-radius:3px;border:1px solid var(--border-strong);"></span>
+      <div class="news-text">
+        ${n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline || '—')}</a>` : esc(n.headline || '—')}
+        <br><span class="src">${esc(n.espn_league || 'ESPN')}${n.type ? ' · ' + esc(n.type) : ''}</span>
+      </div>
+    </li>`).join('');
 }
 
 function renderWatchlistEvents(data) {
@@ -996,25 +1035,38 @@ function renderEventChart(data) {
 async function loadPerformer(performerId) {
   const mount = document.getElementById('performer-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading performer #${performerId}…</div>`;
-  let perf, espn, events;
+  let perf, espn, portfolio;
   try {
-    [perf, espn, events] = await Promise.all([
+    [perf, espn, portfolio] = await Promise.all([
       api(`/api/performers/${performerId}`),
       api(`/api/broker/performer/${performerId}/espn`).catch(() => null),
-      api(`/api/events?performer_id=${performerId}&only_with_available_tickets=true`).catch(() => ({events:[]})),
+      api(`/api/portfolio?performer_id=${performerId}`).catch(() => ({events:[], aggregate:{}})),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load performer ${performerId}: ${esc(e.message)}</div>`;
     return;
   }
 
-  const eventRows = (events.events || []).slice(0, 30).map(e => `
-    <tr onclick="goto('event/${e.id}')">
-      <td>${esc(shortDate(e.occurs_at_local || e.occurs_at))}</td>
-      <td>${esc((e.name||'').slice(0,80))}</td>
-      <td>${esc(e.venue?.name || '—')}</td>
-      <td class="num dim">#${e.id}</td>
-    </tr>`).join('') || '<tr><td colspan="4" class="muted" style="padding:16px;">No upcoming events with available tickets.</td></tr>';
+  // Sort by occurs_at_local ascending so soonest event surfaces first
+  const portfolioEvents = (portfolio.events || []).slice()
+    .sort((a, b) => (a.occurs_at_local || '').localeCompare(b.occurs_at_local || ''));
+  const agg = portfolio.aggregate || {};
+
+  const eventRows = portfolioEvents.slice(0, 50).map(e => {
+    const isOwned = (e.owned_tickets_count || 0) > 0;
+    const isMkt = (e.owned_share || 0) >= 0.30;
+    const cls = ['', isOwned ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
+    const sharePct = e.owned_share != null ? Math.round(e.owned_share * 100) + '%' : '—';
+    return `<tr class="${cls}" onclick="goto('event/${e.id}')">
+      <td>${esc(shortDate(e.occurs_at_local))}</td>
+      <td>${esc((e.name||'').slice(0,72))}</td>
+      <td class="dim">${esc(e.venue_name || '—')}</td>
+      <td class="num">${moneyC(e.retail_median)}</td>
+      <td class="num">${num(e.tickets_count)}</td>
+      <td class="num">${num(e.owned_tickets_count)}</td>
+      <td class="num ${isMkt?'warn':''}">${sharePct}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted" style="padding:16px;">No tracked events for this performer.</td></tr>';
 
   const espnHTML = (() => {
     if (!espn || !espn.applicable) {
@@ -1058,22 +1110,34 @@ async function loadPerformer(performerId) {
     return `<div class="espn">${standingHTML}${injHTML}${recentHTML}${newsHTML}</div>`;
   })();
 
+  // Aggregate KPIs from portfolio.aggregate (rolled up server-side)
+  const aggKPIs = `
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-l">Events tracked</div><div class="kpi-v">${num(agg.events_count)}</div><div class="kpi-d muted">${num(agg.events_with_owned)} owned</div></div>
+      <div class="kpi"><div class="kpi-l">Total tix on mkt</div><div class="kpi-v">${num(agg.tickets_total)}</div><div class="kpi-d muted">across all events</div></div>
+      <div class="kpi"><div class="kpi-l">S4K owned tix</div><div class="kpi-v">${num(agg.owned_tickets_total)}</div><div class="kpi-d pos">${moneyC(agg.owned_retail_value_total)} exposure</div></div>
+      <div class="kpi"><div class="kpi-l">Owned share (wt)</div><div class="kpi-v ${(agg.owned_share_weighted || 0) >= 0.30 ? 'warn' : ''}">${agg.owned_share_weighted != null ? Math.round(agg.owned_share_weighted * 100) + '%' : '—'}</div><div class="kpi-d muted">tickets-weighted</div></div>
+      <div class="kpi"><div class="kpi-l">Mkt value (med)</div><div class="kpi-v">${moneyC(agg.retail_value_total)}</div><div class="kpi-d muted">price × volume</div></div>
+      <div class="kpi"><div class="kpi-l">Avg ask (wt)</div><div class="kpi-v">${moneyC(agg.retail_median_avg_weighted)}</div><div class="kpi-d muted">tickets-weighted</div></div>
+    </div>`;
+
   mount.innerHTML = `
     <div class="hero">
       <div class="hero-left">
         <div class="hero-title">${esc(perf.name || ('Performer #' + performerId))}</div>
-        <div class="hero-sub">${esc(perf.category?.name || '')} · ${(events.events||[]).length} upcoming events</div>
+        <div class="hero-sub">${esc(perf.category?.name || '')} · ${num(agg.events_count)} tracked events · ${num(agg.events_with_owned)} with S4K inventory</div>
         <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
       </div>
       <div class="hero-right" style="background:linear-gradient(135deg,#16181b,#1c1e22);">
         <div class="map-pin">performer #${performerId}</div>
       </div>
     </div>
+    ${aggKPIs}
     <div class="grid g-2-1">
       <div class="panel">
-        <div class="panel-h"><h3>Upcoming Events</h3></div>
+        <div class="panel-h"><h3>Upcoming Events · with current metrics</h3><div class="actions"><span class="dim">${portfolioEvents.length} total</span></div></div>
         <table class="ibkr">
-          <thead><tr><th>Date</th><th>Event</th><th>Venue</th><th class="num">ID</th></tr></thead>
+          <thead><tr><th>Date</th><th>Event</th><th>Venue</th><th class="num">Med</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th></tr></thead>
           <tbody>${eventRows}</tbody>
         </table>
       </div>
@@ -1090,40 +1154,64 @@ async function loadPerformer(performerId) {
 async function loadVenue(venueId) {
   const mount = document.getElementById('venue-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading venue #${venueId}…</div>`;
-  let venue, events;
+  let venue, portfolio;
   try {
-    [venue, events] = await Promise.all([
+    [venue, portfolio] = await Promise.all([
       api(`/api/venues/${venueId}`),
-      api(`/api/events?venue_id=${venueId}&only_with_available_tickets=true`).catch(() => ({events:[]})),
+      api(`/api/portfolio?venue_id=${venueId}`).catch(() => ({events:[], aggregate:{}})),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load venue ${venueId}: ${esc(e.message)}</div>`;
     return;
   }
 
-  const eventRows = (events.events || []).slice(0, 50).map(e => `
-    <tr onclick="goto('event/${e.id}')">
-      <td>${esc(shortDate(e.occurs_at_local || e.occurs_at))}</td>
-      <td>${esc((e.name||'').slice(0, 80))}</td>
-      <td class="num dim">#${e.id}</td>
-    </tr>`).join('') || '<tr><td colspan="3" class="muted" style="padding:16px;">No upcoming events with available tickets.</td></tr>';
+  const portfolioEvents = (portfolio.events || []).slice()
+    .sort((a, b) => (a.occurs_at_local || '').localeCompare(b.occurs_at_local || ''));
+  const agg = portfolio.aggregate || {};
+
+  const eventRows = portfolioEvents.slice(0, 80).map(e => {
+    const isOwned = (e.owned_tickets_count || 0) > 0;
+    const isMkt = (e.owned_share || 0) >= 0.30;
+    const cls = ['', isOwned ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
+    const sharePct = e.owned_share != null ? Math.round(e.owned_share * 100) + '%' : '—';
+    return `<tr class="${cls}" onclick="goto('event/${e.id}')">
+      <td>${esc(shortDate(e.occurs_at_local))}</td>
+      <td>${esc((e.name||'').slice(0,80))}</td>
+      <td class="dim">${esc(e.primary_performer_name || '—')}</td>
+      <td class="num">${moneyC(e.retail_median)}</td>
+      <td class="num">${num(e.tickets_count)}</td>
+      <td class="num">${num(e.owned_tickets_count)}</td>
+      <td class="num ${isMkt?'warn':''}">${sharePct}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted" style="padding:16px;">No tracked events at this venue.</td></tr>';
 
   const loc = [venue.address, venue.city, venue.state, venue.country].filter(Boolean).join(', ');
+  const aggKPIs = `
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-l">Events at venue</div><div class="kpi-v">${num(agg.events_count)}</div><div class="kpi-d muted">${num(agg.events_with_owned)} with S4K</div></div>
+      <div class="kpi"><div class="kpi-l">Total tix on mkt</div><div class="kpi-v">${num(agg.tickets_total)}</div><div class="kpi-d muted">across all events</div></div>
+      <div class="kpi"><div class="kpi-l">S4K owned tix</div><div class="kpi-v">${num(agg.owned_tickets_total)}</div><div class="kpi-d pos">${moneyC(agg.owned_retail_value_total)} exposure</div></div>
+      <div class="kpi"><div class="kpi-l">Owned share (wt)</div><div class="kpi-v ${(agg.owned_share_weighted || 0) >= 0.30 ? 'warn' : ''}">${agg.owned_share_weighted != null ? Math.round(agg.owned_share_weighted * 100) + '%' : '—'}</div><div class="kpi-d muted">venue-level reflexive</div></div>
+      <div class="kpi"><div class="kpi-l">Mkt value (med)</div><div class="kpi-v">${moneyC(agg.retail_value_total)}</div><div class="kpi-d muted">price × volume</div></div>
+      <div class="kpi"><div class="kpi-l">Avg ask (wt)</div><div class="kpi-v">${moneyC(agg.retail_median_avg_weighted)}</div><div class="kpi-d muted">tickets-weighted</div></div>
+    </div>`;
+
   mount.innerHTML = `
     <div class="hero">
       <div class="hero-left">
         <div class="hero-title">${esc(venue.name || ('Venue #' + venueId))}</div>
-        <div class="hero-sub">${esc(loc || '—')} · ${(events.events||[]).length} upcoming events</div>
+        <div class="hero-sub">${esc(loc || '—')} · ${num(agg.events_count)} tracked events</div>
         <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
       </div>
       <div class="hero-right" style="background:linear-gradient(135deg,#16181b,#1c1e22);">
         <div class="map-pin">venue #${venueId}${venue.timezone ? ' · ' + esc(venue.timezone) : ''}</div>
       </div>
     </div>
+    ${aggKPIs}
     <div class="panel">
-      <div class="panel-h"><h3>Upcoming Events at ${esc(venue.name || 'Venue')}</h3></div>
+      <div class="panel-h"><h3>Events at ${esc(venue.name || 'Venue')} · with current metrics</h3><div class="actions"><span class="dim">${portfolioEvents.length} total</span></div></div>
       <table class="ibkr">
-        <thead><tr><th>Date</th><th>Event</th><th class="num">ID</th></tr></thead>
+        <thead><tr><th>Date</th><th>Event</th><th>Performer</th><th class="num">Med</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th></tr></thead>
         <tbody>${eventRows}</tbody>
       </table>
     </div>`;
