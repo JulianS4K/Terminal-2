@@ -383,6 +383,71 @@ def performer_detail(performer_id: int, include_opponents: bool = True, _=Depend
     return client.get_performer(performer_id, include_opponents=include_opponents)
 
 
+# Static league list for the league-browse strip in the Performers tab.
+# Sourced from performer_external_ids where source='espn'. Order roughly
+# matches in-season activity in May.
+_ESPN_LEAGUES = [
+    {"key": "NBA",       "label": "NBA",        "teams": 30},
+    {"key": "MLB",       "label": "MLB",        "teams": 30},
+    {"key": "NHL",       "label": "NHL",        "teams": 32},
+    {"key": "WNBA",      "label": "WNBA",       "teams": 15},
+    {"key": "MLS",       "label": "MLS",        "teams": 30},
+    {"key": "NFL",       "label": "NFL",        "teams": 32},
+    {"key": "World Cup", "label": "World Cup",  "teams": 48},
+]
+
+
+@app.get("/api/broker/leagues")
+def broker_leagues(_=Depends(require_auth)):
+    """Static list of ESPN-tracked leagues for the league-browse strip in the Performers tab."""
+    return {"leagues": _ESPN_LEAGUES}
+
+
+@app.get("/api/broker/performers/by-league/{league}")
+def broker_performers_by_league(league: str, _=Depends(require_auth)):
+    """Per-team HOME/ROAD price metrics for ESPN-tracked teams in a league.
+    Backed by the get_performers_by_league SQL RPC (mig 20260508050000).
+
+    Returns: { league, count, performers: [
+        { performer_id, performer_name, home_venue_id, home_venue_name,
+          home: { events, market_med, owned_med, market_tix, owned_tix, first_event, last_event },
+          road: { events, market_med, owned_med, market_tix, owned_tix, first_event, last_event } },
+        ...
+    ] }
+    """
+    db = require_sb()
+    rows = db.rpc("get_performers_by_league", {"p_league": league}).execute().data or []
+    performers = [
+        {
+            "performer_id":    r.get("performer_id"),
+            "performer_name":  r.get("performer_name"),
+            "league":          r.get("league"),
+            "home_venue_id":   r.get("home_venue_id"),
+            "home_venue_name": r.get("home_venue_name"),
+            "home": {
+                "events":     r.get("home_events") or 0,
+                "market_med": r.get("home_market_med"),
+                "owned_med":  r.get("home_owned_med"),
+                "market_tix": r.get("home_market_tix") or 0,
+                "owned_tix":  r.get("home_owned_tix")  or 0,
+                "first_event": r.get("home_first_event"),
+                "last_event":  r.get("home_last_event"),
+            },
+            "road": {
+                "events":     r.get("road_events") or 0,
+                "market_med": r.get("road_market_med"),
+                "owned_med":  r.get("road_owned_med"),
+                "market_tix": r.get("road_market_tix") or 0,
+                "owned_tix":  r.get("road_owned_tix")  or 0,
+                "first_event": r.get("road_first_event"),
+                "last_event":  r.get("road_last_event"),
+            },
+        }
+        for r in rows
+    ]
+    return {"league": league, "count": len(performers), "performers": performers}
+
+
 @app.get("/api/portfolio")
 def portfolio(
     performer_id: int | None = None,

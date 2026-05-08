@@ -280,6 +280,23 @@
     <div class="actions"><button type="reset">clear</button><button type="submit" class="primary">search</button></div>
   </form>
   <div class="status" id="performers-status" style="display:none"></div>
+
+  <!-- League browser: ESPN-tracked teams w/ home+away price metrics. Hidden once user does a manual q-search. -->
+  <div id="leagues-zone" style="margin-top:12px">
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 12px;border:1px solid var(--border);background:var(--surface)">
+      <span style="color:var(--dim);font-size:11px;letter-spacing:0.08em;text-transform:uppercase">browse by league</span>
+      <div id="leagues-chips" style="display:flex;gap:6px;flex-wrap:wrap;flex:1"></div>
+      <span id="leagues-meta" style="color:var(--dim);font-size:11px"></span>
+    </div>
+    <div class="panel" id="leagues-results-panel" style="display:none;margin-top:8px">
+      <div class="panel-head">
+        <span><span id="leagues-results-title">teams</span> <span class="count" id="leagues-results-count"></span></span>
+        <input class="table-filter" data-target="leagues-results" placeholder="filter rows…">
+      </div>
+      <div class="panel-body" id="leagues-results"></div>
+    </div>
+  </div>
+
   <div class="panel" id="performers-results-panel" style="display:none">
     <div class="panel-head">
       <span>results <span class="count" id="performers-count"></span></span>
@@ -1083,11 +1100,136 @@ function drawBreakdown(series, tab) {
 // -------- PERFORMERS --------
 $("#pf-catpreset").addEventListener("change", e => { $("#pf-catid").value = e.target.value; });
 
+// ---- league browser (ESPN teams w/ home+away holistic metrics) ----
+let LEAGUES_LOADED = false;
+let CURRENT_LEAGUE = null;
+
+async function loadLeagues() {
+  if (LEAGUES_LOADED) return;
+  try {
+    const d = await api("/api/broker/leagues");
+    const chips = (d.leagues || []).map(l => `
+      <button type="button" class="league-chip" data-league="${esc(l.key)}"
+        style="padding:4px 10px;font-size:11px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);letter-spacing:0.04em;cursor:pointer">
+        ${esc(l.label)} <span style="color:var(--dim)">·${l.teams}</span>
+      </button>`).join("");
+    $("#leagues-chips").innerHTML = chips;
+    $$("#leagues-chips .league-chip").forEach(b => {
+      b.addEventListener("click", () => loadLeague(b.dataset.league));
+    });
+    LEAGUES_LOADED = true;
+  } catch (err) { /* tab not yet visible to user / auth pending; harmless */ }
+}
+
+async function loadLeague(league) {
+  CURRENT_LEAGUE = league;
+  $$("#leagues-chips .league-chip").forEach(b => {
+    const sel = b.dataset.league === league;
+    b.style.background = sel ? "var(--amber)" : "var(--surface-2)";
+    b.style.color      = sel ? "#000"        : "var(--text)";
+    b.style.borderColor = sel ? "var(--amber)" : "var(--border)";
+  });
+  $("#leagues-results-panel").style.display = "block";
+  $("#leagues-results").innerHTML = `<div class="empty">loading ${esc(league)}…</div>`;
+  try {
+    const d = await api("/api/broker/performers/by-league/" + encodeURIComponent(league));
+    renderLeagueGrid(d);
+  } catch (err) {
+    $("#leagues-results").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`;
+  }
+}
+
+function fmtMoney(v) {
+  if (v == null) return `<span class="dim">—</span>`;
+  const n = Number(v); if (!isFinite(n)) return `<span class="dim">—</span>`;
+  return `$${n.toLocaleString(undefined,{maximumFractionDigits:0})}`;
+}
+function fmtInt(v) {
+  if (v == null) return `<span class="dim">—</span>`;
+  const n = Number(v); if (!isFinite(n) || n === 0) return `<span class="dim">0</span>`;
+  return n.toLocaleString();
+}
+
+function renderLeagueGrid(d) {
+  const performers = d.performers || [];
+  $("#leagues-results-title").textContent = `${d.league} teams`;
+  $("#leagues-results-count").textContent = `(${performers.length})`;
+  $("#leagues-meta").textContent = `${d.league} · ${performers.length} teams · home + away (last 24h metrics)`;
+
+  if (!performers.length) {
+    $("#leagues-results").innerHTML = `<div class="empty">no teams in ${esc(d.league)}</div>`;
+    return;
+  }
+
+  const rows = performers.map((p, i) => {
+    const owned = (p.home.owned_tix || 0) + (p.road.owned_tix || 0);
+    const trClass = owned > 0 ? "row owned-team" : "row";
+    return `<tr class="${trClass}" data-id="${p.performer_id}">
+      <td class="num dim">${i+1}</td>
+      <td class="id-tag">${p.performer_id}</td>
+      <td class="ellip">${esc(p.performer_name || "")}</td>
+      <td class="ellip dim">${esc(p.home_venue_name || "—")}</td>
+      <!-- HOME -->
+      <td class="num">${fmtInt(p.home.events)}</td>
+      <td class="num money">${fmtMoney(p.home.market_med)}</td>
+      <td class="num">${fmtInt(p.home.market_tix)}</td>
+      <td class="num" style="color:var(--amber)">${fmtInt(p.home.owned_tix)}</td>
+      <!-- ROAD -->
+      <td class="num">${fmtInt(p.road.events)}</td>
+      <td class="num money">${fmtMoney(p.road.market_med)}</td>
+      <td class="num">${fmtInt(p.road.market_tix)}</td>
+      <td class="num" style="color:var(--amber)">${fmtInt(p.road.owned_tix)}</td>
+    </tr>`;
+  }).join("");
+
+  $("#leagues-results").innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th class="num">#</th><th>id</th><th>team</th><th>home venue</th>
+          <th class="num" colspan="4" style="border-left:1px solid var(--border-hi);background:var(--surface-2);text-align:center">HOME</th>
+          <th class="num" colspan="4" style="border-left:1px solid var(--border-hi);background:var(--surface-2);text-align:center">ROAD</th>
+        </tr>
+        <tr>
+          <th></th><th></th><th></th><th></th>
+          <th class="num" style="border-left:1px solid var(--border-hi)">events</th>
+          <th class="num">median $</th>
+          <th class="num">market tix</th>
+          <th class="num">owned tix</th>
+          <th class="num" style="border-left:1px solid var(--border-hi)">events</th>
+          <th class="num">median $</th>
+          <th class="num">market tix</th>
+          <th class="num">owned tix</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  $$("#leagues-results-panel .table-filter").forEach(i => i.value = "");
+
+  // Click row to populate the regular performer detail panel
+  $$("#leagues-results tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      $$("#leagues-results tr.row").forEach(r => r.classList.remove("sel"));
+      tr.classList.add("sel");
+      loadPerformerDetail(Number(tr.dataset.id));
+    });
+  });
+}
+
+// Hide league browser when user starts a manual q search; show again when they clear.
+function syncLeaguesVisibility() {
+  const q = ($("#pf-q").value || "").trim();
+  const hasManualSearch = q.length > 0;
+  $("#leagues-zone").style.display = hasManualSearch ? "none" : "";
+}
+$("#pf-q").addEventListener("input", syncLeaguesVisibility);
+
 $("#performers-form").addEventListener("submit", async e => {
   e.preventDefault();
   const params = formToParams(e.target);
   $("#performers-results-panel").style.display = "none";
   $("#performers-detail").classList.remove("open");
+  $("#leagues-zone").style.display = "none";  // manual search wins over league browse
   status("performers", "searching…");
   try {
     const data = await api("/api/performers?" + params.toString());
@@ -1095,6 +1237,20 @@ $("#performers-form").addEventListener("submit", async e => {
     status("performers");
   } catch (err) { status("performers", "error: " + err.message, "err"); }
 });
+
+// "clear" button on the performers form resets the search and brings the league strip back.
+$("#performers-form").addEventListener("reset", () => {
+  $("#performers-results-panel").style.display = "none";
+  $("#performers-detail").classList.remove("open");
+  setTimeout(() => { syncLeaguesVisibility(); }, 0);
+});
+
+// Lazy-load leagues the first time the user clicks the Performers tab.
+document.querySelectorAll('#tabs button[data-tab="performers"]').forEach(b => {
+  b.addEventListener("click", () => loadLeagues());
+});
+// Also try on initial page load (in case Performers is the active tab).
+loadLeagues();
 
 function renderPerformersResults(data) {
   const performers = data.performers || [];
