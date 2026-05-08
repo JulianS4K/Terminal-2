@@ -1126,10 +1126,11 @@ async function loadEvent(eventId) {
       </table>
     </div>
     <div class="panel">
-      <div class="panel-h"><h3>Price &amp; Volume · Last 30d</h3><div class="actions"><span class="dim">${chart ? (chart.prices_market || []).length + ' snapshots' : (chartErr ? 'error' : 'no data')}</span></div></div>
-      <div id="event-chart-wrap" style="padding:12px;height:280px;position:relative;">
+      <div class="panel-h"><h3>Price &amp; Volume · Last 30d</h3><div class="actions"><span class="dim">${chart && chart.series ? (chart.series.prices_market || []).length + ' snapshots' : (chartErr ? 'error' : 'no data')}</span></div></div>
+      <div id="event-chart-toggles" style="padding:8px 12px 0;display:flex;flex-wrap:wrap;gap:4px;font-size:11px;"></div>
+      <div id="event-chart-wrap" style="padding:12px;height:320px;position:relative;">
         ${chartErr ? `<div style="padding:48px;text-align:center;color:var(--neg);font-size:12px;">Chart data failed to load: ${esc(chartErr)}</div>` :
-          (!chart || !(chart.prices_market || []).length) ? `<div style="padding:48px;text-align:center;color:var(--muted);font-size:12px;">No price snapshots in the last 30 days. Cron tier collects every 20m–24h depending on event proximity.</div>` :
+          (!chart || !chart.series || !(chart.series.prices_market || []).length) ? `<div style="padding:48px;text-align:center;color:var(--muted);font-size:12px;">No price snapshots in the last 30 days. Cron tier collects every 20m–24h depending on event proximity.</div>` :
           `<canvas id="event-chart"></canvas>`}
       </div>
     </div>
@@ -1198,41 +1199,179 @@ async function loadEvent(eventId) {
       ${rawTevo.groups.length > 200 ? `<div class="dim" style="padding:6px 12px;font-size:11px;">Showing first 200 of ${rawTevo.groups.length} listings (sorted by retail asc).</div>` : ''}
     </div>` : ''}`;
 
-  // Render the chart after innerHTML is set
-  if (chart && (chart.prices_market || []).length) renderEventChart(chart);
+  // Render the chart after innerHTML is set. Pass through the full chart payload.
+  if (chart && chart.series && (chart.series.prices_market || []).length) renderEventChart(chart);
 }
 
-// Single chart instance per page; destroy before re-creating
+// Series catalog — each entry knows its data path, color, axis, dash style, default visibility.
+// Group: '$' (price-y axis), 'count' (count-y axis), '%' (right %-axis), 'idx' (right index axis 0-100).
+// `defaults` set per user spec: market median + owned median (price), home/away standings (%),
+// injuries + roster_moves overlays. Everything else off by default; toggle to enable.
+const CHART_SERIES = [
+  { id: 'prices_market',   label: 'Market median ($)',     path: 'series.prices_market',   color: '#60a5fa', axis: 'y$', def: true },
+  { id: 'prices_owned',    label: 'S4K owned median ($)',  path: 'series.prices_owned',    color: '#4ade80', axis: 'y$', def: true, dash:[4,3] },
+  { id: 'retail_min',      label: 'Retail min ($)',        path: 'series.retail_min',      color: '#7dd3fc', axis: 'y$', def: false },
+  { id: 'retail_p25',      label: 'Retail P25 ($)',        path: 'series.retail_p25',      color: '#93c5fd', axis: 'y$', def: false },
+  { id: 'retail_p75',      label: 'Retail P75 ($)',        path: 'series.retail_p75',      color: '#a78bfa', axis: 'y$', def: false },
+  { id: 'retail_p90',      label: 'Retail P90 ($)',        path: 'series.retail_p90',      color: '#c4b5fd', axis: 'y$', def: false },
+  { id: 'retail_max',      label: 'Retail max ($)',        path: 'series.retail_max',      color: '#ddd6fe', axis: 'y$', def: false },
+  { id: 'retail_mean',     label: 'Retail mean ($)',       path: 'series.retail_mean',     color: '#bfdbfe', axis: 'y$', def: false },
+  { id: 'wholesale_median',label: 'Wholesale median ($)',  path: 'series.wholesale_median',color: '#5eead4', axis: 'y$', def: false, dash:[4,3] },
+  { id: 'getin_price',     label: 'Get-in ($)',            path: 'series.getin_price',     color: '#facc15', axis: 'y$', def: false },
+  { id: 'retail_sum',      label: 'Notional ($)',          path: 'series.retail_sum',      color: '#fb923c', axis: 'y$', def: false },
+  { id: 'counts_market',   label: 'Market tix',            path: 'series.counts_market',   color: '#f58426', axis: 'yC', def: false },
+  { id: 'counts_owned',    label: 'S4K owned tix',         path: 'series.counts_owned',    color: '#fbbf24', axis: 'yC', def: false, dash:[4,3] },
+  { id: 'groups_count',    label: 'Listing groups',        path: 'series.groups_count',    color: '#fb7185', axis: 'yC', def: false },
+  { id: 'sections_count',  label: 'Sections active',       path: 'series.sections_count',  color: '#f472b6', axis: 'yC', def: false },
+  { id: 'owned_share',     label: 'S4K share',             path: 'series.owned_share',     color: '#fbbf24', axis: 'y%', def: false, scale: 100 },
+  { id: 'top5_concentration', label: 'Top-5 concentration', path: 'series.top5_concentration', color: '#a3e635', axis: 'y%', def: false, scale: 100 },
+  { id: 'price_dispersion',label: 'Price dispersion',      path: 'series.price_dispersion',color: '#22d3ee', axis: 'yIdx', def: false },
+  { id: 'tail_premium',    label: 'Tail premium',          path: 'series.tail_premium',    color: '#34d399', axis: 'yIdx', def: false },
+  // ESPN
+  { id: 'home_win_pct',    label: 'Home win %',            path: 'series.home_win_pct',    color: '#10b981', axis: 'y%', def: true,  scale: 100, hint: 'home_team' },
+  { id: 'away_win_pct',    label: 'Away win %',            path: 'series.away_win_pct',    color: '#ef4444', axis: 'y%', def: true,  scale: 100, hint: 'away_team' },
+  { id: 'home_seed',       label: 'Home seed',             path: 'series.home_seed',       color: '#10b981', axis: 'yIdx', def: false, hint: 'home_team' },
+  { id: 'away_seed',       label: 'Away seed',             path: 'series.away_seed',       color: '#ef4444', axis: 'yIdx', def: false, hint: 'away_team' },
+  { id: 'home_injury_load',label: 'Home injuries (#)',     path: 'series.home_injury_load',color: '#f87171', axis: 'yIdx', def: false, hint: 'home_team' },
+  { id: 'away_injury_load',label: 'Away injuries (#)',     path: 'series.away_injury_load',color: '#fca5a5', axis: 'yIdx', def: false, hint: 'away_team' },
+  { id: 'home_team_index', label: 'Home composite',        path: 'series.home_team_index', color: '#84cc16', axis: 'yIdx', def: false, hint: 'home_team' },
+  { id: 'away_team_index', label: 'Away composite',        path: 'series.away_team_index', color: '#fb923c', axis: 'yIdx', def: false, hint: 'away_team' },
+];
+
+// Overlays: injuries + roster_moves render as vertical markers (not series). On by default.
+const CHART_OVERLAYS = [
+  { id: 'injuries',     label: 'Injuries',     path: 'overlays.injuries',     color: '#ef4444', def: true },
+  { id: 'roster_moves', label: 'Trades / cuts', path: 'overlays.roster_moves', color: '#a78bfa', def: true },
+];
+
+// User-toggled state lives in localStorage so the user can keep their workbench config.
+const CHART_STATE_KEY = 'evt_chart_visible_v2';
+function _loadChartVis() {
+  try { return new Set(JSON.parse(localStorage.getItem(CHART_STATE_KEY) || 'null') || _defaultVis()); }
+  catch { return new Set(_defaultVis()); }
+}
+function _defaultVis() {
+  return [...CHART_SERIES.filter(s => s.def).map(s => 's:'+s.id),
+          ...CHART_OVERLAYS.filter(o => o.def).map(o => 'o:'+o.id)];
+}
+function _saveChartVis(set) {
+  localStorage.setItem(CHART_STATE_KEY, JSON.stringify([...set]));
+}
+function _getPath(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
 let _eventChartInstance = null;
+let _eventChartData = null;
+
 function renderEventChart(data) {
+  _eventChartData = data;
+  // Render toggle pills
+  const togglesEl = document.getElementById('event-chart-toggles');
+  if (togglesEl) {
+    const visible = _loadChartVis();
+    const pills = [];
+    pills.push('<span class="dim" style="margin-right:6px;">Series:</span>');
+    for (const s of CHART_SERIES) {
+      const onCls = visible.has('s:' + s.id) ? '' : 'style="opacity:0.4;"';
+      pills.push(`<a class="pill" data-toggle="s:${s.id}" ${onCls} style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${visible.has('s:'+s.id)?'background:var(--surface-2);':''}">
+        <span style="display:inline-block;width:8px;height:2px;background:${s.color};${s.dash?'border-top:1px dashed '+s.color+';height:0;':''}"></span>${esc(s.label)}</a>`);
+    }
+    pills.push('<span class="dim" style="margin:0 6px 0 12px;">Overlays:</span>');
+    for (const o of CHART_OVERLAYS) {
+      pills.push(`<a class="pill" data-toggle="o:${o.id}" style="cursor:pointer;padding:2px 8px;border:1px solid var(--border);border-radius:10px;display:inline-flex;align-items:center;gap:4px;${visible.has('o:'+o.id)?'background:var(--surface-2);':'opacity:0.4;'}">
+        <span style="display:inline-block;width:6px;height:6px;background:${o.color};border-radius:50%;"></span>${esc(o.label)}</a>`);
+    }
+    togglesEl.innerHTML = pills.join('');
+    togglesEl.querySelectorAll('a.pill').forEach(el => {
+      el.addEventListener('click', () => {
+        const key = el.dataset.toggle;
+        const v = _loadChartVis();
+        if (v.has(key)) v.delete(key); else v.add(key);
+        _saveChartVis(v);
+        _drawChart();
+      });
+    });
+  }
+  _drawChart();
+}
+
+function _drawChart() {
+  const data = _eventChartData;
   const canvas = document.getElementById('event-chart');
-  if (!canvas) return;
+  if (!canvas || !data) return;
   if (_eventChartInstance) { _eventChartInstance.destroy(); _eventChartInstance = null; }
-  const toXY = arr => (arr || []).filter(p => p.v != null).map(p => ({ x: p.t, y: p.v }));
-  const datasets = [
-    { label: 'Market median ($)', data: toXY(data.prices_market), borderColor: '#60a5fa', backgroundColor: 'transparent', yAxisID: 'y$', borderWidth: 1.5, pointRadius: 0, tension: 0.2 },
-    { label: 'S4K owned median ($)', data: toXY(data.prices_owned), borderColor: '#4ade80', backgroundColor: 'transparent', yAxisID: 'y$', borderDash: [4,3], borderWidth: 1.5, pointRadius: 0, tension: 0.2 },
-    { label: 'Market tix', data: toXY(data.counts_market), borderColor: '#f58426', backgroundColor: 'transparent', yAxisID: 'yC', borderWidth: 1, pointRadius: 0, tension: 0.2 },
-    { label: 'S4K owned tix', data: toXY(data.counts_owned), borderColor: '#fbbf24', backgroundColor: 'transparent', yAxisID: 'yC', borderDash: [4,3], borderWidth: 1, pointRadius: 0, tension: 0.2 },
-  ];
-  _eventChartInstance = new Chart(canvas.getContext('2d'), {
-    type: 'line',
-    data: { datasets },
-    options: {
-      maintainAspectRatio: false,
-      responsive: true,
-      interaction: { mode: 'nearest', axis: 'x', intersect: false },
-      plugins: {
-        legend: { labels: { color: '#8b8d92', font: { size: 11 }, boxWidth: 16 } },
-        tooltip: { backgroundColor: '#16181b', borderColor: '#34373c', borderWidth: 1 },
-      },
-      scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { color: '#26292d' } },
-        y$: { type: 'linear', position: 'left', ticks: { color: '#8b8d92', font: { size: 10 }, callback: v => '$' + Math.round(v).toLocaleString() }, grid: { color: '#26292d' } },
-        yC: { type: 'linear', position: 'right', ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { drawOnChartArea: false } },
+  const visible = _loadChartVis();
+  const toXY = (arr, scale) => (arr || []).filter(p => p.v != null).map(p => ({ x: p.t, y: scale ? Number(p.v) * scale : Number(p.v) }));
+
+  const datasets = [];
+  for (const s of CHART_SERIES) {
+    if (!visible.has('s:' + s.id)) continue;
+    const series = _getPath(data, s.path);
+    if (!series || !series.length) continue;
+    datasets.push({
+      label: s.label, data: toXY(series, s.scale),
+      borderColor: s.color, backgroundColor: 'transparent',
+      yAxisID: s.axis, borderWidth: 1.5, pointRadius: 0, tension: 0.2,
+      ...(s.dash ? { borderDash: s.dash } : {}),
+    });
+  }
+
+  // Overlay annotations as scatter datasets at y=0 of secondary axis (vertical lines).
+  // Chart.js doesn't natively do vertical lines without a plugin; we'll use scatter with showLine=false
+  // and tooltips, plus a custom hover-only line via segment plugin. Simplest robust approach:
+  // emit one scatter point per overlay; tooltip surfaces the detail.
+  for (const o of CHART_OVERLAYS) {
+    if (!visible.has('o:' + o.id)) continue;
+    const overlay = _getPath(data, o.path);
+    if (!overlay || !overlay.length) continue;
+    datasets.push({
+      label: o.label, type: 'scatter',
+      data: overlay.map(e => ({ x: e.t, y: 0, _meta: e })),
+      backgroundColor: o.color, borderColor: o.color, pointRadius: 5, pointStyle: 'rectRot',
+      yAxisID: 'y$', showLine: false, order: -1,
+    });
+  }
+
+  const opts = {
+    maintainAspectRatio: false,
+    responsive: true,
+    interaction: { mode: 'nearest', axis: 'x', intersect: false },
+    plugins: {
+      legend: { display: false },  // we use the toggle pills instead
+      tooltip: {
+        backgroundColor: '#16181b', borderColor: '#34373c', borderWidth: 1,
+        callbacks: {
+          label: ctx => {
+            const meta = ctx.raw && ctx.raw._meta;
+            if (meta) {
+              if (meta.athlete) return `${meta.athlete} (${meta.team}): ${meta.status}${meta.comment ? ' — ' + meta.comment : ''}`;
+              if (meta.type) return `${meta.type}${meta.notes ? ': ' + meta.notes : ''}`;
+            }
+            return `${ctx.dataset.label}: ${ctx.parsed.y}`;
+          },
+        },
       },
     },
-  });
+    scales: {
+      x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { color: '#26292d' } },
+      y$: { type: 'linear', position: 'left', ticks: { color: '#8b8d92', font: { size: 10 }, callback: v => '$' + Math.round(v).toLocaleString() }, grid: { color: '#26292d' } },
+      yC: { type: 'linear', position: 'right', ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { drawOnChartArea: false } },
+      'y%': { type: 'linear', position: 'right', display: false, ticks: { callback: v => v.toFixed(0) + '%' } },
+      yIdx:  { type: 'linear', position: 'right', display: false },
+    },
+  };
+
+  if (!datasets.length) {
+    // No series toggled on — show hint
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#8b8d92'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Toggle a series above to render the chart.', canvas.width/2, canvas.height/2);
+    return;
+  }
+
+  _eventChartInstance = new Chart(canvas.getContext('2d'), { type: 'line', data: { datasets }, options: opts });
 }
 
 // =====================================================================

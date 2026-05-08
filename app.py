@@ -1308,19 +1308,33 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
     db = require_sb()
     since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-    # 1) Price + count series from event_metrics
+    # 1) Full event_metrics distribution as time series — chart workbench
+    # toggles any subset on/off. SELECT every column we collect.
     em = (
         db.table("event_metrics")
-        .select("captured_at,retail_median,owned_median_retail,tickets_count,owned_tickets_count")
+        .select(
+            "captured_at,"
+            "tickets_count,groups_count,sections_count,median_group_size,"
+            "ancillary_groups,ancillary_tickets,"
+            "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
+            "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
+            "getin_price,top5_concentration,price_dispersion,tail_premium,"
+            "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail"
+        )
         .eq("event_id", event_id)
         .gte("captured_at", since_iso)
         .order("captured_at")
         .execute()
     ).data or []
-    prices_owned  = [{"t": r["captured_at"], "v": r.get("owned_median_retail")} for r in em]
-    prices_market = [{"t": r["captured_at"], "v": r.get("retail_median")}        for r in em]
-    counts_owned  = [{"t": r["captured_at"], "v": r.get("owned_tickets_count")}  for r in em]
-    counts_market = [{"t": r["captured_at"], "v": r.get("tickets_count")}        for r in em]
+
+    def _series(col: str) -> list:
+        return [{"t": r["captured_at"], "v": r.get(col)} for r in em]
+
+    # Legacy aliases (preserved for backwards-compat)
+    prices_owned  = _series("owned_median_retail")
+    prices_market = _series("retail_median")
+    counts_owned  = _series("owned_tickets_count")
+    counts_market = _series("tickets_count")
 
     # 2) Resolve home + away ESPN team ids from event_xref → espn_event_snapshots
     home_team_id = away_team_id = home_slug = away_slug = home_league = None
@@ -1543,6 +1557,32 @@ def broker_event_chart_data(event_id: int, days: int = 30, _=Depends(require_aut
             "prices_market":  prices_market,
             "counts_owned":   counts_owned,
             "counts_market":  counts_market,
+            # ===== TEvo: full retail percentile distribution =====
+            "retail_min":     _series("retail_min"),
+            "retail_p25":     _series("retail_p25"),
+            "retail_p75":     _series("retail_p75"),
+            "retail_p90":     _series("retail_p90"),
+            "retail_max":     _series("retail_max"),
+            "retail_mean":    _series("retail_mean"),
+            "retail_sum":     _series("retail_sum"),
+            # ===== TEvo: wholesale percentile distribution =====
+            "wholesale_min":     _series("wholesale_min"),
+            "wholesale_median":  _series("wholesale_median"),
+            "wholesale_mean":    _series("wholesale_mean"),
+            "wholesale_max":     _series("wholesale_max"),
+            # ===== TEvo: structure and concentration =====
+            "getin_price":          _series("getin_price"),
+            "top5_concentration":   _series("top5_concentration"),
+            "price_dispersion":     _series("price_dispersion"),
+            "tail_premium":         _series("tail_premium"),
+            "median_group_size":    _series("median_group_size"),
+            "groups_count":         _series("groups_count"),
+            "sections_count":       _series("sections_count"),
+            "ancillary_tickets":    _series("ancillary_tickets"),
+            "ancillary_groups":     _series("ancillary_groups"),
+            # ===== TEvo: owned aggregates =====
+            "owned_groups_count":   _series("owned_groups_count"),
+            "owned_share":          _series("owned_share"),
             # ===== ESPN standings: legacy combined + new per-field per-team =====
             "home_standings": home_standings,   # legacy alias for home_win_pct
             "away_standings": away_standings,
