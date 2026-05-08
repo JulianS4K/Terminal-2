@@ -349,8 +349,20 @@ Mechanics (whoever picks this up):
 
 ## LOG
 
-### 2026-05-08 code (claude code session, evening)
+### 2026-05-08 code (claude code session, evening — sync audit + simulation pass)
 
+- DONE — **Sync audit caught 2 missing prod migrations. Captured into git.**
+  - `20260508091000_tighten_ghost_filter_48h` — applied to prod earlier today (version 20260508155337) when I tightened the ghost filter from 7d to 48h. I patched the prior `20260508090000` file in-place instead of creating a separate file; capturing the standalone version now to keep git aligned with prod's migration ledger.
+  - `20260508140000_espn_team_and_venue_assets` — copilot's work (applied 18:46 UTC). Adds 14 ESPN-asset columns to `performer_metadata` (logos, colors, ESPN URLs), new `venue_assets` table, `v_event_seating_chart` view, 3 `*_public` asset RPCs, and `espn_asset_crawl_state` queue table seeded with 169 performers (NBA/WNBA/MLB/NHL/NFL/MLS).
+- DONE — **Simulation pass on the new asset infrastructure**:
+  - **35 / 169 ESPN team assets fetched, 134 still pending.** Last fetch was 2026-05-08 18:52 UTC. The crawler appears to have been run once manually (or one cron tick) — 35 teams completed, then stopped. No active cron is driving the queue.
+  - **performer_metadata fill**: 35/845 performers have `espn_team_id` + `logo_default_url` + `color_primary` (just the 35 that got crawled).
+  - **venue_assets**: 34 venues with `hero_image_url` populated, **0 with `map_image_url`, 0 with `capacity`**. The hero-fetch worked for those 34; map + capacity fetchers either don't exist yet or aren't running.
+  - **ESPN crons all healthy** post the verify_jwt fix from earlier today: 11 runs in last 3h, 0 errors, injuries inserting steadily (302 + 28 + 5 + 6 across recent runs).
+  - **Test schemas (code_staging / copilot_test / design_test)**: only the _readme tables exist. No real usage yet — expected, no work has happened in those sandboxes.
+  - **listings_snapshots** still growing: 1.94 GB / 7.82M rows / 459 events (+62 MB / +640k rows in last ~24h). Storage audit fix (change-only ingest) still on cowork's lane.
+- NEXT (copilot) — **Drive the ESPN asset crawl to completion + add a cron**: 134/169 performers stuck in `espn_asset_crawl_state.status='pending'`. Either (a) finish the manual run that processed 35 earlier, OR (b) ship a cron + edge fn to drain the queue (recommend `*/5 * * * *` calling an `espn-fetch-team-assets` fn that processes N pending rows per tick). Without this, the new `get_performer_assets_public` / `get_event_assets_public` RPCs return mostly NULLs.
+- NEXT (copilot) — **Wire venue_assets map_image_url + capacity fetcher**: `venue_assets` has 34 rows with hero URLs but 0 maps and 0 capacities. Either extend the asset crawler to also pull these from ESPN's venue endpoint, or accept current scope. The `v_event_seating_chart` view + `get_venue_assets_public` RPC already expose these fields — they'll just stay NULL until populated.
 - DONE — **ARCHITECTURE confirmed with user + locked into AGENTS.md**. New diagram, new DATA FLOW section (cron tier table, per-surface cache TTLs, ESPN-as-overlay caveat). Two retail backends now explicit (chatbot live-with-90s-cache vs `*_public` RPCs reading cron-collected data). ESPN-context-in-chat called out as aspirational (retrieval only today; content not threaded into tool responses). TEvo rate limits noted as needing a centralized doc.
 - NEXT (copilot) — **decide retail web-store freshness**: either keep current cron-collected `*_public` RPCs (fast, freshness = cron tier) OR switch to live TEvo per render (slower, always fresh, more rate-limit pressure). User flagged as open question. Current path is cron-collected; see `*_public` RPCs in mig 20260508023000.
 - NEXT (copilot) — **thread ESPN context into chatbot tool responses**. Today: ESPN drives RETRIEVAL only (s4k_popularity_boost, athlete aliases). Chatbot doesn't surface ESPN content (injuries, standings, news) in tool results. Possible enhancement: add an ESPN-context tool to the chat fn loop, OR thread relevant injuries into `find_listings` results when an event's home/away team has active injuries. Open scope; coordinate with user before building.
