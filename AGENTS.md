@@ -113,6 +113,14 @@ All three agents are free to call any edge fn or read any view. Only writes to s
 13. **code's audit pass** (post-commit): every commit landed by anyone, code spot-checks the diff against (a) the product wall (no broker→retail leak), (b) AGENTS.md ownership, (c) common bug classes (parking inclusion, ghost events, content_hash gaps, cross-product schema collisions). Findings go in `docs/<date>-audit.md` + LOG.
 14. **claude design ↔ backend boundary**: if a UI change needs a new endpoint, new field, new RPC, or modified data shape — design DOES NOT add the backend code. Drop a `NEXT (claude design): need <endpoint/field>` line in the LOG. Either code (terminal endpoints) or copilot (chat endpoints) picks it up next session.
 
+## STRATEGIC (project-level context every agent should know)
+
+> **Read this before planning new feature work.** These are things that change priorities and tradeoffs across the whole codebase, not narrow tasks. Surfaced from `docs/sync-audit-2026-05-08.md` after code (auditor) found the SeatGeek planning docs sitting unread in `docs/seatgeek/`.
+
+- **🔄 SeatGeek migration is on the roadmap.** Two long planning docs in `docs/seatgeek/` (1,400 lines combined): `kanban-tasks.md` is the EPIC backlog; `migration-guide.md` is the API reference. Driver: `/events` is hard-capped at 10K results since 2026-01-01, so any TEvo full-catalog pattern is silently truncating. Implication: TEvo-shaped data (event_metrics, listings_snapshots, etc.) is a transitional substrate. New broker-side features should not deepen TEvo coupling — prefer abstractions over the source. Open question for the desk: timeline + cutover strategy.
+- **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
+- **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
+
 ## STATE (truth, not history)
 
 - Live URL terminal (broker) = railway https://terminal-2-production.railway.app  /  (Railway dropped the legacy `.up.` subdomain segment; old `terminal-2-production.up.railway.app` now 404s)
