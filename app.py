@@ -889,14 +889,25 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
     detail = db.rpc("get_broker_event_detail", {"p_event_id": event_id}).execute().data or []
     head = detail[0] if detail else None
 
-    # Latest two event_metrics for delta computation
+    # Latest two event_metrics for delta computation. Pull every column we
+    # collect — frontend slices it into Distribution / Volume / Wholesale /
+    # Market Structure / Owned panels.
     em_rows = (
         db.table("event_metrics")
         .select(
-            "captured_at,tickets_count,groups_count,sections_count,"
-            "retail_min,retail_median,retail_p75,retail_p90,retail_max,retail_sum,"
-            "wholesale_median,getin_price,owned_groups_count,owned_tickets_count,"
-            "owned_share,owned_median_retail,price_dispersion,top5_concentration"
+            "captured_at,"
+            # Inventory
+            "tickets_count,groups_count,sections_count,median_group_size,"
+            "ancillary_groups,ancillary_tickets,"
+            # Retail price distribution
+            "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
+            # Wholesale price distribution
+            "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
+            # Market structure / quality
+            "getin_price,top5_concentration,bid_ask_proxy,"
+            "price_dispersion,tail_premium,"
+            # Owned (S4K)
+            "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail"
         )
         .eq("event_id", event_id)
         .order("captured_at", desc=True)
@@ -907,11 +918,18 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
     prev = em_rows[1] if len(em_rows) >= 2 else {}
 
     metric_keys = [
-        "tickets_count", "groups_count", "sections_count",
-        "retail_min", "retail_median", "retail_p75", "retail_p90", "retail_max", "retail_sum",
-        "wholesale_median", "getin_price",
+        # Inventory
+        "tickets_count", "groups_count", "sections_count", "median_group_size",
+        "ancillary_groups", "ancillary_tickets",
+        # Retail distribution
+        "retail_min", "retail_p25", "retail_median", "retail_mean", "retail_p75", "retail_p90", "retail_max", "retail_sum",
+        # Wholesale distribution
+        "wholesale_min", "wholesale_median", "wholesale_mean", "wholesale_max",
+        # Market structure
+        "getin_price", "top5_concentration", "bid_ask_proxy",
+        "price_dispersion", "tail_premium",
+        # Owned
         "owned_groups_count", "owned_tickets_count", "owned_share", "owned_median_retail",
-        "price_dispersion", "top5_concentration",
     ]
     metrics = {k: {"v": curr.get(k), "delta": _delta(curr.get(k), prev.get(k))} for k in metric_keys}
 

@@ -1023,8 +1023,63 @@ async function loadEvent(eventId) {
       ${metricCard('Vol on mkt', 'tickets_count', num)}
       ${metricCard('S4K owned tix', 'owned_tickets_count', num)}
       ${metricCard('S4K share', 'owned_share', x => x == null ? '—' : Math.round(x*100)+'%')}
-      ${metricCard('Min ask', 'retail_min', moneyC)}
-      ${metricCard('Max ask', 'retail_max', moneyC)}
+      ${metricCard('Get-in', 'getin_price', moneyC)}
+      ${metricCard('Notional ($)', 'retail_sum', x => x == null ? '—' : '$' + (x/1000000 >= 1 ? (x/1000000).toFixed(2)+'M' : x/1000 >= 1 ? Math.round(x/1000)+'k' : Math.round(x).toLocaleString()))}
+    </div>
+    <div class="grid g-2-1" style="margin-top:12px;">
+      <div class="panel">
+        <div class="panel-h"><h3>Retail price distribution</h3><div class="actions"><span class="dim">${(m.retail_median?.v != null && m.retail_min?.v != null) ? `range ${moneyC(m.retail_min.v)}–${moneyC(m.retail_max?.v)}` : ''}</span></div></div>
+        <table class="ibkr">
+          <thead><tr><th>Pctile</th><th class="num">Min</th><th class="num">P25</th><th class="num">Median</th><th class="num">Mean</th><th class="num">P75</th><th class="num">P90</th><th class="num">Max</th></tr></thead>
+          <tbody><tr>
+            <td class="muted">Retail ($)</td>
+            <td class="num">${moneyC(m.retail_min?.v)}</td>
+            <td class="num">${moneyC(m.retail_p25?.v)}</td>
+            <td class="num"><strong>${moneyC(m.retail_median?.v)}</strong></td>
+            <td class="num">${moneyC(m.retail_mean?.v)}</td>
+            <td class="num">${moneyC(m.retail_p75?.v)}</td>
+            <td class="num">${moneyC(m.retail_p90?.v)}</td>
+            <td class="num">${moneyC(m.retail_max?.v)}</td>
+          </tr><tr>
+            <td class="muted">Wholesale ($)</td>
+            <td class="num">${moneyC(m.wholesale_min?.v)}</td>
+            <td class="num dim">—</td>
+            <td class="num"><strong>${moneyC(m.wholesale_median?.v)}</strong></td>
+            <td class="num">${moneyC(m.wholesale_mean?.v)}</td>
+            <td class="num dim">—</td>
+            <td class="num dim">—</td>
+            <td class="num">${moneyC(m.wholesale_max?.v)}</td>
+          </tr></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><h3>Market structure</h3></div>
+        <table class="ibkr">
+          <tbody>
+            <tr><td class="muted">Price dispersion</td><td class="num">${m.price_dispersion?.v != null ? Number(m.price_dispersion.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P75 / P25 — wider = more spread</td></tr>
+            <tr><td class="muted">Tail premium</td><td class="num">${m.tail_premium?.v != null ? Number(m.tail_premium.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P90 / median — steeper top end</td></tr>
+            <tr><td class="muted">Top-5 concentration</td><td class="num">${m.top5_concentration?.v != null ? Math.round(m.top5_concentration.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">tickets in top-5 sections</td></tr>
+            <tr><td class="muted">Bid/Ask proxy</td><td class="num">${m.bid_ask_proxy?.v != null ? Math.round(m.bid_ask_proxy.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">(retail_p25 − wholesale_p25) / retail_p25</td></tr>
+            <tr><td class="muted">Sections active</td><td class="num">${num(m.sections_count?.v)}</td><td class="dim" style="font-size:11px;">non-ancillary</td></tr>
+            <tr><td class="muted">Listing groups</td><td class="num">${num(m.groups_count?.v)}</td><td class="dim" style="font-size:11px;">avg ${m.median_group_size?.v != null ? Number(m.median_group_size.v).toFixed(1) : '—'} tix/grp</td></tr>
+            <tr><td class="muted">Ancillary tix</td><td class="num">${num(m.ancillary_tickets?.v)}</td><td class="dim" style="font-size:11px;">parking/hospitality, ${num(m.ancillary_groups?.v)} grps</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:12px;">
+      <div class="panel-h"><h3>S4K owned inventory</h3><div class="actions"><span class="dim">brokerage_id 1768</span></div></div>
+      <table class="ibkr">
+        <thead><tr><th class="num">Owned tix</th><th class="num">Owned grps</th><th class="num">Share of mkt</th><th class="num">Owned median ask</th><th class="num">Premium vs mkt</th><th class="num">Notional</th></tr></thead>
+        <tbody><tr class="${(m.owned_share?.v || 0) >= 0.30 ? 'we-are-mkt' : ''}">
+          <td class="num">${num(m.owned_tickets_count?.v)}</td>
+          <td class="num">${num(m.owned_groups_count?.v)}</td>
+          <td class="num ${(m.owned_share?.v || 0) >= 0.30 ? 'warn' : ''}">${m.owned_share?.v != null ? Math.round(m.owned_share.v * 100) + '%' : '—'}</td>
+          <td class="num">${moneyC(m.owned_median_retail?.v)}</td>
+          <td class="num">${(m.owned_median_retail?.v != null && m.retail_median?.v) ? (((m.owned_median_retail.v / m.retail_median.v) - 1) * 100).toFixed(1) + '%' : '—'}</td>
+          <td class="num">${(m.owned_median_retail?.v != null && m.owned_tickets_count?.v != null) ? moneyC(m.owned_median_retail.v * m.owned_tickets_count.v) : '—'}</td>
+        </tr></tbody>
+      </table>
     </div>
     <div class="panel">
       <div class="panel-h"><h3>Price &amp; Volume · Last 30d</h3><div class="actions"><span class="dim">${chart ? (chart.prices_market || []).length + ' snapshots' : (chartErr ? 'error' : 'no data')}</span></div></div>
