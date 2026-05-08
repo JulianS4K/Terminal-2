@@ -206,6 +206,8 @@
 <header class="topbar">
   <div class="brand">evo terminal</div>
   <div class="meta">
+    <a href="/movers" style="color:var(--amber);text-decoration:none;border:1px solid var(--amber-dim);padding:2px 8px;font-size:11px;letter-spacing:0.04em">📈 movers</a>
+    <a href="/chat" style="color:var(--dim);text-decoration:none;border:1px solid var(--border);padding:2px 8px;font-size:11px;letter-spacing:0.04em">💬 retail chat</a>
     <span><span class="dot" id="sb-dot"></span>db</span>
     <span class="env" id="env-label">—</span>
     <span id="clock">—</span>
@@ -678,6 +680,7 @@ function renderEventDetail(d) {
     </tr>`).join("");
   const pp = (ev.performances || []).find(p => p.primary)?.performer;
   const pivots = [];
+  pivots.push(`<a class="pivot" href="/event/${ev.id}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;background:var(--amber);color:#000;border-color:var(--amber);font-weight:500">↗ event terminal</a>`);
   if (venue.id) {
     pivots.push(`<button class="pivot" data-pivot-action="pivot-tab" data-pivot-tab="events"
       data-pivot-set='${JSON.stringify({venue_id: venue.id})}'>→ other events here</button>`);
