@@ -952,6 +952,50 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
     }
 
 
+@app.get("/api/broker/event/{event_id}/zones")
+def broker_event_zones(event_id: int, _=Depends(require_auth)):
+    """Per-zone latest metrics with full distribution.
+
+    The existing get_event_zones_rollup RPC returns a slim shape (zone,
+    source, tickets, min_retail, max_retail). zone_metrics has way more —
+    full percentile distribution + owned breakdown — so this endpoint
+    surfaces all of it for the event page Zone Ladder panel.
+
+    Returns latest snapshot per (zone, zone_source) tuple. zone_source
+    distinguishes curated (manual performer_zones config), fallback
+    (keyword-derived), and unmapped (no rule matched).
+    """
+    db = require_sb()
+    rows = (
+        db.table("zone_metrics")
+        .select(
+            "zone, zone_source, captured_at, "
+            "tickets_count, groups_count, sections_count, "
+            "retail_min, retail_p25, retail_median, retail_mean, retail_p75, retail_p90, retail_max, retail_sum, "
+            "wholesale_min, wholesale_median, wholesale_mean, wholesale_max, "
+            "getin_price, "
+            "owned_groups_count, owned_tickets_count, owned_share, owned_median_retail"
+        )
+        .eq("event_id", event_id)
+        .order("captured_at", desc=True)
+        .limit(500)
+        .execute()
+    ).data or []
+    # Take latest per (zone, zone_source)
+    seen = set()
+    out = []
+    for r in rows:
+        k = (r.get("zone"), r.get("zone_source"))
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    # Sort: curated first, then fallback, then unmapped; within each by tickets desc
+    src_order = {"curated": 0, "fallback": 1, "unmapped": 2}
+    out.sort(key=lambda r: (src_order.get(r.get("zone_source"), 9), -(r.get("tickets_count") or 0)))
+    return {"zones": out, "count": len(out)}
+
+
 @app.get("/api/broker/event/{event_id}/section-metrics")
 def broker_event_section_metrics(event_id: int, _=Depends(require_auth)):
     """Tab 1: section-level metrics with delta vs prior snapshot."""

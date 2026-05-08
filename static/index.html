@@ -869,15 +869,16 @@ function renderKPIs(movers, watchlistMovers, watchlist) {
 async function loadEvent(eventId) {
   const mount = document.getElementById('event-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading event #${eventId}…</div>`;
-  let ov, espn, chart, sections, rawTevo, news, chartErr = null;
+  let ov, espn, chart, sections, rawTevo, news, zonesRich, chartErr = null;
   try {
-    [ov, espn, chart, sections, rawTevo, news] = await Promise.all([
+    [ov, espn, chart, sections, rawTevo, news, zonesRich] = await Promise.all([
       api(`/api/broker/event/${eventId}/overview`),
       api(`/api/broker/event/${eventId}/espn`).catch(() => null),
       api(`/api/broker/event/${eventId}/chart-data?days=30`).catch(e => { chartErr = e.message; return null; }),
       api(`/api/broker/event/${eventId}/section-metrics`).catch(() => null),
       api(`/api/broker/event/${eventId}/raw-tevo`).catch(() => null),
       api(`/api/broker/news?limit=12`).catch(() => null),
+      api(`/api/broker/event/${eventId}/zones`).catch(() => null),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load event ${eventId}: ${esc(e.message)}</div>`;
@@ -910,9 +911,15 @@ async function loadEvent(eventId) {
     return `<div class="kpi"><div class="kpi-l">${esc(label)}</div><div class="kpi-v">${vDisp}</div><div class="kpi-d ${dCls}">${dDisp}</div></div>`;
   };
 
-  // Zone ladder — combine owned + market by zone.
-  // RPC get_event_zones_rollup returns: zone, source, tickets, min_retail, max_retail
+  // Zone ladder — prefer the rich /api/broker/event/{id}/zones (full distribution
+  // straight from zone_metrics: percentiles, owned breakdown, source tag), fall
+  // back to the slim get_event_zones_rollup rollup, fall back to section-metrics.
+  // The rollup RPC returns: zone, source, tickets, min_retail, max_retail
   // (NOT tickets_count / retail_min / retail_max — verified against prod 2026-05-08).
+  const richZones = (zonesRich && zonesRich.zones) || [];
+  const richTotalTix = richZones.reduce((s, z) => s + (z.tickets_count || 0), 0);
+
+  // For the "old" rollup path (no rich data)
   const byZone = {};
   for (const z of zonesMarket) byZone[z.zone || 'unknown'] = { market: z };
   for (const z of zonesOwned) {
@@ -922,10 +929,42 @@ async function loadEvent(eventId) {
   }
   const zoneEntries = Object.entries(byZone);
   const zoneTotalTix = zoneEntries.reduce((s, [, info]) => s + ((info.market || {}).tickets || 0), 0);
-  // If zones return rows but all zero (sections not mapped to zones for this event),
-  // fall back to raw section-metrics so the user still sees the market depth.
+
   let depthTitle, depthHeader, depthRows, depthCaption;
-  if (zoneEntries.length && zoneTotalTix > 0) {
+
+  if (richZones.length && richTotalTix > 0) {
+    // RICH PATH — full per-zone distribution including curated/fallback/unmapped
+    depthTitle = 'Zone Ladder · Market Depth (full distribution)';
+    depthHeader = '<th>Zone</th><th>Source</th>'
+                + '<th class="num">Min</th><th class="num">P25</th><th class="num">Med</th><th class="num">P75</th><th class="num">P90</th><th class="num">Max</th>'
+                + '<th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th><th class="num">Owned med</th>';
+    depthRows = richZones.map(z => {
+      const totalTix = z.tickets_count || 0;
+      const ownedTix = z.owned_tickets_count || 0;
+      const share = z.owned_share != null ? Number(z.owned_share) : (totalTix > 0 ? ownedTix / totalTix : 0);
+      const isMkt = share >= 0.30;
+      const srcCls = z.zone_source === 'curated' ? 'pos' : z.zone_source === 'fallback' ? 'warn' : 'muted';
+      const cls = ['', ownedTix > 0 ? 'owned' : '', isMkt ? 'we-are-mkt' : ''].filter(Boolean).join(' ');
+      return `<tr class="${cls}">
+        <td><strong>${esc(z.zone || '—')}</strong></td>
+        <td class="${srcCls}" style="font-size:11px;">${esc(z.zone_source || '—')}</td>
+        <td class="num">${moneyC(z.retail_min)}</td>
+        <td class="num">${moneyC(z.retail_p25)}</td>
+        <td class="num"><strong>${moneyC(z.retail_median)}</strong></td>
+        <td class="num">${moneyC(z.retail_p75)}</td>
+        <td class="num">${moneyC(z.retail_p90)}</td>
+        <td class="num">${moneyC(z.retail_max)}</td>
+        <td class="num">${num(totalTix)}</td>
+        <td class="num">${num(ownedTix)}</td>
+        <td class="num ${isMkt?'warn':''}">${totalTix > 0 ? Math.round(share*100)+'%' : '—'}</td>
+        <td class="num">${moneyC(z.owned_median_retail)}</td>
+      </tr>`;
+    }).join('');
+    const sourceCounts = richZones.reduce((acc, z) => { acc[z.zone_source||'?'] = (acc[z.zone_source||'?']||0)+1; return acc; }, {});
+    const sourceSummary = Object.entries(sourceCounts).map(([s,c]) => `${c} ${s}`).join(' · ');
+    depthCaption = `${richZones.length} zones (${sourceSummary}) · ${num(richTotalTix)} tix · last pull ${shortDate(ov.last_pull_at)}`;
+  } else if (zoneEntries.length && zoneTotalTix > 0) {
+    // FALLBACK 1 — slim rollup
     depthTitle = 'Zone Ladder · Market Depth';
     depthHeader = '<th>Zone</th><th>Source</th><th class="num">Min</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th>';
     depthRows = zoneEntries.map(([name, info]) => {
@@ -945,7 +984,7 @@ async function loadEvent(eventId) {
         <td class="num ${isMkt?'warn':''}">${totalTix > 0 ? Math.round(share*100)+'%' : '—'}</td>
       </tr>`;
     }).join('');
-    depthCaption = `${zoneEntries.length} zones · last pull ${shortDate(ov.last_pull_at)}`;
+    depthCaption = `${zoneEntries.length} zones · last pull ${shortDate(ov.last_pull_at)} (slim rollup; rich endpoint had no data)`;
   } else {
     // Fallback: raw section-metrics (no zone mapping)
     depthTitle = 'Section Metrics · Market Depth';
