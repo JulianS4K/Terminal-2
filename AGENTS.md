@@ -6,7 +6,7 @@ both agents read first. both agents append on action. keep cave-man.
 
 | agent  | status | started_at (UTC)    | working on                                   | branch | safe to interrupt? |
 |--------|--------|---------------------|----------------------------------------------|--------|--------------------|
-| code   | IDLE   | —                   | —                                            | —      | yes                |
+| code   | DOING  | 2026-05-08 00:50 UTC | committing cowork's prod work into git on their behalf (no git auth) | main | no — mid-batch commit |
 | cowork | IDLE   | —                   | —                                            | —      | yes                |
 
 **Read this table before starting any work.** If the other agent is DOING and your planned work overlaps theirs (same files, related schema), wait or coordinate via a WAIT note in the LOG. If the other agent is IDLE you're clear to start — flip your row to DOING with a timestamp before your first commit.
@@ -16,10 +16,12 @@ both agents read first. both agents append on action. keep cave-man.
 **Read this section before opening any file.** If a file you want to edit is listed under the *other* agent, pick a different file or wait. Append your file paths under your own subsection before you start editing. Clear your subsection back to "(none)" the moment you commit and push.
 
 ### code
-- (none)
+- AGENTS.md (audit + ping resolution)
+- supabase/migrations/* (cowork-authored migrations 12-17, 22-30 — code committing on cowork's behalf)
+- supabase/functions/* (cowork-authored: chat v26, espn-rosters v2, wiki-collect v1, probe-seating-charts v1, backfill-event-configurations v2 — code committing on cowork's behalf)
 
 ### cowork
-- (none)
+- (none — git access via code)
 
 ## ARCHITECTURE
 
@@ -50,9 +52,10 @@ never leak data across the wall. retail UI must never see wholesale, brokerage n
 
 ## OWN
 
-- **code** (broker / terminal) = app.py · evo_client.py · static/index.html · requirements.txt · Procfile · ESPN ingest (espn / espn-collect edge fns + team_xref / event_xref / espn_*) until the bridge into performer_external_ids lands
-- **cowork** (retail / chat) = supabase/migrations/ · supabase/functions/chat/ · supabase/functions/collect-listings/ · supabase/functions/seed-home-venues/ · supabase/functions/bulk-add-watchlist/ · supabase/functions/probe-tevo-category/ · static/chat.html · docs/ · SESSION_*.md
-- **shared** (ask before edit, leave WAIT note) = AGENTS.md (this file) · README.md · .gitignore · supabase/migrations/ for cross-product schema changes
+- **code** (broker / terminal) = app.py · evo_client.py · static/index.html · requirements.txt · Procfile · supabase/functions/espn/ · supabase/functions/espn-collect/ · supabase/functions/tevo-perf-find/ · ESPN ingest schema (espn_*, event_xref, performer_external_ids source='espn')
+  - **also: code is git proxy for cowork** — cowork has no git auth, so code captures cowork's prod migrations + edge fn deploys into git via audit-and-commit. cowork's source files in git are read-only updates from prod, not edits to merge.
+- **cowork** (retail / chat) = supabase/functions/chat/ · supabase/functions/collect-listings/ · supabase/functions/seed-home-venues/ · supabase/functions/bulk-add-watchlist/ · supabase/functions/probe-tevo-category/ · supabase/functions/wiki-collect/ · supabase/functions/espn-rosters/ · supabase/functions/probe-seating-charts/ · supabase/functions/backfill-event-configurations/ · static/chat.html · docs/ · SESSION_*.md · most schema migrations (zone metrics, chat infra, athlete history, wiki context, broker helpers)
+- **shared** (ask before edit, leave WAIT note) = AGENTS.md (this file) · README.md · .gitignore · cross-product schema changes
 
 both agents are free to call any edge fn or read any view. only writes to source files in the other agent's OWN list need a WAIT note first.
 
@@ -81,13 +84,13 @@ both agents are free to call any edge fn or read any view. only writes to source
 - bulk-add-watchlist edge fn = v1
 - espn edge fn = v1 (code, claude code 2026-05-07)
 - espn-collect edge fn = v2 (code, daily cron CANCELED pending bridge with performer_external_ids)
-- migrations applied through 20260507000021_espn_collect_cron_schedules
+- migrations applied through 20260507000030_team_xref_compat_view (29 cowork migrations + 1 code compat shim now all in git)
 - watchlist = 48 performers (37 NFL added today)
 - performer_home_venues = 135 (NBA/NHL/NFL/MLB/WNBA; MLS missing — covered via performer_external_ids)
 - chat_aliases = 193 (incl 35 FIFA)
 - product wall enforced via DB views: retail_events / retail_listings / retail_event_metrics / retail_event_zones / retail_event_sections (S4K-owned only) vs broker_* (full)
 - performer_external_ids ESPN coverage = **217 teams across 7 leagues**: NFL 32, NHL 32, NBA 30, MLB 30, MLS 30, WNBA 15, World Cup 48 (canonical going forward)
-- team_xref = **DROPPED 2026-05-07** (migration 20). Use performer_external_ids where source='espn'.
+- team_xref = **VIEW (2026-05-07, mig 30)** — read-only compat shim over performer_external_ids where source='espn'. Cowork's RPCs (get_team_context, broker_event_intel, espn-rosters fn) keep working without code changes; PEI remains the canonical source-of-truth.
 - event_xref = 1 row (NYK@PHI G3, lazily populated). PHASE 1.3 (cowork): generalize into `event_external_ids` for SeatGeek/TM/S4K plug-ins.
 - espn snapshot tables (current baseline): 76 team snaps, 566 injuries, 190 news, 78 event snaps. All rows have content_hash + is_baseline=true (migration 17). Next collector run is change-only.
 - espn-collect edge fn = **v5 (code, 2026-05-07)** — scoped change-only ingest. Reads from performer_external_ids (217 teams). Three scopes via `?scope=`: `roster` (injuries every 10 min), `gameday` (event scores+odds for events ±24h, every 10 min), `team_daily` (standings + news, daily 05:00 UTC). Crons live (`espn-roster-10min`, `espn-gameday-10min`, `espn-team-daily`). Smoke-test: 1404 injuries inserted on first run, 1402 unchanged on a 30s-later re-run (2 actually changed during that gap, so change-detection working live). v3-v4 fixed bugs in flight: MD5→SHA-256 (Deno WebCrypto doesn't support MD5); inj.id used as dedup key since ESPN league-injuries doesn't populate inj.athlete.id.
@@ -160,6 +163,7 @@ Mechanics (whoever picks this up):
 
 ### 2026-05-07 code (claude code session)
 
+- DONE <pending-sha> — **Audit + commit cowork's prod work as their git proxy**: pulled SQL of 14 cowork migrations and source of 5 cowork edge fns from prod via MCP. Wrote them to git verbatim. Resolved migration version collisions: cowork's originals 18, 19, 20, 21, 25 were renumbered in git to 25, 26, 27, 28, 29 to avoid conflict with code's 18, 19, 20, 21. Added migration 30 (`team_xref_compat_view`) which resurrects team_xref as a read-only view over performer_external_ids — fixes all cowork RPCs (get_team_context, broker_event_intel, etc.) and the espn-rosters fn that referenced the dropped table. Updated OWN to reflect cowork's expanded surface (athlete history, wiki context, broker dashboard helpers, seating charts) and the "code is git proxy" arrangement.
 - DONE 772ba18 — **PING cowork** (see ⚠️ at top of cowork section): flagged migration version collisions on 18-21, 13 cowork migrations + 5 edge fn deploys not in git, broken `espn-rosters` (reads dropped team_xref), and broker-lane crossings on `broker_dashboard_helpers_v2` / `broker_event_map_rpcs`. Asking them to commit + renumber + WIP-tag.
 - DONE 89f911c — **espn-collect v5 + pg_cron schedules**: split espn-collect into 4 scopes via `?scope=` (roster / gameday / team_daily / all). Bugfixes mid-flight: v3 used MD5 (Deno doesn't support); v4 used inj.athlete.id (ESPN doesn't populate it in league-injuries). v5 uses SHA-256 + inj.id dedup key. Smoke-test verified change-only behavior live: first run 1404 inserts, re-run 30s later showed 2 inserts + 1402 unchanged (real ESPN data changed during the gap). Migration 21 scheduled three pg_cron jobs at the cadence you specified: roster every 10 min, gameday every 10 min (offset by 5 min), team_daily at 05:00 UTC. Old `espn-rosters-10min` (called nonexistent fn) + `espn-collect-daily` crons unscheduled.
 - DONE 199fb15 — **espn fn v2 + slug bug fix + team_xref drop**: refactored `lookupTeamXref` to read from `performer_external_ids` (canonical, 217 teams). Deployed espn fn v2. Smoke-test caught a bug: `meta.espn_slug` mixed sport-slugs ("basketball/nba", correct) with team-slugs ("new-england-patriots", "bra", wrong) — Patriots/Brazil/etc. returned empty data because espn fn called bogus paths. Migration 18 fixed all 217 rows: `meta.espn_slug` is now always the sport-slug; the prior team-slug is preserved as `meta.espn_team_slug`. Migration 19 dropped now-redundant `unique (team_id, league, captured_at)` constraints (change-only ingest already prevents semantic dupes via content_hash). Verified change-only RPC end-to-end via SQL test (3 calls, 2 rows persisted, "unchanged" path correctly UPDATEs last_seen_at). Migration 20 dropped `team_xref` table. WIP cleared. NEXT note added for Twitter/social alerts feature.
@@ -178,6 +182,7 @@ Mechanics (whoever picks this up):
 
 ### 2026-05-07 cowork
 
+- ✅ **PING resolved by code (2026-05-08 00:50 UTC)** — user clarified cowork lacks git auth, so code is now committer/auditor for cowork's prod deploys. Next session, cowork can keep deploying via MCP; code will pull + commit on cadence. This block stays here as record. Original ping below:
 - ⚠️ **PING from code (2026-05-07 23:55 UTC)** — read this before your next deploy:
   1. **Migration version collisions.** You shipped `20260507000018_system_placeholder_zones`, `..._000019_canonical_zone_names`, `..._000020_hybrid_zone_coexistence`, `..._000021_chat_audit_findings`. I shipped `..._000018_espn_fix_sport_slug`, `..._000019_drop_redundant_unique_constraints`, `..._000020_drop_team_xref`, `..._000021_espn_collect_cron_schedules` at the same numbers. Postgres applied both (different timestamps), but our git tree only has mine. We need to renumber on a future commit so the migration history is consistent. Also: please pick the next free version (current max is `...000024` in DB).
   2. **Your migrations 12-17, 22-24 are NOT committed to git.** Specifically: `espn_athletes_and_history`, `team_playoff_context`, `wiki_context`, `team_context_with_wiki`, `broker_dashboard_helpers_v2`, `tevo_ticket_groups_cache`, `event_configuration_and_seating_chart`, `broker_event_map_rpcs`, `schedule_event_config_backfill`. Same story for edge fns: `espn-rosters` v2, `wiki-collect` v1, `probe-seating-charts` v1, `backfill-event-configurations` v2, and chat v20-v26. **Please commit them so the repo reflects prod.** Otherwise we lose your work if anything ever rebuilds from git.
