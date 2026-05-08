@@ -869,13 +869,15 @@ function renderKPIs(movers, watchlistMovers, watchlist) {
 async function loadEvent(eventId) {
   const mount = document.getElementById('event-mount');
   mount.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted);">Loading event #${eventId}…</div>`;
-  let ov, espn, chart, sections, chartErr = null;
+  let ov, espn, chart, sections, rawTevo, news, chartErr = null;
   try {
-    [ov, espn, chart, sections] = await Promise.all([
+    [ov, espn, chart, sections, rawTevo, news] = await Promise.all([
       api(`/api/broker/event/${eventId}/overview`),
       api(`/api/broker/event/${eventId}/espn`).catch(() => null),
       api(`/api/broker/event/${eventId}/chart-data?days=30`).catch(e => { chartErr = e.message; return null; }),
       api(`/api/broker/event/${eventId}/section-metrics`).catch(() => null),
+      api(`/api/broker/event/${eventId}/raw-tevo`).catch(() => null),
+      api(`/api/broker/news?limit=12`).catch(() => null),
     ]);
   } catch (e) {
     mount.innerHTML = `<div style="padding:48px;color:var(--neg);">Failed to load event ${eventId}: ${esc(e.message)}</div>`;
@@ -1023,8 +1025,8 @@ async function loadEvent(eventId) {
       ${metricCard('Vol on mkt', 'tickets_count', num)}
       ${metricCard('S4K owned tix', 'owned_tickets_count', num)}
       ${metricCard('S4K share', 'owned_share', x => x == null ? '—' : Math.round(x*100)+'%')}
-      ${metricCard('Get-in', 'getin_price', moneyC)}
-      ${metricCard('Notional ($)', 'retail_sum', x => x == null ? '—' : '$' + (x/1000000 >= 1 ? (x/1000000).toFixed(2)+'M' : x/1000 >= 1 ? Math.round(x/1000)+'k' : Math.round(x).toLocaleString()))}
+      ${metricCard('Min ask', 'retail_min', moneyC)}
+      ${metricCard('Max ask', 'retail_max', moneyC)}
     </div>
     <div class="grid g-2-1" style="margin-top:12px;">
       <div class="panel">
@@ -1056,6 +1058,8 @@ async function loadEvent(eventId) {
         <div class="panel-h"><h3>Market structure</h3></div>
         <table class="ibkr">
           <tbody>
+            <tr><td class="muted">Get-in price</td><td class="num"><strong>${moneyC(m.getin_price?.v)}</strong></td><td class="dim" style="font-size:11px;">cheapest ask, qty ≥ 2</td></tr>
+            <tr><td class="muted">Notional ($)</td><td class="num">${m.retail_sum?.v != null ? '$' + (m.retail_sum.v/1000000 >= 1 ? (m.retail_sum.v/1000000).toFixed(2)+'M' : m.retail_sum.v/1000 >= 1 ? Math.round(m.retail_sum.v/1000)+'k' : Math.round(m.retail_sum.v).toLocaleString()) : '—'}</td><td class="dim" style="font-size:11px;">sum of all retail asks</td></tr>
             <tr><td class="muted">Price dispersion</td><td class="num">${m.price_dispersion?.v != null ? Number(m.price_dispersion.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P75 / P25 — wider = more spread</td></tr>
             <tr><td class="muted">Tail premium</td><td class="num">${m.tail_premium?.v != null ? Number(m.tail_premium.v).toFixed(2) + 'x' : '—'}</td><td class="dim" style="font-size:11px;">P90 / median — steeper top end</td></tr>
             <tr><td class="muted">Top-5 concentration</td><td class="num">${m.top5_concentration?.v != null ? Math.round(m.top5_concentration.v * 100) + '%' : '—'}</td><td class="dim" style="font-size:11px;">tickets in top-5 sections</td></tr>
@@ -1098,10 +1102,61 @@ async function loadEvent(eventId) {
       </table>
     </div>
     <div style="height:12px"></div>
+    ${ev.map_large_url ? `
     <div class="panel">
-      <div class="panel-h"><h3>ESPN Context</h3></div>
-      ${espnHTML}
-    </div>`;
+      <div class="panel-h"><h3>Venue Map · ${esc(ev.configuration_name || 'config #' + (ev.configuration_id || '—'))}</h3><div class="actions"><a href="${esc(ev.map_large_url)}" target="_blank" rel="noopener" class="dim">open full size</a></div></div>
+      <div style="background:var(--bg);padding:12px;text-align:center;">
+        <img src="${esc(ev.map_large_url)}" alt="Seating chart" loading="lazy"
+             style="max-width:100%;max-height:520px;border-radius:4px;border:1px solid var(--border);"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
+        <div class="muted" style="display:none;padding:32px;font-size:12px;">Seating chart image failed to load. URL: ${esc(ev.map_large_url)}</div>
+      </div>
+    </div>
+    <div style="height:12px"></div>` : ''}
+    <div class="grid g-2-1">
+      <div class="panel">
+        <div class="panel-h"><h3>ESPN Context</h3></div>
+        ${espnHTML}
+      </div>
+      <div class="panel">
+        <div class="panel-h"><h3>Related News</h3><div class="actions"><span class="dim">${news?.count || 0} items</span></div></div>
+        <ul class="news" style="max-height:520px;">
+          ${(news?.items || []).slice(0, 12).map(n => `
+            <li>
+              <span class="news-when">${ageMinutes(n.published_at)}</span>
+              <span class="logo-sm" style="background:#26292d;border:1px solid var(--border-strong);"></span>
+              <div class="news-text">
+                ${n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline || '—')}</a>` : esc(n.headline || '—')}
+                <br><span class="src">${esc(n.espn_league || 'ESPN')}${n.type ? ' · ' + esc(n.type) : ''}</span>
+              </div>
+            </li>`).join('') || '<li style="grid-template-columns:1fr;"><div class="muted" style="padding:8px;">No recent news.</div></li>'}
+        </ul>
+      </div>
+    </div>
+    <div style="height:12px"></div>
+    ${rawTevo && (rawTevo.groups || []).length ? `
+    <div class="panel">
+      <div class="panel-h"><h3>Market vs Owned Depth · ${rawTevo.groups.length} listings</h3><div class="actions"><span class="dim">source: ${esc(rawTevo.source || 'live')} · ${shortDate(rawTevo.captured_at)}</span></div></div>
+      <table class="ibkr">
+        <thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th><th class="num">Retail</th><th class="num">Wholesale</th><th>Format</th><th>Brokerage</th><th>In hand</th></tr></thead>
+        <tbody>
+          ${rawTevo.groups.slice().sort((a,b) => (a.retail_price||0) - (b.retail_price||0)).slice(0, 200).map(g => {
+            const owned = g.office?.brokerage?.id === 1768;
+            return `<tr class="${owned ? 'owned' : ''}">
+              <td>${esc(g.section || '—')}</td>
+              <td>${esc(g.row || '—')}</td>
+              <td class="num">${num(g.available_quantity ?? g.quantity)}</td>
+              <td class="num"><strong>${moneyC(g.retail_price)}</strong></td>
+              <td class="num dim">${moneyC(g.wholesale_price)}</td>
+              <td class="dim">${esc(g.format || '')}</td>
+              <td class="${owned ? 'pos' : 'muted'}">${esc(g.office?.brokerage?.name || '—')}${owned ? ' <span class="badge warn" style="font-size:9px;">S4K</span>' : ''}</td>
+              <td class="dim">${g.in_hand ? '✓' : esc(g.in_hand_on || '—')}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      ${rawTevo.groups.length > 200 ? `<div class="dim" style="padding:6px 12px;font-size:11px;">Showing first 200 of ${rawTevo.groups.length} listings (sorted by retail asc).</div>` : ''}
+    </div>` : ''}`;
 
   // Render the chart after innerHTML is set
   if (chart && (chart.prices_market || []).length) renderEventChart(chart);
