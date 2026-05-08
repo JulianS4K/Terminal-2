@@ -11,15 +11,15 @@
 #   - Both see the SAME file tree (no more sub-tree-mount split)
 #   - Filesystem-driven drift goes away
 #
-# RUN FROM A FRESH PowerShell ELEVATED PROMPT, AFTER CLOSING CLAUDE CODE.
+# RUN FROM A FRESH PowerShell PROMPT, AFTER CLOSING CLAUDE CODE.
 # Do NOT run this from inside Claude Code (would yank the rug).
 #
 # Usage:
 #   1. Close all Claude Code sessions, all terminals in the repo, all editors.
 #   2. Open PowerShell.
 #   3. PowerShell -ExecutionPolicy Bypass -File C:\Users\julia\Code\Terminal-2\bin\permafix-move.ps1
-#      (or: cd C:\Users\julia\Code\Terminal-2\bin ; .\permafix-move.ps1)
-#   4. Update Railway dashboard → service → Settings → Source root path → C:\VibeCode\terminal-2
+#   4. Update Railway dashboard if it pulls from a local path (most likely it
+#      pulls from GitHub, in which case no Railway change is needed).
 #   5. Reopen Claude Code at C:\VibeCode\terminal-2
 
 $ErrorActionPreference = "Stop"
@@ -56,9 +56,9 @@ New-Item -ItemType Directory -Force -Path "C:\VibeCode" | Out-Null
 if (Test-Path $target) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmm"
     $backup = "C:\VibeCode\terminal-2-pre-move-backup-$stamp"
-    Write-Host "Target $target already exists — backing up to $backup" -ForegroundColor Yellow
+    Write-Host "Target $target already exists - backing up to $backup" -ForegroundColor Yellow
     Move-Item -LiteralPath $target -Destination $backup
-    Write-Host "  backup created. The mockup + copilot's docs from this backup were already pulled into git in the prior commit, so nothing should be lost." -ForegroundColor Green
+    Write-Host "  backup created. The mockup + copilot's docs from this backup were already pulled into git in commit e3f1138, so nothing should be lost." -ForegroundColor Green
 }
 
 # THE MOVE
@@ -70,7 +70,7 @@ Push-Location $target
 $head = git rev-parse --short HEAD
 $branch = git branch --show-current
 Pop-Location
-Write-Host "  ✅ moved." -ForegroundColor Green
+Write-Host "  [OK] moved." -ForegroundColor Green
 Write-Host "  git HEAD at new location: $head on $branch"
 Write-Host ""
 
@@ -86,15 +86,15 @@ Pop-Location
 
 Write-Host ""
 Write-Host "=== NEXT STEPS (manual) ===" -ForegroundColor Cyan
-Write-Host "  1. Update Railway: dashboard → glorious-appreciation service → Settings"
-Write-Host "     → Source root path: C:\VibeCode\terminal-2"
-Write-Host "     (If Railway pulls from GitHub instead of a local path, you only"
-Write-Host "      need to push — Railway doesn't care about the local checkout location.)"
+Write-Host "  1. Railway: most likely pulls from GitHub, no change needed (push"
+Write-Host "     already went out as commit e3f1138). If Railway points at a"
+Write-Host "     local path, update dashboard service Settings to:"
+Write-Host "       C:\VibeCode\terminal-2"
 Write-Host ""
 Write-Host "  2. Reopen Claude Code at C:\VibeCode\terminal-2"
 Write-Host ""
-Write-Host "  3. Tell copilot the move is complete. They should already be at the"
-Write-Host "     right path; if their sandbox now sees the full repo (including"
-Write-Host "     app.py / static/index.html / Procfile), the permafix worked."
+Write-Host "  3. Tell copilot the move is complete. Their sandbox at that path"
+Write-Host "     now sees the FULL repo (including app.py, static/index.html,"
+Write-Host "     Procfile - the files they could not see before)."
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
