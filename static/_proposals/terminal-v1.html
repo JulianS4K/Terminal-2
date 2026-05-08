@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S4K Terminal — mockup v1</title>
+<style>
+  /* night-mode IBKR + Claude restraint */
+  :root {
+    --bg: #0d0e10;
+    --surface: #16181b;
+    --surface-2: #1c1e22;
+    --border: #26292d;
+    --border-strong: #34373c;
+    --text: #e8e6e3;
+    --muted: #8b8d92;
+    --dim: #5a5d62;
+    --accent: #f58426;       /* S4K orange */
+    --pos: #4ade80;
+    --neg: #ef4444;
+    --warn: #fbbf24;
+    --info: #60a5fa;
+    --owned-tint: rgba(74,222,128,0.06);
+    --warn-tint: rgba(251,191,36,0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    font-size: 14px; line-height: 1.5; font-feature-settings: "tnum" 1, "ss01" 1; }
+  a { color: inherit; text-decoration: none; }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+  .warn { color: var(--warn); }
+  .info { color: var(--info); }
+  .muted { color: var(--muted); }
+  .dim { color: var(--dim); font-size: 12px; }
+
+  /* top bar */
+  .topbar {
+    display: grid; grid-template-columns: 200px 1fr auto auto; gap: 16px;
+    align-items: center; padding: 10px 16px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 500; letter-spacing: 0.02em; }
+  .brand-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 1px; }
+  .search { background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 4px; font-size: 13px; width: 100%; max-width: 480px; }
+  .search:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  .nav { display: flex; gap: 4px; }
+  .nav a { padding: 4px 10px; font-size: 13px; color: var(--muted); border-radius: 3px; }
+  .nav a:hover { background: var(--bg); color: var(--text); }
+  .nav a.active { color: var(--text); background: var(--bg); border-bottom: 2px solid var(--accent); }
+  .status { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .status::before { content: "●"; color: var(--pos); }
+
+  /* breadcrumb */
+  .crumb { padding: 8px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--bg); }
+  .crumb a:hover { color: var(--accent); }
+  .crumb .sep { color: var(--dim); margin: 0 6px; }
+
+  /* layout helpers */
+  main { padding: 12px 16px 60px; max-width: 1680px; margin: 0 auto; }
+  .grid { display: grid; gap: 12px; }
+  .g-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .g-2-1 { grid-template-columns: 2fr 1fr; }
+  .g-1-1 { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 1100px) { .g-3, .g-2-1, .g-1-1 { grid-template-columns: 1fr; } }
+
+  /* KPI strip */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; }
+  .kpi-l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .kpi-v { font-size: 22px; font-weight: 500; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi-d { font-size: 12px; margin-top: 2px; }
+
+  /* panels */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .panel-h { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .panel-h h3 { font-size: 12px; font-weight: 500; margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel-h .actions { display: flex; gap: 8px; font-size: 11px; color: var(--muted); }
+  .panel-h .actions a:hover { color: var(--accent); }
+
+  /* IBKR table */
+  table.ibkr { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.ibkr thead th { padding: 6px 10px; text-align: left; font-weight: 400; color: var(--muted);
+    background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em; position: sticky; top: 0; }
+  table.ibkr thead th.num { text-align: right; }
+  table.ibkr tbody td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  table.ibkr tbody tr:hover { background: var(--surface-2); cursor: pointer; }
+  table.ibkr tbody tr.owned { box-shadow: inset 3px 0 0 var(--pos); }
+  table.ibkr tbody tr.we-are-mkt { background: var(--warn-tint); }
+  table.ibkr tbody tr.we-are-mkt:hover { background: rgba(251,191,36,0.12); }
+
+  /* logo chip */
+  .logo {
+    display: inline-block; width: 22px; height: 22px; border-radius: 3px;
+    vertical-align: -6px; margin-right: 8px; background-size: contain; background-repeat: no-repeat; background-position: center;
+    border: 1px solid var(--border-strong);
+  }
+  .logo-sm { width: 18px; height: 18px; vertical-align: -4px; margin-right: 5px; background-size: contain; background-repeat: no-repeat; background-position: center; border: 1px solid var(--border-strong); border-radius: 3px; display: inline-block; }
+  /* logo URL helpers — paint a real ESPN logo on a dark plate */
+  .lg-nyk { background-color: #1d428a; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/ny.png'); }
+  .lg-phi { background-color: #006bb6; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/phi.png'); }
+  .lg-bos { background-color: #007a33; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/bos.png'); }
+  .lg-mia { background-color: #98002e; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/mia.png'); }
+  .lg-min { background-color: #266092; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/min.png'); }
+  .lg-sac { background-color: #5a2d81; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/sac.png'); }
+  .lg-lal { background-color: #552583; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/lal.png'); }
+  .lg-gsw { background-color: #1d428a; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/gs.png'); }
+  .lg-den { background-color: #0e2240; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/den.png'); }
+  .lg-det { background-color: #1d428a; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/det.png'); }
+  .lg-hou { background-color: #ce1141; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/hou.png'); }
+  .lg-orl { background-color: #0150b5; background-image: url('https://a.espncdn.com/i/teamlogos/nba/500/orl.png'); }
+  /* MLB / NHL / NFL — same pattern */
+  .lg-nyy { background-color: #132448; background-image: url('https://a.espncdn.com/i/teamlogos/mlb/500/nyy.png'); }
+  .lg-bos-mlb { background-color: #bd3039; background-image: url('https://a.espncdn.com/i/teamlogos/mlb/500/bos.png'); }
+  .lg-nym { background-color: #002d72; background-image: url('https://a.espncdn.com/i/teamlogos/mlb/500/nym.png'); }
+  .lg-atl-mlb { background-color: #ce1141; background-image: url('https://a.espncdn.com/i/teamlogos/mlb/500/atl.png'); }
+  .lg-hou-mlb { background-color: #002d62; background-image: url('https://a.espncdn.com/i/teamlogos/mlb/500/hou.png'); }
+  .lg-sea-mlb { background-color: #0c2c56; background-image: url('https://a.espncdn.com/i/teamlogos/mlb/500/sea.png'); }
+  .lg-bos-nhl { background-color: #fcb514; background-image: url('https://a.espncdn.com/i/teamlogos/nhl/500/bos.png'); }
+  .lg-tor-nhl { background-color: #00205b; background-image: url('https://a.espncdn.com/i/teamlogos/nhl/500/tor.png'); }
+  .lg-nyr { background-color: #0038a8; background-image: url('https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png'); }
+  .lg-fla { background-color: #c8102e; background-image: url('https://a.espncdn.com/i/teamlogos/nhl/500/fla.png'); }
+  .lg-kc-nfl { background-color: #e31837; background-image: url('https://a.espncdn.com/i/teamlogos/nfl/500/kc.png'); }
+  .lg-lar-nfl { background-color: #003594; background-image: url('https://a.espncdn.com/i/teamlogos/nfl/500/lar.png'); }
+  .lg-dal-nfl { background-color: #003594; background-image: url('https://a.espncdn.com/i/teamlogos/nfl/500/dal.png'); }
+  .ticker-cell { display: flex; align-items: center; gap: 6px; }
+  .ticker-cell .sub { font-size: 11px; color: var(--muted); }
+
+  /* badge */
+  .badge { display: inline-block; padding: 1px 6px; font-size: 10px; border-radius: 2px;
+    background: var(--bg); border: 1px solid var(--border-strong); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em; vertical-align: 1px; }
+  .badge.home { color: var(--pos); border-color: rgba(74,222,128,0.3); }
+  .badge.road { color: var(--info); border-color: rgba(96,165,250,0.3); }
+  .badge.warn { color: var(--warn); border-color: rgba(251,191,36,0.3); background: var(--warn-tint); }
+  .badge.live { color: var(--accent); border-color: rgba(245,132,38,0.3); }
+
+  /* hero (level pages) */
+  .hero {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  }
+  .hero-left { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-height: 200px; }
+  .hero-right { background-size: cover; background-position: center; min-height: 200px; position: relative; }
+  .hero-right::after { content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, rgba(13,14,16,0.5) 0%, rgba(13,14,16,0) 30%); }
+  .hero-right .map-pin { position: absolute; bottom: 10px; left: 12px; font-size: 11px;
+    color: var(--text); background: rgba(13,14,16,0.7); padding: 4px 8px; border-radius: 3px;
+    backdrop-filter: blur(4px); border: 1px solid var(--border-strong); z-index: 1; }
+  .hero-title { font-size: 22px; font-weight: 500; }
+  .hero-sub { font-size: 13px; color: var(--muted); }
+  .hero-logos { display: flex; align-items: center; gap: 12px; }
+  .hero-logos .logo-lg { width: 56px; height: 56px; border-radius: 6px; border: 1px solid var(--border-strong); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: var(--bg); }
+  .hero-vs { font-size: 13px; color: var(--muted); }
+  .accent-bar { height: 3px; display: flex; }
+  .accent-bar > span { flex: 1; }
+
+  /* mini chart */
+  .chart-wrap { padding: 12px; }
+  .chart-wrap svg { width: 100%; height: 140px; display: block; }
+  .chart-legend { display: flex; gap: 16px; font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .chart-legend .swatch { display: inline-block; width: 10px; height: 2px; vertical-align: 3px; margin-right: 4px; }
+
+  /* movers split */
+  .movers-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .movers-col { padding: 8px 12px; }
+  .movers-col + .movers-col { border-left: 1px solid var(--border); }
+  .movers-col h4 { font-size: 11px; font-weight: 500; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .movers-col h4.pos { color: var(--pos); }
+  .movers-col h4.neg { color: var(--neg); }
+  .movers-col ul { list-style: none; margin: 0; padding: 0; }
+  .movers-col li { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .movers-col li:last-child { border-bottom: 0; }
+  .movers-col li .pct { font-variant-numeric: tabular-nums; }
+
+  /* news feed */
+  .news { padding: 0; margin: 0; list-style: none; max-height: 360px; overflow-y: auto; }
+  .news li { display: grid; grid-template-columns: 56px 28px 1fr; gap: 8px;
+    padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; align-items: center; }
+  .news li:hover { background: var(--surface-2); }
+  .news-when { font-size: 11px; color: var(--muted); }
+  .news-text .src { color: var(--muted); font-size: 11px; }
+
+  /* ESPN context block */
+  .espn { padding: 12px; }
+  .espn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .espn-h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px; }
+  .espn-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .espn-row:last-child { border-bottom: 0; }
+  .espn-form { display: inline-flex; gap: 3px; }
+  .espn-form .pill { width: 18px; height: 18px; border-radius: 2px; font-size: 10px; display: flex; align-items: center; justify-content: center; font-weight: 500; }
+  .espn-form .W { background: rgba(74,222,128,0.15); color: var(--pos); }
+  .espn-form .L { background: rgba(239,68,68,0.15); color: var(--neg); }
+
+  /* raw data */
+  .raw { padding: 12px; font-family: ui-monospace, SF Mono, Menlo, monospace; font-size: 11px; color: var(--muted); max-height: 220px; overflow: auto; background: var(--bg); border-top: 1px solid var(--border); }
+
+  /* views */
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* sparkline */
+  .spark { width: 60px; height: 20px; vertical-align: -4px; }
+
+  /* row group divider in tables */
+  table.ibkr .group-row td { background: var(--bg); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 10px; }
+
+  /* watchlist tabs */
+  .wl-tabs { display: flex; gap: 0; }
+  .wl-tab { padding: 6px 12px; font-size: 12px; color: var(--muted); cursor: pointer;
+    border-bottom: 2px solid transparent; user-select: none; letter-spacing: 0.02em; }
+  .wl-tab:hover { color: var(--text); }
+  .wl-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .wl-pane { display: none; }
+  .wl-pane.active { display: block; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-dot"></span> S4K Terminal</div>
+  <input class="search" placeholder="Search events, performers, venues, sections...">
+  <nav class="nav">
+    <a href="#home" data-view="home" class="active">Portfolio</a>
+    <a href="#performer/16303" data-view="performer">Performers</a>
+    <a href="#venue/896" data-view="venue">Venues</a>
+    <a href="#event/3345925" data-view="event">Event</a>
+  </nav>
+  <div class="status">Live · 9 crons · 83% chart coverage</div>
+</header>
+
+<div class="crumb" id="crumb"><a href="#home">Portfolio</a></div>
+
+<main>
+
+<!-- ============================================================
+     HOME — portfolio dashboard
+     ============================================================ -->
+<section class="view active" id="view-home">
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Owned listings</div><div class="kpi-v">8,742 tix</div><div class="kpi-d muted">2,140 grp · 143 events</div></div>
+    <div class="kpi"><div class="kpi-l">Mkt-value at quote</div><div class="kpi-v">$3.21M</div><div class="kpi-d pos">+2.7% 24h med ask</div></div>
+    <div class="kpi"><div class="kpi-l">Mkts ≥30% ours</div><div class="kpi-v warn">14</div><div class="kpi-d muted">we are the market</div></div>
+    <div class="kpi"><div class="kpi-l">Top price mover 24h</div><div class="kpi-v pos">NYK G5 +8.2%</div><div class="kpi-d muted">$1,748 med</div></div>
+    <div class="kpi"><div class="kpi-l">Top inflow 24h</div><div class="kpi-v">NYK G5 +44 grp</div><div class="kpi-d muted">listings added</div></div>
+    <div class="kpi"><div class="kpi-l">Stale snaps</div><div class="kpi-v neg">3</div><div class="kpi-d muted">&gt;48h, ghost candidates</div></div>
+  </div>
+
+  <div class="grid g-2-1">
+
+    <!-- WATCHLIST · 3 tabs -->
+    <div class="panel">
+      <div class="panel-h">
+        <div class="wl-tabs">
+          <div class="wl-tab active" data-pane="wl-events">Events <span class="dim">· 6</span></div>
+          <div class="wl-tab" data-pane="wl-performers">Performers <span class="dim">· 4</span></div>
+          <div class="wl-tab" data-pane="wl-venues">Venues <span class="dim">· 3</span></div>
+        </div>
+        <div class="actions"><a>+ Add</a><a>Sort: %Δ ↓</a></div>
+      </div>
+
+      <!-- EVENTS pane — kind='event' rows from watchlist -->
+      <div class="wl-pane active" id="wl-events">
+        <table class="ibkr">
+          <thead><tr>
+            <th>Ticker</th>
+            <th class="num">Last</th>
+            <th class="num">Δ</th>
+            <th class="num">%Δ</th>
+            <th class="num">Vol</th>
+            <th class="num">Owned</th>
+            <th class="num">Share</th>
+            <th>7d</th>
+          </tr></thead>
+          <tbody>
+            <tr class="owned we-are-mkt" onclick="goto('event/3345925')"><td><span class="logo lg-nyk"></span><strong>NYK</strong> · G5 76ers <span class="badge home">HOME</span> <span class="badge warn">WE ARE MKT</span></td>
+              <td class="num">$1,748</td><td class="num pos">+$132</td><td class="num pos">+8.2%</td><td class="num">312</td><td class="num">696</td><td class="num warn">63%</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#4ade80" stroke-width="1.5" points="0,14 10,12 20,13 30,9 40,8 50,5 60,3"/></svg></td>
+            </tr>
+            <tr class="owned" onclick="goto('event/3345924')"><td><span class="logo lg-phi"></span><strong>NYK</strong> · G4 @ PHI <span class="badge road">ROAD</span></td>
+              <td class="num">$612</td><td class="num neg">−$28</td><td class="num neg">−4.4%</td><td class="num">488</td><td class="num">142</td><td class="num">8%</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#ef4444" stroke-width="1.5" points="0,4 10,5 20,7 30,7 40,9 50,11 60,12"/></svg></td>
+            </tr>
+            <tr class="owned" onclick="goto('event/3340012')"><td><span class="logo lg-nyy"></span><strong>NYY</strong> · vs BOS · Sat <span class="badge home">HOME</span></td>
+              <td class="num">$184</td><td class="num pos">+$6</td><td class="num pos">+3.4%</td><td class="num">1,124</td><td class="num">87</td><td class="num">2%</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#4ade80" stroke-width="1.5" points="0,11 10,11 20,10 30,10 40,9 50,9 60,8"/></svg></td>
+            </tr>
+            <tr onclick="goto('event/3338111')"><td><span class="logo lg-nyk"></span><strong>NYK</strong> · vs MIA · 5/14 <span class="badge home">HOME</span></td>
+              <td class="num">$248</td><td class="num pos">+$2</td><td class="num pos">+0.8%</td><td class="num">624</td><td class="num">0</td><td class="num">—</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#8b8d92" stroke-width="1.5" points="0,11 10,11 20,10 30,11 40,10 50,11 60,10"/></svg></td>
+            </tr>
+            <tr class="owned" onclick="goto('event/3344211')"><td><span class="logo lg-dal-nfl"></span><strong>DAL</strong> · vs PHI · 9/14 <span class="badge home">HOME</span></td>
+              <td class="num">$432</td><td class="num pos">+$24</td><td class="num pos">+5.9%</td><td class="num">2,210</td><td class="num">312</td><td class="num">14%</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#4ade80" stroke-width="1.5" points="0,16 10,14 20,12 30,11 40,9 50,8 60,6"/></svg></td>
+            </tr>
+            <tr onclick="goto('event/3346781')"><td><span class="logo lg-bos-nhl"></span><strong>NHL</strong> · BOS @ TOR · 5/12 <span class="badge road">ROAD</span></td>
+              <td class="num">$298</td><td class="num neg">−$12</td><td class="num neg">−3.9%</td><td class="num">388</td><td class="num">0</td><td class="num">—</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#ef4444" stroke-width="1.5" points="0,7 10,9 20,9 30,10 40,11 50,12 60,12"/></svg></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- PERFORMERS pane — kind='performer' rows: aggregate across that performer's events -->
+      <div class="wl-pane" id="wl-performers">
+        <table class="ibkr">
+          <thead><tr>
+            <th>Performer</th>
+            <th class="num">Avg Last</th>
+            <th class="num">%Δ 24h</th>
+            <th class="num">Events</th>
+            <th class="num">Vol total</th>
+            <th class="num">Owned</th>
+            <th>Top mkt-maker</th>
+            <th>7d</th>
+          </tr></thead>
+          <tbody>
+            <tr class="owned" onclick="goto('performer/16303')"><td><span class="logo lg-nyk"></span><strong>New York Knicks</strong> <span class="badge">NBA</span></td>
+              <td class="num">$612</td><td class="num pos">+4.7%</td><td class="num">8</td><td class="num">2,840</td><td class="num">982</td>
+              <td><span class="warn">G5 · 63%</span></td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#4ade80" stroke-width="1.5" points="0,15 10,13 20,11 30,9 40,7 50,5 60,3"/></svg></td>
+            </tr>
+            <tr class="owned" onclick="goto('performer/15533')"><td><span class="logo lg-nyy"></span><strong>New York Yankees</strong> <span class="badge">MLB</span></td>
+              <td class="num">$184</td><td class="num pos">+1.8%</td><td class="num">12</td><td class="num">8,420</td><td class="num">412</td>
+              <td><span class="muted">vs BOS · 24%</span></td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#4ade80" stroke-width="1.5" points="0,12 10,11 20,11 30,10 40,9 50,9 60,8"/></svg></td>
+            </tr>
+            <tr onclick="goto('performer/16308')"><td><span class="logo lg-det"></span><strong>Detroit Pistons</strong> <span class="badge">NBA</span></td>
+              <td class="num">$94</td><td class="num neg">−2.1%</td><td class="num">5</td><td class="num">3,210</td><td class="num">0</td>
+              <td><span class="muted">—</span></td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#8b8d92" stroke-width="1.5" points="0,9 10,9 20,10 30,10 40,11 50,11 60,12"/></svg></td>
+            </tr>
+            <tr class="owned" onclick="goto('performer/16323')"><td><span class="logo lg-min"></span><strong>Minnesota Timberwolves</strong> <span class="badge">NBA</span></td>
+              <td class="num">$268</td><td class="num pos">+3.4%</td><td class="num">4</td><td class="num">1,624</td><td class="num">88</td>
+              <td><span class="muted">G3 · 18%</span></td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#4ade80" stroke-width="1.5" points="0,12 10,11 20,10 30,9 40,8 50,7 60,5"/></svg></td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="padding: 6px 12px; font-size: 11px; color: var(--muted);">aggregate of all upcoming events for this performer · click row for HOME/ROAD breakout</div>
+      </div>
+
+      <!-- VENUES pane — kind='venue' rows: aggregate across all events at venue -->
+      <div class="wl-pane" id="wl-venues">
+        <table class="ibkr">
+          <thead><tr>
+            <th>Venue</th>
+            <th class="num">Avg Last</th>
+            <th class="num">%Δ 24h</th>
+            <th class="num">Events</th>
+            <th class="num">Vol total</th>
+            <th class="num">Owned</th>
+            <th class="num">Share</th>
+            <th>7d</th>
+          </tr></thead>
+          <tbody>
+            <tr class="owned we-are-mkt" onclick="goto('venue/896')"><td><span class="logo lg-nyk"></span><strong>Madison Square Garden</strong> <span class="badge">New York</span></td>
+              <td class="num">$842</td><td class="num pos">+2.1%</td><td class="num">8</td><td class="num">3,488</td><td class="num">1,124</td><td class="num warn">32%</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#4ade80" stroke-width="1.5" points="0,14 10,12 20,11 30,9 40,7 50,6 60,4"/></svg></td>
+            </tr>
+            <tr class="owned" onclick="goto('venue/2786')"><td><span class="logo lg-hou"></span><strong>Toyota Center · Houston</strong> <span class="badge">Houston</span></td>
+              <td class="num">$284</td><td class="num neg">−1.2%</td><td class="num">3</td><td class="num">988</td><td class="num">94</td><td class="num">10%</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#ef4444" stroke-width="1.5" points="0,8 10,9 20,9 30,10 40,10 50,11 60,11"/></svg></td>
+            </tr>
+            <tr onclick="goto('venue/1537')"><td><span class="logo lg-orl"></span><strong>Kia Center</strong> <span class="badge">Orlando</span></td>
+              <td class="num">$148</td><td class="num pos">+0.4%</td><td class="num">5</td><td class="num">1,840</td><td class="num">0</td><td class="num">—</td>
+              <td><svg class="spark" viewBox="0 0 60 20"><polyline fill="none" stroke="#8b8d92" stroke-width="1.5" points="0,11 10,11 20,11 30,10 40,11 50,11 60,10"/></svg></td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="padding: 6px 12px; font-size: 11px; color: var(--muted);">aggregate of all upcoming events at this venue · click row for full venue page</div>
+      </div>
+    </div>
+
+    <!-- ESPN NEWS -->
+    <div class="panel">
+      <div class="panel-h"><h3>ESPN News</h3><div class="actions"><a>All teams</a></div></div>
+      <ul class="news">
+        <li><span class="news-when">12m</span><span class="logo-sm lg-nyk"></span>
+          <div class="news-text">Brunson questionable for Game 5 with ankle sprain<br><span class="src">ESPN · injuries</span></div></li>
+        <li><span class="news-when">48m</span><span class="logo-sm lg-kc-nfl"></span>
+          <div class="news-text">Mahomes signs 4-yr extension; cap implications for KC<br><span class="src">NYT · trades</span></div></li>
+        <li><span class="news-when">1h</span><span class="logo-sm lg-nyy"></span>
+          <div class="news-text">Judge homers in 4th straight; Yankees-Sox demand spikes<br><span class="src">ESPN · news</span></div></li>
+        <li><span class="news-when">2h</span><span class="logo logo-sm" style="background:#fbbf24"></span>
+          <div class="news-text">NOAA: 60% chance heavy rain at Citi Field Sat<br><span class="src">WHY · weather</span></div></li>
+        <li><span class="news-when">3h</span><span class="logo-sm lg-phi"></span>
+          <div class="news-text">Embiid downgraded to OUT for G4 vs Knicks<br><span class="src">ESPN · injuries</span></div></li>
+        <li><span class="news-when">5h</span><span class="logo-sm lg-dal-nfl"></span>
+          <div class="news-text">Cowboys release schedule; SF home opener trending<br><span class="src">AP</span></div></li>
+        <li><span class="news-when">8h</span><span class="logo-sm lg-nyk"></span>
+          <div class="news-text">Knicks-76ers rivalry intensity 8/10 — playoff history<br><span class="src">Wiki</span></div></li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="grid g-1-1">
+    <!-- PRICE MOVERS (gainers/losers) -->
+    <div class="panel">
+      <div class="panel-h"><h3>Price Movers · 24h</h3><div class="actions"><a>Last 24h</a><a>Last 7d</a></div></div>
+      <div class="movers-split">
+        <div class="movers-col">
+          <h4 class="pos">Top Gainers</h4>
+          <ul>
+            <li><span><span class="logo-sm lg-nyk"></span>NYK G5 76ers</span><span class="pct pos">+8.2%</span></li>
+            <li><span><span class="logo-sm lg-dal-nfl"></span>DAL @ PHI 9/14</span><span class="pct pos">+5.9%</span></li>
+            <li><span><span class="logo-sm lg-kc-nfl"></span>KC vs LAR 9/8</span><span class="pct pos">+5.1%</span></li>
+            <li><span><span class="logo-sm lg-nyy"></span>NYY vs BOS Sat</span><span class="pct pos">+3.4%</span></li>
+            <li><span><span class="logo-sm lg-lal"></span>LAL @ DEN G3</span><span class="pct pos">+2.9%</span></li>
+          </ul>
+        </div>
+        <div class="movers-col">
+          <h4 class="neg">Top Losers</h4>
+          <ul>
+            <li><span><span class="logo-sm lg-phi"></span>NYK G4 @ PHI</span><span class="pct neg">−4.4%</span></li>
+            <li><span><span class="logo-sm lg-bos-nhl"></span>BOS @ TOR 5/12</span><span class="pct neg">−3.9%</span></li>
+            <li><span><span class="logo-sm lg-sac"></span>SAC @ MIN G2</span><span class="pct neg">−3.1%</span></li>
+            <li><span><span class="logo-sm lg-nym"></span>NYM vs ATL 5/16</span><span class="pct neg">−2.7%</span></li>
+            <li><span><span class="logo-sm lg-hou-mlb"></span>HOU vs SEA 5/13</span><span class="pct neg">−1.8%</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- VOLUME MOVERS (replaces P&L) -->
+    <div class="panel">
+      <div class="panel-h"><h3>Volume Movers · 24h · listings count Δ</h3><div class="actions"><a>Inflow</a><a>Outflow</a><span class="dim">Δ-volume only — no sales source yet</span></div></div>
+      <div class="movers-split">
+        <div class="movers-col">
+          <h4 class="pos">Top Inflow · listings added</h4>
+          <ul>
+            <li><span><span class="logo-sm lg-nyk"></span>NYK G5 76ers</span><span class="pct pos">+44 grp · +212 tix</span></li>
+            <li><span><span class="logo-sm lg-kc-nfl"></span>KC vs LAR 9/8</span><span class="pct pos">+38 grp · +148 tix</span></li>
+            <li><span><span class="logo-sm lg-dal-nfl"></span>DAL @ PHI 9/14</span><span class="pct pos">+22 grp · +88 tix</span></li>
+            <li><span><span class="logo-sm lg-nyy"></span>NYY vs BOS Sat</span><span class="pct pos">+18 grp · +64 tix</span></li>
+            <li><span><span class="logo-sm lg-lal"></span>LAL @ DEN G3</span><span class="pct pos">+14 grp · +42 tix</span></li>
+          </ul>
+        </div>
+        <div class="movers-col">
+          <h4 class="neg">Top Outflow · listings removed</h4>
+          <ul>
+            <li><span><span class="logo-sm lg-phi"></span>NYK G4 @ PHI</span><span class="pct neg">−28 grp · −94 tix</span></li>
+            <li><span><span class="logo-sm lg-bos-nhl"></span>BOS @ TOR 5/12</span><span class="pct neg">−16 grp · −58 tix</span></li>
+            <li><span><span class="logo-sm lg-sac"></span>SAC @ MIN G2</span><span class="pct neg">−12 grp · −36 tix</span></li>
+            <li><span><span class="logo-sm lg-nym"></span>NYM vs ATL 5/16</span><span class="pct neg">−8 grp · −24 tix</span></li>
+            <li><span><span class="logo-sm lg-hou-mlb"></span>HOU vs SEA 5/13</span><span class="pct neg">−6 grp · −18 tix</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     VENUE LP — Madison Square Garden (venue_id 5725)
+     ============================================================ -->
+<section class="view" id="view-venue">
+  <div class="hero">
+    <div class="hero-left">
+      <div class="hero-title">Madison Square Garden</div>
+      <div class="hero-sub">New York, NY · 19,812 cap · 8 upcoming events · primary tenant <a href="#performer/16303" style="color:var(--accent)">NYK</a></div>
+      <div class="hero-logos" style="margin-top: 6px;">
+        <div class="logo-lg" style="background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/ny.png');"></div>
+        <div class="logo-lg" style="background-image:url('https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png');"></div>
+      </div>
+      <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span><span style="background:#005bb6"></span></div>
+    </div>
+    <div class="hero-right" style="background-image:url('https://a.espncdn.com/i/venues/nba/day/1830.jpg');">
+      <div class="map-pin">📍 ESPN venue hero · 7th Ave & 33rd St</div>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Aggregate last (med)</div><div class="kpi-v">$842</div><div class="kpi-d pos">+2.1% 24h</div></div>
+    <div class="kpi"><div class="kpi-l">Total tix on market</div><div class="kpi-v">3,488</div><div class="kpi-d muted">across 8 events</div></div>
+    <div class="kpi"><div class="kpi-l">S4K owned</div><div class="kpi-v">1,124</div><div class="kpi-d pos">$487k exposure</div></div>
+    <div class="kpi"><div class="kpi-l">S4K share of mkt</div><div class="kpi-v warn">32%</div><div class="kpi-d warn">venue-level reflexive</div></div>
+  </div>
+
+  <div class="grid g-2-1">
+    <div class="panel">
+      <div class="panel-h"><h3>Venue Aggregate Price · Last 30d</h3><div class="actions"><a>30d</a><a>90d</a><a>YTD</a></div></div>
+      <div class="chart-wrap">
+        <svg viewBox="0 0 600 140" preserveAspectRatio="none">
+          <defs><pattern id="g" width="60" height="28" patternUnits="userSpaceOnUse"><path d="M60 0H0V28" fill="none" stroke="#26292d" stroke-width="0.5"/></pattern></defs>
+          <rect width="600" height="140" fill="url(#g)"/>
+          <polyline fill="none" stroke="#60a5fa" stroke-width="1.5" points="0,80 30,82 60,75 90,72 120,70 150,65 180,60 210,58 240,55 270,52 300,48 330,42 360,38 390,35 420,32 450,30 480,26 510,22 540,18 570,14 600,12"/>
+          <polyline fill="none" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="3,3" points="0,90 30,92 60,86 90,84 120,80 150,76 180,70 210,68 240,66 270,62 300,58 330,52 360,48 390,44 420,40 450,38 480,34 510,30 540,26 570,22 600,20"/>
+          <circle cx="120" cy="70" r="3" fill="#fbbf24"/><text x="128" y="68" font-size="10" fill="#fbbf24">G2 spike</text>
+          <circle cx="330" cy="42" r="3" fill="#fbbf24"/><text x="338" y="40" font-size="10" fill="#fbbf24">R2 win</text>
+          <circle cx="510" cy="22" r="3" fill="#f58426"/><text x="518" y="20" font-size="10" fill="#f58426">G5 today</text>
+        </svg>
+        <div class="chart-legend">
+          <span><span class="swatch" style="background:#60a5fa"></span>Market median ask</span>
+          <span><span class="swatch" style="background:#4ade80; border-top: 1px dashed; height: 0;"></span>S4K owned median</span>
+          <span><span class="swatch" style="background:#fbbf24; width: 4px; height: 4px; border-radius: 50%;"></span>Action</span>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><h3>Venue Map · MSG config 3845</h3><div class="actions"><a>Layouts (3)</a></div></div>
+      <div style="background: var(--bg); padding: 12px;">
+        <img src="https://s3.amazonaws.com/media.ticketevolution.com/configurations/static_maps/3845/large.jpg?1426402468"
+             alt="MSG seating chart"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+             style="width: 100%; border-radius: 4px; border: 1px solid var(--border);">
+        <div style="display:none; padding: 40px; text-align: center; color: var(--muted); font-size: 12px;">[TEvo seating_chart_large URL — embedded inline]</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="panel">
+    <div class="panel-h"><h3>Market-Making Positions @ MSG · auto-generated · share &ge; 20%</h3><div class="actions"><a>Sort: share ↓</a></div></div>
+    <table class="ibkr">
+      <thead><tr>
+        <th>Date</th><th>Event</th><th class="num">Last</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th><th class="num">Exposure</th>
+      </tr></thead>
+      <tbody>
+        <tr class="we-are-mkt" onclick="goto('event/3345925')"><td>5/8 7:30p</td><td><span class="logo-sm lg-phi"></span>76ers @ NYK G5</td><td class="num">$1,748</td><td class="num">312</td><td class="num">696</td><td class="num warn">63%</td><td class="num">$1.21M</td></tr>
+        <tr class="we-are-mkt" onclick="goto('event/3346421')"><td>5/29 7:30p</td><td>Pearl Jam</td><td class="num">$418</td><td class="num">340</td><td class="num">198</td><td class="num warn">58%</td><td class="num">$83k</td></tr>
+        <tr onclick="goto('event/3346000')"><td>TBD R3</td><td>NYK R3 G1 · TBD</td><td class="num">$1,344</td><td class="num">144</td><td class="num">42</td><td class="num">29%</td><td class="num">$56k</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="panel">
+    <div class="panel-h"><h3>Upcoming Events at MSG</h3><div class="actions"><a>S4K-only</a><a>All</a></div></div>
+    <table class="ibkr">
+      <thead><tr>
+        <th>Date</th><th>Matchup</th><th class="num">Last</th><th class="num">%Δ</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th><th>Map</th>
+      </tr></thead>
+      <tbody>
+        <tr class="owned we-are-mkt" onclick="goto('event/3345925')"><td>Wed 5/8 · 7:30p</td><td><span class="logo-sm lg-phi"></span>76ers @ <strong>NYK</strong> G5 <span class="badge live">PLAYOFF</span></td><td class="num">$1,748</td><td class="num pos">+8.2%</td><td class="num">312</td><td class="num">696</td><td class="num warn">63%</td><td>✓</td></tr>
+        <tr class="owned" onclick="goto('event/3338111')"><td>Tue 5/14 · 8:00p</td><td><span class="logo-sm lg-mia"></span>MIA @ <strong>NYK</strong></td><td class="num">$248</td><td class="num pos">+0.8%</td><td class="num">624</td><td class="num">88</td><td class="num">14%</td><td>✓</td></tr>
+        <tr onclick="goto('event/3343012')"><td>Sat 5/18 · 7:00p</td><td><span class="logo-sm lg-nyk"></span>NYR vs FLA G3 <span class="badge live">PLAYOFF</span></td><td class="num">$612</td><td class="num pos">+1.2%</td><td class="num">812</td><td class="num">0</td><td class="num">—</td><td>✓</td></tr>
+        <tr onclick="goto('event/3344998')"><td>Fri 5/24 · 8:00p</td><td>Billy Joel · 100th show</td><td class="num">$1,124</td><td class="num pos">+3.4%</td><td class="num">988</td><td class="num">142</td><td class="num">14%</td><td>✗</td></tr>
+        <tr onclick="goto('event/3345112')"><td>Sat 5/25 · 8:00p</td><td>Bad Bunny</td><td class="num">$842</td><td class="num neg">−1.1%</td><td class="num">412</td><td class="num">0</td><td class="num">—</td><td>✓</td></tr>
+        <tr class="owned" onclick="goto('event/3346421')"><td>Wed 5/29 · 7:30p</td><td>Pearl Jam</td><td class="num">$418</td><td class="num pos">+0.4%</td><td class="num">340</td><td class="num">198</td><td class="num">58%</td><td>✗</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================
+     PERFORMER LP — New York Knicks (performer_id 16303)
+     ============================================================ -->
+<section class="view" id="view-performer">
+  <div class="hero">
+    <div class="hero-left">
+      <div class="hero-logos">
+        <div class="logo-lg" style="background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/ny.png');"></div>
+        <div>
+          <div class="hero-title">New York Knicks</div>
+          <div class="hero-sub">NBA · Madison Square Garden · 53–29 (2nd East)</div>
+        </div>
+      </div>
+      <div class="hero-sub" style="margin-top:8px;">8 upcoming events · 3 home / 4 road / 1 neutral · S4K boost: 10</div>
+      <div class="accent-bar"><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
+    </div>
+    <div class="hero-right" style="background-image:url('https://a.espncdn.com/i/venues/nba/day/1830.jpg');">
+      <div class="map-pin">Home: MSG</div>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Avg last (med)</div><div class="kpi-v">$612</div><div class="kpi-d pos">+4.7% 24h</div></div>
+    <div class="kpi"><div class="kpi-l">East rank</div><div class="kpi-v">2nd</div><div class="kpi-d pos">↑ 3 in 30d</div></div>
+    <div class="kpi"><div class="kpi-l">Home avg</div><div class="kpi-v">$988</div><div class="kpi-d muted">3 events</div></div>
+    <div class="kpi"><div class="kpi-l">Road avg</div><div class="kpi-v">$402</div><div class="kpi-d muted">4 events</div></div>
+    <div class="kpi"><div class="kpi-l">Owned (all)</div><div class="kpi-v">982</div><div class="kpi-d pos">$724k exposure</div></div>
+    <div class="kpi"><div class="kpi-l">Top market share</div><div class="kpi-v warn">63%</div><div class="kpi-d warn">G5 we-are-mkt</div></div>
+  </div>
+
+  <div class="grid g-2-1">
+    <div class="panel">
+      <div class="panel-h"><h3>Knicks · Price + Conference Rank · Last 30d</h3><div class="actions"><a>HOME</a><a>ROAD</a><a>ALL</a></div></div>
+      <div class="chart-wrap">
+        <svg viewBox="0 0 600 140" preserveAspectRatio="none">
+          <defs><pattern id="g2" width="60" height="28" patternUnits="userSpaceOnUse"><path d="M60 0H0V28" fill="none" stroke="#26292d" stroke-width="0.5"/></pattern></defs>
+          <rect width="600" height="140" fill="url(#g2)"/>
+          <!-- left axis: price (low = bottom) -->
+          <text x="4" y="12" font-size="9" fill="#8b8d92">$ / 1st</text>
+          <text x="4" y="135" font-size="9" fill="#8b8d92">$ / 15th</text>
+          <text x="572" y="12" font-size="9" fill="#fbbf24">rank</text>
+          <!-- market median -->
+          <polyline fill="none" stroke="#60a5fa" stroke-width="1.5" points="0,90 30,86 60,82 90,78 120,72 150,68 180,62 210,58 240,54 270,48 300,44 330,38 360,32 390,28 420,22 450,18 480,14 510,10 540,8 570,6 600,4"/>
+          <!-- S4K owned -->
+          <polyline fill="none" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="3,3" points="0,98 30,94 60,90 90,86 120,80 150,76 180,70 210,66 240,62 270,56 300,52 330,46 360,40 390,36 420,30 450,26 480,22 510,18 540,16 570,14 600,12"/>
+          <!-- standings rank (right axis, stepped — lower y = higher rank) -->
+          <polyline fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-opacity="0.7" points="0,55 60,55 60,48 120,48 120,40 180,40 180,32 240,32 240,28 300,28 300,22 360,22 360,18 420,18 420,14 480,14 480,12 540,12 540,12 600,12"/>
+          <!-- annotations -->
+          <circle cx="60" cy="82" r="3" fill="#fbbf24"/><text x="68" y="80" font-size="10" fill="#fbbf24">R1 win → 4th</text>
+          <circle cx="240" cy="54" r="3" fill="#fbbf24"/><text x="248" y="52" font-size="10" fill="#fbbf24">R2 G3 → 3rd</text>
+          <circle cx="510" cy="10" r="3" fill="#f58426"/><text x="518" y="9" font-size="10" fill="#f58426">G5 today · 2nd</text>
+        </svg>
+        <div class="chart-legend">
+          <span><span class="swatch" style="background:#60a5fa"></span>Market median</span>
+          <span><span class="swatch" style="background:#4ade80; border-top: 1px dashed; height: 0;"></span>S4K owned median</span>
+          <span><span class="swatch" style="background:#fbbf24"></span>East rank (right axis)</span>
+          <span><span class="swatch" style="background:#fbbf24; width: 4px; height: 4px; border-radius: 50%;"></span>Result · rank Δ</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h"><h3>ESPN Context · Knicks</h3><div class="actions"><a>Roster</a><a>Schedule</a></div></div>
+      <div class="espn">
+        <div class="espn-grid">
+          <div>
+            <h4 class="espn-h">Standing</h4>
+            <div class="espn-row"><span>Record</span><span><strong>53–29</strong> · 2nd East</span></div>
+            <div class="espn-row"><span>Last 5</span><span class="espn-form"><span class="pill W">W</span><span class="pill W">W</span><span class="pill L">L</span><span class="pill W">W</span><span class="pill W">W</span></span></div>
+            <div class="espn-row"><span>Series</span><span><strong>3–1</strong> vs 76ers · Win-or-go</span></div>
+          </div>
+          <div>
+            <h4 class="espn-h">Injuries · 3</h4>
+            <div class="espn-row"><span>Brunson</span><span class="warn">Q · ankle</span></div>
+            <div class="espn-row"><span>Hart</span><span class="muted">P · rest</span></div>
+            <div class="espn-row"><span>Robinson</span><span class="neg">OUT · foot</span></div>
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <h4 class="espn-h">Rivalries</h4>
+          <div class="espn-row"><span>vs 76ers (Atlantic)</span><span class="warn">Intensity 8/10</span></div>
+          <div class="espn-row"><span>vs Heat</span><span class="muted">7/10</span></div>
+          <div class="espn-row"><span>vs Celtics</span><span class="muted">9/10</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="panel">
+    <div class="panel-h"><h3>Market-Making Positions · auto-generated · share &ge; 20%</h3><div class="actions"><a>HOME</a><a>ROAD</a><a>All</a></div></div>
+    <div class="movers-split">
+      <div class="movers-col">
+        <h4 class="warn">HOME · MSG</h4>
+        <table class="ibkr" style="font-size:12px">
+          <tbody>
+            <tr class="we-are-mkt" onclick="goto('event/3345925')"><td><span class="logo-sm lg-phi"></span>76ers @ NYK G5</td><td class="num">$1,748</td><td class="num warn">63%</td><td class="num">696</td></tr>
+            <tr onclick="goto('event/3346000')"><td>TBD @ NYK R3 G1</td><td class="num">$1,344</td><td class="num">29%</td><td class="num">42</td></tr>
+            <tr onclick="goto('event/3338111')"><td><span class="logo-sm lg-mia"></span>MIA @ NYK</td><td class="num">$248</td><td class="num">14%</td><td class="num">88</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="movers-col">
+        <h4 class="info">ROAD</h4>
+        <table class="ibkr" style="font-size:12px">
+          <tbody>
+            <tr onclick="goto('event/3345924')"><td>NYK @ <span class="logo-sm lg-phi"></span>76ers G4</td><td class="num">$612</td><td class="num">8%</td><td class="num">142</td></tr>
+            <tr class="muted" onclick="goto('event/3346701')"><td>NYK @ <span class="logo-sm lg-lal"></span>BOS G6</td><td class="num">$508</td><td class="num">—</td><td class="num">0</td></tr>
+            <tr class="muted"><td colspan="4" style="text-align:center; padding: 8px;"><span class="dim">no road positions ≥ 20% — market-making is HOME-skewed</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="panel">
+    <div class="panel-h"><h3>Upcoming Knicks Events</h3><div class="actions"><a>HOME</a><a>ROAD</a><a>All</a></div></div>
+    <table class="ibkr">
+      <thead><tr>
+        <th>Date</th><th>Matchup</th><th>Venue</th><th class="num">Last</th><th class="num">%Δ</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th>
+      </tr></thead>
+      <tbody>
+        <tr class="group-row"><td colspan="8">HOME · MSG (3 events)</td></tr>
+        <tr class="owned we-are-mkt" onclick="goto('event/3345925')"><td>Wed 5/8 · 7:30p</td><td><span class="logo-sm lg-phi"></span>76ers @ <strong>NYK</strong> G5</td><td>MSG</td><td class="num">$1,748</td><td class="num pos">+8.2%</td><td class="num">312</td><td class="num">696</td><td class="num warn">63%</td></tr>
+        <tr class="owned" onclick="goto('event/3338111')"><td>Tue 5/14 · 8:00p</td><td><span class="logo-sm lg-mia"></span>MIA @ <strong>NYK</strong></td><td>MSG</td><td class="num">$248</td><td class="num pos">+0.8%</td><td class="num">624</td><td class="num">88</td><td class="num">14%</td></tr>
+        <tr onclick="goto('event/3346000')"><td>TBD R3 G1</td><td>TBD @ <strong>NYK</strong> R3 G1</td><td>MSG</td><td class="num">$1,344</td><td class="num pos">+2.1%</td><td class="num">144</td><td class="num">42</td><td class="num">29%</td></tr>
+        <tr class="group-row"><td colspan="8">ROAD (4 events)</td></tr>
+        <tr class="owned" onclick="goto('event/3345924')"><td>Sun 5/12 · 3:30p</td><td><strong>NYK</strong> @ <span class="logo-sm lg-phi"></span>76ers G4</td><td>Xfinity Arena</td><td class="num">$612</td><td class="num neg">−4.4%</td><td class="num">488</td><td class="num">142</td><td class="num">8%</td></tr>
+        <tr onclick="goto('event/3346701')"><td>Wed 5/15 · 7:30p</td><td><strong>NYK</strong> @ <span class="logo-sm lg-lal"></span>BOS R2 G6</td><td>TD Garden</td><td class="num">$508</td><td class="num pos">+1.2%</td><td class="num">622</td><td class="num">0</td><td class="num">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================
+     EVENT LP — Knicks G5 vs 76ers (event_id 3345925)
+     ============================================================ -->
+<section class="view" id="view-event">
+  <div class="hero">
+    <div class="hero-left">
+      <div class="hero-logos">
+        <div class="logo-lg" style="background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/phi.png');"></div>
+        <div class="hero-vs">@</div>
+        <div class="logo-lg" style="background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/ny.png');"></div>
+        <div style="margin-left:auto;">
+          <div class="hero-title">76ers @ Knicks · G5</div>
+          <div class="hero-sub">NBA Playoffs R1 · 3–1 NYK · win at home wraps</div>
+        </div>
+      </div>
+      <div class="hero-sub">Wed May 8 · 7:30 PM EDT · Madison Square Garden · TNT · <span class="badge home">HOME</span> <span class="badge warn">WE ARE THE MARKET · 63%</span></div>
+      <div class="accent-bar"><span style="background:#006bb6"></span><span style="background:#ed174c"></span><span style="background:#1d428a"></span><span style="background:#f58426"></span></div>
+    </div>
+    <div class="hero-right" style="background-image:url('https://a.espncdn.com/i/venues/nba/day/1830.jpg');">
+      <div class="map-pin">MSG · 7th Ave & 33rd</div>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Last (med)</div><div class="kpi-v">$1,748</div><div class="kpi-d pos">+$132 (+8.2%)</div></div>
+    <div class="kpi"><div class="kpi-l">Volume on mkt</div><div class="kpi-v">312</div><div class="kpi-d muted">+44 new 24h</div></div>
+    <div class="kpi"><div class="kpi-l">S4K owned</div><div class="kpi-v">696</div><div class="kpi-d pos">$1.21M exposure</div></div>
+    <div class="kpi"><div class="kpi-l">S4K share</div><div class="kpi-v warn">63%</div><div class="kpi-d warn">quote is reflexive</div></div>
+    <div class="kpi"><div class="kpi-l">Bid / Ask</div><div class="kpi-v">$1,580 / $1,840</div><div class="kpi-d muted">spread 14.1%</div></div>
+  </div>
+
+  <div class="grid g-2-1">
+    <div class="panel">
+      <div class="panel-h"><h3>Price &amp; Action · Last 7d</h3><div class="actions"><a>1d</a><a>7d</a><a>30d</a></div></div>
+      <div class="chart-wrap">
+        <svg viewBox="0 0 600 140" preserveAspectRatio="none">
+          <defs><pattern id="g3" width="60" height="28" patternUnits="userSpaceOnUse"><path d="M60 0H0V28" fill="none" stroke="#26292d" stroke-width="0.5"/></pattern></defs>
+          <rect width="600" height="140" fill="url(#g3)"/>
+          <polyline fill="none" stroke="#60a5fa" stroke-width="1.5" points="0,90 50,86 100,82 150,72 200,62 250,56 300,48 350,42 400,36 450,28 500,20 550,14 600,8"/>
+          <polyline fill="none" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="3,3" points="0,94 50,90 100,86 150,76 200,68 250,62 300,54 350,48 400,42 450,32 500,24 550,18 600,12"/>
+          <circle cx="100" cy="82" r="3" fill="#fbbf24"/><text x="108" y="80" font-size="10" fill="#fbbf24">G2 NYK win</text>
+          <circle cx="250" cy="56" r="3" fill="#fbbf24"/><text x="258" y="54" font-size="10" fill="#fbbf24">G3 NYK win</text>
+          <circle cx="400" cy="36" r="3" fill="#f58426"/><text x="408" y="34" font-size="10" fill="#f58426">+44 listings</text>
+          <circle cx="500" cy="20" r="3" fill="#fbbf24"/><text x="508" y="18" font-size="10" fill="#fbbf24">G4 NYK loss</text>
+          <circle cx="580" cy="9" r="3" fill="#ef4444"/><text x="525" y="7" font-size="10" fill="#ef4444">−12 listings</text>
+        </svg>
+        <div class="chart-legend">
+          <span><span class="swatch" style="background:#60a5fa"></span>Market median</span>
+          <span><span class="swatch" style="background:#4ade80; border-top: 1px dashed; height: 0;"></span>S4K owned median</span>
+          <span><span class="swatch" style="background:#f58426; width: 4px; height: 4px; border-radius: 50%;"></span>Listing event</span>
+          <span><span class="swatch" style="background:#fbbf24; width: 4px; height: 4px; border-radius: 50%;"></span>Game result</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h"><h3>Seating Chart · MSG config 3845</h3><div class="actions"><a>Open zones</a></div></div>
+      <div style="background: var(--bg); padding: 12px;">
+        <img src="https://s3.amazonaws.com/media.ticketevolution.com/configurations/static_maps/3845/large.jpg?1426402468"
+             alt="MSG seating chart"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+             style="width: 100%; border-radius: 4px; border: 1px solid var(--border);">
+        <div style="display:none; padding: 40px; text-align: center; color: var(--muted); font-size: 12px;">[TEvo seating_chart_large URL]</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="grid g-1-1">
+    <div class="panel">
+      <div class="panel-h"><h3>Zone Ladder · Market Depth</h3><div class="actions"><a>S4K only</a><a>All</a></div></div>
+      <table class="ibkr">
+        <thead><tr><th>Zone</th><th class="num">Min</th><th class="num">Med</th><th class="num">Max</th><th class="num">Vol</th><th class="num">Owned</th><th class="num">Share</th></tr></thead>
+        <tbody>
+          <tr class="owned we-are-mkt"><td>Courtside</td><td class="num">$4,500</td><td class="num">$5,200</td><td class="num">$9,800</td><td class="num">124</td><td class="num">21</td><td class="num warn">17%</td></tr>
+          <tr class="owned"><td>Club Platinum</td><td class="num">$1,100</td><td class="num">$1,450</td><td class="num">$2,200</td><td class="num">88</td><td class="num">34</td><td class="num">39%</td></tr>
+          <tr class="owned we-are-mkt"><td>100 Corner</td><td class="num">$324</td><td class="num">$410</td><td class="num">$720</td><td class="num">312</td><td class="num">187</td><td class="num warn">60%</td></tr>
+          <tr class="owned we-are-mkt"><td>100 Garbage</td><td class="num">$280</td><td class="num">$340</td><td class="num">$520</td><td class="num">208</td><td class="num">152</td><td class="num warn">73%</td></tr>
+          <tr class="owned"><td>U1 1-9</td><td class="num">$124</td><td class="num">$178</td><td class="num">$260</td><td class="num">145</td><td class="num">44</td><td class="num">30%</td></tr>
+          <tr><td>U2 1-10</td><td class="num">$78</td><td class="num">$112</td><td class="num">$168</td><td class="num">98</td><td class="num">0</td><td class="num">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h"><h3>ESPN Context</h3><div class="actions"><a>Box</a><a>H2H</a></div></div>
+      <div class="espn">
+        <div class="espn-grid">
+          <div>
+            <h4 class="espn-h">76ers</h4>
+            <div class="espn-row"><span>Record</span><span><strong>47–35</strong> · 7th</span></div>
+            <div class="espn-row"><span>Last 5</span><span class="espn-form"><span class="pill L">L</span><span class="pill W">W</span><span class="pill L">L</span><span class="pill W">W</span><span class="pill L">L</span></span></div>
+            <div class="espn-row"><span>OUT</span><span class="neg">Embiid · Maxey Q</span></div>
+          </div>
+          <div>
+            <h4 class="espn-h">Knicks</h4>
+            <div class="espn-row"><span>Record</span><span><strong>53–29</strong> · 2nd</span></div>
+            <div class="espn-row"><span>Last 5</span><span class="espn-form"><span class="pill W">W</span><span class="pill W">W</span><span class="pill L">L</span><span class="pill W">W</span><span class="pill W">W</span></span></div>
+            <div class="espn-row"><span>Q</span><span class="warn">Brunson · ankle</span></div>
+          </div>
+        </div>
+        <div style="margin-top: 12px;">
+          <h4 class="espn-h">Series · 3–1 NYK</h4>
+          <div class="espn-row"><span>R1 G1 @ NYK</span><span class="pos">NYK 111–104</span></div>
+          <div class="espn-row"><span>R1 G2 @ NYK</span><span class="pos">NYK 104–101</span></div>
+          <div class="espn-row"><span>R1 G3 @ PHI</span><span class="pos">NYK 97–92</span></div>
+          <div class="espn-row"><span>R1 G4 @ PHI</span><span class="neg">PHI 112–106</span></div>
+          <div class="espn-row"><span>Rivalry intensity</span><span class="warn">8/10 · Atlantic</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 12px"></div>
+
+  <div class="panel">
+    <div class="panel-h"><h3>Listing Flow · 312 active listings</h3><div class="actions"><a>S4K</a><a>All</a><a>Sort: $ ↑</a><span class="dim">flow = added · removed · repriced (no sales source yet)</span></div></div>
+    <table class="ibkr">
+      <thead><tr><th>Time</th><th>Event</th><th>Sec</th><th>Row</th><th class="num">Qty</th><th>Format</th><th>View</th><th class="num">Price</th><th class="num">Δ vs prev</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr class="owned"><td class="muted">12:43</td><td><span class="badge live">NEW</span></td><td>102</td><td>5</td><td class="num">4</td><td>e-tkt</td><td>—</td><td class="num">$1,850</td><td class="num">—</td><td class="pos">S4K</td></tr>
+        <tr><td class="muted">12:41</td><td><span class="badge">REPRICE</span></td><td>217</td><td>3</td><td class="num">2</td><td>e-tkt</td><td>—</td><td class="num">$890</td><td class="num neg">−$22</td><td class="muted">Mkt</td></tr>
+        <tr class="owned"><td class="muted">12:38</td><td><span class="badge">REPRICE</span></td><td>108</td><td>12</td><td class="num">6</td><td>flash</td><td>—</td><td class="num">$724</td><td class="num pos">+$48</td><td class="pos">S4K</td></tr>
+        <tr><td class="muted">12:35</td><td><span class="badge warn">REMOVED</span></td><td>214</td><td>8</td><td class="num">3</td><td>e-tkt</td><td>obstr</td><td class="num muted">$612</td><td class="num">—</td><td class="muted">Mkt</td></tr>
+        <tr class="owned"><td class="muted">12:32</td><td><span class="badge live">NEW</span></td><td>104</td><td>2</td><td class="num">2</td><td>e-tkt</td><td>—</td><td class="num">$1,240</td><td class="num">—</td><td class="pos">S4K</td></tr>
+        <tr><td class="muted">12:28</td><td><span class="badge live">NEW</span></td><td>U2-7</td><td>14</td><td class="num">4</td><td>e-tkt</td><td>—</td><td class="num">$112</td><td class="num">—</td><td class="muted">Mkt</td></tr>
+      </tbody>
+    </table>
+    <div class="raw">
+{
+  "event_id": 3345925, "configuration_id": 5188, "fanvenues_key": "msg-hockey",
+  "primary_performer_id": 16303, "venue_id": 5725,
+  "tickets_count": 1098, "ancillary_tickets": 786, "owned_tickets_count": 696,
+  "retail_median": 1748, "owned_median_retail": 1812, "owned_share": 0.633,
+  "captured_at": "2026-05-08T16:43:12Z", "ghost_filter": "fresh (12m)"
+}
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+  // hash routing
+  function applyRoute() {
+    const h = (location.hash || '#home').replace('#', '');
+    const view = h.split('/')[0];
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const target = document.getElementById('view-' + view);
+    if (target) target.classList.add('active');
+    document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
+    // breadcrumb
+    const crumb = document.getElementById('crumb');
+    const labels = { home: 'Portfolio', venue: 'Venue · MSG', performer: 'Performer · NYK', event: 'Event · NYK G5' };
+    if (view === 'home') {
+      crumb.innerHTML = '<a href="#home">Portfolio</a>';
+    } else {
+      crumb.innerHTML = '<a href="#home">Portfolio</a><span class="sep">/</span><span>' + (labels[view] || view) + '</span>';
+    }
+    window.scrollTo(0, 0);
+  }
+  function goto(path) { location.hash = path; }
+  window.addEventListener('hashchange', applyRoute);
+  applyRoute();
+
+  // watchlist tabs (Events / Performers / Venues)
+  document.querySelectorAll('.wl-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.pane;
+      tab.parentElement.querySelectorAll('.wl-tab').forEach(t => t.classList.toggle('active', t === tab));
+      // toggle panes within the same panel
+      const panel = tab.closest('.panel');
+      panel.querySelectorAll('.wl-pane').forEach(p => p.classList.toggle('active', p.id === target));
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -160,6 +160,15 @@ def movers_page():
     return (STATIC_DIR / "movers.html").read_text(encoding="utf-8")
 
 
+@app.get("/terminal/v1", response_class=HTMLResponse)
+def terminal_v1_preview():
+    """Preview of the proposed terminal redesign (claude design + copilot collab,
+    captured from copilot's sandbox 2026-05-08). Existing terminal at `/` stays
+    untouched so it can be compared side-by-side. Source lives under
+    static/_proposals/ — underscore prefix = WIP, not yet promoted to /."""
+    return (STATIC_DIR / "_proposals" / "terminal-v1.html").read_text(encoding="utf-8")
+
+
 @app.get("/api/public/config")
 def public_config():
     """Browser-safe config for the login page. No secrets."""

@@ -155,7 +155,7 @@ All three agents are free to call any edge fn or read any view. Only writes to s
 1. `git pull --rebase origin main` before push. always. (code's responsibility on proxy commits; copilot/design work from their own working copy.)
 2. no edit other agent's owned path without leaving WAIT note in LOG first.
 3. `.claude/` gitignored. never commit worktrees.
-4. work in `C:\VibeCode\terminal-2`. never OneDrive, never `C:\Users\julia\Code\Terminal-2` once the move completes. **(repo still physically at `C:\Users\julia\Code\Terminal-2` as of 2026-05-07; user-driven `mv` + Railway root reconfig pending — see WAIT in LOG)**
+4. work in `C:\VibeCode\terminal-2`. never OneDrive, never `C:\Users\julia\Code\Terminal-2`. **MOVE PERMAFIX IN PROGRESS 2026-05-08 evening**: code agent has staged everything (mockup + 3 docs from copilot's mount pulled into git, `/terminal/v1` route added to app.py, push made). User runs `bin/permafix-move.ps1` from a fresh PowerShell after closing Claude Code to do the actual `mv` + Railway reconfig. After the move, both code and copilot work from the same canonical path → no more sub-tree-mount split.
 5. append to LOG below at end of every session. newest entry on top.
 6. tag tasks: DOING / DONE / WAIT / NEXT / BLOCKED.
 7. broker product = full data. retail product = S4K-owned only. never cross.
