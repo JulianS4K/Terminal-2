@@ -167,6 +167,13 @@
   /* venue + city columns get a slightly tighter ellipsis */
   td.cell-venue { max-width:200px; }
   td.cell-city  { max-width:140px; }
+  /* S4K-owned row highlight in raw ticket-group tables. Amber left-stripe +
+     warm-tinted background so the eye finds 'what we own vs the rest of the
+     market' instantly. */
+  tr.owned-row { background: rgba(255, 149, 0, 0.05); }
+  tr.owned-row td:first-child { border-left: 2px solid var(--amber); padding-left: 10px; }
+  tr.owned-row td.money { color: var(--amber); font-weight: 500; }
+
   /* Subline meta text under event names */
   td .meta-sub {
     color:var(--dim); font-size:11px; line-height:1.2; margin-top:2px;
@@ -891,18 +898,68 @@ async function loadEventDetail(id) {
   catch (err) { detail.innerHTML = `<div class="detail-head"><span class="status err" style="display:inline">${esc(err.message)}</span></div>`; }
 }
 
+// Trader-priority sort: zone DESC, qty DESC, row DESC, section DESC.
+// Pricing decisions are made at zone level so we bucket there first; within
+// a zone, more inventory wins; row + section are tiebreakers.
+const ZONE_RANK = ["Floor / Pit / GA","Premium / VIP","Box","Loge","Lower (100s)","Club (200s)","Upper (300s)","Upper (400s)","Upper (500s+)","Balcony","Grandstand","Bleachers","Lawn / Terrace","Special"];
+function classifyZone(section) {
+  if (!section) return "Special";
+  const s = String(section).toLowerCase().replace(/\s+/g, "");
+  if (/(courtside|^crt|^cside|^floor|^fl\d|^ga$|^pit$)/.test(s)) return "Floor / Pit / GA";
+  if (/(^vip|^vip\d|vipsuite|premium|hospitality|clublounge|skybox)/.test(s)) return "Premium / VIP";
+  if (/(^box|box$)/.test(s)) return "Box";
+  if (/loge/.test(s)) return "Loge";
+  if (/(balcony|^bal\d|^bal$)/.test(s)) return "Balcony";
+  if (/(grandstand|^gs)/.test(s)) return "Grandstand";
+  if (/bleach/.test(s)) return "Bleachers";
+  if (/(lawn|terrace)/.test(s)) return "Lawn / Terrace";
+  const m = String(section).match(/(\d+)/);
+  if (m) { const n = parseInt(m[1]);
+    if (n >= 1 && n <= 199) return "Lower (100s)";
+    if (n <= 299) return "Club (200s)";
+    if (n <= 399) return "Upper (300s)";
+    if (n <= 499) return "Upper (400s)";
+    if (n >= 500) return "Upper (500s+)";
+  }
+  return "Special";
+}
+function isS4kOwned(tg) {
+  // S4K brokerage_id = 1768 (matches what the chat fn uses).
+  return Number(tg && tg.office && tg.office.brokerage && tg.office.brokerage.id) === 1768;
+}
+function sortTicketGroupsTrader(groups) {
+  // zone DESC, qty DESC, row DESC, section DESC — exactly per user spec.
+  return [...(groups || [])].sort((a, b) => {
+    const az = classifyZone(a.section), bz = classifyZone(b.section);
+    if (az !== bz) return bz.localeCompare(az);   // zone DESC
+    const aq = a.available_quantity || 0, bq = b.available_quantity || 0;
+    if (aq !== bq) return bq - aq;                 // qty DESC
+    const ar = String(a.row||""), br = String(b.row||"");
+    if (ar !== br) return br.localeCompare(ar);    // row DESC
+    return String(b.section||"").localeCompare(String(a.section||""));  // sec DESC
+  });
+}
+
 function renderEventDetail(d) {
   const ev = d.event;
-  const groups = d.ticket_groups || [];
+  const groups = sortTicketGroupsTrader(d.ticket_groups || []);
   const venue = ev.venue || {};
-  const tgRows = groups.map(tg => `
-    <tr><td class="ellip">${esc(tg.section || "")}</td><td>${esc(tg.row || "")}</td>
+  const tgRows = groups.map(tg => {
+    const owned = isS4kOwned(tg);
+    const zone = classifyZone(tg.section);
+    return `<tr class="${owned ? 'owned-row' : ''}">
+      <td class="dim" style="font-size:11px">${owned ? '<span style="background:#3a2a10;color:var(--amber);padding:1px 5px;font-size:10px;letter-spacing:0.06em">S4K</span>' : ''}</td>
+      <td>${esc(zone)}</td>
+      <td class="ellip">${esc(tg.section || "")}</td>
+      <td>${esc(tg.row || "")}</td>
       <td class="num">${tg.available_quantity ?? 0}</td>
       <td class="num money">${money(tg.retail_price)}</td>
       <td class="dim">${(tg.splits || []).join(",")}</td>
       <td class="dim">${esc(tg.format || "")}</td>
       <td class="dim">${tg.wheelchair ? "♿" : ""}${tg.instant_delivery ? "⚡" : ""}${tg.eticket ? "📱" : ""}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
+  const ownedCount = groups.filter(isS4kOwned).length;
   const pp = (ev.performances || []).find(p => p.primary)?.performer;
   const pivots = [];
   pivots.push(`<a class="pivot" href="/event/${ev.id}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;background:var(--amber);color:#000;border-color:var(--amber);font-weight:500">↗ event terminal</a>`);
@@ -932,21 +989,89 @@ function renderEventDetail(d) {
       </div>
       <div class="pivots">${pivots.join("")}</div>
     </div>
+    <!-- TRADER PRIORITY 1-3: ESPN alerts (injuries / trades / standings) at TOP -->
+    <div id="event-espn-alerts-mount"></div>
     ${HERO_PANEL_HTML}
     ${BREAKDOWN_PANEL_HTML}
     <div class="panel" style="margin-top:16px">
       <div class="panel-head">
-        <span>ticket groups <span class="count">(${groups.length})</span></span>
+        <span><span style="font-size:10px;background:#3a2a10;color:var(--amber);padding:2px 6px;margin-right:8px;letter-spacing:0.08em">TEVO</span>ticket groups <span class="count">(${groups.length}${ownedCount ? ` · <span style="color:var(--amber)">${ownedCount} S4K</span>` : ''})</span></span>
+        <span class="dim" style="font-size:11px">sorted: zone ↓ · qty ↓ · row ↓ · section ↓</span>
         <input class="table-filter" data-target="events-tg-table" placeholder="filter rows…">
       </div>
       <div class="panel-body" id="events-tg-table">
         <table><thead><tr>
-          <th>section</th><th>row</th><th class="num">qty</th>
+          <th></th><th>zone</th><th>section</th><th>row</th><th class="num">qty</th>
           <th class="num">retail</th><th>splits</th><th>format</th><th>flags</th>
         </tr></thead><tbody>${tgRows || ""}</tbody></table>
       </div>
     </div>`;
   initEventHistory(ev.id);
+  loadEventEspnAlerts(ev.id);
+  attachOverflowTooltips("#events-detail");
+}
+
+// Load top-of-detail ESPN alerts: pulls /api/broker/performer/{id}/espn for
+// each performer attached to the event (typically home team + away team) and
+// renders both side-by-side. Skips silently for non-sports events.
+async function loadEventEspnAlerts(eventId) {
+  const mount = $("#event-espn-alerts-mount");
+  if (!mount) return;
+  // Pull event detail to get the performer list — already fetched in
+  // renderEventDetail but we don't have it here, so re-fetch from cache.
+  let ev;
+  try { ev = (await api("/api/events/" + eventId)).event; }
+  catch (err) { return; }
+  if (!ev) return;
+  const performers = (ev.performances || []).map(p => p.performer).filter(p => p && p.id);
+  if (!performers.length) return;
+
+  // Fetch ESPN context for each in parallel; quietly drop the ones with no mapping.
+  const teams = await Promise.all(performers.map(async p => {
+    try {
+      const d = await api("/api/broker/performer/" + p.id + "/espn");
+      return d && d.applicable ? { name: p.name, ...d } : null;
+    } catch (_) { return null; }
+  }));
+  const valid = teams.filter(Boolean);
+  if (!valid.length) { mount.innerHTML = ''; return; }
+
+  const sevColor = s => /out/i.test(s||"") ? "#f87171" : (/quest|day-to-day|prob/i.test(s||"") ? "#fbbf24" : "var(--dim)");
+  const injItem = (inj) => `<div style="font-size:11px;padding:3px 0">
+    <span style="background:${sevColor(inj.status)};color:#000;padding:1px 4px;font-size:10px;font-weight:500">${esc((inj.status||'?').slice(0,4).toUpperCase())}</span>
+    <span style="color:var(--text);margin-left:6px">${esc(inj.athlete_name || '')}</span>
+    <span class="dim">${esc(inj.position || '')}</span>
+    <span class="dim" style="margin-left:6px">${esc(inj.injury_type || '')}</span>
+  </div>`;
+
+  const teamCol = t => {
+    const tt = t.team || {};
+    const record = tt.record_summary || (tt.wins!=null ? `${tt.wins}-${tt.losses}` : '—');
+    const streak = tt.streak ? `<span class="dim">· ${esc(tt.streak)}</span>` : '';
+    const inj = (t.injuries || []).slice(0, 6);
+    return `<div>
+      <div style="color:#93c5fd;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">${esc(t.name)} · ${esc(record)} ${streak}</div>
+      ${inj.length ? inj.map(injItem).join('') : '<div class="dim" style="font-size:11px">no current injuries reported</div>'}
+    </div>`;
+  };
+
+  const totalInj = valid.reduce((n, t) => n + (t.injuries || []).length, 0);
+  const cols = Math.min(valid.length, 2);
+  mount.innerHTML = `
+    <div class="panel panel-espn" style="margin-top:0;border:1px solid #2a4a6e;background:linear-gradient(180deg, rgba(96,165,250,0.04), transparent 80px)">
+      <div class="panel-head" style="background:#0d1a2b;border-bottom:1px solid #2a4a6e">
+        <span style="color:#60a5fa;letter-spacing:0.04em">
+          <span style="font-size:10px;background:#1e3a5f;color:#93c5fd;padding:2px 6px;margin-right:8px;letter-spacing:0.08em">ESPN</span>
+          alerts &amp; standings
+          ${totalInj ? ` <span class="count" style="color:#f87171">${totalInj} injury</span>` : ''}
+        </span>
+      </div>
+      <div class="panel-body" style="padding:12px">
+        <div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:16px">
+          ${valid.map(teamCol).join('')}
+        </div>
+      </div>
+    </div>`;
 }
 
 // =====================================================================
