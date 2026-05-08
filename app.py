@@ -1042,20 +1042,24 @@ def admin_seed_home_venues(league: str, _=Depends(require_auth)):
         pid = int(r["performer_id"])
         try:
             perf = client.get_performer(pid, include_opponents=False)
-            home = perf.get("home_venue") or {}
-            vid  = home.get("id")
+            # TEvo returns the home venue under `venue` (singular) for sports.
+            # `home_venue` is also populated for some leagues — fall back to it.
+            v = perf.get("venue") or perf.get("home_venue") or {}
+            vid = v.get("id")
             if not vid:
                 skipped += 1
                 continue
+            addr = v.get("address") or {}
+            location = ", ".join(x for x in [addr.get("locality"), addr.get("region")] if x) or v.get("location")
             db.table("performer_home_venues").upsert({
                 "performer_id":   pid,
                 "performer_name": perf.get("name") or r.get("external_name"),
                 "venue_id":       int(vid),
-                "venue_name":     home.get("name"),
-                "venue_location": home.get("location"),
+                "venue_name":     v.get("name"),
+                "venue_location": location,
                 "league":         league,
                 "source":         "tevo_lookup",
-            }, on_conflict="performer_id,league").execute()
+            }, on_conflict="performer_id").execute()
             added += 1
         except Exception as e:
             errors.append(f"performer_id={pid}: {e}")
