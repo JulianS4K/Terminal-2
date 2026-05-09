@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v17)
+## SCHEMA LOCK (2026-05-09-v18)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v17`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v18`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,18 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (historical/sentiment/similar-events strategy + supporting schema)
+
+- DONE — **Strategy memo** at `docs/historical-data-and-multi-view-strategy-2026-05-09.md`. Covers 4 historical-data layers (event/performer/venue/matchup), buyer sentiment composite (formula + 5 visual options), similar-event matching, micro→macro 10-level zoom spectrum, web vs PWA delta, schema additions, build sequence.
+- DONE — **Migration `20260509130000`** operationalizes the memo:
+  - `matchup_xref` table — unordered (team_a, team_b) → matchup_id; **445 matchups seeded** from existing events (top: Yankees-Orioles 13, Yankees-Blue Jays 13, Red Sox-Yankees 11, Knicks-76ers 7).
+  - `matchup_history` view rolls up event_metrics per matchup.
+  - `event_sentiment` table + `compute_buyer_sentiment(event_id)` RPC + `backfill_event_sentiment(N)` cascade-friendly batch fn. **Live test produces real signal**: Pistons-Cavs G3 +100, Knicks G5 +54, Wolves-Spurs G5 (ghost-ish) -34. The composite captures buyer absorption rate + getin floor + owned share trajectory + pair thinning.
+  - `performer_baselines` + `venue_baselines` tables with `refresh_*_baselines()` daily-refresh fns. Initial run: 72 performers / 67 venues with active future events.
+  - `find_similar_events(event_id, max_n)` RPC scoring across same-matchup (1.0) + same-performer (0.6) + same-venue (0.4). **Live test on Knicks G5**: returns G7/G2/G1 (score 2.0), G6/G4/G3 (1.6), Finals games (1.0) — perfect ranking.
+- TOP FINDING: Knicks-76ers played-game retail decay is **50-65% from initial listing to gametime** ($1,110→$560, $1,274→$464, $643→$250, $817→$399). That's the playbook number for similar-event projections. Future games (G5/G6/G7) are still at 80-98% of initial listing — buyer sentiment shows G5 absorbing aggressively (+54 index).
+- KANBAN updated with companion NEXT (design) row pointing at the new memo + cross-reference to the redesign memo.
 
 ### 2026-05-09 code (terminal redesign memo — rebuild from scratch per data findings)
 

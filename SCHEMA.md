@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v17`
-**Last verified against prod**: 2026-05-09 ~03:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v18`
+**Last verified against prod**: 2026-05-09 ~04:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -820,6 +820,59 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v18**: **Matchup index, buyer-sentiment composite,
+  performer + venue baselines, similar-event finder**. Operationalizes
+  the strategy memo at `docs/historical-data-and-multi-view-strategy-2026-05-09.md`.
+  Mig `20260509130000`.
+
+  **Tables**:
+  - `matchup_xref` — unordered (team_a_id, team_b_id) pair → matchup_id.
+    Seeded with **445 matchups** from existing events (top: Yankees-Orioles
+    13, Yankees-Blue Jays 13, Red Sox-Yankees 11, Knicks-76ers 7).
+  - `event_sentiment` — per (event_id, captured_at) buyer-sentiment composite
+    in [-100, +100] with 4 decomposed components (tix_per_hour,
+    getin_per_hour, owned_share_change, pairs_change_per_hour).
+  - `performer_baselines` — per-performer rolling median retail / getin /
+    tix / owned tix / owned_share / owned_premium_pct / total_book_notional.
+    Refreshed daily.
+  - `venue_baselines` — per-venue rolling baseline.
+
+  **Views**:
+  - `matchup_history` — events joined to their latest event_metrics rolled
+    up per matchup.
+
+  **Functions**:
+  - `backfill_matchup_xref()` — seeds matchup_xref from events.
+  - `compute_buyer_sentiment(event_id)` — composite formula:
+    `−10·tix_per_hour + 4·getin_pct_per_hour + −50·owned_share_change + −2·pairs_change_per_hour`
+    clamped to [−100, +100]. Live test: Pistons-Cavs G3 +100, Knicks G5 +54,
+    Wolves-Spurs G5 (ghost) −34.
+  - `backfill_event_sentiment(max_events)` — cascade-friendly batch.
+  - `refresh_performer_baselines()` / `refresh_venue_baselines()` — daily.
+  - `find_similar_events(event_id, max_n)` — scores comparable events:
+    same matchup (1.0) + same primary performer (0.6) + same venue (0.4).
+    Live test on Knicks G5: returns G7/G2/G1 (2.0 score), G6/G4/G3 (1.6),
+    NBA Finals games (1.0) — perfectly ranked.
+
+  **Findings backed by live data**:
+  - Knicks-76ers played-game retail decay = **50-65% from initial listing
+    to gametime** ($1,110→$560, $1,274→$464, $643→$250). That's the
+    playbook number.
+  - Sentiment composite separates strong-buying events (Pistons-Cavs G3
+    +100, absorbing -32 tix/hr) from weak/bearish events (Wolves-Spurs G5
+    -34, gaining +3 tix/hr).
+  - Matchup level enables "last 5 Knicks-76ers" comparison; performer
+    level enables "Yankees home games typically settle at $X"; venue
+    level enables section-premium curves.
+
+  **Open future work**:
+  - Multi-year history (2026 is our first reference season; 2027 unlocks YoY).
+  - Add sentiment + similar-events backfills to `master_cascade_2min`
+    (already designed; defer to next migration to avoid bloating this one).
+  - Add `/api/broker/event/{id}/sentiment` and `/api/broker/event/{id}/similar`
+    routes (specced in memo §6.2).
+  - Venue capacity ingestion for "% sold" aggregates (requires manual seed).
 
 - **2026-05-09-v17**: **Cross-source entity maps** — single way to
   translate any source's id to all other sources' ids. TEvo is the hub.

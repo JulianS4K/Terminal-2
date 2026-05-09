@@ -30,6 +30,31 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
+### NEXT (design) — Companion strategy at docs/historical-data-and-multi-view-strategy-2026-05-09.md
+
+**What**: Second strategy memo extending the redesign. Covers:
+- 4 historical-data layers (event / performer / venue / matchup), each answering different broker questions
+- Buyer sentiment composite (formula + 5 visual options) — backed by new `event_sentiment` table
+- Similar-event matching — new `find_similar_events(event_id, n)` SQL function returns ranked comparables
+- Micro→macro view spectrum (10 zoom levels)
+- Web vs PWA differences (same data, different consumption pattern)
+- Schema additions made live: `matchup_xref` (445 matchups seeded), `event_sentiment`, `performer_baselines` (72), `venue_baselines` (67)
+
+**Why**: Mandate was "tell me ideal views and how to incorporate ALL the data". This is the answer for historical depth + sentiment + similar-event intelligence + the phone form factor.
+
+**Verified live**:
+- Sentiment composite separates bullish (Knicks G5 +54, Pistons-Cavs G3 +100) from bearish (Wolves-Spurs G5 -34)
+- Similar-events for Knicks G5 returns G7/G2/G1 (perfect 2.0 score), G6/G4/G3 (1.6), Finals games (1.0)
+- Matchup table groups 13 Yankees-Orioles, 13 Yankees-Blue Jays, 11 Red Sox-Yankees, 7 Knicks-76ers
+
+**Read both memos as a pair**:
+1. `docs/terminal-redesign-2026-05-09.md` — what 7 pages to build
+2. `docs/historical-data-and-multi-view-strategy-2026-05-09.md` — how to incorporate historical/sentiment/similar/PWA
+
+**Filed by**: code · 2026-05-09
+
+---
+
 ### NEXT (design) — TERMINAL REBUILD per docs/terminal-redesign-2026-05-09.md
 
 **What**: User mandate — **rebuild `static/index.html` from scratch** based on what the data actually supports. The full design memo is at `docs/terminal-redesign-2026-05-09.md` and includes:
