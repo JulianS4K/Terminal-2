@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v11`
-**Last verified against prod**: 2026-05-09 ~03:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v12`
+**Last verified against prod**: 2026-05-09 ~04:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -797,6 +797,63 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v12**: **(a) Vault-backed API keys**, **(b) SeatData↔TEvo
+  cross-source mapping**, **(c) EVO orders integration + 10-min cron**,
+  **(d) Bucket 18: S4K Order Book**.
+
+  **(a) Supabase Vault for app secrets**: `SEATDATA_API_KEY` is now stored
+  in `vault.secrets` and accessed via the new `public.get_app_secret(name)`
+  RPC (SECURITY DEFINER, whitelist-gated). seatdata_client loads the key
+  via the RPC before falling through to the env-var override. New keys
+  get added by extending the whitelist in the function definition AND
+  calling `vault.create_secret()`. Single rotation point per key. Whitelist
+  currently: `SEATDATA_API_KEY`, `TEVO_API_TOKEN`, `TEVO_SECRET`.
+
+  **(b) SeatData↔TEvo cross-source mapping**: TEvo and SeatData use
+  totally different ids for events / venues / performers / zones / sections.
+  New tables capture mappings:
+    - `seatdata_venue_xref(tevo_venue_id, sd_std_venue_id, ...)`
+    - `seatdata_performer_xref(tevo_performer_id, sd_std_event_id, ...)`
+    - `seatdata_zone_xref(tevo_event_id, sd_zone, tevo_zone, ...)` — per-event
+    - `seatdata_section_xref(tevo_event_id, sd_section, tevo_section, tevo_zone, ...)` — per-event
+  Function `normalize_sd_listing(event_id, sd_zone, sd_section, sd_row)`
+  resolves any SeatData listing to canonical (zone, section) using lookup
+  priority: section_xref → zone_xref → derive_zone_fallback() → unmapped.
+  New view `sd_sales_normalized` exposes sales rows with canonical zone
+  attached AND fixes the SeatData **quantity-null caveat** (server returns
+  `quantity=0` to mean "unknown", not literally zero — view exposes as
+  NULL with a `quantity_unknown` flag).
+
+  **(c) EVO orders integration**: TEvo `/v9/orders` gives us the brokerage's
+  own order book (pending / accepted / rejected / completed / pending_substitution).
+  Different from listings_snapshots (which is the general market). New tables:
+    - `evo_orders` — order header (state, totals, buyer/seller/client, timestamps)
+    - `evo_order_items` — line items with `event_id` mapped from `ticket_group.event.id`
+    - `evo_orders_by_event` view — rollup per event
+  Pulled by `POST /api/admin/collect-orders` (cron-secret OR auth-gated). Cron
+  `evo-orders-collect-10min` (jobid 40) hits the route every 10 min via
+  pg_net. Pagination capped to 50 pages × 10 = 500 orders/tick (TEvo enforces
+  per_page≤10 server-side). Read by frontend via `GET /api/broker/event/{id}/orders`.
+  EvoClient gained `list_orders`, `iter_orders`, `get_order` methods.
+
+  **(d) Bucket 18: S4K Order Book** added to the canonical 17-bucket
+  taxonomy (now 18 buckets):
+    - `evo_orders` / `evo_order_items` — order rows
+    - `evo_orders_by_event` view — per-event rollup
+    - Aggregates: pending_orders, accepted_orders, completed_orders,
+      tickets_sold, gross_sold (per event)
+    - Use cases: realized PnL, fulfillment urgency, sale velocity,
+      ask-vs-sold spread, e-ticket alerts. Documented in
+      `docs/data-sources-terminal-uses.md` for design + future copilot.
+
+  **API surface added** (under `/api/seatdata/*` and `/api/admin/*`):
+    - `POST /api/admin/collect-orders` — driven by 10-min cron
+    - `GET  /api/broker/event/{id}/orders` — read persisted orders + summary
+
+  **Migration `20260509070000`** captures all the above. **Wall**: EVO orders
+  + SeatData sales are broker-only. Buyer/seller/client identity NEVER
+  leaves the broker product surface (RULE: product wall).
 
 - **2026-05-09-v11**: **SeatData integration** — second pricing source
   alongside TEvo. TEvo gives us live asks; SeatData adds two complementary

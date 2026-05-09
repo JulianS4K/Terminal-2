@@ -356,3 +356,73 @@ class EvoClient:
     def get_configuration(self, configuration_id: int) -> dict[str, Any]:
         """GET /v9/configurations/:id — Show."""
         return self._get(f"/v9/configurations/{configuration_id}")
+
+    # ========== Orders ==========
+    # /v9/orders gives us the brokerage's own pending/accepted/rejected/
+    # completed orders. Different from /listings — orders are post-buy
+    # state for our own account, not market inventory.
+    #
+    # Per docs: pagination max is 10 per_page (NOT 100). States are:
+    #   pending | accepted | rejected | completed | pending_substitution
+    # Types are: Order (sale) | PurchaseOrder (purchase). type filter is
+    # case-sensitive — passing 'order' returns ALL orders.
+
+    def list_orders(
+        self,
+        *,
+        q: str | None = None,
+        seller_id: int | None = None,
+        buyer_id: int | None = None,
+        order_id: int | None = None,
+        order_group_id: int | None = None,
+        state: str | None = None,
+        type: str | None = None,                # Order | PurchaseOrder
+        needs_eticket: bool | None = None,
+        direct_buyer_type: str | None = None,
+        reference: str | None = None,
+        performer_id: int | None = None,
+        venue_id: int | None = None,
+        event_date: str | None = None,          # ISO_8601
+        page: int = 1,
+        per_page: int = 10,                     # MAX is 10 per docs
+        **extra: Any,
+    ) -> dict[str, Any]:
+        """GET /v9/orders — Index. Per-page MAX is 10 (server-enforced)."""
+        params = {
+            "q": q, "seller_id": seller_id, "buyer_id": buyer_id,
+            "order_id": order_id, "order_group_id": order_group_id,
+            "state": state, "type": type,
+            "needs_eticket": needs_eticket, "direct_buyer_type": direct_buyer_type,
+            "reference": reference, "performer_id": performer_id,
+            "venue_id": venue_id, "event_date": event_date,
+            "page": page, "per_page": min(per_page, 10),
+            **extra,
+        }
+        return self._get("/v9/orders", params)
+
+    def iter_orders(
+        self,
+        *,
+        max_pages: int = 200,                   # 200 * 10 = 2000 orders per scan
+        per_page: int = 10,
+        **kwargs: Any,
+    ) -> Iterator[dict]:
+        """Yield orders across pages. Stops when total_entries reached or empty page."""
+        kwargs.pop("page", None)
+        per_page = min(per_page, 10)
+        seen = 0
+        for page in range(1, max_pages + 1):
+            resp = self.list_orders(page=page, per_page=per_page, **kwargs)
+            batch = resp.get("orders") or []
+            total = resp.get("total_entries", 0)
+            if not batch:
+                break
+            for o in batch:
+                yield o
+            seen += len(batch)
+            if seen >= total:
+                break
+
+    def get_order(self, order_id: int) -> dict[str, Any]:
+        """GET /v9/orders/:id — Show single order."""
+        return self._get(f"/v9/orders/{order_id}")

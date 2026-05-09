@@ -2467,6 +2467,245 @@ def seatdata_auto_search(event_id: int, _=Depends(require_auth)):
     return {"matched": True, "sd_event_id": sd_event_id, "match": match}
 
 
+# ============================================================================
+# EVO orders — pulls /v9/orders every 10 min, maps to events
+# ============================================================================
+# Auth on this route: either a normal Bearer token (manual trigger from UI)
+# or a matching X-Cron-Secret header (pg_cron-driven). The cron secret is
+# expected in env var CRON_SECRET on Railway. Per existing convention, the
+# placeholder string 'pick-any-random-string-and-save-it' is used.
+
+CRON_SECRET = os.environ.get("CRON_SECRET", "pick-any-random-string-and-save-it")
+
+
+def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
+    """Allow either authenticated user OR matching X-Cron-Secret."""
+    if x_cron_secret and x_cron_secret == CRON_SECRET:
+        return {"cron": True}
+    return require_auth(authorization)
+
+
+def _parse_iso_or_none(s):
+    if not s:
+        return None
+    try:
+        # TEvo emits 'Z' suffix; Python 3.11+ fromisoformat handles it
+        return s.replace("Z", "+00:00") if isinstance(s, str) and s.endswith("Z") else s
+    except Exception:
+        return None
+
+
+def _to_int_or_none(v):
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_num_or_none(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _flatten_order(order: dict) -> dict:
+    """Project a TEvo /v9/orders row to our evo_orders schema."""
+    buyer = order.get("buyer") or {}
+    buyer_brk = buyer.get("brokerage") or {}
+    seller = order.get("seller") or {}
+    seller_brk = seller.get("brokerage") or {}
+    cl = order.get("client") or {}
+    return {
+        "evo_order_id": _to_int_or_none(order.get("id")),
+        "state": order.get("state"),
+        "type": order.get("type"),
+        "fraud_check_status": order.get("fraud_check_status"),
+        "total":               _to_num_or_none(order.get("total")),
+        "subtotal":            _to_num_or_none(order.get("subtotal")),
+        "tax":                 _to_num_or_none(order.get("tax")),
+        "shipping":            _to_num_or_none(order.get("shipping")),
+        "service_fee":         _to_num_or_none(order.get("service_fee")),
+        "refunded":            _to_num_or_none(order.get("refunded")),
+        "balance":             _to_num_or_none(order.get("balance")),
+        "additional_expense":  _to_num_or_none(order.get("additional_expense")),
+        "reference":           order.get("reference"),
+        "invoice_number":      order.get("invoice_number"),
+        "po_number":           order.get("po_number"),
+        "instructions":        order.get("instructions"),
+        "partner":             order.get("partner"),
+        "buyer_id":            _to_int_or_none(buyer.get("id")),
+        "buyer_name":          buyer.get("name"),
+        "buyer_brokerage_id":  _to_int_or_none(buyer_brk.get("id")),
+        "buyer_brokerage_name": buyer_brk.get("name"),
+        "seller_id":           _to_int_or_none(seller.get("id")),
+        "seller_name":         seller.get("name"),
+        "seller_brokerage_id": _to_int_or_none(seller_brk.get("id")),
+        "seller_brokerage_name": seller_brk.get("name"),
+        "client_id":           _to_int_or_none(cl.get("id")),
+        "client_name":         cl.get("name"),
+        "client_phone":        ((cl.get("phone_numbers") or [{}])[0] or {}).get("number") if cl.get("phone_numbers") else None,
+        "client_email":        ((cl.get("email_addresses") or [{}])[0] or {}).get("address") if cl.get("email_addresses") else None,
+        "evo_created_at":      _parse_iso_or_none(order.get("created_at")),
+        "evo_updated_at":      _parse_iso_or_none(order.get("updated_at")),
+        "hold_placed_at":      _parse_iso_or_none(order.get("hold_placed_at")),
+        "hold_expires_at":     _parse_iso_or_none(order.get("hold_expires_at")),
+        "raw":                 order,
+        "last_seen_at":        datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _flatten_order_items(order: dict) -> list[dict]:
+    """Project order.items[] into evo_order_items schema, mapping event_id."""
+    out = []
+    for it in (order.get("items") or []):
+        tg = it.get("ticket_group") or {}
+        ev = tg.get("event") or {}
+        venue = ev.get("venue") or {}
+        out.append({
+            "evo_order_id":              _to_int_or_none(order.get("id")),
+            "evo_item_id":               _to_int_or_none(it.get("id")),
+            "quantity":                  _to_int_or_none(it.get("quantity")),
+            "price":                     _to_num_or_none(it.get("price")),
+            "ticket_group_id":           _to_int_or_none(tg.get("id")),
+            "ticket_group_remote_id":    tg.get("remote_id"),
+            "ticket_group_office_id":    _to_int_or_none(tg.get("office_id")),
+            "ticket_group_section":      tg.get("section"),
+            "ticket_group_row":          tg.get("row"),
+            "ticket_group_seats":        tg.get("seats") or [],
+            "ticket_group_quantity":     _to_int_or_none(tg.get("quantity")),
+            "ticket_group_retail_price": _to_num_or_none(tg.get("retail_price")),
+            "ticket_group_wholesale_price": _to_num_or_none(tg.get("wholesale_price")),
+            "ticket_group_external_notes": tg.get("external_notes"),
+            "event_id":                  _to_int_or_none(ev.get("id")),
+            "event_name":                ev.get("name"),
+            "occurs_at":                 _parse_iso_or_none(ev.get("occurs_at")),
+            "venue_id":                  _to_int_or_none(venue.get("id")),
+            "venue_name":                venue.get("name"),
+            "eticket_available":         it.get("eticket_available"),
+            "eticket_delivery":          it.get("eticket_delivery"),
+            "eticket_downloaded_at":     _parse_iso_or_none(it.get("eticket_downloaded_at")) or None,
+            "eticket_downloaded_by":     _to_int_or_none(it.get("eticket_downloaded_by")),
+            "raw":                       it,
+        })
+    return out
+
+
+@app.post("/api/admin/collect-orders")
+def collect_evo_orders(
+    max_pages: int = 50,                   # 50 * 10 = 500 orders per tick
+    state: str | None = None,              # filter by state if provided
+    authorization: str | None = Header(None),
+    x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
+):
+    """Pull TEvo /v9/orders, persist to evo_orders + evo_order_items, return summary.
+
+    Designed for a 10-min pg_cron driving us via pg_net.http_post. Idempotent
+    via PRIMARY KEY (evo_order_id) + UNIQUE (evo_item_id) — re-running just
+    refreshes existing rows. evo_order_items rows are deleted+re-inserted per
+    order on update so item-list mutations (added / removed) reflect cleanly.
+    """
+    _require_cron_or_auth(authorization, x_cron_secret)
+    db = require_sb()
+
+    orders_seen = 0
+    orders_inserted = 0
+    items_inserted = 0
+    events_touched: set[int] = set()
+    errors: list[str] = []
+
+    try:
+        for o in client.iter_orders(max_pages=int(max_pages),
+                                    per_page=10,
+                                    state=state):
+            orders_seen += 1
+            try:
+                row = _flatten_order(o)
+                if row["evo_order_id"] is None:
+                    continue
+                # Upsert order
+                db.table("evo_orders").upsert(
+                    row, on_conflict="evo_order_id"
+                ).execute()
+                orders_inserted += 1
+                # Replace item rows for this order — handles add/remove cleanly
+                db.table("evo_order_items").delete().eq("evo_order_id", row["evo_order_id"]).execute()
+                items = _flatten_order_items(o)
+                if items:
+                    db.table("evo_order_items").insert(items).execute()
+                    items_inserted += len(items)
+                    for it in items:
+                        if it.get("event_id"):
+                            events_touched.add(int(it["event_id"]))
+            except Exception as e:
+                errors.append(f"order {o.get('id')}: {e}")
+    except Exception as e:
+        errors.append(f"iter_orders failed: {e}")
+
+    return {
+        "ok": len(errors) == 0,
+        "orders_seen": orders_seen,
+        "orders_upserted": orders_inserted,
+        "items_inserted": items_inserted,
+        "events_touched": len(events_touched),
+        "events_touched_ids": sorted(events_touched)[:50],
+        "errors": errors[:10],
+    }
+
+
+@app.get("/api/broker/event/{event_id}/orders")
+def broker_event_orders(event_id: int, _=Depends(require_auth)):
+    """Read persisted evo_orders + items for an event. Free, no TEvo call.
+    Used by the event-detail page to show pending/accepted/rejected/completed
+    counts + the actual order rows.
+    """
+    db = require_sb()
+    items = (
+        db.table("evo_order_items")
+        .select("evo_order_id,evo_item_id,quantity,price,"
+                "ticket_group_id,ticket_group_section,ticket_group_row,ticket_group_seats,"
+                "eticket_available,eticket_downloaded_at,occurs_at")
+        .eq("event_id", event_id).execute()
+    ).data or []
+    if not items:
+        return {"event_id": event_id, "items": [], "orders": [], "summary": None}
+    order_ids = list({i["evo_order_id"] for i in items if i.get("evo_order_id")})
+    orders = (
+        db.table("evo_orders")
+        .select("evo_order_id,state,type,fraud_check_status,total,subtotal,refunded,balance,"
+                "buyer_name,seller_name,client_name,evo_created_at,evo_updated_at")
+        .in_("evo_order_id", order_ids).execute()
+    ).data or []
+    state_map = {o["evo_order_id"]: o for o in orders}
+    # Summary roll-up
+    by_state: dict[str, int] = {}
+    tickets_sold = 0
+    gross_sold = 0.0
+    for it in items:
+        oid = it.get("evo_order_id")
+        st = (state_map.get(oid) or {}).get("state") or "unknown"
+        by_state[st] = by_state.get(st, 0) + 1
+        if st in ("accepted", "completed") and it.get("quantity") and it.get("price"):
+            tickets_sold += int(it["quantity"])
+            gross_sold += float(it["price"]) * int(it["quantity"])
+    return {
+        "event_id": event_id,
+        "items": items,
+        "orders": orders,
+        "summary": {
+            "total_items":     len(items),
+            "by_state":        by_state,
+            "tickets_sold":    tickets_sold,
+            "gross_sold":      round(gross_sold, 2),
+            "last_update_at":  max((o.get("evo_updated_at") for o in orders if o.get("evo_updated_at")), default=None),
+        },
+    }
+
+
 @app.post("/api/seatdata/event/{event_id}/sync-sales")
 def seatdata_sync_sales(event_id: int, _=Depends(require_auth)):
     """Pull /v0.3/salesdata/get for a linked event and persist new rows.

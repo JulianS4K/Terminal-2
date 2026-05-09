@@ -88,14 +88,30 @@ class BudgetExceeded(SeatDataError):
 class SeatDataClient:
     def __init__(self, api_key: str | None = None, db: Client | None = None,
                  timeout_s: int = 30):
+        # Key resolution order:
+        #   1. Explicit api_key argument (one-off scripts / tests)
+        #   2. SEATDATA_API_KEY env var (Railway-style override)
+        #   3. Supabase Vault via public.get_app_secret('SEATDATA_API_KEY')
+        # Vault is preferred — keys live in one place, rotation is a single
+        # vault.update_secret() call, no Railway redeploy required.
+        self.db = db
         self.api_key = api_key or os.environ.get("SEATDATA_API_KEY")
+        if not self.api_key and db is not None:
+            try:
+                res = db.rpc("get_app_secret", {"p_name": "SEATDATA_API_KEY"}).execute()
+                self.api_key = res.data if isinstance(res.data, str) else (res.data or {}).get("value") or None
+                # supabase-py returns the scalar return value directly for SQL functions
+                if isinstance(res.data, dict) and "get_app_secret" in res.data:
+                    self.api_key = res.data["get_app_secret"]
+            except Exception as e:
+                print(f"seatdata: vault lookup failed: {e}")
         if not self.api_key:
             raise SeatDataError(
-                "SEATDATA_API_KEY env var not set. "
-                "Add it to Railway env vars before deploying. "
-                "Get a key from https://seatdata.io/api-keys"
+                "SEATDATA_API_KEY not found. "
+                "Either set the env var, or store it in Supabase Vault: "
+                "SELECT vault.create_secret('<key>', 'SEATDATA_API_KEY'); "
+                "Whitelist is in public.get_app_secret() — add new key names there."
             )
-        self.db = db
         self.timeout_s = timeout_s
         self.session = requests.Session()
         self.session.headers.update({

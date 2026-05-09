@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v11)
+## SCHEMA LOCK (2026-05-09-v12)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v11`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v12`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,15 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (vault for keys + SeatData↔TEvo mapping + EVO orders 10-min cron)
+
+- DONE — **Supabase Vault for app secrets** (mig `20260509070000`, SCHEMA v12). `SEATDATA_API_KEY` now lives in `vault.secrets` and is read via new SECURITY DEFINER RPC `public.get_app_secret(name)` with a whitelist (currently `SEATDATA_API_KEY`, `TEVO_API_TOKEN`, `TEVO_SECRET`). seatdata_client loads from vault by default; env var still works as override. **No more Railway env var sprawl** — single rotation point per key via `vault.update_secret()`. The user-shared key is now safely in vault, not chat history.
+- DONE — **Cross-source mapping schema**: SeatData and TEvo use different ids for everything. New tables `seatdata_venue_xref`, `seatdata_performer_xref`, `seatdata_zone_xref`, `seatdata_section_xref`. New function `normalize_sd_listing(event_id, sd_zone, sd_section, sd_row)` resolves any SeatData row to canonical (zone, section) via lookup priority: section_xref → zone_xref → `derive_zone_fallback()` → unmapped. New view `sd_sales_normalized` exposes the SeatData sales with canonical naming AND fixes the **quantity-null caveat** (SeatData uses `quantity=0` to mean "unknown" — the view surfaces this as NULL with a `quantity_unknown` flag).
+- DONE — **EVO orders integration**: TEvo `/v9/orders` is now ingested every 10 min. Schema: `evo_orders` (header), `evo_order_items` (lines, with `event_id` mapped from `ticket_group.event.id`), `evo_orders_by_event` view. EvoClient gained `list_orders` / `iter_orders` / `get_order` methods (per_page max=10 per docs). Two new app.py routes: `POST /api/admin/collect-orders` (cron-secret OR auth gated, bounded to 50 pages × 10 = 500 orders/tick) and `GET /api/broker/event/{id}/orders` (read with summary). Cron `evo-orders-collect-10min` (jobid 40) drives the pull via pg_net. Replaces ad-hoc TEvo order checks; gives us realized PnL, fulfillment urgency, sale velocity, and the ask-vs-sold spread that's the most honest measure of pricing accuracy.
+- DONE — **`docs/data-sources-terminal-uses.md`**: comprehensive memo for design (and future copilot) covering the data wall, mapping caveats, 6 SeatData UI uses, 7 EVO-orders UI uses (chart series, hero strip, e-ticket alerts, hold-expiry urgency, ask-vs-sold spread badge, etc.), and SQL cheat sheet. Both lanes should read this before designing new event-detail panels.
+- NEXT (design) — KANBAN row added: render the `EVO_Orders_Completed` bar series + order-book hero strip + e-ticket fulfillment alert. The hero strip is the smallest impactful UI delta; do that first.
+- ACTION REQUIRED (user) — **Set `CRON_SECRET` env var on Railway** to match the placeholder `pick-any-random-string-and-save-it`. Or change the value in both pg_cron jobs (jobids 40 + others using same secret) and Railway env. Without the match, `/api/admin/collect-orders` returns 401 to the cron.
 
 ### 2026-05-09 code (SeatData integration — second pricing source live, Knicks G5 sales pulled)
 
