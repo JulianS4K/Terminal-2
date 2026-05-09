@@ -15,7 +15,7 @@ tables.
 
 | Query | What it returns | When to use |
 |---|---|---|
-| **`SELECT get_event_context(:event_id)`** | One JSONB with **13 keys**: event basics + pricing + ESPN + odds + Wikipedia + weather + competitors + Reddit pulse + important_news + x_accounts_known + our_orders + classification | Default landing for any event-detail surface. One call → everything. |
+| **`SELECT get_event_context(:event_id)`** | One JSONB with **14 keys**: event basics + pricing + ESPN + odds + Wikipedia + weather + competitors + Reddit pulse + important_news + x_accounts_known + **rivalry** + our_orders + classification. The `rivalry` key surfaces rivalry_name, league, is_branded, intensity, Wikipedia URL when matched. | Default landing for any event-detail surface. One call → everything. |
 | `get_broker_event_detail(:event_id)` | Tabular row: event basics + venue + map URLs + has_seating_chart flag + curated_zones_count | When you need just the broker-facing fields without the full bundle |
 | `SELECT * FROM v_event_full_v2 WHERE tevo_event_id=:event_id` | Tabular: full canonical event with TEvo+SG+SD pricing nested + sg_event_metrics + sentiment | When you want pricing inline without function-call overhead |
 | `SELECT * FROM v_event_full_sports WHERE tevo_event_id=:event_id` | Tabular: same but with ESPN team state, injuries, news, home/away, days_to_event | Sports-specific event detail |
@@ -87,6 +87,9 @@ tables.
 | `SELECT * FROM v_performer_tours WHERE primary_performer_id=:perf_id` | Tour: ≥2 venues over 12 months. Returns `venues[]`, `regions[]` |
 | `SELECT * FROM v_performer_residencies WHERE venue_id=:venue_id` | Residencies at a venue (Sphere, Caesars, MSG runs) |
 | `SELECT * FROM v_broadway_runs WHERE primary_performer_name ILIKE '%:show%'` | Broadway show runs at known Broadway theaters |
+| **`SELECT * FROM v_rivalry_events WHERE tevo_event_id=:event_id`** | Is this matchup a known rivalry? Returns rivalry_name, league, is_branded, intensity, Wikipedia URL |
+| **`SELECT * FROM v_upcoming_rivalry_games ORDER BY event_date LIMIT 25`** | Calendar of upcoming rivalry games with at-a-glance pricing + signal-availability flags. Powers the "Hot Rivalries" widget |
+| `SELECT * FROM sporting_rivalries WHERE league=:league` | All seeded rivalries (66 across NBA/NFL/MLB/NHL/MLS) with team_a_performer_id + team_b_performer_id linked |
 | `SELECT * FROM v_unmatched_events` | Events seen on SG/SD/EVO orders but missing event-table row |
 
 ---
@@ -235,6 +238,19 @@ SELECT
   count(*) FILTER (WHERE canonical_status='cancelled')                             AS cancelled_today
 FROM our_orders_with_net
 WHERE source_created_at::date = current_date;
+```
+
+### Hot rivalry games this week
+
+```sql
+SELECT event_date, home_team, away_team, rivalry_name, rivalry_intensity,
+       getin_price, retail_median, tickets_count
+FROM v_upcoming_rivalry_games
+WHERE event_date BETWEEN current_date AND current_date + 7
+ORDER BY
+  CASE rivalry_intensity WHEN 'historic' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
+  event_date
+LIMIT 25;
 ```
 
 ### Performers with rising Reddit buzz (new signal)
