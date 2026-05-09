@@ -2835,6 +2835,121 @@ def seatgeek_sync_taxonomies(_=Depends(require_auth)):
     return {"taxonomies_received": len(tax), "taxonomies_upserted": n}
 
 
+@app.post("/api/seatgeek/venue/{venue_id}/auto-search")
+def seatgeek_auto_search_venue(venue_id: int, _=Depends(require_auth)):
+    """Search SG venues by name + city + state and link if a confident match exists.
+    Free. Use this once per TEvo venue we care about; SG venue ids are stable."""
+    sg = _get_seatgeek_client()
+    if not sg:
+        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+    db = require_sb()
+    v = (db.table("venues").select("id,name,city,state,country,postal_code")
+         .eq("id", venue_id).limit(1).execute()).data or []
+    if not v:
+        raise HTTPException(404, f"venue {venue_id} not found")
+    vv = v[0]
+    # SG venue search has no name param — use q + city + state for narrowing
+    body = sg.list_venues(q=vv.get("name"),
+                          city=vv.get("city") or None,
+                          state=vv.get("state") or None,
+                          country=vv.get("country") or None,
+                          postal_code=vv.get("postal_code") or None)
+    candidates = body.get("venues") or []
+    # Best match: name equality (case-insensitive), then city, then any
+    name_lc = (vv.get("name") or "").lower()
+    match = None
+    for c in candidates:
+        if (c.get("name") or "").lower() == name_lc:
+            match = c; break
+    if not match and candidates:
+        # Loose fallback — top result by SG score
+        match = sorted(candidates, key=lambda c: -(c.get("score") or 0))[0]
+        confidence = 0.55  # name didn't match exactly
+    else:
+        confidence = 0.95 if match else None
+    if not match:
+        return {"matched": False, "candidates_n": len(candidates), "candidates": candidates[:5]}
+    sg.link_venue(venue_id, match, match_method="auto_name_city", confidence=confidence)
+    return {"matched": True, "sg_venue_id": match.get("id"),
+            "sg_name": match.get("name"), "sg_url": match.get("url"),
+            "confidence": confidence}
+
+
+@app.post("/api/seatgeek/performer/{performer_id}/auto-search")
+def seatgeek_auto_search_performer(performer_id: int, _=Depends(require_auth)):
+    """Search SG performers by name (with slug fallback) and link if matched.
+    Free. SG performer slugs are stable; once linked, recommendations + images
+    are usable forever."""
+    sg = _get_seatgeek_client()
+    if not sg:
+        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+    db = require_sb()
+    p = (db.table("performers_compat" if False else "performer_metadata")
+         .select("performer_id,what_event_type,top_category_name,parent_category_name,category_name,genre")
+         .eq("performer_id", performer_id).limit(1).execute()).data or []
+    # Performer name lives on `events.primary_performer_name` since we don't
+    # have a `performers` table — pull from the most recent event.
+    pn_rows = (db.table("events").select("primary_performer_name")
+               .eq("primary_performer_id", performer_id).limit(1).execute()).data or []
+    if not pn_rows:
+        raise HTTPException(404, f"performer {performer_id} not found in events table")
+    pname = pn_rows[0].get("primary_performer_name") or ""
+    if not pname:
+        raise HTTPException(404, "performer has no name")
+    body = sg.list_performers(q=pname, per_page=10)
+    candidates = body.get("performers") or []
+    name_lc = pname.lower()
+    match = None
+    for c in candidates:
+        if (c.get("name") or "").lower() == name_lc:
+            match = c; break
+    if not match and candidates:
+        # Try slug containment
+        slug_pieces = [s for s in name_lc.replace("the ", "").split() if len(s) > 2]
+        for c in candidates:
+            csl = (c.get("slug") or "").lower()
+            if all(p in csl for p in slug_pieces[:2]):
+                match = c; break
+    if not match and candidates:
+        match = candidates[0]  # top match by SG score
+        confidence = 0.5
+    else:
+        confidence = 0.95 if match else None
+    if not match:
+        return {"matched": False, "candidates_n": len(candidates), "candidates": candidates[:5]}
+    sg.link_performer(performer_id, match, match_method="auto_name", confidence=confidence)
+    return {"matched": True, "sg_performer_id": match.get("id"),
+            "sg_name": match.get("name"), "sg_slug": match.get("slug"),
+            "sg_image_url": (match.get("images") or {}).get("huge") or match.get("image"),
+            "confidence": confidence}
+
+
+@app.get("/api/cross-source/event/{event_id}")
+def cross_source_event(event_id: int, _=Depends(require_auth)):
+    """One-stop view of all 3 external xrefs for a TEvo event.
+    Returns ESPN + SeatGeek + SeatData ids together so frontend doesn't
+    need 3 separate calls. Free."""
+    db = require_sb()
+    ev = (db.table("events")
+          .select("id,name,occurs_at_local,venue_id,venue_name,primary_performer_id,primary_performer_name,event_type")
+          .eq("id", event_id).limit(1).execute()).data or []
+    if not ev:
+        raise HTTPException(404, f"event {event_id} not found")
+    espn = (db.table("event_xref").select("espn_event_id,espn_league,espn_slug,match_method,matched_at")
+            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+    sg = (db.table("seatgeek_event_xref").select("sg_event_id,sg_url,sg_short_title,sg_type,match_method,matched_at")
+          .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+    sd = (db.table("seatdata_event_xref").select("sd_event_id,match_method,matched_at,last_paid_pull_at")
+          .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+    return {
+        "tevo_event": ev[0],
+        "espn":     espn[0] if espn else None,
+        "seatgeek": sg[0]   if sg   else None,
+        "seatdata": sd[0]   if sd   else None,
+        "matched_count": sum(1 for x in (espn, sg, sd) if x),
+    }
+
+
 @app.get("/api/seatgeek/recommendations/by-event/{event_id}")
 def seatgeek_recs_by_event(event_id: int, limit: int = 20, _=Depends(require_auth)):
     """Read cached recs for an event. Free."""
