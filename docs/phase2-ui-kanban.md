@@ -115,22 +115,15 @@ webhook URL.
 
 ---
 
-## CARD: SeatGeek `payment_total` data-quality fix
+## CARD: SeatGeek `payment_total` ~~data-quality fix~~ — RESOLVED differently
 
-**Why:** smoke test on `our_orders_with_net` showed all 400 sg_seller
-orders have NULL `payment_total`. Either the SG /orders endpoint isn't
-returning that field for our token, or the `sg_seller_process()`
-function's INSERT is reading the wrong JSON path.
-
-**Investigate:** Pull a raw SG order row from net._http_response,
-inspect the JSON, compare to the INSERT path in
-`sg_seller_process()` (mig 20260509290000). Fix path or set
-`payment_total` from a different field (`sale_price` × `sale_quantity`
-might be the right derivation if the API doesn't surface a total).
-
-**Effort:** 2 hours.
-
-**Dependencies:** none — can do anytime.
+**Resolution (mig 20260509440000):** SG API simply does not return
+payment_total for our token tier — verified across all 400 orders.
+But sale_price + sale_quantity + sale_section + sale_row ARE
+populated 100%. Migration 440000 derives gross_amount as
+`sale_price * sale_quantity` and exposes per-section views
+(v_sg_sales_by_section, v_sg_sales_by_event). SG side now shows real
+numbers: ~$113K gross / $101K net across 186 events. Card closed.
 
 ---
 
@@ -184,14 +177,109 @@ than X days for events past their date.
 
 ---
 
+## CARD: Google News RSS pipeline
+
+**Why:** mainstream-news complement to Reddit (which gives fan
+reactions). Google News RSS is free, no auth, returns headlines
+within minutes of publication. Search by performer/team name to
+catch breaking news from outlets like The Athletic, USA Today, ESPN
+that don't always show up on team subreddits.
+
+**Build:** mirror the Reddit RSS pattern. URL shape:
+`https://news.google.com/rss/search?q=<encoded query>&hl=en-US&gl=US&ceid=US:en`.
+Returns RSS XML with <item><title><link><pubDate><description>.
+
+  - `news_pending` queue table (one row per query)
+  - `news_queue()` — iterates performer_metadata.name + handles in
+    important_x_accounts.name (skip handles already covered by
+    Reddit subs); fires GET via pg_net
+  - `news_process()` — regex-extract <item> blocks (same Atom-style
+    parser shape as the Reddit one in mig 410000)
+  - `news_articles` storage table (article_id PK derived from <link>)
+  - 30-min cron `news_queue_30min` + `news_process_30min`
+  - `v_performer_news_recent` view + extend `get_event_context`
+    with `news_articles` array
+
+**Effort:** half-day. Same pattern as Reddit RSS, regex parsing
+approach already proven.
+
+**Dependencies:** none.
+
+---
+
+## CARD: Google Trends signal (pytrends)
+
+**Why:** broad public-interest signal that Reddit can't deliver:
+covers every searchable entity equally (concert artists + Broadway,
+not just sports teams), gives comparable 0–100 scores across
+performers, supports geographic filtering. Lagging vs Reddit (1–6h
+to register) but captures the broader ticket-buying public, not
+just fan-community.
+
+**Build:** can't pull from plpgsql/pg_net cleanly because pytrends
+scrapes the unofficial Trends interface and needs a Python runtime.
+Two options:
+
+1. **Edge Function** in Deno using a Trends scraper port (cleaner
+   for our Supabase-only architecture). Fire on a daily cron via
+   pg_cron → net.http_post to the function URL.
+2. **Supabase Scheduled Function** (Python, if/when supported in
+   Edge runtime — currently Deno-only).
+
+Schema:
+  - `performer_trends_daily` (tevo_performer_id, date, region,
+    interest_score, related_topics jsonb, pulled_at)
+  - `v_performer_trends_recent` rolling 30-day curve per performer
+
+**Effort:** 1 day to wire Edge Function + persistence + view + cron.
+
+**Dependencies:** Edge Function deployment infra (already used for
+espn-collect and collect-listings — no new dep).
+
+**Caveats:** rate limits + occasional captcha block. Pull <50
+performers/day to stay safe; cycle through the full list over
+multiple days.
+
+---
+
+## CARD: Wikipedia pageviews — comeback (AI-context only)
+
+**Why:** dropped from SQL analytics in mig 20260509340000 because
+the trend math was YAGNI for SQL. But as a **prompt-time AI signal**
+for "did interest in this performer spike yesterday" it's genuinely
+useful at zero cost. Different intent layer than Reddit (post
+volume) or Google Trends (search interest) — pageviews capture
+"reading-up-on" behavior.
+
+**Build:** restore the schema (`performer_wiki_pageviews` table +
+queue/process functions + cron) but DO NOT add the trend view this
+time. Just the raw daily counts, queryable per performer + date.
+Surface in `get_event_context` as `wikipedia_pageviews_7d`,
+`wikipedia_pageviews_30d` so the AI prompt can include "Knicks
+Wikipedia pageviews 7d/30d ratio = 1.4x" without anyone needing to
+run analytics views.
+
+**Effort:** 2 hours (schema is essentially what mig 330000 created
+before we reverted; cleaner version without the v_performer_pageview_trend
+analytics view).
+
+**Dependencies:** none.
+
+---
+
 ## Priority order if we did one card per week
 
-1. SeatGeek `payment_total` fix — money signal correctness.
-2. Data quality dashboard — protects against silent failures.
-3. Alert delivery — turns alerts into product.
-4. Inventory churn view — high-value pricing signal.
-5. Time-decay baselines — needs history first.
-6. Cost meter — nice to have, no immediate pain.
-7. Rivalries — easy when prioritized; not urgent.
-8. SD pull — blocked on external input.
-9. SG metrics retention — pre-emptive only.
+1. ~~SeatGeek `payment_total` fix~~ — RESOLVED via mig 440000 (use
+   sale_price × sale_quantity since payment_total isn't returned).
+2. **Google News RSS pipeline** — half-day, mainstream-news layer.
+3. **Alert delivery** (Slack/email/push) — turns alerts into product.
+4. **Google Trends signal** — broad public-interest layer that
+   Reddit can't capture; needs Edge Function + 1d work.
+5. **Data quality dashboard** — protects against silent failures.
+6. **Inventory churn view** — high-value pricing signal.
+7. **Wikipedia pageviews comeback** — 2h, AI-context-only.
+8. **Time-decay baselines** — needs ~3 months history first.
+9. **Cost meter** — nice to have, no immediate pain.
+10. **Rivalries** — easy when prioritized; not urgent.
+11. **SD pull** — blocked on external input.
+12. **SG metrics retention** — pre-emptive only.
