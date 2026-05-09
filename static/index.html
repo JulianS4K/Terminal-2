@@ -85,6 +85,15 @@
   .panel-h .actions { display: flex; gap: 8px; font-size: 11px; color: var(--muted); }
   .panel-h .actions a:hover { color: var(--accent); }
 
+  /* Chart range buttons (6h / 24h / 3d / 7d / 30d / ALL).
+     Active state via class (.rng.active) instead of inline styles so
+     toggling between ranges is reliable and not subject to CSS-shorthand
+     quirks when JS clears style.background. */
+  .rng           { color: var(--text); background: transparent; transition: background 0.1s, color 0.1s; }
+  .rng:hover     { background: var(--surface-2); }
+  .rng.active    { background: var(--accent); color: #000; }
+  .rng.active:hover { background: var(--accent); color: #000; }
+
   /* IBKR table */
   table.ibkr { width: 100%; border-collapse: collapse; font-size: 13px; }
   table.ibkr thead th { padding: 6px 10px; text-align: left; font-weight: 400; color: var(--muted);
@@ -1315,7 +1324,7 @@ async function loadEvent(eventId) {
             <a class="rng" data-rng="24h" style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">24h</a>
             <a class="rng" data-rng="3d"  style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">3d</a>
             <a class="rng" data-rng="7d"  style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">7d</a>
-            <a class="rng active" data-rng="30d" style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);background:var(--accent);color:#000;">30d</a>
+            <a class="rng" data-rng="30d" style="padding:3px 8px;font-size:11px;cursor:pointer;border-right:1px solid var(--border);">30d</a>
             <a class="rng" data-rng="all" style="padding:3px 8px;font-size:11px;cursor:pointer;">ALL</a>
           </span>
           <span id="chart-range-meta" class="dim">${chart && chart.series ? (chart.series.prices_market || []).length + ' snaps' : (chartErr ? 'error' : 'no data')}</span>
@@ -1705,20 +1714,21 @@ function _wireRangeButtons(eventId) {
   const wrap = document.getElementById('chart-range-buttons');
   if (!wrap) return;
   // Clone to drop any prior listeners from earlier loadEvent calls.
+  // (Each loadEvent invocation re-wires; without the clone we'd stack listeners.)
   const fresh = wrap.cloneNode(true);
   wrap.parentNode.replaceChild(fresh, wrap);
   const realWrap = document.getElementById('chart-range-buttons');
   const current = _loadChartRange();
+  // Active state is driven by the .rng.active CSS class — no inline-style juggling.
   realWrap.querySelectorAll('a.rng').forEach(el => {
-    const r = el.dataset.rng;
-    const isActive = r === current;
-    el.classList.toggle('active', isActive);
-    el.style.background = isActive ? 'var(--accent)' : '';
-    el.style.color      = isActive ? '#000'         : '';
+    el.classList.toggle('active', el.dataset.rng === current);
+  });
+  realWrap.querySelectorAll('a.rng').forEach(el => {
     el.addEventListener('click', async () => {
+      const r = el.dataset.rng;
       _saveChartRange(r);
-      realWrap.querySelectorAll('a.rng').forEach(b => { b.style.background=''; b.style.color=''; b.classList.remove('active'); });
-      el.style.background = 'var(--accent)'; el.style.color = '#000'; el.classList.add('active');
+      // Toggle .active across all buttons in this group — single source of truth
+      realWrap.querySelectorAll('a.rng').forEach(b => b.classList.toggle('active', b === el));
       const meta = document.getElementById('chart-range-meta');
       if (meta) meta.textContent = 'loading…';
       try {
