@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v10)
+## SCHEMA LOCK (2026-05-09-v11)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v10`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v11`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,15 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (SeatData integration — second pricing source live, Knicks G5 sales pulled)
+
+- DONE — **SeatData integration** (mig `20260509060000`, SCHEMA v11). New second-source pricing API alongside TEvo, focused on the data TEvo doesn't expose: sold-listing history + cross-market fill rate. Hard-capped to BASIC plan budget (100 paid pulls/day, 2000/month) at the DB level via `seatdata_pull_budget` + RPC. Going over those caps requires bumping BOTH the DB defaults AND `seatdata_client.py` constants — two-key change so accidental overage is unlikely.
+- DONE — **`seatdata_client.py`** (new module at repo root). Wraps all 9 SeatData endpoints (3 paid + 6 free). Handles gzip-encoded responses, 429 backoff with Retry-After respect, atomic budget increment, full pull-log persistence. Reads API key from `SEATDATA_API_KEY` env var.
+- DONE — **7 new `/api/seatdata/*` routes in app.py**: account, usage, budget, event/{id}, event/{id}/sales, event/{id}/link, event/{id}/auto-search, event/{id}/sync-sales. Routes return 503 with setup hint if `SEATDATA_API_KEY` is unset rather than crashing.
+- DONE — **Live test on next Knicks home game** (TEvo 3345925, 2026-05-12 vs 76ers @ MSG). Auto-search matched to SeatData sd_event_id=1247184. `/v0.3/salesdata/get` returned **254 historical sale records over 42 days** (3/28 → 5/9). Median sale $668, avg $773, range $378-$3,756. 519 tickets sold across 8 zones / 50 sections. All persisted to `seatdata_sales_snapshots` table.
+- ACTION REQUIRED (user) — **Set `SEATDATA_API_KEY` Railway env var** before next deploy: `railway variables --set SEATDATA_API_KEY=<your-key>`. Without it, `/api/seatdata/*` routes return 503. Recommend rotating the key after this session since it was shared in chat history.
+- NEXT (design) — KANBAN row added: render the SeatData sales-history overlay on the chart workbench (transacted prices vs TEvo asks) — the most actionable ML feature the integration unlocks.
 
 ### 2026-05-09 code (event lifecycle classifier — sort ghost playoff games out of live surfaces)
 

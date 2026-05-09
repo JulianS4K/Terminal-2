@@ -13,17 +13,8 @@
 
 ## DOING
 
-### DOING (design) — Polish the chart range switcher
-
-- **What**: Removed `color` from the `.rng` transition (was the source of the activate flash); added `[` / `]` keyboard stepping (one-shot global listener that respects input focus and wraps at the ends without spilling); added a Chart.js crosshair plugin + switched the tooltip to `mode:'index'` so all visible series values render at the snapped x; added a relative-time `title` callback ("3h ago", "yesterday 4 PM", "Apr 24") replacing the long ISO.
-- **Files touched**: `static/index.html`
-  - CSS: ~lines 88-101 (`.rng` transition + new `:focus-visible` outline)
-  - JS keyboard wiring: ~lines 1726-1755 (`_wireRangeKeyboard` + call from `_wireRangeButtons`)
-  - JS chart helpers: ~lines 1830-1888 (`_formatRelativeTime`, `_evtChartCrosshair` plugin)
-  - JS tooltip config: ~lines 2065-2080 (`mode:'index'` + `title` callback)
-  - JS chart constructor: ~lines 2147-2151 (register `_evtChartCrosshair` locally, not globally)
-- **Status**: ready for review
-- **Started**: 2026-05-09 02:15 UTC
+### DOING (design) — _none yet_
+_(append your work-in-progress here)_
 
 ### DOING (code) — _none yet_
 _(if I'm in the middle of something, it goes here so design knows what files I'm touching)_
@@ -35,6 +26,23 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 ### NEXT (design) — orient and pick a starter task
 
 **What**: Read `COWORKER_ONBOARDING.md` end-to-end, then pick a row below.
+**Filed by**: code · 2026-05-09
+
+---
+
+### NEXT (design) — Render SeatData sales overlay on the chart workbench
+
+**What**: SeatData integration is live (commit *pending*). For any TEvo event linked to SeatData, `/api/seatdata/event/{tevo_event_id}/sales` returns up to 5000 historical sale rows: `{sale_timestamp, quantity, price, zone, section, row}` plus an aggregated `summary: {avg, median, min, max, tickets_total, zones, first_sale, last_sale}`.
+
+UI surfaces:
+1. **Chart workbench** — add a new togglable series category "SeatData_Sales" (paint as scatter dots, not line). Each dot is a transacted sale; size = quantity, color = zone. Hover tooltip shows `$price · qty · section · row`. Y-axis = `y$` (same as TEvo prices).
+2. **Event hero** — small badge "SeatData: 254 sales · median $668 · last sold 14m ago" pulled from the summary. Click opens a side panel with the sale list.
+3. **Sync button** — manual "Refresh sales" button on the event page that POSTs `/api/seatdata/event/{id}/sync-sales` (charges 1 pull). Disable with tooltip if `/api/seatdata/budget` says budget is exhausted.
+4. **Splash for unlinked events** — when `/api/seatdata/event/{id}` returns `linked:false`, show a "Match this event to SeatData" button that POSTs `/auto-search`.
+
+**Why**: TEvo gives us asks; SeatData gives us actual transactions. Brokers price against transacted comps, not asks. This is the most actionable signal we've added since the chart workbench itself.
+**Backend ready**: yes — Knicks G5 (TEvo 3345925) is pre-populated with 254 rows for visual testing.
+**Files**: `static/index.html`
 **Filed by**: code · 2026-05-09
 
 ---
@@ -141,13 +149,28 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ## BLOCKED
 
-_(none currently)_
+### BLOCKED (design) — Polish the chart range switcher
+
+- **What**: Removed `color` from the `.rng` transition (was the source of the activate flash); added `[` / `]` keyboard stepping (one-shot global listener that respects input focus and clamps at the ends); added a Chart.js crosshair plugin + switched the tooltip to `mode:'index'` so all visible series values render at the snapped x; added a relative-time `title` callback ("3h ago", "yesterday 4 PM", "Apr 24") replacing the long ISO.
+- **Files touched (already on disk, not yet reviewed/committed)**: `static/index.html`
+  - CSS: ~lines 88-101 (`.rng` transition + new `:focus-visible` outline)
+  - JS keyboard wiring: ~lines 1726-1755 (`_wireRangeKeyboard` + call from `_wireRangeButtons`)
+  - JS chart helpers: ~lines 1830-1888 (`_formatRelativeTime`, `_evtChartCrosshair` plugin)
+  - JS tooltip config: ~lines 2065-2080 (`mode:'index'` + `title` callback)
+  - JS chart constructor: ~lines 2147-2151 (register `_evtChartCrosshair` locally, not globally)
+- **Blocker**: paused by Julian — hold review/commit until he gives the go-ahead. File edits remain in the worktree; nothing has been pushed.
+- **Started**: 2026-05-09 02:15 UTC
+- **Flagged by**: design · 2026-05-09
 
 ---
 
 ## DONE (last 10)
 
-### DONE — `<sha pending>` · feat(events): lifecycle classifier sorts ghost playoff games out of live surfaces
+### DONE — `<sha pending>` · feat(seatdata): integration live + Knicks G5 sales pulled (254 rows)
+- New second-source pricing API alongside TEvo. Hard-capped to BASIC plan budget (100/day, 2000/month) at the DB level. New `seatdata_client.py` + 7 `/api/seatdata/*` routes. Live-tested on TEvo 3345925: matched to sd_event_id=1247184, pulled 254 historical sales (median $668, avg $773, range $378-$3,756). Mig `20260509060000`. SCHEMA v11. **User action required**: set `SEATDATA_API_KEY` env var on Railway.
+- by: code · landed: 2026-05-09 03:00 UTC
+
+### DONE — `dc4c41d` · feat(events): lifecycle classifier sorts ghost playoff games out of live surfaces
 - New SQL fn `derive_event_lifecycle(event_id)` + view `event_lifecycle`. Status enum `active | ghost_eliminated | completed | postponed | cancelled`. Strongest signal: TEvo `last_seen` staleness (live=avg 1.0h, ghost=avg 133h, zero overlap). Wired into `/api/broker/event/{id}/overview` (lifecycle block), `/api/broker/movers` (`?include_inactive` defaults false), `/api/portfolio` (per-event lifecycle + `inactive_excluded_count`). Distribution: 1045 active / 95 completed / 89 ghost / 2 postponed / 1 cancelled. Mig `20260509050000`. SCHEMA bumped to v10.
 - by: code · landed: 2026-05-09 02:30 UTC
 

@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v10`
-**Last verified against prod**: 2026-05-09 ~02:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v11`
+**Last verified against prod**: 2026-05-09 ~03:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -797,6 +797,59 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v11**: **SeatData integration** — second pricing source
+  alongside TEvo. TEvo gives us live asks; SeatData adds two complementary
+  primitives:
+  1. **Sold-listings history** (`/v0.3/salesdata/get`) — actual transacted
+     prices over time, which TEvo doesn't expose directly.
+  2. **Cross-market fill rate + multi-marketplace get-in** (`/v1/events/
+     {id}/stats`) — useful as a cross-check on TEvo-only signals.
+
+  Hard-capped to BASIC plan budget: **100 paid pulls/day, 2000/month**,
+  enforced at the DB level via `seatdata_pull_budget` table + RPC
+  `seatdata_check_budget()`. Going over those caps requires bumping BOTH
+  the DB defaults (in mig 20260509060000) AND the constants in
+  `seatdata_client.py` — two-key change so accidental overage is unlikely.
+
+  Per RULE 0: SeatData is the second documented price source.
+
+  **Migration `20260509060000`** adds:
+    - `seatdata_event_xref` — TEvo↔SeatData event_id mapping
+    - `seatdata_pull_budget` — daily counter + cap, monthly aggregate
+    - `seatdata_sales_snapshots` — sold-listing history (deduped via content_hash)
+    - `seatdata_listings_snapshots` — live listing snapshots
+    - `seatdata_event_stats` — pricing time series (avg/median/get-in/fill_rate)
+    - `seatdata_pull_log` — audit trail of every call
+    - `seatdata_event_latest` view — latest stats + sales counts per linked event
+    - functions `seatdata_check_budget(p_endpoint)` + `seatdata_increment_budget(p_endpoint, was_charged)`
+
+  **Client**: `seatdata_client.py` (new at repo root) wraps all SeatData
+  endpoints. Free endpoints: `/v1/account`, `/v1/usage`, `/v1/events/search`,
+  `/v0.4/events/event-request-add`, `/v0.4/events/event-request-status/{id}`,
+  `/v0.5/daily-csv/download`. Paid endpoints (with budget check): `/v0.3/
+  salesdata/get`, `/v0.1.1/listings/get`, `/v1/events/{id}/stats`. Handles
+  gzip-encoded responses, 429 backoff with Retry-After respect, atomic
+  budget increment, full pull-log persistence.
+
+  **API routes added** (under `/api/seatdata/*`):
+    - `GET  /account` — diagnostic (free)
+    - `GET  /usage`   — billing-period totals from SeatData (free)
+    - `GET  /budget`  — our DB-tracked pull budget
+    - `GET  /event/{tevo_event_id}` — xref + persisted snapshot status (free)
+    - `GET  /event/{tevo_event_id}/sales` — read persisted sales rows (free)
+    - `POST /event/{tevo_event_id}/link?sd_event_id=` — manual xref link (free)
+    - `POST /event/{tevo_event_id}/auto-search` — search by date+venue and link (free)
+    - `POST /event/{tevo_event_id}/sync-sales`  — pull + persist (PAID, 1 pull)
+
+  **Auth**: requires `SEATDATA_API_KEY` env var on Railway. Routes return
+  503 with a setup hint if the key is missing rather than crashing.
+
+  **Live test result**: Knicks G5 (TEvo 3345925, 2026-05-12 vs 76ers @ MSG)
+  matched to SeatData sd_event_id=1247184 via auto-search. `/v0.3/salesdata/get`
+  returned **254 historical sales over a 42-day window** (3/28 → 5/9). Median
+  sale price $668, average $773, range $378-$3,756. 519 tickets sold across
+  8 zones / 50 sections. All persisted to `seatdata_sales_snapshots`.
 
 - **2026-05-09-v10**: **Event lifecycle classifier** — sort ghost playoff
   brackets, completed events, postponed/cancelled out of "live" surfaces.
