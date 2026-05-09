@@ -4,6 +4,31 @@
 
 ---
 
+## Sales crons — the question that matters most
+
+Pulled out separately because day-trader analytics depend on this lane being healthy. **Live status as of 2026-05-09:**
+
+| Cron / Path | Cadence | Source endpoint | Last write | Status |
+|---|---|---|---|---|
+| `evo-orders-collect-10min` | every 10 min | Railway `/api/admin/collect-orders` → TEvo `/v9/orders` | **NEVER** (0 rows) | 🔴 **FAILING** — Railway returns 404 Not Found |
+| `seatgeek-seller-collect-10min` | every 10 min | Railway `/api/admin/collect-sg-seller` → SG `/orders` | 2026-05-09 02:57 (~16h ago) | 🟡 Cron firing successfully but returning `{"done":true,"fetched":0}` — no new orders in flight (legitimate quiet OR partial Railway issue) |
+| SG broker `/sales` endpoint | (no cron) | brokerdata.seatgeek.com `/sales` | — (0 rows) | ⚪ Endpoint wired in client; never scheduled. Would give SG market-wide sale-completion velocity. |
+| SeatData `/v0.3/salesdata/get` | (no cron) | api.seatdata.io | 2026-05-09 01:48 | ⚪ **By design** — on-demand only, gated by 100/day budget cap. 254 rows are the manual Knicks G5 backfill. |
+| `seatgeek_historic_sales_daily` | daily 05:15 UTC | (re-derives from seatgeek_orders) | (within 24h) | 🟢 Re-derivation only, not a pull. Healthy. |
+
+**The TEvo orders failure is the active problem.** Cron has been firing every 10 min for the entire session and `evo_orders` table is still empty. Recent pg_net responses to `terminal-2-production.railway.app/api/admin/collect-orders` show **HTTP 404 "Not Found"** repeatedly. The original session summary flagged `CRON_SECRET` env var as missing on Railway — but the 404 suggests the route itself isn't being served, not auth. Either:
+- Railway deployment is broken (we saw Railway's default landing page on `/` earlier in this session)
+- Or the FastAPI app there is an older version without the `/api/admin/collect-orders` route
+- Or Railway is routing to wrong service
+
+**Day-trader product impact**: `unified_orders` is missing the TEvo side entirely. Cross-source order analytics (TEvo + SG + SeatData unified) is currently TEvo-blind. Recommend Julian verify Railway deploy status as the next P0.
+
+**SG seller `fetched=0` reads**: ambiguous — either there are genuinely no new SG order state changes (orders all stable), OR the route is short-circuiting. Worth confirming once by triggering a status change manually.
+
+**SG broker `/sales` not scheduled** is a known gap — endpoint is wired, table exists with proper schema, just never crontabbed. Would feed `seatgeek_sales_snapshots` with SG market-wide transacted sales (different from sellerdirect /orders which is OUR own SG sales). Useful for sale-velocity comparison vs listings depth.
+
+---
+
 ## TL;DR — 28 active crons across 6 sources
 
 | Source | Crons | Cadence range |
