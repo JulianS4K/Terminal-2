@@ -1653,12 +1653,13 @@ def broker_event_chart_data(
             home_slug = away_slug = x["espn_slug"]
 
     def _team_standings(team_id: str | None) -> list:
-        if not team_id:
+        if not team_id or not home_league:
             return []
         rows = (
             db.table("espn_team_snapshots")
             .select("captured_at,win_pct,wins,losses,games_back,playoff_seed,conference_rank,division_rank,record_summary,streak")
             .eq("espn_team_id", team_id)
+            .eq("espn_league", home_league)   # league-scope: same id exists across leagues
             .gte("captured_at", since_iso)
             .order("captured_at")
             .execute()
@@ -1691,14 +1692,18 @@ def broker_event_chart_data(
     # too. Front-end tags each marker with `is_change` so the user can tell
     # status flips apart from initial-baseline injuries (copilot lane: fix
     # the upstream is_baseline detection in espn-collect).
+    # CRITICAL: filter by espn_league too — espn_team_id is league-scoped
+    # (id "18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18).
+    # Without the league filter we'd pull 229 rows when only 12 are real.
     inj_rows = (
         db.table("espn_injuries_snapshots")
         .select("captured_at,athlete_name,status,injury_type,short_comment,espn_team_id,is_baseline")
         .in_("espn_team_id", [t for t in (home_team_id, away_team_id) if t])
+        .eq("espn_league", home_league or "")
         .gte("captured_at", since_iso)
         .order("captured_at")
         .execute()
-    ).data or [] if (home_team_id or away_team_id) else []
+    ).data or [] if (home_team_id or away_team_id) and home_league else []
     injuries = [{"t": r["captured_at"], "athlete": r.get("athlete_name"),
                  "status": r.get("status"), "team": "home" if r.get("espn_team_id") == home_team_id else "away",
                  "comment": r.get("short_comment"),
@@ -1707,11 +1712,12 @@ def broker_event_chart_data(
 
     # 4) Roster moves (trades + releases)
     rm_rows = []
-    if home_team_id or away_team_id:
+    if (home_team_id or away_team_id) and home_league:
         rm_rows = (
             db.table("espn_athlete_team_history")
             .select("detected_at,transaction_type,prior_team_id,espn_team_id,espn_athlete_id,notes")
             .in_("transaction_type", ["traded", "released"])
+            .eq("espn_league", home_league)   # league-scope; team_id+league together is the unique team
             .gte("detected_at", since_iso)
             .or_(",".join(filter(None, [
                 f"espn_team_id.eq.{home_team_id}" if home_team_id else None,
@@ -1729,12 +1735,13 @@ def broker_event_chart_data(
 
     # 5) Last-5 record per team
     def _last5(team_id: str | None) -> list:
-        if not team_id:
+        if not team_id or not home_league:
             return []
         rows = (
             db.table("espn_event_snapshots")
             .select("captured_at,espn_event_id,home_team_id,away_team_id,home_score,away_score,state")
             .or_(f"home_team_id.eq.{team_id},away_team_id.eq.{team_id}")
+            .eq("espn_league", home_league)   # league-scope: id "20" exists in NBA + MLB + NFL etc.
             .eq("state", "post")
             .order("captured_at", desc=True).limit(5)
             .execute()

@@ -1,39 +1,41 @@
 # AGENTS.md
 
-three agents now. all three read first, all three append on action. keep cave-man.
+solo agent now (code) until terminal hits high-beta. on lane re-split, copilot + claude design come back.
 
-## ROSTER (2026-05-08 onward)
+## ROSTER (2026-05-09 onward — solo phase)
 
-| agent           | role                                                                                  | reports to git via |
-|-----------------|---------------------------------------------------------------------------------------|--------------------|
-| **code**        | auditor of the entire codebase · terminal backend (FastAPI/SQL) · git proxy for everyone · runs project simulations + deep-dives + audits to surface issues | self (has direct push access) |
-| **copilot**     | retail chat backend (chat edge fn) · ML / NLU pipeline for the chatbot · listings/data ingest fns it already owns | code (proxy commits) |
-| **claude design** | front-end for BOTH products: terminal admin UI (`static/index.html`, `static/event.html`, `static/movers.html`) and chatbot UI (`static/chat.html`) · CSS / layout / interactions / accessibility | code (proxy commits) |
+| agent | role | reports to git via |
+|---|---|---|
+| **code** (this chat) | sole owner of the entire Terminal-2 stack: terminal frontend (`static/index.html`, `event.html`, `movers.html`, `chat.html`), terminal backend (`app.py`, `evo_client.py`), all edge functions (`supabase/functions/*`), all SQL migrations, ESPN/TEvo/Wiki/NOAA ingest, schema docs (SCHEMA.md), audit + git push | self (direct push) |
+| ~~copilot~~ | **PAUSED** — retail chat backend / NLU / listings ingest. Lane returns when terminal reaches high-beta status. | n/a |
+| ~~claude design~~ | **PAUSED** — front-end specialist. Lane returns when terminal reaches high-beta status. | n/a |
 
-**code is the only agent with git push.** copilot and claude design write code locally / via PR; code reviews, audits, and pushes. code also keeps running scenario simulations (broker audits, workflow audits, Knicks-style deep-dives) to find issues neither feature-builder agent would catch on their own.
+**Why solo**: per user direction 2026-05-09 — coordination overhead between three agents was slowing terminal builds; consolidating to a single owner until the broker terminal stabilizes at high-beta. After that, lanes split again with copilot picking up retail chat and claude design picking up dedicated front-end polish.
+
+**Lane discipline still applies**: SCHEMA.md is canonical (RULE 0), AGENTS.md LOG gets an entry per commit, no skipping migration capture. The discipline that protected against drift in the multi-agent era stays in place.
 
 ## STATUS BOARD (live, read first, update on every state change)
 
-| agent           | status | started_at (UTC)    | working on                                   | branch | safe to interrupt? |
-|-----------------|--------|---------------------|----------------------------------------------|--------|--------------------|
-| code            | IDLE   | —                   | —                                            | main   | yes                |
-| copilot         | IDLE   | —                   | —                                            | —      | yes                |
-| claude design   | IDLE   | —                   | —                                            | —      | yes                |
+| agent | status | started_at (UTC) | working on | branch | safe to interrupt? |
+|---|---|---|---|---|---|
+| code  | IDLE | — | — | main | yes |
+| ~~copilot~~ | PAUSED | — | — | — | n/a |
+| ~~claude design~~ | PAUSED | — | — | — | n/a |
 
-**Read this table before starting any work.** If another agent is DOING and your planned work overlaps theirs (same files, related schema), wait or coordinate via a WAIT note in the LOG. If everyone else is IDLE you're clear to start — flip your row to DOING with a timestamp before your first edit.
+**Read this table before starting any work.** During solo phase code can move freely across all files; the WIP section below still gets used as a "what am I touching this commit" checklist for self-discipline.
 
 ## WIP (files an agent is actively editing — append before edit, clear on commit)
 
-**Read this section before opening any file.** If a file you want to edit is listed under another agent, pick a different file or wait. Append your file paths under your own subsection before editing. Clear your subsection back to "(none)" the moment your work hits `main`.
+**Read this section before opening any file.**
 
 ### code
 - (none)
 
-### copilot
-- (none — git access via code)
+### ~~copilot~~
+- (paused — lane returns at high-beta)
 
-### claude design
-- (none — git access via code)
+### ~~claude design~~
+- (paused — lane returns at high-beta)
 
 ## ARCHITECTURE (confirmed 2026-05-08)
 
@@ -405,6 +407,15 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (solo phase begin)
+
+- **LANE CONSOLIDATION** (per user direction): copilot and claude design lanes paused. code (this chat) becomes sole owner of the entire Terminal-2 stack until the broker terminal hits high-beta status. ROSTER + STATUS BOARD updated above. Lanes return on re-split — copilot picks back up retail chat + NLU + listings ingest; claude design picks up dedicated front-end polish.
+- DONE — **CRITICAL: cross-league injury / standings bleed fix.** chart-data was filtering by `espn_team_id` only across 4 queries (injuries, standings, last5, roster_moves). Since `espn_team_id` is league-scoped (id "18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18), the queries pulled rows from every league with that team_id. For Knicks G5 chart: 12 real rows became ~229. Added `.eq("espn_league", home_league)` to all four queries (only `_news_series` and `_injury_load_series` were already correctly filtering). User caught it from MLB injuries appearing on the NBA event chart.
+- DONE — **Recent Big Moves panel** on event page (commit 0f1924c): snap-over-snap detector for ≥3% price moves OR ≥100 tix swings. Plain-English Read column ("Inventory dump", "Demand spike", "Possible snapshot oscillation"). Surfaces things like the Knicks G5 −9.3% drop on 5/4.
+- DONE — **Event hero nav buttons** (commit 0f1924c): home/away logos clickable to performer page; venue name in subline is an underlined link; explicit "→ team", "→ venue" button row under accent bar.
+- DONE — **Injury overlay filter relaxed**: was `is_baseline=false` ("real status flips"), but espn-collect's is_baseline detection only works for MLB+NHL. NBA/NFL/MLS/WNBA/WC always come back is_baseline=true → 0 markers ever showed. Removed strict filter, added `is_change` flag per row so frontend can color/label differently. Fix-the-cause NEXT: get espn-collect's is_baseline detection working for the 5 affected leagues.
+- DONE — **SCHEMA.md v5** (commit a94022a): replaced single-checkmark "ESPN coverage" table with 4-layer matrix (performer mapping / team standings / game-day snapshots / event xref). Reveals MLS/NHL/NFL/WNBA/WC have full performer-level coverage but ZERO event-level snapshots/xref because espn-collect.gameday only iterates NBA + MLB. Documented as a copilot-lane NEXT — but with copilot paused, this becomes a code-lane TODO.
 
 ### 2026-05-08 code (claude code session, late-evening — second sync audit)
 
