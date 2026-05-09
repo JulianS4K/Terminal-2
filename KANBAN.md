@@ -13,17 +13,61 @@
 
 ## DOING
 
-### DOING (design) — Preliminary 5-template design handoff (DONE — ready for review)
+### DOING (design) — Design handoff: 6 broker templates + 2 parallel-product designs (DONE — ready for review)
 
-- **What**: Per Julian's brief, produced `design/preliminary-event-views-2026-05-08.md` — 5 view templates with ASCII wireframes (Event Workbench / Performer Console / Venue Pulse / Pricing Queue / Metro Watchlist), structural decisions on Julian's 5 questions (sports-vs-non-sports performer, venue-mode tabs, performer past-data integration, power-user pricing queue with `J/K` keyboard nav, metro-competing-events panel), simulation grid (8 scenarios × 5 templates), metrics-have-vs-need audit, LLM analysis-layer placeholder for Grok/Claude hookup, build sequence integrated with code's prior memos.
-- **Files touched**: `design/preliminary-event-views-2026-05-08.md` (new, ~600 lines).
-- **Reads from**: `docs/terminal-redesign-2026-05-09.md`, `docs/historical-data-and-multi-view-strategy-2026-05-09.md` (code's prior strategy memos — design doc explicitly builds on them, no re-analysis).
-- **Status**: ready for code review + claude design session pickup.
+- **What**: Three deliverables in this session, all in `design/`:
+  1. **`design/preliminary-event-views-2026-05-08.md`** — 6 broker-terminal view templates with ASCII wireframes:
+     - T1 Event Workbench (single-event, the workhorse)
+     - T2 Performer Console (sports + non-sports variants)
+     - T3 Venue Pulse (mode-tabs: home-team / concert / comedy / other)
+     - T4 Pricing Queue (`J/K` keyboard flow for re-pricing 47 events in a sitting)
+     - T5 Metro Watchlist (competing-events demand-overlap)
+     - T6 Series / Season / Tour Aggregator (MLB 5-game, NBA full season, 47-stop tour)
+     - Plus: structural decisions on Julian's 5 questions, 11-row × 6-template simulation grid, metrics have/need audit, LLM analysis-layer slot reserved for Grok hookup, build sequence integrated with code's prior memos.
+  2. **`design/retail-site-2026-05-08.md`** — public buying site at `/shop` + `/shop/event/{id}`:
+     - Two-API architecture (`/api/retail/*` mirrors `/api/broker/*` with code-enforced wall via `retail_inventory_v` view)
+     - Three surfaces: catalog, event detail + seat picker, chatbot side-panel integration
+     - Telemetry-as-product: `retail_events` table feeds the chatbot training corpus
+     - 8 retail-persona scenarios scored across site flows
+  3. **`design/undelivered-window-2026-05-08.md`** — fulfillment ops view (internal only):
+     - One normalizing view (`undelivered_orders_v`) across EVO + SG + Vivid + StubHub + retail + wholesale
+     - Single dense ops board with default sort by time-to-event (red T-0/T-24h first)
+     - Hold-expiry alert lane (separate from delivery queue)
+     - Bulk action: "deliver all 76 for Knicks G5" — the highest-leverage feature
+     - 9 fulfillment-scenario simulations
+- **Plus 3 frontend skeleton files** (added on Julian's "build templates, frontend only" follow-up):
+  1. **`static/_proposals/templates.html`** — broker terminal · 6 templates · hash-router (`#workbench` / `#performer` / `#venue` / `#queue` / `#metro` / `#series`). Each template fully laid out with placeholder data and `<span class="todo">` markers on every backend hook. Uses CSS variables matching `static/index.html`.
+  2. **`static/_proposals/shop.html`** — retail buying site · 4 hash-routed views (`#catalog` / `#event/{id}` / `#cart` / `#account`). Light theme (deliberately opposite density of the broker terminal). Chatbot side-panel with bidirectional handoff. Strict wall: file references only `/api/retail/*`, never `/api/broker/*`.
+  3. **`static/_proposals/undelivered.html`** — fulfillment ops board. Pinned hold-expiry banner, KPI strip, filter chips, dense board with time-to-event color coding, drawer for row click, bulk-deliver-for-event modal. Reads from `unified_orders` (the canonical view from mig 20260509140000 — supersedes the `undelivered_orders_v` placeholder I sketched in the original doc).
+- **Plus 1 notes-for-code file**:
+  - **`design/CODE_NOTES_2026-05-08.md`** — every backend hook the 3 skeletons assume, organized as: existing endpoints to wire / NEW endpoints to build / new tables/views proposed / wiring sequence / open questions. Designed so code reads top-to-bottom and knows exactly what to build without touching frontend.
+- **Plus, after Julian's TEvo-templates ask + media-asset ask**:
+  - **Rewrote `static/_proposals/shop.html`** to follow the canonical TEvo template set per the API-01..API-10 docs Julian uploaded:
+    - 7 hash routes: `#home` · `#performer/{slug}` · `#venue/{slug}` · `#event/{id}` · `#search` · `#cart` · `#account`
+    - Comprehensive search with typeahead dropdown (groups: Events / Performers / Venues per `/searches/suggestions`)
+    - Performer LP — slug URL + showPerformer + listEvents(performer_id) per API-06
+    - Venue LP — slug URL + showVenue + listEvents(venue_id) per API-07
+    - Event LP — showEvent + listings(event_id), with seatmaps-client placeholder + static fallback (real Citizens Bank Park static map URL) per API-08
+    - Cart/checkout flow — Client creation (nested company/email/address/phone per API-09) + Braintree drop-in mount (API-10)
+    - Wall held: 0 broker-namespace references; only retail namespace.
+  - **Added `design/MEDIA_ASSETS_2026-05-08.md`** mapping every available media asset (ESPN team logos, ESPN player headshots, TEvo static + dynamic seat maps, TEvo `meta.image`, S4K `venue_assets`) to each project surface. Catalogues 5 sources, then maps each surface in all 3 projects to its preferred resolve-order (S4K venue_assets → ESPN logo → TEvo meta.image → static map → gradient fallback). Includes channel-logo plan for the undelivered window (self-host wordmarks for EVO/SG/Vivid/SH).
+- **Files touched (this session, all design-owned)**: `design/preliminary-event-views-2026-05-08.md` (now 6 templates), `design/retail-site-2026-05-08.md`, `design/undelivered-window-2026-05-08.md`, `design/CODE_NOTES_2026-05-08.md`, `design/MEDIA_ASSETS_2026-05-08.md`, `static/_proposals/templates.html`, `static/_proposals/shop.html` (rewritten to TEvo pattern), `static/_proposals/undelivered.html`.
+- **NOT touched**: `app.py`, `evo_client.py`, `seatgeek_client.py`, `seatdata_client.py`, `supabase/migrations/*`, `supabase/functions/*`, `SCHEMA.md`, `AGENTS.md`, `static/index.html` (still has BLOCKED chart-range-switcher edits from earlier in this session — separate row).
+- **Reads from**: `docs/terminal-redesign-2026-05-09.md`, `docs/historical-data-and-multi-view-strategy-2026-05-09.md`, `docs/broker-audit-2026-05-08.md`, `INSTRUCTIONS_FOR_CLAUDE_DESIGN.md`, `design/main.fig.md`. Skeletons reference the canonical state model in mig 20260509140000.
+- **Git state at hand-off**: worktree HEAD = `3d55a38` (origin/main tip). Local main is 40 behind, but worktree itself is current.
+- **Status**: 3 design docs + 3 frontend skeletons + 1 code-notes file ready for review. Skeletons are previewable by opening `static/_proposals/*.html` in a browser (no backend running needed for layout review).
 - **Started**: 2026-05-08 (this session)
-- **No code changes**: doc-only deliverable. Static/index.html untouched. Strict wall preserved.
 
 ### DOING (code) — _none yet_
 _(if I'm in the middle of something, it goes here so design knows what files I'm touching)_
+
+### DONE (code) — Overnight: audit + XSS fix + 3-surface preview switcher
+
+- **Audit of design's 2026-05-08 submission** committed at `docs/audit-2026-05-09.md`. Wall preserved, Python clean, backend healthy (21 crons, 0 failures last hour). 1 blocking finding: DOM-XSS in `shop.html` chatbot.
+- **XSS fixed**: `sendChat()` + `openChat(prefill)` rewritten with `textContent` + `appendChild` via `_appendChatTurn()` helper. Inline deeplink onclick moved to `data-deeplink` + `addEventListener`.
+- **3-surface preview launched** at `/preview/*` per Julian's overnight ask. 4 new app.py routes (landing, terminal, shop, ops). Sticky switcher header on every skeleton with active-route highlight. Landing page card grid links to GitHub specs.
+- **No protected files touched** beyond app.py route additions + AGENTS LOG + KANBAN. Migrations / SCHEMA / clients untouched.
+- **Pushed**: pending commit hash.
 
 ---
 

@@ -415,6 +415,19 @@ Mechanics (whoever picks this up):
 
 ## LOG
 
+### 2026-05-09 code (overnight: design audit + 3-surface preview + XSS fix)
+
+- DONE — **Audit of design coworker's 2026-05-08 submission** at `docs/audit-2026-05-09.md`. 5 design docs + 3 frontend skeletons reviewed. Wall preserved (no `/api/broker/*` in shop.html, no `/api/retail/*` in broker skeletons). Python parses on all 4 backend files. Backend health: 21 active crons, 109 runs in last hour, 0 failures. CODE_NOTES.md scoped 17+ new endpoints (P1/P2/P3) and 6 new tables — all migration references verified accurate.
+- DONE — **Blocking XSS fix in `shop.html` chatbot**. The `sendChat()` and `openChat(prefill)` functions inlined user-typed input into `innerHTML`. Replaced with `textContent` + `appendChild` pattern via a `_appendChatTurn()` helper. Static deeplink span moved to `data-deeplink` + `addEventListener` (no inline onclick). User input now structurally cannot escape into HTML. Verified clean via grep.
+- DONE — **3-surface preview at `/preview/*`** (per Julian's overnight ask: "have all 3 projects live in the same site with buttons to switch between them"). 4 new routes in app.py:
+  - `GET /preview` → landing page with 3 cards (broker / shop / ops) + back-to-live link
+  - `GET /preview/terminal` → broker 6-template skeleton
+  - `GET /preview/shop` → retail buying site
+  - `GET /preview/ops` → fulfillment ops board
+  - All 3 skeletons gained a sticky switcher header at top with the active route highlighted in accent yellow. Self-contained inline styles so the switcher doesn't fight per-page CSS.
+- DONE — **Landing page** at `static/_proposals/preview-landing.html`: 3-card grid with audience tag, bullet feature list, "Open" + "Spec" buttons (Spec links to the GitHub-hosted design markdown). Footer note explains why one site for now and points to the audit + CODE_NOTES.
+- NEXT — design coworker can keep iterating in `_proposals/`; once any surface stabilizes, promote it to `static/{name}.html` and update its app.py route to point at the promoted location.
+
 ### 2026-05-09 code (cross-source order status mapping — unified vocabulary)
 
 - DONE — **`order_status_xref`** rosetta stone (mig `20260509140000`, SCHEMA v19). Maps 13 source-statuses to 6 canonical states (`pending` / `accepted` / `substitution` / `rejected` / `cancelled` / `fulfilled`) with `is_terminal` + `is_sale_succeeded` flags carried alongside.

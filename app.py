@@ -160,6 +160,39 @@ def movers_page():
     return (STATIC_DIR / "movers.html").read_text(encoding="utf-8")
 
 
+# ---------- Preview surfaces ----------
+# Three in-flight products sharing one site for now. Each gets its own
+# deployment once stable. Per RULE 4 (move permafix in progress) and the
+# 2026-05-09 audit, these live under /preview/* until they split.
+#
+# The skeleton files are static/_proposals/{templates,shop,undelivered}.html
+# (design coworker authored, code reviewed per RULE 12 proxy commit).
+# The XSS in shop.html chatbot was patched in this commit.
+
+@app.get("/preview", response_class=HTMLResponse)
+def preview_landing():
+    """Landing page for the 3 preview surfaces with a switcher to each."""
+    return (STATIC_DIR / "_proposals" / "preview-landing.html").read_text(encoding="utf-8")
+
+
+@app.get("/preview/terminal", response_class=HTMLResponse)
+def preview_terminal():
+    """Broker terminal · 6 templates · hash router. design/preliminary-event-views-2026-05-08.md spec."""
+    return (STATIC_DIR / "_proposals" / "templates.html").read_text(encoding="utf-8")
+
+
+@app.get("/preview/shop", response_class=HTMLResponse)
+def preview_shop():
+    """Retail buying site · TEvo pattern. design/retail-site-2026-05-08.md spec."""
+    return (STATIC_DIR / "_proposals" / "shop.html").read_text(encoding="utf-8")
+
+
+@app.get("/preview/ops", response_class=HTMLResponse)
+def preview_ops():
+    """Fulfillment ops board reading from unified_orders. design/undelivered-window-2026-05-08.md spec."""
+    return (STATIC_DIR / "_proposals" / "undelivered.html").read_text(encoding="utf-8")
+
+
 @app.get("/terminal/v1", response_class=HTMLResponse)
 def terminal_v1_alias():
     """Backward-compat alias — terminal-v1 was promoted to `/` on 2026-05-08.
