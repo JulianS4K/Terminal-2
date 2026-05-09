@@ -1684,19 +1684,26 @@ def broker_event_chart_data(
                        "seed": r.get("playoff_seed"), "rec": r.get("record_summary")}
                       for r in away_standings_rows]
 
-    # 3) Injury changes (only rows where is_baseline=false → real status flip)
+    # 3) Injury rows. Originally filtered is_baseline=false ("real status flips
+    # only") but espn-collect's is_baseline detection only works for MLB+NHL —
+    # NBA/NFL/MLS/WNBA/WC always come back with is_baseline=true, so the strict
+    # filter hid 100% of their injury data. Relaxed to include baseline rows
+    # too. Front-end tags each marker with `is_change` so the user can tell
+    # status flips apart from initial-baseline injuries (copilot lane: fix
+    # the upstream is_baseline detection in espn-collect).
     inj_rows = (
         db.table("espn_injuries_snapshots")
-        .select("captured_at,athlete_name,status,injury_type,short_comment,espn_team_id")
+        .select("captured_at,athlete_name,status,injury_type,short_comment,espn_team_id,is_baseline")
         .in_("espn_team_id", [t for t in (home_team_id, away_team_id) if t])
-        .eq("is_baseline", False)
         .gte("captured_at", since_iso)
         .order("captured_at")
         .execute()
     ).data or [] if (home_team_id or away_team_id) else []
     injuries = [{"t": r["captured_at"], "athlete": r.get("athlete_name"),
                  "status": r.get("status"), "team": "home" if r.get("espn_team_id") == home_team_id else "away",
-                 "comment": r.get("short_comment")} for r in inj_rows]
+                 "comment": r.get("short_comment"),
+                 "is_change": (r.get("is_baseline") is False)}  # true = real status flip; false = baseline row
+                for r in inj_rows]
 
     # 4) Roster moves (trades + releases)
     rm_rows = []

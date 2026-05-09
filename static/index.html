@@ -1073,14 +1073,17 @@ async function loadEvent(eventId) {
   const venueName = ev.venue_name || ev.venue?.name || '—';
   // Logo strip — home + away from ov.assets, falls back to "?" placeholder
   // when performer_metadata isn't populated yet (crawl in progress).
+  // Logos are clickable → navigate to the performer page.
   const homeAsset = ov.assets?.home;
   const awayAsset = ov.assets?.away;
   const _logoHTML = (asset, side) => {
     const url = asset?.logo_default_url;
     const cp = asset?.color_primary;
     const bg = cp ? '#' + cp : '#26292d';
-    if (!url) return `<div class="logo-lg" title="No ESPN logo for ${side}" style="background:${bg};display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;">?</div>`;
-    return `<div class="logo-lg" title="${esc(asset?.name || side)}" style="background-color:${bg};background-image:url('${esc(url)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
+    const pid = asset?.performer_id;
+    const clickAttr = pid ? `onclick="event.stopPropagation();goto('performer/${pid}')" style="cursor:pointer;` : 'style="';
+    if (!url) return `<div class="logo-lg" title="No ESPN logo for ${side}${pid ? ' — click to view performer page' : ''}" ${clickAttr}background:${bg};display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;"${pid ? '' : ''}>?</div>`;
+    return `<div class="logo-lg" title="${esc(asset?.name || side)}${pid ? ' — click to view performer page' : ''}" ${clickAttr}background-color:${bg};background-image:url('${esc(url)}');background-size:contain;background-repeat:no-repeat;background-position:center;"></div>`;
   };
   // Build accent-bar from team primary colors (home + away + S4K orange)
   const accentColors = [
@@ -1098,10 +1101,15 @@ async function loadEvent(eventId) {
           ${_logoHTML(homeAsset, 'home')}
           <div style="margin-left:8px;">
             <div class="hero-title">${esc(ev.name || ('Event #' + eventId))}</div>
-            <div class="hero-sub">${esc(occursAt || '')} · ${esc(venueName)}</div>
+            <div class="hero-sub">${esc(occursAt || '')} · <a onclick="goto('venue/${ev.venue_id || ''}')" style="cursor:pointer;color:var(--accent);text-decoration:underline;text-decoration-color:rgba(245,132,38,0.4);" title="Click for venue page">${esc(venueName)}</a></div>
           </div>
         </div>
         <div class="accent-bar" style="margin-top:8px;">${accentColors.map(c => `<span style="background:${c}"></span>`).join('')}</div>
+        <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+          ${homeAsset?.performer_id ? `<a onclick="goto('performer/${homeAsset.performer_id}')" style="cursor:pointer;padding:4px 10px;font-size:11px;border:1px solid var(--border);border-radius:3px;background:var(--surface-2);" title="Open performer page">→ ${esc(homeAsset.name || 'home performer')}</a>` : ''}
+          ${awayAsset?.performer_id ? `<a onclick="goto('performer/${awayAsset.performer_id}')" style="cursor:pointer;padding:4px 10px;font-size:11px;border:1px solid var(--border);border-radius:3px;background:var(--surface-2);" title="Open performer page">→ ${esc(awayAsset.name || 'away performer')}</a>` : ''}
+          ${ev.venue_id ? `<a onclick="goto('venue/${ev.venue_id}')" style="cursor:pointer;padding:4px 10px;font-size:11px;border:1px solid var(--border);border-radius:3px;background:var(--surface-2);" title="Open venue page">→ ${esc(venueName || 'venue')}</a>` : ''}
+        </div>
       </div>
       <div class="hero-right" style="background:linear-gradient(135deg,#16181b,#1c1e22);">
         <div class="map-pin">Venue Map · ${esc(ev.configuration_name || ('config #' + (ev.configuration_id || '—')))}</div>
@@ -1233,6 +1241,71 @@ async function loadEvent(eventId) {
         </tr></tbody>
       </table>
     </div>
+    ${(() => {
+      // Recent Big Moves — scan the prices_market + counts_market series for
+      // snap-over-snap deltas that exceed thresholds. Surfaces moments where
+      // the book moved fast — the kind of thing a broker wants to see at a
+      // glance without inspecting the chart.
+      const pm = chart?.series?.prices_market || [];
+      const cm = chart?.series?.counts_market || [];
+      // Map captured_at → tickets_count
+      const tixByT = new Map();
+      cm.forEach(p => tixByT.set(p.t, p.v));
+      const moves = [];
+      for (let i = 1; i < pm.length; i++) {
+        const cur = pm[i], prev = pm[i-1];
+        if (cur.v == null || prev.v == null || prev.v === 0) continue;
+        const pctMed = (cur.v - prev.v) / prev.v;
+        const tixCur = tixByT.get(cur.t);
+        const tixPrev = tixByT.get(prev.t);
+        const tixDelta = (tixCur != null && tixPrev != null) ? tixCur - tixPrev : null;
+        // Threshold: ≥ 3% price move OR ≥ 100 tix swing
+        if (Math.abs(pctMed) >= 0.03 || (tixDelta != null && Math.abs(tixDelta) >= 100)) {
+          moves.push({ t: cur.t, prev_t: prev.t, pctMed, priceFrom: prev.v, priceTo: cur.v, tixDelta });
+        }
+      }
+      // Take the top 6 by magnitude (combined score)
+      moves.sort((a, b) => Math.abs(b.pctMed) + Math.abs((b.tixDelta||0)/500) - (Math.abs(a.pctMed) + Math.abs((a.tixDelta||0)/500)));
+      const top = moves.slice(0, 6);
+      if (!top.length) return '';
+      return `
+    <div class="panel">
+      <div class="panel-h">
+        <h3>Recent Big Moves</h3>
+        <div class="actions"><span class="dim" title="Snap-over-snap moves where median moved ≥3% OR ticket count swung ≥100. Top 6 by combined magnitude.">price ≥3% or tix ≥100 swings · ${moves.length} flagged</span></div>
+      </div>
+      <table class="ibkr">
+        <thead><tr>
+          <th title="When the move was captured">When</th>
+          <th class="num" title="Median retail before → after">Price move</th>
+          <th class="num" title="Δ% on the median">%Δ</th>
+          <th class="num" title="Δ ticket count snap-over-snap">Δ Tix</th>
+          <th title="Likely interpretation">Read</th>
+        </tr></thead>
+        <tbody>
+          ${top.map(m => {
+            const cls = m.pctMed > 0 ? 'pos' : m.pctMed < 0 ? 'neg' : '';
+            const arrow = m.pctMed > 0 ? '↑' : m.pctMed < 0 ? '↓' : '';
+            const read = (m.pctMed <= -0.05 && (m.tixDelta||0) > 100) ? 'Inventory dump (price down + tix up — supply shock)'
+                      : (m.pctMed >= 0.05 && (m.tixDelta||0) < -100) ? 'Demand spike (price up + tix down — buyers absorbing)'
+                      : (Math.abs(m.tixDelta || 0) > 500 && Math.abs(m.pctMed) < 0.02) ? 'Possible snapshot oscillation — verify with prior + next ticks'
+                      : (m.pctMed <= -0.05) ? 'Sharp price drop'
+                      : (m.pctMed >= 0.05) ? 'Sharp price rise'
+                      : (Math.abs(m.tixDelta || 0) >= 200) ? 'Volume swing'
+                      : '—';
+            return `<tr>
+              <td class="dim">${shortDate(m.t)}</td>
+              <td class="num">${moneyC(m.priceFrom)} <span class="dim">→</span> <strong>${moneyC(m.priceTo)}</strong></td>
+              <td class="num ${cls}">${arrow} ${(m.pctMed*100).toFixed(1)}%</td>
+              <td class="num ${(m.tixDelta||0) > 0 ? 'pos' : (m.tixDelta||0) < 0 ? 'neg' : ''}">${m.tixDelta == null ? '—' : ((m.tixDelta>=0?'+':'')+m.tixDelta)}</td>
+              <td class="dim" style="font-size:11px;">${esc(read)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="height:12px"></div>`;
+    })()}
     <div class="panel">
       <div class="panel-h">
         <h3>Price &amp; Volume</h3>
