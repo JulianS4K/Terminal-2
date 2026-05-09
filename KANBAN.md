@@ -232,7 +232,11 @@ UI surfaces:
 
 ## DONE (last 10)
 
-### DONE — `<sha pending>` · feat: SG metrics + xref + cascade + RULE 2 read-only
+### DONE — `<sha pending>` · feat: cross-source entity maps (universal id translator)
+- 3 views (entity_event_map / entity_performer_map / entity_venue_map) translate any source's id to all others, TEvo as hub. 6 translation functions (forward + inverse, both directions). taxonomy_xref table seeded with 12 league/type mappings (NBA, MLB, etc.). cross_source_coverage diagnostic view. Live coverage: 269/1233 events on ESPN, 37 multi-source performers, 21 SG-linked venues. All round-trips verified. Mig 20260509120000. SCHEMA v17.
+- by: code · landed: 2026-05-09 03:30 UTC
+
+### DONE — `e7e680f` · feat: SG metrics + xref + cascade + RULE 2 read-only
 - Mig 20260509110000. New tables: seatgeek_performer_xref (102 auto-linked from listings/orders), seatgeek_venue_xref (21), seatgeek_event_metrics (28 cols parallel to event_metrics + seatdata_event_stats). New views: seatgeek_categorized_listings, cross_source_event_audit. Smart matcher fix prevents ghost-event mismatches (Lynx→Timberwolves bug fixed). master_cascade_2min extended with SG xref + metrics stages (1.7s total runtime). RULE 2 read-only enforcement at code level (HTTP method allowlist in evo/seatdata/seatgeek clients). Cross-source audit shows Knicks G5 with TEvo+ESPN+SeatData coverage (3 sources, 254 sales). SCHEMA v16.
 - by: code · landed: 2026-05-09 03:15 UTC
 

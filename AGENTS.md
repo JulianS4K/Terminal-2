@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v16)
+## SCHEMA LOCK (2026-05-09-v17)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v16`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v17`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,15 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (cross-source entity maps — universal id translator)
+
+- DONE — **Cross-source entity maps** (mig `20260509120000`, SCHEMA v17). Three views — `entity_event_map`, `entity_performer_map`, `entity_venue_map` — that translate any source's id to all others. TEvo is the hub. Each view returns a `sources_count` rollup + a JSONB `external_ids` block compact enough to drop into API responses.
+- DONE — **6 translation functions**: `tevo_event_id_for(source, id)` and inverse `external_ids_for_event(tevo_id)` (plus performer + venue variants). ESPN performer lookup supports `'NBA:18'` syntax for league-disambiguated ids per RULE 1.
+- DONE — **`taxonomy_xref` table** for the "fixed variables": TEvo event_type ↔ ESPN league ↔ SG event_type ↔ SeatData event_type. Seeded with 12 mappings (NBA, WNBA, NFL, NHL, MLB, MLS, NCAA-FB, NCAA-MBB, Concert, Comedy, Theater, Parking).
+- DONE — **`cross_source_coverage` diagnostic view**. Live coverage: 269/1233 events on ESPN (22%), 39 performers on SG (21%), 21 venues on SG (17%), 37 performers multi-source. SeatData event/performer/venue coverage is sparse (manually-linked Knicks G5 only) — driven by user-initiated /auto-search.
+- VERIFIED — round-trip translations + name-based lookups all return correct hub ids. Surfaced one known data bug (TEvo 3345925 + 3346856 share ESPN id 401871162 — documented earlier as the G5 vs G3 mismatch; not a new issue).
+- NEXT (design) — KANBAN row added: render the `entity_event_map.external_ids` JSONB on event hero as 4-light coverage badges with hover-popover showing the raw ids per source.
 
 ### 2026-05-09 code (SG metrics + xref + cascade + RULE 2 read-only enforcement)
 

@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v16`
-**Last verified against prod**: 2026-05-09 ~03:15 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v17`
+**Last verified against prod**: 2026-05-09 ~03:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -820,6 +820,57 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v17**: **Cross-source entity maps** — single way to
+  translate any source's id to all other sources' ids. TEvo is the hub.
+  Mig `20260509120000`.
+
+  **3 hub views** (one per entity type):
+    - `entity_event_map` — TEvo event_id → { espn_event_id+league+slug,
+      sd_event_id, sg_event_id+name+location, lifecycle_status,
+      sources_count, external_ids JSONB }
+    - `entity_performer_map` — TEvo performer_id → { espn_team_id+league,
+      home_venue_ids[], sd_performer_id, sg_performer_name, performer
+      classification (genre/category), sources_count, external_ids }
+    - `entity_venue_map` — TEvo venue_id → { sd_venue_id+slug+city+state,
+      sg_venue_name, sources_count, external_ids } (ESPN doesn't expose
+      venue ids cleanly so it's not in the venue map)
+
+  **6 translation functions** for both directions:
+    - `tevo_event_id_for(source, external_id) → bigint`
+    - `tevo_performer_id_for(source, external_id) → bigint`
+      (espn supports `'NBA:18'` syntax to disambiguate league-scoped ids)
+    - `tevo_venue_id_for(source, external_id) → bigint`
+    - `external_ids_for_event(tevo_event_id) → jsonb`
+    - `external_ids_for_performer(tevo_performer_id) → jsonb`
+    - `external_ids_for_venue(tevo_venue_id) → jsonb`
+
+  **`taxonomy_xref` table** for the "fixed variables" — TEvo event_type
+  ↔ ESPN league ↔ SG event_type ↔ SeatData event_type. Seeded with
+  12 known mappings: NBA, WNBA, NFL, NHL, MLB, MLS, NCAA-FB, NCAA-MBB,
+  Concert, Comedy, Theater, Parking. Extended on a per-need basis.
+
+  **`cross_source_coverage` view** (diagnostic): for each entity_type
+  (event/performer/venue) reports total + per-source linked + multi-
+  source linked counts. Drives backfill prioritization.
+
+  **Live coverage as of v17**:
+
+  | entity    | total | ESPN | SeatData | SG | multi-source |
+  |-----------|-------|------|----------|----|--------------|
+  | event     | 1,233 | 269  | 1        | 1  | 1            |
+  | performer | 182   | 217¹ | 0        | 39 | 37           |
+  | venue     | 124   | n/a  | 0        | 21 | 0            |
+
+  ¹ ESPN performer xref count exceeds total because some performers
+  have multiple (team_id, league) pairs (e.g., a "soccer team" performer
+  matched in both MLS and another league). RULE 1 always disambiguates.
+
+  All translations verified live: round-trip TEvo → external → TEvo,
+  cross-source name lookups (SG name → TEvo id), all return the correct
+  hub id. The single doubly-linked event (TEvo 3345925 + 3346856 share
+  ESPN id 401871162) is the documented G5 vs G3 data bug from earlier;
+  not a new issue.
 
 - **2026-05-09-v16**: **SG metrics + xref + categorization + RULE 2 +
   cascade integration**. Mig `20260509110000`.
