@@ -2712,19 +2712,16 @@ def broker_event_orders(event_id: int, _=Depends(require_auth)):
 # SeatGeek public API gives us: section_info per venue, recommendations
 # (event + performer affinity), 4-size performer images, full taxonomy tree,
 # and cross-validation of event/venue/performer metadata. Auth via
-# SEATGEEK_CLIENT_ID (+ optional SEATGEEK_CLIENT_SECRET) in Vault.
+# SEATGEEK_API_TOKEN in Vault (or env-var override).
 
 def _get_seatgeek_client():
-    """Lazy import + instantiation. Returns None if SEATGEEK_CLIENT_ID is missing."""
-    if not (os.environ.get("SEATGEEK_CLIENT_ID") or True):
-        # Always try to instantiate — vault fallback is in the client
-        return None
+    """Lazy import + instantiation. Returns None if SEATGEEK_API_TOKEN is missing."""
     try:
         from seatgeek_client import SeatGeekClient
         return SeatGeekClient(db=require_sb())
     except Exception as e:
         # Surface the setup hint via 503 in the route
-        if "SEATGEEK_CLIENT_ID not found" in str(e):
+        if "SEATGEEK_API_TOKEN not found" in str(e):
             return None
         raise
 
@@ -2755,7 +2752,7 @@ def seatgeek_auto_search_event(event_id: int, _=Depends(require_auth)):
     """Search SG by date+venue and link if a high-confidence match is found."""
     sg = _get_seatgeek_client()
     if not sg:
-        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault. Set via upsert_app_secret RPC.")
+        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault. Set via SELECT public.upsert_app_secret('SEATGEEK_API_TOKEN', '<token>').")
     db = require_sb()
     ev = (db.table("events")
           .select("id,name,occurs_at_local,venue_name,venue_id,primary_performer_name")
@@ -2789,7 +2786,7 @@ def seatgeek_sync_sections(event_id: int, _=Depends(require_auth)):
     """Pull /events/section_info/{sg_event_id} and cache. Free."""
     sg = _get_seatgeek_client()
     if not sg:
-        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
     db = require_sb()
     xref = (db.table("seatgeek_event_xref").select("sg_event_id")
             .eq("tevo_event_id", event_id).limit(1).execute()).data or []
@@ -2810,7 +2807,7 @@ def seatgeek_sync_recommendations(event_id: int, _=Depends(require_auth)):
     Returns top-20 recommended events by affinity score."""
     sg = _get_seatgeek_client()
     if not sg:
-        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
     db = require_sb()
     xref = (db.table("seatgeek_event_xref").select("sg_event_id")
             .eq("tevo_event_id", event_id).limit(1).execute()).data or []
@@ -2829,7 +2826,7 @@ def seatgeek_sync_taxonomies(_=Depends(require_auth)):
     """Pull SG taxonomy tree and cache. Run rarely (monthly+). Free."""
     sg = _get_seatgeek_client()
     if not sg:
-        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
     tax = sg.list_taxonomies()
     n = sg.cache_taxonomies(tax)
     return {"taxonomies_received": len(tax), "taxonomies_upserted": n}
@@ -2841,7 +2838,7 @@ def seatgeek_auto_search_venue(venue_id: int, _=Depends(require_auth)):
     Free. Use this once per TEvo venue we care about; SG venue ids are stable."""
     sg = _get_seatgeek_client()
     if not sg:
-        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
     db = require_sb()
     v = (db.table("venues").select("id,name,city,state,country,postal_code")
          .eq("id", venue_id).limit(1).execute()).data or []
@@ -2882,7 +2879,7 @@ def seatgeek_auto_search_performer(performer_id: int, _=Depends(require_auth)):
     are usable forever."""
     sg = _get_seatgeek_client()
     if not sg:
-        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
     db = require_sb()
     p = (db.table("performers_compat" if False else "performer_metadata")
          .select("performer_id,what_event_type,top_category_name,parent_category_name,category_name,genre")

@@ -59,34 +59,28 @@ class SeatGeekError(Exception):
 class SeatGeekClient:
     def __init__(
         self,
-        client_id: str | None = None,
-        client_secret: str | None = None,
+        api_token: str | None = None,
         db: Client | None = None,
         timeout_s: int = 20,
     ):
-        # Key resolution: explicit arg → env → Supabase Vault → error.
-        # Vault is preferred — single rotation point per key.
+        # Key resolution: explicit arg → env (SEATGEEK_API_TOKEN) → Vault → error.
+        # SeatGeek calls the auth value `client_id` in the URL but we treat it
+        # as a single API token internally to match TEvo + SeatData naming.
         self.db = db
-        self.client_id = client_id or os.environ.get("SEATGEEK_CLIENT_ID")
-        self.client_secret = client_secret or os.environ.get("SEATGEEK_CLIENT_SECRET")
-        if (not self.client_id or not self.client_secret) and db is not None:
-            for name, attr in (
-                ("SEATGEEK_CLIENT_ID", "client_id"),
-                ("SEATGEEK_CLIENT_SECRET", "client_secret"),
-            ):
-                if not getattr(self, attr):
-                    try:
-                        res = db.rpc("get_app_secret", {"p_name": name}).execute()
-                        setattr(self, attr, res.data if isinstance(res.data, str) else None)
-                    except Exception as e:
-                        # client_secret is optional; client_id is required
-                        if attr == "client_id":
-                            print(f"seatgeek: vault lookup failed for {name}: {e}")
-        if not self.client_id:
+        self.api_token = api_token or os.environ.get("SEATGEEK_API_TOKEN")
+        if not self.api_token and db is not None:
+            try:
+                res = db.rpc("get_app_secret", {"p_name": "SEATGEEK_API_TOKEN"}).execute()
+                self.api_token = res.data if isinstance(res.data, str) else None
+            except Exception as e:
+                print(f"seatgeek: vault lookup failed: {e}")
+        if not self.api_token:
             raise SeatGeekError(
-                "SEATGEEK_CLIENT_ID not found. Either set the env var, or "
-                "store it in Vault: SELECT public.upsert_app_secret('SEATGEEK_CLIENT_ID', '<key>')."
+                "SEATGEEK_API_TOKEN not found. Either set the env var, or "
+                "store it in Vault: SELECT public.upsert_app_secret('SEATGEEK_API_TOKEN', '<token>')."
             )
+        # `client_id` is what SeatGeek's URL params want — it's the same value.
+        self.client_id = self.api_token
         self.timeout_s = timeout_s
         self.session = requests.Session()
         self.session.headers.update({
@@ -112,11 +106,9 @@ class SeatGeekClient:
     def _get(self, path: str, params: dict | None = None,
              max_429_retries: int = 3) -> dict | list:
         url = f"{API_BASE}/{path.lstrip('/')}"
-        # SG auth: client_id (and optionally client_secret) as query params.
+        # SG auth: client_id query param (= our api_token internally).
         # Drop None and pass through bool-as-1/0 per SG convention.
         clean: dict[str, Any] = {"client_id": self.client_id}
-        if self.client_secret:
-            clean["client_secret"] = self.client_secret
         for k, v in (params or {}).items():
             if v is None:
                 continue

@@ -418,10 +418,10 @@ Mechanics (whoever picks this up):
 ### 2026-05-09 code (SeatGeek integration — 3rd data source: section_info, recs, performer images)
 
 - DONE — **SeatGeek integration** (mig `20260509080000`, SCHEMA v13). Third data source after TEvo + SeatData. Metadata + discovery only (no pricing — that's TEvo + SeatData). Adds: section_info per venue (canonical seating layouts, complementary to our zone xref), affinity-scored recommendations (events + performers — better than our string-similarity heuristic), 4-size performer images, SG taxonomy tree for cross-validation.
-- DONE — **Vault writer RPC**: `upsert_app_secret(name, value)` (whitelist-gated, SECURITY DEFINER, service-role only). Lets PowerShell / scripts push keys without using SQL editor. Whitelist now covers SEATDATA_API_KEY + TEVO_API_TOKEN + TEVO_SECRET + SEATGEEK_CLIENT_ID + SEATGEEK_CLIENT_SECRET.
+- DONE — **Vault writer RPC**: `upsert_app_secret(name, value)` (whitelist-gated, SECURITY DEFINER, service-role only). Lets PowerShell / scripts push keys without using SQL editor. Whitelist now covers SEATDATA_API_KEY + TEVO_API_TOKEN + TEVO_SECRET + SEATGEEK_API_TOKEN.
 - DONE — **`seatgeek_client.py`** (new module). Wraps all 9 SG endpoints. Vault-first auth, env-var override, 429 backoff, persistence helpers for every xref + cache table.
 - DONE — **6 new `/api/seatgeek/*` routes** in app.py: `GET /event/{id}`, `POST /event/{id}/auto-search`, `POST /event/{id}/sync-sections`, `POST /event/{id}/sync-recommendations`, `POST /sync-taxonomies`, `GET /recommendations/by-event/{id}`.
-- AWAITING — **SEATGEEK_CLIENT_ID push to Vault** via PowerShell. The user has the key; will push via `upsert_app_secret` RPC once confirmed.
+- AWAITING — **SEATGEEK_API_TOKEN push to Vault**. User pushes via SQL editor: `SELECT public.upsert_app_secret('SEATGEEK_API_TOKEN', '<token>')`.
 - NEXT (design) — KANBAN row added: render SG section layout on event-detail page (overlay onto existing zone breakdown), and "Related events" panel using `/api/seatgeek/recommendations/by-event/{id}`.
 
 ### 2026-05-09 code (vault for keys + SeatData↔TEvo mapping + EVO orders 10-min cron)

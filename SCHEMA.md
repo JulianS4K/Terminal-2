@@ -814,7 +814,7 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 
   **Migration `20260509080000`** adds:
     - `upsert_app_secret(name, value)` — writer RPC for Vault, whitelist-gated
-    - `get_app_secret()` whitelist extended to include SEATGEEK_CLIENT_ID + SEATGEEK_CLIENT_SECRET
+    - `get_app_secret()` whitelist extended to include SEATGEEK_API_TOKEN
     - `seatgeek_event_xref` (TEvo event_id ↔ SG event_id + cached metadata)
     - `seatgeek_venue_xref`
     - `seatgeek_performer_xref` (with 4-size images)
@@ -829,8 +829,7 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
     - `list_venues`, `get_venue`
     - `list_taxonomies`
     - `recommend_events`, `recommend_performers`
-  Auth via Vault (`SEATGEEK_CLIENT_ID` + optional `SEATGEEK_CLIENT_SECRET`)
-  with env var override. 429 backoff with Retry-After respect. Persistence
+  Auth via Vault (`SEATGEEK_API_TOKEN`) with env var override. 429 backoff with Retry-After respect. Persistence
   helpers for all xref + cache tables.
 
   **API routes added** (under `/api/seatgeek/*`):
@@ -842,7 +841,7 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
     - `GET  /recommendations/by-event/{event_id}` — read cached recs
 
   **Auth**: Vault-stored credentials. Use `SELECT public.upsert_app_secret(
-  'SEATGEEK_CLIENT_ID', '<key>')` to set. Routes return 503 with setup
+  'SEATGEEK_API_TOKEN', '<token>')` to set. Routes return 503 with setup
   hint if missing.
 
   **Rate limits**: SG doesn't publish hard numbers; observed ~1000 req/hour

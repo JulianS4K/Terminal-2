@@ -35,8 +35,7 @@ BEGIN
     'SEATDATA_API_KEY',
     'TEVO_API_TOKEN',
     'TEVO_SECRET',
-    'SEATGEEK_CLIENT_ID',
-    'SEATGEEK_CLIENT_SECRET'
+    'SEATGEEK_API_TOKEN'
   ) THEN
     RAISE EXCEPTION 'secret % is not in the app whitelist', p_name USING ERRCODE = '42501';
   END IF;
@@ -72,8 +71,7 @@ BEGIN
     'SEATDATA_API_KEY',
     'TEVO_API_TOKEN',
     'TEVO_SECRET',
-    'SEATGEEK_CLIENT_ID',
-    'SEATGEEK_CLIENT_SECRET'
+    'SEATGEEK_API_TOKEN'
   ) THEN
     RAISE EXCEPTION 'secret % is not in the app whitelist', p_name USING ERRCODE = '42501';
   END IF;
