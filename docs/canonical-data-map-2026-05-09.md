@@ -132,17 +132,39 @@ The table is pre-seeded with **62 mappings** covering events, performers, venues
 
 ### 2.5 Sale (transacted / order)
 
-| Canonical field | tevo (evo_orders) | sg_broker (seatgeek_orders) | seatdata (seatdata_sales_snapshots) |
+| Canonical field | tevo (evo_orders) | sg_broker (seatgeek_orders, sg_seller) | seatdata SoldAPI (seatdata_sales_snapshots) |
 |---|---|---|---|
-| `id` | `order_id` | `sg_order_id` | (synthetic content_hash) |
-| `price` | `price` | `sale_price` | `sold_price` |
+| `id` | `order_id` | `sg_order_id` | (synthetic `content_hash`) |
+| `price` | `price` | `sale_price` | **`price`** (was incorrectly mapped as `sold_price` — fixed in mig 220000) |
 | `qty` | `quantity` | `sale_quantity` | `quantity` |
 | `section` | (in evo_order_items) | `sale_section` | `section` |
 | `row` | (in evo_order_items) | `sale_row` | `row` |
+| `zone` | (none) | (none) | `zone` (SD coarse zone label) |
+| `sale_timestamp` | (in evo_order_items) | `created_at_sg` | `sale_timestamp` (when transaction cleared) |
 | `status` | `status` (canonical via order_status_xref) | `status` | (always sold) |
 | `event_id` (TEvo) | `tevo_event_id` (via evo_order_items) | `tevo_event_id` | `tevo_event_id` |
+| `payment_total` | (in evo_order_items) | `payment_total` (gross paid by buyer) | (none) |
+| `payment_fees` | — | `payment_fees` (SG cut) | — |
 
 Canonical state machine (6-state) defined in `order_status_xref`. Use `unified_orders` view to get one rowset across all 3 sources.
+
+### 2.6 SeatData SoldAPI (`/v0.3/salesdata/get`) — full feed shape
+
+The "SoldAPI" is SeatData's `/v0.3/salesdata/get` endpoint — sold-listings history. Always charged when rows are returned (per BASIC plan budget enforcement). Persisted to `seatdata_sales_snapshots` with these columns:
+
+| Column | Source field in SD response | Notes |
+|---|---|---|
+| `tevo_event_id` | (joined via `seatdata_event_xref`) | Hub join key |
+| `sd_event_id` | `event_id` | SD's id space |
+| `sale_timestamp` | `sale_timestamp` | When the transaction cleared |
+| `quantity` | `quantity` | Number of tickets sold |
+| `price` | `price` | Realized retail price (per ticket) |
+| `zone` | `zone` | Coarse zone (e.g. "Lower Bowl") |
+| `section` | `section` | Section number/name |
+| `row` | `row` | Row label |
+| `content_hash` | (computed) | Dedup key |
+
+We have **254 rows** for 1 event (Knicks G5) currently — every row is a transacted sale, not a listing. Also persisted: `seatdata_event_stats` (pricing time series with `sold_median`, `sold_mean`, `getin_min`, `getin_listings_count`, `total_count`, `total_sold` — see field-map for full list).
 
 ---
 
@@ -215,10 +237,22 @@ Every source above is **read-only**. The enforcement stack (per `SCHEMA.md` RULE
 
 Plus 25 SG events tracked in `sg_events_canonical` (211 if you count the 186 historical orders-only rows). 8.5M TEvo listings rows + 200 SG seller catalog rows in `unified_listings` today.
 
+**`data_source_field_map` coverage**: 190 mappings across 25 tables, **0 unmapped**.
+
+| source_key | mappings | entity_kinds covered |
+|---|---|---|
+| `tevo` | 50 | event, event_metrics, performer, venue, listing, sale, derived |
+| `sg_broker` | 39 | event, performer, venue, listing, sale, sale_broker, derived |
+| `seatdata` | 33 | event, event_stats, performer, venue, section, zone, listing, sale (SoldAPI) |
+| `espn` | 31 | event, performer, snapshot, event_snapshot, injury, news, athlete |
+| `sg_seller` | 30 | event, listing, sale, order_ticket |
+| `wikipedia` | 7 | performer |
+
 Refresh anytime:
 
 ```sql
 SELECT * FROM v_canonical_coverage;
+SELECT * FROM data_source_field_map_audit;  -- drift detector
 ```
 
 ---
@@ -233,7 +267,8 @@ SELECT * FROM v_canonical_coverage;
 | `20260509180000_sg_canonical_orders_sales_sync.sql` | extend canonical sync to orders + broker sales |
 | `20260509190000_seatgeek_historic_sales.sql` | historic-data fabric (performer + season + section) |
 | `20260509200000_seatgeek_historic_views.sql` | analytical views on historic |
-| **`20260509210000_canonical_data_map.sql`** | **THIS migration** — registry + field map + universal external_ids + unified_listings + v_canonical_event/performer/coverage |
+| `20260509210000_canonical_data_map.sql` | initial registry + field map (62 rows) + universal external_ids + unified_listings + v_canonical_event/performer/coverage |
+| **`20260509220000_full_field_map_coverage.sql`** | **THIS migration** — 128 added field mappings (SoldAPI complete + sg_seller complete + ESPN snapshots/injuries/news/athlete + TEvo extras + Wikipedia extras + drift-detection audit view). Bug-fix: SD sale price was incorrectly mapped to `sold_price`; corrected to `price`. |
 
 ---
 
