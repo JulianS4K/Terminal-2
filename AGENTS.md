@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v14)
+## SCHEMA LOCK (2026-05-09-v15)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v14`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v15`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,16 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (SeatGeek Seller Direct API — auto-xref via inline event metadata)
+
+- DONE — **SeatGeek Seller Direct integration** (mig `20260509100000`, SCHEMA v15). Read-only ingest from `sellerdirect-api.seatgeek.com` (DIFFERENT host from `brokerdata.seatgeek.com`, same token). Probe revealed 3 endpoints we can use: `/listings` (157,846 active S4K listings), `/orders?status=X` (6,074 confirmed + 496,413 fulfilled lifetime), `/order?order_id=X` (single).
+- DONE — **Auto-backfill via inline event metadata**. Every /listings + /orders row carries `event_id`, `event` name, `venue`, `date` inline. New SQL function `sg_attempt_event_xref(sg_event_id, name, date, venue)` fuzzy-matches TEvo events on (occurs_at_local::date, venue_name LIKE) and upserts `seatgeek_event_xref` automatically. **No more manual SG event_id mapping for events we have inventory on.**
+- DONE — **Live test on Knicks G5**: persisted page-1 listings (200 rows) + confirmed-orders page 1 + fulfilled-orders page 1 (400 orders total, deduped). 2 SG events auto-linked to TEvo events (Chicago Sky @ Lynx 5/17, Rockies @ Diamondbacks 5/22). Knicks G5 (TEvo 3345925) wasn't in the first page of listings — either we don't have S4K inventory on this specific game or it's later in the cursor walk. The mechanism is verified; cron will keep filling the xref over time.
+- DONE — **Pagination probe + client update**: `?page=N` is deprecated (server returns 400 "use page_cursor instead"). `?page_cursor=X` is the new pattern. `?per_page=N` works, `?event_id=N` filters. Client now uses `iter_seller_listings(max_pages, per_page)` with cursor pagination. Default cron pulls 5 pages × 200 = 1000 listings/tick.
+- DONE — **Schema additions**: `seatgeek_seller_listings`, `seatgeek_orders`, `seatgeek_order_tickets`, `seatgeek_seller_pull_log`, `seatgeek_orders_by_event` view. Plus `sg_attempt_event_xref()` SQL function.
+- DONE — **`POST /api/admin/collect-sg-seller`** + 3 read endpoints + cron `seatgeek-seller-collect-10min` (jobid 41) every 10 min via pg_net → Railway.
+- NEXT (design) — KANBAN row added: render SG seller-direct sales overlay (we now have actual S4K SG sales by event) + SG seller-listings panel showing our active inventory cross-referenced against TEvo zones.
 
 ### 2026-05-09 code (SeatGeek BROKER DATA rebuild — wrong host scrap-and-rewrite)
 

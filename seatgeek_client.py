@@ -36,6 +36,8 @@ import requests
 from supabase import Client
 
 API_BASE = "https://brokerdata.seatgeek.com"
+# Seller Direct API — different host, same partner token. Read-only ingest.
+SELLER_DIRECT_BASE = "https://sellerdirect-api.seatgeek.com"
 
 
 class SeatGeekError(Exception):
@@ -332,3 +334,364 @@ class SeatGeekClient:
         except Exception as e:
             print(f"seatgeek: store_sales failed: {e}")
             return 0
+
+    # ============================================================
+    # SELLER DIRECT API (sellerdirect-api.seatgeek.com)
+    # ============================================================
+    # Read-only — pulls our S4K listings catalog + orders. The data on
+    # these endpoints carries SG event_id + name + venue + date INLINE,
+    # which is the discovery mechanism for backfilling seatgeek_event_xref
+    # automatically (no manual matching needed for events we have inventory
+    # or orders on).
+
+    def _get_seller(self, path: str, params: dict | None = None,
+                    max_429_retries: int = 3) -> tuple[int, dict | list]:
+        """Same shape as _get but for SELLER_DIRECT_BASE."""
+        url = f"{SELLER_DIRECT_BASE}/{path.lstrip('/')}"
+        clean: dict[str, Any] = {"token": self.api_token}
+        for k, v in (params or {}).items():
+            if v is None:
+                continue
+            clean[k] = (1 if v else 0) if isinstance(v, bool) else v
+        attempt = 0
+        backoff = 1.0
+        while True:
+            attempt += 1
+            r = self.session.get(url, params=clean, timeout=self.timeout_s)
+            if r.status_code == 429 and attempt <= max_429_retries:
+                ra = r.headers.get("Retry-After")
+                try:
+                    sleep_s = float(ra) if ra else backoff
+                except ValueError:
+                    sleep_s = backoff
+                time.sleep(min(60.0, sleep_s + random.random()))
+                backoff = min(60.0, backoff * 2)
+                continue
+            try:
+                body = r.json()
+            except ValueError:
+                body = {"raw_text": r.text}
+            return r.status_code, body
+
+    def seller_listings(self, *, event_id: int | None = None,
+                        per_page: int = 200,
+                        page_cursor: str | None = None) -> dict:
+        """GET /listings — full S4K catalog OR filtered by event_id.
+        Pagination uses page_cursor (the deprecated `page` int still
+        returns 400 from the server). Returns the full body dict so the
+        caller can inspect meta + next cursor."""
+        params: dict = {"per_page": per_page}
+        if event_id is not None:
+            params["event_id"] = int(event_id)
+        if page_cursor:
+            params["page_cursor"] = page_cursor
+        status, body = self._get_seller("/listings", params=params)
+        listings = (body or {}).get("listings") if isinstance(body, dict) else []
+        if self.db:
+            try:
+                self.db.table("seatgeek_seller_pull_log").insert({
+                    "endpoint": "/listings", "http_status": status,
+                    "rows_returned": len(listings or []),
+                    "total_reported": ((body or {}).get("meta") or {}).get("total"),
+                    "request_meta": params,
+                }).execute()
+            except Exception:
+                pass
+        if status != 200:
+            raise SeatGeekError(f"/listings returned {status}: {str(body)[:200]}")
+        return body if isinstance(body, dict) else {"listings": listings or []}
+
+    def iter_seller_listings(self, *, max_pages: int = 5, per_page: int = 200):
+        """Walk /listings via page_cursor. Yields each listing dict.
+        Default pulls just first 5 pages (1000 listings) — full catalog
+        is 157K+ items, so use larger max_pages for full sweep."""
+        cursor = None
+        for _ in range(max_pages):
+            body = self.seller_listings(per_page=per_page, page_cursor=cursor)
+            listings = body.get("listings") or []
+            if not listings:
+                break
+            for l in listings:
+                yield l
+            meta = body.get("meta") or {}
+            cursor = meta.get("next_cursor") or meta.get("next_page_cursor") or meta.get("page_cursor")
+            if not cursor:
+                break
+
+    def seller_orders(self, status_filter: str, *, page: int = 1) -> dict:
+        """GET /orders?status={X}&page={N}. Status is REQUIRED.
+        Valid: open | confirmed | fulfilled | pending | cancelled | delivered."""
+        status, body = self._get_seller("/orders", params={"status": status_filter, "page": page})
+        orders = (body or {}).get("orders") if isinstance(body, dict) else []
+        meta = (body or {}).get("meta") if isinstance(body, dict) else {}
+        if self.db:
+            try:
+                self.db.table("seatgeek_seller_pull_log").insert({
+                    "endpoint": "/orders",
+                    "status_filter": status_filter,
+                    "page": page,
+                    "http_status": status,
+                    "rows_returned": len(orders or []),
+                    "total_reported": (meta or {}).get("total"),
+                }).execute()
+            except Exception:
+                pass
+        if status != 200:
+            raise SeatGeekError(f"/orders?status={status_filter} returned {status}: {str(body)[:200]}")
+        return body if isinstance(body, dict) else {"orders": [], "meta": {}}
+
+    def iter_seller_orders(self, status_filter: str, *, max_pages: int = 50):
+        """Auto-paginate through /orders for one status filter. Yields each
+        order dict. Stops when total_reached or empty page returned."""
+        seen = 0
+        for page in range(1, max_pages + 1):
+            body = self.seller_orders(status_filter, page=page)
+            orders = body.get("orders") or []
+            meta = body.get("meta") or {}
+            total = meta.get("total") or 0
+            if not orders:
+                break
+            for o in orders:
+                yield o
+            seen += len(orders)
+            if total and seen >= total:
+                break
+
+    def seller_order(self, order_id: str) -> dict:
+        """GET /order?order_id={X}. Single-order detail (Apps Script's primary call)."""
+        status, body = self._get_seller("/order", params={"order_id": str(order_id)})
+        if self.db:
+            try:
+                self.db.table("seatgeek_seller_pull_log").insert({
+                    "endpoint": "/order", "http_status": status,
+                    "rows_returned": 1 if status == 200 else 0,
+                    "request_meta": {"order_id": order_id},
+                }).execute()
+            except Exception:
+                pass
+        if status != 200:
+            raise SeatGeekError(f"/order?order_id={order_id} returned {status}: {str(body)[:200]}")
+        return body if isinstance(body, dict) else {}
+
+    @staticmethod
+    def _hash_seller_listing(l: dict) -> str:
+        canon = "|".join(str(l.get(k, "")) for k in (
+            "sg_listing_id", "section", "row", "quantity", "cost",
+            "is_edelivery", "is_instant", "in_hand_date", "notes",
+            "seat_from", "seat_thru",
+        ))
+        return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:32]
+
+    def store_seller_listings(self, listings: list) -> dict:
+        """Persist listings + auto-backfill seatgeek_event_xref via
+        sg_attempt_event_xref(). Returns counts dict."""
+        if not self.db or not listings:
+            return {"received": 0, "inserted": 0, "events_seen": 0, "events_linked": 0}
+        ts = datetime.now(timezone.utc).isoformat()
+        # Dedup-and-batch-resolve event xrefs first to avoid hammering the RPC
+        events_seen: dict[int, dict] = {}
+        for l in listings:
+            sg_eid = l.get("event_id")
+            if sg_eid is None:
+                continue
+            try:
+                sg_eid_i = int(sg_eid)
+            except (TypeError, ValueError):
+                continue
+            if sg_eid_i not in events_seen:
+                events_seen[sg_eid_i] = {
+                    "sg_event_id": sg_eid_i,
+                    "sg_event_name": l.get("event"),
+                    "sg_venue": l.get("venue"),
+                    "sg_event_date": l.get("event_date"),
+                }
+        events_linked = 0
+        tevo_by_sg: dict[int, int] = {}
+        for sg_eid, meta in events_seen.items():
+            try:
+                res = self.db.rpc("sg_attempt_event_xref", {
+                    "p_sg_event_id": meta["sg_event_id"],
+                    "p_sg_event_name": meta["sg_event_name"],
+                    "p_sg_event_date": meta["sg_event_date"],
+                    "p_sg_venue": meta["sg_venue"],
+                }).execute()
+                tevo_id = res.data if isinstance(res.data, int) else (res.data or {}).get("sg_attempt_event_xref")
+                if tevo_id:
+                    tevo_by_sg[sg_eid] = int(tevo_id)
+                    events_linked += 1
+            except Exception as e:
+                print(f"seatgeek: sg_attempt_event_xref failed for {sg_eid}: {e}")
+
+        rows = []
+        for l in listings:
+            sg_eid = l.get("event_id")
+            if sg_eid is None:
+                continue
+            try:
+                sg_eid_i = int(sg_eid)
+            except (TypeError, ValueError):
+                continue
+            ihd = l.get("in_hand_date")
+            ihd_clean = ihd[:10] if isinstance(ihd, str) and len(ihd) >= 10 else None
+            rows.append({
+                "pulled_at": ts,
+                "seller_listing_id": l.get("seller_listing_id"),
+                "ticket_id": l.get("ticket_id"),
+                "sg_listing_id": int(l["sg_listing_id"]) if l.get("sg_listing_id") is not None else None,
+                "sg_event_id": sg_eid_i,
+                "sg_event_name": l.get("event"),
+                "sg_venue": l.get("venue"),
+                "sg_event_date": l.get("event_date"),
+                "sg_event_time": l.get("event_time"),
+                "quantity": l.get("quantity"),
+                "section": l.get("section"),
+                "row": l.get("row"),
+                "seat_from": l.get("seat_from"),
+                "seat_thru": l.get("seat_thru"),
+                "notes": l.get("notes"),
+                "cost": l.get("cost"),
+                "is_edelivery": l.get("is_edelivery"),
+                "is_instant": l.get("is_instant"),
+                "in_hand_date": ihd_clean,
+                "tevo_event_id": tevo_by_sg.get(sg_eid_i),
+                "content_hash": self._hash_seller_listing(l),
+                "raw": l,
+            })
+        try:
+            res = self.db.table("seatgeek_seller_listings").upsert(
+                rows, on_conflict="sg_listing_id,content_hash"
+            ).execute()
+            return {"received": len(listings), "inserted": len(res.data or []),
+                    "events_seen": len(events_seen), "events_linked": events_linked}
+        except Exception as e:
+            print(f"seatgeek: store_seller_listings failed: {e}")
+            return {"received": len(listings), "inserted": 0,
+                    "events_seen": len(events_seen), "events_linked": events_linked,
+                    "error": str(e)}
+
+    def store_seller_orders(self, orders: list, status_filter: str) -> dict:
+        """Persist orders + auto-backfill xref. Returns counts dict."""
+        if not self.db or not orders:
+            return {"received": 0, "upserted": 0, "tickets_inserted": 0,
+                    "events_seen": 0, "events_linked": 0}
+        # Dedup events for batched xref resolution
+        events_seen: dict[int, dict] = {}
+        for o in orders:
+            ev = o.get("event") or {}
+            sg_eid = ev.get("seatgeek_event_id")
+            if sg_eid is None:
+                continue
+            try:
+                sg_eid_i = int(sg_eid)
+            except (TypeError, ValueError):
+                continue
+            if sg_eid_i not in events_seen:
+                events_seen[sg_eid_i] = {
+                    "sg_event_id": sg_eid_i,
+                    "sg_event_name": ev.get("name"),
+                    "sg_venue": ev.get("venue"),
+                    "sg_event_date": ev.get("date"),
+                }
+        tevo_by_sg: dict[int, int] = {}
+        events_linked = 0
+        for sg_eid, meta in events_seen.items():
+            try:
+                res = self.db.rpc("sg_attempt_event_xref", {
+                    "p_sg_event_id": meta["sg_event_id"],
+                    "p_sg_event_name": meta["sg_event_name"],
+                    "p_sg_event_date": meta["sg_event_date"],
+                    "p_sg_venue": meta["sg_venue"],
+                }).execute()
+                tevo_id = res.data if isinstance(res.data, int) else (res.data or {}).get("sg_attempt_event_xref")
+                if tevo_id:
+                    tevo_by_sg[sg_eid] = int(tevo_id)
+                    events_linked += 1
+            except Exception as e:
+                print(f"seatgeek: sg_attempt_event_xref failed for {sg_eid}: {e}")
+
+        order_rows = []
+        ticket_rows = []
+        ts_now = datetime.now(timezone.utc).isoformat()
+        for o in orders:
+            sg_oid = o.get("id")
+            if not sg_oid:
+                continue
+            ev = o.get("event") or {}
+            listing = o.get("listing") or {}
+            payment = o.get("payment") or {}
+            sg_eid = ev.get("seatgeek_event_id")
+            try:
+                sg_eid_i = int(sg_eid) if sg_eid is not None else None
+            except (TypeError, ValueError):
+                sg_eid_i = None
+            order_rows.append({
+                "sg_order_id": sg_oid,
+                "status": status_filter,
+                "created_at_sg": self._parse_iso(o.get("created")),
+                "delivery": o.get("delivery"),
+                "delivery_method": o.get("delivery_method"),
+                "stock_type": o.get("stock_type"),
+                "fulfillment_issue_message": o.get("fulfillment_issue_message"),
+                "pickup_email": o.get("pickup_email"),
+                "pickup_phone": o.get("pickup_phone"),
+                "pickup_availability": o.get("pickup_availability"),
+                "pickup_location": o.get("pickup_location"),
+                "pickup_instructions": o.get("pickup_instructions"),
+                "sg_event_id": sg_eid_i,
+                "sg_event_name": ev.get("name"),
+                "sg_venue": ev.get("venue"),
+                "sg_event_date": ev.get("date"),
+                "sg_event_time": ev.get("time"),
+                "sg_listing_id": listing.get("id"),
+                "sale_price": listing.get("price"),
+                "sale_row": listing.get("row"),
+                "sale_section": listing.get("section"),
+                "sale_quantity": listing.get("quantity"),
+                "tevo_event_id": tevo_by_sg.get(sg_eid_i) if sg_eid_i else None,
+                "payment_total": payment.get("total"),
+                "payment_price": payment.get("price"),
+                "payment_fees": payment.get("fees"),
+                "payment_tax": payment.get("tax"),
+                "payment_delivery": payment.get("delivery"),
+                "last_status_at": ts_now,
+                "raw": o,
+            })
+            for i, t in enumerate(o.get("tickets") or []):
+                bc = t.get("barcode") or {}
+                ticket_rows.append({
+                    "sg_order_id": sg_oid,
+                    "ticket_index": i,
+                    "section": t.get("section"),
+                    "row": t.get("row"),
+                    "seat": t.get("seat"),
+                    "is_ada": t.get("is_ada"),
+                    "is_ga": t.get("ga"),
+                    "obstructed_view": t.get("obstructed_view"),
+                    "barcode_type": bc.get("type"),
+                    "barcode_value": bc.get("value"),
+                    "mobile_passes": t.get("mobile_passes") or [],
+                    "raw": t,
+                })
+
+        upserted = 0
+        try:
+            if order_rows:
+                res = self.db.table("seatgeek_orders").upsert(
+                    order_rows, on_conflict="sg_order_id"
+                ).execute()
+                upserted = len(res.data or [])
+            # Ticket rows: replace per order to handle add/remove cleanly
+            sg_oids = list({r["sg_order_id"] for r in order_rows})
+            if sg_oids:
+                self.db.table("seatgeek_order_tickets").delete().in_("sg_order_id", sg_oids).execute()
+            if ticket_rows:
+                self.db.table("seatgeek_order_tickets").insert(ticket_rows).execute()
+        except Exception as e:
+            print(f"seatgeek: store_seller_orders failed: {e}")
+            return {"received": len(orders), "upserted": upserted,
+                    "tickets_inserted": len(ticket_rows),
+                    "events_seen": len(events_seen),
+                    "events_linked": events_linked, "error": str(e)}
+        return {"received": len(orders), "upserted": upserted,
+                "tickets_inserted": len(ticket_rows),
+                "events_seen": len(events_seen), "events_linked": events_linked}

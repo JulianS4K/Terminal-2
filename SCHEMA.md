@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v14`
-**Last verified against prod**: 2026-05-09 ~05:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v15`
+**Last verified against prod**: 2026-05-09 ~03:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -797,6 +797,71 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v15**: **SeatGeek Seller Direct API integration** —
+  read-only ingest from `sellerdirect-api.seatgeek.com`. SECOND broker
+  host alongside `brokerdata.seatgeek.com` (v14). Same partner token,
+  different API surface.
+
+  **Live probe results** (mig `20260509100000`):
+
+  | endpoint | status | findings |
+  |---|---|---|
+  | `GET /listings` | 200 | **157,846** active S4K listings catalog. Each row carries `event_id` + `event` name + `venue` + `event_date` inline. |
+  | `GET /listings?event_id=N` | 200 | filter works — direct event lookup |
+  | `GET /listings?per_page=N` | 200 | works |
+  | `GET /listings?page=N` | 400 | **deprecated** — use `?page_cursor=` |
+  | `GET /orders?status=confirmed` | 200 | **6,074** confirmed lifetime orders |
+  | `GET /orders?status=fulfilled` | 200 | **496,413** fulfilled lifetime orders |
+  | `GET /orders?status=open\|pending\|cancelled\|delivered` | 200 | shape valid, currently 0 each |
+  | `GET /order?order_id=X` | 200 / 404 | single-order detail (Apps Script's primary call) |
+
+  **Discovery model**: the inline `event` block on every listing and
+  order makes manual mapping obsolete for events we have inventory or
+  orders on. Fuzzy match `(occurs_at_local::date, venue_name)` between
+  TEvo `events` and SG metadata, auto-upsert into `seatgeek_event_xref`.
+  Verified live: 2 SG events auto-linked from page 1 of /listings alone
+  (Chicago Sky @ Lynx 5/17 → TEvo 3345789; Rockies @ Diamondbacks 5/22 →
+  TEvo 3092720). Cron will keep it converging.
+
+  **Migration `20260509100000`** adds:
+    - `seatgeek_seller_listings` — full catalog snapshot per pull;
+      18 fields per listing including `tevo_event_id` backfilled via
+      `sg_attempt_event_xref()`. content_hash dedup.
+    - `seatgeek_orders` — order header (id, status, event inline,
+      listing inline, payment summary, tevo_event_id auto-backfilled)
+    - `seatgeek_order_tickets` — per-seat detail (barcodes, mobile passes)
+    - `seatgeek_seller_pull_log` — audit trail with `total_reported`
+    - `sg_attempt_event_xref(sg_event_id, name, date, venue) RETURNS bigint` —
+      idempotent xref helper, fuzzy matches TEvo events on date+venue
+      with case-insensitive trim + LIKE prefix fallback. Returns
+      matched tevo_event_id (or NULL when no TEvo match).
+    - `seatgeek_orders_by_event` view — rollup per (TEvo) event:
+      open/pending/confirmed/fulfilled/delivered/cancelled counts +
+      tickets_sold + gross_sold
+
+  **Client extension (`seatgeek_client.py`)**: 4 new methods —
+  `seller_listings(event_id, per_page, page_cursor)`,
+  `iter_seller_listings(max_pages, per_page)` (cursor pagination),
+  `seller_orders(status, page)`, `iter_seller_orders(status)`,
+  `seller_order(order_id)`, plus `store_seller_listings()` and
+  `store_seller_orders()` helpers that auto-call `sg_attempt_event_xref()`
+  and report `events_seen` + `events_linked` counts.
+
+  **API routes**:
+    - `POST /api/admin/collect-sg-seller?statuses=open,pending,confirmed,fulfilled&pull_listings=true` —
+      cron-driven, X-Cron-Secret gated. Pulls 5 pages of /listings × 200
+      = 1000 listings/tick, then iterates orders by status filter.
+    - `GET /api/seatgeek/event/{tevo_id}/seller-listings?latest_only=true` —
+      read persisted with summary
+    - `GET /api/seatgeek/event/{tevo_id}/seller-orders` — read persisted
+      with summary (by_status, tickets_sold, gross_sold)
+    - `GET /api/seatgeek/seller-status` — diagnostic: distinct SG events
+      seen, auto-link rate, recent pulls
+
+  **Cron**: `seatgeek-seller-collect-10min` (jobid 41) every 10 min via
+  pg_net → Railway. Convergence-style: cumulative pulls keep adding
+  fresh inventory + filling xref over time.
 
 - **2026-05-09-v14**: **SeatGeek BROKER DATA API rebuild**. The v13
   integration assumed the public discovery API at `api.seatgeek.com/2`

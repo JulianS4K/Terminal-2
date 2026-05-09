@@ -30,6 +30,23 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
+### NEXT (design) — SeatGeek Seller Direct: S4K inventory + sales overlay
+
+**What**: SG Seller Direct integration is live (commit *pending*). Cron `seatgeek-seller-collect-10min` (jobid 41) pulls 1000 listings + paginated orders every 10 min from `sellerdirect-api.seatgeek.com`. Every row carries inline event metadata, so `seatgeek_event_xref` auto-fills via fuzzy match.
+
+UI surfaces to add:
+1. **"S4K on SG" panel on event hero**. `GET /api/seatgeek/event/{tevo_id}/seller-listings` returns our active SG listings for the event with summary (count, tickets, median cost). Show as a small dense panel: "S4K SG: 12 listings · 47 tix · median cost $89".
+2. **Realized SG sales chart series**. `GET /api/seatgeek/event/{tevo_id}/seller-orders` returns persisted orders with state breakdown. Add a new chart series `SG_Orders_Confirmed` (bar, hourly) — direct visibility into our SG sales velocity, parallel to TEvo's evo_orders.
+3. **Cross-source sale comparison**. Combine: TEvo evo_orders (our TEvo sales), SG seller_orders (our SG sales), SeatData sales (whole-market sold comps), TEvo evo asks (current asks), SG seller_listings asks. That's 5 series for a single event — dense but each has a distinct color/dash convention.
+4. **Auto-link status badge**. `GET /api/seatgeek/seller-status` reports auto-link rate. Surface on a settings page: "SG events seen: N, auto-linked to TEvo: M". When auto-linked stalls or fails, badge goes amber.
+
+**Why**: This is the deepest data we have. SG Seller Direct gives us OUR actual transactions on SG, not market-wide aggregates. Combined with TEvo /v9/orders we now have the full S4K sales pipeline on both marketplaces.
+**Backend ready**: yes — cron firing every 10 min, 200 listings + 400 orders already persisted from initial test pulls.
+**Files**: `static/index.html`
+**Filed by**: code · 2026-05-09
+
+---
+
 ### NEXT (design) — SeatGeek BROKER DATA: marketplace listings + sold-comp overlay
 
 **What**: SG integration is now the **broker** data API (not public). Three high-value UI surfaces:
@@ -199,7 +216,11 @@ UI surfaces:
 
 ## DONE (last 10)
 
-### DONE — `<sha pending>` · refactor(seatgeek): scrap public-API, rebuild for BROKER DATA API
+### DONE — `<sha pending>` · feat(seatgeek): seller-direct ingest with auto-xref via inline event metadata
+- Added 2nd SG broker host (`sellerdirect-api.seatgeek.com`). Probe revealed /listings (157,846 active S4K), /orders?status= (496K fulfilled lifetime), /order single. Migration 20260509100000 adds seatgeek_seller_listings + seatgeek_orders + order_tickets + pull_log + sg_attempt_event_xref RPC + seatgeek_orders_by_event view. Each row carries inline event metadata → fuzzy match to TEvo on (date, venue) auto-fills xref. Live test: page-1 listings = 200 rows, 25 distinct SG events, 2 auto-linked to TEvo. Cron seatgeek-seller-collect-10min (jobid 41) every 10 min, pulls 5×200 listings + 4 status filters of orders. Page=N is deprecated; client uses page_cursor pagination. SCHEMA v15.
+- by: code · landed: 2026-05-09 03:00 UTC
+
+### DONE — `089c9a8` · refactor(seatgeek): scrap public-API, rebuild for BROKER DATA API
 - v13 used wrong host (api.seatgeek.com/2 with ?client_id=). Token is actually for brokerdata.seatgeek.com with ?token=. Mig 20260509090000 drops 5 unused tables, rebuilds around event_xref/listings_snapshots/sales_snapshots/pull_log + event_latest view. Client + 6 routes rewritten for /listings, /v2/listings, /sales (purchases scope unavailable). Live diag: 400 "No event found" on bogus event_id (auth pass), 401 on /purchases (covered by TEvo /v9/orders). SCHEMA v14.
 - by: code · landed: 2026-05-09 05:00 UTC
 
