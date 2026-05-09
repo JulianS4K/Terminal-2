@@ -80,6 +80,41 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
+### NEXT (code) — Set Railway CRON_SECRET to unblock EVO orders
+
+**What**: Set the Railway environment variable `CRON_SECRET` for the terminal-2-production service so that the `evo-orders-collect-10min` cron starts populating `evo_orders`. Today the cron runs successfully but writes 0 rows because the secret-gated endpoint returns 401.
+
+**Value to set** (provided by Julian 2026-05-08): `thisisevochronsecret123!`
+
+**How**:
+- Railway dashboard → terminal-2-production service → Variables → add/update `CRON_SECRET=thisisevochronsecret123!`
+- OR `railway variables set CRON_SECRET=thisisevochronsecret123!` if using the CLI
+- After setting, redeploy is automatic; next cron tick (≤ 10 min) starts ingesting
+
+**Verify**: `SELECT COUNT(*) FROM evo_orders` 30 min after redeploy — should be > 0.
+
+**Why this is on the board**: design surfaced it during the 2026-05-08 Supabase data-reality pass. It's been the persistent action item from `docs/audit-2026-05-09.md` §5 item 1. Several design surfaces (Undelivered Window, Event Workbench order book strip, Pricing Queue) need EVO orders to feel populated.
+
+**Security note**: this secret value should NOT be committed to source. It's in this KANBAN row temporarily for handoff; remove this row once set.
+
+**Filed by**: design · 2026-05-08
+
+---
+
+### NEXT (code) — Backfill SG event xref to TEvo
+
+**What**: SeatGeek has 186 distinct SG events with orders in our DB but only 0-1 are TEvo-xref'd today. SG also has 25 distinct SG events with seller listings, only 1 xref'd. Most existing SG data is invisible at the event level.
+
+**How**: name+venue+date matching from `seatgeek_orders` + `seatgeek_seller_listings` against `events`. Likely 80%+ matchable via fuzzy name + exact venue + date-equals.
+
+**Companion task — same pattern for SeatData** (`seatdata_event_xref` is also 1 event today; SD has 254 sales for that event but more SD pulls are coming).
+
+**Why**: unlocks `unified_orders_by_event` for the entire SG-covered book. Currently every event-level order panel shows zero SG orders even when they exist.
+
+**Filed by**: design · 2026-05-08 (per data-reality-2026-05-08.md)
+
+---
+
 ### NEXT (design) — Order status uses unified vocabulary now
 
 **What**: New `unified_orders` + `unified_orders_by_event` views (mig 20260509140000) collapse EVO + SG seller-direct + SeatData into a single rowset with 6 canonical states (`pending` / `accepted` / `substitution` / `rejected` / `cancelled` / `fulfilled`). Two flags carry alongside: `is_terminal` (state won't change), `is_sale_succeeded` (only `fulfilled`).

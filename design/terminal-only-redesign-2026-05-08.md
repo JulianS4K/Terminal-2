@@ -33,6 +33,27 @@ The redesign exposes that surface as the primary analytical object. Every panel 
 
 ## 1. Data sources — single map of how everything joins
 
+### 1.0 Data reality 2026-05-08 (calibration note added post-Supabase pass)
+
+A live inspection of `hzrizjeaxlqcxfrtczpq` (Terminal .5) showed the design needs calibration on coverage. The architecture below holds; the coverage doesn't yet match what the sims assumed. **All of these gaps are temporary** — Julian confirmed more SG/SD/non-sports data is being added, and zones + cross-source xref will land later.
+
+| Signal | Architecture | Coverage today | Trajectory |
+|---|---|---|---|
+| TEvo `event_metrics` | hub | 28,342 snapshots / 634 events / 16d history | dominant; growing |
+| ESPN team + injuries + news | join via `event_xref` | 428 events linked; 1973 active injury rows; 594 news rows | mature for NBA/MLB/MLS |
+| ESPN athletes | join via `performer_external_ids` | **MLB 545 / NBA 281 / MLS 31; ZERO NFL/NHL/WNBA** | NFL/NHL/WNBA pending ingest |
+| SeatData stats | join via `seatdata_event_xref` | **1 event xref'd to TEvo** (Knicks G5); 254 raw sales | growing; xref backfill pending |
+| SeatGeek metrics | join via `seatgeek_event_xref` | **1 event xref'd to TEvo**; 200 raw listings cover 25 SG events; 400 raw orders cover 186 SG events | growing; xref backfill pending |
+| Wiki summary + rivalries | NOT YET linked to performer_id | 126 summary rows + 25 rivalry rows present; xref to TEvo entities not built | linkage pending |
+| Performer zones | `performer_zones` + `performer_zone_rules` | 179 zones + 3553 rules — **GEOMETRY only** (which sections/rows belong to which zone) | rules-config layer (Smart/Dumb, SG2..SG6) lives in AQ — needs ingest |
+| `event_sentiment` composite | mig 130000 | **18 events populated** (stub) | needs broader cron backfill |
+| EVO orders | `evo_orders` | 0 rows (Railway `CRON_SECRET` blocker) | unblocked once secret is set |
+| `unified_orders` | mig 140000 | 654 rows = 400 SG + 254 SD + 0 EVO | grows with EVO + SG xref |
+| `major_event_calendar` | mig 010000 | 14 tentpole events (Super Bowl etc.) | use this for Mega-event mode auto-detection |
+| `venue_assets` | venue images/maps | 111 venues covered (more than the "top ~30" originally claimed) | mature |
+
+**Practical implication for the design**: TEvo is the analytical core today. SD/SG/Wiki are graceful-degrade enrichment. The cross-source 4-light coverage badge mostly shows 1-2 lights now, and that's honest. As SG/SD xref backfill and Wiki linkage land, the same UI lights up more cells without redesign.
+
 ### 1.1 The hub-and-spoke model
 
 TEvo's `events.id` is the hub. Every other source xrefs to TEvo independently. There is one canonical join view per entity:
@@ -397,7 +418,9 @@ Per code's redesign memo, ship after Templates 1-4. Reads `event_movers()` RPC f
 
 | # | Object | Why | Priority |
 |---|---|---|---|
-| 1 | `zone_pricer` table | Mirror of the pricer CSV columns (per-event-per-zone). Drives Event Workbench zone breakdown deep view + Pricing Queue. | P1 — biggest gap |
+| 1 | `zone_pricer` table — **AQ ingest** (not from-scratch) | Geometry already exists: `performer_zones` (179) + `performer_zone_rules` (3553) hold (zone_id → section_from/to + row_from/to). The PRICING RULES (Smart/Dumb, SG2..SG6 deltas, top-of-range, max-step-drop) live in the existing AQ system and need ingest into our DB. Drives Event Workbench zone breakdown deep view + Pricing Queue. | P1 — biggest gap |
+| 1b | `wiki_summary` xref to TEvo `performer_id` | Wiki data IS already ingested (126 performer summaries + 25 rivalries) but the `wiki_summary.performer_id` linkage to TEvo's `events.primary_performer_id` is the missing connection. One join statement per performer fixes it. | P2 — present-but-unlinked |
+| 1c | `seatgeek_event_xref` + `seatdata_event_xref` backfill | SG raw data covers 186 distinct SG events with orders + 25 with seller listings; only 1 xref'd. SD has 254 sales for 1 xref'd event. Name/venue/date matching backfill unlocks most existing coverage without new ingest. | P1 — pure backfill, high leverage |
 | 2 | `venue_row_rank_method` enum on `venue_assets` (or new `venue_seating_config` table) | §2.1 — row-rank ambiguity is real | P2 |
 | 3 | `hold_expires_at` on `unified_orders` view | Code already approved (audit §4 Q2) | P2 |
 | 4 | `series_xref` table | Code approved table approach (audit §4 Q3) | P2 |

@@ -16,6 +16,28 @@
 
 ---
 
+## 0a. Data reality 2026-05-08 (calibration after Supabase pass)
+
+ESPN athlete data is currently populated for 3 leagues only:
+
+| League | espn_athletes rows | Player-driven sims supported? |
+|---|---:|---|
+| MLB | 545 | 🟢 fully (deepest coverage) |
+| NBA | 281 | 🟢 fully |
+| MLS | 31 | 🟡 thin — works for biggest names |
+| NFL | 0 | 🔴 player-overlay sims degrade to team/news/standings only |
+| NHL | 0 | 🔴 same — no athlete data; team-level fine |
+| WNBA | 0 | 🔴 same — see WNBA-1 caveat below |
+| World Cup | (news only) | 🟡 594 news rows but no athlete tracking |
+
+**`espn_team_snapshots` (365), `espn_injury_snapshot_latest` (1973 active), `espn_news` (594) cover the linked leagues fully** — so team-level signals work for all sports above. It's specifically the player-row scenarios (a star scratched, a pitcher matchup, a single-star draws) that need calibration. Each scenario below carries a **Data caveat** line where reality differs from intent.
+
+`major_event_calendar` is also live (14 tentpole rows: Super Bowl, Stanley Cup Final, MLS Cup, etc.) — Mega-event mode auto-detects from this, no new schema needed for that piece.
+
+The 30 sim shapes hold. Where data is thin, the sim documents what to render today vs after ingest catches up.
+
+---
+
 ## 0. TL;DR
 
 Sports differs from non-sports in 6 structural ways the simulations exercise:
@@ -361,19 +383,22 @@ Each section below picks 5 scenarios that exercise those differences. The Alloca
 
 ## 6. WNBA — 5 scenarios
 
-### WNBA-1 · Caitlin Clark / single-star draws
+### WNBA-1 · Caitlin Clark / single-star draws — **degraded to team-level today**
 
-- **Persona / intent**: pricer reacting to star-driven demand. Clark's games are 3-5x non-Clark games. Player presence is the dominant signal.
-- **Scope**: 8 — single performer (Indiana Fever, with Clark-presence overlay)
-- **Data sources**: EVO, ESPN player snapshots (Clark availability), Twitter (FUTURE — Clark mentions).
-- **Primary view**: T1 with **star-overlay panel** — Clark's recent stats, injury status, season trajectory next to game pricing.
+- **Data caveat (2026-05-08)**: WNBA athletes are not yet ingested (`espn_athletes` = 0 WNBA rows). The original sim assumed Clark-specific status drives the view. **Today this degrades to a team-level proxy**: Indiana Fever's home/away pricing premium acts as the demand signal. When WNBA athletes get ingested, the sim resumes the original shape (player-overlay panel, Clark status as primary driver).
+- **Persona / intent**: pricer reacting to star-team-driven demand. Fever home games trade 3-5x non-Fever WNBA games — driven by Clark's presence, but the player attribution is currently team-level not athlete-level in our data.
+- **Scope**: 8 — single performer (Indiana Fever)
+- **Data sources today**: EVO, ESPN team snapshots (Indiana Fever record + standings), ESPN news (594 news rows include 33 WNBA), team-level injury (when WNBA team rosters land). Twitter (FUTURE — Clark mentions).
+- **Data sources after WNBA athlete ingest**: add `espn_athletes` row for Clark + `espn_injury_snapshot_latest` filtered to her athlete_id.
+- **Primary view today**: T1 in **single-team-driven variant** — large team-record + streak panel (where ESPN team data IS populated for WNBA), 33 news rows surfaced as a "WNBA news" feed when relevant. The "with Clark / without Clark" comparison stays in the design as a stub — it activates when athlete data lands.
 - **Tabs / hide-shows**:
-  - Tabs: Tickets · View-by-Zone · Star-impact comparable games
-  - Show: "with Clark" vs "without Clark" historical pricing comparison
-- **Real-time elements**: live Clark injury status; sales tape.
+  - Tabs: Tickets · View-by-Zone · Star-impact comparable games (placeholder when athlete data missing)
+  - Show: team news feed; team standings; record vs season
+  - Hide-show: athlete-status block (default hidden when `espn_athletes` for the team is empty)
+- **Real-time elements**: WNBA news ticker; team-level injury news.
 - **Allocation note**: Fever season tickets exist; Allocation View applies.
 - **Custom zones**: WNBA-arena standard
-- **2-sec answer**: is Clark's status causing demand swings right now
+- **2-sec answer (today)**: is Indiana Fever home demand still elevated this game vs season average. **(Future, after athlete ingest)**: is Clark playing tonight + what's the corresponding premium.
 
 ### WNBA-2 · Playoff series — best-of-5 → best-of-7
 
@@ -606,10 +631,10 @@ Beyond what was already in `terminal-only-redesign-2026-05-08.md`:
 | # | Addition | Why |
 |---|---|---|
 | 1 | `inventory_allocation` table | Per Julian's many-to-many addition to non-sports doc; foundational for sports |
-| 2 | `tournament_xref` | Map events to tournament structure (NBA IST, MLS Concacaf, NFL playoffs, etc.). Includes round + advancement info. |
+| 2 | `tournament_xref` | Map events to tournament structure (NBA IST, MLS Concacaf, NFL playoffs, etc.). Includes round + advancement info. **NOTE 2026-05-08**: `major_event_calendar` is already live (14 tentpole rows: SB, SCF, MLS Cup, etc.) — Mega-event mode for major-event detection auto-derives from this; tournament_xref is the broader structure layer. |
 | 3 | `game_importance_flag` derivations | Rivalry / clinch-scenario / elimination / record-watch — derived nightly from ESPN context |
 | 4 | `pre_game_inactives` table | NFL inactives release, NBA injury report, MLB lineup. Time-stamped. Drives the 90min-before alert. |
-| 5 | `weather_forecast` (NOAA exposed) | Per-event-per-day forecast. Updated hourly. |
+| 5 | `weather_forecast` (NOAA exposed) | Per-event-per-day forecast. Updated hourly. **NOTE 2026-05-08**: `why_signals` table exists with weather schema (3 stub rows) — infrastructure ready, more data ingest pending. |
 | 6 | `pitcher_matchup` table (MLB-specific) | Probable starters per game. Drives the pitcher-overlay panel. |
 | 7 | `player_active_record_watch` | Players approaching career milestones. Drives WNBA-5 milestone-watch panel. |
 | 8 | `trade_event` log | Per-trade audit log with timestamp + players-affected + teams-affected. Drives Trade Impact Mode. |

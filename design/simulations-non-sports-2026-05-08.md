@@ -18,6 +18,18 @@
 
 ---
 
+## 0a. Data reality 2026-05-08 (calibration after Supabase pass)
+
+Three corrections to the assumptions baked into this doc:
+
+1. **Wikipedia is PRESENT, not future** — `wiki_summary` has 126 performer rows + `wiki_rivalries` has 25 rows. Where this doc says "Wikipedia (FUTURE)", read "Wikipedia (PRESENT, 126 covered) but not yet linked to `events.primary_performer_id`". The xref-to-TEvo is the gap, not the data.
+2. **Twitter / Reddit / Google Trends are still future** — no ingest yet. Those callouts remain accurate.
+3. **Concert event coverage is sparse**: 130 active concert events vs 445 concert performers in metadata. Most concert performers in our catalog have no upcoming events tracked. Tour-wide sims (C1, C3, T5) work in shape but have a smaller universe of comparable tours than implied.
+
+The 5-per-category sim shapes hold. Coverage is the calibration item, not the design.
+
+---
+
 ## 0. TL;DR
 
 The non-sports broker has fundamentally different mental tools than the sports broker:

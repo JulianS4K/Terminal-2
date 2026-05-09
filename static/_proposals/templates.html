@@ -163,6 +163,62 @@
   .ai-slot::before { content:"💡"; }
   .ai-slot.placeholder { font-style:italic; color:var(--dim); }
 
+  /* ========== MEDIA ASSETS ==========
+     Imported from the team-color + ESPN logo system in static/index.html
+     ESPN team logos: https://a.espncdn.com/i/teamlogos/{league}/500/{abbr}.png
+     ESPN player headshots: https://a.espncdn.com/i/headshots/{league}/players/full/{id}.png
+     TEvo seating maps: https://s3.amazonaws.com/media.ticketevolution.com/configurations/static_maps/{config_id}/{medium|large}.jpg
+  */
+  .lg { display:inline-block; width:24px; height:24px; border-radius:3px; vertical-align:-7px;
+    margin-right:6px; background-size:contain; background-repeat:no-repeat; background-position:center;
+    border:1px solid var(--border-strong); }
+  .lg-lg { width:64px; height:64px; vertical-align:middle; border-radius:6px; }
+  .lg-sm { width:18px; height:18px; vertical-align:-4px; margin-right:4px; }
+  .lg-nyk { background-color:#1d428a; background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/ny.png'); }
+  .lg-phi { background-color:#006bb6; background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/phi.png'); }
+  .lg-bos { background-color:#007a33; background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/bos.png'); }
+  .lg-mia { background-color:#98002e; background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/mia.png'); }
+  .lg-lal { background-color:#552583; background-image:url('https://a.espncdn.com/i/teamlogos/nba/500/lal.png'); }
+  .lg-nyy { background-color:#132448; background-image:url('https://a.espncdn.com/i/teamlogos/mlb/500/nyy.png'); }
+  .lg-pit-mlb { background-color:#fdb827; background-image:url('https://a.espncdn.com/i/teamlogos/mlb/500/pit.png'); }
+  .lg-bos-mlb { background-color:#bd3039; background-image:url('https://a.espncdn.com/i/teamlogos/mlb/500/bos.png'); }
+  .lg-nyr { background-color:#0038a8; background-image:url('https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png'); }
+
+  /* venue map panel — TEvo S3 static seat map */
+  .venue-map { aspect-ratio:1.4/1; max-height:220px; background:var(--bg); border:1px solid var(--border);
+    border-radius:3px; overflow:hidden; position:relative; }
+  .venue-map .img { width:100%; height:100%; background-size:contain; background-repeat:no-repeat;
+    background-position:center; opacity:0.85; }
+  .venue-map .label { position:absolute; bottom:6px; left:6px; font-size:10px;
+    background:rgba(13,14,16,0.7); padding:2px 6px; border-radius:2px; color:var(--muted); }
+
+  /* player headshot — ESPN /headshots */
+  .pl-head { display:inline-block; width:28px; height:28px; border-radius:50%; vertical-align:-9px;
+    margin-right:6px; background-size:cover; background-position:center top;
+    border:1px solid var(--border-strong); background-color:var(--surface-2); }
+  .pl-head.pl-brunson  { background-image:url('https://a.espncdn.com/i/headshots/nba/players/full/3934672.png'); }
+  .pl-head.pl-bridges  { background-image:url('https://a.espncdn.com/i/headshots/nba/players/full/3982181.png'); }
+  .pl-head.pl-randle   { background-image:url('https://a.espncdn.com/i/headshots/nba/players/full/3064440.png'); }
+  .pl-head.pl-embiid   { background-image:url('https://a.espncdn.com/i/headshots/nba/players/full/3059318.png'); }
+
+  /* custom zone styling — custom is the DEFAULT zone view for sports */
+  .zone-mode-toggle { display:inline-flex; gap:0; border:1px solid var(--border); border-radius:3px; overflow:hidden; }
+  .zone-mode-toggle a { padding:3px 10px; font-size:11px; color:var(--muted); cursor:pointer;
+    border-right:1px solid var(--border); transition: background 120ms ease; }
+  .zone-mode-toggle a:last-child { border-right:none; }
+  .zone-mode-toggle a:hover { background:var(--surface-2); color:var(--text); }
+  .zone-mode-toggle a.active { background:var(--accent); color:#000; }
+  .cz-row { display:grid; grid-template-columns:1fr 60px 60px 60px 28px; gap:8px; padding:6px 12px;
+    border-bottom:1px solid var(--border); align-items:center; font-size:13px; }
+  .cz-row:hover { background:var(--surface-2); cursor:pointer; }
+  .cz-row .name { font-weight:500; }
+  .cz-row .pred { font-size:11px; color:var(--dim); margin-top:1px; }
+  .cz-row .cz-action { font-size:10px; padding:2px 5px; background:var(--surface-2); border:1px solid var(--border);
+    border-radius:2px; color:var(--muted); cursor:pointer; }
+  .cz-row .cz-action:hover { background:var(--accent); color:#000; border-color:var(--accent); }
+  .cz-row.add { color:var(--accent); border-bottom:none; padding-top:8px; }
+  .cz-row.add:hover { background:rgba(245,132,38,0.08); }
+
   /* template hide/show */
   .tmpl { display:none; }
   .tmpl.active { display:block; }
@@ -232,11 +288,11 @@
 <section id="workbench" class="tmpl">
   <div class="panel">
     <div class="panel-h">
-      <h3>Knicks vs 76ers · Game 5 · MSG · Wed May 13 19:30 ET</h3>
+      <h3><span class="lg lg-nyk"></span>Knicks <span class="muted">vs</span> <span class="lg lg-phi"></span>76ers · Game 5 · MSG · Wed May 13 19:30 ET</h3>
       <div class="actions">
         T-1d 17h 22m <span class="badge hot">HOT</span>
         <span class="cov" title="TEvo · SeatData · SeatGeek · ESPN">
-          <span class="lit"></span><span class="lit"></span><span></span><span class="lit espn"></span>
+          <span class="lit"></span><span></span><span></span><span class="lit espn"></span>
         </span>
       </div>
     </div>
@@ -297,17 +353,65 @@
     </div>
 
     <div class="panel">
-      <div class="panel-h"><h3>Zone breakdown</h3>
-        <span class="dim">curated → fallback</span></div>
-      <table class="dt">
-        <thead><tr><th>Zone</th><th class="num">$</th><th class="num">lst</th><th class="num">S4K%</th></tr></thead>
-        <tbody>
-          <tr><td>Lower Bowl</td><td class="num">$2,340</td><td class="num">76</td><td class="num">28%</td></tr>
-          <tr><td>Mezzanine</td><td class="num">$1,120</td><td class="num">142</td><td class="num">41%</td></tr>
-          <tr><td>Upper Deck</td><td class="num">$385</td><td class="num">229</td><td class="num">51%</td></tr>
-          <tr><td>Nosebleed</td><td class="num">$145</td><td class="num">156</td><td class="num">33%</td></tr>
-        </tbody>
-      </table>
+      <div class="panel-h">
+        <h3>Zones</h3>
+        <span class="zone-mode-toggle">
+          <a class="active">My Zones</a><a>Curated</a><a>Sections</a>
+        </span>
+      </div>
+      <!-- venue seat map asset · TEvo S3 static map for MSG / Basketball config -->
+      <div style="padding:8px 8px 0;">
+        <div class="venue-map">
+          <div class="img" style="background-image:url('https://s3.amazonaws.com/media.ticketevolution.com/configurations/static_maps/2841/medium.jpg?1429172102');"></div>
+          <div class="label">MSG · Basketball config · TEvo static</div>
+        </div>
+      </div>
+      <!-- CUSTOM ZONES — DEFAULT FOR SPORTS per Julian 2026-05-08 -->
+      <div style="padding:6px 0 4px;">
+        <div class="cz-row" style="font-size:10px; color:var(--muted); text-transform:uppercase;
+          letter-spacing:0.04em; padding:4px 12px; border-bottom:1px solid var(--border-strong);">
+          <span>Name / predicate</span><span class="num">$ med</span><span class="num">lst</span><span class="num">S4K%</span><span></span>
+        </div>
+        <div class="cz-row">
+          <div>
+            <div class="name">Front 10 + GA pit</div>
+            <div class="pred">section IN ('100 End','100 Corner','100 Garbage','GA') AND row ≤ 10</div>
+          </div>
+          <span class="num">$2,340</span><span class="num">76</span><span class="num">28%</span>
+          <span class="cz-action">@</span>
+        </div>
+        <div class="cz-row">
+          <div>
+            <div class="name">Premium boxes</div>
+            <div class="pred">section LIKE 'Club %' OR section = 'Courtside'</div>
+          </div>
+          <span class="num">$6,750</span><span class="num">42</span><span class="num">12%</span>
+          <span class="cz-action">@</span>
+        </div>
+        <div class="cz-row">
+          <div>
+            <div class="name">Mid-tier value</div>
+            <div class="pred">section IN ('U1 .1-9','U2 1-10','300 Center')</div>
+          </div>
+          <span class="num">$650</span><span class="num">95</span><span class="num">35%</span>
+          <span class="cz-action">@</span>
+        </div>
+        <div class="cz-row">
+          <div>
+            <div class="name">Discount tier</div>
+            <div class="pred">section IN ('U3 10+','U4','400') AND row > 5</div>
+          </div>
+          <span class="num">$385</span><span class="num">229</span><span class="num">51%</span>
+          <span class="cz-action">@</span>
+        </div>
+        <div class="cz-row add">
+          <div>+ New custom zone</div><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+      <div class="ai-slot placeholder">
+        Custom zones default · curated zones available via toggle ·
+        <span class="todo" style="margin-left:auto;">user_custom_zones table (NEW)</span>
+      </div>
     </div>
 
     <div class="panel">
@@ -365,9 +469,9 @@
 <section id="performer" class="tmpl">
   <div class="panel">
     <div class="panel-h">
-      <h3>New York Knicks · NBA · home: MSG</h3>
+      <h3><span class="lg lg-lg lg-nyk" style="margin-right:12px;"></span>New York Knicks · NBA · home: MSG</h3>
       <div class="actions">
-        <span class="cov"><span class="lit"></span><span class="lit"></span><span></span><span class="lit espn"></span></span>
+        <span class="cov"><span class="lit"></span><span></span><span></span><span class="lit espn"></span></span>
       </div>
     </div>
     <div class="panel-body">
@@ -411,10 +515,31 @@
 
   <div class="panel">
     <div class="panel-h"><h3>ESPN context</h3>
-      <span class="dim">because event_type=game + has_espn=true</span></div>
+      <span class="dim">because event_type=game + has_espn=true · /api/broker/performer/{id}/espn</span></div>
     <div class="panel-body" style="font-size:13px;">
-      Standings <strong>51-31</strong> · streak W3 · Brunson <span class="badge amber">Q</span> · Bridges out · 3 news 24h
-      <span class="todo">/api/broker/performer/{id}/espn</span>
+      <div style="margin-bottom:8px;">
+        Standings <strong>51-31</strong> · streak <span class="pos">W3</span> · 8th seed East · 3 news 24h
+      </div>
+      <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:center;">
+        <div title="Jalen Brunson — Questionable">
+          <span class="pl-head pl-brunson"></span>
+          <span style="font-weight:500;">Brunson</span>
+          <span class="badge amber" style="margin-left:4px;">Q</span>
+          <div class="dim" style="font-size:11px; margin-top:2px;">ankle · Day-To-Day</div>
+        </div>
+        <div title="Mikal Bridges — Out">
+          <span class="pl-head pl-bridges"></span>
+          <span style="font-weight:500;">Bridges</span>
+          <span class="badge red" style="margin-left:4px;">OUT</span>
+          <div class="dim" style="font-size:11px; margin-top:2px;">back · multi-game</div>
+        </div>
+        <div title="Julius Randle — Active">
+          <span class="pl-head pl-randle"></span>
+          <span style="font-weight:500;">Randle</span>
+          <span class="badge green" style="margin-left:4px;">A</span>
+          <div class="dim" style="font-size:11px; margin-top:2px;">starting · clean</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -717,49 +842,56 @@
       <div class="series-cols">
         <div class="series-col played">
           <div class="dim">G1 · 5/04</div>
-          <div class="dim">MSG</div>
+          <div style="margin:4px 0;"><span class="lg lg-sm lg-nyk"></span><span class="muted">v</span><span class="lg lg-sm lg-phi"></span></div>
+          <div class="dim">MSG · home</div>
           <div class="num-big">$560</div>
           <div class="dim">$1110 → -49.6%</div>
           <div><span class="badge amber">amber</span></div>
         </div>
         <div class="series-col played">
           <div class="dim">G2 · 5/06</div>
-          <div class="dim">MSG</div>
+          <div style="margin:4px 0;"><span class="lg lg-sm lg-nyk"></span><span class="muted">v</span><span class="lg lg-sm lg-phi"></span></div>
+          <div class="dim">MSG · home</div>
           <div class="num-big">$464</div>
           <div class="dim">$1274 → -63.6%</div>
           <div><span class="badge amber">amber</span></div>
         </div>
         <div class="series-col played">
           <div class="dim">G3 · 5/08</div>
-          <div class="dim">Phil</div>
+          <div style="margin:4px 0;"><span class="lg lg-sm lg-phi"></span><span class="muted">v</span><span class="lg lg-sm lg-nyk"></span></div>
+          <div class="dim">Phil · away</div>
           <div class="num-big">$250</div>
           <div class="dim">$643 → -61.1%</div>
           <div><span class="badge red">red</span></div>
         </div>
         <div class="series-col played">
           <div class="dim">G4 · 5/10</div>
-          <div class="dim">Phil</div>
+          <div style="margin:4px 0;"><span class="lg lg-sm lg-phi"></span><span class="muted">v</span><span class="lg lg-sm lg-nyk"></span></div>
+          <div class="dim">Phil · away</div>
           <div class="num-big">$399</div>
           <div class="dim">$817 → -51.2%</div>
           <div><span class="badge amber">amber</span></div>
         </div>
         <div class="series-col now">
           <div class="dim">G5 · 5/13</div>
-          <div class="dim">MSG</div>
+          <div style="margin:4px 0;"><span class="lg lg-sm lg-nyk"></span><span class="muted">v</span><span class="lg lg-sm lg-phi"></span></div>
+          <div class="dim">MSG · home</div>
           <div class="num-big">$987</div>
           <div class="dim">T-1d</div>
           <div><span class="badge amber">amber</span></div>
         </div>
         <div class="series-col">
           <div class="dim">G6 · 5/15</div>
-          <div class="dim">Phil</div>
+          <div style="margin:4px 0;"><span class="lg lg-sm lg-phi"></span><span class="muted">v</span><span class="lg lg-sm lg-nyk"></span></div>
+          <div class="dim">Phil · away</div>
           <div class="num-big">$1,140</div>
           <div class="dim">T-3d · +5%</div>
           <div><span class="badge green">green</span></div>
         </div>
         <div class="series-col contingent">
           <div class="dim">G7 · 5/17</div>
-          <div class="dim">MSG</div>
+          <div style="margin:4px 0;"><span class="lg lg-sm lg-nyk"></span><span class="muted">v</span><span class="lg lg-sm lg-phi"></span></div>
+          <div class="dim">MSG · home</div>
           <div class="num-big">$1,460</div>
           <div class="dim">T-5d · +12%</div>
           <div><span class="badge contingent">if-nec</span></div>
