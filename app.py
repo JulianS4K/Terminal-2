@@ -1620,6 +1620,264 @@ def admin_seed_home_venues(league: str, _=Depends(require_auth)):
     return {"league": league, "scanned": len(todo), "added": added, "skipped_no_venue": skipped, "errors": errors[:10]}
 
 
+# ---------------------------------------------------------------------------
+# Admin: wire SG / SeatData events to TEvo events
+# ---------------------------------------------------------------------------
+# For SG events with seller-direct listings but no seatgeek_event_xref row,
+# search TEvo by event name + date, ingest matching TEvo events into our
+# `events` table, then call sg_attempt_event_xref to link them.
+#
+# RULE 2 compliant — every TEvo call is GET via the read-only client.
+
+def _venue_tokens(name: str) -> set[str]:
+    """Crude venue-name token bag for fuzzy match. Strips 'Parking' suffix
+    so 'Citi Field Parking' matches 'Citi Field'."""
+    if not name:
+        return set()
+    n = name.lower().replace(" parking", "").replace("parking", "")
+    return {tok for tok in re.split(r"[^a-z0-9]+", n) if len(tok) >= 3}
+
+
+def _venue_overlap(a: str, b: str) -> float:
+    """Jaccard overlap between two venue names. 1.0 = identical, 0 = nothing
+    in common. ~0.5 typically indicates a real match (e.g. 'Daikin Park'
+    vs 'Daikin Park Houston')."""
+    ta, tb = _venue_tokens(a), _venue_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    inter = ta & tb
+    union = ta | tb
+    return len(inter) / len(union) if union else 0.0
+
+
+def _upsert_tevo_event_into_events(db, ev: dict) -> int | None:
+    """Upsert a TEvo event-detail dict into our `events` table. Returns the
+    event id if upserted, None otherwise."""
+    eid = ev.get("id")
+    if not eid:
+        return None
+    venue = ev.get("venue") or {}
+    perfs = ev.get("performances") or []
+    primary = next((p.get("performer") for p in perfs if p.get("primary")), None) \
+              or (perfs[0].get("performer") if perfs else None) \
+              or {}
+    row = {
+        "id": int(eid),
+        "name": ev.get("name"),
+        "occurs_at_local": ev.get("occurs_at_local") or ev.get("occurs_at"),
+        "state": ev.get("state"),
+        "venue_id": venue.get("id"),
+        "venue_name": venue.get("name"),
+        "venue_location": venue.get("location"),
+        "primary_performer_id": primary.get("id"),
+        "primary_performer_name": primary.get("name"),
+        "performer_ids": [
+            p.get("performer", {}).get("id")
+            for p in perfs
+            if isinstance(p.get("performer", {}).get("id"), int)
+        ],
+        "popularity_score": ev.get("popularity_score"),
+        "long_term_popularity_score": ev.get("long_term_popularity_score"),
+        "configuration_id": (ev.get("configuration") or {}).get("id"),
+        "configuration_name": (ev.get("configuration") or {}).get("name"),
+        "event_type": ev.get("category", {}).get("slug")
+                      if isinstance(ev.get("category"), dict)
+                      else ev.get("category"),
+    }
+    try:
+        db.table("events").upsert(row, on_conflict="id").execute()
+        return int(eid)
+    except Exception as e:
+        print(f"events upsert failed for {eid}: {e}")
+        return None
+
+
+@app.post("/api/admin/wire-sg-to-tevo")
+def admin_wire_sg_to_tevo(
+    dry_run: bool = False,
+    venue_overlap_min: float = 0.34,
+    _=Depends(require_auth),
+):
+    """For every SG event with seller-direct listings and no TEvo xref:
+      1. Pull distinct (sg_event_id, sg_event_name, sg_event_date, sg_venue)
+      2. Call TEvo /v9/events/search for the name on that date
+      3. Pick the result whose venue tokens overlap >= venue_overlap_min
+      4. Upsert that TEvo event into our `events` table
+      5. Call sg_attempt_event_xref (which inserts the xref row)
+
+    dry_run=true: returns proposed matches without writing anything.
+    Returns: counts + per-event audit so you can see what matched and why.
+    """
+    db = require_sb()
+    rows = (db.table("seatgeek_seller_listings")
+              .select("sg_event_id,sg_event_name,sg_event_date,sg_venue")
+              .execute().data or [])
+    seen = set()
+    todo: list[dict] = []
+    for r in rows:
+        key = r.get("sg_event_id")
+        if key in seen or not key:
+            continue
+        seen.add(key)
+        # Skip already-xref'd events
+        existing = (db.table("seatgeek_event_xref")
+                      .select("tevo_event_id").eq("sg_event_id", key)
+                      .limit(1).execute().data or [])
+        if existing:
+            continue
+        todo.append(r)
+
+    audit: list[dict] = []
+    new_xrefs = 0
+    no_match = 0
+    inserted_events = 0
+    errors: list[str] = []
+
+    for r in todo:
+        sg_event_id = int(r["sg_event_id"])
+        sg_name = r.get("sg_event_name") or ""
+        sg_date = r.get("sg_event_date")  # YYYY-MM-DD string
+        sg_venue = r.get("sg_venue") or ""
+        if not sg_date:
+            audit.append({"sg_event_id": sg_event_id, "sg_name": sg_name,
+                          "matched": False, "reason": "no sg_event_date"})
+            no_match += 1
+            continue
+        # 1-day window around sg_date
+        from datetime import datetime as _dt, timedelta as _td
+        try:
+            d = _dt.fromisoformat(str(sg_date))
+        except Exception:
+            audit.append({"sg_event_id": sg_event_id, "sg_name": sg_name,
+                          "matched": False, "reason": f"bad date {sg_date}"})
+            no_match += 1
+            continue
+
+        try:
+            resp = client.search_events_fulltext(
+                q=sg_name,
+                **{"occurs_at.gte": d.isoformat(),
+                   "occurs_at.lt":  (d + _td(days=1)).isoformat()},
+                per_page=20,
+            )
+        except Exception as e:
+            errors.append(f"sg_event_id={sg_event_id}: TEvo search failed: {e}")
+            continue
+        hits = (resp or {}).get("events", []) or []
+        if not hits:
+            audit.append({"sg_event_id": sg_event_id, "sg_name": sg_name,
+                          "matched": False, "reason": "TEvo: 0 hits on date"})
+            no_match += 1
+            continue
+        # Score by venue overlap
+        scored = []
+        for h in hits:
+            v = (h.get("venue") or {}).get("name") or ""
+            ov = _venue_overlap(sg_venue, v)
+            scored.append((ov, h))
+        scored.sort(key=lambda x: -x[0])
+        best_ov, best = scored[0]
+        if best_ov < venue_overlap_min:
+            audit.append({"sg_event_id": sg_event_id, "sg_name": sg_name,
+                          "matched": False, "best_venue": (best.get("venue") or {}).get("name"),
+                          "best_overlap": round(best_ov, 2),
+                          "reason": f"venue overlap {best_ov:.2f} < {venue_overlap_min}"})
+            no_match += 1
+            continue
+
+        if dry_run:
+            audit.append({"sg_event_id": sg_event_id, "sg_name": sg_name,
+                          "tevo_event_id": best.get("id"),
+                          "tevo_name": best.get("name"),
+                          "tevo_venue": (best.get("venue") or {}).get("name"),
+                          "venue_overlap": round(best_ov, 2),
+                          "matched": True, "dry_run": True})
+            new_xrefs += 1
+            continue
+
+        # Upsert TEvo event into events table
+        new_eid = _upsert_tevo_event_into_events(db, best)
+        if new_eid:
+            inserted_events += 1
+
+        # Call sg_attempt_event_xref to write the xref row
+        try:
+            res = db.rpc("sg_attempt_event_xref", {
+                "p_sg_event_id": sg_event_id,
+                "p_sg_event_name": sg_name,
+                "p_sg_event_date": str(sg_date),
+                "p_sg_venue": sg_venue,
+            }).execute()
+            matched_tevo_id = res.data
+        except Exception as e:
+            errors.append(f"sg_event_id={sg_event_id}: xref RPC failed: {e}")
+            continue
+
+        if matched_tevo_id:
+            new_xrefs += 1
+            audit.append({"sg_event_id": sg_event_id, "sg_name": sg_name,
+                          "tevo_event_id": int(matched_tevo_id),
+                          "tevo_name": best.get("name"),
+                          "tevo_venue": (best.get("venue") or {}).get("name"),
+                          "venue_overlap": round(best_ov, 2),
+                          "matched": True})
+        else:
+            audit.append({"sg_event_id": sg_event_id, "sg_name": sg_name,
+                          "tevo_event_id": int(best.get("id") or 0),
+                          "matched": False,
+                          "reason": "TEvo event ingested but xref RPC returned NULL "
+                                    "(matcher rejected — likely performer-name mismatch)"})
+
+    return {
+        "candidates": len(todo),
+        "newly_linked": new_xrefs,
+        "no_match": no_match,
+        "tevo_events_ingested": inserted_events,
+        "errors": errors[:20],
+        "dry_run": dry_run,
+        "audit": audit,
+    }
+
+
+@app.post("/api/admin/wire-sd-to-tevo")
+def admin_wire_sd_to_tevo(_=Depends(require_auth)):
+    """Same as wire-sg-to-tevo but for SeatData. SD events come in with
+    sd_event_name/date/venue; we search TEvo and call sd's existing
+    matcher (manual upsert via auto_name_date_venue path).
+
+    Currently SD only has 1 event (Knicks G5, already xref'd) — this route
+    is futureproofing for when more SD events arrive."""
+    db = require_sb()
+    rows = (db.table("seatdata_sales_snapshots")
+              .select("sd_event_id").execute().data or [])
+    seen = {r.get("sd_event_id") for r in rows if r.get("sd_event_id")}
+    if not seen:
+        return {"candidates": 0, "newly_linked": 0, "audit": []}
+
+    audit = []
+    new_xrefs = 0
+    for sd_id in seen:
+        existing = (db.table("seatdata_event_xref")
+                      .select("tevo_event_id").eq("sd_event_id", sd_id)
+                      .limit(1).execute().data or [])
+        if existing:
+            audit.append({"sd_event_id": sd_id, "matched": True,
+                          "tevo_event_id": existing[0]["tevo_event_id"],
+                          "note": "already linked"})
+            continue
+        # No SD event-detail call here yet — when more SD events arrive we
+        # plumb in the SD-side metadata fetch and search TEvo. Logged as
+        # missing for now.
+        audit.append({"sd_event_id": sd_id, "matched": False,
+                      "reason": "no metadata available; manual link required"})
+    return {
+        "candidates": len(seen),
+        "newly_linked": new_xrefs,
+        "already_linked": sum(1 for a in audit if a["matched"]),
+        "audit": audit,
+    }
+
+
 @app.get("/api/broker/event/{event_id}/espn")
 def broker_event_espn(event_id: int, _=Depends(require_auth)):
     """Tab 2: ESPN aggregated data for home + away teams.
