@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v18)
+## SCHEMA LOCK (2026-05-09-v19)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v18`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v19`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,15 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (cross-source order status mapping — unified vocabulary)
+
+- DONE — **`order_status_xref`** rosetta stone (mig `20260509140000`, SCHEMA v19). Maps 13 source-statuses to 6 canonical states (`pending` / `accepted` / `substitution` / `rejected` / `cancelled` / `fulfilled`) with `is_terminal` + `is_sale_succeeded` flags carried alongside.
+- DONE — **`canonical_order_status(source, source_status) → jsonb`** helper RPC for one-shot lookups.
+- DONE — **`unified_orders` view** — single rowset across `evo_orders` + `seatgeek_orders` + `seatdata_sales_snapshots`. Caught and fixed a bug along the way: initial draft joined `seatgeek_sales_snapshots` (broker-data /sales, currently empty for our token) instead of `seatdata_sales_snapshots` (the 254-row Knicks G5 SeatData history). Now produces 254 SeatData fulfilled + 200 SG accepted + 200 SG fulfilled, $397K gross from SeatData alone.
+- DONE — **`unified_orders_by_event`** + **`order_status_coverage`** rollup views. The latter is the diagnostic for "what do we have across all sources?" and feeds the future Order Book page from the redesign memo.
+- IMPACT: any cross-source analytical query (fill rate, sale velocity, in-flight book) now writes against canonical states instead of per-source CASE. Future sources (TickPick, Vivid Seats) just insert their xref rows + UNION into `unified_orders`.
+- BLOCKED ON USER (carried from prior session): set `CRON_SECRET` on Railway to unblock EVO orders cron jobid 40. Once set, EVO orders auto-flow into the same `unified_orders` view.
 
 ### 2026-05-09 code (historical/sentiment/similar-events strategy + supporting schema)
 

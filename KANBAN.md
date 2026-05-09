@@ -13,8 +13,14 @@
 
 ## DOING
 
-### DOING (design) — _none yet_
-_(append your work-in-progress here)_
+### DOING (design) — Preliminary 5-template design handoff (DONE — ready for review)
+
+- **What**: Per Julian's brief, produced `design/preliminary-event-views-2026-05-08.md` — 5 view templates with ASCII wireframes (Event Workbench / Performer Console / Venue Pulse / Pricing Queue / Metro Watchlist), structural decisions on Julian's 5 questions (sports-vs-non-sports performer, venue-mode tabs, performer past-data integration, power-user pricing queue with `J/K` keyboard nav, metro-competing-events panel), simulation grid (8 scenarios × 5 templates), metrics-have-vs-need audit, LLM analysis-layer placeholder for Grok/Claude hookup, build sequence integrated with code's prior memos.
+- **Files touched**: `design/preliminary-event-views-2026-05-08.md` (new, ~600 lines).
+- **Reads from**: `docs/terminal-redesign-2026-05-09.md`, `docs/historical-data-and-multi-view-strategy-2026-05-09.md` (code's prior strategy memos — design doc explicitly builds on them, no re-analysis).
+- **Status**: ready for code review + claude design session pickup.
+- **Started**: 2026-05-08 (this session)
+- **No code changes**: doc-only deliverable. Static/index.html untouched. Strict wall preserved.
 
 ### DOING (code) — _none yet_
 _(if I'm in the middle of something, it goes here so design knows what files I'm touching)_
@@ -26,6 +32,24 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 ### NEXT (design) — orient and pick a starter task
 
 **What**: Read `COWORKER_ONBOARDING.md` end-to-end, then pick a row below.
+**Filed by**: code · 2026-05-09
+
+---
+
+### NEXT (design) — Order status uses unified vocabulary now
+
+**What**: New `unified_orders` + `unified_orders_by_event` views (mig 20260509140000) collapse EVO + SG seller-direct + SeatData into a single rowset with 6 canonical states (`pending` / `accepted` / `substitution` / `rejected` / `cancelled` / `fulfilled`). Two flags carry alongside: `is_terminal` (state won't change), `is_sale_succeeded` (only `fulfilled`).
+
+UI surfaces that should use this:
+1. **Event hero "order book strip"** — render counts in canonical buckets (pending / accepted / fulfilled / rejected+cancelled / substitution) regardless of which source they came from. Add a small badge per source within each bucket if the user wants to drill in.
+2. **Movers panel** — the "Read" classifier should consider `unified_orders_by_event.fulfilled` count vs `in_flight` count. Strong fulfilled momentum + low in-flight = supply about to dry up.
+3. **Sale pipeline page** (Page 6 in the redesign memo) — shows 5 canonical buckets with rows from all 3 sources blended into each.
+
+**Why**: Brokers don't think in "EVO completed vs SG fulfilled vs SG delivered". They think "did the sale go through". The canonical states model that.
+
+**Backend ready**: yes. `SELECT * FROM unified_orders_by_event WHERE tevo_event_id = X;` returns per-source per-canonical-state counts + gross.
+
+**Files**: `static/index.html`
 **Filed by**: code · 2026-05-09
 
 ---
@@ -283,6 +307,14 @@ UI surfaces:
 ---
 
 ## DONE (last 10)
+
+### DONE — `<sha pending>` · feat: cross-source order status mapping (unified vocabulary)
+- Mig 20260509140000 adds order_status_xref (13 mappings, 6 canonical states), canonical_order_status() RPC, unified_orders view (254 SD fulfilled + 200 SG accepted + 200 SG fulfilled live), unified_orders_by_event rollup, order_status_coverage diagnostic. Caught and fixed seatgeek_sales_snapshots vs seatdata_sales_snapshots typo during build. SCHEMA v19. Future sources (TickPick, Vivid Seats) just add xref rows + UNION branch.
+- by: code · landed: 2026-05-09 04:30 UTC
+
+### DONE — `005e3c0` · feat: matchup index + buyer sentiment + baselines + similar-events finder
+- See AGENTS LOG for details.
+- by: code · landed: 2026-05-09 04:00 UTC
 
 ### DONE — `<sha pending>` · feat: cross-source entity maps (universal id translator)
 - 3 views (entity_event_map / entity_performer_map / entity_venue_map) translate any source's id to all others, TEvo as hub. 6 translation functions (forward + inverse, both directions). taxonomy_xref table seeded with 12 league/type mappings (NBA, MLB, etc.). cross_source_coverage diagnostic view. Live coverage: 269/1233 events on ESPN, 37 multi-source performers, 21 SG-linked venues. All round-trips verified. Mig 20260509120000. SCHEMA v17.

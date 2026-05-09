@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v18`
-**Last verified against prod**: 2026-05-09 ~04:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v19`
+**Last verified against prod**: 2026-05-09 ~04:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -820,6 +820,74 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v19**: **Cross-source order status mapping** — 3 sale
+  sources (EVO TEvo, SG seller-direct, SeatData) now speak one
+  vocabulary. Mig `20260509140000`.
+
+  **Canonical state machine (6 states)**:
+  - `pending` — order received, no seller action yet
+  - `accepted` — seller acknowledged, working on fulfillment
+  - `substitution` — fulfilling broker rejected, awaiting substitute
+  - `rejected` — seller rejected outright
+  - `cancelled` — cancelled by either side
+  - `fulfilled` — sale finalized and delivered
+
+  Plus 2 boolean flags carried alongside:
+  - `is_terminal` — state will not transition again
+  - `is_sale_succeeded` — sale completed in our favor (only `fulfilled`)
+
+  **Source-status → canonical mapping (13 rows seeded)**:
+
+  | source | source_status | canonical | terminal | succeeded |
+  |---|---|---|---|---|
+  | evo | pending | pending | ❌ | ❌ |
+  | evo | accepted | accepted | ❌ | ❌ |
+  | evo | rejected | rejected | ✅ | ❌ |
+  | evo | completed | fulfilled | ✅ | ✅ |
+  | evo | pending_substitution | substitution | ❌ | ❌ |
+  | seatgeek | open | pending | ❌ | ❌ |
+  | seatgeek | pending | pending | ❌ | ❌ |
+  | seatgeek | confirmed | accepted | ❌ | ❌ |
+  | seatgeek | fulfilled | fulfilled | ✅ | ✅ |
+  | seatgeek | delivered | fulfilled | ✅ | ✅ |
+  | seatgeek | cancelled | cancelled | ✅ | ❌ |
+  | seatgeek | pending_substitution | substitution | ❌ | ❌ |
+  | seatdata | sold (synthesized) | fulfilled | ✅ | ✅ |
+
+  **Schema**:
+  - `order_status_xref` — the rosetta stone table; query by `(source, source_status)` or `WHERE canonical_status = X`.
+  - `canonical_order_status(source, source_status) → jsonb` helper RPC.
+  - `unified_orders` — single rowset across `evo_orders` + `seatgeek_orders`
+    + `seatdata_sales_snapshots`. Each row has source + canonical_status +
+    flags + tevo_event_id (resolved). Cross-source queries become trivial.
+  - `unified_orders_by_event` — per-event-per-source rollup with state
+    histogram + gross_sold + tickets_sold.
+  - `order_status_coverage` — diagnostic of (source, canonical_status)
+    counts + window + avg qty + sum gross.
+
+  **Live coverage as of v19**:
+
+  | source | canonical_status | rows | window | gross |
+  |---|---|---:|---|---:|
+  | seatdata | fulfilled | 254 | 2026-03 → 2026-05 | $397,558 |
+  | seatgeek | accepted | 200 | 2019-10 → 2026-05 | n/a |
+  | seatgeek | fulfilled | 200 | 2018-09 → 2026-05 | n/a |
+  | evo | (any) | 0 | — | — |
+
+  (EVO is 0 because Railway `CRON_SECRET` env var still needs to be
+  set to unblock jobid 40. Once unblocked, EVO orders flow into the
+  same `unified_orders` view automatically.)
+
+  **Why this matters**: any analytical query that wants "all sales
+  this event has had across any source" or "all in-flight orders
+  across all sources" or "fill rate per event" now writes against
+  `unified_orders` / `unified_orders_by_event` instead of building
+  per-source CASE statements.
+
+  **Future sources** (TickPick, Vivid Seats, etc.): when added, just
+  insert their status mappings into `order_status_xref` and add them
+  to the `unified_orders` view's UNION. No downstream query changes.
 
 - **2026-05-09-v18**: **Matchup index, buyer-sentiment composite,
   performer + venue baselines, similar-event finder**. Operationalizes
