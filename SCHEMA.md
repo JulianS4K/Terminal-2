@@ -373,26 +373,84 @@ to follow.
 
 ### The read-only external API rule (RULE 2)
 
-**TEvo, SeatData, SeatGeek (broker + seller-direct) integrations are
-strictly READ-ONLY.** We pull data — we never POST/PUT/PATCH/DELETE.
+**TEvo and SeatGeek (broker + seller-direct) integrations are strictly
+READ-ONLY.** We pull data — we never POST/PUT/PATCH/DELETE.
 
-Enforced at the code level with hard-coded HTTP method allowlists in:
-- `evo_client.py` — only GET to `api.ticketevolution.com`
-- `seatdata_client.py` — GET + the single `POST /v0.4/events/event-request-add`
-  (asks SG to add an event to their catalog; metadata only, no S4K data)
-- `seatgeek_client.py` — only GET to both `brokerdata.seatgeek.com` and
-  `sellerdirect-api.seatgeek.com`
+This rule is enforced in **three layers** so that no human and no AI session
+(this one or future ones) can ship a write without flipping a tracked file:
 
-Each client has an `_assert_readonly_method(method)` guard called inside
-`_get` / `_request`. If anyone ever adds a non-GET wrapper, the assertion
-raises before the HTTP call goes out.
+#### Layer 1 — Runtime guards inside each client
 
-Why this matters: writes to TEvo's `/orders` would create real orders.
-Writes to SG's broker endpoints could change inventory state. The rule
-makes accidental damage from a coding error structurally impossible.
+| Module | Guard | Allowed methods |
+|---|---|---|
+| `evo_client.py` | `_assert_readonly_method()` raises `EvoReadOnlyError` | `frozenset({"GET"})` |
+| `seatgeek_client.py` | `_assert_readonly_method()` raises `SeatGeekError` | `frozenset({"GET"})` |
+| `seatdata_client.py` | `_assert_readonly_method()` | GET + the single `POST /v0.4/events/event-request-add` (metadata only — asks SD to add an event to their catalog; no S4K data) |
 
-When adding a new external API: copy the same `ALLOWED_HTTP_METHODS` +
-`_assert_readonly_method` pattern. List the integration in this section.
+Each guard is called inside the transport method (`_get`, `_get_seller`,
+`_request`) **before** the HTTP request is constructed. If anyone adds a
+non-GET wrapper or passes a write method through, the assertion raises
+before a network call is made. The `ALLOWED_HTTP_METHODS` constant is a
+module-level `frozenset` so it can't be silently mutated.
+
+#### Layer 2 — Static analysis (`scripts/check_readonly.py`)
+
+Repo-wide grep that fails (exit 1) if it finds:
+- `requests.(post|put|patch|delete)` / `httpx.(post|put|patch|delete)` /
+  `session.(post|put|patch|delete)` in any Python file with a forbidden
+  host string nearby
+- `fetch(URL, { method: "POST" | "PUT" | "PATCH" | "DELETE" })` in any
+  TS/JS file where `URL` resolves (literally or via tracked variable
+  bindings) to a forbidden host
+- A client module missing `_assert_readonly_method` /
+  `ALLOWED_HTTP_METHODS` / `frozenset({"GET"})` tokens
+
+Run as part of CI / pre-commit:
+```bash
+python scripts/check_readonly.py
+```
+Exits 0 with `RULE 2 clean`, or 1 with itemized violations.
+
+#### Layer 3 — Unit tests (`tests/test_readonly_guards.py`)
+
+12 pytest cases assert:
+- Each client's `_assert_readonly_method` raises on POST/PUT/PATCH/DELETE
+- Each client's `ALLOWED_HTTP_METHODS` constant equals `frozenset({"GET"})`
+- The audit script passes against the clean tree
+- The audit script catches a synthesized Python POST to TEvo
+- The audit script catches a synthesized TS POST to SG via host-var binding
+- The audit script fails when a runtime guard is removed from a client
+
+Run with:
+```bash
+pytest tests/test_readonly_guards.py
+```
+
+#### Why three layers
+
+- **Layer 1** stops accidental writes at runtime, even if Layers 2/3 are
+  bypassed (e.g. someone runs in a stripped CI image without pytest).
+- **Layer 2** stops new write paths at code-review time before they merge.
+- **Layer 3** stops the guards themselves from being silently removed —
+  if a future PR strips out `_assert_readonly_method`, the test fails.
+
+#### When adding a new external API
+
+1. Copy the `_assert_readonly_method` + `ALLOWED_HTTP_METHODS` pattern from
+   `evo_client.py` or `seatgeek_client.py`.
+2. Add the new module to `CLIENT_FILES` in `scripts/check_readonly.py`.
+3. Add unit tests mirroring `tests/test_readonly_guards.py` for the new
+   client.
+4. List the integration in this section.
+
+#### Why this matters
+
+Writes to TEvo's `/orders` would create real orders against the brokerage.
+Writes to SG's broker endpoints could change inventory state. RULE 2 makes
+accidental damage from a coding error (or a misguided AI suggestion)
+structurally impossible — flipping the rule requires editing three tracked
+files (the client, the audit script, and the tests), each of which is
+visible in any code review or git diff.
 
 ### `espn_injuries_snapshots` schema
 

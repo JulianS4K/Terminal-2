@@ -33,7 +33,12 @@ from typing import Any
 
 import requests
 
-from supabase import Client
+# Type-only import: this module's runtime guards (RULE 2) must be importable
+# in environments where the `supabase` package isn't installed (e.g. minimal
+# CI containers running scripts/check_readonly.py and tests/test_readonly_guards.py).
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from supabase import Client  # pragma: no cover
 
 API_BASE = "https://brokerdata.seatgeek.com"
 # Seller Direct API — different host, same partner token. Read-only ingest.
@@ -67,7 +72,7 @@ class SeatGeekClient:
     def __init__(
         self,
         api_token: str | None = None,
-        db: Client | None = None,
+        db: "Client | None" = None,
         timeout_s: int = 25,
     ):
         # Token resolution: explicit arg → env → Supabase Vault → error.

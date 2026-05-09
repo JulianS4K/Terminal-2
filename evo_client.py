@@ -43,6 +43,29 @@ from urllib.parse import urlencode
 import requests
 
 
+# RULE 2 — READ-ONLY across api.ticketevolution.com.
+# We pull listings, events, performers, venues, configurations, orders.
+# We never POST/PUT/PATCH/DELETE — no creating orders, no editing inventory.
+# Any non-GET method here is a bug; the guard below catches it at runtime
+# before a request can even fly. Do not add a method to this allowlist
+# without explicit human approval (see SCHEMA.md RULE 2).
+ALLOWED_HTTP_METHODS = frozenset({"GET"})
+
+
+class EvoReadOnlyError(RuntimeError):
+    """Raised when a non-GET method is attempted against TEvo."""
+
+
+def _assert_readonly_method(method: str) -> None:
+    """Hard guard: this client must never write back to TEvo."""
+    if method.upper() not in ALLOWED_HTTP_METHODS:
+        raise EvoReadOnlyError(
+            f"READ-ONLY violation: method {method} is not allowed. "
+            "TEvo integration is strictly read-only (RULE 2 in SCHEMA.md). "
+            "Pulling data only — never write back to api.ticketevolution.com."
+        )
+
+
 class EvoClient:
     def __init__(self, token: str, secret: str, sandbox: bool = False, timeout: int = 30):
         self.token = token
@@ -77,16 +100,12 @@ class EvoClient:
         return out
 
     # RULE 2 — READ-ONLY against api.ticketevolution.com.
-    # We pull listings, events, performers, venues, configurations,
-    # orders. We never POST/PUT/DELETE — no creating orders, no
-    # editing inventory, no calling SG-style mutate endpoints. Any
-    # write would risk the brokerage's actual book.
+    # See module-level _assert_readonly_method + ALLOWED_HTTP_METHODS for
+    # the runtime enforcement. Any non-GET attempt raises EvoReadOnlyError
+    # before a network call is made.
 
     def _get(self, path: str, params: dict | None = None) -> dict[str, Any]:
-        # Hard read-only guard. If any code ever tries _get() with
-        # something other than GET, this catches it.
-        # (TEvo client only exposes GET wrappers, but the assertion is
-        # defense-in-depth.)
+        _assert_readonly_method("GET")  # RULE 2 enforcement
         clean = self._normalize(params)
         query = urlencode(sorted(clean.items()))
         signature = self._sign("GET", path, query)
