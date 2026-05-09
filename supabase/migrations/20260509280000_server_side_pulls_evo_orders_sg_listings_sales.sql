@@ -1,4 +1,23 @@
 -- ============================================================================
+-- ⚠️ PARTIALLY SUPERSEDED BY 20260509290000 (consolidation pass).
+-- Net effect after both migrations apply on a fresh DB:
+--   ✓ tevo_sign_get(...)                        — KEPT
+--   ✓ evo_orders_pending + evo_orders_queue/process — KEPT (cadence later
+--                                                changed to 30min in 290000)
+--   ✓ sg_listings_pending + sg_listings_queue_window/process — KEPT
+--   ✗ sg_sales_queue_daily + sg_sales_process_daily crons — DROPPED in 290000
+--   ✗ sg_sales_queue + sg_sales_process functions — DROPPED in 290000
+--   ✗ sg_sales_pending table — DROPPED in 290000
+--   ✗ evo_orders_queue_10min + evo_orders_process_10min crons — REPLACED
+--                                                by _30min variants in 290000
+--   ✓ Schema relaxations on tevo_event_id / sale_at_utc — KEPT
+--
+-- Why the churn: the SG broker /sales endpoint requires a scope our token
+-- doesn't have (only sellerdirect /orders works for OUR sales). Caught
+-- during live verification post-migration; the dead parts were torn down
+-- in 290000 same-day rather than fully rewriting this file. Future
+-- migration consolidation pass can squash the redundancy.
+-- ============================================================================
 -- Migration 20260509280000 — Migrate Railway-bound crons to Supabase pg_net
 --                            + add SG listings windowed cron + SG /sales cron
 --
