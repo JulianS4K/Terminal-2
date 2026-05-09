@@ -1,0 +1,79 @@
+name: forbidden-paths-check
+
+# Belt-and-suspenders gate beyond CODEOWNERS. Fails the PR if a non-owner
+# author touches files that should only be modified by the audit lane.
+# CODEOWNERS handles 99% of this via review requirement; this workflow
+# catches the 1% (PRs auto-merged by bots, branch protection misconfiguration,
+# repo-admin override, etc.).
+#
+# Allowed authors: list below. Add coworker GitHub handles to OWNERS env
+# only if you intend to grant them backend-write privileges (we don't).
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      OWNERS: "JulianS4K"
+      FORBIDDEN_PATHS: |
+        ^app\.py$
+        ^evo_client\.py$
+        ^seatgeek_client\.py$
+        ^seatdata_client\.py$
+        ^requirements\.txt$
+        ^Procfile$
+        ^supabase/
+        ^scripts/
+        ^bin/
+        ^tests/
+        ^\.github/
+        ^AGENTS\.md$
+        ^SCHEMA\.md$
+        ^COWORKER_ONBOARDING\.md$
+        ^KANBAN\.md$
+        ^README\.md$
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed files
+        id: diff
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/changed.txt
+          echo "Changed files:"
+          cat /tmp/changed.txt
+
+      - name: Check forbidden paths
+        run: |
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+          if echo "$OWNERS" | grep -wq "$AUTHOR"; then
+            echo "Author $AUTHOR is an owner — backend writes allowed."
+            exit 0
+          fi
+
+          # Build a single regex from FORBIDDEN_PATHS
+          PATTERN=$(echo "$FORBIDDEN_PATHS" | sed '/^$/d' | tr '\n' '|' | sed 's/|$//')
+
+          if grep -E "$PATTERN" /tmp/changed.txt > /tmp/violations.txt; then
+            echo ""
+            echo "❌ Non-owner author '$AUTHOR' touched protected backend files:"
+            cat /tmp/violations.txt
+            echo ""
+            echo "Coworker UI work belongs in the Terminal-2-ui repo."
+            echo "If you need a backend change, open an issue describing"
+            echo "the need; the audit lane will write + apply it."
+            exit 1
+          fi
+
+          echo "✅ No forbidden paths touched."

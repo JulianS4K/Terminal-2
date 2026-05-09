@@ -1,219 +1,148 @@
-# COWORKER_ONBOARDING.md — Terminal Design Coworker
+# COWORKER_ONBOARDING.md — Phase 2 (UI handoff)
 
-> **Read this top-to-bottom before touching any file.** This is the contract. Violations cause backend drift and force the audit lane (me, "code") to reject your work.
-
----
-
-## 1. What you're working on
-
-**Terminal-2** is a sports-ticket broker terminal for S4K Entertainment (NBA, NFL, MLB, NHL, MLS, WNBA, plus major-event single-week stuff like F1/Tennis/Golf). Two products share one backend:
-
-- **Broker terminal** (live URL: `https://terminal-2-production.railway.app/`, Google-OAuth gated to `@s4kent.com`) — full data, all S4K-owned + market depth, served by FastAPI on Railway.
-- **Retail chatbot** (same domain, `/chat`) — public, S4K-owned tickets only.
-
-You are working on the **broker terminal frontend**. You do NOT touch the chatbot, the API, or the DB.
-
-**Stack you'll see**:
-- Single-file vanilla JS + Chart.js 4.4 in `static/index.html` (~3000 lines). No bundler, no React.
-- Backend hands you JSON over Bearer-token auth via `/api/broker/*` routes.
-- Styling is CSS variables in `<style>` blocks at the top of `static/index.html`.
-
-**Why no React/build step**: speed + audit simplicity. One file, one diff, no bundle drift.
+> **This document was rewritten 2026-05-09 for Phase 2.** Phase 1 (data
+> collection) is complete and stable. The prior version of this file
+> referenced `static/index.html` and a single-repo design lane that no
+> longer exists — that whole UI was deleted in the Phase 1 cleanup.
+> Phase 2 starts fresh with a separate UI repo.
 
 ---
 
-## 2. Your role — frontend only, no push
+## TL;DR
 
-You design and implement the broker terminal UI: layout, components, charts, search, watchlist, mover panels, event/performer/venue pages.
+You are the UI coworker for Terminal-2. **You don't push to this repo.**
+You work in `Terminal-2-ui` (separate repo, link below) and call this
+backend's read-only Postgres role + JSON API. The audit lane (me) reviews
+and merges your changes.
 
-You **DO NOT**:
-- Push to git. Ever. (The audit-and-push lane is owned by **code**, who reviews your diffs first.)
-- Write to prod DB tables (`public.*`). Read-only via Supabase MCP for diagnostics is fine.
-- Deploy edge functions.
-- Schedule or modify pg_cron jobs.
-- Edit backend Python (`app.py`, `evo_client.py`).
-- Edit SQL migrations or the schema doc.
+Three places to look:
 
-You **DO**:
-- Edit HTML / CSS / JS in the files listed in Section 3.
-- Use the `design_test` schema for any sandbox data (NOT `public.*`).
-- Drop diffs / file content into `KANBAN.md` under "DOING" with a "FROM design" header so code can pick them up.
-- Read `SCHEMA.md` to understand backend data shape before designing.
-- Read this file's Section 7 to know what good work looks like.
+| Where | What |
+|---|---|
+| **Terminal-2-ui** repo | Your codebase. Frontend stack is your choice. |
+| **`docs/coworker-handoff/`** in this repo | My notes and instructions for you (the canonical reference) |
+| `SCHEMA.md`, `docs/database-map-2026-05-09.md`, `docs/phase2-ui-kanban.md` in this repo | Background reading: schema, data model, kanban backlog |
 
 ---
 
-## 3. Ownership — what you can edit
+## What Phase 2 is
 
-| file / glob                              | who edits     | notes |
-|------------------------------------------|---------------|-------|
-| `static/index.html`                      | **design**    | broker terminal — your primary canvas |
-| `static/event.html`                      | **design**    | legacy event page, may be deprecated; check kanban before touching |
-| `static/movers.html`                     | **design**    | full Movers report |
-| `static/chat.html`                       | **design**    | retail chatbot UI |
-| `static/legacy.html`                     | **design** (frozen) | old terminal kept at `/legacy`; only touch if asked |
-| `design/**`                              | **design**    | design notes, mockups, Figma exports |
-| `docs/retail-ui-kit.md`                  | **design**    | retail UI kit doc |
-| `app.py`, `evo_client.py`, `Procfile`, `requirements.txt` | **code (review only)** | backend; if you need a new endpoint or field, write a `NEXT (design): need <endpoint/field>` entry in `KANBAN.md` |
-| `supabase/functions/**`                  | **code**      | edge functions |
-| `supabase/migrations/**`                 | **code**      | SQL migrations |
-| `SCHEMA.md`                              | **code**      | backend canonical schema lock — read-only for design |
-| `AGENTS.md`                              | **code**      | process doc |
-| `KANBAN.md`                              | **shared**    | append your own DOING/DONE rows under the design column |
-| `COWORKER_ONBOARDING.md` (this file)     | **code**      | read-only |
-| `bin/**`, `.github/**`                   | **code**      | infra/CI |
+Phase 1 built the data plane (TEvo + SeatGeek + ESPN + Reddit + Wikipedia +
+weather + alerts + odds + AI context bundle). **No UI was built.** Phase 2
+is the UI rebuild from scratch.
 
-**Rule of thumb**: if it ends in `.html`, `.css`, or is in `design/`, you can edit it. Everything else, ask.
+The first kanban card you'll work on is the **Data Quality Dashboard** —
+the dashboard the team uses to know whether the data plane is healthy day
+to day. Scope is in `docs/phase2-ui-kanban.md` (sections "Data quality
+dashboard" + the priority order at the bottom).
 
 ---
 
-## 4. Environment & access
+## What you have access to
 
-### What you have access to (Supabase MCP)
+### 1. Read-only Supabase Postgres role: `coworker_readonly`
 
-- **Read** any table in the `public.*` schema. Use it to understand data shape before designing UI.
-- **Write** any table in `design_test.*`. Use this for stub/mock data when prototyping.
-- **No write** to `public.*` — even if MCP lets you, the rule is strict. Code's audit pass will revert it.
+Connection string + password are delivered out-of-band (see hand-off
+package from Julian).
 
-### Test schema setup
+**Can do:**
+- `SELECT` on every table and view in `public.*` (~99 tables, ~92 views)
+- `EXECUTE` ~23 read-only helper functions including
+  `get_event_context(event_id)` — the AI/RAG-style single-call bundle
+- Full create/read/update/delete in your own sandbox schema:
+  `design_test.*`
 
-```sql
--- Run this once to confirm your sandbox is healthy:
-SELECT * FROM design_test._readme;
-```
+**Can NOT do:**
+- Insert/update/delete on `public.*` (data plane is owned by audit lane)
+- Read `vault.*` or touch `cron.*`
+- Execute any function that fires `net.http_*` (data-plane writers, paid pulls)
 
-Use `design_test` for:
-- Stubbed event_metrics rows when you want to test rendering with synthetic data.
-- Feature-flag tables for A/B'ing new layouts.
-- Mock data for UI states the real prod data doesn't currently exercise.
+### 2. JSON API on the FastAPI backend
 
-### Local dev workflow
+`https://<railway-deploy>.railway.app/api/*` — 60 read-only routes.
+The contract is the route signature; backend semantics are stable.
+Bearer-token auth. Token in hand-off package.
 
-You can develop against live prod data — `static/index.html` calls `/api/broker/*` which is open to any browser tab on the deployed Railway URL once you've Google-signed-in.
+Common ones:
+- `GET /api/events` — upcoming events list
+- `GET /api/events/{event_id}` — single event detail
+- `GET /api/broker/event/{event_id}/overview` — full broker bundle
+- `GET /api/portfolio` — our orders rollup
 
-For local iteration:
-```bash
-# Terminal 1 — serve the static files locally
-cd static && py -3 -m http.server 8080
-# Terminal 2 — point your browser at http://localhost:8080/index.html
-# But: API calls will fail because there's no FastAPI running.
-```
+You'll see the full list in `app.py` (read-only — link from your repo's
+README).
 
-To get full local stack with auth + API, ask code to spin up Railway with a preview branch — DO NOT try to run `app.py` yourself; it requires service-role secrets you don't have.
+### 3. Supabase MCP (for diagnostic queries during development)
 
-**Easier**: edit `static/index.html` directly, ping code in `KANBAN.md` to push, then test on the deployed Railway URL. Cycle time ~3 min.
-
----
-
-## 5. Backend handoff — when you need something new
-
-If your UI needs:
-- A new field in an existing endpoint
-- A new endpoint
-- A new data shape from the API
-- A schema column
-
-**DO NOT** add it yourself. Drop a row in `KANBAN.md` under the **NEXT (code)** column with this format:
-
-```
-### NEXT (code) — <short title>
-
-**Need**: <what data/endpoint you need>
-**Why**: <UI feature it unblocks>
-**Shape**: <example JSON or SQL the frontend would consume>
-**Deadline**: <if any>
-**Filed by**: design · 2026-MM-DD
-```
-
-Code reviews, implements, ships. Once the new endpoint is live in prod, code moves the row to **DONE** with the commit SHA. You can then wire your UI to it.
+Same `coworker_readonly` role; lets you run ad-hoc SELECTs from your IDE
+without writing app code. Useful for designing a query before wiring it up.
 
 ---
 
-## 6. Hand-off pattern — how your work reaches main
+## What's expected of you
 
-You don't push. Here's how your edits land:
+1. **All UI work happens in `Terminal-2-ui`.** Frontend stack is your
+   choice (React/Svelte/Vue/Astro/HTMX/vanilla — doesn't matter, pick
+   what you'll be productive in).
 
-1. **You edit** `static/index.html` (or whichever owned file).
-2. **You append to KANBAN.md DOING column**:
-   ```
-   ### DOING (design) — <short title>
-   - **What**: <one-line summary>
-   - **Files touched**: static/index.html (lines ~XXXX-YYYY)
-   - **Status**: ready for review
-   - **Started**: 2026-MM-DD HH:MM
-   ```
-3. **Code reviews** the diff:
-   - Runs `py -3 -c "import ast; ast.parse(open('app.py').read())"` (sanity, even though you didn't touch it)
-   - Eyeballs the HTML diff for backend coupling, XSS, broken event handlers
-   - Checks the Launch preview panel renders cleanly
-4. **Code commits** in your name with a `Co-Authored-By: design` trailer:
-   ```
-   git commit -m "feat(terminal): <your subject>
+2. **Open PRs against `main` of `Terminal-2-ui`.** I review and merge.
+   Don't merge your own PRs.
 
-   Co-Authored-By: design <design@s4kent.local>"
-   ```
-5. **Code pushes** to `main`. Railway redeploys automatically.
-6. **You verify** on the live URL.
-7. **Both move the row** to DONE in `KANBAN.md` with the commit SHA.
+3. **You don't push to this repo (`Terminal-2`).** A `CODEOWNERS` file
+   + branch-protection rule + CI guard would all reject the PR anyway.
+   If you genuinely need a backend change (schema gap, missing API
+   route, new function), **open an issue in this repo** describing what
+   and why; I'll write + apply it.
 
-If code finds a bug, the row goes to **BLOCKED** with the bug reason. You fix and re-submit.
+4. **Use `design_test.*` for any sandbox tables.** Never `CREATE TABLE
+   public.foo` — the role doesn't allow it, but the convention is also
+   that `public.*` is owned by the data plane, not UI.
+
+5. **Treat the connection string and Bearer token like any secret.**
+   Don't commit them. `.env.local` is your friend; commit `.env.example`
+   instead. The hand-off package shows the shape.
 
 ---
 
-## 7. What good work looks like
+## What's deprecated from prior onboarding
 
-### Visual quality bar
+If you ever see references to:
+- `static/index.html`, `templates/`, "design lane editing the broker
+  terminal frontend"
+- `COWORKER_ONBOARDING.md` mentioning `static/index.html` ownership
 
-- **Robinhood / Bloomberg Terminal feel**: dense, monospaced where appropriate, no wasted space, instant feedback on hover/click.
-- **Smooth transitions**: range switches fade rather than blank-flash. Hover states are crisp, not draggy.
-- **Dark theme is the only theme**. Terminal users don't want light mode.
-- **Mobile-responsive is NOT a goal** for the broker terminal. This is a desk tool — assume 1440px+ widescreen.
-
-### Data hygiene
-
-- **Never hardcode data** that should come from the API. If the data isn't in an endpoint yet, file a NEXT (code).
-- **Never assume data is non-null**. Backend can return `null` for any metric column. Show "—" or hide the row.
-- **Respect the product wall**: broker terminal sees everything (S4K-owned + competitor listings + wholesale). Retail chatbot must NEVER see wholesale, brokerage names, or non-S4K listings. If you ever find yourself rendering wholesale data in `chat.html`, **stop and file a `BLOCKED` row** — that's the wall and breaking it has legal implications.
-
-### Code style
-
-- **Single file**: keep new components inline in `static/index.html`. No bundler.
-- **Vanilla JS only**: no React, Vue, jQuery, etc.
-- **CSS variables for theming**: `--surface`, `--surface-2`, `--border`, `--text`, `--dim`, `--accent`, `--pos`, `--neg`. Defined at the top of `static/index.html`.
-- **No external assets** unless they're already in the codebase. Inline SVGs > external images.
-- **Comment sparingly**: explain WHY, not WHAT. Future-you can read the code; future-you can't read your mind.
+Those are pre-Phase-2 and **gone**. The Phase 2 reality is: there is no
+frontend code in this repo. The frontend lives in `Terminal-2-ui`.
 
 ---
 
-## 8. Common pitfalls
+## First-day sequence
 
-- **Don't break the auth bootstrap** — `/api/public/config` is the first call; it returns Supabase URL + anon key for browser auth init. The Bearer token comes from `supabase.auth.getSession()`. If you see 401s everywhere, the bootstrap is broken.
-- **Don't introduce new localStorage keys without a version suffix** — bumping `evt_chart_visible_v3` to `_v4` is the pattern when defaults change. Existing users get fresh defaults on next load.
-- **Don't auto-discover series and rename them** — `_autoDiscoverSeries` lets the backend ship new metrics without a frontend deploy. If you rename a backend series, the auto-discover catches it as a new pill labeled `[auto]`. Don't try to "fix" this — it's the feature.
-- **Don't add tracking / analytics** — desk tool. Internal use only.
-- **Don't add user-input forms that POST to `public.*`** — all writes go through code-owned API endpoints. Frontend forms call `api(...)` which calls `/api/broker/*`.
-
----
-
-## 9. Where to find things
-
-- **What needs work next**: `KANBAN.md`
-- **Backend data shape**: `SCHEMA.md` (don't edit, just read)
-- **Process rules**: `AGENTS.md`
-- **Past UI decisions**: `docs/broker-audit-2026-05-08.md`, `docs/terminal-data-inventory.md`, `design/main.fig.md`
-- **Live URL**: `https://terminal-2-production.railway.app/`
-- **Project on Supabase**: `hzrizjeaxlqcxfrtczpq` (Terminal .5)
+1. Accept the GitHub invite to `Terminal-2-ui`.
+2. Clone it. Read the README; it points to everything else.
+3. Read `docs/phase2-ui-kanban.md` (in `Terminal-2`, linked from your repo's README).
+4. Read the Data Quality Dashboard scope in particular.
+5. Open an issue in `Terminal-2-ui` describing your design + stack
+   choice. Wait for ack before building.
+6. Build, PR, review, merge.
 
 ---
 
-## 10. First-day checklist
+## Where my notes live
 
-1. [ ] Read this file end-to-end.
-2. [ ] Read `KANBAN.md` to see what's NEXT (design).
-3. [ ] Skim `SCHEMA.md`'s "Active crons" + "Backend API surface" sections so you know what data is available.
-4. [ ] Open `static/index.html` and orient yourself. The structure is: CSS variables → header → hero search → 3-tab watchlist → mover panels → footer. Event detail page is rendered by `loadEvent(id)` (~line 880 onward).
-5. [ ] Sign in to the live Railway URL with your `@s4kent.com` Google account to see the deployed terminal.
-6. [ ] Run `SELECT * FROM design_test._readme;` via Supabase MCP to confirm sandbox access.
-7. [ ] Pick the top **NEXT (design)** row from KANBAN, move it to **DOING (design)**, and start.
+| Document | Purpose |
+|---|---|
+| `Terminal-2/docs/coworker-handoff/SCOPE.md` | What you can/can't touch, in plain prose |
+| `Terminal-2/docs/coworker-handoff/QUERY_COOKBOOK.md` | Ready-to-paste SQL examples for common UI needs |
+| `Terminal-2/docs/coworker-handoff/DATA_QUALITY_DASHBOARD.md` | Full scope for your first card |
+| `Terminal-2/docs/database-map-2026-05-09.md` | Full schema topology |
+| `Terminal-2/docs/phase2-ui-kanban.md` | Backlog (after Data Quality Dashboard) |
+| `Terminal-2/SCHEMA.md` | Per-table column reference |
+| `Terminal-2-ui/README.md` | Quick start for your repo |
 
-Welcome aboard. Ask via KANBAN entries — code reads it on every commit cycle.
+---
+
+## Questions
+
+Open an issue in `Terminal-2-ui` and tag me. Don't DM Slack — issues
+keep the discussion attached to the work.

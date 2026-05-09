@@ -1,0 +1,46 @@
+# CODEOWNERS — Terminal-2 backend
+#
+# GitHub auto-assigns review on PRs touching matched paths. Combined with
+# branch protection on main (Settings -> Branches -> Branch protection
+# rules -> require review from Code Owners), this blocks merge of any
+# backend-touching PR without owner approval.
+#
+# Coworker UI work happens in a SEPARATE repo (Terminal-2-ui). They never
+# push here directly; they propose changes that I (the audit lane) review
+# and commit. So the rules below assume only owners merge here.
+
+# Default: everything requires owner review
+*                                           @JulianS4K
+
+# Backend code — explicit (so GitHub UI shows the rule clearly)
+/app.py                                     @JulianS4K
+/evo_client.py                              @JulianS4K
+/seatgeek_client.py                         @JulianS4K
+/seatdata_client.py                         @JulianS4K
+/requirements.txt                           @JulianS4K
+/Procfile                                   @JulianS4K
+
+# Database
+/supabase/                                  @JulianS4K
+/supabase/migrations/                       @JulianS4K
+/supabase/functions/                        @JulianS4K
+
+# Tooling / audit
+/scripts/                                   @JulianS4K
+/bin/                                       @JulianS4K
+/tests/                                     @JulianS4K
+
+# CI
+/.github/                                   @JulianS4K
+/.github/workflows/                         @JulianS4K
+/.github/CODEOWNERS                         @JulianS4K
+
+# Schema + onboarding contracts
+/AGENTS.md                                  @JulianS4K
+/SCHEMA.md                                  @JulianS4K
+/COWORKER_ONBOARDING.md                     @JulianS4K
+/KANBAN.md                                  @JulianS4K
+/README.md                                  @JulianS4K
+
+# Docs that the coworker reads but doesn't write
+/docs/                                      @JulianS4K
