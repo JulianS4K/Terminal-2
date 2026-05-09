@@ -1892,9 +1892,23 @@ def broker_event_chart_data(
             ent["counts_owned"].append({"t": r["captured_at"], "v": r.get("owned_tickets_count")})
     zone_series_list = sorted(zone_series.values(), key=lambda z: -sum(p.get("v") or 0 for p in z["counts_market"]))
 
+    # Range metadata so the chart can pin its x-axis explicitly to the
+    # requested window — prevents Chart.js from auto-fitting to whichever
+    # series happens to have data, which collapsed 30d views to ~24h when
+    # newer series (nonowned_median_retail, splits_min_q) hadn't backfilled
+    # past their introduction date.
+    until_iso = datetime.now(timezone.utc).isoformat()
+    range_meta = {
+        "range":    range or (f"{range_hours}h" if range_hours else "all"),
+        "hours":    range_hours,
+        "since":    since_iso if range_hours else None,  # None = open-left for 'all'
+        "until":    until_iso,
+    }
+
     return {
         "event_id": event_id,
         "days": days,
+        "range_meta": range_meta,
         "series": {
             # ===== TEvo: prices and counts (legacy IDs preserved) =====
             "prices_owned":    prices_owned,

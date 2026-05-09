@@ -1741,17 +1741,20 @@ function _wireRangeButtons(eventId) {
       realWrap.querySelectorAll('a.rng').forEach(b => b.classList.toggle('active', b === el));
       const meta = document.getElementById('chart-range-meta');
       if (meta) meta.textContent = 'loading…';
+      // Soft fade the existing chart while loading (Robinhood-style — no blank flash)
+      const wrapEl = document.getElementById('event-chart-wrap');
+      if (wrapEl) { wrapEl.style.transition = 'opacity 180ms ease'; wrapEl.style.opacity = '0.45'; }
       try {
         const data = await api(`/api/broker/event/${eventId}/chart-data?range=${encodeURIComponent(r)}`);
         if (meta) meta.textContent = ((data.series?.prices_market || []).length) + ' snaps';
-        // Replace the canvas wrapper if it was the empty-state placeholder
-        const wrapEl = document.getElementById('event-chart-wrap');
         if (wrapEl && !document.getElementById('event-chart')) {
           wrapEl.innerHTML = '<canvas id="event-chart"></canvas>';
         }
         renderEventChart(data);
+        if (wrapEl) requestAnimationFrame(() => { wrapEl.style.opacity = '1'; });
       } catch (e) {
         if (meta) meta.textContent = 'error: ' + e.message;
+        if (wrapEl) wrapEl.style.opacity = '1';
       }
     });
   });
@@ -1982,12 +1985,50 @@ function _drawChartImpl() {
       },
     },
     scales: {
-      x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { color: '#26292d' } },
+      x: (() => {
+        // Pin the X-axis to the requested range, not whatever subset of series
+        // happens to have data. Without this, Chart.js auto-fits to the most
+        // recent populated series and 30d views collapse to 24h whenever a
+        // newer column (nonowned_median, splits_min_q) lacks backfill history.
+        const meta = data.range_meta || {};
+        const rangeHours = meta.hours ?? null;
+        const until = meta.until ? new Date(meta.until).getTime() : Date.now();
+        const since = (rangeHours != null) ? (until - rangeHours * 3600 * 1000) : null;
+        // Auto-pick time unit based on range so labels read naturally.
+        const unit = rangeHours == null ? 'week'
+                   : rangeHours <= 24   ? 'hour'
+                   : rangeHours <= 72   ? 'day'   // 3d
+                   : rangeHours <= 168  ? 'day'   // 7d
+                   :                      'day';  // 30d (one tick per day)
+        const stepSize = rangeHours == null ? undefined
+                       : rangeHours <= 6    ? 1
+                       : rangeHours <= 24   ? 3
+                       : rangeHours <= 72   ? 1
+                       : rangeHours <= 168  ? 1
+                       :                      3;  // 30d → tick every 3 days
+        return {
+          type: 'time',
+          ...(since != null ? { min: since, max: until } : {}),
+          time: { unit, stepSize, tooltipFormat: 'PP p' },
+          ticks: { color: '#8b8d92', font: { size: 10 }, maxRotation: 0, autoSkip: true, autoSkipPadding: 24 },
+          grid: { color: '#26292d' },
+        };
+      })(),
       y$: { type: 'linear', position: 'left', ticks: { color: '#8b8d92', font: { size: 10 }, callback: v => '$' + Math.round(v).toLocaleString() }, grid: { color: '#26292d' } },
       yC: { type: 'linear', position: 'right', ticks: { color: '#8b8d92', font: { size: 10 } }, grid: { drawOnChartArea: false } },
       'y%': { type: 'linear', position: 'right', display: false, ticks: { callback: v => v.toFixed(0) + '%' } },
       yIdx:  { type: 'linear', position: 'right', display: false },
     },
+    // Robinhood-style smooth transition between ranges + soft hover feel.
+    animation: { duration: 320, easing: 'easeOutQuart' },
+    transitions: {
+      active: { animation: { duration: 120 } },
+    },
+    elements: {
+      line:  { borderJoinStyle: 'round', borderCapStyle: 'round' },
+      point: { hoverRadius: 4, hoverBorderWidth: 2 },
+    },
+    hover: { mode: 'nearest', axis: 'x', intersect: false },
   };
 
   if (!datasets.length) {

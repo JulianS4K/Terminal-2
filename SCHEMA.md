@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v8`
-**Last verified against prod**: 2026-05-09 ~00:53 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v9`
+**Last verified against prod**: 2026-05-09 ~01:15 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -797,6 +797,21 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v9**: **`range_meta` in `/api/broker/event/{id}/chart-data`
+  response** + lane re-split. The chart-data endpoint now returns
+  `range_meta: { range, hours, since, until }` alongside `series` and
+  `zone_series`. The frontend uses these bounds to pin Chart.js's time
+  x-axis explicitly to the requested window — without it, Chart.js
+  auto-fit to the union of populated datasets and 30d views collapsed
+  to ~24h whenever a newer column (e.g. `nonowned_median_retail`,
+  `splits_min_q`) lacked backfill history. Time `unit` and `stepSize`
+  also auto-derived from `hours`. No backend schema change beyond the
+  response shape. **Lane re-split**: backend + audit + git push
+  consolidated under code; a fresh **design** coworker takes the
+  terminal frontend with no git-push and no prod-write privileges
+  (uses `design_test.*` for sandboxing). Hand-off via the shared
+  `KANBAN.md` board; full contract in `COWORKER_ONBOARDING.md`.
 
 - **2026-05-09-v8**: **Cascading cron model** + ESPN injury/trade freshness
   bumped from every-10-min to every-2-min. Migration `20260509040000`:

@@ -1,28 +1,30 @@
 # AGENTS.md
 
-solo agent now (code) until terminal hits high-beta. on lane re-split, copilot + claude design come back.
+two-lane split (2026-05-09 evening): **code** owns backend + audit + git push; **design** (fresh coworker) owns terminal frontend, no push, no prod writes. Copilot remains paused.
 
-## ROSTER (2026-05-09 onward — solo phase)
+## ROSTER (2026-05-09 evening onward — two-lane split)
 
 | agent | role | reports to git via |
 |---|---|---|
-| **code** (this chat) | sole owner of the entire Terminal-2 stack: terminal frontend (`static/index.html`, `event.html`, `movers.html`, `chat.html`), terminal backend (`app.py`, `evo_client.py`), all edge functions (`supabase/functions/*`), all SQL migrations, ESPN/TEvo/Wiki/NOAA ingest, schema docs (SCHEMA.md), audit + git push | self (direct push) |
-| ~~copilot~~ | **PAUSED** — retail chat backend / NLU / listings ingest. Lane returns when terminal reaches high-beta status. | n/a |
-| ~~claude design~~ | **PAUSED** — front-end specialist. Lane returns when terminal reaches high-beta status. | n/a |
+| **code** (this chat) | backend lane — `app.py`, `evo_client.py`, all edge functions, all SQL migrations, ESPN/TEvo/Wiki/NOAA ingest, schema docs (SCHEMA.md), AUDIT pass on every commit, SOLE git pusher | self (direct push) |
+| **design** (fresh coworker) | terminal frontend lane — `static/index.html`, `static/event.html`, `static/movers.html`, `static/chat.html`, `static/legacy.html`, `design/*`. **NO git push, NO prod writes.** Hands off via `KANBAN.md` proxy-commit pattern | code's proxy commit (RULE 12) |
+| ~~copilot~~ | **PAUSED** — retail chat backend / NLU / listings ingest. Lane returns later. | n/a |
 
-**Why solo**: per user direction 2026-05-09 — coordination overhead between three agents was slowing terminal builds; consolidating to a single owner until the broker terminal stabilizes at high-beta. After that, lanes split again with copilot picking up retail chat and claude design picking up dedicated front-end polish.
+**Why two lanes (and not three)**: per user direction 2026-05-09 evening — splitting backend (code) from frontend (design) lets each move at full speed without stepping on each other. Copilot's retail-chat lane stays paused until the broker terminal hits high-beta. The design coworker is BRAND NEW — full onboarding lives in [`COWORKER_ONBOARDING.md`](COWORKER_ONBOARDING.md).
 
-**Lane discipline still applies**: SCHEMA.md is canonical (RULE 0), AGENTS.md LOG gets an entry per commit, no skipping migration capture. The discipline that protected against drift in the multi-agent era stays in place.
+**Why design has no push**: prevents drift — design's diffs land via code's audit-and-push proxy. This is the same pattern the prior multi-agent era used (RULE 12); it kept us drift-free for weeks.
+
+**Why design has no prod writes**: hard wall against accidental schema/state changes from a brand-new agent. Design uses `design_test.*` schema for sandboxing; reads from `public.*` are fine.
 
 ## STATUS BOARD (live, read first, update on every state change)
 
 | agent | status | started_at (UTC) | working on | branch | safe to interrupt? |
 |---|---|---|---|---|---|
-| code  | IDLE | — | — | main | yes |
+| code   | IDLE | — | — | main | yes |
+| design | NEW — onboarding | — | reading COWORKER_ONBOARDING.md + KANBAN.md | n/a (no push) | n/a |
 | ~~copilot~~ | PAUSED | — | — | — | n/a |
-| ~~claude design~~ | PAUSED | — | — | — | n/a |
 
-**Read this table before starting any work.** During solo phase code can move freely across all files; the WIP section below still gets used as a "what am I touching this commit" checklist for self-discipline.
+**Read this table before starting any work.** Design's branch column is "n/a" because design doesn't own a branch — diffs go through code.
 
 ## WIP (files an agent is actively editing — append before edit, clear on commit)
 
@@ -302,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v8)
+## SCHEMA LOCK (2026-05-09-v9)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v8`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v9`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -412,6 +414,13 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (lane re-split: code = backend, design = frontend; chart range bug fix)
+
+- DONE — **Lane re-split per user direction**: code becomes backend + audit + git-push lane; a fresh **design** coworker takes the terminal frontend (`static/*.html`, `design/*`). Copilot stays paused. New onboarding doc [`COWORKER_ONBOARDING.md`](COWORKER_ONBOARDING.md) covers the full contract — file ownership, no-push rule, `design_test` schema for sandboxing, hand-off pattern via KANBAN, and what good work looks like. New shared work board [`KANBAN.md`](KANBAN.md) has NEXT / DOING / BLOCKED / DONE columns; seeded with 7 NEXT rows (4 design, 3 code) so the design coworker has work waiting on day one.
+- DONE — **Chart range bug fix**. User reported 30d view only displayed ~24 hours of data despite `range=30d` being requested. Root cause: Chart.js was auto-fitting the time x-axis to the union of populated datasets, and two new default series (`nonowned_median_retail`, `splits_min_q`) only have data from 2026-05-08 ~22:00 onward (introduced yesterday). With those series in the chart, the time-axis collapsed to the youngest series' window. Fix: backend now returns `range_meta: {range, hours, since, until}`; frontend pins Chart.js x-axis `min`/`max` explicitly to the requested window. Auto-picks time `unit` (hour for ≤24h, day otherwise) + sane `stepSize` so 30d gets a label every 3 days instead of "May 8" repeated. Added Robinhood-style smooth opacity fade during range fetch + 320ms `easeOutQuart` transition between renders.
+- NEXT (design) — chart polish row in KANBAN: hover crosshair, relative timestamps in tooltip, `[`/`]` keyboard range step, hover state on inactive range buttons.
+- NEXT (code) — investigate `listings_snapshots(event_id, captured_at, is_ancillary)` index; if missing, adding may unlock folding zone backfill back into the master cascade.
 
 ### 2026-05-09 code (solo phase, cascading cron model + 2-min ESPN freshness)
 
