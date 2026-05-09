@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v13)
+## SCHEMA LOCK (2026-05-09-v14)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v13`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v14`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,13 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (SeatGeek BROKER DATA rebuild — wrong host scrap-and-rewrite)
+
+- DONE — **Scrapped the v13 SeatGeek public-API integration and rebuilt for the BROKER API** (mig `20260509090000`, SCHEMA v14). v13 assumed `api.seatgeek.com/2` with `?client_id=` auth; our partner token is actually for `brokerdata.seatgeek.com` with `?token=` auth. Live diagnostics confirmed: `/listings` + `/sales` return 400 "No event found" with our token (auth pass, just needs real event_id); `/purchases` returns 401 (scope unavailable — TEvo /v9/orders covers our own purchases). Dropped 5 unused tables (taxonomies, sections, recommendations, venue_xref, performer_xref). Rebuilt around `seatgeek_event_xref` (simplified), `seatgeek_listings_snapshots` (18 listing fields + content_hash dedup), `seatgeek_sales_snapshots`, `seatgeek_pull_log`, `seatgeek_event_latest` view.
+- DONE — **`seatgeek_client.py` rewritten** for `brokerdata.seatgeek.com`. Three methods (`listings`, `sales`, `purchases`) with typed `SeatGeekScopeError` on 401. Vault-loaded auth. content_hash dedup for listings (re-pulls only insert when something changed). Sales dedup by UUID.
+- DONE — **6 new `/api/seatgeek/*` routes** in app.py: `GET /event/{id}`, `POST /event/{id}/link`, `POST /event/{id}/sync-listings`, `POST /event/{id}/sync-sales`, `GET /event/{id}/listings`, `GET /event/{id}/sales`. The `/api/cross-source/event/{id}` updated to use the new xref columns.
+- AWAITING — **Manual SG event_id mapping**. Broker API has no `/search` endpoint, so user-driven matching: find SG event_id via SG broker portal or website URL, POST `/api/seatgeek/event/{tevo_id}/link?sg_event_id=N`. Then sync routes work.
 
 ### 2026-05-09 code (SeatGeek integration — 3rd data source: section_info, recs, performer images)
 

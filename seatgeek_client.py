@@ -1,59 +1,49 @@
-"""SeatGeek API client — third data source. Metadata + discovery only.
+"""SeatGeek BROKER DATA API client.
 
-SeatGeek's public API does NOT expose pricing or transacted sales (those
-are TEvo + SeatData jobs). What SG adds beyond what we already have:
-  * Cross-validation of event / venue / performer naming + lat/lng
-  * Section info per venue (canonical seating layouts)
-  * Recommendations (related events/performers, affinity-scored)
-  * Performer images (4 sizes: huge / large / medium / small)
-  * SeatGeek's taxonomy tree (cross-reference with TEvo classification)
+Host: https://brokerdata.seatgeek.com
+Auth: ?token=<TOKEN> query param. Token in vault as SEATGEEK_API_TOKEN.
 
-Endpoints implemented (per spec dropped 2026-05-09):
+This is the partner-only Seller Direct Broker Data API — DIFFERENT from
+the public SG API at api.seatgeek.com/2 (which our token doesn't grant
+access to). Endpoints we use:
 
-  Events
-    GET /events                              list / search
-    GET /events/{eventId}                    show single
-    GET /events/section_info/{eventId}       venue layout for an event
+  GET /listings        broker inventory for an event_id (this account's
+                       view of the marketplace)
+  GET /v2/listings     ALL secondary listings on SG marketplace for an
+                       event (broader, full competitor visibility)
+  GET /sales           transacted sales for an event (broker side; only
+                       broadcast/wholesale price exposed, not retail)
+  GET /purchases       broker's own SG purchases (token currently lacks
+                       this scope — kept here for when SG enables it)
 
-  Performers
-    GET /performers                          list / search
-    GET /performers/{performerId}            show single
-
-  Venues
-    GET /venues                              list / search
-    GET /venues/{venueId}                    show single
-
-  Taxonomies
-    GET /taxonomies                          full taxonomy tree
-
-  Recommendations
-    GET /recommendations                     events similar to seed
-    GET /recommendations/performers          performers similar to seed
-
-Auth: SeatGeek public API uses ?client_id=X (query param). Some endpoints
-accept HTTP Basic with client_id+client_secret for higher rate limits.
-Both are read from Supabase Vault (preferred) or env vars (override).
-
-Rate limits: SG doesn't publish hard numbers; observed ~1000 req/hour
-for public endpoints. We respect 429 with exponential backoff; no DB
-budget table since calls are free.
+ID model: SG event_id is independent from TEvo event_id. The broker API
+has NO search endpoint, so matching is manual:
+  1. User finds SG event_id (broker portal, SG website URL, etc.)
+  2. POST /api/seatgeek/event/{tevo_event_id}/link?sg_event_id=N
+  3. Subsequent /sync-listings + /sync-sales work off the xref.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import random
 import time
-from typing import Any, Iterator
+from datetime import datetime, timezone
+from typing import Any
 
 import requests
 
 from supabase import Client
 
-API_BASE = "https://api.seatgeek.com/2"
+API_BASE = "https://brokerdata.seatgeek.com"
 
 
 class SeatGeekError(Exception):
     pass
+
+
+class SeatGeekScopeError(SeatGeekError):
+    """Token works but lacks scope for this endpoint (HTTP 401, code 421004)."""
 
 
 class SeatGeekClient:
@@ -61,11 +51,9 @@ class SeatGeekClient:
         self,
         api_token: str | None = None,
         db: Client | None = None,
-        timeout_s: int = 20,
+        timeout_s: int = 25,
     ):
-        # Key resolution: explicit arg → env (SEATGEEK_API_TOKEN) → Vault → error.
-        # SeatGeek calls the auth value `client_id` in the URL but we treat it
-        # as a single API token internally to match TEvo + SeatData naming.
+        # Token resolution: explicit arg → env → Supabase Vault → error.
         self.db = db
         self.api_token = api_token or os.environ.get("SEATGEEK_API_TOKEN")
         if not self.api_token and db is not None:
@@ -76,46 +64,47 @@ class SeatGeekClient:
                 print(f"seatgeek: vault lookup failed: {e}")
         if not self.api_token:
             raise SeatGeekError(
-                "SEATGEEK_API_TOKEN not found. Either set the env var, or "
-                "store it in Vault: SELECT public.upsert_app_secret('SEATGEEK_API_TOKEN', '<token>')."
+                "SEATGEEK_API_TOKEN not found. Either set the env var, or store "
+                "it in Vault: SELECT public.upsert_app_secret('SEATGEEK_API_TOKEN', '<token>')."
             )
-        # `client_id` is what SeatGeek's URL params want — it's the same value.
-        self.client_id = self.api_token
         self.timeout_s = timeout_s
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Terminal-2/1.0 (broker terminal)",
             "Accept": "application/json",
+            "User-Agent": "Terminal-2/1.0 (broker terminal)",
         })
 
-    # -------- internal HTTP --------
+    # ---------- internal HTTP ----------
 
-    def _log_pull(self, endpoint: str, status: int, rows: int | None,
+    def _log_pull(self, endpoint: str, *, tevo_event_id: int | None,
+                  sg_event_id: int | None, status: int, rows: int | None,
+                  cache_hit: bool | None, refreshed_at_utc: str | None,
                   error: str | None = None, meta: dict | None = None) -> None:
         if not self.db:
             return
         try:
             self.db.table("seatgeek_pull_log").insert({
-                "endpoint": endpoint, "http_status": status,
-                "rows_returned": rows, "error_message": error,
+                "endpoint": endpoint,
+                "tevo_event_id": tevo_event_id,
+                "sg_event_id": sg_event_id,
+                "http_status": status,
+                "rows_returned": rows,
+                "cache_hit": cache_hit,
+                "refreshed_at_utc": refreshed_at_utc,
+                "error_message": error,
                 "request_meta": meta or {},
             }).execute()
         except Exception as e:
             print(f"seatgeek: pull log failed: {e}")
 
     def _get(self, path: str, params: dict | None = None,
-             max_429_retries: int = 3) -> dict | list:
+             max_429_retries: int = 3) -> tuple[int, dict | list]:
         url = f"{API_BASE}/{path.lstrip('/')}"
-        # SG auth: client_id query param (= our api_token internally).
-        # Drop None and pass through bool-as-1/0 per SG convention.
-        clean: dict[str, Any] = {"client_id": self.client_id}
+        clean: dict[str, Any] = {"token": self.api_token}
         for k, v in (params or {}).items():
             if v is None:
                 continue
-            if isinstance(v, bool):
-                clean[k] = 1 if v else 0
-            else:
-                clean[k] = v
+            clean[k] = (1 if v else 0) if isinstance(v, bool) else v
         attempt = 0
         backoff = 1.0
         while True:
@@ -133,234 +122,213 @@ class SeatGeekClient:
             try:
                 body = r.json()
             except ValueError:
-                body = {"raw": r.text}
-            return body if r.status_code == 200 else (
-                self._raise(path, r.status_code, body)
-            )
+                body = {"raw_text": r.text}
+            return r.status_code, body
 
-    def _raise(self, path: str, status: int, body: Any) -> dict:
-        # Always returns a dict so callers can also inspect error envelopes,
-        # but we do raise to surface failures upstream.
-        self._log_pull(path, status, None, str(body)[:500])
-        raise SeatGeekError(f"GET {path} returned {status}: {body}")
+    @staticmethod
+    def _parse_iso(s: str | None):
+        if not s:
+            return None
+        return s.replace("Z", "+00:00") if isinstance(s, str) and s.endswith("Z") else s
 
-    # -------- Events --------
+    @staticmethod
+    def _hash_listing(l: dict) -> str:
+        """Stable content hash for dedup. Includes the price + qty + flags
+        so a re-pull only inserts a row when something changed."""
+        canon = "|".join(str(l.get(k, "")) for k in (
+            "sglid", "pf", "bp", "ds", "q", "s", "r",
+            "bo", "is_b2b", "idl", "sro", "lv", "wa",
+            "dm", "ihd", "m", "st", "ada",
+        ))
+        return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:32]
 
-    def list_events(self, **params) -> dict:
-        """GET /events. See spec for query params (performers.id, venue.id,
-        datetime_local, datetime_utc with .gt/.gte/.lt/.lte, taxonomies.name,
-        q, id, addons_visible, type, page, per_page).
-        Returns {events: [...], meta: {...}}."""
-        body = self._get("/events", params)
-        rows = (body or {}).get("events") if isinstance(body, dict) else []
-        self._log_pull("events.list", 200, len(rows or []), meta={"params": params})
-        return body if isinstance(body, dict) else {"events": body or []}
+    # ---------- /listings + /v2/listings ----------
 
-    def iter_events(self, *, max_pages: int = 50, per_page: int = 50, **params) -> Iterator[dict]:
-        params = dict(params); params.pop("page", None)
-        seen = 0
-        for page in range(1, max_pages + 1):
-            resp = self.list_events(page=page, per_page=min(int(per_page), 100), **params)
-            batch = resp.get("events") or []
-            total = (resp.get("meta") or {}).get("total", 0)
-            if not batch:
-                break
-            for ev in batch:
-                yield ev
-            seen += len(batch)
-            if total and seen >= total:
-                break
+    def listings(self, sg_event_id: int, *, v2: bool = False,
+                 tevo_event_id: int | None = None) -> dict:
+        """Fetch listings for an event. v2=True calls /v2/listings (broader —
+        ALL secondary marketplace listings). v2=False calls /listings (broker
+        scope only). Returns the full response dict.
+        """
+        path = "v2/listings" if v2 else "listings"
+        status, body = self._get(f"/{path}", params={"event_id": int(sg_event_id)})
+        listings = (body or {}).get("listings") if isinstance(body, dict) else []
+        rows = len(listings or [])
+        ev = (body or {}).get("event") if isinstance(body, dict) else None
+        if status == 200:
+            self._log_pull(path, tevo_event_id=tevo_event_id, sg_event_id=sg_event_id,
+                           status=status, rows=rows,
+                           cache_hit=(body or {}).get("cache_hit"),
+                           refreshed_at_utc=(body or {}).get("refreshed_at_utc"),
+                           meta={"event_inline": ev})
+            return body if isinstance(body, dict) else {"event": None, "listings": []}
+        # Handle 401 scope-denied with a typed exception so the route can return 403
+        msg = ((body or {}).get("error") or {}).get("message") if isinstance(body, dict) else str(body)[:200]
+        self._log_pull(path, tevo_event_id=tevo_event_id, sg_event_id=sg_event_id,
+                       status=status, rows=None, cache_hit=None,
+                       refreshed_at_utc=None, error=msg)
+        if status == 401:
+            raise SeatGeekScopeError(f"/{path} scope denied: {msg}")
+        raise SeatGeekError(f"/{path} returned {status}: {msg}")
 
-    def get_event(self, event_id: int | str) -> dict:
-        """GET /events/{id}. Returns the SG event object."""
-        body = self._get(f"/events/{event_id}")
-        self._log_pull("events.show", 200, 1, meta={"id": event_id})
-        return body or {}
+    # ---------- /sales ----------
 
-    def get_event_sections(self, event_id: int | str) -> dict:
-        """GET /events/section_info/{id}. Returns {sections: {section_name: [rows...]}}."""
-        body = self._get(f"/events/section_info/{event_id}")
-        rows = len(((body or {}).get("sections") or {}))
-        self._log_pull("events.section_info", 200, rows, meta={"id": event_id})
-        return body or {}
+    def sales(self, sg_event_id: int, *, tevo_event_id: int | None = None) -> dict:
+        status, body = self._get("/sales", params={"event_id": int(sg_event_id)})
+        sales = (body or {}).get("sales") if isinstance(body, dict) else []
+        rows = len(sales or [])
+        ev = (body or {}).get("event") if isinstance(body, dict) else None
+        if status == 200:
+            self._log_pull("sales", tevo_event_id=tevo_event_id, sg_event_id=sg_event_id,
+                           status=status, rows=rows,
+                           cache_hit=(body or {}).get("cache_hit"),
+                           refreshed_at_utc=(body or {}).get("refreshed_at_utc"),
+                           meta={"event_inline": ev})
+            return body if isinstance(body, dict) else {"event": None, "sales": []}
+        msg = ((body or {}).get("error") or {}).get("message") if isinstance(body, dict) else str(body)[:200]
+        self._log_pull("sales", tevo_event_id=tevo_event_id, sg_event_id=sg_event_id,
+                       status=status, rows=None, cache_hit=None,
+                       refreshed_at_utc=None, error=msg)
+        if status == 401:
+            raise SeatGeekScopeError(f"/sales scope denied: {msg}")
+        raise SeatGeekError(f"/sales returned {status}: {msg}")
 
-    # -------- Performers --------
+    # ---------- /purchases (currently scope-denied for our token) ----------
 
-    def list_performers(self, **params) -> dict:
-        body = self._get("/performers", params)
-        rows = (body or {}).get("performers") if isinstance(body, dict) else []
-        self._log_pull("performers.list", 200, len(rows or []), meta={"params": params})
-        return body if isinstance(body, dict) else {"performers": body or []}
+    def purchases(self, *, start_time: str | None = None, end_time: str | None = None,
+                  event_id: int | None = None, order_ids: str | None = None,
+                  order_status: str | None = None, page: int = 1,
+                  per_page: int = 10) -> dict:
+        params = {
+            "start_time": start_time, "end_time": end_time,
+            "event_id": event_id, "order_ids": order_ids,
+            "order_status": order_status,
+            "page": page, "per_page": min(int(per_page), 10),
+        }
+        status, body = self._get("/purchases", params=params)
+        if status == 200:
+            return body if isinstance(body, dict) else {"purchases": []}
+        msg = ((body or {}).get("error") or {}).get("message") if isinstance(body, dict) else str(body)[:200]
+        if status == 401:
+            raise SeatGeekScopeError(f"/purchases scope denied: {msg}")
+        raise SeatGeekError(f"/purchases returned {status}: {msg}")
 
-    def get_performer(self, performer_id: int | str) -> dict:
-        body = self._get(f"/performers/{performer_id}")
-        self._log_pull("performers.show", 200, 1, meta={"id": performer_id})
-        return body or {}
+    # ---------- DB persistence ----------
 
-    # -------- Venues --------
-
-    def list_venues(self, **params) -> dict:
-        body = self._get("/venues", params)
-        rows = (body or {}).get("venues") if isinstance(body, dict) else []
-        self._log_pull("venues.list", 200, len(rows or []), meta={"params": params})
-        return body if isinstance(body, dict) else {"venues": body or []}
-
-    def get_venue(self, venue_id: int | str) -> dict:
-        body = self._get(f"/venues/{venue_id}")
-        self._log_pull("venues.show", 200, 1, meta={"id": venue_id})
-        return body or {}
-
-    # -------- Taxonomies --------
-
-    def list_taxonomies(self) -> list:
-        body = self._get("/taxonomies")
-        if isinstance(body, dict) and "taxonomies" in body:
-            tax = body["taxonomies"]
-        elif isinstance(body, list):
-            tax = body
-        else:
-            tax = []
-        self._log_pull("taxonomies.list", 200, len(tax))
-        return tax
-
-    # -------- Recommendations --------
-
-    def recommend_events(self, *, seed_event_ids: list | None = None,
-                         seed_performer_ids: list | None = None,
-                         geoip: str | None = None, lat: float | None = None,
-                         lon: float | None = None, postal_code: str | None = None,
-                         range_: str | None = None, **extra) -> dict:
-        params = {**extra}
-        if seed_event_ids: params["events.id"] = ",".join(str(x) for x in seed_event_ids)
-        if seed_performer_ids: params["performers.id"] = ",".join(str(x) for x in seed_performer_ids)
-        if geoip: params["geoip"] = geoip
-        if lat is not None: params["lat"] = lat
-        if lon is not None: params["lon"] = lon
-        if postal_code: params["postal_code"] = postal_code
-        if range_: params["range"] = range_
-        body = self._get("/recommendations", params)
-        rows = (body or {}).get("recommendations") if isinstance(body, dict) else (body or [])
-        self._log_pull("recommendations.events", 200, len(rows or []), meta={"params": params})
-        return body if isinstance(body, dict) else {"recommendations": body or []}
-
-    def recommend_performers(self, *, seed_event_ids: list | None = None,
-                             seed_performer_ids: list | None = None, **extra) -> dict:
-        params = {**extra}
-        if seed_event_ids: params["events.id"] = ",".join(str(x) for x in seed_event_ids)
-        if seed_performer_ids: params["performers.id"] = ",".join(str(x) for x in seed_performer_ids)
-        body = self._get("/recommendations/performers", params)
-        rows = (body or {}).get("recommendations") if isinstance(body, dict) else (body or [])
-        self._log_pull("recommendations.performers", 200, len(rows or []), meta={"params": params})
-        return body if isinstance(body, dict) else {"recommendations": body or []}
-
-    # -------- DB persistence helpers --------
-
-    def link_event(self, tevo_event_id: int, sg_event: dict, *,
-                   match_method: str = "manual", confidence: float | None = None) -> None:
+    def link_event(self, tevo_event_id: int, sg_event_id: int,
+                   sg_event_inline: dict | None = None,
+                   *, match_method: str = "manual",
+                   confidence: float | None = 1.0) -> None:
+        """Upsert the TEvo↔SG event xref. sg_event_inline is the `event`
+        block from any /listings or /sales response — it carries name,
+        location, type, start_data so we cache them on the xref row."""
         if not self.db:
             return
+        ev = sg_event_inline or {}
         self.db.table("seatgeek_event_xref").upsert({
-            "tevo_event_id": tevo_event_id,
-            "sg_event_id": int(sg_event["id"]),
-            "sg_url": sg_event.get("url"),
-            "sg_short_title": sg_event.get("short_title"),
-            "sg_type": sg_event.get("type"),
-            "sg_taxonomies": sg_event.get("taxonomies") or [],
-            "sg_score": sg_event.get("score"),
-            "sg_announce_date": sg_event.get("announce_date"),
+            "tevo_event_id": int(tevo_event_id),
+            "sg_event_id": int(sg_event_id),
+            "sg_event_name": ev.get("name"),
+            "sg_event_type": ev.get("type"),
+            "sg_event_location": ev.get("location"),
+            "sg_start_data": self._parse_iso(ev.get("start_data")),
+            "sg_visible_until": self._parse_iso(ev.get("visible_until_utc")),
             "match_method": match_method,
             "match_confidence": confidence,
-            "meta": {},
         }, on_conflict="tevo_event_id").execute()
 
-    def link_venue(self, tevo_venue_id: int, sg_venue: dict, *,
-                   match_method: str = "manual", confidence: float | None = None) -> None:
-        if not self.db:
-            return
-        loc = sg_venue.get("location") or {}
-        self.db.table("seatgeek_venue_xref").upsert({
-            "tevo_venue_id": tevo_venue_id,
-            "sg_venue_id": int(sg_venue["id"]),
-            "sg_name": sg_venue.get("name"),
-            "sg_url": sg_venue.get("url"),
-            "sg_address": sg_venue.get("address"),
-            "sg_city": sg_venue.get("city"),
-            "sg_state": sg_venue.get("state"),
-            "sg_country": sg_venue.get("country"),
-            "sg_postal_code": sg_venue.get("postal_code"),
-            "sg_lat": loc.get("lat"),
-            "sg_lng": loc.get("lon"),
-            "match_method": match_method,
-            "match_confidence": confidence,
-        }, on_conflict="tevo_venue_id").execute()
-
-    def link_performer(self, tevo_performer_id: int, sg_performer: dict, *,
-                       match_method: str = "manual", confidence: float | None = None) -> None:
-        if not self.db:
-            return
-        imgs = sg_performer.get("images") or {}
-        self.db.table("seatgeek_performer_xref").upsert({
-            "tevo_performer_id": tevo_performer_id,
-            "sg_performer_id": int(sg_performer["id"]),
-            "sg_slug": sg_performer.get("slug"),
-            "sg_name": sg_performer.get("name"),
-            "sg_short_name": sg_performer.get("short_name"),
-            "sg_type": sg_performer.get("type"),
-            "sg_url": sg_performer.get("url"),
-            "sg_image_url": imgs.get("huge") or imgs.get("large") or sg_performer.get("image"),
-            "sg_images": imgs,
-            "sg_taxonomies": sg_performer.get("taxonomies") or [],
-            "match_method": match_method,
-            "match_confidence": confidence,
-        }, on_conflict="tevo_performer_id").execute()
-
-    def cache_taxonomies(self, taxonomies: list) -> int:
-        if not self.db or not taxonomies:
+    def store_listings(self, tevo_event_id: int, sg_event_id: int,
+                       listings: list, *, endpoint: str = "v1") -> int:
+        """Insert listings rows, deduped via (tevo_event_id, sglid, content_hash).
+        Returns count of newly-inserted rows."""
+        if not self.db or not listings:
             return 0
-        rows = [{
-            "sg_id": int(t["id"]), "name": t.get("name"),
-            "parent_id": int(t["parent_id"]) if t.get("parent_id") else None,
-            "raw": t,
-        } for t in taxonomies if t.get("id") is not None]
-        if not rows:
+        ts = datetime.now(timezone.utc).isoformat()
+        rows = []
+        for l in listings:
+            # SG returns ihd as a date string (or empty); coerce to date or None
+            ihd = l.get("ihd")
+            ihd_clean = ihd[:10] if isinstance(ihd, str) and len(ihd) >= 10 else None
+            rows.append({
+                "tevo_event_id": int(tevo_event_id),
+                "sg_event_id": int(sg_event_id),
+                "captured_at": ts,
+                "sglid": int(l["sglid"]) if l.get("sglid") is not None else None,
+                "display_id": l.get("id"),
+                "retail_price_all_in": l.get("pf"),
+                "broadcast_price": l.get("bp"),
+                "deal_quality_score": l.get("ds"),
+                "quantity": l.get("q"),
+                "splits": l.get("sp") or [],
+                "section": l.get("s"),
+                "row": l.get("r"),
+                "is_broker_owned":     bool(l.get("bo")) if l.get("bo") is not None else None,
+                "is_b2b":              bool(l.get("is_b2b")) if l.get("is_b2b") is not None else None,
+                "is_instant_download": bool(l.get("idl")) if l.get("idl") is not None else None,
+                "is_sro":              bool(l.get("sro")) if l.get("sro") is not None else None,
+                "has_limited_view":    bool(l.get("lv"))  if l.get("lv")  is not None else None,
+                "is_wheelchair_acc":   bool(l.get("wa"))  if l.get("wa")  is not None else None,
+                "ada_details":  l.get("ada"),
+                "delivery_method": l.get("dm"),
+                "in_hand_date": ihd_clean,
+                "market_source": l.get("m"),
+                "stock_type": l.get("st"),
+                "seller_notes": l.get("pn"),
+                "endpoint": endpoint,
+                "content_hash": self._hash_listing(l),
+                "raw": l,
+            })
+        try:
+            res = self.db.table("seatgeek_listings_snapshots").upsert(
+                rows, on_conflict="tevo_event_id,sglid,content_hash"
+            ).execute()
+            # Update last_listings_at on the xref
+            self.db.table("seatgeek_event_xref").update({
+                "last_listings_at": ts,
+            }).eq("tevo_event_id", int(tevo_event_id)).execute()
+            return len(res.data or [])
+        except Exception as e:
+            print(f"seatgeek: store_listings failed: {e}")
             return 0
-        self.db.table("seatgeek_taxonomies").upsert(rows, on_conflict="sg_id").execute()
-        return len(rows)
 
-    def cache_event_sections(self, sg_event_id: int, sections: dict,
-                             tevo_event_id: int | None = None) -> None:
-        if not self.db or not sections:
-            return
-        sec_count = len(sections)
-        total_rows = sum(len(rows or []) for rows in sections.values())
-        self.db.table("seatgeek_event_sections").upsert({
-            "sg_event_id": int(sg_event_id),
-            "tevo_event_id": tevo_event_id,
-            "sections": sections,
-            "section_count": sec_count,
-            "total_rows": total_rows,
-            "refreshed_at": "now()",
-        }, on_conflict="sg_event_id").execute()
-
-    def cache_recommendations(self, *, seed_type: str, seed_sg_id: int,
-                              rec_type: str, recs: list) -> int:
-        if not self.db or not recs:
+    def store_sales(self, tevo_event_id: int, sg_event_id: int, sales: list) -> int:
+        """Insert sales rows, deduped via (tevo_event_id, sg_sale_id)."""
+        if not self.db or not sales:
             return 0
         rows = []
-        for r in recs:
-            entity = r.get("event") or r.get("performer") or {}
-            rec_id = entity.get("id")
-            if rec_id is None:
+        for s in sales:
+            ihd = s.get("ihd")
+            ihd_clean = ihd[:10] if isinstance(ihd, str) and len(ihd) >= 10 else None
+            sale_at = self._parse_iso(s.get("putc"))
+            if not sale_at:
+                # Skip rows with no sale time — would violate NOT NULL
                 continue
             rows.append({
-                "seed_type": seed_type, "seed_sg_id": int(seed_sg_id),
-                "rec_type": rec_type, "rec_sg_id": int(rec_id),
-                "affinity_score": float(r.get("score") or 0),
-                "rec_payload": r,
+                "tevo_event_id": int(tevo_event_id),
+                "sg_event_id": int(sg_event_id),
+                "sg_sale_id": s.get("id"),
+                "broadcast_price": s.get("bp"),
+                "quantity": s.get("q"),
+                "section": s.get("s"),
+                "row": s.get("r"),
+                "stock_type": s.get("st"),
+                "delivery_method": s.get("dm"),
+                "in_hand_date": ihd_clean,
+                "is_instant": bool(s.get("idl")) if s.get("idl") is not None else None,
+                "seller_notes": s.get("pn"),
+                "sale_at_utc": sale_at,
+                "raw": s,
             })
         if not rows:
             return 0
-        self.db.table("seatgeek_recommendations").upsert(
-            rows, on_conflict="seed_type,seed_sg_id,rec_type,rec_sg_id"
-        ).execute()
-        return len(rows)
+        try:
+            res = self.db.table("seatgeek_sales_snapshots").upsert(
+                rows, on_conflict="tevo_event_id,sg_sale_id"
+            ).execute()
+            self.db.table("seatgeek_event_xref").update({
+                "last_sales_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("tevo_event_id", int(tevo_event_id)).execute()
+            return len(res.data or [])
+        except Exception as e:
+            print(f"seatgeek: store_sales failed: {e}")
+            return 0

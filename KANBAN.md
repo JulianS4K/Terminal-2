@@ -30,16 +30,16 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
-### NEXT (design) — SeatGeek: section overlay + related events panel
+### NEXT (design) — SeatGeek BROKER DATA: marketplace listings + sold-comp overlay
 
-**What**: SeatGeek integration is live. Two UI surfaces unlock high-value workflows:
-1. **Section layout overlay** on the event detail page. `GET /api/seatgeek/event/{id}` returns `sections` (canonical seat layout from SG: `{section_name: [row, row, ...]}`). Overlay this onto the existing zone breakdown panel — color sections by current TEvo retail_median, click section to drill into its listings. SG's section_info gives us the canonical "what sections exist at this venue", which complements our derived zone system.
-2. **Related events panel** on the event hero. `GET /api/seatgeek/recommendations/by-event/{event_id}` returns affinity-scored recommended events from SG. Show top 5 with title + date + venue + score. Click → adds to watchlist or opens that event in the terminal.
-3. **Sync buttons** on the event page: "Pull section info" (`POST /sync-sections`), "Pull recommendations" (`POST /sync-recommendations`). Both are FREE (no SeatGeek charge) — just throttle to once per session per event.
-4. **Performer hero images** — `seatgeek_performer_xref.sg_image_url` has SG's "huge"/"large" performer image. Use as fallback when our existing performer_metadata image is missing. Pull on-demand via auto-search.
+**What**: SG integration is now the **broker** data API (not public). Three high-value UI surfaces:
+1. **SG marketplace overlay** on the chart workbench. `GET /api/seatgeek/event/{id}/listings?latest_only=true` returns ALL secondary listings on the SG marketplace (when v2 was used). Plot as a scatter overlay alongside TEvo asks — gives brokers cross-marketplace visibility (TEvo asks vs SG marketplace asks).
+2. **SG sold-comp panel** on the event hero. `GET /api/seatgeek/event/{id}/sales` returns transacted broadcast (wholesale) prices. Pair with SeatData's retail-side sold prices — together that's the full "what's actually clearing" view.
+3. **Match button + manual link**. Broker API has no search endpoint. Show a "Link to SeatGeek" button when `seatgeek_event_xref` is empty; opens a small input that POSTs `/api/seatgeek/event/{tevo_id}/link?sg_event_id=N`. The user pastes the SG event_id from their SG broker portal (or any SG URL) once per event.
+4. **"We are the marketplace" indicator**. `seatgeek_listings_snapshots.is_broker_owned=true` flags listings posted by THIS account. Surface as a badge: "S4K is N of M listings on SeatGeek".
 
-**Why**: SG's section_info is the cleanest "ground truth" for venue layouts we have. Recommendations are how brokers find events to watchlist next without manual search. Both replace string-similarity workarounds.
-**Backend ready**: yes — call `POST /api/seatgeek/event/{id}/auto-search` on any event to link, then read with `GET /api/seatgeek/event/{id}`.
+**Why**: SeatGeek + TEvo + SeatData together give us 3-source coverage. SG is the only source that exposes BOTH our listings AND competitor listings on the same marketplace. The `sglid` (SeatGeek Listing ID) gives us cross-source listing linkage if we ever want to compare the SAME listing across exchanges.
+**Backend ready**: yes — `POST /api/seatgeek/event/{tevo_id}/link?sg_event_id=N` then `POST /sync-listings` (with `?v2=true` for full marketplace) and `POST /sync-sales`.
 **Files**: `static/index.html`
 **Filed by**: code · 2026-05-09
 
@@ -199,7 +199,11 @@ UI surfaces:
 
 ## DONE (last 10)
 
-### DONE — `<sha pending>` · feat(seatgeek): integration scaffolded — section_info + recommendations + xref
+### DONE — `<sha pending>` · refactor(seatgeek): scrap public-API, rebuild for BROKER DATA API
+- v13 used wrong host (api.seatgeek.com/2 with ?client_id=). Token is actually for brokerdata.seatgeek.com with ?token=. Mig 20260509090000 drops 5 unused tables, rebuilds around event_xref/listings_snapshots/sales_snapshots/pull_log + event_latest view. Client + 6 routes rewritten for /listings, /v2/listings, /sales (purchases scope unavailable). Live diag: 400 "No event found" on bogus event_id (auth pass), 401 on /purchases (covered by TEvo /v9/orders). SCHEMA v14.
+- by: code · landed: 2026-05-09 05:00 UTC
+
+### DONE — `4c9641f` · feat(seatgeek): integration scaffolded — section_info + recommendations + xref
 - 3rd data source. Metadata + discovery only (no pricing). Mig 20260509080000 adds `seatgeek_event/venue/performer_xref`, `seatgeek_taxonomies`, `seatgeek_event_sections`, `seatgeek_recommendations`, `seatgeek_pull_log`, `upsert_app_secret(name, value)` RPC. New `seatgeek_client.py` covers all 9 SG endpoints. 6 new `/api/seatgeek/*` routes. Awaiting SEATGEEK_API_TOKEN push to Vault before live test. SCHEMA bumped to v13.
 - by: code · landed: 2026-05-09 04:30 UTC
 

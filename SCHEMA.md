@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v13`
-**Last verified against prod**: 2026-05-09 ~04:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v14`
+**Last verified against prod**: 2026-05-09 ~05:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -797,6 +797,67 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v14**: **SeatGeek BROKER DATA API rebuild**. The v13
+  integration assumed the public discovery API at `api.seatgeek.com/2`
+  with `?client_id=` auth. Our partner token is actually for
+  `brokerdata.seatgeek.com` (Seller Direct Broker Data API) with
+  `?token=` auth. Different host, different endpoints, different shape.
+  Live diagnostics: token returned 400 "No event found" on `/listings`
+  + `/sales` (auth accepted, just need real event_id), and 401 on
+  `/purchases` (token lacks that scope; we use TEvo `/v9/orders` for
+  our own purchases anyway).
+
+  **Migration `20260509090000`** drops the prior public-API tables
+  (`seatgeek_taxonomies`, `seatgeek_event_sections`, `seatgeek_recommendations`,
+  `seatgeek_venue_xref`, `seatgeek_performer_xref`) and rebuilds around
+  the broker API:
+    - `seatgeek_event_xref` — simpler: TEvo↔SG event mapping with
+      cached event metadata from broker responses (name, type, location,
+      start_data, visible_until)
+    - `seatgeek_listings_snapshots` — broker inventory (v1=`/listings`,
+      v2=`/v2/listings` for full marketplace). 18 listing fields plus
+      `sglid` (canonical SG Listing ID) for dedup. content_hash dedup
+      so re-pulls only insert when something changed.
+    - `seatgeek_sales_snapshots` — transacted sales. Broker side returns
+      only broadcast (wholesale) price, not retail.
+    - `seatgeek_pull_log` — audit trail with cache_hit + refreshed_at_utc
+      from response envelope.
+    - `seatgeek_event_latest` view — rollup per linked event:
+      active_listings, active_tickets, broker_owned_listings, sales_count,
+      last_sale_at.
+
+  **Client `seatgeek_client.py`** rewritten. Three methods: `listings`,
+  `sales`, `purchases` (raises typed `SeatGeekScopeError` on 401 since
+  token lacks purchases scope). Vault-loaded auth, content_hash dedup
+  for listings, dedup-by-uuid for sales, full pull_log persistence.
+
+  **API routes added** (under `/api/seatgeek/*`):
+    - `GET  /event/{tevo_id}` — xref + latest snapshot rollup (free)
+    - `POST /event/{tevo_id}/link?sg_event_id=N` — manual xref (no
+      search endpoint exists, so matching is always manual)
+    - `POST /event/{tevo_id}/sync-listings?v2=true|false` — pull + persist
+    - `POST /event/{tevo_id}/sync-sales` — pull + persist
+    - `GET  /event/{tevo_id}/listings?latest_only=true&limit=1000` —
+      read with summary (median/min/max retail_all_in, broker-owned count)
+    - `GET  /event/{tevo_id}/sales?limit=1000` — read with summary
+      (median/min/max broadcast_price, first/last sale times)
+
+  **`/api/cross-source/event/{id}`** updated: SG block now returns
+  `sg_event_name`, `sg_event_type`, `sg_event_location`,
+  `last_listings_at`, `last_sales_at` (the prior v13 fields like
+  `sg_url`, `sg_short_title` no longer exist).
+
+  **Auth**: Same `SEATGEEK_API_TOKEN` in vault. Wire format is
+  `?token=<TOKEN>` (not `?client_id=` like the public API). Verified
+  working against prod broker host with status 400 "event not found"
+  on a bogus event_id (auth-pass), so the token is good.
+
+  **Manual matching workflow**: SG broker API has no `/search` endpoint.
+  To link a TEvo event to its SG counterpart: open SG broker portal
+  (or any SG website URL with the event), grab the numeric event_id,
+  POST `/api/seatgeek/event/{tevo_id}/link?sg_event_id=N`. From there
+  sync-listings + sync-sales work off the xref.
 
 - **2026-05-09-v13**: **SeatGeek integration** — third data source. Metadata
   + discovery only; SG public API does NOT expose pricing or transacted
