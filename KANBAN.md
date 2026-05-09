@@ -30,6 +30,22 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
+### NEXT (design) — Cross-source data coverage badge on event hero
+
+**What**: New view `cross_source_event_audit` returns one row per TEvo event with: ESPN id, SeatData event_id + sales_count, SG event_id + listings count + active tickets, EVO orders, lifecycle status. Render this as a 4-light coverage badge on the event hero ("TEvo · ESPN · SeatData · SG"), each light lit per source linked. Plus a popover showing actual counts.
+
+Plus three new chart series powered by `seatgeek_event_metrics`:
+- `SG_Cost_Median` (line, $-axis) — our wholesale cost percentile
+- `SG_Active_Tickets` (bar, count axis) — our active SG inventory
+- `SG_Sold_Quantity` (bar, count axis) — sold SG history
+
+**Why**: At a glance brokers see "we have 3-source coverage on this event" vs "TEvo only — no comp data". Drives decisions about which events deserve deeper attention.
+**Backend ready**: yes — view + metrics table both populated by master cascade every 2 min.
+**Files**: `static/index.html`
+**Filed by**: code · 2026-05-09
+
+---
+
 ### NEXT (design) — SeatGeek Seller Direct: S4K inventory + sales overlay
 
 **What**: SG Seller Direct integration is live (commit *pending*). Cron `seatgeek-seller-collect-10min` (jobid 41) pulls 1000 listings + paginated orders every 10 min from `sellerdirect-api.seatgeek.com`. Every row carries inline event metadata, so `seatgeek_event_xref` auto-fills via fuzzy match.
@@ -216,7 +232,11 @@ UI surfaces:
 
 ## DONE (last 10)
 
-### DONE — `<sha pending>` · feat(seatgeek): seller-direct ingest with auto-xref via inline event metadata
+### DONE — `<sha pending>` · feat: SG metrics + xref + cascade + RULE 2 read-only
+- Mig 20260509110000. New tables: seatgeek_performer_xref (102 auto-linked from listings/orders), seatgeek_venue_xref (21), seatgeek_event_metrics (28 cols parallel to event_metrics + seatdata_event_stats). New views: seatgeek_categorized_listings, cross_source_event_audit. Smart matcher fix prevents ghost-event mismatches (Lynx→Timberwolves bug fixed). master_cascade_2min extended with SG xref + metrics stages (1.7s total runtime). RULE 2 read-only enforcement at code level (HTTP method allowlist in evo/seatdata/seatgeek clients). Cross-source audit shows Knicks G5 with TEvo+ESPN+SeatData coverage (3 sources, 254 sales). SCHEMA v16.
+- by: code · landed: 2026-05-09 03:15 UTC
+
+### DONE — `c3762f5` · feat(seatgeek): seller-direct ingest with auto-xref via inline event metadata
 - Added 2nd SG broker host (`sellerdirect-api.seatgeek.com`). Probe revealed /listings (157,846 active S4K), /orders?status= (496K fulfilled lifetime), /order single. Migration 20260509100000 adds seatgeek_seller_listings + seatgeek_orders + order_tickets + pull_log + sg_attempt_event_xref RPC + seatgeek_orders_by_event view. Each row carries inline event metadata → fuzzy match to TEvo on (date, venue) auto-fills xref. Live test: page-1 listings = 200 rows, 25 distinct SG events, 2 auto-linked to TEvo. Cron seatgeek-seller-collect-10min (jobid 41) every 10 min, pulls 5×200 listings + 4 status filters of orders. Page=N is deprecated; client uses page_cursor pagination. SCHEMA v15.
 - by: code · landed: 2026-05-09 03:00 UTC
 

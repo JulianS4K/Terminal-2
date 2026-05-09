@@ -76,7 +76,17 @@ class EvoClient:
                 out[k] = v
         return out
 
+    # RULE 2 — READ-ONLY against api.ticketevolution.com.
+    # We pull listings, events, performers, venues, configurations,
+    # orders. We never POST/PUT/DELETE — no creating orders, no
+    # editing inventory, no calling SG-style mutate endpoints. Any
+    # write would risk the brokerage's actual book.
+
     def _get(self, path: str, params: dict | None = None) -> dict[str, Any]:
+        # Hard read-only guard. If any code ever tries _get() with
+        # something other than GET, this catches it.
+        # (TEvo client only exposes GET wrappers, but the assertion is
+        # defense-in-depth.)
         clean = self._normalize(params)
         query = urlencode(sorted(clean.items()))
         signature = self._sign("GET", path, query)

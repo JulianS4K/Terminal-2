@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v15`
-**Last verified against prod**: 2026-05-09 ~03:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v16`
+**Last verified against prod**: 2026-05-09 ~03:15 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -370,6 +370,29 @@ MLB Pirates, NFL Saints, NHL, WNBA. Caught + fixed in commit `bbd18ed`
 (2026-05-09). The `_news_series` and `_injury_load_series` helpers in
 `chart-data` were already correct and serve as the canonical template
 to follow.
+
+### The read-only external API rule (RULE 2)
+
+**TEvo, SeatData, SeatGeek (broker + seller-direct) integrations are
+strictly READ-ONLY.** We pull data — we never POST/PUT/PATCH/DELETE.
+
+Enforced at the code level with hard-coded HTTP method allowlists in:
+- `evo_client.py` — only GET to `api.ticketevolution.com`
+- `seatdata_client.py` — GET + the single `POST /v0.4/events/event-request-add`
+  (asks SG to add an event to their catalog; metadata only, no S4K data)
+- `seatgeek_client.py` — only GET to both `brokerdata.seatgeek.com` and
+  `sellerdirect-api.seatgeek.com`
+
+Each client has an `_assert_readonly_method(method)` guard called inside
+`_get` / `_request`. If anyone ever adds a non-GET wrapper, the assertion
+raises before the HTTP call goes out.
+
+Why this matters: writes to TEvo's `/orders` would create real orders.
+Writes to SG's broker endpoints could change inventory state. The rule
+makes accidental damage from a coding error structurally impossible.
+
+When adding a new external API: copy the same `ALLOWED_HTTP_METHODS` +
+`_assert_readonly_method` pattern. List the integration in this section.
 
 ### `espn_injuries_snapshots` schema
 
@@ -797,6 +820,55 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v16**: **SG metrics + xref + categorization + RULE 2 +
+  cascade integration**. Mig `20260509110000`.
+
+  **(a) New schema**:
+    - `seatgeek_performer_xref` (lighter re-introduction): TEvo
+      performer_id ↔ SG performer name string. Auto-extracts from
+      seller_listings + orders by splitting "Away at Home" event names.
+      102 performers auto-linked on first run.
+    - `seatgeek_venue_xref`: TEvo venue_id ↔ SG venue name. 21 venues
+      auto-linked.
+    - `seatgeek_event_metrics`: parallel to `event_metrics` (TEvo) and
+      `seatdata_event_stats`. 28 columns covering listings aggregates
+      (count, tickets, cost percentiles, sections, edelivery_share,
+      instant_share), orders state buckets (open/pending/confirmed/
+      fulfilled/delivered/cancelled), sold metrics (qty, gross, price
+      stats), and a fill_rate proxy (sold / (sold + active)).
+    - `seatgeek_categorized_listings` view: latest snapshot per event
+      grouped by (sg_event_name, sg_venue, sg_event_date) — answers
+      "all our SG inventory for X at Y".
+    - `cross_source_event_audit` view: for any TEvo event, returns
+      ESPN id, SeatData sales count, SG event_id, SG seller listing
+      count, SG seller active tickets, SG order count, EVO order count,
+      lifecycle status. One JOIN-free query for the full picture.
+
+  **(b) Smart event-xref matcher fix**: prior `sg_attempt_event_xref`
+  matched only on (date, venue_LIKE) and incorrectly linked Lynx
+  game on 5/17 to a "TBD at Minnesota Timberwolves" ghost event at
+  Target Center on 5/17. New version requires:
+    - performer name overlap (split SG name on " at ", check both
+      halves against TEvo `primary_performer_name` + `name`)
+    - prefer non-ghost events (lifecycle.is_active=true)
+    - exact venue match before LIKE prefix
+  Re-ran on 219 known SG events — exactly 1 valid auto-link
+  (Rockies @ Diamondbacks 5/22 → TEvo 3092720). Ghost reject worked.
+
+  **(c) RULE 2 (Read-only external APIs)**: documented + enforced.
+  See "The read-only external API rule (RULE 2)" section above.
+
+  **(d) Cascade integration**: `master_cascade_2min` now includes two
+  new stages — SG performer + venue auto-xref, SG metrics backfill (50
+  events/tick). Total runtime ~1.7s, well under 2-min budget.
+
+  **(e) Cross-source audit**: ran live; richest event in our system
+  is **Knicks G5** (TEvo 3345925) with TEvo + ESPN + SeatData
+  coverage (3 sources, 254 SeatData sales pulled, 2,869 active TEvo
+  tix at $987 retail median, 940 owned tix). SG hasn't matched it yet
+  because page-1 listings only covered ~25 events out of 157,846; the
+  10-min cron will keep filling.
 
 - **2026-05-09-v15**: **SeatGeek Seller Direct API integration** —
   read-only ingest from `sellerdirect-api.seatgeek.com`. SECOND broker

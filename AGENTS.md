@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v15)
+## SCHEMA LOCK (2026-05-09-v16)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v15`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v16`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,15 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (SG metrics + xref + cascade + RULE 2 read-only enforcement)
+
+- DONE — **SG event metrics, performer xref, venue xref, categorization view** (mig `20260509110000`, SCHEMA v16). Parallel to TEvo `event_metrics` and SeatData `seatdata_event_stats`. 28 metric columns (listings + orders + sold + mix + fill_rate). `seatgeek_categorized_listings` answers "all our SG inventory for X at Y" without joins. `cross_source_event_audit` view gives all 4 sources for any TEvo event in one row.
+- DONE — **Smart matcher fix**: prior `sg_attempt_event_xref` linked SG Lynx game on 5/17 to a ghost "TBD at Minnesota Timberwolves" TEvo event (same venue/date). New version requires performer name overlap + prefers non-ghost (lifecycle.is_active). Re-ran on 219 known SG events: 1 valid match (Rockies @ Diamondbacks → TEvo 3092720), ghost rejected.
+- DONE — **RULE 2 (Read-only external APIs)** documented + enforced at code level. `evo_client.py`, `seatdata_client.py`, `seatgeek_client.py` all hard-code an HTTP method allowlist. Any non-GET (except SeatData's metadata-only event-add POST) raises before the network call. Documented in SCHEMA.md right next to RULE 0 and RULE 1.
+- DONE — **Cascade extended**: `master_cascade_2min` now runs SG performer + venue auto-xref + SG metrics backfill (50 events/tick) alongside the existing TEvo splits/nonowned + ESPN HTTP. Live test: 1.7s total runtime, 102 SG performers + 21 venues linked, 1 SG event metric computed.
+- DONE — **Cross-source audit**: most-covered event in our system is Knicks G5 (TEvo 3345925) — TEvo + ESPN + SeatData all linked, 254 SeatData sales, 2,869 active TEvo tix. SG hasn't matched it yet because page-1 listings only covered ~25 of 157,846 listings; 10-min cron will keep filling.
+- NEXT (design) — KANBAN row added: render the `cross_source_event_audit` view as a single "data coverage" badge on the event hero (4 lights for TEvo / ESPN / SeatData / SG, lit per source matched). Plus `seatgeek_event_metrics` series on the chart (`SG_Cost_Median`, `SG_Active_Tickets`, `SG_Sold_Quantity`).
 
 ### 2026-05-09 code (SeatGeek Seller Direct API — auto-xref via inline event metadata)
 

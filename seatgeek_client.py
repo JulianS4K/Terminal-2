@@ -39,6 +39,21 @@ API_BASE = "https://brokerdata.seatgeek.com"
 # Seller Direct API — different host, same partner token. Read-only ingest.
 SELLER_DIRECT_BASE = "https://sellerdirect-api.seatgeek.com"
 
+# RULE 2 — READ-ONLY across all SeatGeek surfaces.
+# We never POST/PUT/PATCH/DELETE to brokerdata.seatgeek.com or
+# sellerdirect-api.seatgeek.com. Any non-GET method here is a bug.
+ALLOWED_HTTP_METHODS = frozenset({"GET"})
+
+
+def _assert_readonly_method(method: str) -> None:
+    """Hard guard: this client must never write back to SeatGeek."""
+    if method.upper() not in ALLOWED_HTTP_METHODS:
+        raise SeatGeekError(
+            f"READ-ONLY violation: method {method} is not allowed. "
+            "SeatGeek integration is strictly read-only (RULE 2 in SCHEMA.md). "
+            "Pulling data only — never write back to SG."
+        )
+
 
 class SeatGeekError(Exception):
     pass
@@ -101,6 +116,7 @@ class SeatGeekClient:
 
     def _get(self, path: str, params: dict | None = None,
              max_429_retries: int = 3) -> tuple[int, dict | list]:
+        _assert_readonly_method("GET")  # RULE 2 enforcement
         url = f"{API_BASE}/{path.lstrip('/')}"
         clean: dict[str, Any] = {"token": self.api_token}
         for k, v in (params or {}).items():
@@ -347,6 +363,7 @@ class SeatGeekClient:
     def _get_seller(self, path: str, params: dict | None = None,
                     max_429_retries: int = 3) -> tuple[int, dict | list]:
         """Same shape as _get but for SELLER_DIRECT_BASE."""
+        _assert_readonly_method("GET")  # RULE 2 enforcement
         url = f"{SELLER_DIRECT_BASE}/{path.lstrip('/')}"
         clean: dict[str, Any] = {"token": self.api_token}
         for k, v in (params or {}).items():

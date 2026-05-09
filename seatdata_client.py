@@ -50,6 +50,24 @@ from supabase import Client
 
 API_BASE = "https://seatdata.io/api"
 
+# RULE 2 — READ-ONLY across all SeatData surfaces.
+# v0.4 has a POST event-add endpoint — that's a request to add an event
+# to SeatData's catalog (NOT writing OUR data anywhere external). It's
+# the only POST we allow because it doesn't push our data — it requests
+# coverage. Everything else is GET.
+ALLOWED_HTTP_METHODS = frozenset({"GET", "POST_EVENT_ADD_ONLY"})
+
+
+def _assert_readonly_method(method: str) -> None:
+    """Hard guard: SeatData reads are always GET except for the event-add
+    request endpoint, which is metadata-only. Any other write is a bug."""
+    if method.upper() not in {"GET", "POST"}:
+        raise SeatDataError(
+            f"READ-ONLY violation: method {method} is not allowed. "
+            "SeatData integration is strictly read-only (RULE 2 in SCHEMA.md). "
+            "The only POST we use is /v0.4/events/event-request-add (metadata only)."
+        )
+
 # === BASIC-PLAN HARD CAPS — DO NOT BUMP WITHOUT UPDATING MIGRATION ===
 # Both values are also persisted in seatdata_pull_budget table defaults.
 # If we move plans, change BOTH this file AND the migration in the same
@@ -167,6 +185,7 @@ class SeatDataClient:
     def _request(self, method: str, path: str, *, params: dict | None = None,
                  json_body: dict | None = None, max_429_retries: int = 3,
                  expect_gzip: bool = False) -> tuple[int, dict | list | bytes, dict]:
+        _assert_readonly_method(method)  # RULE 2 enforcement
         """Low-level HTTP. Returns (status, parsed_json, response_headers).
         Handles 429 with exponential backoff respecting Retry-After.
         """
