@@ -21,11 +21,10 @@ import re
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import requests
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from evo_client import EvoClient
 
@@ -121,8 +120,7 @@ def require_auth(authorization: str | None = Header(None)):
 
 # ---------- App setup ----------
 
-STATIC_DIR = Path(__file__).parent / "static"
-app = FastAPI(title="Evo Terminal")
+app = FastAPI(title="Evo Terminal — data-only API (UI on rebuild)")
 
 # (SMS / WhatsApp / web bot moved to Supabase Edge Functions in v2.7:
 #  supabase/functions/sms-bot, web-bot, chat. The legacy bot.py is unused.)
@@ -134,79 +132,16 @@ async def _runtime_error_handler(request, exc: RuntimeError):
 
 
 # ---------- Public routes (no auth) ----------
+# Phase 1: data-collection only. UI is on full reboot — no HTML routes shipped.
+# All previous /, /chat, /event, /movers, /preview/*, /terminal/v1, /legacy
+# routes removed along with their static/*.html assets in the 2026-05-09
+# UI rebuild prep. JSON API endpoints below remain available for whatever
+# UI gets built next.
 
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-
-
-@app.get("/chat", response_class=HTMLResponse)
-def chat_page():
-    """Customer-facing retail chat. Bootstraps from /api/public/config to get
-    the Supabase anon key, then POSTs to the chat Edge Function for replies."""
-    return (STATIC_DIR / "chat.html").read_text(encoding="utf-8")
-
-
-@app.get("/event/{event_id}", response_class=HTMLResponse)
-def event_terminal_page(event_id: int):
-    """Broker terminal — single event detail page (Bloomberg/Robinhood hybrid).
-    The event_id is read by the JS via window.location.pathname."""
-    return (STATIC_DIR / "event.html").read_text(encoding="utf-8")
-
-
-@app.get("/movers", response_class=HTMLResponse)
-def movers_page():
-    """Top winners + losers report — across event/performer/venue, owned vs market."""
-    return (STATIC_DIR / "movers.html").read_text(encoding="utf-8")
-
-
-# ---------- Preview surfaces ----------
-# Three in-flight products sharing one site for now. Each gets its own
-# deployment once stable. Per RULE 4 (move permafix in progress) and the
-# 2026-05-09 audit, these live under /preview/* until they split.
-#
-# The skeleton files are static/_proposals/{templates,shop,undelivered}.html
-# (design coworker authored, code reviewed per RULE 12 proxy commit).
-# The XSS in shop.html chatbot was patched in this commit.
-
-@app.get("/preview", response_class=HTMLResponse)
-def preview_landing():
-    """Landing page for the 3 preview surfaces with a switcher to each."""
-    return (STATIC_DIR / "_proposals" / "preview-landing.html").read_text(encoding="utf-8")
-
-
-@app.get("/preview/terminal", response_class=HTMLResponse)
-def preview_terminal():
-    """Broker terminal · 6 templates · hash router. design/preliminary-event-views-2026-05-08.md spec."""
-    return (STATIC_DIR / "_proposals" / "templates.html").read_text(encoding="utf-8")
-
-
-@app.get("/preview/shop", response_class=HTMLResponse)
-def preview_shop():
-    """Retail buying site · TEvo pattern. design/retail-site-2026-05-08.md spec."""
-    return (STATIC_DIR / "_proposals" / "shop.html").read_text(encoding="utf-8")
-
-
-@app.get("/preview/ops", response_class=HTMLResponse)
-def preview_ops():
-    """Fulfillment ops board reading from unified_orders. design/undelivered-window-2026-05-08.md spec."""
-    return (STATIC_DIR / "_proposals" / "undelivered.html").read_text(encoding="utf-8")
-
-
-@app.get("/terminal/v1", response_class=HTMLResponse)
-def terminal_v1_alias():
-    """Backward-compat alias — terminal-v1 was promoted to `/` on 2026-05-08.
-    Old bookmarks still resolve. Returns the same HTML as `/`."""
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-
-
-@app.get("/legacy", response_class=HTMLResponse)
-def index_legacy():
-    """Pre-2026-05-08 terminal. Preserved here because it has features the new
-    design hasn't reabsorbed yet: watchlist add/remove modal, configurations
-    browse, snapshots/velocity views, run history. Reachable for power users
-    until parity is restored."""
-    return (STATIC_DIR / "legacy.html").read_text(encoding="utf-8")
+@app.get("/")
+def root_health():
+    """Liveness probe. Phase-1 data-collection mode."""
+    return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
 
 
 @app.get("/api/public/config")
