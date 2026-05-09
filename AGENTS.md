@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v9)
+## SCHEMA LOCK (2026-05-09-v10)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v9`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v10`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,14 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (event lifecycle classifier — sort ghost playoff games out of live surfaces)
+
+- DONE — **Event lifecycle classifier** (mig `20260509050000`, SCHEMA v10). User reported Toronto Raptors / Boston Celtics events showing up as live despite both teams being eliminated. Audit found 203 ghost future events out of 1134 (~18% pollution). Built `derive_event_lifecycle(event_id)` function + `event_lifecycle` view classifying events as `active | ghost_eliminated | completed | postponed | cancelled | unknown` with confidence + reasons. Strongest signal: TEvo `last_seen` staleness (live Knicks avg 1.0h since refresh; ghost brackets avg 133h, min 121h — zero overlap). Combined with `event_type='game' AND name ILIKE '%TBD%'` for the placeholder bracket pattern.
+- DONE — **API integration**: `/api/broker/event/{id}/overview` adds a `lifecycle` block. `/api/broker/movers` and `/api/portfolio` default to excluding non-active events with `?include_inactive=true` opt-in. Portfolio response now includes `inactive_excluded_count` so the UI can flag "we hid N ghost events". `/api/broker/performers/by-league/{league}` accepts the flag but currently only as passthrough — the SQL RPC needs a JOIN against the lifecycle view (NEXT in KANBAN).
+- DONE — **Distribution check**: 1045 active / 95 completed / 89 ghost_eliminated / 2 postponed / 1 cancelled across 1232 events. Spot-verified on 8 known events (5 Raptors/Celtics scenarios + 1 concert + 1 active Knicks game + 1 NBA Finals ghost).
+- NEXT (design) — KANBAN row added: render the lifecycle status badge on event hero + watchlist rows + movers list (ghost / completed / postponed visual treatment).
+- NEXT (code) — KANBAN row added: rewrite `get_performers_by_league` SQL RPC to filter ghost events from the home/road aggregates.
 
 ### 2026-05-09 code (lane re-split: code = backend, design = frontend; chart range bug fix)
 

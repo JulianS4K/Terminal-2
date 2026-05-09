@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v9`
-**Last verified against prod**: 2026-05-09 ~01:15 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v10`
+**Last verified against prod**: 2026-05-09 ~02:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -797,6 +797,39 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v10**: **Event lifecycle classifier** — sort ghost playoff
+  brackets, completed events, postponed/cancelled out of "live" surfaces.
+  User reported Toronto Raptors and Boston Celtics events showing in the
+  terminal even though those teams were eliminated from the playoffs.
+  Audit found **203 ghost future events out of 1134 (~18% pollution)**.
+  - Migration `20260509050000`: function `derive_event_lifecycle(event_id)`
+    + view `event_lifecycle` (bulk classification across all events).
+  - Status enum: `active | ghost_eliminated | completed | postponed |
+    cancelled | unknown`. Returns confidence + reasons[] + ghost_score.
+  - Strongest signal: TEvo `last_seen` staleness. Live Knicks events
+    avg 1.0h since last refresh (max 1.1h); ghost playoff brackets
+    avg 133h (min 121h) — **zero overlap**. Combined with
+    `event_type='game' AND name ILIKE '%TBD%'` for the placeholder
+    bracket pattern, classifier hits 0.95 confidence on ghosts.
+  - **Distribution as of 2026-05-09**: 1045 active / 95 completed /
+    89 ghost_eliminated / 2 postponed / 1 cancelled.
+  - **API integration**:
+    - `/api/broker/event/{id}/overview` — adds `lifecycle: {status,
+      confidence, reasons, is_active, hrs_since_seen, hrs_to_event,
+      ghost_score}` block. Frontend renders status badge from this.
+    - `/api/broker/movers?include_inactive=` — defaults `false`, ghost
+      events excluded from winners/losers lists.
+    - `/api/portfolio?include_inactive=` — defaults `false`, ghost
+      events excluded from aggregate sums; per-event rows get
+      `lifecycle` block + response includes `inactive_excluded_count`.
+    - `/api/broker/performers/by-league/{league}?include_inactive=` —
+      flag passthrough only for now; the underlying SQL RPC still
+      aggregates over all events. NEXT (code) tracked in KANBAN to
+      update `get_performers_by_league` to JOIN against the lifecycle
+      view.
+  - Clients that want to see EVERYTHING (including ghosts) opt in with
+    `?include_inactive=true`.
 
 - **2026-05-09-v9**: **`range_meta` in `/api/broker/event/{id}/chart-data`
   response** + lane re-split. The chart-data endpoint now returns

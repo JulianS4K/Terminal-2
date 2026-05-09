@@ -537,7 +537,7 @@ def broker_news(
 
 
 @app.get("/api/broker/performers/by-league/{league}")
-def broker_performers_by_league(league: str, _=Depends(require_auth)):
+def broker_performers_by_league(league: str, include_inactive: bool = False, _=Depends(require_auth)):
     """Per-team HOME/ROAD price metrics for ESPN-tracked teams in a league.
     Backed by the get_performers_by_league SQL RPC (mig 20260508050000).
 
@@ -547,6 +547,13 @@ def broker_performers_by_league(league: str, _=Depends(require_auth)):
           road: { events, market_med, owned_med, market_tix, owned_tix, first_event, last_event } },
         ...
     ] }
+
+    `include_inactive`: passthrough flag. The underlying SQL RPC currently
+    aggregates over ALL events (including ghost playoff brackets where the
+    team was eliminated). NEXT (code) — update get_performers_by_league
+    to JOIN against event_lifecycle and exclude is_active=false rows when
+    include_inactive=false. Until that lands, the response field
+    `_inactive_filter_applied` reports false so the frontend can flag it.
     """
     db = require_sb()
     rows = db.rpc("get_performers_by_league", {"p_league": league}).execute().data or []
@@ -596,7 +603,13 @@ def broker_performers_by_league(league: str, _=Depends(require_auth)):
         }
         for r in rows
     ]
-    return {"league": league, "count": len(performers), "performers": performers}
+    return {
+        "league": league,
+        "count": len(performers),
+        "performers": performers,
+        "_inactive_filter_applied": False,  # see NEXT in docstring; tracked in KANBAN
+        "_include_inactive_param": include_inactive,
+    }
 
 
 @app.get("/api/portfolio")
@@ -604,6 +617,7 @@ def portfolio(
     performer_id: int | None = None,
     venue_id: int | None = None,
     watchlist_only: bool = False,
+    include_inactive: bool = False,
     _=Depends(require_auth),
 ):
     """Aggregated portfolio across multiple events.
@@ -613,7 +627,12 @@ def portfolio(
         venue_id        - events at this venue
         watchlist_only  - events that originated from any watchlist row (via watch_sources)
 
-    Returns: { filter, events: [...latest metric per event...], aggregate: {...rollups...} }
+    `include_inactive`: by default we exclude events flagged ghost / completed /
+    cancelled / postponed via the event_lifecycle view, so portfolio totals
+    don't double-count playoff brackets that the team got eliminated from.
+
+    Returns: { filter, events: [...latest metric per event with `lifecycle`...],
+               aggregate: {...rollups...}, inactive_excluded_count }
     """
     if not (performer_id or venue_id or watchlist_only):
         raise HTTPException(400, "Provide performer_id, venue_id, or watchlist_only=true")
@@ -698,6 +717,23 @@ def portfolio(
     ).data or []
     metrics_by_id = {m["event_id"]: m for m in ev_metrics}
 
+    # 3.5) Lifecycle classification for each event. Used to exclude ghosts
+    # (eliminated playoff brackets, completed games, cancellations) from
+    # aggregates by default. Each event row also gets a `lifecycle` block
+    # so the UI can show a status badge.
+    lc_rows = (
+        db.table("event_lifecycle").select("event_id,status,is_active,confidence,reasons")
+        .in_("event_id", event_ids).execute()
+    ).data or []
+    lifecycle_by_id = {r["event_id"]: r for r in lc_rows}
+    inactive_excluded_count = 0
+    if not include_inactive:
+        before = len(event_ids)
+        active_ids = {r["event_id"] for r in lc_rows if r.get("is_active")}
+        # Keep events that are either active or have no lifecycle row (defensive — shouldn't happen)
+        ev_meta = [e for e in ev_meta if e["id"] in active_ids or e["id"] not in lifecycle_by_id]
+        inactive_excluded_count = before - len(ev_meta)
+
     # 4) Merge per-event
     out_events = []
     for ev in ev_meta:
@@ -738,6 +774,7 @@ def portfolio(
             "price_dispersion": m.get("price_dispersion"),
             "tail_premium": m.get("tail_premium"),
             "top5_concentration": m.get("top5_concentration"),
+            "lifecycle": lifecycle_by_id.get(ev["id"]),  # status badge data
         })
 
     # Sort: events with metrics first, soonest first
@@ -773,10 +810,12 @@ def portfolio(
             "performer_id": performer_id,
             "venue_id": venue_id,
             "watchlist_only": watchlist_only,
+            "include_inactive": include_inactive,
         },
         "performer_classification": perf_classification,    # null when not perf-filtered
         "is_sports_performer": is_sports_performer,         # gates the HOME/AWAY UI
         "events": out_events,
+        "inactive_excluded_count": inactive_excluded_count,  # ghost / completed / cancelled events filtered out
         "aggregate": {
             "events_count": len(out_events),
             "tickets_total": tickets_total,
@@ -1075,6 +1114,16 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
     home_assets = assets_by_id.get(int(home_perf_id)) if home_perf_id else None
     away_assets_list = [assets_by_id.get(int(p)) for p in perf_ids if p != home_perf_id and assets_by_id.get(int(p))]
 
+    # Lifecycle classification — flags ghost playoff games, completed events,
+    # postponed/cancelled. Used by the UI to render a status banner and to
+    # let movers/league/portfolio surfaces filter ghosts out by default.
+    # See migration 20260509050000_event_lifecycle for rule definitions.
+    try:
+        lc_rows = db.rpc("derive_event_lifecycle", {"p_event_id": event_id}).execute().data or []
+        lc = lc_rows[0] if lc_rows else None
+    except Exception:
+        lc = None
+
     return {
         "event": head,
         "metrics": metrics,
@@ -1086,6 +1135,7 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
             "away": away_assets_list[0] if away_assets_list else None,
             "all": list(assets_by_id.values()),
         },
+        "lifecycle": lc,
     }
 
 
@@ -2005,13 +2055,17 @@ def broker_event_chart_data(
 
 
 @app.get("/api/broker/movers")
-def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
+def broker_movers(window_hours: int = 24, include_inactive: bool = False, _=Depends(require_auth)):
     """Top 10 winners + losers at event / performer / venue level, owned vs market.
     Window: compare latest event_metrics row vs latest row from `window_hours` ago.
 
     Owned segment    = events with owned_tickets_count > 0 in current window
     Market segment   = events with market listings (regardless of owned)
     Returns 12 lists total: {events,performers,venues} × {owned,market} × {winners,losers}
+
+    `include_inactive`: by default we exclude ghost / completed / cancelled events
+    (lifecycle.is_active=false) so a Raptors playoff bracket that won't happen
+    doesn't pollute the movers list. Pass true to see everything raw.
     """
     window_hours = max(1, min(int(window_hours), 168))
     db = require_sb()
@@ -2025,6 +2079,20 @@ def broker_movers(window_hours: int = 24, _=Depends(require_auth)):
     # capped at 1000 rows by PostgREST's per-request row limit, producing
     # an empty Movers report even when the underlying data was rich.
     rpc_rows = db.rpc("get_event_movers", {"p_window_hours": window_hours}).execute().data or []
+
+    # Filter ghost/completed/cancelled events unless caller explicitly opts in.
+    # event_lifecycle is a view over derive_event_lifecycle(); cheap to query
+    # for the small id-set we get from the movers RPC.
+    if rpc_rows and not include_inactive:
+        ids = [r.get("event_id") for r in rpc_rows if r.get("event_id")]
+        if ids:
+            lc_rows = (
+                db.table("event_lifecycle").select("event_id,status,is_active")
+                .in_("event_id", ids).execute()
+            ).data or []
+            inactive = {r["event_id"] for r in lc_rows if not r.get("is_active")}
+            if inactive:
+                rpc_rows = [r for r in rpc_rows if r.get("event_id") not in inactive]
 
     def pct_delta(cur, prev):
         if cur is None or prev is None: return None

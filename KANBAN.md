@@ -13,8 +13,17 @@
 
 ## DOING
 
-### DOING (design) — _none yet_
-_(append your work-in-progress here)_
+### DOING (design) — Polish the chart range switcher
+
+- **What**: Removed `color` from the `.rng` transition (was the source of the activate flash); added `[` / `]` keyboard stepping (one-shot global listener that respects input focus and wraps at the ends without spilling); added a Chart.js crosshair plugin + switched the tooltip to `mode:'index'` so all visible series values render at the snapped x; added a relative-time `title` callback ("3h ago", "yesterday 4 PM", "Apr 24") replacing the long ISO.
+- **Files touched**: `static/index.html`
+  - CSS: ~lines 88-101 (`.rng` transition + new `:focus-visible` outline)
+  - JS keyboard wiring: ~lines 1726-1755 (`_wireRangeKeyboard` + call from `_wireRangeButtons`)
+  - JS chart helpers: ~lines 1830-1888 (`_formatRelativeTime`, `_evtChartCrosshair` plugin)
+  - JS tooltip config: ~lines 2065-2080 (`mode:'index'` + `title` callback)
+  - JS chart constructor: ~lines 2147-2151 (register `_evtChartCrosshair` locally, not globally)
+- **Status**: ready for review
+- **Started**: 2026-05-09 02:15 UTC
 
 ### DOING (code) — _none yet_
 _(if I'm in the middle of something, it goes here so design knows what files I'm touching)_
@@ -30,15 +39,15 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
-### NEXT (design) — Polish the chart range switcher
+### NEXT (design) — Render event lifecycle status badge
 
-**What**: The 6h/24h/3d/7d/30d/ALL toggle now smooth-fades + pins x-axis bounds (commit *pending*). Make it actively feel Robinhood-grade:
-1. Hover state on inactive buttons (subtle bg, no color flash).
-2. Keyboard `[` / `]` to step ranges.
-3. A vertical crosshair on chart hover that snaps to the nearest data point and shows a small badge with all visible series values at that timestamp.
-4. The timestamp tooltip currently shows long ISO; make it relative ("3h ago", "yesterday 4 PM", "Apr 24").
+**What**: Backend now classifies every event as `active | ghost_eliminated | completed | postponed | cancelled` via the new `lifecycle` block in `/api/broker/event/{id}/overview` and `lifecycle` field on each event in `/api/portfolio`. UI surfaces that need treatment:
+1. **Event hero** (top of event detail page): show a colored badge if `lifecycle.status !== 'active'`. Suggested colors: `ghost_eliminated` = dim red, `completed` = neutral gray, `postponed` = amber, `cancelled` = solid red. Include `lifecycle.reasons[0]` as a small subline.
+2. **Watchlist row + Movers list**: small dot or strikethrough on rows where the event is non-active. Tooltip shows the reason.
+3. **Portfolio header**: when `inactive_excluded_count > 0`, show "N ghost events hidden" with a "Show all" link that re-fetches with `?include_inactive=true`.
 
-**Why**: User wants Robinhood feel. Range switching is the most-touched control on the page.
+**Why**: 18% of future events in our system are ghosts (eliminated playoff brackets). Without this badge a broker can scan the watchlist and waste time triaging events that won't happen. Knowing at-a-glance which events are actually playable is critical.
+**Backend ready**: yes — the lifecycle data is live as of `<sha pending>`. Just consume it.
 **Files**: `static/index.html`
 **Filed by**: code · 2026-05-09
 
@@ -70,6 +79,17 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 **Why**: Brokers customize sort by tab (mine = my-positions-by-cost-basis; movers = absolute change; gametime = chronological). Forcing them to re-pick on every tab is annoying.
 **Files**: `static/index.html`
+**Filed by**: code · 2026-05-09
+
+---
+
+### NEXT (code) — Update get_performers_by_league RPC to filter ghost events
+
+**What**: `/api/broker/performers/by-league/{league}` now accepts `?include_inactive=` but the underlying SQL RPC (`get_performers_by_league`, mig 20260508050000) aggregates over ALL events including ghost playoff brackets. Rewrite the RPC to JOIN against `event_lifecycle` and exclude `is_active=false` rows when the new `p_include_inactive` arg is false.
+
+**Why**: A team like Boston Celtics gets aggregate `home_events=8` from all the speculative Round 2/3/Finals home games even though they're eliminated. Should be `home_events=2` (the actual played games). Currently the API response includes `_inactive_filter_applied: false` so the frontend can flag the discrepancy.
+
+**Files**: `supabase/migrations/<new>.sql` + matching update in `app.py` to pass through `p_include_inactive`.
 **Filed by**: code · 2026-05-09
 
 ---
@@ -126,6 +146,10 @@ _(none currently)_
 ---
 
 ## DONE (last 10)
+
+### DONE — `<sha pending>` · feat(events): lifecycle classifier sorts ghost playoff games out of live surfaces
+- New SQL fn `derive_event_lifecycle(event_id)` + view `event_lifecycle`. Status enum `active | ghost_eliminated | completed | postponed | cancelled`. Strongest signal: TEvo `last_seen` staleness (live=avg 1.0h, ghost=avg 133h, zero overlap). Wired into `/api/broker/event/{id}/overview` (lifecycle block), `/api/broker/movers` (`?include_inactive` defaults false), `/api/portfolio` (per-event lifecycle + `inactive_excluded_count`). Distribution: 1045 active / 95 completed / 89 ghost / 2 postponed / 1 cancelled. Mig `20260509050000`. SCHEMA bumped to v10.
+- by: code · landed: 2026-05-09 02:30 UTC
 
 ### DONE — `<sha pending>` · feat(cron): cascading 2-min freshness model
 - 6 individual freshness crons collapsed into `master-cascade-2min` (jobid 38). ESPN injury/trade cadence 10m → 2m. Worst-case event coverage staleness 50m → 2m. Verified runtime ~150-200ms per tick. Side-fixed `auto_link_event_xref` NOT NULL bug. SCHEMA bumped to v8.
