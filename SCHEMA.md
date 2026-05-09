@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v12`
-**Last verified against prod**: 2026-05-09 ~04:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v13`
+**Last verified against prod**: 2026-05-09 ~04:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -797,6 +797,57 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v13**: **SeatGeek integration** — third data source. Metadata
+  + discovery only; SG public API does NOT expose pricing or transacted
+  sales (those are TEvo + SeatData jobs). What SG adds beyond what we have:
+  1. **Section info per venue** — `/events/section_info/{id}` returns a
+     `{section_name: [row_label, row_label, ...]}` map. Goldmine for our
+     zone/section mapping (cross-validate against TEvo + SeatData).
+  2. **Recommendations** — affinity-scored related events + performers,
+     better than our string-similarity heuristic. Seed by event_id or
+     performer_id; great for "what should we add to watchlist next".
+  3. **Performer images** in 4 sizes (huge / large / medium / small) for
+     backfilling our metadata.
+  4. **Cross-validation** of event/venue/performer naming + lat/lng +
+     SG taxonomy tree (independent of TEvo classification).
+
+  **Migration `20260509080000`** adds:
+    - `upsert_app_secret(name, value)` — writer RPC for Vault, whitelist-gated
+    - `get_app_secret()` whitelist extended to include SEATGEEK_CLIENT_ID + SEATGEEK_CLIENT_SECRET
+    - `seatgeek_event_xref` (TEvo event_id ↔ SG event_id + cached metadata)
+    - `seatgeek_venue_xref`
+    - `seatgeek_performer_xref` (with 4-size images)
+    - `seatgeek_taxonomies` (full tree cache, refresh monthly+)
+    - `seatgeek_event_sections` (sections + rows per event, cache aggressive)
+    - `seatgeek_recommendations` (affinity-scored, seed_type ∈ {event,performer})
+    - `seatgeek_pull_log` (audit trail of every call)
+
+  **Client**: `seatgeek_client.py` (new at repo root) wraps all 9 endpoints:
+    - `list_events`, `iter_events`, `get_event`, `get_event_sections`
+    - `list_performers`, `get_performer`
+    - `list_venues`, `get_venue`
+    - `list_taxonomies`
+    - `recommend_events`, `recommend_performers`
+  Auth via Vault (`SEATGEEK_CLIENT_ID` + optional `SEATGEEK_CLIENT_SECRET`)
+  with env var override. 429 backoff with Retry-After respect. Persistence
+  helpers for all xref + cache tables.
+
+  **API routes added** (under `/api/seatgeek/*`):
+    - `GET  /event/{tevo_event_id}` — xref + sections + rec count (free)
+    - `POST /event/{tevo_event_id}/auto-search` — search by date+venue, link if matched
+    - `POST /event/{tevo_event_id}/sync-sections` — pull + cache section info
+    - `POST /event/{tevo_event_id}/sync-recommendations` — pull + cache event recs
+    - `POST /sync-taxonomies` — refresh full taxonomy tree
+    - `GET  /recommendations/by-event/{event_id}` — read cached recs
+
+  **Auth**: Vault-stored credentials. Use `SELECT public.upsert_app_secret(
+  'SEATGEEK_CLIENT_ID', '<key>')` to set. Routes return 503 with setup
+  hint if missing.
+
+  **Rate limits**: SG doesn't publish hard numbers; observed ~1000 req/hour
+  for public endpoints. Client respects 429 with exponential backoff. No
+  DB budget table since calls are free.
 
 - **2026-05-09-v12**: **(a) Vault-backed API keys**, **(b) SeatData↔TEvo
   cross-source mapping**, **(c) EVO orders integration + 10-min cron**,

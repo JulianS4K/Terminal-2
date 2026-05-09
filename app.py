@@ -2706,6 +2706,152 @@ def broker_event_orders(event_id: int, _=Depends(require_auth)):
     }
 
 
+# ============================================================================
+# SeatGeek routes — third data source (metadata + discovery, no pricing)
+# ============================================================================
+# SeatGeek public API gives us: section_info per venue, recommendations
+# (event + performer affinity), 4-size performer images, full taxonomy tree,
+# and cross-validation of event/venue/performer metadata. Auth via
+# SEATGEEK_CLIENT_ID (+ optional SEATGEEK_CLIENT_SECRET) in Vault.
+
+def _get_seatgeek_client():
+    """Lazy import + instantiation. Returns None if SEATGEEK_CLIENT_ID is missing."""
+    if not (os.environ.get("SEATGEEK_CLIENT_ID") or True):
+        # Always try to instantiate — vault fallback is in the client
+        return None
+    try:
+        from seatgeek_client import SeatGeekClient
+        return SeatGeekClient(db=require_sb())
+    except Exception as e:
+        # Surface the setup hint via 503 in the route
+        if "SEATGEEK_CLIENT_ID not found" in str(e):
+            return None
+        raise
+
+
+@app.get("/api/seatgeek/event/{event_id}")
+def seatgeek_event(event_id: int, _=Depends(require_auth)):
+    """Read SeatGeek state for a TEvo event_id (xref + cached section_info).
+    Free — no SG API call. Returns null fields if not yet linked."""
+    db = require_sb()
+    xref = (db.table("seatgeek_event_xref").select("*")
+            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+    if not xref:
+        return {"tevo_event_id": event_id, "linked": False, "xref": None,
+                "sections": None, "recommendations_count": 0}
+    x = xref[0]
+    secs = (db.table("seatgeek_event_sections").select("*")
+            .eq("sg_event_id", x["sg_event_id"]).limit(1).execute()).data or []
+    rec_n = (db.table("seatgeek_recommendations").select("id", count="exact")
+             .eq("seed_type", "event").eq("seed_sg_id", x["sg_event_id"])
+             .limit(1).execute())
+    return {"tevo_event_id": event_id, "linked": True, "xref": x,
+            "sections": secs[0] if secs else None,
+            "recommendations_count": getattr(rec_n, "count", None) or 0}
+
+
+@app.post("/api/seatgeek/event/{event_id}/auto-search")
+def seatgeek_auto_search_event(event_id: int, _=Depends(require_auth)):
+    """Search SG by date+venue and link if a high-confidence match is found."""
+    sg = _get_seatgeek_client()
+    if not sg:
+        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault. Set via upsert_app_secret RPC.")
+    db = require_sb()
+    ev = (db.table("events")
+          .select("id,name,occurs_at_local,venue_name,venue_id,primary_performer_name")
+          .eq("id", event_id).limit(1).execute()).data or []
+    if not ev:
+        raise HTTPException(404, f"event {event_id} not found")
+    e = ev[0]
+    date_prefix = (e.get("occurs_at_local") or "")[:10]
+    venue = e.get("venue_name") or ""
+    perf = (e.get("primary_performer_name") or "")
+    # SG: q is broad — combine date + venue/performer into one query.
+    page = sg.list_events(q=f"{perf} {venue}".strip(),
+                          datetime_local=date_prefix or None, per_page=20)
+    candidates = page.get("events") or []
+    match = None
+    for c in candidates:
+        sg_date = (c.get("datetime_local") or "")[:10]
+        sg_venue = ((c.get("venue") or {}).get("name") or "").lower()
+        if sg_date == date_prefix and sg_venue == venue.lower():
+            match = c; break
+    if not match:
+        return {"matched": False, "candidates_n": len(candidates), "candidates": candidates[:5]}
+    sg.link_event(event_id, match, match_method="auto_date_venue", confidence=0.95)
+    return {"matched": True, "sg_event_id": match.get("id"),
+            "sg_short_title": match.get("short_title"),
+            "sg_url": match.get("url")}
+
+
+@app.post("/api/seatgeek/event/{event_id}/sync-sections")
+def seatgeek_sync_sections(event_id: int, _=Depends(require_auth)):
+    """Pull /events/section_info/{sg_event_id} and cache. Free."""
+    sg = _get_seatgeek_client()
+    if not sg:
+        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+    db = require_sb()
+    xref = (db.table("seatgeek_event_xref").select("sg_event_id")
+            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+    if not xref:
+        raise HTTPException(404, f"event {event_id} not linked to SeatGeek; call /auto-search first")
+    sg_id = int(xref[0]["sg_event_id"])
+    body = sg.get_event_sections(sg_id)
+    sections = (body or {}).get("sections") or {}
+    sg.cache_event_sections(sg_id, sections, tevo_event_id=event_id)
+    return {"event_id": event_id, "sg_event_id": sg_id,
+            "section_count": len(sections),
+            "total_rows": sum(len(v or []) for v in sections.values())}
+
+
+@app.post("/api/seatgeek/event/{event_id}/sync-recommendations")
+def seatgeek_sync_recommendations(event_id: int, _=Depends(require_auth)):
+    """Pull /recommendations seeded by this event's SG id. Caches results.
+    Returns top-20 recommended events by affinity score."""
+    sg = _get_seatgeek_client()
+    if not sg:
+        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+    db = require_sb()
+    xref = (db.table("seatgeek_event_xref").select("sg_event_id")
+            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+    if not xref:
+        raise HTTPException(404, f"event {event_id} not linked to SeatGeek")
+    sg_id = int(xref[0]["sg_event_id"])
+    body = sg.recommend_events(seed_event_ids=[sg_id])
+    recs = body.get("recommendations") or []
+    sg.cache_recommendations(seed_type="event", seed_sg_id=sg_id, rec_type="event", recs=recs)
+    return {"event_id": event_id, "sg_event_id": sg_id, "recs_returned": len(recs),
+            "top": recs[:5]}
+
+
+@app.post("/api/seatgeek/sync-taxonomies")
+def seatgeek_sync_taxonomies(_=Depends(require_auth)):
+    """Pull SG taxonomy tree and cache. Run rarely (monthly+). Free."""
+    sg = _get_seatgeek_client()
+    if not sg:
+        raise HTTPException(503, "SEATGEEK_CLIENT_ID not in Vault.")
+    tax = sg.list_taxonomies()
+    n = sg.cache_taxonomies(tax)
+    return {"taxonomies_received": len(tax), "taxonomies_upserted": n}
+
+
+@app.get("/api/seatgeek/recommendations/by-event/{event_id}")
+def seatgeek_recs_by_event(event_id: int, limit: int = 20, _=Depends(require_auth)):
+    """Read cached recs for an event. Free."""
+    db = require_sb()
+    xref = (db.table("seatgeek_event_xref").select("sg_event_id")
+            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+    if not xref:
+        return {"event_id": event_id, "linked": False, "recommendations": []}
+    sg_id = int(xref[0]["sg_event_id"])
+    rows = (db.table("seatgeek_recommendations").select("*")
+            .eq("seed_type", "event").eq("seed_sg_id", sg_id)
+            .order("affinity_score", desc=True)
+            .limit(int(limit)).execute()).data or []
+    return {"event_id": event_id, "sg_event_id": sg_id, "linked": True,
+            "recommendations": rows}
+
+
 @app.post("/api/seatdata/event/{event_id}/sync-sales")
 def seatdata_sync_sales(event_id: int, _=Depends(require_auth)):
     """Pull /v0.3/salesdata/get for a linked event and persist new rows.

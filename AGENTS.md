@@ -304,9 +304,9 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v12)
+## SCHEMA LOCK (2026-05-09-v13)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v12`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v13`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
@@ -414,6 +414,15 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (SeatGeek integration — 3rd data source: section_info, recs, performer images)
+
+- DONE — **SeatGeek integration** (mig `20260509080000`, SCHEMA v13). Third data source after TEvo + SeatData. Metadata + discovery only (no pricing — that's TEvo + SeatData). Adds: section_info per venue (canonical seating layouts, complementary to our zone xref), affinity-scored recommendations (events + performers — better than our string-similarity heuristic), 4-size performer images, SG taxonomy tree for cross-validation.
+- DONE — **Vault writer RPC**: `upsert_app_secret(name, value)` (whitelist-gated, SECURITY DEFINER, service-role only). Lets PowerShell / scripts push keys without using SQL editor. Whitelist now covers SEATDATA_API_KEY + TEVO_API_TOKEN + TEVO_SECRET + SEATGEEK_CLIENT_ID + SEATGEEK_CLIENT_SECRET.
+- DONE — **`seatgeek_client.py`** (new module). Wraps all 9 SG endpoints. Vault-first auth, env-var override, 429 backoff, persistence helpers for every xref + cache table.
+- DONE — **6 new `/api/seatgeek/*` routes** in app.py: `GET /event/{id}`, `POST /event/{id}/auto-search`, `POST /event/{id}/sync-sections`, `POST /event/{id}/sync-recommendations`, `POST /sync-taxonomies`, `GET /recommendations/by-event/{id}`.
+- AWAITING — **SEATGEEK_CLIENT_ID push to Vault** via PowerShell. The user has the key; will push via `upsert_app_secret` RPC once confirmed.
+- NEXT (design) — KANBAN row added: render SG section layout on event-detail page (overlay onto existing zone breakdown), and "Related events" panel using `/api/seatgeek/recommendations/by-event/{id}`.
 
 ### 2026-05-09 code (vault for keys + SeatData↔TEvo mapping + EVO orders 10-min cron)
 

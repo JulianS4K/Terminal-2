@@ -30,6 +30,21 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
+### NEXT (design) — SeatGeek: section overlay + related events panel
+
+**What**: SeatGeek integration is live. Two UI surfaces unlock high-value workflows:
+1. **Section layout overlay** on the event detail page. `GET /api/seatgeek/event/{id}` returns `sections` (canonical seat layout from SG: `{section_name: [row, row, ...]}`). Overlay this onto the existing zone breakdown panel — color sections by current TEvo retail_median, click section to drill into its listings. SG's section_info gives us the canonical "what sections exist at this venue", which complements our derived zone system.
+2. **Related events panel** on the event hero. `GET /api/seatgeek/recommendations/by-event/{event_id}` returns affinity-scored recommended events from SG. Show top 5 with title + date + venue + score. Click → adds to watchlist or opens that event in the terminal.
+3. **Sync buttons** on the event page: "Pull section info" (`POST /sync-sections`), "Pull recommendations" (`POST /sync-recommendations`). Both are FREE (no SeatGeek charge) — just throttle to once per session per event.
+4. **Performer hero images** — `seatgeek_performer_xref.sg_image_url` has SG's "huge"/"large" performer image. Use as fallback when our existing performer_metadata image is missing. Pull on-demand via auto-search.
+
+**Why**: SG's section_info is the cleanest "ground truth" for venue layouts we have. Recommendations are how brokers find events to watchlist next without manual search. Both replace string-similarity workarounds.
+**Backend ready**: yes — call `POST /api/seatgeek/event/{id}/auto-search` on any event to link, then read with `GET /api/seatgeek/event/{id}`.
+**Files**: `static/index.html`
+**Filed by**: code · 2026-05-09
+
+---
+
 ### NEXT (design) — EVO orders: hero strip + chart series + e-ticket alerts
 
 **What**: TEvo `/v9/orders` is now ingested every 10 min into `evo_orders` + `evo_order_items`. Three UI pieces unlock high-impact broker workflows:
@@ -184,7 +199,11 @@ UI surfaces:
 
 ## DONE (last 10)
 
-### DONE — `<sha pending>` · feat: vault for keys + SeatData↔TEvo mapping + EVO orders 10-min cron
+### DONE — `<sha pending>` · feat(seatgeek): integration scaffolded — section_info + recommendations + xref
+- 3rd data source. Metadata + discovery only (no pricing). Mig 20260509080000 adds `seatgeek_event/venue/performer_xref`, `seatgeek_taxonomies`, `seatgeek_event_sections`, `seatgeek_recommendations`, `seatgeek_pull_log`, `upsert_app_secret(name, value)` RPC. New `seatgeek_client.py` covers all 9 SG endpoints. 6 new `/api/seatgeek/*` routes. Awaiting SEATGEEK_CLIENT_ID push to Vault before live test. SCHEMA bumped to v13.
+- by: code · landed: 2026-05-09 04:30 UTC
+
+### DONE — `914d846` · feat: vault for keys + SeatData↔TEvo mapping + EVO orders 10-min cron
 - (a) Supabase Vault stores `SEATDATA_API_KEY`; `get_app_secret(name)` RPC reads it. seatdata_client uses vault by default. (b) New cross-source xref tables (venue/performer/zone/section) + `normalize_sd_listing()` function + `sd_sales_normalized` view fixing the SeatData quantity-null caveat. (c) TEvo `/v9/orders` ingested every 10 min: `evo_orders`, `evo_order_items`, `evo_orders_by_event` view; cron jobid 40. New routes: `POST /api/admin/collect-orders`, `GET /api/broker/event/{id}/orders`. EvoClient gained `list_orders`/`iter_orders`/`get_order`. (d) Bucket 18 added to taxonomy. Comprehensive memo at `docs/data-sources-terminal-uses.md`. Mig `20260509070000`. SCHEMA v12.
 - by: code · landed: 2026-05-09 04:00 UTC
 
