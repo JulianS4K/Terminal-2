@@ -415,6 +415,17 @@ Mechanics (whoever picks this up):
 
 ## LOG
 
+### 2026-05-09 code (terminal redesign memo — rebuild from scratch per data findings)
+
+- DONE — **Strategic redesign memo** at `docs/terminal-redesign-2026-05-09.md`. User mandate: assume prior `static/index.html` is obsolete and rebuild from scratch. I ran a 4-phase audit on prod data:
+  1. **Inventory**: 822 active sports events, 564K market tix, 60K owned. 554 events with rich tracking (avg 48 snaps, 7d history). Concerts thin (115 events, only 1 with metrics). Sports-first build is correct.
+  2. **6 simulations** on real data, surfacing patterns like the price-decay V-shape (drops 1-3d out, sometimes bounces in final 24h), the wildly variable owned_premium_pct (−32% to +255% across our book), inventory loading asymmetry (S4K +767% vs market +45% over 7d), and three distinct mover types (supply flood / re-pricing / ghost-resolve).
+  3. **Synthesized 7 page templates** with concrete data behind each: Home (position concentration + risk alerts), Event detail (with `owned_premium_pct` as the headliner KPI), Performer detail (NEW), Movers with 5-bucket classifier, Cross-source explorer (NEW), Order book / sales pipeline (NEW), Settings.
+  4. **5 new API endpoints** scoped: `/api/broker/home`, `/api/broker/movers/classified`, `/api/broker/performers/{id}/detail`, `/api/broker/orders/sales-pipeline`, `/api/broker/cross-source/explorer`.
+- Top finding for design: **`owned_premium_pct` (owned_median_retail / nonowned_median_retail − 1) is the single most actionable broker metric** — varies from −32% (Knicks: leaving money on the table) to +255% (Pistons: probably won't clear). Currently invisible in the UI. Should be the biggest number on every event page.
+- Top finding for code: **Knicks book = $20.4M notional** (5,088 owned tickets × ~$3,950 avg retail). One performer is 40% of total book risk. Position concentration view is critical.
+- KANBAN: new top-priority NEXT (design) row pointing at the redesign memo. Build sequence in §7 of the memo recommends Event detail page first.
+
 ### 2026-05-09 code (cross-source entity maps — universal id translator)
 
 - DONE — **Cross-source entity maps** (mig `20260509120000`, SCHEMA v17). Three views — `entity_event_map`, `entity_performer_map`, `entity_venue_map` — that translate any source's id to all others. TEvo is the hub. Each view returns a `sources_count` rollup + a JSONB `external_ids` block compact enough to drop into API responses.

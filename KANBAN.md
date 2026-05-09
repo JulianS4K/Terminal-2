@@ -30,6 +30,33 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
+### NEXT (design) — TERMINAL REBUILD per docs/terminal-redesign-2026-05-09.md
+
+**What**: User mandate — **rebuild `static/index.html` from scratch** based on what the data actually supports. The full design memo is at `docs/terminal-redesign-2026-05-09.md` and includes:
+- 7 page templates (Home / Event detail / Performer / Movers / Cross-source explorer / Order book / Settings)
+- 9 findings from data simulations on actual prod data
+- Build sequence (Event detail first, then Home, then Movers, etc.)
+- Visual conventions, deletion list, open questions
+
+**Why**: Prior `static/index.html` accumulated 3,000+ lines over many iterations. The data shape is now clearer (sports-first, owned_premium_pct should be top-line KPI, mover classification is missing). Cleaner to start fresh than refactor.
+
+**Headliner finding**: `owned_premium_pct` (S4K asks vs competitor asks for the same event) varies from −32% to +255% across our book. It's the single most actionable broker metric and isn't surfaced anywhere right now. Make it the biggest number on the event page.
+
+**Top of the build queue**: Page 2 (Event detail) — that's where 80% of broker time goes. Ship that first with the new owned-premium KPI; the rest follows.
+
+**Backend coverage** (what's already there to support this):
+- 822 active sports events with rich tracking (avg 48 snapshots, 7 days price history)
+- Cross-source entity maps for clean translation (`entity_event_map`, `entity_performer_map`, `entity_venue_map`)
+- All metrics tables populated (TEvo `event_metrics`, `seatgeek_event_metrics`, `seatdata_event_stats`)
+- Order books from both TEvo and SG seller-direct
+- Lifecycle classifier filters ghost events automatically
+
+**Files**: `static/index.html` (rebuild), referencing endpoints in `app.py`. New endpoints to add are listed in §4 of the redesign memo (5 new routes).
+
+**Filed by**: code · 2026-05-09
+
+---
+
 ### NEXT (design) — Cross-source data coverage badge on event hero
 
 **What**: New view `cross_source_event_audit` returns one row per TEvo event with: ESPN id, SeatData event_id + sales_count, SG event_id + listings count + active tickets, EVO orders, lifecycle status. Render this as a 4-light coverage badge on the event hero ("TEvo · ESPN · SeatData · SG"), each light lit per source linked. Plus a popover showing actual counts.
