@@ -177,13 +177,27 @@ async function collectTeams(db: any, state: CollectorState, opts: { standings: b
 
     if (!opts.injuries) continue;
     // Emit per-team injuries from league-wide payload (change-only per injury record)
-    // ESPN's /sports/{slug}/injuries response does NOT populate inj.athlete.id —
-    // only first/last/displayName. Use inj.id (the ESPN injury record id, e.g.
-    // "630675") as the stable change-detection key. Same row.athlete_id column,
-    // semantically "stable identifier"; rename later if it becomes confusing.
+    //
+    // BUG-FIX 2026-05-09: ESPN's /sports/{slug}/injuries response uses inj.id
+    // as the ESPN INJURY RECORD id, which is NOT stable across observations
+    // for NBA/NFL/MLS/WNBA/World Cup (only MLB+NHL keep it stable). Using
+    // inj.id meant `where athlete_id = p_athlete_id` in upsert_espn_injury
+    // never found a prior row, so every observation was "first" and got
+    // is_baseline=true — making `WHERE is_baseline=false` filters return 0
+    // for those leagues.
+    //
+    // Fix: synthesize a stable per-athlete key from team_id + slugified
+    // displayName when athlete.id isn't populated. team_id is always present;
+    // displayName is too. This produces a deterministic dedup key across runs.
     const teamInj = (ld.injuries?.injuries ?? []).find((x: any) => String(x.id) === String(t.espn_team_id));
     for (const inj of teamInj?.injuries ?? []) {
-      const dedupKey = inj.id ? String(inj.id) : null;
+      const athleteIdRaw = inj.athlete?.id;
+      const displayName = inj.athlete?.displayName ?? "";
+      const dedupKey = athleteIdRaw
+        ? String(athleteIdRaw)
+        : (displayName
+            ? `${t.espn_team_id}:${displayName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\-]/g, "")}`
+            : (inj.id ? `legacy:${String(inj.id)}` : null));
       if (!dedupKey) continue;
       const row = {
         athlete_id: dedupKey,

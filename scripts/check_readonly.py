@@ -10,8 +10,10 @@ We integrate with three external read-only data sources:
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
   2. fetch(...) calls in TS/JS with method other than GET
-  3. The hardcoded host strings appearing alongside non-GET method tokens
-  4. The runtime guards (_assert_readonly_method / ALLOWED_HTTP_METHODS)
+  3. net.http_post|put|patch|delete calls in plpgsql migrations targeting
+     forbidden hosts (Phase-1 server-side data ingest path)
+  4. The hardcoded host strings appearing alongside non-GET method tokens
+  5. The runtime guards (_assert_readonly_method / ALLOWED_HTTP_METHODS)
      missing from the client modules
 
 Run as part of CI / pre-commit. Designed to fail loudly so neither code,
@@ -73,10 +75,17 @@ TS_POST_ALLOWLIST = (
     "api.anthropic.com",
 )
 
+# SKIP_DIRS applies only to .py / .ts walks. plpgsql scan opts in supabase/migrations explicitly.
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".claude",
              "supabase/migrations", ".next", "dist", "build",
              # tests/ is allowed to embed synthetic violations as test fixtures
              "tests"}
+
+# plpgsql write-method patterns (Phase-1 server-side ingest uses pg_net)
+PLPGSQL_FORBIDDEN_PATTERN = re.compile(
+    r"net\.http_(post|put|patch|delete)\s*\(",
+    flags=re.IGNORECASE,
+)
 
 
 def _is_skipped(path: Path) -> bool:
@@ -187,6 +196,31 @@ def check_ts_writes() -> list[str]:
     return violations
 
 
+def check_plpgsql_writes() -> list[str]:
+    """Scan supabase/migrations/*.sql for net.http_post|put|patch|delete calls
+    targeting forbidden hosts. Phase-1 server-side ingest writes data via
+    pg_net and could bypass the Python/TS RULE 2 layers if not checked here."""
+    violations: list[str] = []
+    mig_dir = ROOT / "supabase" / "migrations"
+    if not mig_dir.exists():
+        return violations
+    for f in sorted(mig_dir.glob("*.sql")):
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        for m in PLPGSQL_FORBIDDEN_PATTERN.finditer(text):
+            # Look at the surrounding 800 chars for the URL.
+            start = max(0, m.start() - 200)
+            end = min(len(text), m.end() + 800)
+            snippet = text[start:end]
+            forbidden_hits = [h for h in FORBIDDEN_HOSTS if h in snippet]
+            if forbidden_hits:
+                line_no = text[: m.start()].count("\n") + 1
+                violations.append(
+                    f"{f.relative_to(ROOT)}:{line_no}: "
+                    f"'{m.group(0)}' near forbidden host(s) {forbidden_hits}"
+                )
+    return violations
+
+
 def check_guard_tokens() -> list[str]:
     """Each client module must contain the runtime guard tokens."""
     violations: list[str] = []
@@ -208,24 +242,26 @@ def check_guard_tokens() -> list[str]:
 def main() -> int:
     py_violations = check_python_writes()
     ts_violations = check_ts_writes()
+    plpgsql_violations = check_plpgsql_writes()
     guard_violations = check_guard_tokens()
 
-    total = py_violations + ts_violations + guard_violations
+    total = py_violations + ts_violations + plpgsql_violations + guard_violations
     if total:
         print("RULE 2 VIOLATIONS — read-only contract broken:")
         for v in total:
             print(f"  - {v}")
         print()
         print("Fix: route the call through evo_client.EvoClient or "
-              "seatgeek_client.SeatGeekClient (GET-only). If the call is "
-              "intentionally read-only and lives outside those clients, "
-              "add the runtime guard or move it into the client.")
+              "seatgeek_client.SeatGeekClient (GET-only) for app code, "
+              "or use net.http_get exclusively in plpgsql migrations.")
         return 1
 
+    mig_count = len(list((ROOT / "supabase" / "migrations").glob("*.sql"))) if (ROOT / "supabase" / "migrations").exists() else 0
     print("RULE 2 clean — no write paths detected to TEvo or SeatGeek hosts.")
-    print(f"  - Python files scanned: {len(_walk(('.py',)))}")
-    print(f"  - TS/JS files scanned : {len(_walk(('.ts', '.js', '.tsx', '.jsx')))}")
-    print(f"  - Client guards present: {', '.join(sorted(CLIENT_FILES))}")
+    print(f"  - Python files scanned   : {len(_walk(('.py',)))}")
+    print(f"  - TS/JS files scanned    : {len(_walk(('.ts', '.js', '.tsx', '.jsx')))}")
+    print(f"  - plpgsql migrations     : {mig_count}")
+    print(f"  - Client guards present  : {', '.join(sorted(CLIENT_FILES))}")
     return 0
 
 
