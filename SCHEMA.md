@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v6`
-**Last verified against prod**: 2026-05-09 ~03:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v7`
+**Last verified against prod**: 2026-05-09 ~03:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -781,6 +781,22 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v7**: New event_metrics column **`nonowned_median_retail`**
+  (mig 20260509030000) — median retail across non-S4K listings only
+  (is_owned=false). Used by chart's "MARKET NOT US" default series.
+  Median-of-subset can't be derived from medians-of-whole + complement,
+  so requires direct aggregation from listings_snapshots. Backfilled by
+  `compute_event_nonowned_median(event_id)` and cron-driven by
+  `compute-event-nonowned-30min` (jobid 37) + the midnight sweep.
+  Verified Knicks G5: market $988 / S4K $1,117 / market-not-us $950.
+  Chart catalog updated: GET-IN, market-all median, S4K-owned median,
+  market-not-us median, splits-min-q, and counts-market all on by
+  default per user spec. Counts render as **bars** (semi-transparent
+  fill, thin border), money series stay as lines. ESPN win % no
+  longer default-on (toggle when game is relevant). localStorage key
+  bumped `evt_chart_visible_v2` → `_v3` so existing users get the new
+  defaults on first load.
 
 - **2026-05-09-v6**: Added a dedicated **"ESPN injury / standings
   auto-assignment rules"** section after the league coverage matrix.

@@ -1542,36 +1542,43 @@ async function loadEvent(eventId) {
 // Naming convention: '<SOURCE>_<scope> <metric>' where SOURCE is the
 // upstream data provider (EVO=Ticket Evolution; ESPN; future: SG=SeatGeek,
 // TM=Ticketmaster, etc.). Scope is Market / Owned / Stand / etc.
+// Default visibility per user spec: GET IN + MEDIAN PRICE ALL + OWNED +
+// MARKET NOT US (parking already excluded by event_metrics aggregation) +
+// quantity available (rendered as BAR not line, since count != price) +
+// MOST COMMON SPLIT QTY + injury overlays. ESPN win% no longer default —
+// users can toggle when relevant.
 const CHART_SERIES = [
-  // Ticket Evolution — market & owned ($) ===================================
-  { id: 'prices_market',   label: 'EVO_Market median ($)',     path: 'series.prices_market',   color: '#60a5fa', axis: 'y$', def: true },
-  { id: 'prices_owned',    label: 'EVO_Owned median ($)',      path: 'series.prices_owned',    color: '#4ade80', axis: 'y$', def: true, dash:[4,3] },
-  { id: 'retail_min',      label: 'EVO_Market P0 / min ($)',   path: 'series.retail_min',      color: '#7dd3fc', axis: 'y$', def: false },
-  { id: 'retail_p25',      label: 'EVO_Market P25 ($)',        path: 'series.retail_p25',      color: '#93c5fd', axis: 'y$', def: false },
-  { id: 'retail_p75',      label: 'EVO_Market P75 ($)',        path: 'series.retail_p75',      color: '#a78bfa', axis: 'y$', def: false },
-  { id: 'retail_p90',      label: 'EVO_Market P90 ($)',        path: 'series.retail_p90',      color: '#c4b5fd', axis: 'y$', def: false },
-  { id: 'retail_max',      label: 'EVO_Market P100 / max ($)', path: 'series.retail_max',      color: '#ddd6fe', axis: 'y$', def: false },
-  { id: 'retail_mean',     label: 'EVO_Market mean ($)',       path: 'series.retail_mean',     color: '#bfdbfe', axis: 'y$', def: false },
-  { id: 'wholesale_median',label: 'EVO_Wholesale median ($)',  path: 'series.wholesale_median',color: '#5eead4', axis: 'y$', def: false, dash:[4,3] },
-  { id: 'getin_price',     label: 'EVO_Get-in ($)',            path: 'series.getin_price',     color: '#facc15', axis: 'y$', def: false },
-  { id: 'retail_sum',      label: 'EVO_Notional ($)',          path: 'series.retail_sum',      color: '#fb923c', axis: 'y$', def: false },
-  // Ticket Evolution — counts ==============================================
-  { id: 'counts_market',   label: 'EVO_Market tix',            path: 'series.counts_market',   color: '#f58426', axis: 'yC', def: false },
-  { id: 'counts_owned',    label: 'EVO_Owned tix',             path: 'series.counts_owned',    color: '#fbbf24', axis: 'yC', def: false, dash:[4,3] },
-  { id: 'groups_count',    label: 'EVO_Listing groups',        path: 'series.groups_count',    color: '#fb7185', axis: 'yC', def: false },
-  { id: 'sections_count',  label: 'EVO_Sections active',       path: 'series.sections_count',  color: '#f472b6', axis: 'yC', def: false },
-  // Ticket Evolution — structure & ratios ==================================
-  { id: 'owned_share',         label: 'EVO_Owned share',         path: 'series.owned_share',         color: '#fbbf24', axis: 'y%',   def: false, scale: 100 },
-  { id: 'top5_concentration',  label: 'EVO_Top-5 concentration', path: 'series.top5_concentration',  color: '#a3e635', axis: 'y%',   def: false, scale: 100 },
-  { id: 'price_dispersion',    label: 'EVO_Price dispersion',    path: 'series.price_dispersion',    color: '#22d3ee', axis: 'yIdx', def: false },
-  { id: 'tail_premium',        label: 'EVO_Tail premium',        path: 'series.tail_premium',        color: '#34d399', axis: 'yIdx', def: false },
-  // Ticket Evolution — splits inventory ====================================
-  { id: 'splits_pct_pairs',    label: 'EVO_Pairs available %',   path: 'series.splits_pct_pairs',    color: '#fb923c', axis: 'y%',   def: false, scale: 100 },
-  { id: 'splits_pct_singles',  label: 'EVO_Singles available %', path: 'series.splits_pct_singles',  color: '#f472b6', axis: 'y%',   def: false, scale: 100 },
-  { id: 'splits_min_q',        label: 'EVO_Min buyable qty',     path: 'series.splits_min_q',        color: '#facc15', axis: 'yIdx', def: false },
-  // ESPN — standings + rank ================================================
-  { id: 'home_win_pct',     label: 'ESPN_Home win %',     path: 'series.home_win_pct',     color: '#10b981', axis: 'y%',   def: true,  scale: 100 },
-  { id: 'away_win_pct',     label: 'ESPN_Away win %',     path: 'series.away_win_pct',     color: '#ef4444', axis: 'y%',   def: true,  scale: 100 },
+  // Ticket Evolution — money series (lines) ================================
+  { id: 'getin_price',      label: 'EVO_Get-in ($)',                path: 'series.getin_price',      color: '#facc15', axis: 'y$', def: true },
+  { id: 'prices_market',    label: 'EVO_Market median (all) ($)',   path: 'series.prices_market',    color: '#60a5fa', axis: 'y$', def: true },
+  { id: 'prices_owned',     label: 'EVO_Owned median (S4K) ($)',    path: 'series.prices_owned',     color: '#4ade80', axis: 'y$', def: true,  dash:[4,3] },
+  { id: 'prices_nonowned',  label: 'EVO_Market not S4K median ($)', path: 'series.prices_nonowned',  color: '#a78bfa', axis: 'y$', def: true },
+  // Ticket Evolution — money series (off by default; users toggle for spread analysis)
+  { id: 'retail_min',       label: 'EVO_Market P0 / min ($)',       path: 'series.retail_min',       color: '#7dd3fc', axis: 'y$', def: false },
+  { id: 'retail_p25',       label: 'EVO_Market P25 ($)',            path: 'series.retail_p25',       color: '#93c5fd', axis: 'y$', def: false },
+  { id: 'retail_p75',       label: 'EVO_Market P75 ($)',            path: 'series.retail_p75',       color: '#c4b5fd', axis: 'y$', def: false },
+  { id: 'retail_p90',       label: 'EVO_Market P90 ($)',            path: 'series.retail_p90',       color: '#ddd6fe', axis: 'y$', def: false },
+  { id: 'retail_max',       label: 'EVO_Market P100 / max ($)',     path: 'series.retail_max',       color: '#bfdbfe', axis: 'y$', def: false },
+  { id: 'retail_mean',      label: 'EVO_Market mean ($)',           path: 'series.retail_mean',      color: '#dbeafe', axis: 'y$', def: false },
+  { id: 'wholesale_median', label: 'EVO_Wholesale median ($)',      path: 'series.wholesale_median', color: '#5eead4', axis: 'y$', def: false, dash:[4,3] },
+  { id: 'retail_sum',       label: 'EVO_Notional ($)',              path: 'series.retail_sum',       color: '#fb923c', axis: 'y$', def: false },
+  // Ticket Evolution — counts (BARS by default — qty data, not price ratio)
+  { id: 'counts_market',    label: 'EVO_Quantity available (mkt)',  path: 'series.counts_market',    color: '#f58426', axis: 'yC', def: true,  chartType: 'bar' },
+  { id: 'counts_owned',     label: 'EVO_Quantity (S4K-owned)',      path: 'series.counts_owned',     color: '#fbbf24', axis: 'yC', def: false, chartType: 'bar' },
+  { id: 'groups_count',     label: 'EVO_Listing groups',            path: 'series.groups_count',     color: '#fb7185', axis: 'yC', def: false, chartType: 'bar' },
+  { id: 'sections_count',   label: 'EVO_Sections active',           path: 'series.sections_count',   color: '#f472b6', axis: 'yC', def: false, chartType: 'bar' },
+  // Ticket Evolution — structure & ratios (lines, off by default)
+  { id: 'owned_share',          label: 'EVO_Owned share',           path: 'series.owned_share',          color: '#fbbf24', axis: 'y%',   def: false, scale: 100 },
+  { id: 'top5_concentration',   label: 'EVO_Top-5 concentration',   path: 'series.top5_concentration',   color: '#a3e635', axis: 'y%',   def: false, scale: 100 },
+  { id: 'price_dispersion',     label: 'EVO_Price dispersion',      path: 'series.price_dispersion',     color: '#22d3ee', axis: 'yIdx', def: false },
+  { id: 'tail_premium',         label: 'EVO_Tail premium',          path: 'series.tail_premium',         color: '#34d399', axis: 'yIdx', def: false },
+  // Ticket Evolution — splits inventory
+  { id: 'splits_min_q',         label: 'EVO_Most common split qty', path: 'series.splits_min_q',         color: '#facc15', axis: 'yIdx', def: true },
+  { id: 'splits_pct_pairs',     label: 'EVO_Pairs available %',     path: 'series.splits_pct_pairs',     color: '#fb923c', axis: 'y%',   def: false, scale: 100 },
+  { id: 'splits_pct_singles',   label: 'EVO_Singles available %',   path: 'series.splits_pct_singles',   color: '#f472b6', axis: 'y%',   def: false, scale: 100 },
+  // ESPN — standings + rank (off by default; user toggles when game-relevant)
+  { id: 'home_win_pct',     label: 'ESPN_Home win %',     path: 'series.home_win_pct',     color: '#10b981', axis: 'y%',   def: false, scale: 100 },
+  { id: 'away_win_pct',     label: 'ESPN_Away win %',     path: 'series.away_win_pct',     color: '#ef4444', axis: 'y%',   def: false, scale: 100 },
   { id: 'home_seed',        label: 'ESPN_Home seed',      path: 'series.home_seed',        color: '#10b981', axis: 'yIdx', def: false },
   { id: 'away_seed',        label: 'ESPN_Away seed',      path: 'series.away_seed',        color: '#ef4444', axis: 'yIdx', def: false },
   { id: 'home_injury_load', label: 'ESPN_Home injuries (#)', path: 'series.home_injury_load', color: '#f87171', axis: 'yIdx', def: false },
@@ -1587,7 +1594,10 @@ const CHART_OVERLAYS = [
 ];
 
 // User-toggled state lives in localStorage so the user can keep their workbench config.
-const CHART_STATE_KEY = 'evt_chart_visible_v2';
+// Bumped to v3 when defaults changed (added prices_nonowned, getin/splits_min_q on by
+// default, ESPN win% off by default, counts as bars). Old v2 keys are abandoned —
+// each user gets the new defaults on first load.
+const CHART_STATE_KEY = 'evt_chart_visible_v3';
 function _loadChartVis() {
   try { return new Set(JSON.parse(localStorage.getItem(CHART_STATE_KEY) || 'null') || _defaultVis()); }
   catch { return new Set(_defaultVis()); }
@@ -1894,12 +1904,31 @@ function _drawChartImpl() {
     if (!visible.has('s:' + s.id)) continue;
     const series = _getPath(data, s.path);
     if (!series || !series.length) continue;
-    datasets.push({
-      label: s.label, data: toXY(series, s.scale),
-      borderColor: s.color, backgroundColor: 'transparent',
-      yAxisID: s.axis, borderWidth: 1.5, pointRadius: 0, tension: 0.2,
-      ...(s.dash ? { borderDash: s.dash } : {}),
-    });
+    if (s.chartType === 'bar') {
+      // Bars for quantity / count series — visually distinct from price lines.
+      // Semi-transparent fill so overlapping bars stay readable; thin border for definition.
+      datasets.push({
+        type: 'bar',
+        label: s.label, data: toXY(series, s.scale),
+        backgroundColor: s.color + '66',  // ~40% opacity hex suffix
+        borderColor: s.color,
+        borderWidth: 1,
+        yAxisID: s.axis,
+        // For time-axis bar charts, set categoryPercentage + barPercentage to keep
+        // bars compact and not stretching the full snapshot interval.
+        categoryPercentage: 0.6, barPercentage: 0.9,
+        order: 10,  // draw bars BEHIND lines (lower z order in Chart.js means rendered later, ironically)
+      });
+    } else {
+      datasets.push({
+        type: 'line',
+        label: s.label, data: toXY(series, s.scale),
+        borderColor: s.color, backgroundColor: 'transparent',
+        yAxisID: s.axis, borderWidth: 1.5, pointRadius: 0, tension: 0.2,
+        ...(s.dash ? { borderDash: s.dash } : {}),
+        order: 1,
+      });
+    }
   }
 
   // Per-zone series — same shape as event-level but data path goes through

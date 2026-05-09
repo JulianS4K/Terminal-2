@@ -1612,6 +1612,7 @@ def broker_event_chart_data(
             "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
             "getin_price,top5_concentration,price_dispersion,tail_premium,"
             "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
+            "nonowned_median_retail,"   # NEW: median of non-S4K listings ("MARKET NOT US")
             "splits_min_q,splits_pct_pairs,splits_pct_singles,"
             "splits_listings_with_singles,splits_listings_with_pairs,"
             "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split"
@@ -1626,10 +1627,11 @@ def broker_event_chart_data(
         return [{"t": r["captured_at"], "v": r.get(col)} for r in em]
 
     # Legacy aliases (preserved for backwards-compat)
-    prices_owned  = _series("owned_median_retail")
-    prices_market = _series("retail_median")
-    counts_owned  = _series("owned_tickets_count")
-    counts_market = _series("tickets_count")
+    prices_owned    = _series("owned_median_retail")
+    prices_market   = _series("retail_median")
+    prices_nonowned = _series("nonowned_median_retail")  # NEW — "MARKET NOT US"
+    counts_owned    = _series("owned_tickets_count")
+    counts_market   = _series("tickets_count")
 
     # 2) Resolve home + away ESPN team ids from event_xref → espn_event_snapshots
     home_team_id = away_team_id = home_slug = away_slug = home_league = None
@@ -1895,10 +1897,11 @@ def broker_event_chart_data(
         "days": days,
         "series": {
             # ===== TEvo: prices and counts (legacy IDs preserved) =====
-            "prices_owned":   prices_owned,
-            "prices_market":  prices_market,
-            "counts_owned":   counts_owned,
-            "counts_market":  counts_market,
+            "prices_owned":    prices_owned,
+            "prices_market":   prices_market,
+            "prices_nonowned": prices_nonowned,    # NEW: "MARKET NOT US" median
+            "counts_owned":    counts_owned,
+            "counts_market":   counts_market,
             # ===== TEvo: full retail percentile distribution =====
             "retail_min":     _series("retail_min"),
             "retail_p25":     _series("retail_p25"),
