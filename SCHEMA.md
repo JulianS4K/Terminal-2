@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v7`
-**Last verified against prod**: 2026-05-09 ~03:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v8`
+**Last verified against prod**: 2026-05-09 ~00:53 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -594,7 +594,9 @@ Grouped by purpose:
 
 ---
 
-## Active crons (21 jobs)
+## Active crons (17 jobs as of v8)
+
+**Cascading freshness model (2026-05-09-v8)**: 6 individual freshness crons (espn-roster, espn-gameday, auto-link, splits, zone-backfill, nonowned) collapsed into a single `master-cascade-2min` (jobid 38) that fires every 2 min and runs each stage in dependency order with per-stage try/except. ESPN ingest is async (`pg_net.http_post`); SQL backfills are sync. Zone backfill kept separate (jobid 39) due to a pre-existing 120s-timeout bug in `match_performer_zone` — see "Known issues" callout below.
 
 | jobid | name | schedule | what |
 |---|---|---|---|
@@ -603,18 +605,32 @@ Grouped by purpose:
 | 18 | sweep-bot-messages | daily 04:10 | chat retention |
 | 20 | sweep_tevo_ticket_groups_cache | hourly :15 | clear expired raw-tevo cache |
 | 21 | refresh-chat-corpus | hourly :30 | chat NLU |
-| 24 | espn-roster-10min | every 10 min | injuries + roster |
-| 25 | espn-gameday-10min | every 10 min @ 5-59 | events ±24h scores+odds |
 | 26 | espn-team-daily | daily 05:00 | standings + news |
 | 27 | run-daily-chat-audit | daily 04:00 | chat audit |
 | 28 | backfill-event-configurations-5min | every 5 min | events.configuration_id population |
 | 29 | refresh-chat-term-freq-split-hourly | hourly :15 | chat NLU |
 | 30 | crawl-venues-and-performers-3min | every 3 min | venue + performer discovery |
-| 31 | auto-link-event-xref-15min | :05/:20/:35/:50 | TEvo ↔ ESPN event matcher |
-| 32 | compute-event-splits-30min | :03/:33 | splits_* metrics backfill |
 | 33 | crawl-espn-team-assets-3min | every 3 min | logos + colors crawl (queue drained 2026-05-08) |
 | 34 | ensure-watchlist-coverage-daily | daily 06:00 | new ESPN teams → watchlist |
-| 35 | backfill-zone-metrics-10min | :04/:14/:24/:34/:44/:54 | recompute zone_metrics for stale events |
+| 36 | midnight-catchup-sweep | daily 00:00 | safety-net pass running all idempotent backfills |
+| **38** | **master-cascade-2min** | **every 2 min** | **ESPN roster+gameday HTTP (async) → auto_link → splits → nonowned (sync chain)** |
+| 39 | zone-backfill-isolated-10min | :04/:14/:24/:34/:44/:54 | `backfill_stale_zone_metrics(5)` — split out from cascade, batch reduced |
+
+**Master cascade per-tick stages** (function `master_cascade_2min`, returns JSONB summary):
+
+| stage | what runs | error mode | typical runtime |
+|---|---|---|---|
+| 1a | `net.http_post(.../espn-collect?scope=roster)` | per-stage try/except, returns `espn_roster_request_id` or `..._error` | <1ms (fire-and-forget; HTTP work async) |
+| 1b | `net.http_post(.../espn-collect?scope=gameday)` | same | <1ms |
+| 2a | `auto_link_event_xref()` | per-stage try/except, returns `auto_link_count` or `auto_link_error` | <50ms |
+| 2b | `backfill_event_splits_metrics(50)` | same, returns `splits_count` | ~50ms |
+| 2c | `backfill_event_nonowned_median(50)` | same, returns `nonowned_count` | ~80ms |
+
+End-to-end cascade tick: ~150-200ms typical (well under the 2-min cycle and the 120s cron statement_timeout). Per-stage isolation means a single bad stage logs an error in the JSONB return and the rest still run.
+
+**Known issues**:
+- `match_performer_zone`-driven `compute_event_zone_metrics` consistently exceeded 120s on `backfill_stale_zone_metrics(50)` pre-cascade (jobid 35 was failing every run for hours). Zone backfill kept on its own slower cron with batch=5 + isolation budget. Fix-the-cause NEXT: investigate the LATERAL match cost and add an index on `listings_snapshots(event_id, captured_at, is_ancillary)` if not present.
+- `auto_link_event_xref` had a NOT NULL violation on `event_xref.espn_slug` pre-v8 (silently failing on jobid 31). Fixed in mig 20260509040000 with a hardcoded league→slug CASE; NEXT is to replace with a `league_slug` lookup table.
 
 ---
 
@@ -781,6 +797,44 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v8**: **Cascading cron model** + ESPN injury/trade freshness
+  bumped from every-10-min to every-2-min. Migration `20260509040000`:
+  - Unscheduled 6 individual freshness crons (espn-roster-10min,
+    espn-gameday-10min, auto-link-event-xref-15min, compute-event-splits-30min,
+    backfill-zone-metrics-10min, compute-event-nonowned-30min).
+  - Created `master_cascade_2min()` function — single chain that fires
+    ESPN roster+gameday HTTP (async via `pg_net`) and runs auto_link →
+    splits → nonowned in dependency order with per-stage try/except.
+    Returns JSONB summary so prod logs show `splits_count`, `nonowned_count`,
+    `auto_link_count`, ESPN request IDs, `duration_ms`, plus per-stage
+    errors when they occur.
+  - Scheduled `master-cascade-2min` (jobid 38) at `*/2 * * * *`.
+    First-tick verified runtime ~150-200ms.
+  - **Why ESPN runs async**: `pg_net.http_post` returns a request_id
+    immediately; HTTP work happens in a background worker. Stage 1
+    overlaps with Stage 2's SQL — total wall time = max(ESPN, SQL),
+    not sum.
+  - **Worst-case staleness collapsed**: a brand-new event used to wait
+    up to ~50 min for full ESPN xref + splits + nonowned coverage
+    (15+30+10 min worst-case fan-out across 3 separate schedules).
+    Now ~2 min.
+  - **Zone backfill kept SEPARATE** (`zone-backfill-isolated-10min`,
+    jobid 39, batch=5) due to pre-existing 120s timeout bug in
+    `match_performer_zone` — jobid 35 had been failing every run for
+    hours pre-cascade. Splitting it out keeps the cascade reliable.
+    Fix-the-cause NEXT: investigate LATERAL cost and the
+    `listings_snapshots(event_id, captured_at, is_ancillary)` index.
+  - **Side fix**: `auto_link_event_xref` was inserting into `event_xref`
+    without populating `espn_slug` (NOT NULL), so jobid 31 was silently
+    failing pre-v8. Cascade caught it via per-stage error reporter.
+    Added a hardcoded league→slug CASE for the 7 leagues (NBA, WNBA,
+    MLB, NHL, NFL, MLS, World Cup). NEXT: replace with a `league_slug`
+    lookup table.
+  - **Cron count**: 22 → 17 (6 dropped, 1 cascade added — net -5).
+  - **midnight-catchup-sweep** (jobid 36) remains as the daily
+    safety net — re-runs all idempotent backfills at 00:00 UTC so
+    no event goes >24h without a complete pass even if ticks fail.
 
 - **2026-05-09-v7**: New event_metrics column **`nonowned_median_retail`**
   (mig 20260509030000) — median retail across non-S4K listings only

@@ -302,22 +302,25 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v7)
+## SCHEMA LOCK (2026-05-09-v8)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v7`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v8`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
 > **RULE 1 (Cross-league)** — every query against the `espn_*` tables MUST filter by `(espn_team_id, espn_league)` together. team_id is league-scoped (id "18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18). Skipping the league filter leaks 95% phantom data.
 >
-> Contents: 48 tables, 75+ SQL functions, 22 active crons (added `midnight-catchup-sweep` jobid 36), all edge functions, the canonical **17-bucket data taxonomy**, TEvo classification tree, behavior rules (HOME/AWAY + ESPN UI gates), 4-layer ESPN coverage matrix, **dedicated ESPN injury / standings schema + auto-assignment rules**, recommended ML feature row, non-big-6 ESPN coverage gap + roadmap, major event calendar workflow, API surface, data-flow diagram, verification queries.
+> **v8 (cascading cron model)** — 6 individual freshness crons collapsed into `master-cascade-2min` (jobid 38) firing every 2 min: async ESPN roster+gameday HTTP via pg_net, then sync auto_link → splits → nonowned with per-stage try/except. ESPN injury/trade freshness improved from 10-min cadence to 2-min. Zone backfill (jobid 39, batch=5) kept separate due to pre-existing 120s timeout bug in match_performer_zone. Worst-case event-coverage staleness collapsed from ~50 min to ~2 min.
 >
-> **Drift to be reconciled** (5 migrations applied via MCP execute_sql in code-agent session, captured as files in `supabase/migrations/` but not yet in prod migration ledger):
-> - `20260508220000_auto_link_event_xref` (jobid 31)
-> - `20260508230000_event_splits_metrics` (jobid 32)
+> Contents: 48 tables, 75+ SQL functions, 17 active crons (was 22; 6 collapsed into the cascade, 1 added back as isolated zone job), all edge functions, the canonical **17-bucket data taxonomy**, TEvo classification tree, behavior rules (HOME/AWAY + ESPN UI gates), 4-layer ESPN coverage matrix, **dedicated ESPN injury / standings schema + auto-assignment rules**, recommended ML feature row, non-big-6 ESPN coverage gap + roadmap, major event calendar workflow, API surface, data-flow diagram, verification queries.
+>
+> **Drift to be reconciled** (6 migrations applied via MCP execute_sql in code-agent session, captured as files in `supabase/migrations/` but not yet in prod migration ledger):
+> - `20260508220000_auto_link_event_xref` (jobid 31 — replaced by cascade)
+> - `20260508230000_event_splits_metrics` (jobid 32 — replaced by cascade)
 > - `20260508240000_crawl_espn_assets_cron` (jobid 33)
 > - `20260508250000_ensure_major_league_watchlist` (jobid 34)
-> - `20260509000000_zone_metrics_backfill_cron` (jobid 35)
+> - `20260509000000_zone_metrics_backfill_cron` (jobid 35 — replaced by jobid 39)
+> - `20260509040000_master_cascade_cron` (jobid 38 + 39, this commit)
 
 ## STATE (truth, not history)
 
@@ -409,6 +412,14 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (solo phase, cascading cron model + 2-min ESPN freshness)
+
+- DONE — **Cascading cron model** (mig `20260509040000`, SCHEMA v8): per user direction "run all crons as cascading events instead of one at a time. Also run the evo injury and trade chrons every 2 minutes for freshest news." Replaced 6 individual freshness crons with a single `master-cascade-2min` (jobid 38) that fires every 2 min. ESPN roster+gameday HTTP via `pg_net.http_post` (async), then sync chain: `auto_link_event_xref` → `backfill_event_splits_metrics(50)` → `backfill_event_nonowned_median(50)`. Per-stage try/except returns a JSONB summary. Verified runtime ~150-200ms per tick — well under the 2-min cycle and the 120s cron statement_timeout. ESPN injury/trade cadence bumped from 10 min → 2 min. Worst-case event coverage staleness collapsed ~50 min → ~2 min.
+- DONE — **Zone backfill split out** (`zone-backfill-isolated-10min`, jobid 39, batch=5). `backfill_stale_zone_metrics(50)` had been silently failing every run for hours pre-cascade (jobid 35) — `match_performer_zone` LATERAL join exceeds the 120s cron statement_timeout. Forcing zones into a 2-min cycle would have turned every cascade tick red. Fix-the-cause NEXT: investigate the LATERAL cost + add an index on `listings_snapshots(event_id, captured_at, is_ancillary)` if missing.
+- DONE — **Side-fix: `auto_link_event_xref` NOT NULL bug** on `event_xref.espn_slug`. Pre-cascade, jobid 31 had been silently failing on every run (the column was added later, function never updated). Cascade caught it via the per-stage error reporter on first invocation. Added a hardcoded league→slug CASE for the 7 leagues (NBA / WNBA / MLB / NHL / NFL / MLS / unknown). NEXT: replace with a `league_slug` lookup table.
+- NEXT (code) — **Index audit** for `listings_snapshots`. If `(event_id, captured_at, is_ancillary)` index is missing, the zone backfill timeout may be solved by an index alone rather than function rewrite.
+- NEXT (code) — Replace the league→slug CASE with a proper `league_slug` lookup table; will be needed when SeatGeek migration lands and we stop assuming a single-source ESPN slug.
 
 ### 2026-05-09 code (solo phase, midnight sweep + RULE 1)
 
