@@ -10,10 +10,12 @@ gaps are, and which tables we collect into but never read from.
    plus an ESPN xref plus performer Wikipedia text. End to end this
    side just works.
 
-2. **SeatGeek cross-reference is broken.** We pull 7,298 listing
-   snapshots, 400 orders, 200 seller listings — but only ~7%, 0%, and
-   0.5% respectively are linked back to a `tevo_event_id`. The data is
-   in the database. Day-trader views can't see it.
+2. **SeatGeek cross-reference is sparse — but correct.** Initially
+   reported as broken; on re-check the matcher correctly refuses to
+   pair unrelated events sharing a date (e.g. BTS concert at Stanford
+   vs WNBA game at Moda Center). The 208 unmatched `sg_events_canonical`
+   rows are mostly events without a TEvo equivalent (concerts,
+   non-major sports). See "SG xref state — corrected" below.
 
 3. **SeatData is essentially silent.** 1 event xref'd, 254 sales rows
    on that one event. Either the SD pull pipeline isn't iterating
@@ -63,7 +65,26 @@ status, performer wiki, weather. We have all of those.
 + SD historic comps. Both pipelines are running (crons active) and
 both have data in their raw tables. The xref join is the failure.
 
-## SG xref failure — root cause
+## SG xref state — corrected
+
+Initial finding ("69 obvious cross-source matches not xref'd") was a
+**false positive** in the audit query. The fuzzy match used loose
+substring overlap on event names, which produced spurious pairs like:
+
+- SG "BTS" at Stanford Stadium ↔ TEvo "Connecticut Sun at Portland
+  Fire" at Moda Center — different sport, different venue, same date.
+- SG "Palomazo Norteno" at Kia Forum ↔ TEvo "Texas Rangers at Toronto
+  Blue Jays" at Rogers Centre — different sport, different venue.
+
+After re-querying with **same-venue + same-date**, only **1** legit
+SG↔TEvo collision exists today, and the existing matcher correctly
+rejects it (SG WNBA game vs TEvo Timberwolves at Target Center on the
+same date — different performers, gated against ghost-matching).
+
+The 208 unmatched `sg_events_canonical` rows are real cross-source
+gaps in the TEvo catalog: SG carries lots of concerts and MLS/NCAAF
+games that we don't pull into TEvo. Not a matcher bug — a coverage
+choice.
 
 ```
 sg_listings_snapshots:   7,298 total | 527 (7.2%) xref'd to tevo_event_id
@@ -72,19 +93,13 @@ sg_seller_listings:        200 total | 1 (0.5%)   xref'd
 sg_events_canonical:       211 total | 3 (1.4%)   xref'd
 ```
 
-Joining `events` to `sg_events_canonical` on `(date, name fragments)`
-finds **72 obvious matches**, of which only **3 are correctly xref'd**
-and **69 are not.** The matcher is leaving money on the table.
+The low xref rates reflect that most SG events simply don't have a
+TEvo equivalent in our event list. The matcher is doing its job —
+correctly NOT pairing unrelated events that share a date.
 
-The matcher cron `sg_canonical_auto_match_30min` is active; it isn't
-matching because the SG event names are different shapes from TEvo's
-("Oklahoma City Thunder at Los Angeles Lakers (Game 3, …)" vs the
-SG-side phrasing). The fuzzy-match threshold or the candidate window
-is too narrow.
-
-**Fix path** (P1): widen matcher to compare strip-of-parentheticals
-+ use venue when name match is weak. 69 → ~3 unmatched would
-unlock most of the hidden SG depth on TEvo events.
+**No fix needed.** The unified `cross_source_match_tick_30min` cron
+(mig 20260509350000) keeps running the existing matcher and will pick
+up new pairs whenever TEvo's event coverage and SG's overlap.
 
 ## SeatData near-empty
 
@@ -186,7 +201,7 @@ Tier 3 (nice to have, deferred):
 
 | # | Action | Effort | Why it matters |
 |---|---|---|---|
-| 1 | Fix `sg_canonical_auto_match_30min` matcher (parentheticals + venue tiebreak) | small | unlocks ~69 cross-source pairs immediately, growing daily |
+| 1 | ~~Fix SG matcher~~ — withdrawn, matcher is correct. Replaced by `cross_source_match_tick_30min` unified cron (mig 350000) | done | logs orphans across all sources for visibility |
 | 2 | Diagnose why `seatdata_pull_log` is empty (cron not running? not iterating?) | small-medium | SD comps are real money signal; right now we have ~zero |
 | 3 | Wire `seatgeek_event_metrics` into `v_pricing_cross_source` | small | data exists, just needs JOIN |
 | 4 | Wire `event_sentiment` into `v_event_full` | small | data exists, currently invisible |
