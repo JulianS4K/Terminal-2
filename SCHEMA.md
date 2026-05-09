@@ -1,7 +1,7 @@
 # SCHEMA.md — Backend architecture lock
 
-**Version**: `2026-05-09-v5`
-**Last verified against prod**: 2026-05-09 ~02:30 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
+**Version**: `2026-05-09-v6`
+**Last verified against prod**: 2026-05-09 ~03:00 UTC (Supabase project `hzrizjeaxlqcxfrtczpq`)
 **Authority**: this file. Future agents should read SCHEMA.md before proposing backend changes.
 
 > **Process discipline (RULE 0)**: Any time we add new data — new table,
@@ -342,6 +342,117 @@ need ESPN at all).
 
 ---
 
+## ESPN injury / standings auto-assignment rules
+
+> Locked rules that apply to **every query against the espn_* tables**.
+> If you find yourself writing a new query and don't see filters following
+> these rules, stop and re-check.
+
+### The cross-league rule (RULE 1)
+
+**ESPN team_id is league-scoped.** `espn_team_id="18"` is simultaneously
+NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18. Same
+for every team_id 1-48. Every query against the following tables MUST
+filter by `(espn_team_id, espn_league)` together:
+
+| Table | Required filter |
+|---|---|
+| `espn_team_snapshots` | `WHERE espn_team_id = ? AND espn_league = ?` |
+| `espn_injuries_snapshots` | same |
+| `espn_news` | same |
+| `espn_event_snapshots` | `WHERE (home_team_id = ? OR away_team_id = ?) AND espn_league = ?` |
+| `espn_athletes` | `WHERE espn_athlete_id = ? AND espn_league = ?` |
+| `espn_athlete_team_history` | `WHERE espn_team_id = ? AND espn_league = ?` |
+
+**Failure mode**: omitting the league filter for Knicks G5 (team_ids
+18+20) returned **229 rows where 12 are real** — 95% phantom data from
+MLB Pirates, NFL Saints, NHL, WNBA. Caught + fixed in commit `bbd18ed`
+(2026-05-09). The `_news_series` and `_injury_load_series` helpers in
+`chart-data` were already correct and serve as the canonical template
+to follow.
+
+### `espn_injuries_snapshots` schema
+
+```
+column            type           notes
+─────────────────────────────────────────────────────────────────────────
+id                bigint         PK
+espn_team_id      text           1-48 per league — combine with espn_league
+espn_league       text           NBA | MLB | NFL | NHL | MLS | WNBA | 'World Cup'
+captured_at       timestamptz    cron tick when this row was captured
+athlete_id        text           ESPN athlete id (sometimes null on league-injury endpoint)
+athlete_name      text           player display name
+position          text           POS abbr
+status            text           'Out' | 'Day-To-Day' | 'Active' | 'Suspended' | etc.
+injury_type       text           normalized to lowercase enum
+short_comment     text           brief reporter quote
+long_comment      text           full reporter context
+return_date       timestamptz    expected return date if known
+meta              jsonb          raw ESPN row
+content_hash      text           used by upsert_espn_injury for change-only ingest
+last_seen_at      timestamptz    bumped on every observation (even when nothing changed)
+is_baseline       boolean        false = real status flip; true = baseline observation
+```
+
+### `is_baseline` semantics + known bug
+
+`is_baseline` is intended to distinguish:
+- `true` = an injury captured during initial roster ingest or with no detected change since the prior snapshot (carrier rows)
+- `false` = an actual status flip detected via `content_hash` comparison
+
+**Known bug** (espn-collect lane — now code lane during solo phase):
+the `is_baseline` detection only fires correctly for **MLB and NHL**. For
+NBA / NFL / MLS / WNBA / World Cup, every row is currently `is_baseline=true`,
+which means a strict `WHERE is_baseline = false` filter returns 0 rows and
+the chart's injury overlay is empty for those leagues despite having
+real injury data.
+
+**Frontend mitigation** (already shipped in `0f1924c`): `chart-data`
+includes baseline rows and tags each with `is_change` so the UI can
+color-code them differently if needed.
+
+**Backend fix needed** (NEXT for code-lane during solo phase):
+`upsert_espn_injury` RPC needs the same content_hash comparison logic
+the MLB/NHL paths use, applied uniformly across all 5 leagues. After
+that fix, the chart could re-tighten the filter to "real flips only"
+without losing data.
+
+### `espn_team_snapshots` schema
+
+```
+column            type           notes
+─────────────────────────────────────────────────────────────────────────
+espn_team_id      text           league-scoped (RULE 1)
+espn_league       text
+captured_at       timestamptz
+wins              integer
+losses            integer
+ties              integer
+win_pct           numeric
+games_back        numeric
+playoff_seed      integer
+conference_rank   integer
+division_rank    integer
+record_summary    text           e.g. "53-29"
+standing_summary  text           "1st in Atlantic"
+streak            text           "W3", "L1"
+content_hash      text           change-only ingest key
+last_seen_at      timestamptz
+is_baseline       boolean        same semantics + same league bug as injuries
+```
+
+### Auto-assignment hooks (where these rules are enforced today)
+
+| Endpoint / RPC | Tables it touches | League-filtered? |
+|---|---|---|
+| `/api/broker/performer/{id}/espn` | team_snapshots, injuries, news, recent (RPC) | ✅ resolved league via `performer_external_ids.league` then filtered |
+| `/api/broker/event/{id}/espn` | proxies espn fn (resolves via event_xref) | ✅ league from xref |
+| `/api/broker/event/{id}/chart-data` | 6 ESPN queries: standings × 2, injuries, last5 × 2, roster_moves, news_series × 2, injury_load × 2 | ✅ all 6 filter `(team_id, league)` after `bbd18ed` |
+| `/api/broker/news` | espn_news | ✅ accepts league or event_id (resolves to league + team_ids) |
+| `auto_link_event_xref()` cron | matches by `(home_team_id OR away_team_id, league, status_short M/D)` | ✅ requires league match |
+
+---
+
 ## Tables (47)
 
 Grouped by bucket. Row counts as of 2026-05-09 (`pg_stat_user_tables.n_live_tup` estimate).
@@ -670,6 +781,30 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' OR
 ---
 
 ## Change log
+
+- **2026-05-09-v6**: Added a dedicated **"ESPN injury / standings
+  auto-assignment rules"** section after the league coverage matrix.
+  Documents:
+  - **RULE 1 (cross-league)**: every query against the espn_* tables
+    MUST filter by `(espn_team_id, espn_league)` together — id "18" is
+    NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18.
+    Failure mode: 229 rows pulled when 12 are real. Caught + fixed in
+    `bbd18ed`. Listed every endpoint that touches espn_* tables and
+    confirmed each filters correctly post-fix.
+  - **`espn_injuries_snapshots` schema**: full column-by-column
+    documentation including `is_baseline` semantics
+  - **`is_baseline` known bug**: detection only fires correctly for
+    MLB+NHL; NBA/NFL/MLS/WNBA/WC always come back true. Documented as
+    code-lane NEXT for solo phase.
+  - **`espn_team_snapshots` schema**: same column-by-column treatment
+  - **Auto-assignment hooks table**: every endpoint/RPC that touches
+    espn_* tables, with confirmation of league filtering
+  Added new cron **`midnight-catchup-sweep`** (jobid 36, mig
+  20260509020000) — daily 00:00 UTC pass that runs all 4 idempotent
+  backfills (auto_link_event_xref, backfill_stale_zone_metrics,
+  backfill_event_splits_metrics, ensure_major_league_watchlist_coverage)
+  in one coordinated sweep. First fire 2026-05-10 00:00 UTC. Component
+  fns are idempotent so re-running after intra-day crons is safe.
 
 - **2026-05-09-v5**: Replaced the single-checkmark "League → ESPN-tracked
   map" with a 4-layer matrix (performer mapping / team standings /

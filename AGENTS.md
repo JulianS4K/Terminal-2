@@ -302,13 +302,15 @@ When a new chat variant is needed, create a new subfolder rather than a new buck
 - **🔄 Retail product surface expanded beyond chatbot.** Migration `20260508023000_leads_and_rest_wrappers` (copilot, 2026-05-08) adds a `leads` table + 6 `*_public` REST RPCs. Suggests a dedicated retail website / landing-page experience is in flight, not just the existing `static/chat.html` chatbot. claude design should expect to be asked for `static/landing.html` or similar soon.
 - **💸 Trial countdown**: 8 days / $4.58 left on Railway as of 2026-05-08. If not upgraded, terminal goes dark; chat fn (Supabase) keeps running independently.
 
-## SCHEMA LOCK (2026-05-09-v5)
+## SCHEMA LOCK (2026-05-09-v6)
 
-> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v5`**.
+> **Backend architecture is documented in [SCHEMA.md](SCHEMA.md).** Read it before proposing any backend change. Locked version: **`2026-05-09-v6`**.
 >
 > **RULE 0 (Process discipline)** — any new data (table/column/external feed/derived metric/price source) MUST be categorized into a SCHEMA.md bucket in the same commit. Including all price data sources.
 >
-> Contents: 48 tables (incl. `major_event_calendar`), 73+ SQL functions, 21 active crons, all edge functions, the canonical **17-bucket data taxonomy** (10 core + 6 ML-training + 1 major event calendar), full TEvo classification tree, behavior rules (HOME/AWAY + ESPN UI gates), **4-layer ESPN coverage matrix** (performer mapping / team standings / game-day snapshots / event xref — surfaces that MLS/NHL/NFL/WNBA/WC are performer-level only, not event-level), recommended ML feature row, non-big-6 ESPN coverage gap + roadmap, major event calendar workflow (F1/NASCAR/Tennis/Golf seeded), API surface, data-flow diagram, and verification queries.
+> **RULE 1 (Cross-league)** — every query against the `espn_*` tables MUST filter by `(espn_team_id, espn_league)` together. team_id is league-scoped (id "18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18). Skipping the league filter leaks 95% phantom data.
+>
+> Contents: 48 tables, 75+ SQL functions, 22 active crons (added `midnight-catchup-sweep` jobid 36), all edge functions, the canonical **17-bucket data taxonomy**, TEvo classification tree, behavior rules (HOME/AWAY + ESPN UI gates), 4-layer ESPN coverage matrix, **dedicated ESPN injury / standings schema + auto-assignment rules**, recommended ML feature row, non-big-6 ESPN coverage gap + roadmap, major event calendar workflow, API surface, data-flow diagram, verification queries.
 >
 > **Drift to be reconciled** (5 migrations applied via MCP execute_sql in code-agent session, captured as files in `supabase/migrations/` but not yet in prod migration ledger):
 > - `20260508220000_auto_link_event_xref` (jobid 31)
@@ -407,6 +409,11 @@ Mechanics (whoever picks this up):
 **WAIT user** — agent cannot do step 1 (mv would invalidate cwd) or step 2 (Railway dashboard). Once user signals the move is done, either agent can do steps 3-6 in one commit.
 
 ## LOG
+
+### 2026-05-09 code (solo phase, midnight sweep + RULE 1)
+
+- DONE — **SCHEMA.md v6 + RULE 1**: documented the ESPN cross-league filter rule explicitly as a top-level rule in AGENTS.md and a dedicated section in SCHEMA.md. Includes column-by-column schema for `espn_injuries_snapshots` + `espn_team_snapshots`, the `is_baseline` known-bug callout (only MLB+NHL detect changes correctly; other 5 leagues always = true), and an auto-assignment hooks table covering every endpoint/RPC that touches espn_* tables.
+- DONE — **`midnight-catchup-sweep` cron** (jobid 36, mig 20260509020000): daily 00:00 UTC sweep that runs all 4 idempotent backfills in coordinated order (auto_link_event_xref → backfill_stale_zone_metrics → backfill_event_splits_metrics → ensure_major_league_watchlist_coverage). First fire 2026-05-10 00:00 UTC. Returns a JSONB summary so prod logs show the sweep impact (linked, recomputed, splits updated, watchlist additions). Component fns idempotent — running after intra-day crons just no-ops.
 
 ### 2026-05-09 code (solo phase begin)
 
