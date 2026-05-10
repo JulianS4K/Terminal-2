@@ -1,9 +1,21 @@
 -- ============================================================================
--- Phase 4: drift-prevention triggers.
+-- Migration 20260510120300 — Phase 4: drift-prevention triggers
 --
--- For each per-source xref table, install an AFTER INSERT/UPDATE/DELETE
--- trigger that mirrors the row into canonical_external_ids using the
--- normalized vocabulary from data_sources.
+-- Lane:     canonical
+-- Touches:  canonical_external_ids (W via triggers),
+--           seatgeek_event_xref (W via cascade trigger),
+--           event_xref (TRIGGER), seatgeek_event_xref (TRIGGER),
+--           seatdata_event_xref (TRIGGER), seatgeek_venue_xref (TRIGGER),
+--           seatdata_venue_xref (TRIGGER), venue_assets (TRIGGER),
+--           performer_external_ids (TRIGGER), seatgeek_performer_xref (TRIGGER),
+--           seatdata_performer_xref (TRIGGER), performer_espn_team_xref (TRIGGER),
+--           sg_events_canonical (TRIGGER)
+-- Pre-reqs: 20260510120200 (Phase 3 — canonical_external_ids backfilled)
+--
+-- Per §4 escape hatch: triggers on writer-owned tables propagate writer's
+-- INSERT/UPDATE into canonical lane's canonical_external_ids without the
+-- canonical lane writing to those tables directly. Mirrors the row into
+-- canonical_external_ids using the normalized vocabulary from data_sources.
 --
 -- Special-case: sg_events_canonical → seatgeek_event_xref. The cron auto-match
 -- writes tevo_event_id directly onto sg_events_canonical; this trigger then

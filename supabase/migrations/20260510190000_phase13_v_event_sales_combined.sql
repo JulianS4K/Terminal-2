@@ -1,7 +1,17 @@
 -- ============================================================================
--- Phase 13: v_event_sales_combined — single server-side view that unifies
---           sales rows from EVO orders, SeatGeek seller orders, and the SG
---           broker sales snapshot for any Tevo event.
+-- Migration 20260510190000 — Phase 13: v_event_sales_combined
+--
+-- Lane:     canonical
+-- Touches:  v_event_sales_combined (CREATE VIEW),
+--           evo_order_items (INDEX), seatgeek_orders (INDEX),
+--           seatgeek_sales_snapshots (INDEX);
+--           reads evo_orders, evo_order_items, seatgeek_orders,
+--           seatgeek_sales_snapshots
+-- Pre-reqs: existing tables only
+--
+-- v_event_sales_combined — single server-side view that unifies sales rows
+-- from EVO orders, SeatGeek seller orders, and the SG broker sales snapshot
+-- for any Tevo event.
 --
 -- The event view's price chart plots one scatter dot per sale and the third
 -- "Sales (combined)" raw-data tab paginates over the same rows. Doing this as

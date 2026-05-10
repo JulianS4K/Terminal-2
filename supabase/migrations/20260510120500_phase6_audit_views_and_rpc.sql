@@ -1,5 +1,16 @@
 -- ============================================================================
--- Phase 6: audit views + audit_cross_source_health() RPC.
+-- Migration 20260510120500 — Phase 6: audit views + audit_cross_source_health()
+--
+-- Lane:     canonical
+-- Touches:  v_canonical_coverage_v2, v_canonical_drift,
+--           v_orphan_seatgeek_data, v_orphan_seatdata_data,
+--           v_event_overlay_summary (all CREATE VIEW);
+--           audit_cross_source_health() (CREATE FUNCTION);
+--           reads canonical_external_ids, performer_external_ids,
+--           seatgeek_event_xref, seatdata_event_xref, event_xref,
+--           seatgeek_listings_snapshots, seatgeek_sales_snapshots,
+--           seatdata_listings_snapshots
+-- Pre-reqs: 20260510120300 (Phase 4 — drift triggers), 20260510120400 (Phase 5)
 --
 -- Drift detection has three pillars:
 --   1. v_canonical_coverage_v2  — how many tevo entities are linked per source

@@ -1,5 +1,17 @@
 -- ============================================================================
--- Phase 14: Event view supporting views
+-- Migration 20260510200000 — Phase 14: event view supporting views
+--
+-- Lane:     canonical
+-- Touches:  v_seatgeek_listings_classified (CREATE VIEW),
+--           v_event_competing_events (CREATE VIEW),
+--           v_event_data_freshness (CREATE VIEW);
+--           reads seatgeek_listings_snapshots, seatgeek_seller_listings,
+--           events, v_venue_neighbors, listings_snapshots, evo_orders,
+--           evo_order_items, seatgeek_sales_snapshots, seatgeek_orders,
+--           seatdata_listings_snapshots, v_event_espn_state, v_event_weather,
+--           v_event_nws_alerts, nws_alerts, v_event_reddit
+-- Pre-reqs: 20260510130030 (Phase 7), 20260510180000 (Phase 12),
+--           20260510190000 (Phase 13), v_venue_neighbors (pre-existing)
 --
 --   1. v_seatgeek_listings_classified — adds an ownership_class column to
 --      seatgeek_listings_snapshots: 'ours_sg' / 'sg_broker' / 'sg_fan'.

@@ -1,7 +1,18 @@
 -- ============================================================================
--- Phase 1: backfill per-source event xref tables from data already linked to
--- a Tevo event. The SG / SD ingest pipelines store tevo_event_id on each
--- snapshot row but the xref tables drift; this catches them up.
+-- Migration 20260510120030 — Phase 1: backfill SG / SD event xref tables
+--
+-- Lane:     canonical
+-- Touches:  seatgeek_event_xref (W), seatdata_event_xref (W),
+--           sg_events_canonical (R), seatgeek_listings_snapshots (R),
+--           seatgeek_sales_snapshots (R), seatgeek_seller_listings (R),
+--           seatgeek_event_metrics (R), seatdata_listings_snapshots (R)
+-- Pre-reqs: 20260507000013 (event_xref + per-source xref tables exist),
+--           20260509150000 (sg_events_canonical seeded)
+--
+-- Backfill per-source event xref tables from data already linked to a Tevo
+-- event. The SG / SD ingest pipelines store tevo_event_id on each snapshot
+-- row but the xref tables drift; this catches them up. Idempotent
+-- (ON CONFLICT DO NOTHING).
 -- ============================================================================
 
 -- SeatGeek event xref ← sg_events_canonical (rows that already carry tevo_event_id)

@@ -1,11 +1,22 @@
 -- ============================================================================
--- Phase 11: Match SG events to Tevo events by venue + date when the SG
---           performer name is unparseable (the "noisy parses" set).
+-- Migration 20260510170000 — Phase 11: SG event matcher by venue + date
 --
--- The existing sg_attempt_event_xref() requires performer-name overlap to
--- guard against ghost matches; that gate prevents matching events like
--- "REFES DU SOL" or "Forged in Houston" where the SG event title doesn't
--- contain a recognizable team / artist name.
+-- Lane:     canonical
+-- Touches:  v_sg_event_match_proposals (CREATE VIEW),
+--           sg_match_event_by_venue_date() (CREATE FUNCTION),
+--           auto_match_sg_canonical_relaxed() (CREATE FUNCTION),
+--           sg_events_canonical (W via matcher RPC),
+--           seatgeek_event_xref (W via Phase 4 trigger);
+--           reads events, seatgeek_venue_xref, sg_events_canonical
+-- Pre-reqs: 20260510120300 (Phase 4 — drift triggers cascade matcher writes),
+--           20260510160000 (Phase 10 — candidate normalization)
+--
+-- Match SG events to Tevo events by venue + date when the SG performer name
+-- is unparseable (the "noisy parses" set). The existing
+-- sg_attempt_event_xref() requires performer-name overlap to guard against
+-- ghost matches; that gate prevents matching events like "REFES DU SOL" or
+-- "Forged in Houston" where the SG event title doesn't contain a
+-- recognizable team / artist name.
 --
 -- This phase adds:
 --   1. v_sg_event_match_proposals — for every unmatched sg_events_canonical

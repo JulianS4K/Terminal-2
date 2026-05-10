@@ -1,5 +1,13 @@
 -- ============================================================================
--- Phase 2: backfill performer_external_ids from per-source performer xrefs.
+-- Migration 20260510120100 — Phase 2: backfill performer_external_ids
+--
+-- Lane:     canonical
+-- Touches:  performer_external_ids (W), seatgeek_performer_xref (R),
+--           seatdata_performer_xref (R), performer_espn_team_xref (R)
+-- Pre-reqs: 20260509120000 (performer_external_ids exists),
+--           20260510110000 (performer_espn_team_xref seeded)
+--
+-- Backfill performer_external_ids from per-source performer xrefs.
 -- The ESPN rows (217) are populated by the athlete-crawl pipeline; this adds
 -- 'sg_broker' and 'seatdata' rows so performer_external_ids becomes a
 -- multi-source registry (not just ESPN).

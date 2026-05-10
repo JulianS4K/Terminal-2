@@ -1,5 +1,16 @@
 -- ============================================================================
--- Phase 7: drift surface hardening + missing domain overlays.
+-- Migration 20260510130030 — Phase 7: drift hardening + extra overlays
+--
+-- Lane:     canonical
+-- Touches:  event_xref (TRUNCATE TRIGGER), seatgeek_event_xref (TRUNCATE TRIGGER),
+--           seatdata_event_xref (TRUNCATE TRIGGER),
+--           seatgeek_venue_xref (TRUNCATE TRIGGER), seatdata_venue_xref (TRUNCATE TRIGGER),
+--           performer_external_ids (TRUNCATE TRIGGER), performer_espn_team_xref (TRUNCATE TRIGGER),
+--           v_event_base, v_event_espn_state, v_event_espn_news,
+--           v_event_espn_injuries, v_event_overlay_summary,
+--           v_event_context (CREATE VIEW),
+--           audit_cross_source_health() (CREATE OR REPLACE)
+-- Pre-reqs: 20260510120500 (Phase 6)
 --
 -- 1. STATEMENT-level guards on per-source xref tables for TRUNCATE
 --    (ROW triggers don't fire on TRUNCATE; without these, a truncate would

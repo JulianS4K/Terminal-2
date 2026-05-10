@@ -1,6 +1,14 @@
 -- ============================================================================
--- Phase 8: candidate-performer extraction from unmatched SeatGeek data.
+-- Migration 20260510140000 — Phase 8: SG candidate-performer view
 --
+-- Lane:     canonical
+-- Touches:  v_sg_unmatched_candidate_performers (CREATE VIEW),
+--           record_sg_performer_match() (CREATE FUNCTION);
+--           reads sg_events_canonical, seatgeek_listings_snapshots,
+--           seatgeek_sales_snapshots, seatgeek_orders, seatgeek_performer_xref
+-- Pre-reqs: 20260509150000 (sg_events_canonical)
+--
+-- Candidate-performer extraction from unmatched SeatGeek data.
 -- 35K SG listings + sales + orders collapse to ~228 distinct sg_events_canonical
 -- rows that are still not linked to a Tevo event. From those event names we can
 -- extract a small set (~168) of distinct performer-name candidates which the

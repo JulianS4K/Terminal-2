@@ -1,5 +1,17 @@
 -- ============================================================================
--- Phase 12: SG-internal stitching + 2018-2020 ignored_historic bucket
+-- Migration 20260510180000 — Phase 12: SG stitching + match queue
+--
+-- Lane:     canonical
+-- Touches:  sg_events_canonical (ALTER + W),
+--           sg_event_match_pending (CREATE TABLE + W),
+--           v_sg_event_match_proposals, v_sg_events_by_status,
+--           v_sg_events_pending_match, v_sg_events_ignored_historic,
+--           v_orphan_seatgeek_data (CREATE VIEW),
+--           queue_sg_event_match(), approve_sg_event_match(),
+--           reject_sg_event_match() (CREATE FUNCTION);
+--           reads seatgeek_listings_snapshots, seatgeek_sales_snapshots,
+--           seatgeek_orders, seatgeek_seller_listings
+-- Pre-reqs: 20260510170000 (Phase 11)
 --
 -- Two parallel goals:
 --   1. Mark the 185 sg_events_canonical rows from 2018-2020 as

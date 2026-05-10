@@ -1,10 +1,18 @@
 -- ============================================================================
--- Phase 9: lock 1-to-1 mapping across ESPN / Tevo / SeatGeek / SeatData /
---          Wikipedia performers and venues with UNIQUE constraints.
+-- Migration 20260510150000 — Phase 9: lock 1-to-1 mappings (UNIQUE constraints)
 --
--- These external IDs are static — once Tevo performer X is matched to ESPN
--- team Y in league L, that pair is permanent. Same for SG performer name and
--- SD performer name. The forward direction is already enforced by primary
+-- Lane:     canonical
+-- Touches:  performer_external_ids (ALTER), performer_espn_team_xref (ALTER),
+--           seatgeek_performer_xref (ALTER), seatdata_performer_xref (ALTER),
+--           seatgeek_venue_xref (ALTER), seatdata_venue_xref (ALTER),
+--           venue_assets (UPDATE + ALTER for espn_venue_id 1-to-1),
+--           v_one_to_one_health (CREATE VIEW)
+-- Pre-reqs: 20260510120300 (Phase 4), 20260510120500 (Phase 6)
+--
+-- Lock 1-to-1 mapping across ESPN / Tevo / SeatGeek / SeatData / Wikipedia
+-- performers and venues with UNIQUE constraints. These external IDs are
+-- static — once Tevo performer X is matched to ESPN team Y in league L, that
+-- pair is permanent. The forward direction is already enforced by primary
 -- keys; this phase locks down the *reverse* direction so future inserts
 -- physically cannot violate 1-to-1.
 --

@@ -1,6 +1,18 @@
 -- ============================================================================
--- Phase 3: backfill canonical_external_ids — the unified per-entity registry.
+-- Migration 20260510120200 — Phase 3: canonical_external_ids backfill
 --
+-- Lane:     canonical
+-- Touches:  data_sources (W), performer_external_ids (W),
+--           canonical_external_ids (W),
+--           event_xref (R), seatgeek_event_xref (R), seatdata_event_xref (R),
+--           seatgeek_venue_xref (R), seatdata_venue_xref (R),
+--           seatgeek_performer_xref (R), seatdata_performer_xref (R),
+--           performer_espn_team_xref (R), venue_assets (R),
+--           performer_wikipedia (R)
+-- Pre-reqs: 20260510120030 (Phase 1), 20260510120100 (Phase 2),
+--           20260509210000 (canonical_external_ids exists)
+--
+-- Backfill canonical_external_ids — the unified per-entity registry.
 -- Pre-step (vocabulary normalization):
 --   * canonical_external_ids.source_key has an FK to data_sources.source_key,
 --     so every key we use here must already exist in data_sources.

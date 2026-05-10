@@ -1,5 +1,10 @@
 -- ============================================================================
--- Phase 10: candidate-performer normalization
+-- Migration 20260510160000 — Phase 10: candidate-performer normalization
+--
+-- Lane:     canonical
+-- Touches:  v_sg_unmatched_candidate_performers (DROP + CREATE VIEW);
+--           reads sg_events_canonical, seatgeek_performer_xref
+-- Pre-reqs: 20260510140000 (Phase 8 — initial candidate view)
 --
 -- The Phase 8 view exposed 168 distinct candidate names; the Phase 8 matcher
 -- accepted 44 outright. The 35 skips fall into four recoverable classes and

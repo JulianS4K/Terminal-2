@@ -1,5 +1,23 @@
 -- ============================================================================
--- Phase 5: date / venue / time overlay views.
+-- Migration 20260510120400 — Phase 5: date / venue / time overlay views
+--
+-- Lane:     canonical
+-- Touches:  v_event_base, v_event_holidays, v_event_school_breaks,
+--           v_event_weather, v_event_nws_alerts, v_event_reddit,
+--           v_event_major_calendar, v_event_sporting_rivalries,
+--           v_event_mlb_branded_series, v_event_espn_news,
+--           v_event_espn_injuries, v_event_context (all CREATE VIEW);
+--           reads events, holidays, school_breaks, weather_observations,
+--           nws_alerts, reddit_posts, major_calendar_events,
+--           sporting_rivalries, mlb_branded_series, espn_news,
+--           espn_injuries_snapshots
+-- Pre-reqs: 20260509260000 (weather), 20260509550000 (holidays),
+--           20260509560000 (NWS), 20260509410000 (reddit),
+--           20260509530000 (rivalries), 20260510000000 (injuries)
+--
+-- Per-event overlay views: weather / NWS / holidays / school breaks /
+-- reddit / major calendar / rivalries / branded series / news / injuries.
+-- All read-only, joined to events.id for the event-view header strip.
 --
 -- Drop any pre-existing overlay view that has a different column set so the
 -- CREATE OR REPLACE statements below don't trip over column drift.
