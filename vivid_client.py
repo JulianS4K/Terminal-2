@@ -14,9 +14,10 @@ Endpoints used:
 
 Imported from JulianS4K/Unified-Order-Suite. The original suite included
 a fulfillment write (POST /transferOrderViaURL); that endpoint is NOT
-imported here. This client mirrors the RULE 2 read-only guards used by
-evo_client.py and seatgeek_client.py so the same enforcement model
-applies if anyone tries to add writes later.
+imported here. Vivid Seats orders are in the same RULE 2 read-only
+bucket as the Evo /v9/orders and SG /sales feeds — `brokers.vividseats.com`
+is on the FORBIDDEN_HOSTS allowlist in scripts/check_readonly.py and
+this module appears in CLIENT_FILES.
 """
 from __future__ import annotations
 
@@ -26,11 +27,11 @@ from typing import Any
 import requests
 
 
-# Read-only by design. Mirrors the RULE 2 pattern in evo_client.py and
-# seatgeek_client.py. brokers.vividseats.com is not in
-# scripts/check_readonly.py's FORBIDDEN_HOSTS list, but the same runtime
-# guard is wired so any future non-GET via this client raises before the
-# network call.
+# RULE 2 — READ-ONLY against brokers.vividseats.com.
+# Vivid Seats orders are part of the orders/sales bucket alongside Evo
+# and SG. Any non-GET attempt raises before a network call is made. The
+# runtime guard pairs with the static check in scripts/check_readonly.py
+# and the unit tests in tests/test_readonly_guards.py.
 ALLOWED_HTTP_METHODS = frozenset({"GET"})
 
 
