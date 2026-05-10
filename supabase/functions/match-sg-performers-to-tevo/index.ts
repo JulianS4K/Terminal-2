@@ -84,6 +84,7 @@ interface Candidate {
   performer_name: string;
   event_count: number;
   categories: (string | null)[];
+  aliases?: string[] | null;
 }
 
 interface Hit {
@@ -143,7 +144,7 @@ Deno.serve(async (req) => {
 
   const { data: candidates, error: candErr } = await sb
     .from("v_sg_unmatched_candidate_performers")
-    .select("performer_name, event_count, categories")
+    .select("performer_name, event_count, categories, aliases")
     .order("event_count", { ascending: false })
     .limit(limit);
   if (candErr) {
@@ -155,25 +156,51 @@ Deno.serve(async (req) => {
   let accepted = 0, skipped = 0, errored = 0;
 
   for (const c of (candidates ?? []) as Candidate[]) {
-    // pick first non-null category for the search scope
     const sgCat = (c.categories ?? []).find((x) => x) ?? null;
     const catId = categoryFor(sgCat);
 
-    const r = await tevoSearch(tevoToken, tevoSecret, c.performer_name, catId);
-    if (!r.ok) {
+    // Build the list of names to try: primary first, then any aliases
+    const namesToTry = [c.performer_name, ...((c.aliases ?? []) as string[])]
+      .filter((n) => n && n.length > 1);
+
+    let best: ReturnType<typeof pickBest> = { hit: null, confidence: 0, method: "no_hits" };
+    let triedName = c.performer_name;
+    let aliasUsed: string | null = null;
+    let lastError: { status: number; body: string } | null = null;
+
+    for (const name of namesToTry) {
+      const r = await tevoSearch(tevoToken, tevoSecret, name, catId);
+      if (!r.ok) { lastError = { status: r.status!, body: r.body! }; continue; }
+      const hits = ((r.body as { performers?: Hit[] }).performers ?? []) as Hit[];
+      // When trying an alias, score against the alias text (TEvo's catalog name)
+      const candidate = pickBest(name, hits);
+      if (candidate.hit && candidate.confidence >= minConf) {
+        best = candidate;
+        triedName = name;
+        aliasUsed = name === c.performer_name ? null : name;
+        break;
+      }
+      // Keep the highest-confidence partial as a reportable fallback
+      if (candidate.confidence > best.confidence) {
+        best = candidate;
+        triedName = name;
+      }
+    }
+
+    if (!best.hit && lastError && namesToTry.every((_) => true)) {
       errored++;
-      samples.push({ name: c.performer_name, error: r.status, body: r.body });
+      samples.push({ name: c.performer_name, error: lastError.status, body: lastError.body });
       continue;
     }
-    const hits = ((r.body as { performers?: Hit[] }).performers ?? []) as Hit[];
-    const best = pickBest(c.performer_name, hits);
 
     if (!best.hit || best.confidence < minConf) {
       skipped++;
       samples.push({
         name: c.performer_name, event_count: c.event_count,
         sg_category: sgCat, decision: "skipped", reason: best.method,
-        confidence: best.confidence, top_hit: best.hit ? { id: best.hit.id, name: best.hit.name } : null,
+        confidence: best.confidence,
+        tried_names: namesToTry,
+        top_hit: best.hit ? { id: best.hit.id, name: best.hit.name } : null,
       });
       continue;
     }
@@ -185,23 +212,26 @@ Deno.serve(async (req) => {
         p_sg_name:       c.performer_name,
         p_tevo_perf_id:  best.hit.id,
         p_confidence:    best.confidence,
-        p_match_method:  `tevo_search:${best.method}`,
+        p_match_method:  aliasUsed ? `tevo_search:alias:${best.method}` : `tevo_search:${best.method}`,
         p_meta: {
           tevo_name: best.hit.name,
           tevo_category: best.hit.category?.slug,
           popularity: best.hit.popularity_score,
           sg_event_count: c.event_count,
           sg_categories: c.categories,
+          alias_used: aliasUsed,
+          tried_name: triedName,
         },
       });
       if (rpcErr) { errored++; samples.push({ name: c.performer_name, rpc_error: rpcErr.message }); continue; }
     }
     accepted++;
-    if (samples.length < 10) {
+    if (samples.length < 20) {
       samples.push({
         name: c.performer_name, event_count: c.event_count,
         decision: "accepted", method: best.method,
         confidence: best.confidence,
+        alias_used: aliasUsed,
         tevo: { id: best.hit.id, name: best.hit.name },
       });
     }
