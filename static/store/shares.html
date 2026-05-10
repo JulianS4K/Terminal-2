@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VibePass — share links</title>
+  <link rel="stylesheet" href="/static/store/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <div class="badge mvp">MVP · share links admin</div>
+  </header>
+
+  <main class="wrap">
+    <a class="back" href="/store">← back to events</a>
+
+    <div class="head-row" style="margin-bottom: 16px">
+      <div>
+        <h1 style="margin:0">Share links</h1>
+        <p class="event-meta">
+          Revocable storefront share links. Recipients see only the listings
+          you filtered to.
+        </p>
+      </div>
+      <div class="head-actions">
+        <label class="muted" style="font-size:13px">
+          <input type="checkbox" id="includeInactive" /> show revoked &amp; expired
+        </label>
+      </div>
+    </div>
+
+    <div id="status" class="status">Loading share links…</div>
+
+    <div id="empty" class="empty" hidden>
+      No share links yet. Open any event page and click <strong>Share inventory</strong> →
+      <em>Make this revocable</em> to create one.
+    </div>
+
+    <table id="sharesTbl" class="shares-tbl" hidden>
+      <thead>
+        <tr>
+          <th>Link</th>
+          <th>Event</th>
+          <th>Filters</th>
+          <th>Note</th>
+          <th>Views</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="sharesBody"></tbody>
+    </table>
+  </main>
+
+  <footer class="foot">
+    <span>powered by Ticket Evolution · share_links table</span>
+  </footer>
+
+  <script src="/static/store/store.js"></script>
+  <script>
+    Store.mountSharesAdmin();
+  </script>
+</body>
+</html>

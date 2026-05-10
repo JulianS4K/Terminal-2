@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VibePass — event</title>
+  <link rel="stylesheet" href="/static/store/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <div class="badge mvp">MVP · browse only · no real purchases</div>
+  </header>
+
+  <main class="wrap">
+    <a class="back" href="/store">← back to events</a>
+
+    <div id="status" class="status">Loading event…</div>
+
+    <section id="header" class="event-head" hidden>
+      <div class="head-row">
+        <div>
+          <h1 id="evName"></h1>
+          <p class="event-meta">
+            <span id="evVenue"></span>
+            <span class="dot">·</span>
+            <span id="evDate"></span>
+          </p>
+          <p class="event-meta sub">
+            <span id="evPerformers"></span>
+          </p>
+        </div>
+        <div class="head-actions">
+          <button class="btn ghost" id="openShare">Share inventory</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Banner appears when a share link is being viewed (any URL filter set). -->
+    <div id="sharedBanner" class="banner" hidden>
+      <span id="sharedSummary"></span>
+      <a href="" id="clearShared" class="banner-link">show all listings</a>
+    </div>
+
+    <section id="body" class="event-body" hidden>
+      <aside class="map">
+        <img id="seatMap" alt="seating chart" />
+      </aside>
+
+      <div class="listings">
+        <h2>Available from us <span id="listCount" class="muted"></span></h2>
+        <div class="listcontrols">
+          <label>min qty
+            <select id="minQty">
+              <option value="1" selected>any</option>
+              <option value="2">2+</option>
+              <option value="3">3+</option>
+              <option value="4">4+</option>
+            </select>
+          </label>
+          <label>max price
+            <input id="maxPrice" type="number" min="0" step="10" placeholder="any" />
+          </label>
+        </div>
+
+        <ul id="listings" class="list"></ul>
+        <p id="noListings" class="empty" hidden>
+          Nothing matches those filters. Loosen them or check back — inventory shifts.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Reserve modal — appears when user clicks Reserve on a listing.
+       MVP only: confirms server-side that the ticket group is still
+       available and shows what a real receipt would look like. -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card">
+      <button class="close" aria-label="close" id="closeModal">×</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>powered by Ticket Evolution · /v9/ticket_groups?owned=true</span>
+  </footer>
+
+  <script src="/static/store/store.js"></script>
+  <script>
+    Store.mountEvent();
+  </script>
+</body>
+</html>
