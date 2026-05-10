@@ -15,7 +15,7 @@
 | Templates | **Sports** (when `performer_espn_team_xref` row exists) and **Generic** — hardwired |
 | Tier ranking inside template | `multi_source` · `single_source` · `pending_match` (T4) — affects header badge + match CTA, not template choice |
 | Lead chart | **One merged chart**, multi-axis — prices + inventory + sales velocity. No row-stacked sub-charts. |
-| Default time window | **Last 7 days**, with `[24h] [7d] [30d] [lifetime]` toggle. If less than 7d of data exists, fall back to widest window with data. |
+| Default time window | **Last 7 days**, with `[24h] [3d] [7d] [30d] [all]` toggle. If less than 7d of data exists, fall back to widest window with data. |
 | Owned aggregation | **Split rows per source** (`ours-tevo`, `ours-sg`). No "ours total" collapse. |
 | Market aggregation | **Split per source** (`tevo-mkt`, `sg-mkt`, `sd-mkt`). Each gets its own line on the chart. |
 | Header content | Event identity + tier badge + days-to-event + alert count + **context strip + injuries (sports) merged in**. No separate context strip below. |
@@ -354,6 +354,8 @@ Renders `v_sg_event_match_proposals` for `sg_event_id`. Each row has a **[queue]
 | Performer panel | `performer_wikipedia`, `v_performer_tours`, `v_performer_residencies`, `v_event_reddit` |
 | EVO raw tab | `listings_snapshots`, `evo_orders`, `evo_order_items` |
 | SG raw tab | `seatgeek_listings_snapshots`, `seatgeek_sales_snapshots`, `seatgeek_seller_listings` |
+| Sales (combined) raw tab | **`v_event_sales_combined`** — UNION of EVO per-item + SG seller per-order + SG broker per distinct sale (Phase 13) |
+| Chart sales scatter | same `v_event_sales_combined`, plotted as scatter on the price pane |
 | T4 match candidates | `v_sg_event_match_proposals`, `sg_event_match_pending` |
 
 ---
@@ -361,17 +363,20 @@ Renders `v_sg_event_match_proposals` for `sg_event_id`. Each row has a **[queue]
 ## State machine for the chart time-window selector
 
 ```
+buckets, in priority order:  [24h] [3d] [7d ▣] [30d] [all]
+
 on mount:
   desired_window = 7d
-  earliest_data = MIN(captured_at) for any series in scope
+  earliest_data = MIN(captured_at) across all chart series for the event
   if (now - earliest_data) < desired_window:
-       fall back to next-smaller bucket containing data
-       (lifetime → 30d → 7d → 24h)
+       fall back to nearest-smaller bucket that fits the data
+       (e.g. 1d of data → 24h is the widest; 4d of data → 3d)
   else:
        use desired_window
 
 user toggles:
   always allowed; show empty plot if window has no data
+  selection persists per-event in localStorage
 ```
 
 ---
