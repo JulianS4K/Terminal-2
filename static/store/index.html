@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VibePass — tickets</title>
+  <link rel="stylesheet" href="/static/store/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <div class="badge mvp">MVP · browse only · no real purchases</div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>Find tickets to anything we have.</h1>
+      <p class="sub">Live inventory from our seller account. No middlemen, no markup we can't see.</p>
+      <form id="searchForm" class="search">
+        <input
+          id="q"
+          type="search"
+          placeholder="artist · team · venue · city"
+          autocomplete="off"
+          autofocus
+        />
+        <button type="submit">Search</button>
+      </form>
+    </section>
+
+    <section id="results" class="results" aria-live="polite">
+      <div id="status" class="status">Loading available events…</div>
+      <div id="grid" class="grid" hidden></div>
+      <div id="empty" class="empty" hidden>
+        No events match. Try a broader search, or clear the box to see all.
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>powered by Ticket Evolution · /v9/ticket_groups?owned=true</span>
+  </footer>
+
+  <script src="/static/store/store.js"></script>
+  <script>
+    Store.mountCatalog();
+  </script>
+</body>
+</html>

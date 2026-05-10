@@ -18,15 +18,19 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from evo_client import EvoClient
+
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # ---------- Bootstrap ----------
 
@@ -3335,3 +3339,598 @@ def seatdata_sync_sales(event_id: int, _=Depends(require_auth)):
       .eq("tevo_event_id", event_id).execute()
     return {"event_id": event_id, "sd_event_id": sd_event_id,
             "rows_received": len(sales), "rows_inserted": inserted}
+
+
+# ---------- Store (MVP) ----------
+# Public-facing storefront over the brokerage's owned TEvo inventory. Read-only,
+# no real purchase — "Reserve" returns a mock receipt. Source of truth is TEvo's
+# /v9/ticket_groups?owned=true for live inventory; the catalog page uses
+# event_metrics.owned_tickets_count > 0 to find events worth listing.
+
+def _ticket_group_to_listing(tg: dict) -> dict:
+    """Reduce a TEvo ticket_group payload to the public-safe fields a buyer
+    needs. Strips wholesale price, signature, office/brokerage attribution."""
+    return {
+        "id": tg.get("id"),
+        "section": tg.get("section"),
+        "row": tg.get("row"),
+        "available_quantity": tg.get("available_quantity") or tg.get("quantity"),
+        "splits": tg.get("splits") or [],
+        "retail_price": tg.get("retail_price"),
+        "format": tg.get("format"),
+        "type": tg.get("type") or "event",
+        "in_hand": tg.get("in_hand"),
+        "in_hand_on": tg.get("in_hand_on"),
+        "instant_delivery": tg.get("instant_delivery"),
+        "public_notes": tg.get("public_notes"),
+        "view_type": tg.get("view_type"),
+        "wheelchair": tg.get("wheelchair"),
+    }
+
+
+@app.get("/api/store/events")
+def store_events(
+    q: str | None = None,
+    limit: int = 60,
+    offset: int = 0,
+):
+    """Catalog: events for which we have owned inventory in TEvo.
+
+    Driven by Supabase event_metrics (collector populates owned_tickets_count
+    via /v9/ticket_groups?owned=true on every run). Falling back to the bare
+    events table if Supabase is unavailable still keeps the page alive.
+    """
+    db = require_sb()
+    # Pull events ordered by upcoming first, only those with owned tickets
+    # available right now. The latest_event_metrics view exposes the
+    # most-recent event_metrics row per event.
+    sel = (
+        db.table("latest_event_metrics")
+        .select(
+            "event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
+            "tickets_count,retail_min,captured_at,"
+            "events(id,name,occurs_at_local,venue_name,venue_location,"
+            "primary_performer_name)"
+        )
+        .gt("owned_tickets_count", 0)
+        .order("captured_at", desc=True)
+        .limit(min(limit, 200))
+        .offset(max(offset, 0))
+    )
+    rows = (sel.execute().data) or []
+
+    out: list[dict] = []
+    needle = (q or "").strip().lower()
+    for r in rows:
+        ev = r.get("events") or {}
+        if not ev:
+            continue
+        if needle:
+            hay = " ".join(
+                str(x or "") for x in (
+                    ev.get("name"),
+                    ev.get("venue_name"),
+                    ev.get("venue_location"),
+                    ev.get("primary_performer_name"),
+                )
+            ).lower()
+            if needle not in hay:
+                continue
+        out.append({
+            "id": ev.get("id"),
+            "name": ev.get("name"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue_name": ev.get("venue_name"),
+            "venue_location": ev.get("venue_location"),
+            "primary_performer_name": ev.get("primary_performer_name"),
+            "from_price": r.get("retail_min"),
+            "owned_tickets_count": r.get("owned_tickets_count"),
+            "owned_groups_count": r.get("owned_groups_count"),
+            "captured_at": r.get("captured_at"),
+        })
+    return {"count": len(out), "events": out}
+
+
+def _csv(v: str | None) -> list[str]:
+    return [s.strip() for s in (v or "").split(",") if s.strip()]
+
+
+def _build_zone_resolver(performer_id: int | None, venue_id: int | None):
+    """Return a fn (section, row) -> zone_name | None for this performer+venue.
+
+    Calls match_performer_zone() once per unique (section, row) pair encountered.
+    Cached within a single request so 100 listings across ~30 unique pairs cost
+    ~30 RPCs at most. Returns a no-op resolver if (performer_id, venue_id) are
+    missing or Supabase is offline."""
+    if sb is None or not performer_id or not venue_id:
+        return lambda section, row: None
+    cache: dict[tuple[str, str], str | None] = {}
+
+    def resolve(section, row):
+        key = (str(section or ""), str(row or ""))
+        if key in cache:
+            return cache[key]
+        try:
+            res = sb.rpc(
+                "match_performer_zone",
+                {
+                    "p_performer_id": performer_id,
+                    "p_venue_id": venue_id,
+                    "p_section": section or "",
+                    "p_row": row or "",
+                },
+            ).execute()
+            cache[key] = res.data if isinstance(res.data, str) else None
+        except Exception:
+            cache[key] = None
+        return cache[key]
+
+    return resolve
+
+
+def _normalize_filters(raw: dict | None) -> dict:
+    """Coerce a free-form filter dict (URL params or share_links.filters JSON)
+    into the canonical shape the resolver expects. Drops empty values."""
+    raw = raw or {}
+    def _maybe_csv(v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return _csv(str(v))
+    def _maybe_num(v):
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    def _maybe_int(v):
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    return {
+        "section": _maybe_csv(raw.get("section")),
+        "zones": _maybe_csv(raw.get("zones")),
+        "min_price": _maybe_num(raw.get("min_price")),
+        "max_price": _maybe_num(raw.get("max_price")),
+        "min_qty": _maybe_int(raw.get("min_qty")),
+    }
+
+
+def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
+    """Fetch event + owned listings, apply filters, return the same shape
+    /api/store/events/{id} returns. Shared by the public detail endpoint
+    and the share-link resolver."""
+    try:
+        ev = client.get_event(event_id)
+    except RuntimeError as e:
+        raise HTTPException(502, f"TEvo event lookup failed: {e}")
+    try:
+        tg_resp = client.get_ticket_groups(event_id, owned=True)
+    except RuntimeError as e:
+        raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+
+    groups = tg_resp.get("ticket_groups") or []
+    eligible = [
+        tg
+        for tg in groups
+        if (tg.get("type") or "event").lower() == "event"
+        and (tg.get("available_quantity") or tg.get("quantity") or 0) > 0
+    ]
+    total_before_filters = len(eligible)
+
+    venue = ev.get("venue") or {}
+    performances = ev.get("performances") or []
+    primary_perf = next(
+        ((p.get("performer") or {}) for p in performances if p.get("primary")),
+        ((performances[0].get("performer") or {}) if performances else {}),
+    )
+    perf_id = primary_perf.get("id")
+    venue_id = venue.get("id")
+
+    f = _normalize_filters(filters)
+
+    section_set = {s.lower() for s in f["section"]}
+    if section_set:
+        eligible = [tg for tg in eligible if str(tg.get("section") or "").lower() in section_set]
+
+    if f["min_price"] is not None:
+        eligible = [tg for tg in eligible if float(tg.get("retail_price") or 0) >= f["min_price"]]
+    if f["max_price"] is not None:
+        eligible = [tg for tg in eligible if float(tg.get("retail_price") or 0) <= f["max_price"]]
+
+    if f["min_qty"] is not None and f["min_qty"] > 0:
+        target = f["min_qty"]
+        def _meets(tg):
+            splits = tg.get("splits") or []
+            avail = int(tg.get("available_quantity") or tg.get("quantity") or 0)
+            if splits:
+                return any(s >= target for s in splits)
+            return avail >= target
+        eligible = [tg for tg in eligible if _meets(tg)]
+
+    zone_set = {z.lower() for z in f["zones"]}
+    listings_with_zone: list[tuple[dict, str | None]]
+    if zone_set:
+        resolver = _build_zone_resolver(perf_id, venue_id)
+        kept: list[tuple[dict, str | None]] = []
+        for tg in eligible:
+            z = resolver(tg.get("section"), tg.get("row"))
+            if z and z.lower() in zone_set:
+                kept.append((tg, z))
+        listings_with_zone = kept
+    else:
+        listings_with_zone = [(tg, None) for tg in eligible]
+
+    listings_with_zone.sort(key=lambda x: float(x[0].get("retail_price") or 1e12))
+
+    listings = []
+    for tg, zone in listings_with_zone:
+        item = _ticket_group_to_listing(tg)
+        if zone:
+            item["zone"] = zone
+        listings.append(item)
+
+    config = ev.get("configuration") or {}
+    seating = (config.get("seating_chart") or {})
+
+    return {
+        "event": {
+            "id": ev.get("id"),
+            "name": ev.get("name"),
+            "occurs_at": ev.get("occurs_at"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue": {
+                "id": venue.get("id"),
+                "name": venue.get("name"),
+                "location": venue.get("location"),
+                "time_zone": venue.get("time_zone"),
+            },
+            "configuration": {
+                "id": config.get("id"),
+                "name": config.get("name"),
+                "seating_chart_medium": seating.get("medium"),
+                "seating_chart_large": seating.get("large"),
+            },
+            "performers": [
+                {
+                    "id": (p.get("performer") or {}).get("id"),
+                    "name": (p.get("performer") or {}).get("name"),
+                    "primary": p.get("primary"),
+                }
+                for p in performances
+            ],
+        },
+        "listings": listings,
+        "listings_count": len(listings),
+        "total_before_filters": total_before_filters,
+        "filters": f,
+    }
+
+
+@app.get("/api/store/events/{event_id}")
+def store_event_detail(
+    event_id: int,
+    section: str | None = None,         # CSV of exact section names
+    min_price: float | None = None,
+    max_price: float | None = None,
+    min_qty: int | None = None,
+    zones: str | None = None,           # CSV of curated zone names (case-insensitive)
+):
+    """Event detail + live owned-only ticket groups from TEvo, with optional
+    share-link filters applied server-side. Filters are AND-ed; an empty set of
+    matches is a valid response (UI shows "no listings match")."""
+    return _resolve_event_with_filters(
+        event_id,
+        {
+            "section": section,
+            "min_price": min_price,
+            "max_price": max_price,
+            "min_qty": min_qty,
+            "zones": zones,
+        },
+    )
+
+
+@app.get("/api/store/events/{event_id}/zones")
+def store_event_zones(event_id: int):
+    """List curated zones with owned-ticket counts so the Share dialog can
+    offer zone choices. Falls through to an empty list if the event's
+    performer+venue has no curated zones yet (most events outside NYK@MSG)."""
+    db = require_sb()
+    try:
+        rows = db.rpc(
+            "get_event_zones_rollup",
+            {"p_event_id": event_id, "p_owned_only": True},
+        ).execute().data or []
+    except Exception:
+        rows = []
+    # Only surface curated zones — fallback/unmapped values are noisy and
+    # not stable enough to share by name.
+    zones = [
+        {
+            "name": r.get("zone"),
+            "tickets": r.get("tickets") or 0,
+            "min_retail": r.get("min_retail"),
+            "max_retail": r.get("max_retail"),
+        }
+        for r in rows
+        if r.get("source") == "curated"
+    ]
+    return {"event_id": event_id, "zones": zones}
+
+
+@app.post("/api/store/reserve")
+def store_reserve(payload: dict = Body(...)):
+    """MVP placeholder: a real checkout is not wired up yet. Validates that
+    the requested ticket_group + quantity matches the live owned inventory in
+    TEvo, then returns a mock confirmation. NEVER calls /v9/orders."""
+    try:
+        event_id = int(payload.get("event_id") or 0)
+        ticket_group_id = int(payload.get("ticket_group_id") or 0)
+        quantity = int(payload.get("quantity") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "event_id, ticket_group_id and quantity must be integers")
+    if not (event_id and ticket_group_id and quantity > 0):
+        raise HTTPException(400, "event_id, ticket_group_id and quantity > 0 required")
+
+    try:
+        tg_resp = client.get_ticket_groups(event_id, owned=True)
+    except RuntimeError as e:
+        raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+    match = next(
+        (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
+        None,
+    )
+    if not match:
+        raise HTTPException(404, "ticket group is no longer available from this seller")
+
+    avail = int(match.get("available_quantity") or match.get("quantity") or 0)
+    splits = match.get("splits") or []
+    if quantity > avail:
+        raise HTTPException(409, f"requested {quantity} but only {avail} available")
+    if splits and quantity not in splits:
+        raise HTTPException(409, f"this listing only sells in quantities of {splits}")
+
+    unit = float(match.get("retail_price") or 0)
+    return {
+        "ok": True,
+        "purchase_enabled": False,
+        "message": "MVP demo — no charge processed. This is what a real purchase confirmation would look like.",
+        "reservation": {
+            "event_id": event_id,
+            "ticket_group_id": ticket_group_id,
+            "section": match.get("section"),
+            "row": match.get("row"),
+            "quantity": quantity,
+            "unit_price": unit,
+            "subtotal": round(unit * quantity, 2),
+            "format": match.get("format"),
+            "in_hand": match.get("in_hand"),
+        },
+    }
+
+
+@app.get("/store")
+def store_index_page():
+    return FileResponse(os.path.join(STATIC_DIR, "store", "index.html"))
+
+
+@app.get("/store/event/{event_id}")
+def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
+    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+
+
+# ---------- Share links (revocable, trackable) ----------
+# Server-mediated share links backed by the share_links table. Coexists with
+# the stateless filter-in-URL form — recipients see the same event detail UI
+# either way, but a stateful share is revocable, has an optional expiry, and
+# tracks view count.
+
+_SHARE_FILTER_KEYS = ("zones", "section", "min_price", "max_price", "min_qty")
+
+
+def _share_to_dict(row: dict) -> dict:
+    """Public-safe representation of a share_links row."""
+    if not row:
+        return {}
+    revoked = row.get("revoked_at")
+    expires = row.get("expires_at")
+    expired = False
+    if expires:
+        try:
+            expired = datetime.fromisoformat(str(expires).replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        except ValueError:
+            expired = False
+    return {
+        "id": row.get("id"),
+        "url": f"/s/{row.get('id')}",
+        "event_id": row.get("event_id"),
+        "filters": row.get("filters") or {},
+        "note": row.get("note"),
+        "created_at": row.get("created_at"),
+        "expires_at": expires,
+        "revoked_at": revoked,
+        "view_count": row.get("view_count") or 0,
+        "last_viewed_at": row.get("last_viewed_at"),
+        "active": (revoked is None) and (not expired),
+    }
+
+
+@app.post("/api/store/share")
+def store_share_create(payload: dict = Body(...)):
+    """Create a revocable share link for one event with saved filters.
+
+    Body:
+      event_id: int (required)
+      filters: { zones, section, min_price, max_price, min_qty } (optional)
+      note: str (optional, ≤ 500 chars)
+      expires_in_days: int (optional, 1-365; null = never expires)
+
+    Auth note (MVP): currently open. Tighten with require_auth once the
+    storefront has a sign-in flow. Worst case today is link spam — a share
+    can never expose more than the public /api/store/events/{id} already does.
+    """
+    # Validate before touching Supabase so 4xx errors surface the real reason
+    # instead of "Supabase not configured" when both are wrong.
+    try:
+        event_id = int(payload.get("event_id") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "event_id must be an integer")
+    if not event_id:
+        raise HTTPException(400, "event_id is required")
+
+    filters = _normalize_filters(payload.get("filters") or {})
+    # Persist arrays only if non-empty + numeric values only if set, so the
+    # JSON stays compact and equivalent to the URL form.
+    persisted: dict = {}
+    if filters["section"]: persisted["section"] = filters["section"]
+    if filters["zones"]:   persisted["zones"]   = filters["zones"]
+    if filters["min_price"] is not None: persisted["min_price"] = filters["min_price"]
+    if filters["max_price"] is not None: persisted["max_price"] = filters["max_price"]
+    if filters["min_qty"]   is not None: persisted["min_qty"]   = filters["min_qty"]
+
+    note = (payload.get("note") or "").strip() or None
+    if note and len(note) > 500:
+        raise HTTPException(400, "note too long (max 500 chars)")
+
+    expires_at = None
+    raw_days = payload.get("expires_in_days")
+    if raw_days not in (None, "", 0):
+        try:
+            days = int(raw_days)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "expires_in_days must be an integer")
+        if not (1 <= days <= 365):
+            raise HTTPException(400, "expires_in_days must be between 1 and 365")
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+    # All validation passed — now we need Supabase to persist.
+    db = require_sb()
+
+    # ~12 chars (9 random bytes → 12 url-safe chars) ≈ 72 bits of entropy.
+    # Retry once on the astronomically unlikely collision.
+    share_id = secrets.token_urlsafe(9)
+    row = {
+        "id": share_id,
+        "event_id": event_id,
+        "filters": persisted,
+        "note": note,
+        "expires_at": expires_at,
+    }
+    try:
+        ins = db.table("share_links").insert(row).execute()
+    except Exception as e:
+        # Pretty much always a primary-key collision; one retry is enough.
+        share_id = secrets.token_urlsafe(9)
+        row["id"] = share_id
+        try:
+            ins = db.table("share_links").insert(row).execute()
+        except Exception as e2:
+            raise HTTPException(500, f"could not create share link: {e2}") from e
+
+    saved = (ins.data or [None])[0] or row
+    return _share_to_dict(saved)
+
+
+@app.get("/api/store/share/{share_id}")
+def store_share_resolve(share_id: str):
+    """Public endpoint: resolves a share link to its filtered event payload.
+    Bumps view_count on every successful read. 410 if revoked or expired."""
+    db = require_sb()
+    res = (
+        db.table("share_links")
+        .select("id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at")
+        .eq("id", share_id)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    if not rows:
+        raise HTTPException(404, "share link not found")
+    row = rows[0]
+
+    if row.get("revoked_at"):
+        raise HTTPException(410, "this share link has been revoked")
+    expires = row.get("expires_at")
+    if expires:
+        try:
+            if datetime.fromisoformat(str(expires).replace("Z", "+00:00")) <= datetime.now(timezone.utc):
+                raise HTTPException(410, "this share link has expired")
+        except ValueError:
+            pass  # Bad timestamp shouldn't 500 the recipient
+
+    detail = _resolve_event_with_filters(int(row["event_id"]), row.get("filters") or {})
+
+    # View tracking — best-effort; a tracking failure shouldn't break the page.
+    try:
+        db.rpc("bump_share_view", {"p_id": share_id}).execute()
+    except Exception:
+        pass
+
+    return {
+        "share": _share_to_dict(row),
+        **detail,
+    }
+
+
+@app.delete("/api/store/share/{share_id}")
+def store_share_revoke(share_id: str):
+    """Soft-delete: stamps revoked_at. The row stays so view history survives.
+    Idempotent — revoking an already-revoked link is fine."""
+    db = require_sb()
+    res = (
+        db.table("share_links")
+        .update({"revoked_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", share_id)
+        .execute()
+    )
+    if not (res.data or []):
+        raise HTTPException(404, "share link not found")
+    return {"ok": True, "id": share_id, "revoked_at": (res.data[0] or {}).get("revoked_at")}
+
+
+@app.get("/api/store/shares")
+def store_share_list(
+    event_id: int | None = None,
+    include_inactive: bool = False,
+    limit: int = 50,
+):
+    """List share links, newest first. Filter by event_id when present."""
+    db = require_sb()
+    q = db.table("share_links").select(
+        "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"
+    ).order("created_at", desc=True).limit(min(max(limit, 1), 200))
+    if event_id:
+        q = q.eq("event_id", event_id)
+    if not include_inactive:
+        q = q.is_("revoked_at", "null")
+    rows = q.execute().data or []
+    shares = [_share_to_dict(r) for r in rows]
+    if not include_inactive:
+        # Filter expired in code — Postgres `is null OR > now` would need
+        # an .or_() clause and the supabase-py builder is fussy. The list
+        # is small (page = 50) so post-filtering is fine.
+        shares = [s for s in shares if s["active"]]
+    return {"count": len(shares), "shares": shares}
+
+
+@app.get("/s/{share_id}")
+def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
+    """Serves the same event detail page; JS detects /s/ prefix and resolves
+    the share via /api/store/share/{id} instead of using URL filter params."""
+    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+
+
+@app.get("/store/shares")
+def store_shares_page():
+    return FileResponse(os.path.join(STATIC_DIR, "store", "shares.html"))
+
+
+# Static assets (CSS / JS / images) served from /static.
+# Keep this LAST so explicit routes above win.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
