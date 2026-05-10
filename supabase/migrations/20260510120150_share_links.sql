@@ -1,6 +1,12 @@
--- =============================================================
--- share_links — revocable, trackable storefront share links
--- =============================================================
+-- ============================================================================
+-- Migration 20260510120150 — share_links table for revocable storefront links
+-- Owner: storefront (worktree: eloquent-chatterjee-aaedf0)
+-- Touches:
+--   share_links              W  (new table, this PR is the sole writer)
+--   events                   R  (FK target only; no reads/writes from this mig)
+--   bump_share_view()        W  (new function, owned here)
+-- Pre-reqs: events table exists (init migration). No vault secrets needed.
+-- ============================================================================
 -- A share link points at one event with a saved filter set (zones,
 -- sections, price range, min qty). Surfaced at /s/{id} on the storefront
 -- (see /api/store/share endpoints in app.py).
@@ -25,7 +31,10 @@ create table if not exists share_links (
   -- Shown to the recipient in the shared-view banner.
   note            text,
 
+  -- created_at / updated_at on every new table per the cross-bot conventions.
+  -- updated_at is auto-maintained by share_links_set_updated_at below.
   created_at      timestamptz  not null default now(),
+  updated_at      timestamptz  not null default now(),
   -- created_by is opt-in: when the storefront eventually adds auth-gated
   -- creation, we'll fill this with the Supabase user_id. NULL today.
   created_by      uuid,
@@ -57,9 +66,30 @@ comment on column share_links.expires_at is
   'NULL = never expires. Server-side enforced in /api/store/share/{id}.';
 comment on column share_links.revoked_at is
   'NULL = active. Set by DELETE /api/store/share/{id}; rows are NEVER deleted so view history stays intact.';
+comment on column share_links.updated_at is
+  'Auto-maintained by share_links_set_updated_at trigger on UPDATE.';
+
+-- Auto-update updated_at on every UPDATE. Keeps the bespoke timestamp
+-- columns (last_viewed_at, revoked_at) AND a generic mtime for audit.
+create or replace function share_links_set_updated_at()
+returns trigger
+language plpgsql
+as $func$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$func$;
+
+drop trigger if exists trg_share_links_set_updated_at on share_links;
+create trigger trg_share_links_set_updated_at
+  before update on share_links
+  for each row execute function share_links_set_updated_at();
 
 -- Atomic view-count bump. The handler calls this after enforcing
 -- revocation/expiry so a 410 response never increments the count.
+-- Note: the BEFORE UPDATE trigger above will refresh updated_at here too —
+-- that's fine; view tracking is itself a meaningful "change".
 create or replace function bump_share_view(p_id text)
 returns void
 language sql
