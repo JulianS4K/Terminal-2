@@ -80,11 +80,214 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
+## SECURITY BACKLOG (added by code · 2026-05-10 audit)
+
+> Findings from the 2026-05-10 deep security audit (chat: "security chat"). Severity tags: **[SEC-CRIT]** = exploitable today, **[SEC-HIGH]** = exploitable under common conditions, **[SEC-MED]** = defense-in-depth gap, **[SEC-LOW]** = hardening. Each row keeps the standard NEXT format. Filed by code · 2026-05-10.
+
+### NEXT (code) — [SEC-CRIT] Rotate the leaked `CRON_SECRET` value, then redact from KANBAN/AGENTS
+
+**What**: The `CRON_SECRET` value was committed in plaintext to `KANBAN.md` (lines 87, 90, 91 below this block) and discussed in `AGENTS.md`. It is in git history (commit `5297739` and prior). Anyone who clones this repo today reads the production cron secret.
+
+**Why it matters**: With the cron secret an unauthenticated attacker can call `/api/admin/collect-orders` and similar cron-gated routes (also several edge functions that share the same secret), triggering paid TEvo / SeatGeek pulls and writes against `evo_orders` etc.
+
+**How**:
+1. Generate a new random value (32+ bytes): `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+2. Set it in Railway env (`CRON_SECRET`) AND in Supabase Edge Function secrets (`supabase secrets set CRON_SECRET=...`) AND update the SQL of the relevant `cron.schedule` jobs (the body is in pg_cron — needs an update via `cron.unschedule` + reschedule).
+3. Redact the value from `KANBAN.md` and `AGENTS.md` (replace with `<rotated; in vault>`).
+4. Decide on history rewrite. If the repo is private to the trusted set forever, leaving history alone may be acceptable; otherwise plan a `git filter-repo` purge + force-push window.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-CRIT] Rotate `coworker_readonly` Postgres password (placeholder shipped in migration)
+
+**What**: Migration `20260509460000_coworker_readonly_role.sql:24` creates the `coworker_readonly` role with `PASSWORD 'CHANGE_ME_BEFORE_HANDOFF'`. If the migration ran against prod and the post-handoff rotation didn't happen, that's the live password. Anyone with the public repo + a reachable Supabase Postgres host can `psql -U coworker_readonly` and read the entirety of `public.*`.
+
+**How**:
+1. Connect as superuser, run `ALTER ROLE coworker_readonly WITH PASSWORD '<new strong value>'`.
+2. Re-deliver the new password to the UI coworker out-of-band.
+3. Add a follow-up migration that drops the placeholder pattern: never embed credentials in DDL again. Use `vault.create_secret` or a `\set` script applied separately.
+4. Verify by attempting login with `'CHANGE_ME_BEFORE_HANDOFF'` and confirming it's rejected.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-CRIT] Add auth to `/api/store/share*` endpoints (write + revoke + list are open)
+
+**What**: In `app.py`:
+- `POST /api/store/share` (line 3764) — no auth. Anyone can spam-create share links.
+- `DELETE /api/store/share/{share_id}` (line 3881) — no auth. **Anyone with a share_id can revoke it**, including by enumerating from the list endpoint below.
+- `GET /api/store/shares` (line 3897) — no auth. Lists every share row (event_id, filters, notes, view counts).
+
+The handler comment at line 3774 explicitly acknowledges this is open as MVP. Risk before any sign-in flow lands: a single curl loop deletes every share link in the DB.
+
+**How**: Wrap the three endpoints with `_=Depends(require_auth)` (mirrors the pattern at `app.py:94`). For the public read path `GET /api/store/share/{share_id}` (line 3840) — keep open since the share id is the unguessable cap (72 bits of entropy).
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-CRIT] Fix fail-open `CRON_SECRET` in app.py + 5 edge functions
+
+**What**: Multiple components default to a weak/empty value when `CRON_SECRET` env var is unset:
+- `app.py:2708` — `CRON_SECRET = os.environ.get("CRON_SECRET", "pick-any-random-string-and-save-it")`. If env unset and an attacker guesses the placeholder string, they pass auth.
+- `supabase/functions/{collect,collect-listings,espn-collect,espn-rosters,wiki-collect}/index.ts` — pattern `if (expected && req.headers.get("x-cron-secret") !== expected) { reject }`. If `CRON_SECRET` env is unset, `expected` is undefined, the guard is skipped entirely → endpoint is fully open.
+- `supabase/functions/crawl-espn-team-assets/index.ts:24` — hardcoded fallback string (same shape).
+
+**How**: Replace each with fail-closed: `if (!expected) return 500; if (header !== expected) return 401`. Use a constant-time compare (Python: `hmac.compare_digest`; Deno: `crypto.subtle.timingSafeEqual`).
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-CRIT] DOM-XSS in `static/store/store.js` (multiple `innerHTML` sinks with server data)
+
+**What**: ~20 `innerHTML` writes in `static/store/store.js` build HTML strings from server-returned and URL-derived values. Hot spots: lines 88, 90, 227, 231, 272-293, 331-343, 395, 399, 475-482, 633-634, 761, 795-807. Some use `escapeHtml()` correctly; the pattern is fragile and at least one path mixes URL params (`zones`, `section`) into the chip rendering. The retail HTML project ships these to public buyers — once a single attribute breaks the escape, it's reflected XSS.
+
+**How**: Repeat the fix already done for `shop.html` chatbot (commit overnight): replace innerHTML with `textContent` + `appendChild`. Build chips/modals via `createElement` rather than template strings. Keep `escapeHtml()` only for genuinely opaque data, and audit each remaining call.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-HIGH] Add `SET search_path` to 3 SECURITY DEFINER functions
+
+**What**: `supabase/migrations/20260508140000_espn_team_and_venue_assets.sql` declares `get_event_assets_public()`, `get_performer_assets_public()`, and `get_venue_assets_public()` as SECURITY DEFINER without `SET search_path`. This is the canonical Postgres privilege-escalation vector: a caller can prepend a malicious schema and intercept any unqualified function/table reference.
+
+**How**: Add `SET search_path = public, pg_temp` to each function definition (new migration, or `ALTER FUNCTION ... SET search_path = ...`). Audit `pg_proc` for any other DEFINER functions added since: `SELECT n.nspname, p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef AND NOT 'search_path' = ANY(p.proconfig)`.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-HIGH] Audit RLS coverage on `public.*` tables (~120 tables without `ENABLE ROW LEVEL SECURITY`)
+
+**What**: 141 `CREATE TABLE` statements across 159 migrations; only 20 have `ENABLE ROW LEVEL SECURITY`. The Supabase default GRANT model means anon role can already SELECT/INSERT/UPDATE/DELETE on any public table without RLS — the JWT for that role is published in 3 cron migrations and is also ambient on the FastAPI `/api/public/config` endpoint. Net: any reader of the repo gets anon-level direct PostgREST access to anything not RLS-gated.
+
+**How**: 
+1. Enumerate prod state — `SELECT schemaname, tablename, rowsecurity FROM pg_tables WHERE schemaname='public' AND NOT rowsecurity;`.
+2. Categorize: (a) operational/internal that should never be reachable by anon → REVOKE from anon and authenticated; (b) public catalog data → ENABLE RLS + add explicit `FOR SELECT TO anon USING (true)` policy; (c) user-scoped → ENABLE RLS + per-user policy.
+3. Run `mcp__supabase__get_advisors lint` for the security set; it'll flag this category.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-HIGH] Verify Supabase network restrictions (IP allowlist / Supavisor)
+
+**What**: Repo doesn't tell us whether the Supabase Postgres host is reachable from the public internet on 5432. Combined with the (previously) leaked `coworker_readonly` placeholder password, this is the difference between "exploitable from any IP today" and "needs a foothold first".
+
+**How**: Supabase dashboard → Project Settings → Database → "Network restrictions" / "Connection pooling" → add an allowlist for Railway egress IPs + your home IPs. Document the policy in `docs/`. If the project must remain open, mitigation moves entirely to "passwords + RLS must be hardened first".
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-HIGH] Lock down `chat` edge function (CORS `*` + LLM cost DoS)
+
+**What**: `supabase/functions/chat/index.ts:38` returns `Access-Control-Allow-Origin: *` on a public POST that calls Anthropic via `resolveSecret(db, "anthropic_api_key", ...)`. An unauthenticated caller from any origin can drive arbitrary prompt costs against your account. The `chat_rate_limits` table exists (migration `20260507000001`) but isn't checked before the LLM call in this code path.
+
+**How**: (a) require Bearer JWT (anon-key Supabase JWT is fine as a baseline; RLS on `chat_messages` does the actual gating); (b) call the rate-limit RPC before `llmCall`; (c) restrict `Access-Control-Allow-Origin` to the known frontend origin(s) — wildcard with credentials is invalid anyway.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-HIGH] Move the anon JWT out of cron migrations into vault
+
+**What**: `supabase/migrations/{20260507000024,20260508016000,20260508240000}*.sql` hardcode the Supabase anon JWT in the `cron.schedule` body. This makes the JWT visible to anyone with `SELECT` on `cron.job` (e.g., `coworker_readonly` does NOT have it today, good — but any future read role might). It also locks rotation to a migration cycle.
+
+**How**: Store the JWT in `vault.secrets` (use the existing `upsert_app_secret` whitelist, after expanding it to include `EDGE_FN_ANON_JWT`). In the cron body, read it via `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='EDGE_FN_ANON_JWT')`. Drop the literal from the migration files (history rewrite optional — anon JWT is semi-public per Supabase model, so this is mostly hygiene).
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-HIGH] Replace `AUTH_DISABLED` env kill-switch with a non-prod guard
+
+**What**: `app.py:42` reads `AUTH_DISABLED` env var; `app.py:101` short-circuits `require_auth` to return None when set. A Railway misconfiguration or copy-paste from local `.env` flips the entire FastAPI surface to anonymous.
+
+**How**: Replace the env check with `if AUTH_DISABLED and os.environ.get("RAILWAY_ENVIRONMENT") != "production":`. Better: remove the flag entirely and use a local-only `.env.local` with mock credentials.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-HIGH] Auth-gate the rest of the unauth'd edge functions
+
+**What**: `crawl-venues-and-performers`, `tevo-perf-find`, `seed-home-venues`, `bulk-add-watchlist`, `backfill-event-configurations` have no CRON_SECRET / Bearer check. Each is reachable on its public Functions URL. They mutate state (seeding, backfills) or hit paid upstreams (TEvo).
+
+**How**: Add the standard `x-cron-secret` check (the fail-closed version per the related row above) to each. If a function should ONLY run from an authenticated UI, switch to JWT verification via `supabase-js` createClient with the user's JWT.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-MED] Add CSP headers + CORS allowlist to FastAPI
+
+**What**: No `CORSMiddleware` is registered in `app.py` — relying on browser SOP for cross-origin defense. None of the served HTML (`static/store/index.html`, `event.html`, `shares.html`) carries a `Content-Security-Policy` meta. Inline `<script>Store.mountCatalog()</script>` exists in `index.html:45-46`.
+
+**How**: 
+- Register `CORSMiddleware` with an explicit allowlist (Railway prod URL + localhost during dev).
+- Add a small middleware that emits `Content-Security-Policy: default-src 'self'; script-src 'self'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://api.anthropic.com; frame-ancestors 'none'` plus `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. Move inline scripts to external files to keep `'unsafe-inline'` out of `script-src`.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-MED] Constant-time `CRON_SECRET` comparison
+
+**What**: `app.py:2713` and the edge functions use `==` / `!==` on the cron secret. Practical timing-attack exploitability is low over public networks but is a free hardening.
+
+**How**: `hmac.compare_digest(x_cron_secret, CRON_SECRET)` in Python; `crypto.subtle.timingSafeEqual` (after wrapping both in `TextEncoder` byte arrays of equal length) in Deno.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-MED] Add rate limiting on FastAPI public routes (store/* + login)
+
+**What**: No app-level rate limit on `/api/store/*`, `/api/public/config`, or the auth-burning `/api/config` (which validates the Supabase JWT every request via an outbound `requests.get` — itself a DoS amplifier against Supabase auth).
+
+**How**: Add `slowapi` (FastAPI-native) keyed by IP, default `60/minute` for `/api/store/*`, lower for the share-create + revoke routes.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-MED] Bound numeric URL/query params in store.js
+
+**What**: `static/store/store.js` lines 145, 173-175 coerce `eventId`, prices, qty via `Number()` with no upper/lower bound. Edge cases (`Infinity`, very-large ints) propagate to API calls and DOM text.
+
+**How**: Clamp to sane bounds (`eventId 1..1e9`, `min_price/max_price 0..1e6`, `min_qty 1..50`). Reject non-finite values with a user-facing error.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-LOW] Add SRI + clickjacking hardening on retail HTML
+
+**What**: `static/store/{index,event,shares}.html` reference `/static/store/style.css` without `integrity`. Pages have no `X-Frame-Options` / `frame-ancestors` (covered if the CSP entry above lands).
+
+**How**: Generate SHA-384 hashes for `style.css` + `store.js` and add `integrity="sha384-..." crossorigin="anonymous"`. The CSP `frame-ancestors 'none'` covers iframe embedding.
+
+**Filed by**: code · 2026-05-10
+
+---
+
+### NEXT (code) — [SEC-LOW] Document the `get_app_secret` whitelist + rotation runbook
+
+**What**: `get_app_secret`/`upsert_app_secret` are correctly whitelisted (good), but the whitelist is implicit in the function body and grows every time a new upstream lands. There's no place to look up "which secrets exist, who can read them, last rotated when".
+
+**How**: Add a `vault.secret_metadata` view (name, last_rotated_at, owner) and a section in `MIGRATION_CONVENTIONS.md` that requires every new vault secret to add itself to the whitelist + this metadata table in the same migration.
+
+**Filed by**: code · 2026-05-10
+
+---
+
 ### NEXT (code) — Set Railway CRON_SECRET to unblock EVO orders
-
-**What**: Set the Railway environment variable `CRON_SECRET` for the terminal-2-production service so that the `evo-orders-collect-10min` cron starts populating `evo_orders`. Today the cron runs successfully but writes 0 rows because the secret-gated endpoint returns 401.
-
-**Value to set** (provided by Julian 2026-05-08): `thisisevochronsecret123!`
 
 **How**:
 - Railway dashboard → terminal-2-production service → Variables → add/update `CRON_SECRET=thisisevochronsecret123!`
