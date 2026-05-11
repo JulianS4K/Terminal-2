@@ -1,0 +1,45 @@
+graph TD
+    subgraph CONTROL[Command & Control]
+        A1[Primary/Audit/Push Bot<br/>Admin]
+        B1[Security Manager Bot<br/>Manager]
+        C1[Data + Chat Bot<br/>Supervisor]
+
+        A1 --> B1
+        B1 --> C1
+    end
+
+    subgraph PRIMARY[Primary Sales Environment]
+        P1[Retail Ticket System Bot<br/>Front & Back - Admin]
+    end
+
+    subgraph SECONDARY[Secondary Sales Environment]
+        S1[Terminal Front End Bot<br/>Design & Implementation<br/>audit-datasets-schemas-auoc3]
+        S2[Retail Search Evo Front End Bot<br/>Design & Implementation]
+        S3[Undelivered Front End Bot<br/>Design & Implementation]
+    end
+
+    subgraph DATA[Data Collection]
+        D1[Broadway Scraper Bot<br/>Data Scraping]
+    end
+
+    C1 --> PRIMARY
+    C1 --> SECONDARY
+    C1 --> DATA
+
+    D1 -.->|feeds data| S1
+    A1 -.->|event_xref writes<br/>cascade via S1's<br/>drift triggers| S1
+    S1 -.->|audit views<br/>drift reports| B1
+
+    classDef adminClass fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:3px
+    classDef managerClass fill:#4c6ef5,stroke:#364fc7,color:#fff,stroke-width:3px
+    classDef supervisorClass fill:#51cf66,stroke:#2f9e44,color:#fff,stroke-width:3px
+    classDef primaryClass fill:#ff8787,stroke:#fa5252,color:#fff,stroke-width:2px
+    classDef secondaryClass fill:#ffd43b,stroke:#fab005,color:#000,stroke-width:2px
+    classDef dataClass fill:#74c0fc,stroke:#339af0,color:#000,stroke-width:2px
+
+    class A1 adminClass
+    class B1 managerClass
+    class C1 supervisorClass
+    class P1 primaryClass
+    class S1,S2,S3 secondaryClass
+    class D1 dataClass
