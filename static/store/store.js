@@ -217,6 +217,12 @@
     const resetBtn = $("#resetFilters");
 
     let allListings = [];
+    // Section universe — server tells us every section present in the
+    // unfiltered owned set (`sections_available`). We cache it so the
+    // section chip group keeps showing every section even after the user
+    // selects one and the listings narrow. Multi-select needs all chips
+    // to stay clickable.
+    let sectionsAvailable = [];
     let event = null;
     let zonesAvailable = [];   // populated from /api/store/events/{id}/zones
     let resolvedShare = null;  // populated when arriving via /s/{id}
@@ -539,15 +545,16 @@
     }
 
     function renderSectionChips(activeSections) {
-      // Sections come from the currently-loaded listings. Active sections
-      // that aren't in current listings (e.g., recipient filtered to A,B,C
-      // and only B is present) are still shown as chips so the recipient
-      // can clear them.
-      const sectionsPresent = Array.from(new Set(
-        allListings.map(l => String(l.section || "").trim()).filter(Boolean)
-      ));
+      // Sections come from `sections_available` (server-side, unfiltered
+      // universe). Falls back to the currently-loaded listings if the
+      // server didn't send it (defensive — older share-resolve responses).
+      // Active sections that aren't in either set are still shown so the
+      // user can clear/toggle them. Multi-select works because all chips
+      // stay clickable regardless of how the user narrows.
+      const fromServer = sectionsAvailable || [];
+      const fromListings = allListings.map(l => String(l.section || "").trim()).filter(Boolean);
       const activeSet = new Set(activeSections || []);
-      const all = Array.from(new Set([...sectionsPresent, ...activeSet]))
+      const all = Array.from(new Set([...fromServer, ...fromListings, ...activeSet]))
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
       if (!all.length) {
         sectionRow.hidden = true;
@@ -643,6 +650,11 @@
     function applyEventResponse(res, share) {
       event = res.event;
       allListings = res.listings || [];
+      // Server tells us every section in the unfiltered set — cache so the
+      // chip group keeps showing every section even after the user narrows.
+      if (Array.isArray(res.sections_available) && res.sections_available.length) {
+        sectionsAvailable = res.sections_available;
+      }
       const filters = res.filters || readFiltersFromUI();
 
       $("#evName").textContent = event.name || "Untitled event";

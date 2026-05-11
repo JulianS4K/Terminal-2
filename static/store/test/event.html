@@ -149,6 +149,9 @@
 
       let allListings = [];
       let zonesAvailable = [];
+      // Server-supplied section universe (pre-filter) so chips don't collapse
+      // when the user picks one. Multi-select needs all chips clickable.
+      let sectionsAvailable = [];
       let suppressApply = false;
 
       // ---- URL <-> filter state ----
@@ -244,11 +247,14 @@
       }
 
       function renderSectionChips(active) {
-        const sectionsPresent = Array.from(new Set(
-          allListings.map(l => String(l.section || "").trim()).filter(Boolean)
-        ));
+        // Union of: server-side unfiltered universe, currently-loaded
+        // sections (fallback for older share resolves), and active filters.
+        // Keeps every section clickable so multi-select works after a
+        // narrowing click.
+        const fromServer = sectionsAvailable || [];
+        const fromListings = allListings.map(l => String(l.section || "").trim()).filter(Boolean);
         const activeSet = new Set(active || []);
-        const all = Array.from(new Set([...sectionsPresent, ...activeSet]))
+        const all = Array.from(new Set([...fromServer, ...fromListings, ...activeSet]))
           .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
         if (!all.length) {
           sectionRow.hidden = true;
@@ -561,6 +567,11 @@
       function applyResponse(res) {
         const ev = res.event || {};
         allListings = res.listings || [];
+        // Cache the server-supplied section universe so chips stay clickable
+        // after the user narrows.
+        if (Array.isArray(res.sections_available) && res.sections_available.length) {
+          sectionsAvailable = res.sections_available;
+        }
         const filters = res.filters || readFiltersFromUI();
 
         $("#evName").textContent = ev.name || "Untitled event";

@@ -4365,6 +4365,18 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
 
     f = _normalize_filters(filters)
 
+    # Capture the full section universe BEFORE applying any section filter,
+    # so the UI can render section chips that don't disappear once the user
+    # narrows the listings. Sorted naturally (so "100, 102, 200" not
+    # alphabetic). Section + zone filters DO narrow this set (you only see
+    # sections within the picked zone) — that's intentional, the section
+    # picker should reflect the zone context.
+    sections_available = sorted(
+        {str(tg.get("section") or "").strip()
+         for tg in eligible if tg.get("section")},
+        key=lambda s: (len(s), s),  # rough natural sort: "100" before "1000"
+    )
+
     section_set = {s.lower() for s in f["section"]}
     if section_set:
         eligible = [tg for tg in eligible if str(tg.get("section") or "").lower() in section_set]
@@ -4468,6 +4480,11 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
         "listings": listings,
         "listings_count": len(listings),
         "total_before_filters": total_before_filters,
+        # All section names present in the unfiltered set so the UI can
+        # render the section chip group without it collapsing as the user
+        # narrows. Without this the chips disappear after one click and
+        # multi-select feels broken.
+        "sections_available": sections_available,
         "filters": f,
         # 'cache' (≤10s old, live mode) | 'live' (live mode) | 'snapshot' (SQL-only mode)
         "inventory_source": tg_source,
