@@ -3,10 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>VibePass — tickets</title>
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
-<body>
+<body data-page="catalog">
   <header class="topbar">
     <a class="brand" href="/store">VibePass</a>
     <div class="badge mvp">MVP · browse only · no real purchases</div>
@@ -41,9 +44,6 @@
     <span>powered by Ticket Evolution · /v9/ticket_groups?owned=true</span>
   </footer>
 
-  <script src="/static/store/store.js"></script>
-  <script>
-    Store.mountCatalog();
-  </script>
+  <script src="/static/store/store.js" defer></script>
 </body>
 </html>

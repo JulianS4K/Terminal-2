@@ -10,6 +10,7 @@
 //  4. Upsert into performer_home_venues.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCronSecret } from "../_shared/cron-auth.ts";
 
 const HOST = "api.ticketevolution.com";
 const BASE = `https://${HOST}`;
@@ -81,6 +82,8 @@ async function getPerformerDetail(token: string, secret: string, id: number): Pr
 }
 
 Deno.serve(async (req) => {
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
   let body: any = {};
   try { body = await req.json(); } catch (_) {}
   const leagues: string[] = Array.isArray(body.leagues) && body.leagues.length ? body.leagues : DEFAULT_LEAGUES;

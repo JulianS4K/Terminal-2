@@ -212,7 +212,10 @@ class SeatDataClient:
                     body = gzip.decompress(r.content) if r.headers.get("Content-Encoding") == "gzip" else r.content
                     return r.status_code, json.loads(body), dict(r.headers)
                 except Exception as e:
-                    raise SeatDataError(f"failed to decode gzip JSON: {e}")
+                    # Don't echo `e` — gzip / json libraries can include
+                    # partial response bytes in their messages. Hardened
+                    # 2026-05-11.
+                    raise SeatDataError(f"failed to decode gzip JSON ({type(e).__name__})")
             try:
                 return r.status_code, r.json(), dict(r.headers)
             except ValueError:

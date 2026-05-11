@@ -16,6 +16,7 @@ Optional:
 
 from __future__ import annotations
 
+import hmac
 import os
 import re
 import secrets
@@ -24,9 +25,11 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import requests
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from evo_client import EvoClient
 
@@ -39,7 +42,31 @@ SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 CRON_SECRET = os.environ.get("CRON_SECRET")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
-AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+
+# AUTH_DISABLED is a local-dev kill switch. To prevent a misconfig from
+# accidentally opening the whole API, it ONLY takes effect when:
+#   (a) AUTH_DISABLED=true is set explicitly, AND
+#   (b) at least ONE indicator says we're NOT in production.
+# Hardened 2026-05-11; broadened beyond Railway-only check to be portable.
+_AUTH_DISABLED_REQUESTED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+
+def _is_production() -> bool:
+    """Conservative production detector. If ANY of these indicators say
+    production, we treat it as production (deny the kill-switch)."""
+    railway = (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
+    generic = (os.environ.get("ENVIRONMENT") or "").lower() == "production"
+    node = (os.environ.get("NODE_ENV") or "").lower() == "production"
+    py = (os.environ.get("PYTHON_ENV") or "").lower() == "production"
+    fly = bool(os.environ.get("FLY_APP_NAME"))  # Fly.io
+    render = bool(os.environ.get("RENDER"))     # Render
+    # If NO env-indicator is set at all, we're likely local dev — only then
+    # honor the kill switch. This errs heavily on the side of safety.
+    any_prod_signal = railway or generic or node or py or fly or render
+    return any_prod_signal
+
+AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
+if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+    print("WARNING: AUTH_DISABLED=true ignored — production indicator detected (RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / FLY_APP_NAME / RENDER).")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -125,6 +152,124 @@ def require_auth(authorization: str | None = Header(None)):
 # ---------- App setup ----------
 
 app = FastAPI(title="Evo Terminal — data-only API (UI on rebuild)")
+
+# CORS allowlist. CORS_ALLOWED_ORIGINS env var is a comma-separated list of
+# origins; default permits local dev only. Added 2026-05-11 (security chat).
+_CORS_ORIGINS = [
+    o.strip()
+    for o in (os.environ.get("CORS_ALLOWED_ORIGINS") or "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Cron-Secret"],
+)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Emit baseline security headers on every response. The CSP is tight
+    enough to block the inline-script + third-party-script vectors but
+    permissive enough that the retail HTML keeps working (own-origin only).
+    Added 2026-05-11 (security chat)."""
+
+    _CSP = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://*.supabase.co; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("Content-Security-Policy", self._CSP)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+
+# ---------- Per-IP rate limiter (added 2026-05-11 security chat) ----------
+# In-process sliding-window limiter keyed by client IP + path-prefix bucket.
+# Single-instance Railway deploy makes a process-local limiter sufficient.
+# If you scale to >1 dyno, swap to Redis-backed slowapi or move to Cloudflare.
+import time as _time
+from collections import defaultdict as _dd, deque as _dq
+
+class _IPRateLimiter:
+    def __init__(self):
+        self._hits: dict = _dd(_dq)
+        self._lock = threading.Lock()
+
+    def check(self, key: str, max_per_window: int, window_sec: float) -> bool:
+        now = _time.monotonic()
+        with self._lock:
+            dq = self._hits[key]
+            cutoff = now - window_sec
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+            if len(dq) >= max_per_window:
+                return False
+            dq.append(now)
+            return True
+
+_ip_limiter = _IPRateLimiter()
+
+
+class _RateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-IP rate limit. Path-prefix buckets — most-specific match wins.
+    Returns 429 with a brief retry hint. Hits are dropped after window."""
+
+    # (path_prefix, max_calls, window_seconds)
+    _BUCKETS: list = [
+        ("/api/store/share/",   10,  60.0),  # POST/DELETE/GET-by-id — spam vector
+        ("/api/store/shares",   60,  60.0),  # list endpoint
+        ("/api/store/share",    10,  60.0),  # POST create
+        ("/api/store/reserve",  20,  60.0),  # mock reserve, but hits TEvo
+        ("/api/store/",         60,  60.0),  # public catalog reads
+        ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
+        ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
+        ("/api/admin/",          5,  60.0),  # admin write surface
+    ]
+    _DEFAULT = (200, 60.0)
+
+    def _bucket(self, path: str):
+        for prefix, n, w in self._BUCKETS:
+            if path.startswith(prefix):
+                return n, w
+        return self._DEFAULT
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # Skip CORS preflight + healthcheck — preflights aren't load-bearing.
+        if request.method == "OPTIONS" or path in ("/", "/health"):
+            return await call_next(request)
+        # Trust X-Forwarded-For when present (Railway sets it). Fall back to
+        # request.client. First entry of XFF is the original client.
+        xff = request.headers.get("x-forwarded-for") or ""
+        ip = (xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")) or "unknown"
+        n, w = self._bucket(path)
+        if not _ip_limiter.check(f"{ip}|{path}", n, w):
+            return JSONResponse(
+                {"error": "rate limited", "retry_after_seconds": int(w)},
+                status_code=429,
+                headers={"Retry-After": str(int(w))},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(_RateLimitMiddleware)
+
 
 # (SMS / WhatsApp / web bot moved to Supabase Edge Functions in v2.7:
 #  supabase/functions/sms-bot, web-bot, chat. The legacy bot.py is unused.)
@@ -2702,15 +2847,20 @@ def seatdata_auto_search(event_id: int, _=Depends(require_auth)):
 # ============================================================================
 # Auth on this route: either a normal Bearer token (manual trigger from UI)
 # or a matching X-Cron-Secret header (pg_cron-driven). The cron secret is
-# expected in env var CRON_SECRET on Railway. Per existing convention, the
-# placeholder string 'pick-any-random-string-and-save-it' is used.
+# expected in env var CRON_SECRET on Railway. Hardened 2026-05-11:
+# fail-closed if unset (was: defaulted to a known placeholder string),
+# constant-time compare to avoid timing-leak.
 
-CRON_SECRET = os.environ.get("CRON_SECRET", "pick-any-random-string-and-save-it")
+CRON_SECRET = os.environ.get("CRON_SECRET")
 
 
 def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
-    """Allow either authenticated user OR matching X-Cron-Secret."""
-    if x_cron_secret and x_cron_secret == CRON_SECRET:
+    """Allow either authenticated user OR matching X-Cron-Secret.
+
+    Fails closed if CRON_SECRET is not configured on the server — never
+    accepts an empty/placeholder secret.
+    """
+    if x_cron_secret and CRON_SECRET and hmac.compare_digest(x_cron_secret, CRON_SECRET):
         return {"cron": True}
     return require_auth(authorization)
 
@@ -3762,7 +3912,7 @@ def _share_to_dict(row: dict) -> dict:
 
 
 @app.post("/api/store/share")
-def store_share_create(payload: dict = Body(...)):
+def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
     """Create a revocable share link for one event with saved filters.
 
     Body:
@@ -3771,9 +3921,8 @@ def store_share_create(payload: dict = Body(...)):
       note: str (optional, ≤ 500 chars)
       expires_in_days: int (optional, 1-365; null = never expires)
 
-    Auth note (MVP): currently open. Tighten with require_auth once the
-    storefront has a sign-in flow. Worst case today is link spam — a share
-    can never expose more than the public /api/store/events/{id} already does.
+    Auth: require_auth (Supabase JWT + allowed-domain email). Closed on
+    2026-05-11 (security chat) — see SECURITY BACKLOG in KANBAN.md.
     """
     # Validate before touching Supabase so 4xx errors surface the real reason
     # instead of "Supabase not configured" when both are wrong.
@@ -3879,9 +4028,13 @@ def store_share_resolve(share_id: str):
 
 
 @app.delete("/api/store/share/{share_id}")
-def store_share_revoke(share_id: str):
+def store_share_revoke(share_id: str, _=Depends(require_auth)):
     """Soft-delete: stamps revoked_at. The row stays so view history survives.
-    Idempotent — revoking an already-revoked link is fine."""
+    Idempotent — revoking an already-revoked link is fine.
+
+    Auth: require_auth. Closed on 2026-05-11 (security chat) — any unauth
+    user used to be able to revoke any share link by id.
+    """
     db = require_sb()
     res = (
         db.table("share_links")
@@ -3899,8 +4052,13 @@ def store_share_list(
     event_id: int | None = None,
     include_inactive: bool = False,
     limit: int = 50,
+    _=Depends(require_auth),
 ):
-    """List share links, newest first. Filter by event_id when present."""
+    """List share links, newest first. Filter by event_id when present.
+
+    Auth: require_auth. Closed on 2026-05-11 (security chat) — used to
+    leak every share row (event_id, filters, notes, view counts) to anon.
+    """
     db = require_sb()
     q = db.table("share_links").select(
         "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"

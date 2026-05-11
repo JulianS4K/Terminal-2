@@ -18,10 +18,10 @@
 // a public surface.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { requireCronSecret } from "../_shared/cron-auth.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const CRON_SECRET = "pick-any-random-string-and-save-it";
 
 const SPORT_SLUG: Record<string, string> = {
   NBA:  "basketball/nba",
@@ -97,8 +97,8 @@ async function fetchEspnTeam(sportSlug: string, espnTeamId: string): Promise<Esp
 }
 
 Deno.serve(async (req: Request) => {
-  const cronHeader = req.headers.get("X-Cron-Secret");
-  if (cronHeader && cronHeader !== CRON_SECRET) return new Response("unauthorized", { status: 401 });
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
 
   const startedAt = Date.now();
   const WALL_MS = 50_000;
