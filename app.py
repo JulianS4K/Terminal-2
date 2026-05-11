@@ -3622,30 +3622,64 @@ def store_events(
     # Pull a wider candidate set so we can post-filter by lifecycle + search
     # and still serve a full page.
     candidate_limit = min(cap * 2, 1000) if not include_inactive else cap
-    sel = (
-        db.table("latest_event_metrics")
-        .select(
-            "event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
-            "tickets_count,retail_min,captured_at,"
-            "events!inner(id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-            "primary_performer_id,primary_performer_name)"
+
+    # Two-query merge instead of PostgREST `events!inner(...)` embedding —
+    # the view-to-table FK relationship isn't always re-detected after a
+    # PostgREST restart (PGRST200). This pattern is robust regardless of
+    # whether PostgREST has inferred the relationship.
+    #
+    # Step 1: filter `events` first when a performer/venue filter is set,
+    # so we have a bounded id set for the metrics query. Step 2: query
+    # `latest_event_metrics` for owned + recent metrics on those events.
+    # Step 3: merge in Python.
+    event_filter_ids: list[int] | None = None
+    if performer_id is not None or venue_id is not None:
+        evs_q = db.table("events").select(
+            "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+            "primary_performer_id,primary_performer_name"
         )
+        if performer_id is not None:
+            evs_q = evs_q.eq("primary_performer_id", int(performer_id))
+        if venue_id is not None:
+            evs_q = evs_q.eq("venue_id", int(venue_id))
+        # cap upstream to keep the metrics query bounded
+        evs_q = evs_q.order("occurs_at_local", desc=False).limit(candidate_limit)
+        filtered_events = (evs_q.execute().data) or []
+        event_filter_ids = [int(e["id"]) for e in filtered_events if e.get("id")]
+        if not event_filter_ids:
+            return {"count": 0, "events": [], "limit": cap, "offset": offset}
+
+    metrics_q = (
+        db.table("latest_event_metrics")
+        .select("event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
+                "tickets_count,retail_min,captured_at")
         .gt("owned_tickets_count", 0)
-        # Consumer ordering: soonest event first. StubHub / SeatGeek default.
-        # Older "captured_at desc" was internal collector freshness, the wrong
-        # signal for shoppers. Foreign-table column reachable via PostgREST
-        # because of the events!inner join above.
-        .order("occurs_at_local", desc=False, foreign_table="events", nullsfirst=False)
         .limit(candidate_limit)
         .offset(max(offset, 0))
     )
-    # Optional filters — applied to the joined `events` table via PostgREST's
-    # `<table>.<column>` syntax (the !inner above makes this work).
-    if performer_id is not None:
-        sel = sel.eq("events.primary_performer_id", int(performer_id))
-    if venue_id is not None:
-        sel = sel.eq("events.venue_id", int(venue_id))
-    rows = (sel.execute().data) or []
+    if event_filter_ids is not None:
+        metrics_q = metrics_q.in_("event_id", event_filter_ids)
+    metrics_rows = (metrics_q.execute().data) or []
+    if not metrics_rows:
+        return {"count": 0, "events": [], "limit": cap, "offset": offset}
+
+    # Hydrate event metadata for the metrics we got back.
+    ev_ids = [int(m["event_id"]) for m in metrics_rows if m.get("event_id")]
+    events_rows = (
+        db.table("events")
+        .select("id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+                "primary_performer_id,primary_performer_name")
+        .in_("id", ev_ids)
+        .execute().data
+    ) or []
+    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+
+    # Merge into the row shape downstream code expects (the old !inner
+    # response: each row has a nested `events` dict).
+    rows = [{**m, "events": events_by_id.get(int(m["event_id"]))} for m in metrics_rows]
+    rows = [r for r in rows if r.get("events")]
+    # Consumer ordering: soonest event first.
+    rows.sort(key=lambda r: (r.get("events") or {}).get("occurs_at_local") or "9999")
 
     # Drop ghosts / completed / postponed unless caller opts in. Same
     # pattern as broker_movers — small id-set, single roundtrip to the
@@ -3734,17 +3768,31 @@ def _attach_owned_metadata(
     """
     if not candidate_ids:
         return []
-    rows = (
+    # Two-query merge (was `events!inner(...)` — PostgREST PGRST200 after
+    # cache rebuilds because view-to-table FK inference is flaky).
+    metrics_rows = (
         db.table("latest_event_metrics")
-        .select(
-            "event_id,owned_tickets_count,owned_groups_count,retail_min,"
-            "events!inner(id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-            "primary_performer_id,primary_performer_name)"
-        )
+        .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
         .gt("owned_tickets_count", 0)
         .in_("event_id", [int(e) for e in candidate_ids])
         .execute().data
     ) or []
+    if not metrics_rows:
+        return []
+    metric_event_ids = [int(m["event_id"]) for m in metrics_rows if m.get("event_id")]
+    events_rows = (
+        db.table("events")
+        .select("id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+                "primary_performer_id,primary_performer_name")
+        .in_("id", metric_event_ids)
+        .execute().data
+    ) or []
+    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+    rows = [
+        {**m, "events": events_by_id.get(int(m["event_id"]))}
+        for m in metrics_rows
+        if events_by_id.get(int(m["event_id"]))
+    ]
     if not rows:
         return []
 
@@ -3909,21 +3957,17 @@ def store_events_near(
             }
 
     # source == "supabase" (or hybrid fallback)
-    # Pull all owned events with their venue coords, compute haversine,
-    # filter by within. 83% venue coverage means some events miss this
-    # path; an audit-lane geocoder backfill would close the gap.
+    # Pull all owned event ids; _attach_owned_metadata does its own join
+    # via the two-query merge pattern. (No `events!inner(...)` here either
+    # — PostgREST view→table FK inference is flaky after cache rebuilds.)
     rows = (
         db.table("latest_event_metrics")
-        .select(
-            "event_id,owned_tickets_count,owned_groups_count,retail_min,"
-            "events!inner(id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-            "primary_performer_id,primary_performer_name)"
-        )
+        .select("event_id")
         .gt("owned_tickets_count", 0)
         .limit(500)
         .execute().data
     ) or []
-    candidate_ids = [int(r["event_id"]) for r in rows]
+    candidate_ids = [int(r["event_id"]) for r in rows if r.get("event_id")]
     decorated = _attach_owned_metadata(db, candidate_ids, lat, lon)
     # Drop events outside the radius (or missing coords entirely).
     in_radius = [d for d in decorated
