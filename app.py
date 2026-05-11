@@ -322,6 +322,45 @@ def root_health():
     return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
 
 
+@app.get("/healthz")
+def healthz():
+    """Diagnostic endpoint. Public — no secrets returned, just boot + connectivity
+    facts. Useful when a deploy goes orange and we need a one-curl picture.
+
+    Reports:
+      python_version, is_production, storefront_sql_only,
+      supabase_url_set, supabase_service_role_key_length,
+      supabase_anon_key_length, evo_client_configured,
+      supabase_smoke: pass | fail (with truncated error message)
+    """
+    import sys as _sys
+    out = {
+        "ok": True,
+        "python": _sys.version.split()[0],
+        "is_production": _is_production(),
+        "storefront_sql_only": STOREFRONT_SQL_ONLY,
+        "supabase_url_set": bool(SUPABASE_URL),
+        "supabase_service_role_key_length": len(SUPABASE_SERVICE_ROLE_KEY or ""),
+        "supabase_anon_key_length": len(SUPABASE_ANON_KEY or ""),
+        "supabase_client_initialized": sb is not None,
+        "evo_client_configured": client is not None,
+    }
+    # Tiny safe query against a table we know exists.
+    if sb is None:
+        out["supabase_smoke"] = "skipped — sb is None"
+    else:
+        try:
+            r = sb.table("events").select("id").limit(1).execute()
+            out["supabase_smoke"] = "pass"
+            out["supabase_smoke_rows"] = len(r.data or [])
+        except Exception as e:
+            out["ok"] = False
+            out["supabase_smoke"] = "fail"
+            # Truncate so we don't leak full traces over a public endpoint.
+            out["supabase_smoke_error"] = str(e)[:300]
+    return out
+
+
 @app.get("/api/public/config")
 def public_config():
     """Browser-safe config for the login page. No secrets."""

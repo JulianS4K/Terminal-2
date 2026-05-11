@@ -33,6 +33,11 @@ services:
     # Health endpoint returns {"ok": true, ...} so Render's HTTP probe succeeds.
 
     envVars:
+      # Pin to Python 3.12 — Render's auto-pick of 3.14.3 is brand-new and
+      # some deps (notably supabase-py + pydantic-core) haven't fully baked
+      # cp314 wheels. 3.12 is the most-tested current version.
+      - key: PYTHON_VERSION
+        value: "3.12.7"
       # ---- Demo mode (the new flag this PR introduces) ----
       - key: STOREFRONT_SQL_ONLY
         value: "true"
