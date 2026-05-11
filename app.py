@@ -123,12 +123,26 @@ def resolve_tevo_creds():
 SANDBOX = os.environ.get("TEVO_SANDBOX", "false").lower() == "true"
 TOKEN, SECRET, CREDS_SOURCE = resolve_tevo_creds()
 if not TOKEN or not SECRET:
-    sys.exit(
-        "No TEvo credentials found. Insert into Supabase `settings` table "
-        "(tevo_token, tevo_secret) or set TEVO_TOKEN + TEVO_SECRET env vars."
-    )
-print(f"TEvo creds loaded from: {CREDS_SOURCE}")
-client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
+    # In SQL-only demo mode the storefront never calls TEvo — the EvoClient
+    # is never invoked. Boot in degraded mode (no TEvo client) so the
+    # storefront still serves from listings_snapshots. Any non-storefront
+    # route that needs the live client (broker terminal, /api/admin/*) will
+    # crash on the missing global, which is the right failure mode.
+    if STOREFRONT_SQL_ONLY:
+        print(
+            "TEvo creds missing — running in STOREFRONT_SQL_ONLY mode without a live "
+            "EvoClient. /api/store/* routes will serve from listings_snapshots only."
+        )
+        client = None
+    else:
+        sys.exit(
+            "No TEvo credentials found. Insert into Supabase `settings` table "
+            "(tevo_token, tevo_secret) or set TEVO_TOKEN + TEVO_SECRET env vars. "
+            "Or set STOREFRONT_SQL_ONLY=true to boot in demo mode without TEvo."
+        )
+else:
+    print(f"TEvo creds loaded from: {CREDS_SOURCE}")
+    client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
 
 
 # ---------- Auth dependency ----------
