@@ -2,6 +2,31 @@
 
 Produced by C1 (Data + Chat Bot, supervisor). Handoff target for git work: A1 (Primary/Audit/Push). Branch: `claude/audit-data-sources-b7EGu`.
 
+> **2026-05-11 revision:** initial audit over-counted orphans by ~5. See "Corrections" section at top before reading the orphan analysis below. Verified false positives are crossed out in place.
+
+## Corrections (post sample-fix testing)
+
+After running validation queries against the live DB, several orphan findings were withdrawn:
+
+| original flag | reality | reference |
+|---|---|---|
+| `seatgeek_listings_snapshots` orphan | **Live table** — created in `20260509090000_seatgeek_broker_rebuild.sql:99`, INSERT'd by cron, read by dashboard views in `20260510020000` + `20260510040000` | not an orphan |
+| `seatgeek_sales_snapshots` orphan | **Live table** — same migration, same usage pattern | not an orphan |
+| `wiki-collect` edge function dormant | **Intentional manual admin tool** — targeted single-performer refresh + rivalries refresh that the SQL+pg_net pipeline doesn't cover | not an orphan |
+| Open-Meteo under-pulled | **Already cron-scheduled** — 4 jobs at `20260509260000_weather_integration.sql:355-358` (geocode + forecast, both at 5min and 30min cadences) | not orphan |
+| Reddit RSS under-pulled | **Already cron-scheduled** — 3 jobs at `20260509410000_betting_odds_and_reddit_signals.sql:477-491` | not orphan |
+| OSM Nominatim reactive-only | **Already cron-scheduled** — same weather migration handles venue geocoding queue | not orphan |
+| `sg_event_backfill_pending` queue stalled | **Has dedicated processor** — `20260509360000_orphan_event_auto_backfill.sql` provisions queue + 3 crons to drain it via SeatGeek brokerdata API | not orphan |
+
+**Net real orphan count after corrections:** 0 tables, 0 functions, 0 data sources. The data plane has more sophisticated orphan-handling than initially credited.
+
+**Real findings that survive:**
+1. `seatgeek_event_xref` matches 11 SG events, **none of which appear in `seatgeek_orders`** — the listings-time matcher (`auto_seller_inline_v2`) catches the wrong slice
+2. 400 SG orders with NULL `tevo_event_id` — historical 2018-2025 sales with no TEvo event row to match against (TEvo events table doesn't retain history)
+3. AGENTS.md ARCHITECTURE diagram says "TWO data sources" — actual count is 11
+
+These three are tracked in `docs/cross-source-entity-resolution-2026-05-11.md` Finding 1-3.
+
 ## Headline counts
 
 | metric | count |
@@ -54,48 +79,41 @@ Produced by C1 (Data + Chat Bot, supervisor). Handoff target for git work: A1 (P
 | 10 | Chat / bot | 8 | `bot_messages`, `chat_corpus`, `chat_aliases`, `chat_glossary_known`, `chat_stopwords`, `chat_term_frequency` |
 | 11 | Config / master | 31 | `data_sources`, `sporting_rivalries`, `holidays`, `macro_series_config`, `news_keywords`, `performer_subreddits`, `order_fee_schedule` |
 
-## 4. Orphan / cleanup candidates
+## 4. Orphan / cleanup candidates — **see Corrections section at top of doc**
 
-### Tables (5)
+### Tables — **WITHDRAWN**
 
-| table | created in | actual status |
+The 2 SG view-artifact claims were wrong. `seatgeek_listings_snapshots` and `seatgeek_sales_snapshots` are live tables with cron writers and dashboard readers. See Corrections.
+
+The 3 `_readme` markers remain **intentional** per TEST SCHEMAS Option C (AGENTS.md:260).
+
+**Net cleanup candidates: 0 tables.**
+
+### Edge functions — **mostly intentional, not orphans**
+
+The 8 "dormant" functions are intentionally manual or frontend-invoked:
+- `collect`, `collect-listings` — driven by the TEvo cron lattice via separate scheduling migrations
+- `bulk-add-watchlist`, `seed-home-venues`, `tevo-perf-find` — frontend-triggered admin
+- `espn`, `espn-rosters` — frontend / on-demand
+- `wiki-collect` — intentional manual admin tool (targeted refresh + rivalries; unique vs SQL+pg_net pipeline)
+
+Cron-active (5 named in original audit; many more SQL-driven crons via pg_net pattern, ~84 total scheduled jobs across the migrations).
+
+### Data sources — **all 11 are scheduled**
+
+| source | scheduled? | reference |
 |---|---|---|
-| `seatgeek_listings_snapshots` | `20260507000004_product_separation_views.sql:53` | view artifact from product-separation refactor; only referenced inside the view layer, not by any edge function or frontend |
-| `seatgeek_sales_snapshots` | same migration | same — view artifact, not actively consumed |
-| `code_staging._readme` | `20260508120000_test_schemas_per_agent.sql` | **INTENTIONAL — keep.** Sandbox marker for A1's test schema (TEST SCHEMAS Option C, AGENTS.md:260) |
-| `copilot_test._readme` | same | **INTENTIONAL — keep.** Sandbox marker for copilot lane |
-| `design_test._readme` | same | **INTENTIONAL — keep.** Sandbox marker for design lane |
-
-Net cleanup candidates: **2** (the two SeatGeek view artifacts). The three `_readme` tables are part of the multi-agent test-schema convention and must not be dropped.
-
-### Edge functions — dormant (8 of 14)
-
-These have no cron schedule. They run only on manual trigger or frontend invocation. Flag for review of intent (paused vs. accidentally unscheduled):
-
-| function | invocation path |
-|---|---|
-| `collect` | manual / frontend |
-| `collect-listings` | manual / frontend (see note below) |
-| `bulk-add-watchlist` | frontend |
-| `espn` | frontend |
-| `espn-rosters` | manual only |
-| `seed-home-venues` | manual only |
-| `tevo-perf-find` | frontend |
-| `wiki-collect` | manual only |
-
-Cron-active (5): `backfill-event-configurations`, `crawl-venues-and-performers`, `crawl-espn-team-assets`, `espn-collect`, `chat`.
-
-**Notable:** `wiki-collect` has a queue table (`performer_wiki_pending`) and async ingest pattern but no cron drains it on a schedule — items accumulate unless triggered.
-
-**Note on `collect-listings`:** despite appearing "dormant" by static inspection, it is driven by the 5-tier TEvo cron lattice (AGENTS.md DATA FLOW: 20m / 1h / 4h / 12h / daily). Confirm whether cron lives in a separate scheduling migration before flagging.
-
-### Data sources — under-pulled (3 of 11)
-
-| source | wired? | scheduled? | recommendation |
-|---|---|---|---|
-| Open-Meteo | yes (schema + queue tables) | **no active cron** | C1 decision: schedule forecast pulls or document why deferred |
-| Reddit RSS | yes (15 migrations, `reddit_pending` table) | **no direct cron** (only referenced in chat audit) | C1 decision: schedule or deprecate |
-| OSM Nominatim | yes (used by weather geocode) | reactive only | likely correct — geocoding is event-driven, not scheduled |
+| TEvo (collect-listings) | yes | 5-tier cron lattice |
+| ESPN (collect) | yes | `20260507000021_espn_collect_cron_schedules.sql` |
+| SeatGeek | yes | multi-migration cron chain incl. `20260509360000` orphan auto-backfill |
+| SeatData | yes (budget-capped) | `20260509060000_seatdata_integration.sql` |
+| Wikipedia | yes | `20260509170000_performer_wikipedia_enrichment.sql:235-249` (3 crons) |
+| NOAA / NWS | yes | `20260509560000_nws_active_weather_alerts.sql:792-809` (4 crons) |
+| Open-Meteo | yes | `20260509260000_weather_integration.sql:357-358` |
+| FRED | yes | `20260510130000_fred_macro_indicators_umcsent.sql:264-268` |
+| Reddit RSS | yes | `20260509410000_betting_odds_and_reddit_signals.sql:477-491` |
+| Anthropic Claude API | n/a (LLM, request-driven) | edge function `chat` |
+| OSM Nominatim | yes | `20260509260000_weather_integration.sql:355-356` |
 
 ## 5. Architecture drift — AGENTS.md stale
 
@@ -107,20 +125,21 @@ Reality: **11 sources wired**, 7 actively pulling on cron. The "two-source" fram
 
 **Recommendation (A1):** refresh ARCHITECTURE diagram on next push to reflect the current 11-source data plane, or explicitly mark auxiliaries as "context overlays" if the diagram is meant to show only the running backbone.
 
-## 6. Recommended next actions
+## 6. Recommended next actions (post-correction)
+
+The original recommendations are mostly retracted. Updated list:
 
 ### In C1 lane (no push needed)
-1. Decide on Open-Meteo, Reddit RSS, Wikipedia (`wiki-collect`) cron scheduling — schedule, deprecate, or document as deferred.
-2. Verify `collect-listings` cron lattice is intact (cross-check `cron.schedule` calls in migrations).
+1. None. All 11 data sources are scheduled. The `wiki-collect` edge function is intentionally manual.
 
 ### Handoff to A1 (requires push)
-1. Commit this audit doc + LOG entry under today's date.
-2. Drop the 2 SeatGeek view artifacts (`seatgeek_listings_snapshots`, `seatgeek_sales_snapshots`) — preceded by a grep confirming no view/function still references them.
-3. Refresh `AGENTS.md` ARCHITECTURE diagram from 2 → 11 sources (or annotate the two-source framing as "running backbone only").
-4. Cascade orphan findings into S1's drift trigger system via `event_xref` (per bot-hierarchy chart).
+1. **Real fix needed:** `seatgeek_event_xref` matching pipeline runs at listing-ingest time only. Add an order-side matcher that walks `seatgeek_orders.sg_event_id` and creates xref rows for SG events that have orders. (Methodology in `docs/cross-source-entity-resolution-2026-05-11.md` Layer 3 Path A.)
+2. **Real fix needed:** Path B for the 400 historical SG orders (no TEvo event row available) — resolve `tevo_venue_id` + `tevo_performer_ids` directly on each order. Methodology validated at 19.8% full match / 67.8% venue with exact-name only.
+3. **Doc refresh:** AGENTS.md ARCHITECTURE diagram says "TWO data sources." Reality is 11. Refresh on next push.
+4. **No table drops needed.** The earlier recommendation to drop 2 SG view-artifact tables was based on a misread of migration history.
 
 ### Handoff to B1 (audit views consumer)
-This document is the drift report B1 receives from the S1 → B1 channel. No direct action required from B1 until S1 emits its derived view.
+Corrected drift report. The earlier "5 orphan tables / 8 dormant functions / 3 under-pulled sources" framing was wrong. Real drift signal is now limited to (a) `seatgeek_event_xref` covering 0/186 sg_event_ids with orders, and (b) AGENTS.md ARCHITECTURE staleness.
 
 ## Appendix — file references
 
