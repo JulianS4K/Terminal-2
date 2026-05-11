@@ -688,6 +688,16 @@
         } else if (res.inventory_source === "live") {
           freshness.textContent = "live inventory";
           freshness.className = "freshness live";
+        } else if (res.inventory_source === "snapshot") {
+          // SQL-only demo mode — be honest about staleness so testers and
+          // share-link recipients know what they're looking at.
+          const age = Number(res.snapshot_age_seconds) || 0;
+          const human = age < 60 ? `${age}s`
+                      : age < 3600 ? `${Math.round(age/60)}m`
+                      : age < 86400 ? `${Math.round(age/3600)}h`
+                      : `${Math.round(age/86400)}d`;
+          freshness.textContent = `demo · snapshot ${human} old`;
+          freshness.className = "freshness cached";
         } else {
           freshness.textContent = "";
         }

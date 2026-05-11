@@ -69,6 +69,20 @@ AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
 if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
     print("WARNING: AUTH_DISABLED=true ignored — production indicator detected (RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / FLY_APP_NAME / RENDER).")
 
+# STOREFRONT_SQL_ONLY — demo mode for pre-checkout MVP. When on:
+#   - /api/store/events/{id} reads ticket_groups from listings_snapshots
+#     (cron-collected) instead of going live to TEvo.
+#   - /api/store/reserve skips TEvo validation and returns a mock receipt.
+#   - /api/store/events/near forces source=supabase (no TEvo geo call).
+#
+# Why: until real checkout is wired, live TEvo only buys us freshness, and
+# the test environment shouldn't burn TEvo quota on every page load. Flip
+# off the moment real /v9/orders calls go live — stale snapshots are
+# dangerous when shoppers can actually buy.
+STOREFRONT_SQL_ONLY = os.environ.get("STOREFRONT_SQL_ONLY", "false").lower() == "true"
+if STOREFRONT_SQL_ONLY:
+    print("STOREFRONT_SQL_ONLY=true — storefront serves from listings_snapshots; no live TEvo calls on store routes.")
+
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
@@ -301,6 +315,9 @@ def public_config():
         "supabase_url": SUPABASE_URL,
         "supabase_anon_key": SUPABASE_ANON_KEY,
         "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
+        # Storefront SQL-only demo mode flag. UI hides geolocation + shows
+        # a 'demo · sql snapshot' pill so users know what they're seeing.
+        "storefront_sql_only": STOREFRONT_SQL_ONLY,
     }
 
 # ---------- Protected routes ----------
@@ -3771,6 +3788,11 @@ def store_events_near(
     within = max(1.0, min(within, 500.0))
     cap = max(1, min(limit, 50))
 
+    # SQL-only mode: force supabase mode regardless of ?source=. No TEvo
+    # calls on the home page during demo testing.
+    if STOREFRONT_SQL_ONLY:
+        source = "supabase"
+
     if source == "tevo":
         # No Supabase needed for debug mode — straight passthrough.
         # Debug mode: raw TEvo geo, NO owned filter. Returns whatever TEvo
@@ -4025,6 +4047,119 @@ def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
     threading.Thread(target=_go, daemon=True).start()
 
 
+def _fetch_event_from_db(event_id: int) -> dict:
+    """SQL-only mode: synthesize the TEvo /v9/events/{id} response shape
+    from our local `events` table so the storefront can render without a
+    live TEvo call. Configuration (seating chart) is TEvo-only data we
+    don't mirror, so it comes back empty — UI hides the image.
+    """
+    db = require_sb()
+    row = (
+        db.table("events")
+        .select("id,name,occurs_at_local,state,venue_id,venue_name,venue_location,"
+                "primary_performer_id,primary_performer_name,performer_ids")
+        .eq("id", event_id)
+        .limit(1)
+        .execute().data
+    )
+    if not row:
+        raise HTTPException(404, f"event {event_id} not found in local snapshot")
+    e = row[0]
+    # Build the performances list: primary first, then secondaries (names
+    # resolved via a second lookup so we don't return bare ids).
+    perfs: list[dict] = []
+    if e.get("primary_performer_id"):
+        perfs.append({
+            "performer": {
+                "id": e["primary_performer_id"],
+                "name": e.get("primary_performer_name"),
+            },
+            "primary": True,
+        })
+    other_ids = [int(p) for p in (e.get("performer_ids") or [])
+                 if int(p) != int(e.get("primary_performer_id") or 0)]
+    if other_ids:
+        names = (db.table("events")
+                 .select("primary_performer_id,primary_performer_name")
+                 .in_("primary_performer_id", other_ids)
+                 .execute().data) or []
+        name_map = {int(r["primary_performer_id"]): r.get("primary_performer_name")
+                    for r in names if r.get("primary_performer_id")}
+        for pid in other_ids:
+            perfs.append({
+                "performer": {"id": pid, "name": name_map.get(int(pid))},
+                "primary": False,
+            })
+    return {
+        "id": e["id"],
+        "name": e.get("name"),
+        "occurs_at_local": e.get("occurs_at_local"),
+        # occurs_at not stored — UI uses occurs_at_local exclusively, so this
+        # is fine. Synthesized to match the TEvo shape.
+        "occurs_at": e.get("occurs_at_local"),
+        "state": e.get("state"),
+        "venue": {
+            "id": e.get("venue_id"),
+            "name": e.get("venue_name"),
+            "location": e.get("venue_location"),
+            "time_zone": None,
+        },
+        "configuration": {},   # TEvo-only; UI gracefully renders without
+        "performances": perfs,
+    }
+
+
+def _fetch_owned_ticket_groups_from_db(event_id: int) -> tuple[list[dict], str, str | None]:
+    """SQL-only mode: pull the latest snapshot of owned ticket_groups for
+    an event from `listings_snapshots` and shape rows like TEvo's response.
+    Returns (groups, source, captured_at_iso). source is always 'snapshot'.
+    """
+    db = require_sb()
+    # Latest captured_at for this event — single round-trip.
+    latest = (
+        db.table("listings_snapshots")
+        .select("captured_at")
+        .eq("event_id", event_id)
+        .order("captured_at", desc=True)
+        .limit(1)
+        .execute().data
+    )
+    if not latest:
+        return [], "snapshot", None
+    captured_at = latest[0]["captured_at"]
+    rows = (
+        db.table("listings_snapshots")
+        .select("tevo_ticket_group_id,section,row,quantity,retail_price,format,splits,"
+                "wheelchair,instant_delivery,eticket,is_ancillary,type,is_owned")
+        .eq("event_id", event_id)
+        .eq("captured_at", captured_at)
+        .eq("is_owned", True)
+        .execute().data
+    ) or []
+    groups = []
+    for r in rows:
+        # Shape like TEvo's /v9/ticket_groups response so the existing
+        # filter + render pipeline works unchanged.
+        groups.append({
+            "id": r.get("tevo_ticket_group_id"),
+            "type": r.get("type") or "event",
+            "section": r.get("section"),
+            "row": r.get("row"),
+            "quantity": r.get("quantity"),
+            "available_quantity": r.get("quantity"),
+            "retail_price": r.get("retail_price"),
+            "format": r.get("format"),
+            "splits": r.get("splits") or [],
+            "wheelchair": r.get("wheelchair"),
+            "instant_delivery": r.get("instant_delivery"),
+            "eticket": r.get("eticket"),
+            "in_hand": True,        # snapshot doesn't track this; assume yes
+            "in_hand_on": None,
+            "public_notes": None,    # not mirrored to listings_snapshots
+        })
+    return groups, "snapshot", captured_at
+
+
 def _fetch_owned_ticket_groups(
     event_id: int,
     max_age_seconds: int | None = None,
@@ -4089,15 +4224,26 @@ def _fetch_owned_ticket_groups(
 def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
     """Fetch event + owned listings, apply filters, return the same shape
     /api/store/events/{id} returns. Shared by the public detail endpoint
-    and the share-link resolver."""
-    try:
-        ev = client.get_event(event_id)
-    except RuntimeError as e:
-        raise HTTPException(502, f"TEvo event lookup failed: {e}")
+    and the share-link resolver.
 
-    # Storefront freshness contract: 10s. Tighter than broker's 90s because
-    # this is the buy-decision page — stale availability => bad UX.
-    groups, tg_source = _fetch_owned_ticket_groups(event_id, max_age_seconds=10)
+    SQL-only mode (STOREFRONT_SQL_ONLY=true): reads from `events` +
+    `listings_snapshots` instead of TEvo. Same response shape so the UI
+    is unchanged. inventory_source reflects 'snapshot' + adds
+    snapshot_age_seconds so the demo banner can show staleness honestly.
+    """
+    snapshot_captured_at: str | None = None
+    if STOREFRONT_SQL_ONLY:
+        ev = _fetch_event_from_db(event_id)
+        groups, tg_source, snapshot_captured_at = _fetch_owned_ticket_groups_from_db(event_id)
+    else:
+        try:
+            ev = client.get_event(event_id)
+        except RuntimeError as e:
+            raise HTTPException(502, f"TEvo event lookup failed: {e}")
+
+        # Storefront freshness contract: 10s. Tighter than broker's 90s because
+        # this is the buy-decision page — stale availability => bad UX.
+        groups, tg_source = _fetch_owned_ticket_groups(event_id, max_age_seconds=10)
 
     eligible = [
         tg
@@ -4189,6 +4335,15 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
             "color_primary": (a or {}).get("color_primary"),
         }
 
+    # Snapshot age (SQL-only mode only) — UI uses this to show honest staleness.
+    snapshot_age_seconds: int | None = None
+    if snapshot_captured_at:
+        try:
+            ts = datetime.fromisoformat(str(snapshot_captured_at).replace("Z", "+00:00"))
+            snapshot_age_seconds = int((datetime.now(timezone.utc) - ts).total_seconds())
+        except (ValueError, TypeError):
+            snapshot_age_seconds = None
+
     response = {
         "event": {
             "id": ev.get("id"),
@@ -4213,13 +4368,18 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
         "listings_count": len(listings),
         "total_before_filters": total_before_filters,
         "filters": f,
-        "inventory_source": tg_source,        # 'cache' (≤10s old) or 'live'
+        # 'cache' (≤10s old, live mode) | 'live' (live mode) | 'snapshot' (SQL-only mode)
+        "inventory_source": tg_source,
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "demo_mode": STOREFRONT_SQL_ONLY,
     }
 
     # Fire-and-forget: refresh canonical SQL via the audit-lane Edge Function.
     # Auto-tracks the event (adds performer to watchlist) if we've never seen
-    # it before. Never blocks the response.
-    _fire_canonical_refresh(event_id, ev)
+    # it before. Never blocks the response. SKIPPED in SQL-only mode — no
+    # point firing a TEvo collector while we're trying to keep TEvo out.
+    if not STOREFRONT_SQL_ONLY:
+        _fire_canonical_refresh(event_id, ev)
 
     return response
 
@@ -4290,16 +4450,31 @@ def store_reserve(payload: dict = Body(...)):
     if not (event_id and ticket_group_id and quantity > 0):
         raise HTTPException(400, "event_id, ticket_group_id and quantity > 0 required")
 
-    try:
-        tg_resp = client.get_ticket_groups(event_id, owned=True)
-    except RuntimeError as e:
-        raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
-    match = next(
-        (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
-        None,
-    )
-    if not match:
-        raise HTTPException(404, "ticket group is no longer available from this seller")
+    if STOREFRONT_SQL_ONLY:
+        # SQL-only mode: validate against listings_snapshots' latest capture
+        # for this event. Same validation surface (available + splits) so
+        # the UX is identical, just slightly stale-tolerant.
+        groups, _src, _captured = _fetch_owned_ticket_groups_from_db(event_id)
+        match = next(
+            (tg for tg in groups if int(tg.get("id") or 0) == ticket_group_id),
+            None,
+        )
+        if not match:
+            raise HTTPException(
+                404,
+                "ticket group is no longer available from this seller (snapshot-based)",
+            )
+    else:
+        try:
+            tg_resp = client.get_ticket_groups(event_id, owned=True)
+        except RuntimeError as e:
+            raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+        match = next(
+            (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
+            None,
+        )
+        if not match:
+            raise HTTPException(404, "ticket group is no longer available from this seller")
 
     avail = int(match.get("available_quantity") or match.get("quantity") or 0)
     splits = match.get("splits") or []

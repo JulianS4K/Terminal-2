@@ -575,6 +575,15 @@
           fr.textContent = "live"; fr.className = "freshness live";
         } else if (res.inventory_source === "cache") {
           fr.textContent = "cached"; fr.className = "freshness cached";
+        } else if (res.inventory_source === "snapshot") {
+          // SQL-only demo mode — show age so it's obvious this isn't live.
+          const age = Number(res.snapshot_age_seconds) || 0;
+          const human = age < 60 ? `${age}s`
+                      : age < 3600 ? `${Math.round(age/60)}m`
+                      : age < 86400 ? `${Math.round(age/3600)}h`
+                      : `${Math.round(age/86400)}d`;
+          fr.textContent = `demo · ${human} old`;
+          fr.className = "freshness cached";
         } else {
           fr.textContent = "";
         }
