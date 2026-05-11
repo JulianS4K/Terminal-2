@@ -182,6 +182,79 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(_SecurityHeadersMiddleware)
 
+
+# ---------- Per-IP rate limiter (added 2026-05-11 security chat) ----------
+# In-process sliding-window limiter keyed by client IP + path-prefix bucket.
+# Single-instance Railway deploy makes a process-local limiter sufficient.
+# If you scale to >1 dyno, swap to Redis-backed slowapi or move to Cloudflare.
+import time as _time
+from collections import defaultdict as _dd, deque as _dq
+
+class _IPRateLimiter:
+    def __init__(self):
+        self._hits: dict = _dd(_dq)
+        self._lock = threading.Lock()
+
+    def check(self, key: str, max_per_window: int, window_sec: float) -> bool:
+        now = _time.monotonic()
+        with self._lock:
+            dq = self._hits[key]
+            cutoff = now - window_sec
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+            if len(dq) >= max_per_window:
+                return False
+            dq.append(now)
+            return True
+
+_ip_limiter = _IPRateLimiter()
+
+
+class _RateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-IP rate limit. Path-prefix buckets — most-specific match wins.
+    Returns 429 with a brief retry hint. Hits are dropped after window."""
+
+    # (path_prefix, max_calls, window_seconds)
+    _BUCKETS: list = [
+        ("/api/store/share/",   10,  60.0),  # POST/DELETE/GET-by-id — spam vector
+        ("/api/store/shares",   60,  60.0),  # list endpoint
+        ("/api/store/share",    10,  60.0),  # POST create
+        ("/api/store/reserve",  20,  60.0),  # mock reserve, but hits TEvo
+        ("/api/store/",         60,  60.0),  # public catalog reads
+        ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
+        ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
+        ("/api/admin/",          5,  60.0),  # admin write surface
+    ]
+    _DEFAULT = (200, 60.0)
+
+    def _bucket(self, path: str):
+        for prefix, n, w in self._BUCKETS:
+            if path.startswith(prefix):
+                return n, w
+        return self._DEFAULT
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # Skip CORS preflight + healthcheck — preflights aren't load-bearing.
+        if request.method == "OPTIONS" or path in ("/", "/health"):
+            return await call_next(request)
+        # Trust X-Forwarded-For when present (Railway sets it). Fall back to
+        # request.client. First entry of XFF is the original client.
+        xff = request.headers.get("x-forwarded-for") or ""
+        ip = (xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")) or "unknown"
+        n, w = self._bucket(path)
+        if not _ip_limiter.check(f"{ip}|{path}", n, w):
+            return JSONResponse(
+                {"error": "rate limited", "retry_after_seconds": int(w)},
+                status_code=429,
+                headers={"Retry-After": str(int(w))},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(_RateLimitMiddleware)
+
+
 # (SMS / WhatsApp / web bot moved to Supabase Edge Functions in v2.7:
 #  supabase/functions/sms-bot, web-bot, chat. The legacy bot.py is unused.)
 
