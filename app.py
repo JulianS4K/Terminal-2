@@ -4551,8 +4551,19 @@ def store_shares_page():
     return FileResponse(os.path.join(STATIC_DIR, "store", "shares.html"))
 
 
+def _require_non_prod():
+    """Test-harness gate: 404 in production. Test pages expose debug info
+    (source-mode dropdown, hybrid candidate counts, inventory_source pill)
+    that we don't want anonymous prod users to see. Per #57 A1 review:
+    'Either @require_auth or gate behind a non-prod env check' — taking
+    the non-prod gate so the test pages remain useful in staging without
+    a Bearer-token auth handshake on HTML page loads."""
+    if _is_production():
+        raise HTTPException(404, "not found")
+
+
 @app.get("/store/test")
-def store_test_index_page():
+def store_test_index_page(_=Depends(_require_non_prod)):
     """Multi-page wiring test harness — index. Sidebar navigates to one
     page per evo-doc workflow (search, performer, venue, event landing)
     plus storefront-specific share links. Useful for verifying the store
@@ -4561,27 +4572,27 @@ def store_test_index_page():
 
 
 @app.get("/store/test/search")
-def store_test_search_page():
+def store_test_search_page(_=Depends(_require_non_prod)):
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "search.html"))
 
 
 @app.get("/store/test/performer")
-def store_test_performer_page():
+def store_test_performer_page(_=Depends(_require_non_prod)):
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "performer.html"))
 
 
 @app.get("/store/test/venue")
-def store_test_venue_page():
+def store_test_venue_page(_=Depends(_require_non_prod)):
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "venue.html"))
 
 
 @app.get("/store/test/event")
-def store_test_event_page():
+def store_test_event_page(_=Depends(_require_non_prod)):
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "event.html"))
 
 
 @app.get("/store/test/share")
-def store_test_share_page():
+def store_test_share_page(_=Depends(_require_non_prod)):
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "share.html"))
 
 

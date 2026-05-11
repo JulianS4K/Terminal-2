@@ -109,8 +109,15 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
+        // Build the anchor via DOM — res.url is a server-issued path but
+        // we defensively escape per #57 A1 review.
         const fullUrl = `${location.origin}${res.url}`;
-        $("#newUrl").innerHTML = `<a href="${res.url}" target="_blank">${fullUrl}</a>`;
+        const anchor = document.createElement("a");
+        anchor.href = res.url;
+        anchor.target = "_blank";
+        anchor.rel = "noopener";
+        anchor.textContent = fullUrl;
+        $("#newUrl").replaceChildren(anchor);
         $("#createStatus").className = "pill live";
         $("#createStatus").textContent = "active";
         $("#createJson").innerHTML = fmtJson(res);
@@ -230,7 +237,12 @@
         }
         list.append(tbl);
       } catch (e) {
-        $("#list").innerHTML = `<p style="color: var(--bad)">error: ${e.message}</p>`;
+        // Build via DOM — error messages can echo attacker-controlled data
+        // back from the server. Per #57 A1 review.
+        const p = document.createElement("p");
+        p.style.color = "var(--bad)";
+        p.textContent = `error: ${e.message}`;
+        $("#list").replaceChildren(p);
       }
     }
 

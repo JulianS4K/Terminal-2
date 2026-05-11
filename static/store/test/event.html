@@ -108,6 +108,15 @@
   <script>
     const { $, $$, fmtMoney, fmtWhen, api } = Test;
 
+    // Tiny HTML escaper — used in all innerHTML template literals below.
+    // Per #57 A1 review: TEvo listing data (section/row), URL params, and
+    // server reservation echoes are all attacker-influenceable.
+    function esc(v) {
+      return String(v == null ? "" : v).replace(/[&<>"']/g, c => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+      ));
+    }
+
     const urlParams = new URLSearchParams(location.search);
     const eventId = Number(urlParams.get("id"));
 
@@ -287,8 +296,18 @@
         if (filters.min_price != null) parts.push(`min ${fmtMoney(filters.min_price)}`);
         if (filters.max_price != null) parts.push(`max ${fmtMoney(filters.max_price)}`);
         if (filters.min_qty != null) parts.push(`${filters.min_qty}+ seats`);
-        bannerSummary.innerHTML = `<strong>Filtered view</strong> · ${parts.join(" · ")} · showing ${listingsCount} of ${totalBefore}`;
-        bannerClear.href = `/store/test/event?id=${eventId}`;
+        // Build via DOM nodes — filter values are user-controlled URL params
+        // and TEvo data, not safe for innerHTML. Hardened per #57 A1 review.
+        bannerSummary.replaceChildren();
+        const strong = document.createElement("strong");
+        strong.textContent = "Filtered view";
+        bannerSummary.append(
+          strong,
+          document.createTextNode(
+            ` · ${parts.join(" · ")} · showing ${Number(listingsCount) || 0} of ${Number(totalBefore) || 0}`
+          ),
+        );
+        bannerClear.href = `/store/test/event?id=${Number(eventId) || 0}`;
         banner.hidden = false;
       }
 
@@ -321,14 +340,30 @@
           rowLabel.textContent = `Row ${l.row || "—"}`;
           seat.append(sec, rowLabel);
 
-          const splits = (l.splits && l.splits.length ? l.splits.join(", ") : (l.available_quantity || 0));
+          // Build qty + price via DOM — TEvo's splits / available_quantity /
+          // retail_price are server-controlled but we sanitize defensively
+          // per #57 A1 review (DOM-XSS class fixed in main store.js).
+          const splitsLabel = (l.splits && l.splits.length)
+            ? l.splits.filter(s => Number.isFinite(Number(s))).map(s => String(Number(s))).join(", ")
+            : String(Number(l.available_quantity) || 0);
           const qty = document.createElement("div");
           qty.className = "qty";
-          qty.innerHTML = `${l.available_quantity || 0} available<br><span style="font-size:11px">sells in ${splits}</span>`;
+          qty.append(
+            document.createTextNode(`${Number(l.available_quantity) || 0} available`),
+            document.createElement("br"),
+          );
+          const sells = document.createElement("span");
+          sells.style.fontSize = "11px";
+          sells.textContent = `sells in ${splitsLabel}`;
+          qty.append(sells);
 
           const price = document.createElement("div");
           price.className = "price";
-          price.innerHTML = `${fmtMoney(l.retail_price)}<span class="each">each</span>`;
+          price.append(document.createTextNode(fmtMoney(l.retail_price)));
+          const each = document.createElement("span");
+          each.className = "each";
+          each.textContent = "each";
+          price.append(each);
 
           const buy = document.createElement("button");
           buy.className = "buy-btn";
@@ -349,22 +384,26 @@
       // ---- Buy modal ----
       function openBuyModal(listing) {
         const splits = listing.splits && listing.splits.length ? listing.splits : [1, 2, 3, 4];
-        const opts = splits
-          .filter(s => s <= (listing.available_quantity || 999))
+        // Filter splits to finite integers only — defense in depth against
+        // TEvo returning unexpected types in the splits array.
+        const safeSplits = splits
+          .filter(s => Number.isFinite(Number(s)) && Number(s) <= (Number(listing.available_quantity) || 999))
+          .map(s => Math.trunc(Number(s)));
+        const opts = safeSplits
           .map(s => `<option value="${s}">${s}</option>`).join("");
-        const defaultQ = splits[0] || 1;
+        const defaultQ = safeSplits[0] || 1;
         const mb = $("#modalBody");
         mb.innerHTML = `
           <h3>Get tickets</h3>
-          <p style="color:var(--muted);margin:0 0 16px">Section ${listing.section} · Row ${listing.row}</p>
+          <p style="color:var(--muted);margin:0 0 16px">Section ${esc(listing.section)} · Row ${esc(listing.row)}</p>
           <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0">
             <span>How many?</span>
             <select id="buyQty" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit">${opts}</select>
           </div>
           <div class="receipt">
-            <span class="k">Per ticket</span><span class="v">${fmtMoney(listing.retail_price)}</span>
+            <span class="k">Per ticket</span><span class="v">${esc(fmtMoney(listing.retail_price))}</span>
             <span class="k">Quantity</span><span class="v" id="receiptQty">${defaultQ}</span>
-            <span class="k total">Total</span><span class="v total" id="receiptTotal">${fmtMoney(listing.retail_price * defaultQ)}</span>
+            <span class="k total">Total</span><span class="v total" id="receiptTotal">${esc(fmtMoney(listing.retail_price * defaultQ))}</span>
           </div>
           <button id="confirmBuy" class="buy-btn" style="width:100%;padding:12px">Continue to checkout</button>
           <p style="font-size:11px;color:var(--muted);text-align:center;margin:12px 0 0">
@@ -397,11 +436,11 @@
               <h3>You're set ✓</h3>
               <p style="color:var(--muted);margin:0 0 16px">Demo confirmation — no charge processed.</p>
               <div class="receipt">
-                <span class="k">Section</span><span class="v">${r.section || "—"}</span>
-                <span class="k">Row</span><span class="v">${r.row || "—"}</span>
-                <span class="k">Quantity</span><span class="v">${r.quantity}</span>
-                <span class="k">Per ticket</span><span class="v">${fmtMoney(r.unit_price)}</span>
-                <span class="k total">Total</span><span class="v total">${fmtMoney(r.subtotal)}</span>
+                <span class="k">Section</span><span class="v">${esc(r.section) || "—"}</span>
+                <span class="k">Row</span><span class="v">${esc(r.row) || "—"}</span>
+                <span class="k">Quantity</span><span class="v">${Number(r.quantity) || 0}</span>
+                <span class="k">Per ticket</span><span class="v">${esc(fmtMoney(r.unit_price))}</span>
+                <span class="k total">Total</span><span class="v total">${esc(fmtMoney(r.subtotal))}</span>
               </div>
               <button id="closeOk" class="ghost" style="width:100%">Close</button>
             `;
@@ -430,10 +469,12 @@
           return parts.length ? parts.join(" · ") : "no filters — full inventory";
         })();
         const mb = $("#modalBody");
+        // summary contains user-controlled URL params (zone/section names);
+        // escape it before stitching into innerHTML.
         mb.innerHTML = `
           <h3>Share this view</h3>
-          <p style="color:var(--muted);margin:0 0 12px">${summary} · ${allListings.length} listing${allListings.length === 1 ? "" : "s"}</p>
-          <input id="shareUrl" readonly style="width:100%;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:12px ui-monospace,monospace;margin-bottom:8px" value="${url.replace(/"/g,"&quot;")}" />
+          <p style="color:var(--muted);margin:0 0 12px">${esc(summary)} · ${Number(allListings.length) || 0} listing${allListings.length === 1 ? "" : "s"}</p>
+          <input id="shareUrl" readonly style="width:100%;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:12px ui-monospace,monospace;margin-bottom:8px" value="${esc(url)}" />
           <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin:8px 0">
             <input type="checkbox" id="useRev" style="margin-top:2px" />
             <span>
