@@ -4457,18 +4457,41 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
         except (ValueError, TypeError):
             snapshot_age_seconds = None
 
-    # Pull venue_assets to enrich the venue payload (hero image, indoor/outdoor,
-    # capacity if A1's backfill ever lands, lat/lon for a future map preview).
-    # Audit-lane owns this table; we're read-only. Lookups silently degrade
-    # to the minimal venue payload when assets are missing — the UI hides
-    # whatever wasn't found.
+    # Pull asset bundle from v_event_seating_chart — audit-lane-maintained
+    # view that joins events × configurations × venue_assets × performer
+    # metadata into one row per event. Single round-trip, single source of
+    # truth. Includes TEvo seating chart URLs (configurations.static_maps)
+    # AND fanvenues_key for dynamic interactive seatmaps. Silently degrades
+    # to the minimal payload when the row is missing.
+    asset_bundle: dict = {}
+    if sb is not None and ev.get("id"):
+        try:
+            ab_rows = (
+                sb.table("v_event_seating_chart")
+                .select(
+                    "configuration_id,configuration_name,seating_chart_medium,"
+                    "seating_chart_large,fanvenues_key,venue_hero_url,venue_map_url,"
+                    "venue_capacity,venue_is_indoor,team_color_primary,team_color_alternate,"
+                    "team_logo_url,team_logo_dark_url,team_espn_url"
+                )
+                .eq("event_id", int(ev["id"]))
+                .limit(1)
+                .execute().data
+            ) or []
+            if ab_rows:
+                asset_bundle = ab_rows[0]
+        except Exception:
+            asset_bundle = {}
+
+    # Also pull venue coords from venue_assets (not exposed by the view —
+    # used by the near-me feature, separate from the event page UX).
     venue_assets: dict = {}
     if sb is not None and venue.get("id"):
         try:
             va_rows = (
                 sb.table("venue_assets")
-                .select("hero_image_url,is_indoor,capacity,latitude,longitude,"
-                        "city,state,country,espn_venue_id,espn_venue_name")
+                .select("latitude,longitude,city,state,country,"
+                        "espn_venue_id,espn_venue_name")
                 .eq("tevo_venue_id", int(venue["id"]))
                 .limit(1)
                 .execute().data
@@ -4489,10 +4512,12 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
                 "name": venue.get("name"),
                 "location": venue.get("location"),
                 "time_zone": venue.get("time_zone"),
-                # Audit-lane assets — null when not yet backfilled, UI hides.
-                "hero_image_url": venue_assets.get("hero_image_url"),
-                "is_indoor": venue_assets.get("is_indoor"),
-                "capacity": venue_assets.get("capacity"),
+                # Audit-lane assets (v_event_seating_chart + venue_assets).
+                # All optional — UI hides any field that's null.
+                "hero_image_url": asset_bundle.get("venue_hero_url"),
+                "venue_map_url": asset_bundle.get("venue_map_url"),
+                "is_indoor": asset_bundle.get("venue_is_indoor"),
+                "capacity": asset_bundle.get("venue_capacity"),
                 "latitude": venue_assets.get("latitude"),
                 "longitude": venue_assets.get("longitude"),
                 "city": venue_assets.get("city"),
@@ -4502,10 +4527,25 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
                 "espn_venue_name": venue_assets.get("espn_venue_name"),
             },
             "configuration": {
-                "id": config.get("id"),
-                "name": config.get("name"),
-                "seating_chart_medium": seating.get("medium"),
-                "seating_chart_large": seating.get("large"),
+                # Static seating chart from TEvo's /v9/configurations.
+                # Both medium (~500px) and large (~1000px) URLs available;
+                # UI defaults to medium and lazy-loads large on click.
+                # SQL-only mode reads these from v_event_seating_chart; live
+                # mode falls back to the inline config dict from TEvo's
+                # /v9/events/:id response.
+                "id": asset_bundle.get("configuration_id") or config.get("id"),
+                "name": asset_bundle.get("configuration_name") or config.get("name"),
+                "seating_chart_medium": (
+                    asset_bundle.get("seating_chart_medium") or seating.get("medium")
+                ),
+                "seating_chart_large": (
+                    asset_bundle.get("seating_chart_large") or seating.get("large")
+                ),
+                # fanvenues_key — opaque ID for TEvo's seatmaps-client.js
+                # interactive seat picker. Surfaced so a future enhancement
+                # can mount the dynamic seatmap (today the UI uses the static
+                # jpg). Per docs/api-08 §Seating Charts.
+                "fanvenues_key": asset_bundle.get("fanvenues_key"),
             },
             # TEvo carries "series" performers alongside competing teams on
             # playoff games (e.g. "NBA Playoffs", "NBA Western Conference
