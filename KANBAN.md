@@ -83,6 +83,40 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 ## SECURITY BACKLOG (added by code · 2026-05-10 audit)
 
 > Findings from the 2026-05-10 deep security audit (chat: "security chat"). Severity tags: **[SEC-CRIT]** = exploitable today, **[SEC-HIGH]** = exploitable under common conditions, **[SEC-MED]** = defense-in-depth gap, **[SEC-LOW]** = hardening. Each row keeps the standard NEXT format. Filed by code · 2026-05-10.
+>
+> **2026-05-11 update — code fixes pushed by A1 for B1 review/sync.** 14 of the 16 entries now have landed in-code on PR #57. Operator steps required before B1 syncs to prod are listed at the top of the section below. The 2 remaining items (Supabase network restrictions, history rewrite of the leaked literal) are infra/git-ops actions that need a human and are tagged **[OPS-ONLY]** below.
+
+### B1 sync-to-prod checklist (apply IN THIS ORDER)
+
+1. **Rotate `CRON_SECRET`** to a fresh random value. Set on Railway env, Supabase Edge Function secrets, AND seed into Supabase vault as `CRON_SECRET` (the new cron migration reads it from vault).
+2. **Seed `EDGE_FN_ANON_JWT` in vault** with the current Supabase anon JWT value. The 3 cron migrations in `20260511000200` assert this exists.
+3. **Set `CORS_ALLOWED_ORIGINS`** Railway env to your real frontend origins (comma-separated). Default permits localhost only.
+4. **Set `CHAT_ALLOWED_ORIGINS`** Supabase edge fn secret for the same.
+5. **Generate a fresh password for `coworker_readonly`** out-of-band before re-issuing. Migration `20260511000000` revokes LOGIN until you do this.
+6. **Apply migrations in order**: `20260511000000`, `20260511000100`, `20260511000200`, `20260511000300`.
+7. **Verify**: confirm cron jobs still tick (no Auth header failures); confirm `/api/store/share*` returns 401 to unauth callers; confirm edge functions return 401/500 to callers without `x-cron-secret`.
+
+### Code changes landed by A1 (2026-05-11)
+
+- `app.py`: import `hmac`, auth on store/share*, fail-closed `CRON_SECRET`, constant-time compare, AUTH_DISABLED non-prod guard, `CORSMiddleware` + `_SecurityHeadersMiddleware`.
+- `supabase/functions/_shared/cron-auth.ts`: new shared `requireCronSecret` helper (fail-closed, constant-time).
+- `supabase/functions/{collect,collect-listings,espn-collect,espn-rosters,wiki-collect,crawl-espn-team-assets,crawl-venues-and-performers,tevo-perf-find,seed-home-venues,bulk-add-watchlist,backfill-event-configurations}/index.ts`: wired to the shared helper. 6 were fail-open → fail-closed; 5 were unauth'd → now gated.
+- `supabase/functions/chat/index.ts`: CORS allowlist via `CHAT_ALLOWED_ORIGINS`, rate-limit RPC errors fail-closed (was fail-open), per-min cap tightened 10 → 6.
+- `supabase/migrations/20260511000000_security_coworker_readonly_nologin.sql`: ALTER ROLE … NOLOGIN.
+- `supabase/migrations/20260511000100_security_search_path_definer_funcs.sql`: SET search_path on the 3 ESPN/asset DEFINER fns + a sweep over any others missing it.
+- `supabase/migrations/20260511000200_security_anon_jwt_to_vault.sql`: vault-presence assertion + `_cron_invoke_edge_fn` helper + reschedule of 3 cron jobs without the literal JWT.
+- `supabase/migrations/20260511000300_security_rls_internal_tables.sql`: dynamic `ENABLE RLS` on operational tables (queues, pull logs, crawl state, internal xref). Domain tables untouched.
+- `static/store/store.js`: all `innerHTML` sinks with server/URL data converted to `textContent`/`createElement`; auto-mount via `body[data-page]`; URL params clamped (eventId, prices, qty).
+- `static/store/{index,event,shares}.html`: CSP meta (no `'unsafe-inline'` scripts), X-Content-Type-Options, referrer policy, inline `<script>Store.mountX()` removed.
+- `KANBAN.md` + `AGENTS.md`: leaked `CRON_SECRET` literal redacted.
+
+### Still pending (after this PR)
+
+- **[OPS-ONLY] Verify Supabase network restrictions / IP allowlist** — Supabase Dashboard → Database → Network restrictions. No code change possible.
+- **[OPS-ONLY] History rewrite of the leaked literal** in git — needs `git filter-repo` + a force-push window. Decide whether private-repo posture makes it optional.
+- **[SEC-MED] Add slowapi rate-limiter on `/api/store/*`** — left for the next pass; adds a Python dependency.
+- **[SEC-LOW] Document `get_app_secret` whitelist + rotation runbook** — see `MIGRATION_CONVENTIONS.md` follow-up.
+- **[SEC-HIGH] Full RLS coverage audit on domain tables** — internal/operational covered by `20260511000300`; events/performers/listings/etc. need explicit per-table policy decisions.
 
 ### NEXT (code) — [SEC-CRIT] Rotate the leaked `CRON_SECRET` value, then redact from KANBAN/AGENTS
 
@@ -287,18 +321,18 @@ The handler comment at line 3774 explicitly acknowledges this is open as MVP. Ri
 
 ---
 
-### NEXT (code) — Set Railway CRON_SECRET to unblock EVO orders
+### NEXT (code) — Set Railway CRON_SECRET to unblock EVO orders — VALUE REDACTED 2026-05-11
 
-**How**:
-- Railway dashboard → terminal-2-production service → Variables → add/update `CRON_SECRET=thisisevochronsecret123!`
-- OR `railway variables set CRON_SECRET=thisisevochronsecret123!` if using the CLI
+**Status**: superseded by the [SEC-CRIT] rotation row at the top of SECURITY BACKLOG. The original literal value was redacted from this row on 2026-05-11 (security chat) — see git log for the audit trail. Do NOT re-introduce the literal into source. Recipient: get the rotated value out-of-band from Julian.
+
+**How** (operational, no secret in source):
+- Railway dashboard → terminal-2-production service → Variables → add/update `CRON_SECRET=<rotated value, out-of-band>`
+- OR `railway variables set CRON_SECRET=<rotated value, out-of-band>` if using the CLI
 - After setting, redeploy is automatic; next cron tick (≤ 10 min) starts ingesting
 
 **Verify**: `SELECT COUNT(*) FROM evo_orders` 30 min after redeploy — should be > 0.
 
 **Why this is on the board**: design surfaced it during the 2026-05-08 Supabase data-reality pass. It's been the persistent action item from `docs/audit-2026-05-09.md` §5 item 1. Several design surfaces (Undelivered Window, Event Workbench order book strip, Pricing Queue) need EVO orders to feel populated.
-
-**Security note**: this secret value should NOT be committed to source. It's in this KANBAN row temporarily for handoff; remove this row once set.
 
 **Filed by**: design · 2026-05-08
 

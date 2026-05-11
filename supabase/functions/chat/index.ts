@@ -34,13 +34,24 @@ const COMPREHENSIVE_SUGGEST_LIMIT = 10;
 const LLM_PROVIDER = (Deno.env.get("LLM_PROVIDER") ?? "anthropic").toLowerCase();
 const LLM_MODEL    = Deno.env.get("LLM_MODEL") ?? Deno.env.get("WHATSAPP_BOT_MODEL") ?? "claude-haiku-4-5-20251001";
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
-  "Access-Control-Max-Age": "86400",
-  "Vary": "Origin",
-};
+// CORS allowlist (security-chat 2026-05-11). Was `*` which let any origin
+// drive paid Anthropic calls. CHAT_ALLOWED_ORIGINS is a comma-separated env
+// var; default permits localhost only. The header is built per-request so we
+// can mirror only origins that match the allowlist.
+const CHAT_ALLOWED_ORIGINS = (Deno.env.get("CHAT_ALLOWED_ORIGINS") ?? "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("Origin") ?? "";
+  const allow = CHAT_ALLOWED_ORIGINS.includes(origin) ? origin : "null";
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+}
 
 const SYSTEM_PROMPT = `You are a friendly ticket-finder assistant.
 
@@ -762,23 +773,27 @@ async function runLLMLoop(apiKey: string, history: any[], db: any, evo: Evo | nu
   return { reply: "I'm overthinking this — could you rephrase?", trace, entities: extracted, resolved_count: resolvedEvents.length, comprehensive_count: compEvents.length };
 }
 
-function jsonResponse(obj: any, status = 200) { return new Response(JSON.stringify(obj), { status, headers: { ...CORS_HEADERS, "content-type": "application/json" } }); }
+function jsonResponse(req: Request, obj: any, status = 200) { return new Response(JSON.stringify(obj), { status, headers: { ...corsHeaders(req), "content-type": "application/json" } }); }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
-  if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: { ...CORS_HEADERS, "content-type": "text/plain" } });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
+  if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: { ...corsHeaders(req), "content-type": "text/plain" } });
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const apiKey = LLM_PROVIDER === "anthropic" ? await resolveSecret(db, "anthropic_api_key", "ANTHROPIC_API_KEY") : Deno.env.get("LLM_API_KEY");
-  if (!apiKey) return jsonResponse({ error: "service not configured" }, 503);
+  if (!apiKey) return jsonResponse(req, { error: "service not configured" }, 503);
   let body: any = null;
-  try { body = await req.json(); } catch (_) { return jsonResponse({ error: "expected JSON body" }, 400); }
+  try { body = await req.json(); } catch (_) { return jsonResponse(req, { error: "expected JSON body" }, 400); }
   const history = Array.isArray(body?.history) ? body.history : (body?.message ? [{ role: "user", content: body.message }] : []);
-  if (!history.length) return jsonResponse({ error: "history or message required" }, 400);
+  if (!history.length) return jsonResponse(req, { error: "history or message required" }, 400);
   const ip = (req.headers.get("x-real-ip") ?? req.headers.get("cf-connecting-ip") ?? (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() ?? "unknown") || "unknown";
+  // Rate limit hardened 2026-05-11: fail-closed on RPC error so an outage
+  // doesn't let an attacker burn LLM cost. Limits tightened from 10/min to
+  // 6/min/IP — chat is interactive, 1-per-10-sec is enough.
   try {
-    const { data: allowed } = await db.rpc("check_chat_rate_limit", { p_ip: ip, p_window_sec: 60, p_max_calls: 10 });
-    if (allowed === false) { try { await db.from("bot_messages").insert({ channel: "web", direction: "in", phone: "anon-retail", body: history[history.length-1]?.content?.slice(0, 200) ?? "", meta: { rate_limited: true, ip } }); } catch (_) {} return jsonResponse({ error: "rate limited — try again in a minute" }, 429); }
-  } catch (e) { console.error("rate-limit check failed:", e); }
+    const { data: allowed, error: rlErr } = await db.rpc("check_chat_rate_limit", { p_ip: ip, p_window_sec: 60, p_max_calls: 6 });
+    if (rlErr) { console.error("rate-limit RPC error, denying:", rlErr); return jsonResponse(req, { error: "service temporarily unavailable" }, 503); }
+    if (allowed === false) { try { await db.from("bot_messages").insert({ channel: "web", direction: "in", phone: "anon-retail", body: history[history.length-1]?.content?.slice(0, 200) ?? "", meta: { rate_limited: true, ip } }); } catch (_) {} return jsonResponse(req, { error: "rate limited — try again in a minute" }, 429); }
+  } catch (e) { console.error("rate-limit check threw, denying:", e); return jsonResponse(req, { error: "service temporarily unavailable" }, 503); }
   const creds = await resolveTevoCreds(db);
   const evo = creds ? new Evo(creds.token, creds.secret) : null;
   const last = history[history.length - 1];
@@ -788,5 +803,5 @@ Deno.serve(async (req) => {
   try { result = await runLLMLoop(apiKey, history, db, evo); }
   catch (e) { result = { reply: `sorry, something went wrong: ${(e as Error).message}`, trace: [], entities: null, resolved_count: 0, comprehensive_count: 0 }; }
   try { await db.from("bot_messages").insert({ channel: "web", direction: "out", phone: "anon-retail", body: result.reply, meta: { trace: result.trace, entities: result.entities, model: LLM_MODEL, provider: LLM_PROVIDER, resolved_events_count: result.resolved_count, comprehensive_events_count: result.comprehensive_count } }); } catch (_) {}
-  return jsonResponse({ reply: result.reply });
+  return jsonResponse(req, { reply: result.reply });
 });

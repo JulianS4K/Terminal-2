@@ -16,6 +16,7 @@ Optional:
 
 from __future__ import annotations
 
+import hmac
 import os
 import re
 import secrets
@@ -24,9 +25,11 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import requests
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from evo_client import EvoClient
 
@@ -39,7 +42,15 @@ SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 CRON_SECRET = os.environ.get("CRON_SECRET")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
-AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+
+# AUTH_DISABLED is a local-dev kill switch. To prevent a Railway misconfig
+# from accidentally opening the whole API, it ONLY takes effect when
+# RAILWAY_ENVIRONMENT is unset or != "production". Hardened 2026-05-11.
+_AUTH_DISABLED_REQUESTED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+_RAILWAY_ENV = (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
+AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and _RAILWAY_ENV != "production"
+if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+    print("WARNING: AUTH_DISABLED=true ignored because RAILWAY_ENVIRONMENT=production")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -125,6 +136,51 @@ def require_auth(authorization: str | None = Header(None)):
 # ---------- App setup ----------
 
 app = FastAPI(title="Evo Terminal — data-only API (UI on rebuild)")
+
+# CORS allowlist. CORS_ALLOWED_ORIGINS env var is a comma-separated list of
+# origins; default permits local dev only. Added 2026-05-11 (security chat).
+_CORS_ORIGINS = [
+    o.strip()
+    for o in (os.environ.get("CORS_ALLOWED_ORIGINS") or "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Cron-Secret"],
+)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Emit baseline security headers on every response. The CSP is tight
+    enough to block the inline-script + third-party-script vectors but
+    permissive enough that the retail HTML keeps working (own-origin only).
+    Added 2026-05-11 (security chat)."""
+
+    _CSP = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://*.supabase.co; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("Content-Security-Policy", self._CSP)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 # (SMS / WhatsApp / web bot moved to Supabase Edge Functions in v2.7:
 #  supabase/functions/sms-bot, web-bot, chat. The legacy bot.py is unused.)
@@ -2702,15 +2758,20 @@ def seatdata_auto_search(event_id: int, _=Depends(require_auth)):
 # ============================================================================
 # Auth on this route: either a normal Bearer token (manual trigger from UI)
 # or a matching X-Cron-Secret header (pg_cron-driven). The cron secret is
-# expected in env var CRON_SECRET on Railway. Per existing convention, the
-# placeholder string 'pick-any-random-string-and-save-it' is used.
+# expected in env var CRON_SECRET on Railway. Hardened 2026-05-11:
+# fail-closed if unset (was: defaulted to a known placeholder string),
+# constant-time compare to avoid timing-leak.
 
-CRON_SECRET = os.environ.get("CRON_SECRET", "pick-any-random-string-and-save-it")
+CRON_SECRET = os.environ.get("CRON_SECRET")
 
 
 def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
-    """Allow either authenticated user OR matching X-Cron-Secret."""
-    if x_cron_secret and x_cron_secret == CRON_SECRET:
+    """Allow either authenticated user OR matching X-Cron-Secret.
+
+    Fails closed if CRON_SECRET is not configured on the server — never
+    accepts an empty/placeholder secret.
+    """
+    if x_cron_secret and CRON_SECRET and hmac.compare_digest(x_cron_secret, CRON_SECRET):
         return {"cron": True}
     return require_auth(authorization)
 
@@ -3762,7 +3823,7 @@ def _share_to_dict(row: dict) -> dict:
 
 
 @app.post("/api/store/share")
-def store_share_create(payload: dict = Body(...)):
+def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
     """Create a revocable share link for one event with saved filters.
 
     Body:
@@ -3771,9 +3832,8 @@ def store_share_create(payload: dict = Body(...)):
       note: str (optional, ≤ 500 chars)
       expires_in_days: int (optional, 1-365; null = never expires)
 
-    Auth note (MVP): currently open. Tighten with require_auth once the
-    storefront has a sign-in flow. Worst case today is link spam — a share
-    can never expose more than the public /api/store/events/{id} already does.
+    Auth: require_auth (Supabase JWT + allowed-domain email). Closed on
+    2026-05-11 (security chat) — see SECURITY BACKLOG in KANBAN.md.
     """
     # Validate before touching Supabase so 4xx errors surface the real reason
     # instead of "Supabase not configured" when both are wrong.
@@ -3879,9 +3939,13 @@ def store_share_resolve(share_id: str):
 
 
 @app.delete("/api/store/share/{share_id}")
-def store_share_revoke(share_id: str):
+def store_share_revoke(share_id: str, _=Depends(require_auth)):
     """Soft-delete: stamps revoked_at. The row stays so view history survives.
-    Idempotent — revoking an already-revoked link is fine."""
+    Idempotent — revoking an already-revoked link is fine.
+
+    Auth: require_auth. Closed on 2026-05-11 (security chat) — any unauth
+    user used to be able to revoke any share link by id.
+    """
     db = require_sb()
     res = (
         db.table("share_links")
@@ -3899,8 +3963,13 @@ def store_share_list(
     event_id: int | None = None,
     include_inactive: bool = False,
     limit: int = 50,
+    _=Depends(require_auth),
 ):
-    """List share links, newest first. Filter by event_id when present."""
+    """List share links, newest first. Filter by event_id when present.
+
+    Auth: require_auth. Closed on 2026-05-11 (security chat) — used to
+    leak every share row (event_id, filters, notes, view counts) to anon.
+    """
     db = require_sb()
     q = db.table("share_links").select(
         "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"

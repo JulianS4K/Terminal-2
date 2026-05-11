@@ -147,11 +147,11 @@ async function mapPool<T, R>(
   return { results, errors };
 }
 
+import { requireCronSecret } from "../_shared/cron-auth.ts";
+
 Deno.serve(async (req) => {
-  const expected = Deno.env.get("CRON_SECRET");
-  if (expected && req.headers.get("x-cron-secret") !== expected) {
-    return new Response("unauthorized", { status: 401 });
-  }
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
 
   const token = Deno.env.get("TEVO_TOKEN");
   const secret = Deno.env.get("TEVO_SECRET");

@@ -85,9 +85,14 @@
         meta.className = "meta";
         const left = document.createElement("div");
         left.className = "from";
-        left.innerHTML = ev.from_price != null
-          ? `from <span class="price">${fmtMoney(ev.from_price)}</span>`
-          : `<span class="price">${fmtMoney(null)}</span>`;
+        const priceSpan = document.createElement("span");
+        priceSpan.className = "price";
+        priceSpan.textContent = fmtMoney(ev.from_price);
+        if (ev.from_price != null) {
+          left.append("from ", priceSpan);
+        } else {
+          left.append(priceSpan);
+        }
         const right = document.createElement("div");
         right.className = "qty";
         right.textContent = ev.owned_tickets_count
@@ -140,9 +145,26 @@
     const sharedMatch = path.match(/^\/s\/([^/]+)$/);
     const shareId = sharedMatch ? sharedMatch[1] : null;
 
+    // Clamp helpers — added 2026-05-11 security chat. Reject non-finite
+    // values (Infinity, NaN) and out-of-band ints that could distort UI or
+    // trigger backend errors.
+    const clampInt = (v, lo, hi) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return null;
+      const i = Math.trunc(n);
+      if (i < lo || i > hi) return null;
+      return i;
+    };
+    const clampFloat = (v, lo, hi) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return null;
+      if (n < lo || n > hi) return null;
+      return n;
+    };
+
     let eventId = null;
     if (!shareId) {
-      eventId = Number(path.split("/").pop());
+      eventId = clampInt(path.split("/").pop(), 1, 1e9);
       if (!eventId) {
         $("#status").textContent = "Bad event id in URL.";
         return;
@@ -167,12 +189,15 @@
     // Read share-link filters from the URL on load (only meaningful on the
     // /store/event/{id}?... path; /s/{id} fills these in after resolve).
     const urlParams = new URLSearchParams(location.search);
+    // Hardened 2026-05-11: bound prices/qty and cap chip arrays at 50
+    // entries / 64 chars each so a malicious URL can't bloat the share-UI.
+    const _capArr = (s) => s.split(",").map((x) => x.trim()).filter(Boolean).filter((x) => x.length <= 64).slice(0, 50);
     const shareFilters = {
-      zones: (urlParams.get("zones") || "").split(",").filter(Boolean),
-      section: (urlParams.get("section") || "").split(",").filter(Boolean),
-      min_price: urlParams.get("min_price") ? Number(urlParams.get("min_price")) : null,
-      max_price: urlParams.get("max_price") ? Number(urlParams.get("max_price")) : null,
-      min_qty: urlParams.get("min_qty") ? Number(urlParams.get("min_qty")) : null,
+      zones: _capArr(urlParams.get("zones") || ""),
+      section: _capArr(urlParams.get("section") || ""),
+      min_price: urlParams.get("min_price") ? clampFloat(urlParams.get("min_price"), 0, 1e6) : null,
+      max_price: urlParams.get("max_price") ? clampFloat(urlParams.get("max_price"), 0, 1e6) : null,
+      min_qty: urlParams.get("min_qty") ? clampInt(urlParams.get("min_qty"), 1, 50) : null,
     };
     const hasUrlFilters = Object.values(shareFilters).some(
       (v) => Array.isArray(v) ? v.length : v != null
@@ -221,14 +246,25 @@
         rowLabel.textContent = `Row ${l.row || "—"}`;
         seat.append(section, rowLabel);
 
-        const splits = l.splits && l.splits.length ? l.splits.join(", ") : (l.available_quantity || 0);
+        const splitsLabel = l.splits && l.splits.length ? l.splits.join(", ") : String(l.available_quantity || 0);
         const qbox = document.createElement("div");
         qbox.className = "qbox";
-        qbox.innerHTML = `${l.available_quantity || 0} available<br/><span class="muted">sells in ${splits}</span>`;
+        qbox.append(
+          document.createTextNode(`${l.available_quantity || 0} available`),
+          document.createElement("br"),
+        );
+        const sellsIn = document.createElement("span");
+        sellsIn.className = "muted";
+        sellsIn.textContent = `sells in ${splitsLabel}`;
+        qbox.append(sellsIn);
 
         const pbox = document.createElement("div");
         pbox.className = "pbox";
-        pbox.innerHTML = `${fmtMoney(l.retail_price)}<span class="each">each</span>`;
+        pbox.append(document.createTextNode(fmtMoney(l.retail_price)));
+        const eachSpan = document.createElement("span");
+        eachSpan.className = "each";
+        eachSpan.textContent = "each";
+        pbox.append(eachSpan);
 
         const btn = document.createElement("button");
         btn.className = "btn";
@@ -267,44 +303,72 @@
       const modal = $("#modal");
       const mb = $("#modalBody");
 
-      const splitOpts = (splits.length ? splits : [1, 2, 3, 4])
-        .filter((s) => s <= (listing.available_quantity || 999))
-        .map((s) => `<option value="${s}">${s}</option>`)
-        .join("");
+      // Build via DOM — was innerHTML with server-derived data. Hardened
+      // 2026-05-11 (security chat).
+      mb.replaceChildren();
 
-      mb.innerHTML = `
-        <h3 style="margin:0 0 4px">Reserve seats</h3>
-        <p class="muted" style="margin:0 0 12px">Section ${listing.section} · Row ${listing.row}</p>
-        <label style="display:flex;justify-content:space-between;align-items:center;margin:8px 0">
-          <span>Quantity</span>
-          <select id="resQty" style="background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit">${splitOpts}</select>
-        </label>
-        <div class="receipt">
-          <span class="k">Unit price</span><span class="v">${fmtMoney(listing.retail_price)}</span>
-          <span class="k">Quantity</span><span class="v" id="rcQty">${defaultQ}</span>
-          <span class="k total">Subtotal</span><span class="v total" id="rcTotal">${fmtMoney(listing.retail_price * defaultQ)}</span>
-        </div>
-        <button class="btn" id="confirmReserve" style="width:100%">Reserve (mock)</button>
-        <p class="disclaimer">
-          MVP demo only — no payment will be processed and no order will be sent
-          to Ticket Evolution. This shows what the confirmation flow would look
-          like once checkout is wired up.
-        </p>
-      `;
+      const h3 = document.createElement("h3");
+      h3.style.margin = "0 0 4px";
+      h3.textContent = "Reserve seats";
 
-      const qSel = $("#resQty", mb);
+      const sub = document.createElement("p");
+      sub.className = "muted";
+      sub.style.margin = "0 0 12px";
+      sub.textContent = `Section ${listing.section ?? "—"} · Row ${listing.row ?? "—"}`;
+
+      const label = document.createElement("label");
+      label.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin:8px 0";
+      const lblSpan = document.createElement("span");
+      lblSpan.textContent = "Quantity";
+      const qSel = document.createElement("select");
+      qSel.id = "resQty";
+      qSel.style.cssText = "background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit";
+      const availCap = Number(listing.available_quantity) || 999;
+      for (const s of (splits.length ? splits : [1, 2, 3, 4]).filter((n) => Number(n) <= availCap)) {
+        const opt = document.createElement("option");
+        opt.value = String(s);
+        opt.textContent = String(s);
+        qSel.append(opt);
+      }
+      label.append(lblSpan, qSel);
+
+      const receipt = document.createElement("div");
+      receipt.className = "receipt";
+      const mkRow = (k, vText, idV) => {
+        const ks = document.createElement("span"); ks.className = "k"; ks.textContent = k;
+        const vs = document.createElement("span"); vs.className = "v"; vs.textContent = vText;
+        if (idV) vs.id = idV;
+        receipt.append(ks, vs);
+      };
+      mkRow("Unit price", fmtMoney(listing.retail_price));
+      mkRow("Quantity", String(defaultQ), "rcQty");
+      const totK = document.createElement("span"); totK.className = "k total"; totK.textContent = "Subtotal";
+      const totV = document.createElement("span"); totV.className = "v total"; totV.id = "rcTotal"; totV.textContent = fmtMoney(Number(listing.retail_price) * defaultQ);
+      receipt.append(totK, totV);
+
+      const confirm = document.createElement("button");
+      confirm.className = "btn";
+      confirm.id = "confirmReserve";
+      confirm.style.width = "100%";
+      confirm.textContent = "Reserve (mock)";
+
+      const disc = document.createElement("p");
+      disc.className = "disclaimer";
+      disc.textContent = "MVP demo only — no payment will be processed and no order will be sent to Ticket Evolution. This shows what the confirmation flow would look like once checkout is wired up.";
+
+      mb.append(h3, sub, label, receipt, confirm, disc);
+
       qSel.value = String(defaultQ);
       const recompute = () => {
         const q = Number(qSel.value);
-        $("#rcQty", mb).textContent = q;
-        $("#rcTotal", mb).textContent = fmtMoney(listing.retail_price * q);
+        $("#rcQty", mb).textContent = String(q);
+        totV.textContent = fmtMoney(Number(listing.retail_price) * q);
       };
       qSel.addEventListener("change", recompute);
 
-      $("#confirmReserve", mb).addEventListener("click", async () => {
-        const btn = $("#confirmReserve", mb);
-        btn.disabled = true;
-        btn.textContent = "Validating with TEvo…";
+      confirm.addEventListener("click", async () => {
+        confirm.disabled = true;
+        confirm.textContent = "Validating with TEvo…";
         try {
           const res = await api("/api/store/reserve", {
             method: "POST",
@@ -317,8 +381,8 @@
           });
           renderReceipt(mb, res);
         } catch (err) {
-          btn.disabled = false;
-          btn.textContent = "Reserve (mock)";
+          confirm.disabled = false;
+          confirm.textContent = "Reserve (mock)";
           alert(`Could not reserve: ${err.message}`);
         }
       });
@@ -328,20 +392,41 @@
 
     function renderReceipt(mb, res) {
       const r = res.reservation || {};
-      mb.innerHTML = `
-        <h3 style="margin:0 0 4px">Reservation confirmed (mock)</h3>
-        <p class="muted" style="margin:0 0 12px">${res.message || ""}</p>
-        <div class="receipt">
-          <span class="k">Event</span><span class="v">#${r.event_id}</span>
-          <span class="k">Section</span><span class="v">${r.section || "—"}</span>
-          <span class="k">Row</span><span class="v">${r.row || "—"}</span>
-          <span class="k">Quantity</span><span class="v">${r.quantity}</span>
-          <span class="k">Unit price</span><span class="v">${fmtMoney(r.unit_price)}</span>
-          <span class="k total">Total</span><span class="v total">${fmtMoney(r.subtotal)}</span>
-        </div>
-        <button class="btn ghost" id="closeOk" style="width:100%">Close</button>
-      `;
-      $("#closeOk", mb).addEventListener("click", closeModal);
+      // Build via DOM — was innerHTML with server-derived data. Hardened
+      // 2026-05-11 (security chat).
+      mb.replaceChildren();
+
+      const h3 = document.createElement("h3");
+      h3.style.margin = "0 0 4px";
+      h3.textContent = "Reservation confirmed (mock)";
+
+      const msg = document.createElement("p");
+      msg.className = "muted";
+      msg.style.margin = "0 0 12px";
+      msg.textContent = res.message || "";
+
+      const receipt = document.createElement("div");
+      receipt.className = "receipt";
+      const mkRow = (k, vText, totalClass) => {
+        const ks = document.createElement("span"); ks.className = totalClass ? "k total" : "k"; ks.textContent = k;
+        const vs = document.createElement("span"); vs.className = totalClass ? "v total" : "v"; vs.textContent = vText;
+        receipt.append(ks, vs);
+      };
+      mkRow("Event", `#${r.event_id}`);
+      mkRow("Section", String(r.section ?? "—"));
+      mkRow("Row", String(r.row ?? "—"));
+      mkRow("Quantity", String(r.quantity ?? ""));
+      mkRow("Unit price", fmtMoney(r.unit_price));
+      mkRow("Total", fmtMoney(r.subtotal), true);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "btn ghost";
+      closeBtn.id = "closeOk";
+      closeBtn.style.width = "100%";
+      closeBtn.textContent = "Close";
+
+      mb.append(h3, msg, receipt, closeBtn);
+      closeBtn.addEventListener("click", closeModal);
     }
 
     function closeModal() {
@@ -392,13 +477,31 @@
       if (filters.max_price != null) parts.push(`max ${fmtMoney(filters.max_price)}`);
       if (filters.min_qty != null) parts.push(`${filters.min_qty}+ seats`);
       const filterText = parts.length ? parts.join(" · ") : "no filters";
-      const noteHtml = share?.note ? `<br/><span style="font-style:italic">"${escapeHtml(share.note)}"</span>` : "";
-      const trackHtml = share
-        ? ` · <span class="muted">link viewed ${share.view_count || 0}×</span>`
-        : "";
-      summary.innerHTML = `<strong>Shared view</strong> · ${filterText} · showing ${listingsCount} of ${totalBefore}${trackHtml}${noteHtml}`;
-      // "show all" link points to the canonical event URL with filters stripped.
-      if (clearLink && event?.id) clearLink.href = `/store/event/${event.id}`;
+
+      // Build via DOM — filterText carries URL-param + server data unescaped.
+      // Hardened 2026-05-11 (security chat).
+      summary.replaceChildren();
+      const strong = document.createElement("strong");
+      strong.textContent = "Shared view";
+      summary.append(
+        strong,
+        document.createTextNode(` · ${filterText} · showing ${Number(listingsCount) || 0} of ${Number(totalBefore) || 0}`),
+      );
+      if (share) {
+        const track = document.createElement("span");
+        track.className = "muted";
+        track.textContent = ` · link viewed ${Number(share.view_count) || 0}×`;
+        summary.append(document.createTextNode(" "), track);
+      }
+      if (share?.note) {
+        summary.append(document.createElement("br"));
+        const noteSpan = document.createElement("span");
+        noteSpan.style.fontStyle = "italic";
+        noteSpan.textContent = `"${share.note}"`;
+        summary.append(noteSpan);
+      }
+
+      if (clearLink && event?.id) clearLink.href = `/store/event/${Number(event.id) || 0}`;
       banner.hidden = false;
     }
 
@@ -630,8 +733,12 @@
             if (f.max_price != null) qp.set("max_price", f.max_price);
             if (f.min_qty != null) qp.set("min_qty", f.min_qty);
             const res = await api(`/api/store/events/${eventId}?${qp.toString()}`);
-            $("#sharePreview", mb).innerHTML =
-              `<strong>${res.listings_count}</strong> of ${res.total_before_filters} listings would be shared`;
+            // Build via DOM — was innerHTML with server numbers. Hardened 2026-05-11.
+            const preview = $("#sharePreview", mb);
+            preview.replaceChildren();
+            const s = document.createElement("strong");
+            s.textContent = String(Number(res.listings_count) || 0);
+            preview.append(s, document.createTextNode(` of ${Number(res.total_before_filters) || 0} listings would be shared`));
           } catch (e) {
             $("#sharePreview", mb).textContent = `preview failed: ${e.message}`;
           }
@@ -757,16 +864,30 @@
       return parts.join(" · ") || "(no filters)";
     }
 
-    function fmtStatus(s) {
-      if (s.revoked_at) return `<span class="pill bad">revoked</span>`;
+    function fmtStatusInto(target, s) {
+      // DOM-only renderer for the status pill column. Replaces the prior
+      // fmtStatus(s) -> HTML string -> td.innerHTML pattern that was
+      // flagged by the 2026-05-11 security audit.
+      target.replaceChildren();
+      const mk = (cls, text) => {
+        const el = document.createElement("span");
+        el.className = cls;
+        el.textContent = text;
+        return el;
+      };
+      if (s.revoked_at) { target.append(mk("pill bad", "revoked")); return; }
       if (s.expires_at) {
         const exp = new Date(s.expires_at);
         if (!isNaN(exp.getTime()) && exp <= new Date()) {
-          return `<span class="pill bad">expired</span>`;
+          target.append(mk("pill bad", "expired"));
+          return;
         }
-        return `<span class="pill good">active</span> <span class="muted">until ${exp.toLocaleDateString()}</span>`;
+        target.append(mk("pill good", "active"));
+        target.append(document.createTextNode(" "));
+        target.append(mk("muted", `until ${exp.toLocaleDateString()}`));
+        return;
       }
-      return `<span class="pill good">active</span>`;
+      target.append(mk("pill good", "active"));
     }
 
     async function load() {
@@ -785,27 +906,60 @@
           return;
         }
 
-        tbody.innerHTML = "";
+        tbody.replaceChildren();
         for (const s of shares) {
           const tr = document.createElement("tr");
           tr.dataset.id = s.id;
           const fullUrl = `${location.origin}${s.url}`;
-          tr.innerHTML = `
-            <td>
-              <a href="${s.url}" class="mono">/s/${escapeHtml(s.id)}</a>
-            </td>
-            <td>
-              <a href="/store/event/${s.event_id}">#${s.event_id}</a>
-            </td>
-            <td><span class="muted">${escapeHtml(fmtFilters(s.filters))}</span></td>
-            <td>${escapeHtml(s.note || "")}</td>
-            <td>${s.view_count || 0}</td>
-            <td>${fmtStatus(s)}</td>
-            <td class="actions">
-              <button class="btn ghost copy-btn" data-url="${escapeAttr(fullUrl)}">copy</button>
-              ${s.revoked_at ? "" : `<button class="btn ghost revoke-btn" data-id="${escapeAttr(s.id)}">revoke</button>`}
-            </td>
-          `;
+
+          // Build via DOM — was innerHTML with server data, only some escaped.
+          // Hardened 2026-05-11 (security chat).
+          const td1 = document.createElement("td");
+          const aSlug = document.createElement("a");
+          aSlug.className = "mono";
+          aSlug.href = String(s.url || "");
+          aSlug.textContent = `/s/${s.id}`;
+          td1.append(aSlug);
+
+          const td2 = document.createElement("td");
+          const aEvent = document.createElement("a");
+          aEvent.href = `/store/event/${Number(s.event_id) || 0}`;
+          aEvent.textContent = `#${Number(s.event_id) || 0}`;
+          td2.append(aEvent);
+
+          const td3 = document.createElement("td");
+          const mutedSpan = document.createElement("span");
+          mutedSpan.className = "muted";
+          mutedSpan.textContent = fmtFilters(s.filters);
+          td3.append(mutedSpan);
+
+          const td4 = document.createElement("td");
+          td4.textContent = String(s.note || "");
+
+          const td5 = document.createElement("td");
+          td5.textContent = String(Number(s.view_count) || 0);
+
+          const td6 = document.createElement("td");
+          // fmtStatus returns small static HTML; reparse safely via DOMParser
+          // or rebuild via DOM. Rebuild here is simpler.
+          fmtStatusInto(td6, s);
+
+          const td7 = document.createElement("td");
+          td7.className = "actions";
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "btn ghost copy-btn";
+          copyBtn.dataset.url = fullUrl;
+          copyBtn.textContent = "copy";
+          td7.append(copyBtn);
+          if (!s.revoked_at) {
+            const revBtn = document.createElement("button");
+            revBtn.className = "btn ghost revoke-btn";
+            revBtn.dataset.id = String(s.id || "");
+            revBtn.textContent = "revoke";
+            td7.append(revBtn);
+          }
+
+          tr.append(td1, td2, td3, td4, td5, td6, td7);
           tbody.append(tr);
         }
 
@@ -850,4 +1004,19 @@
   }
 
   window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
+
+  // Auto-mount based on body data-page. Lets HTML pages drop their inline
+  // `<script>Store.mountX()</script>` so we can ship a strict CSP without
+  // 'unsafe-inline'. Added 2026-05-11 (security chat).
+  function _autoMount() {
+    const page = document.body && document.body.dataset && document.body.dataset.page;
+    if (page === "catalog") mountCatalog();
+    else if (page === "event") mountEvent();
+    else if (page === "shares") mountSharesAdmin();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", _autoMount);
+  } else {
+    _autoMount();
+  }
 })();
