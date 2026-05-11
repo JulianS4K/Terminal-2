@@ -17,6 +17,7 @@ Optional:
 from __future__ import annotations
 
 import hmac
+import math
 import os
 import re
 import secrets
@@ -3521,33 +3522,88 @@ def _ticket_group_to_listing(tg: dict) -> dict:
 @app.get("/api/store/events")
 def store_events(
     q: str | None = None,
+    performer_id: int | None = None,
+    venue_id: int | None = None,
     limit: int = 60,
     offset: int = 0,
+    include_inactive: bool = False,
 ):
     """Catalog: events for which we have owned inventory in TEvo.
 
-    Driven by Supabase event_metrics (collector populates owned_tickets_count
-    via /v9/ticket_groups?owned=true on every run). Falling back to the bare
-    events table if Supabase is unavailable still keeps the page alive.
+    Driven by Supabase `latest_event_metrics` (collector populates
+    owned_tickets_count via /v9/ticket_groups?owned=true on every run).
+
+    Wiring:
+    - Filtered by `event_lifecycle.is_active` so ghosts / completed /
+      postponed events are dropped (set include_inactive=true to bypass).
+    - Performer assets (logos / brand colors) bulk-fetched from
+      performer_metadata so cards can render branding without N+1.
+    - Search is in-Python over the already-narrowed result set; cheap
+      because the DB query already caps at limit×2 candidate rows.
     """
     db = require_sb()
-    # Pull events ordered by upcoming first, only those with owned tickets
-    # available right now. The latest_event_metrics view exposes the
-    # most-recent event_metrics row per event.
+    # Cap raised from 200 -> 500 so consumer search pages can cover the full
+    # owned-inventory set in one fetch. Prod has ~270 events with owned
+    # tickets at any given time; capping at 200 was leaving ~25% invisible
+    # to anyone searching by performer name on the storefront. Pagination
+    # is the next step if the catalog grows past ~500.
+    cap = min(max(limit, 1), 500)
+
+    # Pull a wider candidate set so we can post-filter by lifecycle + search
+    # and still serve a full page.
+    candidate_limit = min(cap * 2, 1000) if not include_inactive else cap
     sel = (
         db.table("latest_event_metrics")
         .select(
             "event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
             "tickets_count,retail_min,captured_at,"
-            "events(id,name,occurs_at_local,venue_name,venue_location,"
-            "primary_performer_name)"
+            "events!inner(id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+            "primary_performer_id,primary_performer_name)"
         )
         .gt("owned_tickets_count", 0)
-        .order("captured_at", desc=True)
-        .limit(min(limit, 200))
+        # Consumer ordering: soonest event first. StubHub / SeatGeek default.
+        # Older "captured_at desc" was internal collector freshness, the wrong
+        # signal for shoppers. Foreign-table column reachable via PostgREST
+        # because of the events!inner join above.
+        .order("occurs_at_local", desc=False, foreign_table="events", nullsfirst=False)
+        .limit(candidate_limit)
         .offset(max(offset, 0))
     )
+    # Optional filters — applied to the joined `events` table via PostgREST's
+    # `<table>.<column>` syntax (the !inner above makes this work).
+    if performer_id is not None:
+        sel = sel.eq("events.primary_performer_id", int(performer_id))
+    if venue_id is not None:
+        sel = sel.eq("events.venue_id", int(venue_id))
     rows = (sel.execute().data) or []
+
+    # Drop ghosts / completed / postponed unless caller opts in. Same
+    # pattern as broker_movers — small id-set, single roundtrip to the
+    # event_lifecycle view (over derive_event_lifecycle()).
+    if rows and not include_inactive:
+        ev_ids = [(r.get("events") or {}).get("id") for r in rows]
+        ev_ids = [e for e in ev_ids if e]
+        if ev_ids:
+            try:
+                lc_rows = (
+                    db.table("event_lifecycle")
+                    .select("event_id,status,is_active")
+                    .in_("event_id", ev_ids)
+                    .execute()
+                ).data or []
+                inactive = {r["event_id"] for r in lc_rows if not r.get("is_active")}
+                if inactive:
+                    rows = [r for r in rows
+                            if (r.get("events") or {}).get("id") not in inactive]
+            except Exception:
+                # event_lifecycle view missing in some envs; better to show
+                # everything than 500 the storefront.
+                pass
+
+    # Bulk-fetch performer assets so card branding doesn't N+1.
+    perf_ids = [(r.get("events") or {}).get("primary_performer_id") for r in rows]
+    perf_ids = [int(p) for p in perf_ids if p]
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
 
     out: list[dict] = []
     needle = (q or "").strip().lower()
@@ -3566,6 +3622,7 @@ def store_events(
             ).lower()
             if needle not in hay:
                 continue
+        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
         out.append({
             "id": ev.get("id"),
             "name": ev.get("name"),
@@ -3573,12 +3630,239 @@ def store_events(
             "venue_name": ev.get("venue_name"),
             "venue_location": ev.get("venue_location"),
             "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_logo": (a or {}).get("logo_default_url"),
+            "primary_performer_color": (a or {}).get("color_primary"),
             "from_price": r.get("retail_min"),
             "owned_tickets_count": r.get("owned_tickets_count"),
             "owned_groups_count": r.get("owned_groups_count"),
             "captured_at": r.get("captured_at"),
         })
-    return {"count": len(out), "events": out}
+        if len(out) >= cap:
+            break
+    return {"count": len(out), "events": out, "limit": cap, "offset": offset}
+
+
+def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in miles between two (lat,lon) pairs."""
+    R_MI = 3958.7613  # Earth's mean radius in miles
+    lat1r, lat2r = math.radians(lat1), math.radians(lat2)
+    dlat = lat2r - lat1r
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1r) * math.cos(lat2r) * math.sin(dlon / 2) ** 2
+    return 2 * R_MI * math.asin(math.sqrt(a))
+
+
+def _attach_owned_metadata(
+    db,
+    candidate_ids: list[int],
+    user_lat: float,
+    user_lon: float,
+) -> list[dict]:
+    """Given a list of TEvo event_ids, intersect with our owned + active set
+    and decorate with metadata + display distance. Used by both 'hybrid' and
+    'supabase' near-me modes to keep response shape identical.
+    """
+    if not candidate_ids:
+        return []
+    rows = (
+        db.table("latest_event_metrics")
+        .select(
+            "event_id,owned_tickets_count,owned_groups_count,retail_min,"
+            "events!inner(id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+            "primary_performer_id,primary_performer_name)"
+        )
+        .gt("owned_tickets_count", 0)
+        .in_("event_id", [int(e) for e in candidate_ids])
+        .execute().data
+    ) or []
+    if not rows:
+        return []
+
+    ev_ids = [r["event_id"] for r in rows]
+    try:
+        lc = (
+            db.table("event_lifecycle").select("event_id,is_active")
+            .in_("event_id", ev_ids).execute().data
+        ) or []
+        inactive = {r["event_id"] for r in lc if not r.get("is_active")}
+    except Exception:
+        inactive = set()
+
+    venue_ids = list({(r.get("events") or {}).get("venue_id") for r in rows
+                      if (r.get("events") or {}).get("venue_id")})
+    coord_map: dict[int, tuple[float, float]] = {}
+    if venue_ids:
+        try:
+            ca = (
+                db.table("venue_assets").select("tevo_venue_id,latitude,longitude")
+                .in_("tevo_venue_id", venue_ids).execute().data
+            ) or []
+            for c in ca:
+                if c.get("latitude") is not None and c.get("longitude") is not None:
+                    coord_map[int(c["tevo_venue_id"])] = (float(c["latitude"]), float(c["longitude"]))
+        except Exception:
+            coord_map = {}
+
+    perf_ids = [int((r.get("events") or {}).get("primary_performer_id"))
+                for r in rows
+                if (r.get("events") or {}).get("primary_performer_id")
+                and r["event_id"] not in inactive]
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+
+    out: list[dict] = []
+    for r in rows:
+        eid = r["event_id"]
+        if eid in inactive:
+            continue
+        ev = r.get("events") or {}
+        coords = coord_map.get(int(ev.get("venue_id"))) if ev.get("venue_id") else None
+        dist = _haversine_miles(user_lat, user_lon, coords[0], coords[1]) if coords else None
+        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
+        out.append({
+            "id": eid,
+            "name": ev.get("name"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue_name": ev.get("venue_name"),
+            "venue_location": ev.get("venue_location"),
+            "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_logo": (a or {}).get("logo_default_url"),
+            "primary_performer_color": (a or {}).get("color_primary"),
+            "from_price": r.get("retail_min"),
+            "owned_tickets_count": r.get("owned_tickets_count"),
+            "distance_miles": round(dist, 1) if dist is not None else None,
+        })
+    return out
+
+
+@app.get("/api/store/events/near")
+def store_events_near(
+    lat: float,
+    lon: float,
+    within: float = 50.0,       # miles
+    limit: int = 10,
+    source: str = "hybrid",     # 'hybrid' | 'supabase' | 'tevo'
+):
+    """Owned-inventory events sorted by distance from (lat, lon).
+
+    Implements evo-docs §05 ("Displaying Events Near Your Users"). Three
+    modes selectable via `?source=`:
+
+    1. **hybrid** (default) — TEvo's `/v9/events?lat&lon&within` provides
+       authoritative geo filtering (100% venue coverage). We then intersect
+       the result with our `latest_event_metrics WHERE owned_tickets_count
+       > 0` and apply `event_lifecycle.is_active`. Best of both: TEvo's
+       geo authority + our owned/lifecycle filtering.
+
+    2. **supabase** — pure local: read our owned+active set, join
+       `venue_assets` for lat/lon (83% coverage), compute Python haversine,
+       filter by within. Faster (no TEvo round-trip), zero TEvo quota,
+       but caps coverage at venues we've geocoded.
+
+    3. **tevo** — raw TEvo geo result, no owned filter. Useful for
+       comparison/debug only; the storefront wall says we never show
+       inventory we don't own, so this mode is debug-only and excluded
+       from the consumer UI.
+
+    Distance display uses our `venue_assets` coords for both hybrid and
+    supabase modes (TEvo's events response doesn't include lat/lon on
+    the venue object). Events with no coord yield `distance_miles: null`
+    and sort to the end.
+    """
+    within = max(1.0, min(within, 500.0))
+    cap = max(1, min(limit, 50))
+
+    if source == "tevo":
+        # No Supabase needed for debug mode — straight passthrough.
+        # Debug mode: raw TEvo geo, NO owned filter. Returns whatever TEvo
+        # has nearby. Not used by the consumer UI.
+        try:
+            tevo_resp = client.list_events(
+                lat=lat, lon=lon, within=within,
+                only_with_available_tickets=True,
+                order_by="events.occurs_at ASC",
+                per_page=min(cap, 100),
+            )
+        except RuntimeError as e:
+            raise HTTPException(502, f"TEvo geo lookup failed: {e}")
+        evs = tevo_resp.get("events") or []
+        return {
+            "count": len(evs),
+            "events": [
+                {
+                    "id": e.get("id"),
+                    "name": e.get("name"),
+                    "occurs_at_local": e.get("occurs_at_local"),
+                    "venue_name": (e.get("venue") or {}).get("name"),
+                    "venue_location": (e.get("venue") or {}).get("location"),
+                    "distance_miles": None,
+                }
+                for e in evs
+            ],
+            "user_lat": lat, "user_lon": lon, "within_miles": within,
+            "source": "tevo",
+        }
+
+    db = require_sb()
+
+    if source == "hybrid":
+        # Step 1: TEvo geo query for events near (lat, lon) with available
+        # marketplace tickets. Authoritative venue coords; per_page is
+        # capped at 100 by TEvo so we take all of them as candidates.
+        try:
+            tevo_resp = client.list_events(
+                lat=lat, lon=lon, within=within,
+                only_with_available_tickets=True,
+                order_by="events.occurs_at ASC",
+                per_page=100,
+            )
+        except RuntimeError as e:
+            # On TEvo failure, fall through to supabase mode rather than
+            # 502'ing the home page. Logged for observability.
+            print(f"near (hybrid): TEvo failed, falling back to supabase: {e}")
+            source = "supabase"
+        else:
+            candidate_ids = [int(e["id"]) for e in (tevo_resp.get("events") or []) if e.get("id")]
+            decorated = _attach_owned_metadata(db, candidate_ids, lat, lon)
+            decorated.sort(key=lambda x: (x["distance_miles"] is None, x["distance_miles"] or 1e9))
+            return {
+                "count": len(decorated[:cap]),
+                "events": decorated[:cap],
+                "user_lat": lat, "user_lon": lon, "within_miles": within,
+                "total_within_radius": len(decorated),
+                "tevo_candidates": len(candidate_ids),
+                "source": "hybrid",
+            }
+
+    # source == "supabase" (or hybrid fallback)
+    # Pull all owned events with their venue coords, compute haversine,
+    # filter by within. 83% venue coverage means some events miss this
+    # path; an audit-lane geocoder backfill would close the gap.
+    rows = (
+        db.table("latest_event_metrics")
+        .select(
+            "event_id,owned_tickets_count,owned_groups_count,retail_min,"
+            "events!inner(id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+            "primary_performer_id,primary_performer_name)"
+        )
+        .gt("owned_tickets_count", 0)
+        .limit(500)
+        .execute().data
+    ) or []
+    candidate_ids = [int(r["event_id"]) for r in rows]
+    decorated = _attach_owned_metadata(db, candidate_ids, lat, lon)
+    # Drop events outside the radius (or missing coords entirely).
+    in_radius = [d for d in decorated
+                 if d["distance_miles"] is not None and d["distance_miles"] <= within]
+    in_radius.sort(key=lambda x: x["distance_miles"])
+    return {
+        "count": len(in_radius[:cap]),
+        "events": in_radius[:cap],
+        "user_lat": lat, "user_lon": lon, "within_miles": within,
+        "total_within_radius": len(in_radius),
+        "supabase_candidates": len(rows),
+        "missing_coords": sum(1 for d in decorated if d["distance_miles"] is None),
+        "source": "supabase",
+    }
 
 
 def _csv(v: str | None) -> list[str]:
@@ -3651,6 +3935,157 @@ def _normalize_filters(raw: dict | None) -> dict:
     }
 
 
+def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
+    """Fire-and-forget kick to the audit lane's collect-listings Edge Function
+    so canonical SQL stays as fresh as the storefront sees.
+
+    Two paths:
+    - **Tracked event** (row exists in `events`): hit
+      `collect-listings?event_id=X&min_age_seconds=10`. The audit-lane
+      function dedupes against recent snapshots, so 100 shoppers in 10s
+      trigger one collector run, not 100.
+    - **Untracked event** (row missing): insert primary performer into
+      `watchlist`, then call `collect-listings?watchlist_id=N`. The
+      sweep populates `events` + `listings_snapshots` + `event_metrics`
+      for that performer's full calendar. From now on the regular cron
+      cadence covers the event automatically.
+
+    Lane note: writes to `watchlist` (audit-lane table) using the same
+    insert pattern as the existing `/api/watchlist` POST endpoint. We're
+    using the existing API surface, not creating a parallel writer — the
+    unique constraint on (kind, ext_id) keeps the table consistent.
+
+    Always non-blocking; runs on a daemon thread. Failures are logged to
+    stdout, never raised back to the page handler.
+    """
+    if not (sb is not None and SUPABASE_URL and CRON_SECRET):
+        return  # Best-effort only; missing config silently no-ops.
+
+    def _go():
+        try:
+            existing = (
+                sb.table("events").select("id").eq("id", event_id).limit(1).execute().data
+            )
+        except Exception as e:
+            print(f"canonical refresh: events lookup failed for {event_id}: {e}")
+            return
+
+        if existing:
+            url = (
+                f"{SUPABASE_URL}/functions/v1/collect-listings"
+                f"?event_id={event_id}&min_age_seconds=10"
+            )
+            _fire_collect(url, CRON_SECRET)
+            return
+
+        # Auto-track path: this event is brand new to us. Add primary
+        # performer to watchlist so the cron picks it up going forward.
+        performances = ev.get("performances") or []
+        primary = next(
+            ((p.get("performer") or {}) for p in performances if p.get("primary")),
+            ((performances[0].get("performer") or {}) if performances else {}),
+        )
+        pid = primary.get("id")
+        if not pid:
+            print(f"auto-track: event {event_id} has no primary performer; skipping")
+            return
+        pid = int(pid)
+        pname = primary.get("name") or f"performer {pid}"
+
+        watchlist_id: int | None = None
+        try:
+            ins = sb.table("watchlist").insert(
+                {"kind": "performer", "ext_id": pid, "label": pname}
+            ).execute()
+            row = (ins.data or [None])[0]
+            if row:
+                watchlist_id = row.get("id")
+                print(f"auto-track: added performer {pid} ({pname}) to watchlist as id={watchlist_id}")
+        except Exception as e:
+            msg = str(e)
+            if "duplicate" in msg.lower() or "23505" in msg or "unique" in msg.lower():
+                # Already in watchlist — find the existing id so we can scope the kick.
+                try:
+                    found = (
+                        sb.table("watchlist").select("id")
+                        .eq("kind", "performer").eq("ext_id", pid)
+                        .limit(1).execute().data
+                    )
+                    if found:
+                        watchlist_id = found[0]["id"]
+                except Exception as e2:
+                    print(f"auto-track: lookup after dup failed: {e2}")
+            else:
+                print(f"auto-track: watchlist insert failed for performer {pid}: {e}")
+
+        if watchlist_id:
+            url = f"{SUPABASE_URL}/functions/v1/collect-listings?watchlist_id={watchlist_id}"
+            _fire_collect(url, CRON_SECRET)
+
+    threading.Thread(target=_go, daemon=True).start()
+
+
+def _fetch_owned_ticket_groups(
+    event_id: int,
+    max_age_seconds: int | None = None,
+) -> tuple[list[dict], str]:
+    """Pull owned-only ticket_groups for an event. Returns (groups, source)
+    where source is 'cache' (≤max_age) or 'live'.
+
+    Cache strategy:
+    - Read: gated on `max_age_seconds`. Storefront passes ~10 to keep retail
+      pages near-real-time; broker terminal passes None (uses the row's own
+      90s expires_at). This lets one cache table serve both consumers with
+      different freshness contracts.
+    - Write: always 90s TTL so the broker terminal still gets long-lived
+      data after a storefront refresh.
+
+    Note: cache key is event_id only; owned=true is implied for both
+    storefront and broker call sites that hit this helper.
+    """
+    if sb is not None:
+        try:
+            cached = sb.rpc("get_cached_ticket_groups", {"p_event_id": event_id}).execute().data
+            if cached:
+                payload_age_ok = True
+                if max_age_seconds is not None:
+                    captured_at_str = (cached or {}).get("captured_at")
+                    if captured_at_str:
+                        try:
+                            captured_at = datetime.fromisoformat(
+                                str(captured_at_str).replace("Z", "+00:00")
+                            )
+                            age = (datetime.now(timezone.utc) - captured_at).total_seconds()
+                            payload_age_ok = age <= max_age_seconds
+                        except (ValueError, TypeError):
+                            payload_age_ok = False
+                    else:
+                        payload_age_ok = False
+                if payload_age_ok:
+                    return (cached or {}).get("ticket_groups", []) or [], "cache"
+        except Exception:
+            # Cache failure must never block the page; fall through to live.
+            pass
+    try:
+        live = client.get_ticket_groups(event_id, owned=True)
+    except RuntimeError as e:
+        raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+    groups = live.get("ticket_groups", []) or []
+    if sb is not None:
+        try:
+            sb.rpc("put_cached_ticket_groups", {
+                "p_event_id": event_id,
+                "p_payload": {
+                    "ticket_groups": groups,
+                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "p_ttl_seconds": 90,
+            }).execute()
+        except Exception:
+            pass
+    return groups, "live"
+
+
 def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
     """Fetch event + owned listings, apply filters, return the same shape
     /api/store/events/{id} returns. Shared by the public detail endpoint
@@ -3659,12 +4094,11 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
         ev = client.get_event(event_id)
     except RuntimeError as e:
         raise HTTPException(502, f"TEvo event lookup failed: {e}")
-    try:
-        tg_resp = client.get_ticket_groups(event_id, owned=True)
-    except RuntimeError as e:
-        raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
 
-    groups = tg_resp.get("ticket_groups") or []
+    # Storefront freshness contract: 10s. Tighter than broker's 90s because
+    # this is the buy-decision page — stale availability => bad UX.
+    groups, tg_source = _fetch_owned_ticket_groups(event_id, max_age_seconds=10)
+
     eligible = [
         tg
         for tg in groups
@@ -3728,7 +4162,34 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
     config = ev.get("configuration") or {}
     seating = (config.get("seating_chart") or {})
 
-    return {
+    # Bulk-attach branded assets (logo / colors) for the performers on
+    # this event. performer_metadata is populated by the audit lane's ESPN
+    # ingest — we read only. Falls through gracefully when a performer has
+    # no asset row yet (most non-MLB/NBA/NFL/NHL teams don't).
+    perf_assets: dict[int, dict] = {}
+    if sb is not None:
+        try:
+            perf_ids = [int((p.get("performer") or {}).get("id"))
+                        for p in performances
+                        if (p.get("performer") or {}).get("id")]
+            if perf_ids:
+                perf_assets = _bulk_performer_assets(sb, perf_ids)
+        except Exception:
+            perf_assets = {}
+
+    def _attach_assets(p):
+        perf = p.get("performer") or {}
+        pid = perf.get("id")
+        a = perf_assets.get(int(pid)) if pid else None
+        return {
+            "id": pid,
+            "name": perf.get("name"),
+            "primary": p.get("primary"),
+            "logo_url": (a or {}).get("logo_default_url"),
+            "color_primary": (a or {}).get("color_primary"),
+        }
+
+    response = {
         "event": {
             "id": ev.get("id"),
             "name": ev.get("name"),
@@ -3746,20 +4207,21 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
                 "seating_chart_medium": seating.get("medium"),
                 "seating_chart_large": seating.get("large"),
             },
-            "performers": [
-                {
-                    "id": (p.get("performer") or {}).get("id"),
-                    "name": (p.get("performer") or {}).get("name"),
-                    "primary": p.get("primary"),
-                }
-                for p in performances
-            ],
+            "performers": [_attach_assets(p) for p in performances],
         },
         "listings": listings,
         "listings_count": len(listings),
         "total_before_filters": total_before_filters,
         "filters": f,
+        "inventory_source": tg_source,        # 'cache' (≤10s old) or 'live'
     }
+
+    # Fire-and-forget: refresh canonical SQL via the audit-lane Edge Function.
+    # Auto-tracks the event (adds performer to watchlist) if we've never seen
+    # it before. Never blocks the response.
+    _fire_canonical_refresh(event_id, ev)
+
+    return response
 
 
 @app.get("/api/store/events/{event_id}")
@@ -4087,6 +4549,40 @@ def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
 @app.get("/store/shares")
 def store_shares_page():
     return FileResponse(os.path.join(STATIC_DIR, "store", "shares.html"))
+
+
+@app.get("/store/test")
+def store_test_index_page():
+    """Multi-page wiring test harness — index. Sidebar navigates to one
+    page per evo-doc workflow (search, performer, venue, event landing)
+    plus storefront-specific share links. Useful for verifying the store
+    works against real data before merging."""
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "index.html"))
+
+
+@app.get("/store/test/search")
+def store_test_search_page():
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "search.html"))
+
+
+@app.get("/store/test/performer")
+def store_test_performer_page():
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "performer.html"))
+
+
+@app.get("/store/test/venue")
+def store_test_venue_page():
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "venue.html"))
+
+
+@app.get("/store/test/event")
+def store_test_event_page():
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "event.html"))
+
+
+@app.get("/store/test/share")
+def store_test_share_page():
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "share.html"))
 
 
 # Static assets (CSS / JS / images) served from /static.
