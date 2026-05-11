@@ -71,12 +71,15 @@ psql "$SUPABASE_DB_URL" -c "ALTER ROLE coworker_readonly WITH PASSWORD '$NEW_PWD
 
 ```bash
 supabase db push  # or your usual migration tool
-# Migrations land in this order automatically (timestamp-sorted):
+# Auto-apply set (timestamp-sorted, all in supabase/migrations/):
 #   20260511000000  coworker_readonly NOLOGIN
 #   20260511000100  SET search_path on DEFINER fns
 #   20260511000200  anon JWT to vault + cron rebuild  <-- fails if 1.1+1.2 not done
 #   20260511000300  RLS on internal tables
-#   20260511000400  per-table RLS draft (NEW — see §3.3)
+#
+# Hand-apply set (lives in docs/proposed-migrations/, NOT auto-applied):
+#   20260511000400  per-table RLS draft  <-- run §C verification first, then
+#                                            copy into supabase/migrations/ and re-run
 ```
 
 ---
@@ -141,7 +144,7 @@ New section 7 ("Vault secrets — whitelist + rotation policy") added. Covers:
 
 ### 3.3 [SEC-HIGH] Per-table RLS draft for domain tables
 
-New migration `20260511000400_security_rls_domain_tables_draft.sql`. **Marked DRAFT** — DO NOT apply blindly. It enables RLS on each domain table with a policy that mirrors the current effective access:
+Draft migration at `docs/proposed-migrations/20260511000400_security_rls_domain_tables_draft.sql` (kept OUT of `supabase/migrations/` so `supabase db push` cannot apply it accidentally). **Marked DRAFT** — DO NOT copy into `supabase/migrations/` until you've run the §C verification queries. It enables RLS on each domain table with a policy that mirrors the current effective access:
 - `events`, `performers`, `venues`, `listings_snapshots` → `FOR SELECT TO anon, authenticated USING (true)` (matches existing PostgREST behavior)
 - All other domain tables → `ENABLE RLS` with NO policy (service-role only)
 
@@ -244,6 +247,6 @@ If applying any migration fails:
 | `20260511000200` raises `EDGE_FN_ANON_JWT not in vault` | You forgot §1.2. Seed and re-apply. |
 | `20260511000200` raises `CRON_SECRET not in vault` | You forgot §1.1.c. Seed and re-apply. |
 | `20260511000300` errors | A pattern matched a table the app actively writes to from anon — REVOKE the LOGIN-side write and restore via service_role only. Open an issue against this branch. |
-| `20260511000400` errors or breaks the app | Apply REVERT: `ALTER TABLE x DISABLE ROW LEVEL SECURITY;` per affected table, then iterate on the policy in a follow-up. The migration is marked DRAFT for this reason. |
+| `20260511000400` (when manually applied) errors or breaks the app | Apply REVERT: `ALTER TABLE x DISABLE ROW LEVEL SECURITY;` per affected table, then iterate on the policy in a follow-up. The migration is marked DRAFT and held in `docs/proposed-migrations/` for this reason — copy into `supabase/migrations/` only after §C verification. |
 
 If anything's unclear or the prod state differs from what this runbook assumes, **stop and ping A1 in a PR comment** before forcing through.

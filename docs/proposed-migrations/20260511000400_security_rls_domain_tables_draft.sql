@@ -1,6 +1,12 @@
 -- ============================================================================
 -- 20260511000400 — security: ENABLE RLS on domain tables (DRAFT — verify first)
 --
+-- LOCATION: docs/proposed-migrations/ (NOT supabase/migrations/). Kept out of
+-- the auto-apply path on purpose — `supabase db push` will NOT pick this up.
+-- After B1 verifies §C against prod, COPY this file into supabase/migrations/
+-- (filename can stay the same) and re-run db push. Moved here 2026-05-11
+-- per B1 blocker on PR #57.
+--
 -- Lane:     xref+macro (audit / security)
 -- Touches:  every public.* table not already RLS-enabled, with explicit
 --           anon-read carve-outs for the documented public surface.
