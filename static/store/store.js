@@ -878,12 +878,15 @@
             <input id="shareNote" class="share-input" maxlength="500"
                    placeholder="Optional note for the recipient" />
             <select id="shareExpires" class="share-input" style="margin-top:6px">
-              <option value="">never expires</option>
-              <option value="1">expires in 1 day</option>
-              <option value="7" selected>expires in 7 days</option>
-              <option value="30">expires in 30 days</option>
-              <option value="90">expires in 90 days</option>
+              <option value="" selected>auto · 1h after event start</option>
+              <option value="1">expires in 1 day (capped at event end)</option>
+              <option value="7">expires in 7 days (capped at event end)</option>
+              <option value="30">expires in 30 days (capped at event end)</option>
+              <option value="90">expires in 90 days (capped at event end)</option>
             </select>
+            <p class="muted" style="font-size:11px;margin:6px 0 0">
+              Links auto-expire 1 hour after event start regardless of choice — past tip-off the inventory is moot anyway.
+            </p>
           </div>
         </div>
 

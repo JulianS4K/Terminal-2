@@ -491,12 +491,15 @@
           <div id="revOpts" hidden>
             <input id="shareNote" maxlength="500" placeholder="Optional note for the recipient" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit;margin-bottom:6px" />
             <select id="shareExpires" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit">
-              <option value="">never expires</option>
-              <option value="1">expires in 1 day</option>
-              <option value="7" selected>expires in 7 days</option>
-              <option value="30">expires in 30 days</option>
-              <option value="90">expires in 90 days</option>
+              <option value="" selected>auto · 1h after event start</option>
+              <option value="1">expires in 1 day (capped at event end)</option>
+              <option value="7">expires in 7 days (capped at event end)</option>
+              <option value="30">expires in 30 days (capped at event end)</option>
+              <option value="90">expires in 90 days (capped at event end)</option>
             </select>
+            <p style="color:var(--muted);font-size:11px;margin:6px 0 0">
+              All links auto-expire 1h after event start regardless of choice.
+            </p>
           </div>
           <button id="shareCopy" class="buy-btn" style="width:100%;padding:10px;margin-top:12px">Copy link</button>
         `;

@@ -4787,8 +4787,39 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
     if note and len(note) > 500:
         raise HTTPException(400, "note too long (max 500 chars)")
 
-    expires_at = None
+    # All validation passed — now we need Supabase to persist.
+    db = require_sb()
+
+    # Compute the auto-expiry ceiling: event_start + 1h. Past this point the
+    # share is effectively useless (event has started + small buffer for
+    # walk-up viewing), so we always cap expires_at here. User-chosen
+    # expires_in_days narrows further; null/0/never == "use the cap".
+    #
+    # Default: cap. User explicit shorter days: min(user_days_date, cap).
+    # Buffer is 1h chosen so a recipient opening the link AT tip-off still
+    # sees the inventory; past +1h they get a 410 from /api/store/share/{id}.
+    event_end_ceiling: datetime | None = None
+    try:
+        ev_row = (
+            db.table("events")
+            .select("occurs_at_local")
+            .eq("id", event_id)
+            .limit(1)
+            .execute().data
+        )
+        if ev_row and ev_row[0].get("occurs_at_local"):
+            ev_start = datetime.fromisoformat(
+                str(ev_row[0]["occurs_at_local"]).replace("Z", "+00:00")
+            )
+            # `occurs_at_local` carries the real offset (it's stored as TZ-
+            # qualified ISO), so the resulting datetime is timezone-aware.
+            event_end_ceiling = ev_start + timedelta(hours=1)
+    except Exception:
+        event_end_ceiling = None  # No event row found — fall back to user-only.
+
+    expires_at: str | None = None
     raw_days = payload.get("expires_in_days")
+    user_pick: datetime | None = None
     if raw_days not in (None, "", 0):
         try:
             days = int(raw_days)
@@ -4796,10 +4827,17 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
             raise HTTPException(400, "expires_in_days must be an integer")
         if not (1 <= days <= 365):
             raise HTTPException(400, "expires_in_days must be between 1 and 365")
-        expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+        user_pick = datetime.now(timezone.utc) + timedelta(days=days)
 
-    # All validation passed — now we need Supabase to persist.
-    db = require_sb()
+    # Pick the tighter of (user choice, event-end ceiling). When the event
+    # is unknown, fall back to the user choice. When neither is set the
+    # share never expires (legacy behavior preserved).
+    if user_pick and event_end_ceiling:
+        chosen = min(user_pick, event_end_ceiling)
+    else:
+        chosen = user_pick or event_end_ceiling
+    if chosen:
+        expires_at = chosen.astimezone(timezone.utc).isoformat()
 
     # ~12 chars (9 random bytes → 12 url-safe chars) ≈ 72 bits of entropy.
     # Retry once on the astronomically unlikely collision.
