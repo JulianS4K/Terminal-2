@@ -129,11 +129,37 @@ a { color: inherit; }
   text-decoration: none;
   color: inherit;
   transition: transform .12s, border-color .12s;
+  position: relative;
+  overflow: hidden;
+}
+/* Brand-color stripe along the left edge when the performer has one. */
+.card[style*="--card-accent"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--card-accent);
 }
 .card:hover {
   transform: translateY(-2px);
   border-color: var(--accent);
   box-shadow: var(--shadow);
+}
+.card-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.card-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--bg);
+  padding: 4px;
+  flex-shrink: 0;
 }
 .card .when {
   font-size: 12px;
@@ -213,24 +239,68 @@ a { color: inherit; }
 }
 .muted { color: var(--muted); font-weight: 400; font-size: 13px; }
 
-.listcontrols {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 14px;
-  font-size: 13px;
-  color: var(--muted);
-}
-.listcontrols label { display: flex; gap: 6px; align-items: center; }
-.listcontrols select,
-.listcontrols input {
+/* ----- Inline filter bar on event page ----- */
+.filter-bar {
   background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.filter-row.inline > * { flex-shrink: 0; }
+.filter-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.filter-bar input,
+.filter-bar select {
+  background: var(--bg);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 6px 10px;
   font: inherit;
 }
-.listcontrols input { width: 80px; }
+.filter-bar input[type="number"] { width: 90px; }
+.filter-bar input:focus,
+.filter-bar select:focus { outline: none; border-color: var(--accent); }
+
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+.chip-group .filter-chip {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.chip-group .filter-chip:hover { border-color: var(--accent-2); }
+.chip-group .filter-chip.on {
+  background: rgba(255,92,42,0.15);
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
 
 .list {
   list-style: none;
@@ -354,7 +424,46 @@ a { color: inherit; }
   align-items: flex-start;
   gap: 16px;
 }
-.head-actions { flex-shrink: 0; }
+.head-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* ----- Performer chips on event header ----- */
+.perf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--perf-color, var(--line));
+  background: var(--panel);
+}
+.perf-chip:has(img) { padding-left: 4px; }
+.perf-logo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+/* ----- Inventory-freshness badge ----- */
+.freshness {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.freshness.cached { color: var(--muted); }
+.freshness.live {
+  color: var(--good);
+  border-color: rgba(74,222,128,0.3);
+  background: rgba(74,222,128,0.08);
+}
 
 /* ----- Shared-view banner ----- */
 .banner {

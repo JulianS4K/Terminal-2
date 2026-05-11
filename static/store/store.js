@@ -52,30 +52,49 @@
 
     let allEvents = [];
 
-    function render(events) {
+    function render(events, mode) {
+      // mode: "all" (initial load) or "search" (after a query)
       grid.innerHTML = "";
+      status.hidden = true;
       if (!events.length) {
         grid.hidden = true;
         empty.hidden = false;
-        status.hidden = true;
+        empty.textContent = mode === "search"
+          ? "No events match. Try a broader search, or clear the box to see all."
+          : "No events with available inventory right now. Check back after the next collector run.";
         return;
       }
       empty.hidden = true;
-      status.hidden = true;
       grid.hidden = false;
 
       for (const ev of events) {
         const a = document.createElement("a");
         a.className = "card";
         a.href = `/store/event/${ev.id}`;
+        if (ev.primary_performer_color) {
+          a.style.setProperty("--card-accent", ev.primary_performer_color);
+        }
 
+        // Header row: logo (if branded) + meta lines.
+        const head = document.createElement("div");
+        head.className = "card-head";
+        if (ev.primary_performer_logo) {
+          const img = document.createElement("img");
+          img.className = "card-logo";
+          img.src = ev.primary_performer_logo;
+          img.alt = "";
+          img.loading = "lazy";
+          head.append(img);
+        }
+        const headText = document.createElement("div");
         const when = document.createElement("div");
         when.className = "when";
         when.textContent = fmtWhen(ev.occurs_at_local);
-
         const name = document.createElement("div");
         name.className = "name";
         name.textContent = ev.name || "Untitled event";
+        headText.append(when, name);
+        head.append(headText);
 
         const where = document.createElement("div");
         where.className = "where";
@@ -100,20 +119,20 @@
           : "available";
         meta.append(left, right);
 
-        a.append(when, name, where, meta);
+        a.append(head, where, meta);
         grid.append(a);
       }
     }
 
     function filter(query) {
       const q = (query || "").trim().toLowerCase();
-      if (!q) return render(allEvents);
+      if (!q) return render(allEvents, "all");
       const filtered = allEvents.filter((e) => {
         const hay = [e.name, e.venue_name, e.venue_location, e.primary_performer_name]
           .filter(Boolean).join(" ").toLowerCase();
         return hay.includes(q);
       });
-      render(filtered);
+      render(filtered, "search");
     }
 
     form.addEventListener("submit", (e) => {
@@ -122,10 +141,10 @@
     });
     input.addEventListener("input", () => filter(input.value));
 
-    api("/api/store/events?limit=120")
+    api("/api/store/events?limit=500")
       .then((res) => {
         allEvents = res.events || [];
-        render(allEvents);
+        render(allEvents, "all");
       })
       .catch((err) => {
         status.textContent = `Couldn't load events: ${err.message}`;
@@ -135,13 +154,22 @@
 
   // ---------- Event detail page ----------
   function mountEvent() {
-    // Two URL shapes:
-    //   /store/event/{eventId}?zones=...    stateless (current)
-    //   /s/{shareId}                        revocable share — resolves
-    //                                       to an event_id + saved filters
-    //                                       via the /api/store/share/{id}
-    //                                       endpoint.
-    const path = location.pathname;
+    // The event/listings page is also the share-link surface — the URL is
+    // the source of truth for the filter set. Two URL shapes can land here:
+    //
+    //   /store/event/{eventId}?zones=...&min_qty=...   stateless filtered
+    //   /s/{shareId}                                   revocable share — resolves
+    //                                                  via /api/store/share/{id},
+    //                                                  then we replaceState into
+    //                                                  the canonical event URL
+    //                                                  with the saved filters.
+    //
+    // Filter inputs on the page are bound to the URL:
+    //   - chip click / input change -> debounced -> writes URL via
+    //     replaceState -> refetches /api/store/events/{id}?<filters>
+    //   - server-side filter is the only filter (no client-side narrowing)
+    //   - "Share this view" just serializes the current URL
+    let path = location.pathname;
     const sharedMatch = path.match(/^\/s\/([^/]+)$/);
     const shareId = sharedMatch ? sharedMatch[1] : null;
 
@@ -171,62 +199,103 @@
       }
     }
 
+    // DOM refs (ALL pulled here so the helpers below don't re-query).
     const status = $("#status");
     const head = $("#header");
     const body = $("#body");
-    const minQty = $("#minQty");
-    const maxPrice = $("#maxPrice");
     const listEl = $("#listings");
     const noListings = $("#noListings");
     const listCount = $("#listCount");
     const seatMap = $("#seatMap");
+    const zoneRow = $("#zoneRow");
+    const zoneChipsEl = $("#zoneChips");
+    const sectionRow = $("#sectionRow");
+    const sectionChipsEl = $("#sectionChips");
+    const minPriceInput = $("#minPrice");
+    const maxPriceInput = $("#maxPrice");
+    const minQtyInput = $("#minQty");
+    const resetBtn = $("#resetFilters");
 
     let allListings = [];
     let event = null;
     let zonesAvailable = [];   // populated from /api/store/events/{id}/zones
     let resolvedShare = null;  // populated when arriving via /s/{id}
+    let suppressApply = false; // true while we paint inputs programmatically
 
-    // Read share-link filters from the URL on load (only meaningful on the
-    // /store/event/{id}?... path; /s/{id} fills these in after resolve).
-    const urlParams = new URLSearchParams(location.search);
-    // Hardened 2026-05-11: bound prices/qty and cap chip arrays at 50
-    // entries / 64 chars each so a malicious URL can't bloat the share-UI.
-    const _capArr = (s) => s.split(",").map((x) => x.trim()).filter(Boolean).filter((x) => x.length <= 64).slice(0, 50);
-    const shareFilters = {
-      zones: _capArr(urlParams.get("zones") || ""),
-      section: _capArr(urlParams.get("section") || ""),
-      min_price: urlParams.get("min_price") ? clampFloat(urlParams.get("min_price"), 0, 1e6) : null,
-      max_price: urlParams.get("max_price") ? clampFloat(urlParams.get("max_price"), 0, 1e6) : null,
-      min_qty: urlParams.get("min_qty") ? clampInt(urlParams.get("min_qty"), 1, 50) : null,
-    };
-    const hasUrlFilters = Object.values(shareFilters).some(
-      (v) => Array.isArray(v) ? v.length : v != null
-    );
-    const isSharedView = hasUrlFilters || !!shareId;
+    // ---- URL <-> filter conversion (hardened per #57's A1 review:
+    // cap array sizes + clamp numeric ranges so a malicious URL can't
+    // bloat the share-UI or trigger backend errors). ----
+    const _capArr = (s) => s.split(",").map((x) => x.trim()).filter(Boolean)
+                            .filter((x) => x.length <= 64).slice(0, 50);
+    function parseUrlFilters() {
+      const u = new URLSearchParams(location.search);
+      return {
+        zones:    _capArr(u.get("zones") || ""),
+        section:  _capArr(u.get("section") || ""),
+        min_price: u.get("min_price") ? clampFloat(u.get("min_price"), 0, 1e6) : null,
+        max_price: u.get("max_price") ? clampFloat(u.get("max_price"), 0, 1e6) : null,
+        min_qty:   u.get("min_qty") ? clampInt(u.get("min_qty"), 1, 50) : null,
+      };
+    }
 
-    function renderList() {
-      const minQ = Number(minQty.value) || 1;
-      const maxP = Number(maxPrice.value) || Infinity;
-      const filtered = allListings.filter((l) => {
-        const splits = l.splits || [];
-        const aQty = Number(l.available_quantity) || 0;
-        const meetsQty = splits.length
-          ? splits.some((s) => s >= minQ)
-          : aQty >= minQ;
-        const price = Number(l.retail_price) || 0;
-        return meetsQty && price <= maxP;
-      });
+    function buildQueryString(f) {
+      const p = new URLSearchParams();
+      if (f.zones && f.zones.length)     p.set("zones", f.zones.join(","));
+      if (f.section && f.section.length) p.set("section", f.section.join(","));
+      if (f.min_price != null)           p.set("min_price", f.min_price);
+      if (f.max_price != null)           p.set("max_price", f.max_price);
+      if (f.min_qty != null)             p.set("min_qty", f.min_qty);
+      const qs = p.toString();
+      return qs ? `?${qs}` : "";
+    }
 
-      listCount.textContent = `${filtered.length} of ${allListings.length}`;
+    function hasActiveFilters(f) {
+      return (f.zones && f.zones.length)
+        || (f.section && f.section.length)
+        || f.min_price != null
+        || f.max_price != null
+        || f.min_qty != null;
+    }
+
+    function readFiltersFromUI() {
+      return {
+        zones:    $$(".filter-chip.on", zoneChipsEl).map(c => c.dataset.value),
+        section:  $$(".filter-chip.on", sectionChipsEl).map(c => c.dataset.value),
+        min_price: minPriceInput.value === "" ? null : Number(minPriceInput.value),
+        max_price: maxPriceInput.value === "" ? null : Number(maxPriceInput.value),
+        min_qty:   minQtyInput.value === "" ? null : Number(minQtyInput.value),
+      };
+    }
+
+    function paintInputsFromFilters(f) {
+      suppressApply = true;
+      try {
+        minPriceInput.value = f.min_price ?? "";
+        maxPriceInput.value = f.max_price ?? "";
+        minQtyInput.value   = f.min_qty != null ? String(f.min_qty) : "";
+      } finally {
+        suppressApply = false;
+      }
+    }
+
+    function updateUrl(f) {
+      const qs = buildQueryString(f);
+      const newUrl = `/store/event/${eventId}${qs}`;
+      if (newUrl !== location.pathname + location.search) {
+        history.replaceState({}, "", newUrl);
+      }
+    }
+
+    // ---- Listings rendering (server already filtered) ----
+    function renderListings() {
+      listCount.textContent = `${allListings.length}`;
       listEl.innerHTML = "";
-
-      if (!filtered.length) {
+      if (!allListings.length) {
         noListings.hidden = false;
         return;
       }
       noListings.hidden = true;
-
-      for (const l of filtered) {
+      for (const l of allListings) {
         const li = document.createElement("li");
         li.className = "row";
 
@@ -441,35 +510,96 @@
       if (e.key === "Escape") closeModal();
     });
 
-    minQty.addEventListener("change", renderList);
-    maxPrice.addEventListener("input", renderList);
-
-    // Share button — opens the share modal.
-    $("#openShare").addEventListener("click", () => openShareModal());
-
-    // "Show all" link inside the shared-view banner — strips URL filters.
-    const clearShared = $("#clearShared");
-    if (clearShared) {
-      clearShared.href = location.pathname;
+    // ---- Filter chip rendering ----
+    function renderZoneChips(activeZones) {
+      // Zones row appears ONLY when this event has curated zones in
+      // performer_zones (today: NYK at MSG and a handful of others).
+      // For everything else, the row stays hidden — sections/price/qty cover it.
+      if (!zonesAvailable.length) {
+        zoneRow.hidden = true;
+        return;
+      }
+      zoneRow.hidden = false;
+      zoneChipsEl.innerHTML = "";
+      const activeSet = new Set(activeZones || []);
+      const all = Array.from(new Set([...zonesAvailable.map(z => z.name), ...activeSet]));
+      for (const name of all) {
+        const meta = zonesAvailable.find(z => z.name === name);
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "filter-chip" + (activeSet.has(name) ? " on" : "");
+        chip.dataset.value = name;
+        chip.textContent = meta && meta.tickets ? `${name} (${meta.tickets})` : name;
+        chip.addEventListener("click", () => {
+          chip.classList.toggle("on");
+          scheduleApply();
+        });
+        zoneChipsEl.append(chip);
+      }
     }
 
-    function buildEventQuery(extra) {
-      const p = new URLSearchParams();
-      const f = { ...shareFilters, ...(extra || {}) };
-      if (f.zones && f.zones.length) p.set("zones", f.zones.join(","));
-      if (f.section && f.section.length) p.set("section", f.section.join(","));
-      if (f.min_price != null && f.min_price !== "") p.set("min_price", f.min_price);
-      if (f.max_price != null && f.max_price !== "") p.set("max_price", f.max_price);
-      if (f.min_qty != null && f.min_qty !== "") p.set("min_qty", f.min_qty);
-      const qs = p.toString();
-      return qs ? `?${qs}` : "";
+    function renderSectionChips(activeSections) {
+      // Sections come from the currently-loaded listings. Active sections
+      // that aren't in current listings (e.g., recipient filtered to A,B,C
+      // and only B is present) are still shown as chips so the recipient
+      // can clear them.
+      const sectionsPresent = Array.from(new Set(
+        allListings.map(l => String(l.section || "").trim()).filter(Boolean)
+      ));
+      const activeSet = new Set(activeSections || []);
+      const all = Array.from(new Set([...sectionsPresent, ...activeSet]))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      if (!all.length) {
+        sectionRow.hidden = true;
+        return;
+      }
+      sectionRow.hidden = false;
+      sectionChipsEl.innerHTML = "";
+      for (const s of all) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "filter-chip" + (activeSet.has(s) ? " on" : "");
+        chip.dataset.value = s;
+        chip.textContent = s;
+        chip.addEventListener("click", () => {
+          chip.classList.toggle("on");
+          scheduleApply();
+        });
+        sectionChipsEl.append(chip);
+      }
     }
 
+    // ---- Apply filter changes: read UI -> URL -> fetch -> render ----
+    let applyTimer = null;
+    function scheduleApply() {
+      if (suppressApply) return;
+      clearTimeout(applyTimer);
+      applyTimer = setTimeout(applyFiltersAndFetch, 250);
+    }
+
+    async function applyFiltersAndFetch() {
+      const f = readFiltersFromUI();
+      updateUrl(f);
+      try {
+        const res = await api(`/api/store/events/${eventId}${buildQueryString(f)}`);
+        applyEventResponse(res, resolvedShare);
+      } catch (err) {
+        // Filter apply failures don't break the existing rendered state —
+        // surface in the banner only.
+        console.error("filter apply failed:", err);
+      }
+    }
+
+    // ---- Banner: shows when any filter is active or arriving via /s/{id} ----
     function showSharedBanner(filters, totalBefore, listingsCount, share) {
       const banner = $("#sharedBanner");
       const summary = $("#sharedSummary");
       const clearLink = $("#clearShared");
-      if (!isSharedView) { banner.hidden = true; return; }
+      const isFiltered = hasActiveFilters(filters || {});
+      if (!isFiltered && !share) {
+        banner.hidden = true;
+        return;
+      }
       const parts = [];
       if (filters.zones?.length) parts.push(`zone: ${filters.zones.join(", ")}`);
       if (filters.section?.length) parts.push(`section: ${filters.section.join(", ")}`);
@@ -479,13 +609,17 @@
       const filterText = parts.length ? parts.join(" · ") : "no filters";
 
       // Build via DOM — filterText carries URL-param + server data unescaped.
-      // Hardened 2026-05-11 (security chat).
+      // Hardened 2026-05-11 (PR #57 A1 security review). Distinguishes
+      // "Filtered view" (user just filtered inline) from "Shared view"
+      // (arrived via /s/{id}).
       summary.replaceChildren();
       const strong = document.createElement("strong");
-      strong.textContent = "Shared view";
+      strong.textContent = share ? "Shared view" : "Filtered view";
       summary.append(
         strong,
-        document.createTextNode(` · ${filterText} · showing ${Number(listingsCount) || 0} of ${Number(totalBefore) || 0}`),
+        document.createTextNode(
+          ` · ${filterText} · showing ${Number(listingsCount) || 0} of ${Number(totalBefore) || 0}`
+        ),
       );
       if (share) {
         const track = document.createElement("span");
@@ -501,129 +635,124 @@
         summary.append(noteSpan);
       }
 
-      if (clearLink && event?.id) clearLink.href = `/store/event/${Number(event.id) || 0}`;
+      if (clearLink && eventId) clearLink.href = `/store/event/${Number(eventId) || 0}`;
       banner.hidden = false;
     }
 
+    // ---- Apply event response: paint header + listings + chip state ----
     function applyEventResponse(res, share) {
       event = res.event;
       allListings = res.listings || [];
+      const filters = res.filters || readFiltersFromUI();
 
       $("#evName").textContent = event.name || "Untitled event";
       $("#evVenue").textContent = [event.venue?.name, event.venue?.location].filter(Boolean).join(" · ");
       $("#evDate").textContent = fmtWhen(event.occurs_at_local);
-      $("#evPerformers").textContent = (event.performers || [])
-        .map((p) => p.name + (p.primary ? " (home)" : ""))
-        .join(" vs ");
+
+      const perfEl = $("#evPerformers");
+      perfEl.innerHTML = "";
+      const perfs = event.performers || [];
+      perfs.forEach((p, i) => {
+        if (i > 0) {
+          const sep = document.createElement("span");
+          sep.className = "muted";
+          sep.textContent = " vs ";
+          perfEl.append(sep);
+        }
+        const span = document.createElement("span");
+        span.className = "perf-chip";
+        if (p.color_primary) span.style.setProperty("--perf-color", p.color_primary);
+        if (p.logo_url) {
+          const img = document.createElement("img");
+          img.src = p.logo_url;
+          img.alt = "";
+          img.className = "perf-logo";
+          img.loading = "lazy";
+          span.append(img);
+        }
+        const txt = document.createElement("span");
+        txt.textContent = p.name + (p.primary ? " (home)" : "");
+        span.append(txt);
+        perfEl.append(span);
+      });
 
       const map = event.configuration?.seating_chart_medium || event.configuration?.seating_chart_large;
       if (map) seatMap.src = map;
       else seatMap.style.display = "none";
 
+      const freshness = $("#freshness");
+      if (freshness) {
+        if (res.inventory_source === "cache") {
+          freshness.textContent = "inventory cached (≤10s)";
+          freshness.className = "freshness cached";
+        } else if (res.inventory_source === "live") {
+          freshness.textContent = "live inventory";
+          freshness.className = "freshness live";
+        } else {
+          freshness.textContent = "";
+        }
+      }
+
       status.hidden = true;
       head.hidden = false;
       body.hidden = false;
-      showSharedBanner(res.filters || {}, res.total_before_filters || 0, res.listings_count || 0, share);
-      renderList();
+      renderListings();
+      // Re-render section chips against the new listings (sections may have
+      // shifted as filters narrowed); zone chips are event-static so don't
+      // need re-rendering here.
+      renderSectionChips(filters.section || []);
+      showSharedBanner(filters, res.total_before_filters || 0, res.listings_count || 0, share);
     }
 
-    function loadEvent() {
-      if (shareId) {
-        // Stateful share — server resolves filters + bumps view_count.
-        return api(`/api/store/share/${encodeURIComponent(shareId)}`)
-          .then((res) => {
-            resolvedShare = res.share || null;
-            // Backfill the share filters into the local state so the share
-            // modal pre-fills correctly if the recipient re-opens it.
-            if (resolvedShare?.filters) {
-              const f = resolvedShare.filters;
-              shareFilters.zones = f.zones || [];
-              shareFilters.section = f.section || [];
-              shareFilters.min_price = f.min_price != null ? Number(f.min_price) : null;
-              shareFilters.max_price = f.max_price != null ? Number(f.max_price) : null;
-              shareFilters.min_qty = f.min_qty != null ? Number(f.min_qty) : null;
-            }
-            eventId = res.event?.id;
-            applyEventResponse(res, resolvedShare);
-            return res;
-          });
-      }
-      // Stateless share — filters come from URL params.
-      return api(`/api/store/events/${eventId}${buildEventQuery()}`)
-        .then((res) => { applyEventResponse(res, null); return res; });
-    }
+    // ---- Filter input wiring ----
+    minPriceInput.addEventListener("input", scheduleApply);
+    maxPriceInput.addEventListener("input", scheduleApply);
+    minQtyInput.addEventListener("change", scheduleApply);
+    resetBtn.addEventListener("click", () => {
+      paintInputsFromFilters({});
+      $$(".filter-chip", $("#filterBar")).forEach((c) => c.classList.remove("on"));
+      // No debounce — Reset is intentional.
+      applyFiltersAndFetch();
+    });
 
-    function loadZones() {
-      // For /s/{id} links the eventId is unknown until loadEvent resolves,
-      // so the call is delayed in that path (see Promise chain below).
-      if (!eventId) return Promise.resolve();
-      return api(`/api/store/events/${eventId}/zones`)
-        .then((res) => { zonesAvailable = res.zones || []; })
-        .catch(() => { zonesAvailable = []; });
-    }
+    // ---- Modal close handlers (shared by reserve + share modals) ----
+    $("#closeModal").addEventListener("click", closeModal);
+    $("#modal").addEventListener("click", (e) => {
+      if (e.target.id === "modal") closeModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeModal();
+    });
 
-    // ---------- Share modal ----------
+    // ---- Share button ----
+    $("#openShare").addEventListener("click", openShareModal);
+
+    // ---- Share modal: serializes the CURRENT URL. No filter UI here.
+    //      The page itself is the filter UI; share is just a copy/save action. ----
     function openShareModal() {
       const modal = $("#modal");
       const mb = $("#modalBody");
+      const f = readFiltersFromUI();
+      const statelessUrl = `${location.origin}/store/event/${eventId}${buildQueryString(f)}`;
 
-      // Distinct sections present in the currently-loaded listings — so the
-      // share dialog suggests sections the seller actually has.
-      const sectionsPresent = Array.from(new Set(
-        allListings.map((l) => String(l.section || "").trim()).filter(Boolean)
-      )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-
-      const zoneOpts = zonesAvailable.length
-        ? zonesAvailable.map((z) =>
-            `<label class="chip"><input type="checkbox" value="${escapeAttr(z.name)}" data-zone /> ${escapeHtml(z.name)} <span class="muted">(${z.tickets || 0})</span></label>`
-          ).join("")
-        : `<span class="muted">No curated zones for this event yet — use sections or price.</span>`;
-
-      const sectionOpts = sectionsPresent.length
-        ? sectionsPresent.map((s) =>
-            `<label class="chip"><input type="checkbox" value="${escapeAttr(s)}" data-section /> ${escapeHtml(s)}</label>`
-          ).join("")
-        : `<span class="muted">No sections available.</span>`;
+      const summaryParts = [];
+      if (f.zones.length)     summaryParts.push(`zone: ${f.zones.join(", ")}`);
+      if (f.section.length)   summaryParts.push(`section: ${f.section.join(", ")}`);
+      if (f.min_price != null) summaryParts.push(`min ${fmtMoney(f.min_price)}`);
+      if (f.max_price != null) summaryParts.push(`max ${fmtMoney(f.max_price)}`);
+      if (f.min_qty != null)   summaryParts.push(`${f.min_qty}+ seats`);
+      const summary = summaryParts.length
+        ? summaryParts.join(" · ")
+        : "no filters — full inventory";
+      const listingCount = allListings.length;
 
       mb.innerHTML = `
-        <h3 style="margin:0 0 4px">Share inventory</h3>
-        <p class="muted" style="margin:0 0 16px">
-          Pick what to share — recipients see only listings matching these filters.
+        <h3 style="margin:0 0 4px">Share this view</h3>
+        <p class="muted" style="margin:0 0 12px">
+          ${escapeHtml(summary)} · ${listingCount} listing${listingCount === 1 ? "" : "s"}
         </p>
 
-        <div class="share-section">
-          <div class="share-label">Zones</div>
-          <div class="chip-row" id="zoneChips">${zoneOpts}</div>
-        </div>
-
-        <div class="share-section">
-          <div class="share-label">Sections</div>
-          <div class="chip-row" id="sectionChips">${sectionOpts}</div>
-          <input id="sectionExtra" placeholder="extra sections (CSV)" class="share-input" />
-        </div>
-
-        <div class="share-section">
-          <div class="share-label">Price (per seat)</div>
-          <div class="share-row">
-            <input id="shareMin" type="number" min="0" step="10" placeholder="min $" />
-            <input id="shareMax" type="number" min="0" step="10" placeholder="max $" />
-          </div>
-        </div>
-
-        <div class="share-section">
-          <div class="share-label">Minimum quantity</div>
-          <select id="shareMinQty">
-            <option value="">any</option>
-            <option value="2">2+</option>
-            <option value="3">3+</option>
-            <option value="4">4+</option>
-            <option value="6">6+</option>
-          </select>
-        </div>
-
-        <div class="share-preview">
-          <span id="sharePreview" class="muted">Pick filters above to preview.</span>
-        </div>
+        <input id="shareUrl" class="share-url" readonly value="${escapeAttr(statelessUrl)}" />
 
         <div class="share-section">
           <label class="share-toggle">
@@ -645,148 +774,51 @@
           </div>
         </div>
 
-        <input id="shareUrl" class="share-url" readonly />
         <div class="share-actions">
           <a href="/store/shares" class="btn ghost" style="text-decoration:none">Manage links</a>
           <span style="flex:1"></span>
-          <button class="btn ghost" id="shareReset">Reset</button>
           <button class="btn" id="shareCopy">Copy link</button>
         </div>
       `;
 
-      // Pre-fill controls if a shared filter is already in the URL — lets the
-      // owner tweak an existing share.
-      if (shareFilters.zones?.length) {
-        for (const cb of $$("#zoneChips input[data-zone]", mb)) {
-          if (shareFilters.zones.includes(cb.value)) cb.checked = true;
-        }
-      }
-      if (shareFilters.section?.length) {
-        for (const cb of $$("#sectionChips input[data-section]", mb)) {
-          if (shareFilters.section.includes(cb.value)) cb.checked = true;
-        }
-        const known = new Set(sectionsPresent);
-        const extras = shareFilters.section.filter((s) => !known.has(s));
-        if (extras.length) $("#sectionExtra", mb).value = extras.join(",");
-      }
-      if (shareFilters.min_price != null) $("#shareMin", mb).value = shareFilters.min_price;
-      if (shareFilters.max_price != null) $("#shareMax", mb).value = shareFilters.max_price;
-      if (shareFilters.min_qty != null) $("#shareMinQty", mb).value = String(shareFilters.min_qty);
+      const useRevToggle = $("#useRevocable", mb);
+      const copyBtn = $("#shareCopy", mb);
+      const urlInput = $("#shareUrl", mb);
 
-      function readShareForm() {
-        const zones = $$("#zoneChips input[data-zone]", mb).filter((c) => c.checked).map((c) => c.value);
-        const sectionChips = $$("#sectionChips input[data-section]", mb).filter((c) => c.checked).map((c) => c.value);
-        const sectionExtra = ($("#sectionExtra", mb).value || "")
-          .split(",").map((s) => s.trim()).filter(Boolean);
-        const sections = Array.from(new Set([...sectionChips, ...sectionExtra]));
-        const minP = $("#shareMin", mb).value;
-        const maxP = $("#shareMax", mb).value;
-        const mq = $("#shareMinQty", mb).value;
-        return {
-          zones,
-          section: sections,
-          min_price: minP === "" ? null : Number(minP),
-          max_price: maxP === "" ? null : Number(maxP),
-          min_qty: mq === "" ? null : Number(mq),
-        };
-      }
-
-      function buildShareUrl(f) {
-        const p = new URLSearchParams();
-        if (f.zones.length) p.set("zones", f.zones.join(","));
-        if (f.section.length) p.set("section", f.section.join(","));
-        if (f.min_price != null) p.set("min_price", f.min_price);
-        if (f.max_price != null) p.set("max_price", f.max_price);
-        if (f.min_qty != null) p.set("min_qty", f.min_qty);
-        const qs = p.toString();
-        return `${location.origin}/store/event/${eventId}${qs ? "?" + qs : ""}`;
-      }
-
-      let previewTimer = null;
-      function refreshUrlPreview() {
-        // Only the stateless URL is shown live; the revocable URL is generated
-        // on click of "Generate link" since it requires a server round trip.
-        const f = readShareForm();
-        const url = buildShareUrl(f);
-        const useRev = $("#useRevocable", mb).checked;
-        if (!useRev) {
-          $("#shareUrl", mb).value = url;
-          $("#shareUrl", mb).placeholder = "";
-          $("#shareCopy", mb).textContent = "Copy link";
-        } else {
-          $("#shareUrl", mb).value = "";
-          $("#shareUrl", mb).placeholder = "click Generate to create a /s/… link";
-          $("#shareCopy", mb).textContent = "Generate link";
-        }
+      function refreshButton() {
+        const useRev = useRevToggle.checked;
         $("#revocableOpts", mb).hidden = !useRev;
-      }
-
-      function refreshCountPreview() {
-        const f = readShareForm();
-        clearTimeout(previewTimer);
-        previewTimer = setTimeout(async () => {
-          try {
-            const qp = new URLSearchParams();
-            if (f.zones.length) qp.set("zones", f.zones.join(","));
-            if (f.section.length) qp.set("section", f.section.join(","));
-            if (f.min_price != null) qp.set("min_price", f.min_price);
-            if (f.max_price != null) qp.set("max_price", f.max_price);
-            if (f.min_qty != null) qp.set("min_qty", f.min_qty);
-            const res = await api(`/api/store/events/${eventId}?${qp.toString()}`);
-            // Build via DOM — was innerHTML with server numbers. Hardened 2026-05-11.
-            const preview = $("#sharePreview", mb);
-            preview.replaceChildren();
-            const s = document.createElement("strong");
-            s.textContent = String(Number(res.listings_count) || 0);
-            preview.append(s, document.createTextNode(` of ${Number(res.total_before_filters) || 0} listings would be shared`));
-          } catch (e) {
-            $("#sharePreview", mb).textContent = `preview failed: ${e.message}`;
-          }
-        }, 200);
-      }
-
-      function updatePreview() {
-        refreshUrlPreview();
-        refreshCountPreview();
-      }
-
-      mb.addEventListener("change", updatePreview);
-      mb.addEventListener("input", updatePreview);
-
-      $("#shareReset", mb).addEventListener("click", () => {
-        $$("input[type=checkbox]", mb).forEach((c) => (c.checked = false));
-        $$('input[type="number"], input[type="text"]', mb).forEach((i) => (i.value = ""));
-        $("#sectionExtra", mb).value = "";
-        $("#shareMinQty", mb).value = "";
-        $("#shareNote", mb) && ($("#shareNote", mb).value = "");
-        updatePreview();
-      });
-
-      $("#shareCopy", mb).addEventListener("click", async () => {
-        const useRev = $("#useRevocable", mb).checked;
-        const btn = $("#shareCopy", mb);
-
-        async function copy(url) {
-          try {
-            await navigator.clipboard.writeText(url);
-            const old = btn.textContent;
-            btn.textContent = "Copied ✓";
-            setTimeout(() => (btn.textContent = old), 1200);
-          } catch {
-            $("#shareUrl", mb).select();
-          }
+        if (useRev) {
+          urlInput.value = "";
+          urlInput.placeholder = "click Generate to create a /s/… link";
+          copyBtn.textContent = "Generate link";
+        } else {
+          urlInput.value = statelessUrl;
+          urlInput.placeholder = "";
+          copyBtn.textContent = "Copy link";
         }
+      }
+      useRevToggle.addEventListener("change", refreshButton);
 
-        if (!useRev) {
-          await copy($("#shareUrl", mb).value);
+      async function copyToClipboard(url) {
+        try {
+          await navigator.clipboard.writeText(url);
+          const old = copyBtn.textContent;
+          copyBtn.textContent = "Copied ✓";
+          setTimeout(() => (copyBtn.textContent = old), 1200);
+        } catch {
+          urlInput.select();
+        }
+      }
+
+      copyBtn.addEventListener("click", async () => {
+        if (!useRevToggle.checked) {
+          await copyToClipboard(urlInput.value);
           return;
         }
-
-        // Revocable: persist a share_links row.
-        btn.disabled = true;
-        btn.textContent = "Generating…";
+        copyBtn.disabled = true;
+        copyBtn.textContent = "Generating…";
         try {
-          const f = readShareForm();
           const note = ($("#shareNote", mb)?.value || "").trim();
           const exp = $("#shareExpires", mb)?.value;
           const body = {
@@ -801,41 +833,67 @@
             body: JSON.stringify(body),
           });
           const url = `${location.origin}${created.url}`;
-          $("#shareUrl", mb).value = url;
-          await copy(url);
+          urlInput.value = url;
+          await copyToClipboard(url);
         } catch (e) {
-          $("#shareUrl", mb).value = "";
           alert(`Could not create link: ${e.message}`);
-          btn.textContent = "Generate link";
+          copyBtn.textContent = "Generate link";
         } finally {
-          btn.disabled = false;
+          copyBtn.disabled = false;
         }
       });
 
-      updatePreview();
       modal.hidden = false;
     }
 
-    // For /store/event/{id} we know eventId up front and can fire both calls
-    // in parallel. For /s/{id} we have to load the share first to discover
-    // the eventId, then load zones.
-    if (shareId) {
-      loadEvent()
-        .then(() => loadZones())
-        .catch((err) => {
-          if (err.message.includes("410")) {
-            status.textContent = "This share link is no longer active.";
-          } else {
-            status.textContent = `Couldn't load event: ${err.message}`;
-          }
-          status.style.color = "var(--bad)";
-        });
-    } else {
-      Promise.all([loadZones(), loadEvent()]).catch((err) => {
-        status.textContent = `Couldn't load event: ${err.message}`;
+    // ---- Bootstrap ----
+    async function bootstrap() {
+      try {
+        let initialFilters;
+        if (shareId) {
+          // /s/{id}: resolve the share, replaceState into the canonical event
+          // URL with the saved filters, then hand off to the normal flow.
+          const shareRes = await api(`/api/store/share/${encodeURIComponent(shareId)}`);
+          resolvedShare = shareRes.share || null;
+          eventId = shareRes.event?.id;
+          initialFilters = (resolvedShare && resolvedShare.filters) || {};
+          // Normalize the filters object so subsequent UI operations treat it cleanly.
+          initialFilters = {
+            zones: initialFilters.zones || [],
+            section: initialFilters.section || [],
+            min_price: initialFilters.min_price ?? null,
+            max_price: initialFilters.max_price ?? null,
+            min_qty: initialFilters.min_qty ?? null,
+          };
+          history.replaceState({}, "", `/store/event/${eventId}${buildQueryString(initialFilters)}`);
+
+          const zonesRes = await api(`/api/store/events/${eventId}/zones`).catch(() => ({ zones: [] }));
+          zonesAvailable = zonesRes.zones || [];
+          paintInputsFromFilters(initialFilters);
+          applyEventResponse(shareRes, resolvedShare);
+          renderZoneChips(initialFilters.zones);
+        } else {
+          initialFilters = parseUrlFilters();
+          paintInputsFromFilters(initialFilters);
+          const [evRes, zonesRes] = await Promise.all([
+            api(`/api/store/events/${eventId}${buildQueryString(initialFilters)}`),
+            api(`/api/store/events/${eventId}/zones`).catch(() => ({ zones: [] })),
+          ]);
+          zonesAvailable = zonesRes.zones || [];
+          applyEventResponse(evRes, null);
+          renderZoneChips(initialFilters.zones);
+        }
+      } catch (err) {
+        if (err.message && err.message.includes("410")) {
+          status.textContent = "This share link is no longer active.";
+        } else {
+          status.textContent = `Couldn't load event: ${err.message}`;
+        }
         status.style.color = "var(--bad)";
-      });
+      }
     }
+
+    bootstrap();
   }
 
   function escapeHtml(s) {
