@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Event — VibePass</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">checking…</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+    </nav>
+
+    <main class="content">
+      <!-- Empty state when no event picked. -->
+      <div id="emptyState" class="empty-state" hidden>
+        <h2>Pick an event to see tickets</h2>
+        <p>Search for an artist, team, or venue to find what's available.</p>
+        <a href="/store/test/search">Browse events →</a>
+      </div>
+
+      <!-- Loading state. -->
+      <div id="loading" class="empty-state">Loading event…</div>
+
+      <!-- Event view. -->
+      <div id="eventView" hidden>
+        <a class="prev" href="/store/test/search" style="font-size:13px;display:inline-block;margin-bottom:12px;color:var(--muted);text-decoration:none">← back to search</a>
+
+        <section class="event-hero">
+          <div>
+            <h1 id="evName"></h1>
+            <p class="meta">
+              <span id="evVenue"></span>
+              <span class="dot">·</span>
+              <span id="evDate"></span>
+            </p>
+            <p class="meta" id="evPerformers" style="margin-top:4px;font-size:13px"></p>
+          </div>
+          <div class="actions">
+            <span id="freshness" class="freshness"></span>
+            <button id="shareBtn" class="ghost">Share this view</button>
+          </div>
+        </section>
+
+        <!-- Banner shown when filters are active or arriving via /s/{id}. -->
+        <div id="banner" class="banner" hidden>
+          <span id="bannerSummary"></span>
+          <a href="" id="bannerClear">show all listings</a>
+        </div>
+
+        <!-- Inline filters drive the URL + listings. Zone row only renders
+             when this event has curated zones. -->
+        <div id="filterBar" class="filter-bar">
+          <div id="zoneRow" class="filter-row" hidden>
+            <span class="filter-label">Zone</span>
+            <div class="chip-group" id="zoneChips"></div>
+          </div>
+          <div id="sectionRow" class="filter-row" hidden>
+            <span class="filter-label">Section</span>
+            <div class="chip-group" id="sectionChips"></div>
+          </div>
+          <div class="filter-row inline">
+            <span class="filter-label">Price</span>
+            <input id="minPrice" type="number" min="0" step="10" placeholder="min $" />
+            <input id="maxPrice" type="number" min="0" step="10" placeholder="max $" />
+            <span class="filter-label" style="margin-left:16px">Min qty</span>
+            <select id="minQty">
+              <option value="">any</option>
+              <option value="2">2+</option>
+              <option value="3">3+</option>
+              <option value="4">4+</option>
+              <option value="6">6+</option>
+            </select>
+            <button id="resetFilters" class="ghost" style="margin-left:auto">Reset</button>
+          </div>
+        </div>
+
+        <h2 style="font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:18px 0 8px">
+          Available tickets <span id="listingCount" style="font-weight:400;color:var(--text);text-transform:none;letter-spacing:0"></span>
+        </h2>
+        <div id="listings" class="listing-rows"></div>
+        <p id="noListings" class="empty-state" hidden style="padding:30px 0">
+          Nothing matches those filters. Loosen them — inventory shifts.
+        </p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Buy / share modals share the same container. -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card">
+      <button class="close" id="modalClose">×</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="/static/store/test/test.js"></script>
+  <script>
+    const { $, $$, fmtMoney, fmtWhen, api } = Test;
+
+    const urlParams = new URLSearchParams(location.search);
+    const eventId = Number(urlParams.get("id"));
+
+    // No id? Show empty state and stop.
+    if (!eventId) {
+      $("#loading").hidden = true;
+      $("#emptyState").hidden = false;
+    } else {
+      mountEvent();
+    }
+
+    function mountEvent() {
+      // DOM refs
+      const loading = $("#loading");
+      const view = $("#eventView");
+      const zoneRow = $("#zoneRow");
+      const zoneChipsEl = $("#zoneChips");
+      const sectionRow = $("#sectionRow");
+      const sectionChipsEl = $("#sectionChips");
+      const minPriceInput = $("#minPrice");
+      const maxPriceInput = $("#maxPrice");
+      const minQtyInput = $("#minQty");
+      const resetBtn = $("#resetFilters");
+      const listingsEl = $("#listings");
+      const noListings = $("#noListings");
+      const listingCount = $("#listingCount");
+      const banner = $("#banner");
+      const bannerSummary = $("#bannerSummary");
+      const bannerClear = $("#bannerClear");
+
+      let allListings = [];
+      let zonesAvailable = [];
+      let suppressApply = false;
+
+      // ---- URL <-> filter state ----
+      function parseUrlFilters() {
+        const u = new URLSearchParams(location.search);
+        return {
+          zones:    (u.get("zones") || "").split(",").map(s => s.trim()).filter(Boolean),
+          section:  (u.get("section") || "").split(",").map(s => s.trim()).filter(Boolean),
+          min_price: u.get("min_price") ? Number(u.get("min_price")) : null,
+          max_price: u.get("max_price") ? Number(u.get("max_price")) : null,
+          min_qty:   u.get("min_qty") ? Number(u.get("min_qty")) : null,
+        };
+      }
+
+      function readFiltersFromUI() {
+        return {
+          zones:    $$(".filter-chip.on", zoneChipsEl).map(c => c.dataset.value),
+          section:  $$(".filter-chip.on", sectionChipsEl).map(c => c.dataset.value),
+          min_price: minPriceInput.value === "" ? null : Number(minPriceInput.value),
+          max_price: maxPriceInput.value === "" ? null : Number(maxPriceInput.value),
+          min_qty:   minQtyInput.value === "" ? null : Number(minQtyInput.value),
+        };
+      }
+
+      function buildQueryString(f) {
+        const p = new URLSearchParams();
+        p.set("id", eventId);
+        if (f.zones && f.zones.length) p.set("zones", f.zones.join(","));
+        if (f.section && f.section.length) p.set("section", f.section.join(","));
+        if (f.min_price != null) p.set("min_price", f.min_price);
+        if (f.max_price != null) p.set("max_price", f.max_price);
+        if (f.min_qty != null) p.set("min_qty", f.min_qty);
+        return "?" + p.toString();
+      }
+
+      function buildApiQuery(f) {
+        const p = new URLSearchParams();
+        if (f.zones && f.zones.length) p.set("zones", f.zones.join(","));
+        if (f.section && f.section.length) p.set("section", f.section.join(","));
+        if (f.min_price != null) p.set("min_price", f.min_price);
+        if (f.max_price != null) p.set("max_price", f.max_price);
+        if (f.min_qty != null) p.set("min_qty", f.min_qty);
+        const qs = p.toString();
+        return qs ? `?${qs}` : "";
+      }
+
+      function hasActiveFilters(f) {
+        return (f.zones && f.zones.length)
+          || (f.section && f.section.length)
+          || f.min_price != null
+          || f.max_price != null
+          || f.min_qty != null;
+      }
+
+      function paintInputsFromFilters(f) {
+        suppressApply = true;
+        try {
+          minPriceInput.value = f.min_price ?? "";
+          maxPriceInput.value = f.max_price ?? "";
+          minQtyInput.value   = f.min_qty != null ? String(f.min_qty) : "";
+        } finally {
+          suppressApply = false;
+        }
+      }
+
+      function updateUrl(f) {
+        const newUrl = `/store/test/event${buildQueryString(f)}`;
+        if (newUrl !== location.pathname + location.search) {
+          history.replaceState({}, "", newUrl);
+        }
+      }
+
+      // ---- Chip rendering ----
+      function renderZoneChips(active) {
+        if (!zonesAvailable.length) {
+          zoneRow.hidden = true;
+          return;
+        }
+        zoneRow.hidden = false;
+        zoneChipsEl.innerHTML = "";
+        const activeSet = new Set(active || []);
+        const all = Array.from(new Set([...zonesAvailable.map(z => z.name), ...activeSet]));
+        for (const name of all) {
+          const meta = zonesAvailable.find(z => z.name === name);
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "filter-chip" + (activeSet.has(name) ? " on" : "");
+          chip.dataset.value = name;
+          chip.textContent = meta && meta.tickets ? `${name} (${meta.tickets})` : name;
+          chip.addEventListener("click", () => { chip.classList.toggle("on"); scheduleApply(); });
+          zoneChipsEl.append(chip);
+        }
+      }
+
+      function renderSectionChips(active) {
+        const sectionsPresent = Array.from(new Set(
+          allListings.map(l => String(l.section || "").trim()).filter(Boolean)
+        ));
+        const activeSet = new Set(active || []);
+        const all = Array.from(new Set([...sectionsPresent, ...activeSet]))
+          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        if (!all.length) {
+          sectionRow.hidden = true;
+          return;
+        }
+        sectionRow.hidden = false;
+        sectionChipsEl.innerHTML = "";
+        for (const s of all) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "filter-chip" + (activeSet.has(s) ? " on" : "");
+          chip.dataset.value = s;
+          chip.textContent = s;
+          chip.addEventListener("click", () => { chip.classList.toggle("on"); scheduleApply(); });
+          sectionChipsEl.append(chip);
+        }
+      }
+
+      // ---- Apply filter changes ----
+      let applyTimer = null;
+      function scheduleApply() {
+        if (suppressApply) return;
+        clearTimeout(applyTimer);
+        applyTimer = setTimeout(applyFiltersAndFetch, 250);
+      }
+
+      async function applyFiltersAndFetch() {
+        const f = readFiltersFromUI();
+        updateUrl(f);
+        try {
+          const { body } = await api(`/api/store/events/${eventId}${buildApiQuery(f)}`);
+          applyResponse(body);
+        } catch {}
+      }
+
+      // ---- Banner ----
+      function showBanner(filters, totalBefore, listingsCount) {
+        if (!hasActiveFilters(filters || {})) {
+          banner.hidden = true;
+          return;
+        }
+        const parts = [];
+        if (filters.zones?.length) parts.push(`zone: ${filters.zones.join(", ")}`);
+        if (filters.section?.length) parts.push(`section: ${filters.section.join(", ")}`);
+        if (filters.min_price != null) parts.push(`min ${fmtMoney(filters.min_price)}`);
+        if (filters.max_price != null) parts.push(`max ${fmtMoney(filters.max_price)}`);
+        if (filters.min_qty != null) parts.push(`${filters.min_qty}+ seats`);
+        bannerSummary.innerHTML = `<strong>Filtered view</strong> · ${parts.join(" · ")} · showing ${listingsCount} of ${totalBefore}`;
+        bannerClear.href = `/store/test/event?id=${eventId}`;
+        banner.hidden = false;
+      }
+
+      // ---- Render listings ----
+      function renderListings() {
+        listingCount.textContent = `(${allListings.length})`;
+        listingsEl.innerHTML = "";
+        if (!allListings.length) {
+          noListings.hidden = false;
+          return;
+        }
+        noListings.hidden = true;
+        for (const l of allListings) {
+          const row = document.createElement("div");
+          row.className = "listing-row";
+
+          const seat = document.createElement("div");
+          seat.className = "seat";
+          const sec = document.createElement("div");
+          sec.className = "section";
+          sec.textContent = `Section ${l.section || "—"}`;
+          if (l.zone) {
+            const z = document.createElement("span");
+            z.className = "zone-tag";
+            z.textContent = l.zone;
+            sec.append(" ", z);
+          }
+          const rowLabel = document.createElement("div");
+          rowLabel.className = "row-label";
+          rowLabel.textContent = `Row ${l.row || "—"}`;
+          seat.append(sec, rowLabel);
+
+          const splits = (l.splits && l.splits.length ? l.splits.join(", ") : (l.available_quantity || 0));
+          const qty = document.createElement("div");
+          qty.className = "qty";
+          qty.innerHTML = `${l.available_quantity || 0} available<br><span style="font-size:11px">sells in ${splits}</span>`;
+
+          const price = document.createElement("div");
+          price.className = "price";
+          price.innerHTML = `${fmtMoney(l.retail_price)}<span class="each">each</span>`;
+
+          const buy = document.createElement("button");
+          buy.className = "buy-btn";
+          buy.textContent = "Get tickets";
+          buy.addEventListener("click", () => openBuyModal(l));
+
+          row.append(seat, qty, price, buy);
+          if (l.public_notes) {
+            const notes = document.createElement("div");
+            notes.className = "public-notes";
+            notes.textContent = l.public_notes;
+            row.append(notes);
+          }
+          listingsEl.append(row);
+        }
+      }
+
+      // ---- Buy modal ----
+      function openBuyModal(listing) {
+        const splits = listing.splits && listing.splits.length ? listing.splits : [1, 2, 3, 4];
+        const opts = splits
+          .filter(s => s <= (listing.available_quantity || 999))
+          .map(s => `<option value="${s}">${s}</option>`).join("");
+        const defaultQ = splits[0] || 1;
+        const mb = $("#modalBody");
+        mb.innerHTML = `
+          <h3>Get tickets</h3>
+          <p style="color:var(--muted);margin:0 0 16px">Section ${listing.section} · Row ${listing.row}</p>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0">
+            <span>How many?</span>
+            <select id="buyQty" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit">${opts}</select>
+          </div>
+          <div class="receipt">
+            <span class="k">Per ticket</span><span class="v">${fmtMoney(listing.retail_price)}</span>
+            <span class="k">Quantity</span><span class="v" id="receiptQty">${defaultQ}</span>
+            <span class="k total">Total</span><span class="v total" id="receiptTotal">${fmtMoney(listing.retail_price * defaultQ)}</span>
+          </div>
+          <button id="confirmBuy" class="buy-btn" style="width:100%;padding:12px">Continue to checkout</button>
+          <p style="font-size:11px;color:var(--muted);text-align:center;margin:12px 0 0">
+            Demo storefront — real checkout not wired up yet.
+          </p>
+        `;
+        const qSel = $("#buyQty", mb);
+        qSel.value = String(defaultQ);
+        qSel.addEventListener("change", () => {
+          const q = Number(qSel.value);
+          $("#receiptQty", mb).textContent = q;
+          $("#receiptTotal", mb).textContent = fmtMoney(listing.retail_price * q);
+        });
+        $("#confirmBuy", mb).addEventListener("click", async () => {
+          const btn = $("#confirmBuy", mb);
+          btn.disabled = true;
+          btn.textContent = "Confirming…";
+          try {
+            const { body } = await api("/api/store/reserve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                event_id: eventId,
+                ticket_group_id: listing.id,
+                quantity: Number(qSel.value),
+              }),
+            });
+            const r = body.reservation || {};
+            mb.innerHTML = `
+              <h3>You're set ✓</h3>
+              <p style="color:var(--muted);margin:0 0 16px">Demo confirmation — no charge processed.</p>
+              <div class="receipt">
+                <span class="k">Section</span><span class="v">${r.section || "—"}</span>
+                <span class="k">Row</span><span class="v">${r.row || "—"}</span>
+                <span class="k">Quantity</span><span class="v">${r.quantity}</span>
+                <span class="k">Per ticket</span><span class="v">${fmtMoney(r.unit_price)}</span>
+                <span class="k total">Total</span><span class="v total">${fmtMoney(r.subtotal)}</span>
+              </div>
+              <button id="closeOk" class="ghost" style="width:100%">Close</button>
+            `;
+            $("#closeOk", mb).addEventListener("click", closeModal);
+          } catch (e) {
+            btn.disabled = false;
+            btn.textContent = "Continue to checkout";
+            alert(e.message);
+          }
+        });
+        $("#modal").hidden = false;
+      }
+
+      // ---- Share modal ----
+      function openShareModal() {
+        const f = readFiltersFromUI();
+        const apiQs = buildApiQuery(f);
+        const url = `${location.origin}/store/event/${eventId}${apiQs}`;
+        const summary = (function () {
+          const parts = [];
+          if (f.zones.length)     parts.push(`zone: ${f.zones.join(", ")}`);
+          if (f.section.length)   parts.push(`section: ${f.section.join(", ")}`);
+          if (f.min_price != null) parts.push(`min ${fmtMoney(f.min_price)}`);
+          if (f.max_price != null) parts.push(`max ${fmtMoney(f.max_price)}`);
+          if (f.min_qty != null)   parts.push(`${f.min_qty}+ seats`);
+          return parts.length ? parts.join(" · ") : "no filters — full inventory";
+        })();
+        const mb = $("#modalBody");
+        mb.innerHTML = `
+          <h3>Share this view</h3>
+          <p style="color:var(--muted);margin:0 0 12px">${summary} · ${allListings.length} listing${allListings.length === 1 ? "" : "s"}</p>
+          <input id="shareUrl" readonly style="width:100%;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:12px ui-monospace,monospace;margin-bottom:8px" value="${url.replace(/"/g,"&quot;")}" />
+          <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin:8px 0">
+            <input type="checkbox" id="useRev" style="margin-top:2px" />
+            <span>
+              <strong>Make this revocable</strong><br>
+              <span style="color:var(--muted);font-size:12px">tracks views, expires, can be turned off later</span>
+            </span>
+          </label>
+          <div id="revOpts" hidden>
+            <input id="shareNote" maxlength="500" placeholder="Optional note for the recipient" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit;margin-bottom:6px" />
+            <select id="shareExpires" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit">
+              <option value="">never expires</option>
+              <option value="1">expires in 1 day</option>
+              <option value="7" selected>expires in 7 days</option>
+              <option value="30">expires in 30 days</option>
+              <option value="90">expires in 90 days</option>
+            </select>
+          </div>
+          <button id="shareCopy" class="buy-btn" style="width:100%;padding:10px;margin-top:12px">Copy link</button>
+        `;
+        const useRev = $("#useRev", mb);
+        const copyBtn = $("#shareCopy", mb);
+        const urlInput = $("#shareUrl", mb);
+        useRev.addEventListener("change", () => {
+          $("#revOpts", mb).hidden = !useRev.checked;
+          if (useRev.checked) {
+            urlInput.value = "";
+            urlInput.placeholder = "click Generate to create a /s/… link";
+            copyBtn.textContent = "Generate link";
+          } else {
+            urlInput.value = url;
+            urlInput.placeholder = "";
+            copyBtn.textContent = "Copy link";
+          }
+        });
+        copyBtn.addEventListener("click", async () => {
+          if (!useRev.checked) {
+            try {
+              await navigator.clipboard.writeText(urlInput.value);
+              const old = copyBtn.textContent;
+              copyBtn.textContent = "Copied ✓";
+              setTimeout(() => (copyBtn.textContent = old), 1200);
+            } catch { urlInput.select(); }
+            return;
+          }
+          copyBtn.disabled = true;
+          copyBtn.textContent = "Generating…";
+          try {
+            const note = ($("#shareNote", mb).value || "").trim();
+            const exp = $("#shareExpires", mb).value;
+            const { body } = await api("/api/store/share", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                event_id: eventId,
+                filters: f,
+                note: note || undefined,
+                expires_in_days: exp ? Number(exp) : undefined,
+              }),
+            });
+            const fullUrl = `${location.origin}${body.url}`;
+            urlInput.value = fullUrl;
+            try {
+              await navigator.clipboard.writeText(fullUrl);
+              copyBtn.textContent = "Copied ✓";
+              setTimeout(() => (copyBtn.textContent = "Generate link"), 1200);
+            } catch { urlInput.select(); }
+          } catch (e) {
+            alert(e.message);
+            copyBtn.textContent = "Generate link";
+          } finally {
+            copyBtn.disabled = false;
+          }
+        });
+        $("#modal").hidden = false;
+      }
+
+      function closeModal() { $("#modal").hidden = true; }
+      $("#modalClose").addEventListener("click", closeModal);
+      $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+      $("#shareBtn").addEventListener("click", openShareModal);
+
+      // ---- Apply event response ----
+      function applyResponse(res) {
+        const ev = res.event || {};
+        allListings = res.listings || [];
+        const filters = res.filters || readFiltersFromUI();
+
+        $("#evName").textContent = ev.name || "Untitled event";
+        $("#evVenue").textContent = [ev.venue?.name, ev.venue?.location].filter(Boolean).join(" · ");
+        $("#evDate").textContent = fmtWhen(ev.occurs_at_local);
+        $("#evPerformers").textContent = (ev.performers || [])
+          .map(p => p.name + (p.primary ? " (home)" : ""))
+          .join(" vs ");
+
+        const fr = $("#freshness");
+        if (res.inventory_source === "live") {
+          fr.textContent = "live"; fr.className = "freshness live";
+        } else if (res.inventory_source === "cache") {
+          fr.textContent = "cached"; fr.className = "freshness cached";
+        } else {
+          fr.textContent = "";
+        }
+
+        loading.hidden = true;
+        view.hidden = false;
+        renderListings();
+        renderSectionChips(filters.section || []);
+        showBanner(filters, res.total_before_filters || 0, res.listings_count || 0);
+      }
+
+      // ---- Filter input wiring ----
+      minPriceInput.addEventListener("input", scheduleApply);
+      maxPriceInput.addEventListener("input", scheduleApply);
+      minQtyInput.addEventListener("change", scheduleApply);
+      resetBtn.addEventListener("click", () => {
+        paintInputsFromFilters({});
+        $$(".filter-chip", $("#filterBar")).forEach(c => c.classList.remove("on"));
+        applyFiltersAndFetch();
+      });
+
+      // ---- Bootstrap ----
+      (async () => {
+        const initial = parseUrlFilters();
+        paintInputsFromFilters(initial);
+        try {
+          const [ev, zones] = await Promise.all([
+            api(`/api/store/events/${eventId}${buildApiQuery(initial)}`),
+            api(`/api/store/events/${eventId}/zones`).catch(() => ({ body: { zones: [] } })),
+          ]);
+          zonesAvailable = (zones.body && zones.body.zones) || [];
+          applyResponse(ev.body);
+          renderZoneChips(initial.zones);
+        } catch (e) {
+          loading.textContent = `Couldn't load this event. ${e.message}`;
+        }
+      })();
+    }
+  </script>
+</body>
+</html>
