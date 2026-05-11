@@ -4475,7 +4475,20 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
                 "seating_chart_medium": seating.get("medium"),
                 "seating_chart_large": seating.get("large"),
             },
-            "performers": [_attach_assets(p) for p in performances],
+            # TEvo carries "series" performers alongside competing teams on
+            # playoff games (e.g. "NBA Playoffs", "NBA Western Conference
+            # Semifinals"). They show up in events.performer_ids and have rows
+            # in performer_metadata, but with no logo / color / ESPN xref.
+            # Drop them (non-primary only) so the header doesn't read
+            # "Lakers (home) vs NBA Playoffs vs NBA Western Conference
+            # Semifinals vs Thunder". Always keep the primary even when it
+            # has minimal metadata (Peso Pluma etc. — would otherwise leave
+            # a headliner-less event card).
+            "performers": [
+                p_meta for p_meta in (_attach_assets(p) for p in performances)
+                if p_meta.get("primary")
+                or p_meta.get("logo_url") or p_meta.get("color_primary")
+            ],
         },
         "listings": listings,
         "listings_count": len(listings),

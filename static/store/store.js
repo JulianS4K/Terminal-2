@@ -141,15 +141,56 @@
     });
     input.addEventListener("input", () => filter(input.value));
 
-    api("/api/store/events?limit=500")
+    // URL params let event-detail links into the catalog filter to a single
+    // performer or venue. Server-side filter, not just client-side, so the
+    // result is bounded even when a performer has hundreds of events.
+    const urlParams = new URLSearchParams(location.search);
+    const performerId = urlParams.get("performer_id");
+    const venueId = urlParams.get("venue_id");
+    const qs = new URLSearchParams({ limit: "500" });
+    if (performerId) qs.set("performer_id", performerId);
+    if (venueId) qs.set("venue_id", venueId);
+
+    api(`/api/store/events?${qs.toString()}`)
       .then((res) => {
         allEvents = res.events || [];
+        renderCatalogFilterBanner(performerId, venueId, allEvents);
         render(allEvents, "all");
       })
       .catch((err) => {
         status.textContent = `Couldn't load events: ${err.message}`;
         status.style.color = "var(--bad)";
       });
+  }
+
+  // Shows a "Showing events for ___" banner above the catalog when the user
+  // arrived via a performer/venue link on an event page. DOM-built (no
+  // innerHTML on user-controlled values).
+  function renderCatalogFilterBanner(performerId, venueId, events) {
+    const host = $("#catalogFilterBanner");
+    if (!host) return;
+    if (!performerId && !venueId) { host.hidden = true; return; }
+    const first = events[0] || {};
+    let label = "";
+    if (performerId) {
+      label = first.primary_performer_name
+        || (first.venue_name && first.name)
+        || `Performer #${Number(performerId) || ""}`;
+    } else if (venueId) {
+      label = [first.venue_name, first.venue_location].filter(Boolean).join(" · ")
+        || `Venue #${Number(venueId) || ""}`;
+    }
+    host.replaceChildren();
+    const strong = document.createElement("strong");
+    strong.textContent = `Showing events for ${label}`;
+    host.append(strong);
+    const sep = document.createTextNode(" · ");
+    host.append(sep);
+    const clearA = document.createElement("a");
+    clearA.href = "/store";
+    clearA.textContent = "show all events";
+    host.append(clearA);
+    host.hidden = false;
   }
 
   // ---------- Event detail page ----------
@@ -658,11 +699,25 @@
       const filters = res.filters || readFiltersFromUI();
 
       $("#evName").textContent = event.name || "Untitled event";
-      $("#evVenue").textContent = [event.venue?.name, event.venue?.location].filter(Boolean).join(" · ");
+
+      // Venue — clickable link to /store?venue_id=X so users can browse
+      // other events at the same venue. Falls back to plain text when no id.
+      const venueEl = $("#evVenue");
+      venueEl.replaceChildren();
+      const venueLabel = [event.venue?.name, event.venue?.location].filter(Boolean).join(" · ");
+      if (event.venue?.id) {
+        const a = document.createElement("a");
+        a.href = `/store?venue_id=${Number(event.venue.id) || 0}`;
+        a.className = "venue-link";
+        a.textContent = venueLabel;
+        venueEl.append(a);
+      } else {
+        venueEl.textContent = venueLabel;
+      }
       $("#evDate").textContent = fmtWhen(event.occurs_at_local);
 
       const perfEl = $("#evPerformers");
-      perfEl.innerHTML = "";
+      perfEl.replaceChildren();
       const perfs = event.performers || [];
       perfs.forEach((p, i) => {
         if (i > 0) {
@@ -671,21 +726,24 @@
           sep.textContent = " vs ";
           perfEl.append(sep);
         }
-        const span = document.createElement("span");
-        span.className = "perf-chip";
-        if (p.color_primary) span.style.setProperty("--perf-color", p.color_primary);
+        // Wrap each performer chip in an anchor to /store?performer_id=X so
+        // users can browse other events for the same performer.
+        const wrap = document.createElement(p.id ? "a" : "span");
+        wrap.className = "perf-chip";
+        if (p.id) wrap.href = `/store?performer_id=${Number(p.id) || 0}`;
+        if (p.color_primary) wrap.style.setProperty("--perf-color", p.color_primary);
         if (p.logo_url) {
           const img = document.createElement("img");
           img.src = p.logo_url;
           img.alt = "";
           img.className = "perf-logo";
           img.loading = "lazy";
-          span.append(img);
+          wrap.append(img);
         }
         const txt = document.createElement("span");
         txt.textContent = p.name + (p.primary ? " (home)" : "");
-        span.append(txt);
-        perfEl.append(span);
+        wrap.append(txt);
+        perfEl.append(wrap);
       });
 
       const map = event.configuration?.seating_chart_medium || event.configuration?.seating_chart_large;
