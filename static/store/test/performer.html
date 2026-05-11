@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Performers — VibePass</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">checking…</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+    </nav>
+
+    <main class="content">
+      <h1>Browse by performer</h1>
+      <p class="subtitle">Type an artist or team. Pick one to see their upcoming events.</p>
+
+      <div class="row" style="margin: 16px 0 16px">
+        <input id="q" type="search" placeholder="e.g. Knicks, Yankees, Taylor Swift" autofocus style="flex: 1; padding: 12px 14px; font-size: 15px" />
+      </div>
+
+      <div id="status" style="color: var(--muted); font-size: 13px; margin-bottom: 12px"></div>
+
+      <!-- Matching performers as chips -->
+      <div id="performersRow" hidden style="margin-bottom: 24px">
+        <div class="filter-label">Performers</div>
+        <div id="performerChips" class="chip-group" style="margin-top: 8px"></div>
+      </div>
+
+      <!-- Events for the selected performer (or all matching events). -->
+      <div id="eventsHeader" style="font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px"></div>
+      <div id="cards" class="cards"></div>
+
+      <div id="empty" class="empty-state" hidden>
+        <h2>No performers match</h2>
+        <p>Try a broader keyword. We only show performers with tickets currently available.</p>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/store/test/test.js"></script>
+  <script>
+    const { $, $$, fmtMoney, fmtWhen } = Test;
+
+    // All events with owned inventory — fetched once, filtered client-side
+    // since the user can't actually type a performer ID. Performers and the
+    // events for the selected performer all derive from this single dataset.
+    let allEvents = [];
+    let selectedPerformerId = null;
+
+    function aggregatePerformers(events) {
+      // Group events by primary performer; surface name + count + sample logo.
+      const map = new Map();
+      for (const e of events) {
+        const id = e.primary_performer_id;
+        if (!id) continue;
+        const existing = map.get(id);
+        if (existing) {
+          existing.events.push(e);
+        } else {
+          map.set(id, {
+            id,
+            name: e.primary_performer_name || `Performer ${id}`,
+            logo: e.primary_performer_logo,
+            color: e.primary_performer_color,
+            events: [e],
+          });
+        }
+      }
+      return [...map.values()].sort((a, b) => b.events.length - a.events.length);
+    }
+
+    function renderPerformerChips(performers) {
+      const row = $("#performersRow");
+      const chipsEl = $("#performerChips");
+      chipsEl.innerHTML = "";
+      if (!performers.length) {
+        row.hidden = true;
+        return;
+      }
+      row.hidden = false;
+      for (const p of performers.slice(0, 30)) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "filter-chip" + (p.id === selectedPerformerId ? " on" : "");
+        chip.dataset.value = p.id;
+        chip.textContent = `${p.name} (${p.events.length})`;
+        chip.addEventListener("click", () => {
+          selectedPerformerId = (selectedPerformerId === p.id) ? null : p.id;
+          renderPerformerChips(performers);
+          renderEventCards(currentEvents());
+        });
+        chipsEl.append(chip);
+      }
+    }
+
+    function renderEventCards(events) {
+      const grid = $("#cards");
+      grid.innerHTML = "";
+      const header = $("#eventsHeader");
+      if (!events.length) {
+        header.textContent = "";
+        return;
+      }
+      const sel = selectedPerformerId
+        ? events[0].primary_performer_name
+        : null;
+      header.textContent = sel
+        ? `${sel} · ${events.length} upcoming`
+        : `${events.length} event${events.length === 1 ? "" : "s"}`;
+      for (const ev of events) {
+        const c = document.createElement("a");
+        c.className = "card";
+        c.href = `/store/test/event?id=${ev.id}`;
+        if (ev.primary_performer_color) {
+          c.style.setProperty("--card-accent", ev.primary_performer_color);
+        }
+        c.innerHTML = `
+          <div class="when">${fmtWhen(ev.occurs_at_local)}</div>
+          <div class="name">${ev.name || "—"}</div>
+          <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+          <div class="price">from ${fmtMoney(ev.from_price)}</div>
+        `;
+        grid.append(c);
+      }
+    }
+
+    // Events visible right now: filtered by query AND optionally by selected performer.
+    function currentEvents() {
+      const q = ($("#q").value || "").trim().toLowerCase();
+      const matchQuery = (e) => {
+        if (!q) return true;
+        const hay = [e.name, e.venue_name, e.venue_location, e.primary_performer_name]
+          .filter(Boolean).join(" ").toLowerCase();
+        return hay.includes(q);
+      };
+      let events = allEvents.filter(matchQuery);
+      if (selectedPerformerId) {
+        events = events.filter(e => e.primary_performer_id === selectedPerformerId);
+      }
+      return events;
+    }
+
+    function refresh() {
+      const events = currentEvents();
+      const performers = aggregatePerformers(events);
+      const empty = !events.length;
+      $("#empty").hidden = !empty;
+      renderPerformerChips(performers);
+      renderEventCards(selectedPerformerId
+        ? events  // already filtered to selected performer
+        : events.slice(0, 60));  // cap when no specific performer selected
+    }
+
+    async function load() {
+      $("#status").textContent = "Loading…";
+      try {
+        const r = await fetch("/api/store/events?limit=500");
+        const body = await r.json();
+        allEvents = body.events || [];
+        $("#status").textContent = `${aggregatePerformers(allEvents).length} performers with tickets available`;
+        refresh();
+      } catch (e) {
+        $("#status").textContent = "Couldn't load. " + e.message;
+        $("#status").style.color = "var(--bad)";
+      }
+    }
+
+    $("#q").addEventListener("input", () => {
+      // Reset selection when the query changes — user is searching anew.
+      selectedPerformerId = null;
+      refresh();
+    });
+
+    load();
+  </script>
+</body>
+</html>

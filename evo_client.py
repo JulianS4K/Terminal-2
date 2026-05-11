@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import time
 from typing import Any, Iterator
 from urllib.parse import urlencode
 
@@ -104,6 +105,16 @@ class EvoClient:
     # the runtime enforcement. Any non-GET attempt raises EvoReadOnlyError
     # before a network call is made.
 
+    # 429 backoff config — TEvo doesn't publish hard rate limits but
+    # empirical testing shows ~5 req/sec sustained is the safe band, with
+    # bursts of ~30 sequential requests triggering 429s. Other clients in
+    # the repo (chat fn, espn-collect, seatgeek, seatdata) implement their
+    # own backoff because this client previously did not. Closes that gap.
+    _MAX_RETRIES = 4
+    _BACKOFF_BASE_SEC = 0.5     # 0.5, 1, 2, 4 — caps below the 5s order-of-magnitude
+    _BACKOFF_CAP_SEC = 30.0
+    _RETRY_STATUSES = frozenset({429, 502, 503, 504})
+
     def _get(self, path: str, params: dict | None = None) -> dict[str, Any]:
         _assert_readonly_method("GET")  # RULE 2 enforcement
         clean = self._normalize(params)
@@ -115,13 +126,34 @@ class EvoClient:
             "X-Signature": signature,
             "Accept": "application/vnd.ticketevolution.api+json; version=9",
         }
-        r = requests.get(url, headers=headers, timeout=self.timeout)
-        if not r.ok:
-            raise RuntimeError(
-                f"{r.status_code} {r.reason} on {r.request.method} {r.url}\n"
-                f"Response body: {r.text}"
-            )
-        return r.json()
+
+        last_resp = None
+        for attempt in range(self._MAX_RETRIES + 1):
+            r = requests.get(url, headers=headers, timeout=self.timeout)
+            last_resp = r
+            if r.ok:
+                return r.json()
+            if r.status_code not in self._RETRY_STATUSES or attempt == self._MAX_RETRIES:
+                break
+            # Honor Retry-After when TEvo provides it; else exponential.
+            wait: float
+            ra = r.headers.get("Retry-After")
+            if ra:
+                try:
+                    wait = float(ra)
+                except (TypeError, ValueError):
+                    wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
+            else:
+                wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
+            wait = min(wait, self._BACKOFF_CAP_SEC)
+            time.sleep(wait)
+
+        # Out of retries, or non-retryable status.
+        raise RuntimeError(
+            f"{last_resp.status_code} {last_resp.reason} on "
+            f"{last_resp.request.method} {last_resp.url}\n"
+            f"Response body: {last_resp.text}"
+        )
 
     def _iter_paginated(
         self,

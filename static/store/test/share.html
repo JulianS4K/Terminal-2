@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Share Links — Wiring Test</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass · wiring test</a>
+    <span class="pill" id="serverEnv">checking…</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Start</h3>
+      <a href="/store/test"><span class="num"></span> Index</a>
+      <h3>Workflows</h3>
+      <a href="/store/test/search"><span class="num">04.</span> Comprehensive Search</a>
+      <a href="/store/test/performer"><span class="num">06.</span> Performer Landing</a>
+      <a href="/store/test/venue"><span class="num">07.</span> Venue Landing</a>
+      <a href="/store/test/event"><span class="num">08.</span> Event Landing</a>
+      <h3>Storefront</h3>
+      <a href="/store/test/share"><span class="num">▸</span> Share Links</a>
+    </nav>
+
+    <main class="content">
+      <h1>Share Links</h1>
+      <p class="subtitle">
+        Storefront-specific. Revocable filtered links live at
+        <code>/s/{id}</code>; resolve to the same event-detail UI with the
+        saved filter set applied server-side. Backed by the
+        <code>share_links</code> table + <code>bump_share_view()</code> RPC.
+      </p>
+
+      <div class="panel">
+        <h3>Create</h3>
+        <div class="row">
+          <input id="event_id" type="number" placeholder="event id" />
+          <input id="zones" type="text" placeholder="zones (CSV, optional)" style="max-width: 200px" />
+          <input id="maxP" type="number" placeholder="max $" style="max-width: 90px" />
+          <input id="minQty" type="number" placeholder="min qty" style="max-width: 90px" />
+          <input id="note" type="text" placeholder="note (optional)" />
+          <select id="ttl" style="max-width: 140px">
+            <option value="">never expires</option>
+            <option value="1">1 day</option>
+            <option value="7" selected>7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+          </select>
+          <button id="create">Create link</button>
+        </div>
+        <div class="meta">
+          <span>url: <strong id="newUrl">—</strong></span>
+          <span>status: <span id="createStatus" class="pill">—</span></span>
+        </div>
+        <pre id="createJson" class="json">fill in event id (and any filters) then click Create</pre>
+      </div>
+
+      <div class="panel">
+        <h3>Active links</h3>
+        <div class="row">
+          <label style="margin: 0; display: flex; gap: 6px; align-items: center; text-transform: none; letter-spacing: 0;">
+            <input type="checkbox" id="includeInactive" /> include revoked &amp; expired
+          </label>
+          <button id="refresh" class="ghost">Refresh</button>
+        </div>
+        <div id="list" style="margin-top: 12px"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Activity</h3>
+        <div id="log" class="console"></div>
+      </div>
+
+      <nav class="docnav">
+        <a class="prev" href="/store/test/event"><span class="label">Previous</span>08. Event Landing</a>
+        <a class="next" href="/store/test"><span class="label">Next</span>Index</a>
+      </nav>
+    </main>
+  </div>
+
+  <script src="/static/store/test/test.js"></script>
+  <script>
+    const { $, fmtJson, api, log } = Test;
+
+    async function create() {
+      const event_id = Number($("#event_id").value);
+      if (!event_id) { log("event_id required", "err"); return; }
+      const filters = {};
+      const z = $("#zones").value.trim();
+      if (z) filters.zones = z.split(",").map((x) => x.trim()).filter(Boolean);
+      const mx = $("#maxP").value;
+      if (mx) filters.max_price = Number(mx);
+      const mq = $("#minQty").value;
+      if (mq) filters.min_qty = Number(mq);
+      const note = $("#note").value.trim() || undefined;
+      const ttl = $("#ttl").value;
+      const body = {
+        event_id,
+        filters,
+        note,
+        expires_in_days: ttl ? Number(ttl) : undefined,
+      };
+      try {
+        const { body: res } = await api("/api/store/share", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        // Build the anchor via DOM — res.url is a server-issued path but
+        // we defensively escape per #57 A1 review.
+        const fullUrl = `${location.origin}${res.url}`;
+        const anchor = document.createElement("a");
+        anchor.href = res.url;
+        anchor.target = "_blank";
+        anchor.rel = "noopener";
+        anchor.textContent = fullUrl;
+        $("#newUrl").replaceChildren(anchor);
+        $("#createStatus").className = "pill live";
+        $("#createStatus").textContent = "active";
+        $("#createJson").innerHTML = fmtJson(res);
+        loadList();  // refresh list to show new entry
+      } catch (e) {
+        $("#createStatus").className = "pill err";
+        $("#createStatus").textContent = "error";
+        $("#createJson").innerHTML = fmtJson({ error: e.message });
+      }
+    }
+
+    function statusPill(s) {
+      if (s.revoked_at) return '<span class="pill err">revoked</span>';
+      if (s.expires_at) {
+        const exp = new Date(s.expires_at);
+        if (!isNaN(exp.getTime()) && exp <= new Date()) return '<span class="pill err">expired</span>';
+        return `<span class="pill live">active</span> <span style="color: var(--muted); font-size: 11px">until ${exp.toLocaleDateString()}</span>`;
+      }
+      return '<span class="pill live">active</span>';
+    }
+
+    function fmtFilters(f) {
+      if (!f) return "(none)";
+      const parts = [];
+      if (f.zones && f.zones.length) parts.push(`zones: ${f.zones.join(", ")}`);
+      if (f.section && f.section.length) parts.push(`section: ${f.section.join(", ")}`);
+      if (f.min_price != null) parts.push(`≥ $${f.min_price}`);
+      if (f.max_price != null) parts.push(`≤ $${f.max_price}`);
+      if (f.min_qty != null) parts.push(`${f.min_qty}+ seats`);
+      return parts.length ? parts.join(" · ") : "(none)";
+    }
+
+    async function loadList() {
+      const inc = $("#includeInactive").checked;
+      try {
+        const { body } = await api(`/api/store/shares?include_inactive=${inc}`);
+        const list = $("#list");
+        list.innerHTML = "";
+        if (!body.shares || !body.shares.length) {
+          list.innerHTML = '<p style="color: var(--muted)">no share links yet</p>';
+          return;
+        }
+        const tbl = document.createElement("div");
+        tbl.style.display = "grid";
+        tbl.style.gridTemplateColumns = "auto 1fr 1fr 60px 130px 100px";
+        tbl.style.gap = "8px 14px";
+        tbl.style.fontSize = "13px";
+        tbl.style.alignItems = "center";
+        tbl.innerHTML = `
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">LINK</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">EVENT</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">FILTERS</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">VIEWS</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">STATUS</div>
+          <div></div>
+        `;
+        for (const s of body.shares) {
+          const link = document.createElement("a");
+          link.href = s.url;
+          link.target = "_blank";
+          link.style.fontFamily = "ui-monospace, monospace";
+          link.style.fontSize = "12px";
+          link.textContent = `/s/${s.id}`;
+
+          const ev = document.createElement("a");
+          ev.href = `/store/test/event?id=${s.event_id}`;
+          ev.textContent = `#${s.event_id}`;
+
+          const f = document.createElement("span");
+          f.style.color = "var(--muted)";
+          f.textContent = fmtFilters(s.filters);
+
+          const views = document.createElement("span");
+          views.textContent = s.view_count || 0;
+
+          const status = document.createElement("span");
+          status.innerHTML = statusPill(s);
+
+          const actions = document.createElement("div");
+          actions.style.display = "flex";
+          actions.style.gap = "6px";
+          actions.style.justifyContent = "flex-end";
+
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "ghost";
+          copyBtn.style.padding = "4px 8px";
+          copyBtn.style.fontSize = "11px";
+          copyBtn.textContent = "copy";
+          copyBtn.onclick = async () => {
+            try {
+              await navigator.clipboard.writeText(`${location.origin}${s.url}`);
+              copyBtn.textContent = "copied ✓";
+              setTimeout(() => (copyBtn.textContent = "copy"), 1200);
+            } catch {}
+          };
+          actions.append(copyBtn);
+
+          if (!s.revoked_at) {
+            const rev = document.createElement("button");
+            rev.className = "ghost";
+            rev.style.padding = "4px 8px";
+            rev.style.fontSize = "11px";
+            rev.textContent = "revoke";
+            rev.onclick = async () => {
+              if (!confirm(`Revoke /s/${s.id}?`)) return;
+              try {
+                await api(`/api/store/share/${encodeURIComponent(s.id)}`, { method: "DELETE" });
+                loadList();
+              } catch (e) {
+                alert(e.message);
+              }
+            };
+            actions.append(rev);
+          }
+
+          tbl.append(link, ev, f, views, status, actions);
+        }
+        list.append(tbl);
+      } catch (e) {
+        // Build via DOM — error messages can echo attacker-controlled data
+        // back from the server. Per #57 A1 review.
+        const p = document.createElement("p");
+        p.style.color = "var(--bad)";
+        p.textContent = `error: ${e.message}`;
+        $("#list").replaceChildren(p);
+      }
+    }
+
+    $("#create").addEventListener("click", create);
+    $("#refresh").addEventListener("click", loadList);
+    $("#includeInactive").addEventListener("change", loadList);
+    loadList();
+  </script>
+</body>
+</html>

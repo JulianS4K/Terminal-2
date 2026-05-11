@@ -34,7 +34,8 @@
           </p>
         </div>
         <div class="head-actions">
-          <button class="btn ghost" id="openShare">Share inventory</button>
+          <span id="freshness" class="freshness"></span>
+          <button class="btn ghost" id="openShare">Share this view</button>
         </div>
       </div>
     </section>
@@ -52,18 +53,35 @@
 
       <div class="listings">
         <h2>Available from us <span id="listCount" class="muted"></span></h2>
-        <div class="listcontrols">
-          <label>min qty
+
+        <!-- Inline filters drive the page view AND the share URL. URL is the
+             source of truth: every change updates ?zones=&section=&min_price=
+             &max_price=&min_qty= via replaceState and re-fetches the listings.
+             Zone row only renders when this event's performer+venue has
+             curated zones in performer_zones. -->
+        <div id="filterBar" class="filter-bar">
+          <div id="zoneRow" class="filter-row" hidden>
+            <span class="filter-label">Zone</span>
+            <div class="chip-group" id="zoneChips"></div>
+          </div>
+          <div id="sectionRow" class="filter-row" hidden>
+            <span class="filter-label">Section</span>
+            <div class="chip-group" id="sectionChips"></div>
+          </div>
+          <div class="filter-row inline">
+            <span class="filter-label">Price</span>
+            <input id="minPrice" type="number" min="0" step="10" placeholder="min $" />
+            <input id="maxPrice" type="number" min="0" step="10" placeholder="max $" />
+            <span class="filter-label" style="margin-left:16px">Min qty</span>
             <select id="minQty">
-              <option value="1" selected>any</option>
+              <option value="">any</option>
               <option value="2">2+</option>
               <option value="3">3+</option>
               <option value="4">4+</option>
+              <option value="6">6+</option>
             </select>
-          </label>
-          <label>max price
-            <input id="maxPrice" type="number" min="0" step="10" placeholder="any" />
-          </label>
+            <button id="resetFilters" class="btn ghost" style="margin-left:auto">Reset</button>
+          </div>
         </div>
 
         <ul id="listings" class="list"></ul>
