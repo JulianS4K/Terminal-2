@@ -8,19 +8,31 @@ Produced by C1 (Data + Chat Bot, supervisor). Implementation-ready specs for the
 
 **Migration ordering:** the 7 proposals are independent except where flagged. Implement in priority order (1 → 7). Each gets its own migration file.
 
+### §9 audit-lane compliance baseline (applies to every spec below)
+
+Per `MIGRATION_CONVENTIONS.md` §9 + §10, every new table must include:
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` and `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+- `BEFORE UPDATE` trigger calling `trg_set_updated_at()` to auto-bump `updated_at`
+- `ON CONFLICT` clauses on every UPSERT
+- `meta JSONB` column on any table that may evolve (xref tables, governance tables)
+- §6 header block at the top of the migration file (lane, touches, pre-reqs)
+- No `DROP` operations; if needed, separate rollback migration
+
+The schemas below already incorporate these requirements. Lane / timestamp guidance per proposal indicates whose worktree implements.
+
 ---
 
 ## Build priority
 
-| # | table | priority | dependency |
-|---|---|---|---|
-| 1 | `seatgeek_orders_resolved` | **HIGH** | none |
-| 2 | `v_pg_net_queue_health` (view) | **HIGH** | none |
-| 3 | `event_section_row_snapshots` | medium | none |
-| 4 | `entity_xref_overrides` + `entity_xref_conflicts` | medium | precondition for 5–7 |
-| 5 | `broker_xref` | medium | depends on 4 (overrides) |
-| 6 | `listing_xref` | low | depends on 4, 5 |
-| 7 | `tevo_event_archive` | low | optional, defer-able |
+| # | table | priority | dependency | lane (per §2) |
+|---|---|---|---|---|
+| 1 | `seatgeek_orders_resolved` | **HIGH** | none | canonical |
+| 2 | `v_pg_net_queue_health` (view) | **HIGH** | none | xref+macro (audit) |
+| 3 | `event_section_row_snapshots` | medium | none | audit (TEvo ingest) |
+| 4 | `entity_xref_overrides` + `entity_xref_conflicts` | medium | precondition for 5–7 | canonical |
+| 5 | `broker_xref` | medium | depends on 4 (overrides) | canonical |
+| 6 | `listing_xref` | low | depends on 4, 5 | canonical |
+| 7 | `tevo_event_archive` | low | optional, defer-able | audit (TEvo) |
 
 ---
 
@@ -35,6 +47,24 @@ Direct attachment of TEvo venue + performer IDs to historical SeatGeek orders th
 - TEvo's `events` table only retains 293 past events; **0 share a date with SG orders**
 - Path B sample fix (exact-name only, no normalization) resolved venue for **271/400 (67.8%)** and full venue+both performers for **79/400 (19.8%)**
 
+### Lane / suggested slot
+- **Lane:** canonical (per §2)
+- **Filename:** `20260512100000_canonical_seatgeek_orders_resolved.sql` (or earliest free slot in `20260512` band)
+- **Header block:**
+  ```sql
+  -- ============================================================================
+  -- Migration 20260512100000 — seatgeek_orders_resolved (Path B venue+performer)
+  --
+  -- Lane:     canonical
+  -- Touches:  seatgeek_orders_resolved (W), v_canonical_venue (R), v_canonical_performer (R), seatgeek_orders (R)
+  -- Pre-reqs: v_canonical_venue, v_canonical_performer must exist
+  --
+  -- Resolves tevo_venue_id + tevo_performer_ids directly on each SeatGeek
+  -- order, bypassing the missing TEvo event row for historical 2018-2025 sales.
+  -- Methodology: docs/cross-source-entity-resolution-2026-05-11.md Path B.
+  -- ============================================================================
+  ```
+
 ### Schema
 
 ```sql
@@ -47,14 +77,20 @@ CREATE TABLE seatgeek_orders_resolved (
   performer_confidences numeric(3,2)[] NOT NULL DEFAULT '{}',
   performer_match_methods text[]      NOT NULL DEFAULT '{}',
   occurs_at_resolved    timestamptz,
-  resolved_at           timestamptz   NOT NULL DEFAULT now(),
   resolution_method     text          NOT NULL,    -- 'historical_venue_performer_v1' etc.
-  notes                 text
+  notes                 text,
+  meta                  jsonb         NOT NULL DEFAULT '{}'::jsonb,
+  created_at            timestamptz   NOT NULL DEFAULT now(),
+  updated_at            timestamptz   NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON seatgeek_orders_resolved (tevo_venue_id) WHERE tevo_venue_id IS NOT NULL;
 CREATE INDEX ON seatgeek_orders_resolved USING GIN (tevo_performer_ids);
 CREATE INDEX ON seatgeek_orders_resolved (occurs_at_resolved);
+
+CREATE TRIGGER seatgeek_orders_resolved_updated_at
+  BEFORE UPDATE ON seatgeek_orders_resolved
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 ```
 
 ### Population
@@ -138,6 +174,25 @@ Per-event-per-snapshot rollup at `(section, row, quantity)` grain. Source-tagged
 
 ### Schema
 
+### Lane / suggested slot
+- **Lane:** audit (TEvo ingest extension)
+- **Filename:** `20260512120000_audit_event_section_row_snapshots.sql`
+- **Header block:**
+  ```sql
+  -- ============================================================================
+  -- Migration 20260512120000 — event_section_row_snapshots (per-event section/row rollup)
+  --
+  -- Lane:     xref+macro (audit)
+  -- Touches:  event_section_row_snapshots (W), listings_snapshots (R), events (R)
+  -- Pre-reqs: section_norm() function (created in this migration if absent)
+  --
+  -- Source-tagged rollup at (event_id, source, section_norm, row, quantity) grain.
+  -- Change-only insert via content_hash. Feeds section/row/qty performance views.
+  -- ============================================================================
+  ```
+
+### Schema
+
 ```sql
 CREATE TABLE event_section_row_snapshots (
   event_id        bigint      NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -152,11 +207,18 @@ CREATE TABLE event_section_row_snapshots (
   max_price       numeric(10,2),
   owned_quantity  int         NOT NULL DEFAULT 0,
   content_hash    text        NOT NULL,            -- change-only insert key
+  meta            jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (event_id, source, captured_at, section_norm, row)
 );
 
 CREATE INDEX ON event_section_row_snapshots (event_id, section_norm, row, captured_at DESC);
 CREATE INDEX ON event_section_row_snapshots (captured_at DESC);
+
+CREATE TRIGGER event_section_row_snapshots_updated_at
+  BEFORE UPDATE ON event_section_row_snapshots
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 
 -- Helper function (also reused by xref work)
 CREATE OR REPLACE FUNCTION section_norm(s text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
@@ -194,6 +256,25 @@ Governance layer for the 4-layer entity resolution methodology. Manual overrides
 
 ### Schema
 
+### Lane / suggested slot
+- **Lane:** canonical
+- **Filename:** `20260512140000_canonical_entity_xref_governance.sql`
+- **Header block:**
+  ```sql
+  -- ============================================================================
+  -- Migration 20260512140000 — entity_xref governance (overrides + conflicts)
+  --
+  -- Lane:     canonical
+  -- Touches:  entity_xref_overrides (W), entity_xref_conflicts (W)
+  -- Pre-reqs: none (precondition for broker_xref, listing_xref migrations)
+  --
+  -- Manual override + conflict log for the 4.5-layer xref methodology.
+  -- Overrides always beat auto-matches; conflicts logged when candidates tie.
+  -- ============================================================================
+  ```
+
+### Schema
+
 ```sql
 CREATE TABLE entity_xref_overrides (
   layer       text NOT NULL CHECK (layer IN ('venue', 'performer', 'broker', 'event', 'listing')),
@@ -201,9 +282,15 @@ CREATE TABLE entity_xref_overrides (
   sg_id       text NOT NULL,
   reason      text,
   set_by      text NOT NULL,
-  set_at      timestamptz NOT NULL DEFAULT now(),
+  meta        jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (layer, tevo_id)
 );
+
+CREATE TRIGGER entity_xref_overrides_updated_at
+  BEFORE UPDATE ON entity_xref_overrides
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 
 CREATE TABLE entity_xref_conflicts (
   id                   bigserial PRIMARY KEY,
@@ -213,12 +300,18 @@ CREATE TABLE entity_xref_conflicts (
   confidence_scores    numeric(3,2)[] NOT NULL,
   status               text NOT NULL DEFAULT 'needs_review'
                        CHECK (status IN ('needs_review', 'resolved', 'dismissed')),
-  logged_at            timestamptz NOT NULL DEFAULT now(),
   resolved_at          timestamptz,
-  resolution_note      text
+  resolution_note      text,
+  meta                 jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX ON entity_xref_conflicts (layer, status, logged_at);
+CREATE INDEX ON entity_xref_conflicts (layer, status, created_at);
+
+CREATE TRIGGER entity_xref_conflicts_updated_at
+  BEFORE UPDATE ON entity_xref_conflicts
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 ```
 
 ### Acceptance criteria
@@ -244,6 +337,25 @@ Map TEvo brokerages to SeatGeek SellerDirect sellers. Layer 2.5 from methodology
 
 ### Schema
 
+### Lane / suggested slot
+- **Lane:** canonical
+- **Filename:** `20260512160000_canonical_broker_xref.sql`
+- **Header block:**
+  ```sql
+  -- ============================================================================
+  -- Migration 20260512160000 — broker_xref (TEvo brokerage ↔ SG seller)
+  --
+  -- Lane:     canonical
+  -- Touches:  broker_xref (W), listings_snapshots (R), seatgeek_seller_listings (R)
+  -- Pre-reqs: 20260512140000 (entity_xref_overrides for manual overrides)
+  --
+  -- Layer 2.5 xref enabling Layer 4 (listing match) to fall back on broker
+  -- identity when seat numbers aren't available.
+  -- ============================================================================
+  ```
+
+### Schema
+
 ```sql
 CREATE TABLE broker_xref (
   tevo_brokerage_id   bigint NOT NULL,
@@ -252,14 +364,20 @@ CREATE TABLE broker_xref (
   sg_seller_name      text,
   confidence          numeric(3,2) NOT NULL,
   match_method        text         NOT NULL,
-  matched_at          timestamptz  NOT NULL DEFAULT now(),
   matched_by          text         NOT NULL DEFAULT 'auto',
   notes               text,
+  meta                jsonb        NOT NULL DEFAULT '{}'::jsonb,
+  created_at          timestamptz  NOT NULL DEFAULT now(),
+  updated_at          timestamptz  NOT NULL DEFAULT now(),
   PRIMARY KEY (tevo_brokerage_id, sg_seller_id)
 );
 
 CREATE UNIQUE INDEX ON broker_xref (tevo_brokerage_id) WHERE confidence >= 0.85;
 CREATE UNIQUE INDEX ON broker_xref (sg_seller_id) WHERE confidence >= 0.85;
+
+CREATE TRIGGER broker_xref_updated_at
+  BEFORE UPDATE ON broker_xref
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 ```
 
 ### Population
@@ -287,6 +405,25 @@ TEvo ticket_group ↔ SeatGeek listing match. Layer 4 from methodology. Enables 
 
 ### Schema
 
+### Lane / suggested slot
+- **Lane:** canonical
+- **Filename:** `20260512180000_canonical_listing_xref.sql`
+- **Header block:**
+  ```sql
+  -- ============================================================================
+  -- Migration 20260512180000 — listing_xref (TEvo ticket_group ↔ SG listing)
+  --
+  -- Lane:     canonical
+  -- Touches:  listing_xref (W), listings_snapshots (R), seatgeek_seller_listings (R), broker_xref (R)
+  -- Pre-reqs: 20260512140000 (governance), 20260512160000 (broker_xref)
+  --
+  -- Layer 4 cross-source listing match. Seat-array intersection is the only
+  -- safe key; broker_xref+section/row/qty is fallback; price is NEVER a key.
+  -- ============================================================================
+  ```
+
+### Schema
+
 ```sql
 CREATE TABLE listing_xref (
   id                    bigserial PRIMARY KEY,
@@ -299,13 +436,19 @@ CREATE TABLE listing_xref (
                             ('seat_array_intersect','seat_array_disjoint',
                              'broker_section_row_qty','inconclusive')),
   price_spread_pct      numeric(5,2),                  -- observability only, NOT a match key
-  matched_at            timestamptz NOT NULL DEFAULT now(),
-  notes                 text
+  notes                 text,
+  meta                  jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  updated_at            timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON listing_xref (tevo_ticket_group_id, captured_at_tevo DESC);
 CREATE INDEX ON listing_xref (sg_listing_id, captured_at_sg DESC);
 CREATE INDEX ON listing_xref (match_method, confidence);
+
+CREATE TRIGGER listing_xref_updated_at
+  BEFORE UPDATE ON listing_xref
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 ```
 
 ### Population
@@ -339,6 +482,25 @@ Frozen historical TEvo events that the cron-driven `events` table doesn't retain
 
 ### Schema
 
+### Lane / suggested slot (if built)
+- **Lane:** audit (TEvo ingest)
+- **Filename:** `20260513100000_audit_tevo_event_archive.sql`
+- **Header block:**
+  ```sql
+  -- ============================================================================
+  -- Migration 20260513100000 — tevo_event_archive (historical events retention)
+  --
+  -- Lane:     xref+macro (audit)
+  -- Touches:  tevo_event_archive (W)
+  -- Pre-reqs: TEvo /v9/events API access
+  --
+  -- Snapshot store for events that age out of `events` cron tracking.
+  -- One-off backfill via date-range queries; daily cron archives expiring rows.
+  -- ============================================================================
+  ```
+
+### Schema
+
 ```sql
 CREATE TABLE tevo_event_archive (
   tevo_event_id           bigint PRIMARY KEY,
@@ -349,13 +511,19 @@ CREATE TABLE tevo_event_archive (
   primary_performer_id    bigint,
   primary_performer_name  text,
   raw                     jsonb,
-  archived_at             timestamptz NOT NULL DEFAULT now(),
-  source_pull             text                          -- which backfill job populated it
+  source_pull             text,                         -- which backfill job populated it
+  meta                    jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  updated_at              timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON tevo_event_archive (occurs_at);
 CREATE INDEX ON tevo_event_archive (venue_id);
 CREATE INDEX ON tevo_event_archive (primary_performer_id);
+
+CREATE TRIGGER tevo_event_archive_updated_at
+  BEFORE UPDATE ON tevo_event_archive
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 ```
 
 ### Population
