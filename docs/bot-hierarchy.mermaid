@@ -1,7 +1,52 @@
+%% bot-hierarchy.mermaid — Terminal-2 bot command structure
+%%
+%% ====================================================================
+%% IN-FLIGHT HANDOFF — A1 -> B1 · 2026-05-10 · "security chat" session
+%% ====================================================================
+%%
+%% Security audit completed by A1 (Primary/Audit/Push Bot). 16 findings
+%% filed under "SECURITY BACKLOG" in KANBAN.md on branch
+%% claude/review-supabase-access-v8Dtl (PR #57, draft).
+%%
+%% Passing UP to B1 (Security Manager Bot) for triage + delegation —
+%% B1 is the chart's chartered security role; S1->B1 audit-feed already
+%% exists, so this is in-protocol.
+%%
+%% B1's delegation map (which executing bot owns each entry):
+%%
+%%   SEC-CRIT: Rotate leaked CRON_SECRET + redact         -> A1
+%%   SEC-CRIT: Rotate coworker_readonly password          -> A1
+%%   SEC-CRIT: Auth on /api/store/share* POST/DEL/list    -> P1
+%%   SEC-CRIT: Fix fail-open CRON_SECRET (app + edge)     -> A1 + C1
+%%   SEC-CRIT: DOM-XSS in static/store/store.js           -> P1
+%%   SEC-HIGH: SET search_path on 3 DEFINER funcs         -> A1
+%%   SEC-HIGH: RLS coverage audit (~120 tables)           -> A1 (B1 signs off)
+%%   SEC-HIGH: Verify Supabase network restrictions       -> A1
+%%   SEC-HIGH: chat edge fn CORS + rate-limit             -> C1
+%%   SEC-HIGH: Move anon JWT out of cron migrations       -> A1
+%%   SEC-HIGH: Replace AUTH_DISABLED kill-switch          -> A1
+%%   SEC-HIGH: Auth-gate 5 unauth'd edge fns              -> C1
+%%   SEC-MED:  CSP + CORS middleware                      -> A1 + P1
+%%   SEC-MED:  Constant-time secret compare               -> A1 + C1
+%%   SEC-MED:  Rate limit /api/store/*                    -> A1 + P1
+%%   SEC-MED:  Bound numeric params in store.js           -> P1
+%%   SEC-LOW:  SRI + clickjacking on retail HTML          -> P1
+%%   SEC-LOW:  Document get_app_secret whitelist          -> B1
+%%
+%% Recommended order: rotate CRON_SECRET first — unblocks safe deploys
+%% for the rest of the backlog (several follow-up fixes need the env in
+%% place first).
+%%
+%% NOT recipients of any entry: S1, S2, S3, D1, D2 — no findings landed
+%% in their surfaces.
+%%
+%% Carrier: PR #57 (https://github.com/JulianS4K/Terminal-2/pull/57)
+%% ====================================================================
+
 graph TD
     subgraph CONTROL[Command & Control]
-        A1[Primary/Audit/Push Bot<br/>Admin]
-        B1[Security Manager Bot<br/>Manager]
+        A1[Primary/Audit/Push Bot<br/>Admin<br/>handoff sent -> B1 via PR #57]
+        B1[Security Manager Bot<br/>Manager<br/>INBOX: SECURITY BACKLOG · 16 entries]
         C1[Data + Chat Bot<br/>Supervisor]
 
         A1 --> B1
@@ -31,6 +76,7 @@ graph TD
     D2 -.->|unfulfilled / pending<br/>shipment orders| S3
     A1 -.->|event_xref writes<br/>cascade via S1's<br/>drift triggers| S1
     S1 -.->|audit views<br/>drift reports| B1
+    A1 ==>|2026-05-10 security audit<br/>16 backlog entries<br/>PR #57| B1
 
     classDef adminClass fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:3px
     classDef managerClass fill:#4c6ef5,stroke:#364fc7,color:#fff,stroke-width:3px
