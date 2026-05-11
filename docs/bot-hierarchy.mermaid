@@ -15,11 +15,12 @@ graph TD
     subgraph SECONDARY[Secondary Sales Environment]
         S1[Terminal Front End Bot<br/>Design & Implementation<br/>audit-datasets-schemas-auoc3]
         S2[Retail Search Evo Front End Bot<br/>Design & Implementation]
-        S3[Undelivered Front End Bot<br/>Design & Implementation]
+        S3[Undelivered Front End Bot<br/>Design & Implementation<br/>assigned: review-unified-order-suite-FA0qA / PR #56]
     end
 
     subgraph DATA[Data Collection]
         D1[Broadway Scraper Bot<br/>Data Scraping]
+        D2[TickPick + Vivid Order Clients<br/>Read-only API Pulls<br/>RULE 2 bucket: Evo / SG / TP / VIV]
     end
 
     C1 --> PRIMARY
@@ -27,6 +28,7 @@ graph TD
     C1 --> DATA
 
     D1 -.->|feeds data| S1
+    D2 -.->|unfulfilled / pending<br/>shipment orders| S3
     A1 -.->|event_xref writes<br/>cascade via S1's<br/>drift triggers| S1
     S1 -.->|audit views<br/>drift reports| B1
 
@@ -42,4 +44,4 @@ graph TD
     class C1 supervisorClass
     class P1 primaryClass
     class S1,S2,S3 secondaryClass
-    class D1 dataClass
+    class D1,D2 dataClass
