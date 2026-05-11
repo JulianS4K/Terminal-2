@@ -4167,15 +4167,28 @@ def _fetch_event_from_db(event_id: int) -> dict:
     other_ids = [int(p) for p in (e.get("performer_ids") or [])
                  if int(p) != int(e.get("primary_performer_id") or 0)]
     if other_ids:
-        names = (db.table("events")
-                 .select("primary_performer_id,primary_performer_name")
-                 .in_("primary_performer_id", other_ids)
-                 .execute().data) or []
-        name_map = {int(r["primary_performer_id"]): r.get("primary_performer_name")
-                    for r in names if r.get("primary_performer_id")}
+        # Look up names from performer_metadata (covers all ~56k performers),
+        # not from events.primary_performer_name (only covers performers who
+        # have been primary in some event). NBA playoff games carry "series"
+        # performer IDs that never appear as primary — those would render as
+        # "null" in the UI without this. We drop any performer we still can't
+        # name as a defensive belt-and-suspenders.
+        names = (
+            db.table("performer_metadata")
+            .select("performer_id,name")
+            .in_("performer_id", other_ids)
+            .execute().data
+        ) or []
+        name_map = {int(r["performer_id"]): r.get("name")
+                    for r in names if r.get("performer_id") and r.get("name")}
         for pid in other_ids:
+            nm = name_map.get(int(pid))
+            if not nm:
+                # Unnamed — likely a TEvo-internal "series" tag (e.g. the
+                # conference label on a playoff game). Skip.
+                continue
             perfs.append({
-                "performer": {"id": pid, "name": name_map.get(int(pid))},
+                "performer": {"id": pid, "name": nm},
                 "primary": False,
             })
     return {
