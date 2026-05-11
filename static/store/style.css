@@ -366,7 +366,11 @@ a { color: inherit; }
 .tag.warn { background: rgba(250,204,21,0.12); color: var(--warn); }
 
 /* ----- Modal ----- */
-.modal {
+/* :not([hidden]) guard so display: flex doesn't override the `hidden`
+   attribute (equal specificity — cascade wins without this). Without the
+   guard the modal renders as a thin bar with the close X visible even
+   when hidden=true is set in JS. */
+.modal:not([hidden]) {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.6);
