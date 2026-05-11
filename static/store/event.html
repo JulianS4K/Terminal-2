@@ -21,6 +21,10 @@
     <div id="status" class="status">Loading event…</div>
 
     <section id="header" class="event-head" hidden>
+      <!-- Venue hero image — subtle background banner, populated when
+           venue_assets.hero_image_url exists. JS sets backgroundImage
+           inline; CSS handles the dim overlay so the heading stays readable. -->
+      <div id="evHero" class="event-hero-bg" hidden></div>
       <div class="head-row">
         <div>
           <h1 id="evName"></h1>
@@ -28,6 +32,8 @@
             <span id="evVenue"></span>
             <span class="dot">·</span>
             <span id="evDate"></span>
+            <!-- Venue tags — indoor/outdoor + capacity when available -->
+            <span id="evVenueTags" class="venue-tags"></span>
           </p>
           <p class="event-meta sub">
             <span id="evPerformers"></span>

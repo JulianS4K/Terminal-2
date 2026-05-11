@@ -436,6 +436,46 @@ a { color: inherit; }
 }
 
 /* ----- Performer chips on event header ----- */
+/* ----- Event hero (venue_assets.hero_image_url backdrop) ----- */
+.event-hero-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  /* Dim + dark gradient overlay so the heading + meta text stay readable
+     no matter the hero's brightness. Gradient bottom-fades into the
+     event-head's normal background. */
+  filter: brightness(0.32) saturate(1.15);
+  z-index: 0;
+  border-radius: var(--radius);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.event-head {
+  position: relative;
+  overflow: hidden;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+}
+.event-head > .head-row { position: relative; z-index: 1; }
+
+/* ----- Venue tags (indoor/outdoor, capacity) ----- */
+.venue-tags {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+}
+.venue-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
 .perf-chip {
   display: inline-flex;
   align-items: center;

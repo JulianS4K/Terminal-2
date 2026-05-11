@@ -700,6 +700,20 @@
 
       $("#evName").textContent = event.name || "Untitled event";
 
+      // Venue hero image (audit-lane venue_assets.hero_image_url). Subtle
+      // backdrop, dimmed by CSS so the heading stays legible.
+      const heroEl = $("#evHero");
+      if (heroEl) {
+        const hero = event.venue?.hero_image_url;
+        if (hero) {
+          heroEl.style.backgroundImage = `url("${String(hero).replace(/"/g, "%22")}")`;
+          heroEl.hidden = false;
+        } else {
+          heroEl.style.backgroundImage = "";
+          heroEl.hidden = true;
+        }
+      }
+
       // Venue — clickable link to /store?venue_id=X so users can browse
       // other events at the same venue. Falls back to plain text when no id.
       const venueEl = $("#evVenue");
@@ -715,6 +729,25 @@
         venueEl.textContent = venueLabel;
       }
       $("#evDate").textContent = fmtWhen(event.occurs_at_local);
+
+      // Venue tag pills — indoor/outdoor + capacity (audit-lane data).
+      const tagsEl = $("#evVenueTags");
+      if (tagsEl) {
+        tagsEl.replaceChildren();
+        const v = event.venue || {};
+        if (v.is_indoor === true || v.is_indoor === false) {
+          const pill = document.createElement("span");
+          pill.className = "venue-tag";
+          pill.textContent = v.is_indoor ? "indoor" : "outdoor";
+          tagsEl.append(pill);
+        }
+        if (v.capacity && Number(v.capacity) > 0) {
+          const pill = document.createElement("span");
+          pill.className = "venue-tag";
+          pill.textContent = `cap ${Number(v.capacity).toLocaleString()}`;
+          tagsEl.append(pill);
+        }
+      }
 
       const perfEl = $("#evPerformers");
       perfEl.replaceChildren();

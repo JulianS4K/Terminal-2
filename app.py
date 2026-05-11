@@ -4457,6 +4457,27 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
         except (ValueError, TypeError):
             snapshot_age_seconds = None
 
+    # Pull venue_assets to enrich the venue payload (hero image, indoor/outdoor,
+    # capacity if A1's backfill ever lands, lat/lon for a future map preview).
+    # Audit-lane owns this table; we're read-only. Lookups silently degrade
+    # to the minimal venue payload when assets are missing — the UI hides
+    # whatever wasn't found.
+    venue_assets: dict = {}
+    if sb is not None and venue.get("id"):
+        try:
+            va_rows = (
+                sb.table("venue_assets")
+                .select("hero_image_url,is_indoor,capacity,latitude,longitude,"
+                        "city,state,country,espn_venue_id,espn_venue_name")
+                .eq("tevo_venue_id", int(venue["id"]))
+                .limit(1)
+                .execute().data
+            ) or []
+            if va_rows:
+                venue_assets = va_rows[0]
+        except Exception:
+            venue_assets = {}
+
     response = {
         "event": {
             "id": ev.get("id"),
@@ -4468,6 +4489,17 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
                 "name": venue.get("name"),
                 "location": venue.get("location"),
                 "time_zone": venue.get("time_zone"),
+                # Audit-lane assets — null when not yet backfilled, UI hides.
+                "hero_image_url": venue_assets.get("hero_image_url"),
+                "is_indoor": venue_assets.get("is_indoor"),
+                "capacity": venue_assets.get("capacity"),
+                "latitude": venue_assets.get("latitude"),
+                "longitude": venue_assets.get("longitude"),
+                "city": venue_assets.get("city"),
+                "state": venue_assets.get("state"),
+                "country": venue_assets.get("country"),
+                "espn_venue_id": venue_assets.get("espn_venue_id"),
+                "espn_venue_name": venue_assets.get("espn_venue_name"),
             },
             "configuration": {
                 "id": config.get("id"),
