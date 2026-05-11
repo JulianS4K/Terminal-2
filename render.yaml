@@ -1,0 +1,57 @@
+# Render.com Infrastructure-as-Code blueprint for the storefront test env.
+#
+# Usage:
+#   1. Connect this repo to Render (https://dashboard.render.com → New → Blueprint).
+#   2. Point at this branch (claude/store-sql-only-demo-mode) or any branch
+#      that contains render.yaml.
+#   3. Render reads this file, prompts for the four `sync: false` secrets
+#      (Supabase URL + 3 keys + CRON_SECRET), and provisions the service.
+#   4. Every subsequent push to the connected branch auto-deploys.
+#
+# This blueprint deploys in STOREFRONT_SQL_ONLY=true demo mode by default
+# (per Julian's 2026-05-11 direction: storefront serves from
+# listings_snapshots, no live TEvo). Flip to "false" in the Render
+# dashboard env vars to toggle live mode without redeploying.
+#
+# Free plan limits: 750 hours/mo (plenty for one service), sleeps after
+# 15 min idle (cold start ~1-2s), 512MB RAM. Fine for a test env.
+
+services:
+  - type: web
+    name: vibepass-storefront-test
+    runtime: python
+    plan: free
+    region: oregon          # closest to Supabase us-east-2; tradeoff vs us-east-ohio (~50ms)
+    # If your Supabase project is us-east-2 specifically, prefer 'ohio' region instead.
+    branch: claude/store-sql-only-demo-mode
+    autoDeploy: true        # every push to the branch redeploys
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /
+    # Health endpoint returns {"ok": true, ...} so Render's HTTP probe succeeds.
+
+    envVars:
+      # ---- Demo mode (the new flag this PR introduces) ----
+      - key: STOREFRONT_SQL_ONLY
+        value: "true"
+      # ---- Storefront constants ----
+      - key: ALLOWED_EMAIL_DOMAIN
+        value: s4kent.com
+      # ---- Secrets — Render prompts on first deploy, never bakes into git ----
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      # ---- DO NOT set TEVO_TOKEN / TEVO_SECRET here ----
+      # The app reads them from Supabase `settings` table at boot. Setting
+      # them as env vars would override Supabase, which we don't want.
+      #
+      # ---- DO NOT set RAILWAY_ENVIRONMENT=production or ENVIRONMENT=production ----
+      # _is_production() would then return true and the /store/test/* debug
+      # routes would 404. This is a test env; leave production indicators off.
