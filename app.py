@@ -3623,62 +3623,53 @@ def store_events(
     # and still serve a full page.
     candidate_limit = min(cap * 2, 1000) if not include_inactive else cap
 
-    # Two-query merge instead of PostgREST `events!inner(...)` embedding —
-    # the view-to-table FK relationship isn't always re-detected after a
-    # PostgREST restart (PGRST200). This pattern is robust regardless of
-    # whether PostgREST has inferred the relationship.
+    # Events-first two-query merge (was `events!inner(...)` embedding,
+    # which PostgREST PGRST200s on view→table FK after cache rebuilds).
     #
-    # Step 1: filter `events` first when a performer/venue filter is set,
-    # so we have a bounded id set for the metrics query. Step 2: query
-    # `latest_event_metrics` for owned + recent metrics on those events.
-    # Step 3: merge in Python.
-    event_filter_ids: list[int] | None = None
-    if performer_id is not None or venue_id is not None:
-        evs_q = db.table("events").select(
-            "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-            "primary_performer_id,primary_performer_name"
-        )
-        if performer_id is not None:
-            evs_q = evs_q.eq("primary_performer_id", int(performer_id))
-        if venue_id is not None:
-            evs_q = evs_q.eq("venue_id", int(venue_id))
-        # cap upstream to keep the metrics query bounded
-        evs_q = evs_q.order("occurs_at_local", desc=False).limit(candidate_limit)
-        filtered_events = (evs_q.execute().data) or []
-        event_filter_ids = [int(e["id"]) for e in filtered_events if e.get("id")]
-        if not event_filter_ids:
-            return {"count": 0, "events": [], "limit": cap, "offset": offset}
+    # Always start from `events` filtered to upcoming so we don't waste
+    # candidate slots on yesterday's games. Step 1: pull `events` ordered
+    # by occurs_at_local (with optional performer/venue filter). Step 2:
+    # join `latest_event_metrics` for owned-only. Step 3: merge in Python.
+    #
+    # Over-pull events by 3x so we have headroom after the owned filter
+    # narrows the set. include_inactive=true skips the upcoming filter
+    # (debug / admin only).
+    evs_q = db.table("events").select(
+        "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+        "primary_performer_id,primary_performer_name"
+    )
+    if not include_inactive:
+        # "Today or later" — local-time strings sort correctly here.
+        evs_q = evs_q.gte("occurs_at_local", datetime.now(timezone.utc).date().isoformat())
+    if performer_id is not None:
+        evs_q = evs_q.eq("primary_performer_id", int(performer_id))
+    if venue_id is not None:
+        evs_q = evs_q.eq("venue_id", int(venue_id))
+    evs_q = evs_q.order("occurs_at_local", desc=False).limit(candidate_limit * 3)
+    events_rows = (evs_q.execute().data) or []
+    if not events_rows:
+        return {"count": 0, "events": [], "limit": cap, "offset": offset}
+    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+    event_ids = list(events_by_id.keys())
 
-    metrics_q = (
+    # Owned-only metrics for those event ids.
+    metrics_rows = (
         db.table("latest_event_metrics")
         .select("event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
                 "tickets_count,retail_min,captured_at")
         .gt("owned_tickets_count", 0)
+        .in_("event_id", event_ids)
         .limit(candidate_limit)
         .offset(max(offset, 0))
-    )
-    if event_filter_ids is not None:
-        metrics_q = metrics_q.in_("event_id", event_filter_ids)
-    metrics_rows = (metrics_q.execute().data) or []
-    if not metrics_rows:
-        return {"count": 0, "events": [], "limit": cap, "offset": offset}
-
-    # Hydrate event metadata for the metrics we got back.
-    ev_ids = [int(m["event_id"]) for m in metrics_rows if m.get("event_id")]
-    events_rows = (
-        db.table("events")
-        .select("id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-                "primary_performer_id,primary_performer_name")
-        .in_("id", ev_ids)
         .execute().data
     ) or []
-    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+    if not metrics_rows:
+        return {"count": 0, "events": [], "limit": cap, "offset": offset}
 
     # Merge into the row shape downstream code expects (the old !inner
     # response: each row has a nested `events` dict).
     rows = [{**m, "events": events_by_id.get(int(m["event_id"]))} for m in metrics_rows]
     rows = [r for r in rows if r.get("events")]
-    # Consumer ordering: soonest event first.
     rows.sort(key=lambda r: (r.get("events") or {}).get("occurs_at_local") or "9999")
 
     # Drop ghosts / completed / postponed unless caller opts in. Same
