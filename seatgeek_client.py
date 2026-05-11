@@ -492,7 +492,9 @@ class SeatGeekClient:
             except Exception:
                 pass
         if status != 200:
-            raise SeatGeekError(f"/order?order_id={order_id} returned {status}: {str(body)[:200]}")
+            # Don't echo order_id or body in the user-facing error — both can
+            # carry attacker-controlled bytes. Hardened 2026-05-11.
+            raise SeatGeekError(f"/order lookup returned HTTP {status}")
         return body if isinstance(body, dict) else {}
 
     @staticmethod

@@ -43,14 +43,30 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 CRON_SECRET = os.environ.get("CRON_SECRET")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
 
-# AUTH_DISABLED is a local-dev kill switch. To prevent a Railway misconfig
-# from accidentally opening the whole API, it ONLY takes effect when
-# RAILWAY_ENVIRONMENT is unset or != "production". Hardened 2026-05-11.
+# AUTH_DISABLED is a local-dev kill switch. To prevent a misconfig from
+# accidentally opening the whole API, it ONLY takes effect when:
+#   (a) AUTH_DISABLED=true is set explicitly, AND
+#   (b) at least ONE indicator says we're NOT in production.
+# Hardened 2026-05-11; broadened beyond Railway-only check to be portable.
 _AUTH_DISABLED_REQUESTED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
-_RAILWAY_ENV = (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
-AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and _RAILWAY_ENV != "production"
+
+def _is_production() -> bool:
+    """Conservative production detector. If ANY of these indicators say
+    production, we treat it as production (deny the kill-switch)."""
+    railway = (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
+    generic = (os.environ.get("ENVIRONMENT") or "").lower() == "production"
+    node = (os.environ.get("NODE_ENV") or "").lower() == "production"
+    py = (os.environ.get("PYTHON_ENV") or "").lower() == "production"
+    fly = bool(os.environ.get("FLY_APP_NAME"))  # Fly.io
+    render = bool(os.environ.get("RENDER"))     # Render
+    # If NO env-indicator is set at all, we're likely local dev — only then
+    # honor the kill switch. This errs heavily on the side of safety.
+    any_prod_signal = railway or generic or node or py or fly or render
+    return any_prod_signal
+
+AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
 if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
-    print("WARNING: AUTH_DISABLED=true ignored because RAILWAY_ENVIRONMENT=production")
+    print("WARNING: AUTH_DISABLED=true ignored — production indicator detected (RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / FLY_APP_NAME / RENDER).")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:

@@ -84,7 +84,82 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 > Findings from the 2026-05-10 deep security audit (chat: "security chat"). Severity tags: **[SEC-CRIT]** = exploitable today, **[SEC-HIGH]** = exploitable under common conditions, **[SEC-MED]** = defense-in-depth gap, **[SEC-LOW]** = hardening. Each row keeps the standard NEXT format. Filed by code · 2026-05-10.
 >
-> **2026-05-11 update — code fixes pushed by A1 for B1 review/sync.** 14 of the 16 entries now have landed in-code on PR #57. Operator steps required before B1 syncs to prod are listed at the top of the section below. The 2 remaining items (Supabase network restrictions, history rewrite of the leaked literal) are infra/git-ops actions that need a human and are tagged **[OPS-ONLY]** below.
+> **2026-05-11 first-pass — code fixes pushed by A1 for B1 review/sync.** 14 of the 16 entries now have landed in-code on PR #57. Operator steps required before B1 syncs to prod are listed at the top of the section below. The 2 remaining items (Supabase network restrictions, history rewrite of the leaked literal) are infra/git-ops actions that need a human and are tagged **[OPS-ONLY]** below.
+>
+> **2026-05-11 second-wave audit — new findings + fixes.** A1 ran a second pass across Python upstream clients, CI workflows, dependency pinning, app.py auth+logging, and a second-wave migration grep. **3 of 5 new findings landed in code in commit `<pending>`**; 2 are filed below for B1. Total 19 entries; 17 closed in-code, 4 are ops/human-judgment (the 2 from first pass + 2 new from second wave). Detail under "Second-wave findings (2026-05-11)" below.
+
+### Second-wave findings (2026-05-11)
+
+| ID | Severity | Status | One-liner |
+|---|---|---|---|
+| SW-1 | SEC-MED | LANDED | `seatgeek_client.py:495` was echoing user-controlled `order_id` + response body in `SeatGeekError`. Now: generic "HTTP {status}" message. |
+| SW-2 | SEC-LOW | LANDED | `seatdata_client.py:215` gzip-decode error echoed the inner exception (which can carry partial bytes). Now: only the exception type name. |
+| SW-3 | SEC-MED | LANDED | `requirements.txt` was fully unpinned — every redeploy could pull a different transitively-vulnerable version. Now: compatible-release ranges, dependabot-friendly. |
+| SW-4 | SEC-LOW | LANDED | `AUTH_DISABLED` kill-switch was Railway-specific (`RAILWAY_ENVIRONMENT != production`). On Fly.io/Render/etc. the guard would silently re-arm. Now: checks 6 prod indicators. |
+| SW-5 | SEC-MED | FILED | `require_auth` makes an outbound `GET /auth/v1/user` to Supabase on **every** authenticated request — a DoS amplifier against your Supabase auth quota. Fix below. |
+| SW-6 | SEC-LOW | FILED | `seatdata_client.py:134` caches the bearer token in `self.session.headers` at init. Vault rotation doesn't propagate until the client reinits. Fix below. |
+| SW-7 | OBS | NOTED | `v_dashboard_writes_24h` materialized view bypasses RLS by design (it's only count(*) aggregates over already-public catalog). Documented; no fix needed. |
+
+### NEXT (code) — [SEC-MED · SW-5] Local JWT verification to remove the Supabase-auth DoS amplifier
+
+**What**: `app.py:118-128` calls `requests.get(f"{SUPABASE_URL}/auth/v1/user", ...)` on every request that hits a `require_auth`-gated route. That's an outbound HTTPS round-trip to Supabase per request, which:
+- Burns Supabase auth quota (free tier is 50k/month MAU; if you're sloppy in dev you can hit it fast)
+- Couples API latency to Supabase availability
+- Lets a flood of valid-JWT requests force a `502 auth check failed` outage by exhausting Supabase auth concurrency
+
+The middleware-level rate limiter (`_RateLimitMiddleware`) caps per-IP bursts but doesn't help against distributed traffic.
+
+**How**: Verify the JWT locally with `PyJWT` (the JWT secret is a server-side env var, separate from anon/service-role keys). Pattern:
+
+```python
+import jwt  # PyJWT
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")  # from Supabase dashboard
+
+def require_auth(authorization: str | None = Header(None)):
+    if AUTH_DISABLED: return None
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        claims = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "invalid session")
+    email = (claims.get("email") or "").lower()
+    if not email.endswith("@" + ALLOWED_EMAIL_DOMAIN.lower()):
+        raise HTTPException(403, f"access restricted to @{ALLOWED_EMAIL_DOMAIN}")
+    return {"email": email, "id": claims.get("sub")}
+```
+
+Add `PyJWT>=2.8,<3.0` to `requirements.txt`. Operator must set `SUPABASE_JWT_SECRET` env var (Dashboard → Settings → API → JWT Secret). Drops latency by ~50-100ms/req and removes the amplifier entirely.
+
+**Trade-off**: locally-verified JWTs don't reflect revocation until they expire (default 1h). Acceptable for this app — the alternative is fetching once per JWT into a short-TTL cache (Redis or in-process), which adds complexity. If revocation-on-demand becomes critical (e.g., employee offboarding), layer a deny-list cache on top.
+
+**Filed by**: A1 · 2026-05-11 second wave
+
+---
+
+### NEXT (code) — [SEC-LOW · SW-6] Refresh seatdata bearer per request so vault rotation propagates
+
+**What**: `seatdata_client.py:134-138` bakes `Authorization: Bearer <api_key>` into `self.session.headers` at `__init__`. If `SEATDATA_API_KEY` is rotated via `vault.update_secret`, the running `SeatDataClient` instance never picks up the new value — it keeps signing with the old one until the process bounces.
+
+**How**: Replace the eager header with a per-request auth callable, or simply read the key fresh into `headers` on each `request()` call. Pattern:
+
+```python
+def _request(self, method, path, **kw):
+    headers = {**self._base_headers, "Authorization": f"Bearer {self._read_api_key()}"}
+    return self.session.request(method, url, headers=headers, ...)
+
+def _read_api_key(self):
+    # Cached for 60s; falls back to vault on miss.
+    if not self._cached or self._cached_at < time.monotonic() - 60:
+        self._cached = self._fetch_from_vault()
+        self._cached_at = time.monotonic()
+    return self._cached
+```
+
+Same pattern applies to `seatgeek_client.py` (uses `?token=` query param, cached on init) and `evo_client.py` (signs per-request but reads `self.token` / `self._secret` at init). Lower priority on the latter two because their auth model differs.
+
+**Filed by**: A1 · 2026-05-11 second wave
 
 ### B1 sync-to-prod checklist (apply IN THIS ORDER)
 
