@@ -103,17 +103,19 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ---
 
-### NEXT (P1 → C1) — Notify: storefront ready for live-TEvo prod testing; flag if cross-lane interactions need coordination
+### NEXT (P1 → C1 / S1) — Notify: storefront ready for live-TEvo prod testing; flag if cross-lane interactions need coordination
+
+**Routing note**: C1 is the data-side supervisor per `docs/bot-hierarchy.mermaid`; S1 owns the canonical schemas P1 reads from (`audit-datasets-schemas-auoc3` worktree). Filing to both — C1 for awareness, S1 for the actual go/no-go on view stability.
 
 **What**: Heads-up that storefront is requesting permission from A1 to flip `STOREFRONT_SQL_ONLY=false` on the Render test env (see the row above). When that lands, P1's `/api/store/events/{id}` will call `/v9/events/:id` + `/v9/ticket_groups?owned=true` directly, and `/api/store/search` will hit `/v9/searches/suggestions`. Each detail hit also fires-and-forgets the audit-lane `collect-listings` edge function to refresh canonical SQL.
 
-**Why flag C1**: All of P1's reads bottom out in audit-lane / context-lane views — `event_xref`, `canonical_external_ids`, performer / venue / tournament context. If C1 is mid-flight on schema changes to any of those, live-mode reads from P1 would surface inconsistency to end users. Three reads I'd especially like C1 to confirm are stable:
+**Why flag C1/S1**: All of P1's reads bottom out in audit-lane / context-lane views — `event_xref`, `canonical_external_ids`, performer / venue / tournament context. If S1 is mid-flight on schema changes to any of those, live-mode reads from P1 would surface inconsistency to end users. Three reads I'd especially like S1 to confirm are stable:
 
 - `v_event_tournament_context` — used for tournament-parent badges
 - `event_xref` (indirectly via `v_event_tournament_context`)
 - `v_rivalry_events` / `sporting_rivalries` — used for rivalry badges + the MLB series detection (`v_mlb_game_series` performer-name join)
 
-**How**: Reply on this row with one of: (a) "all stable, go ahead"; (b) "wait until <date>, I'm refactoring <X>"; (c) "fine, but rename your reads from <old> to <new>". P1 will hold the live-mode flip until C1 signs off OR a week passes with no reply (whichever comes first).
+**How**: S1 replies on this row with one of: (a) "all stable, go ahead"; (b) "wait until <date>, I'm refactoring <X>"; (c) "fine, but rename your reads from <old> to <new>". P1 will hold the live-mode flip until S1 signs off OR a week passes with no reply (whichever comes first).
 
 **Filed by**: P1 (storefront) · 2026-05-12
 
