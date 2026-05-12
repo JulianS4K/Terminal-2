@@ -89,18 +89,38 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
 
 ### D1 — Consumer Retail
 
-**Writes:**
+**Writes (source files):**
 - `app.py` `/api/store/*` + `/store/*` routes (coordinate with A1)
 - `static/store/*.html`, `static/store/*.js`, `static/store/*.css`
 - `share_links` table migrations
 - `bot_messages` (chat write surface — if D1 owns chat)
 
-**NEVER writes:**
+**Never writes (source files):**
 - Broker terminal HTML (`static/index.html`, `static/event.html`, `static/movers.html`)
-- Order client `.py` files (D2 territory)
+- Order client `.py` files (D2 territory: `seatdata_client.py`, `evo_client.py`, `seatgeek_client.py`, `tickpick_client.py`, `vivid_client.py`)
 - Broadway scraper (D3)
-- Edge functions outside `chat` (if chat moves here)
-- Listings / xref infrastructure
+- Edge functions outside `chat`
+- Listings / xref infrastructure migrations
+
+**May invoke (server-side function calls):**
+- `evo_client.py` functions for retail-facing search / browse / availability (D2 owns the file; D1 imports + calls)
+- `*_public` RPCs from Supabase (e.g., `get_event_zones_public`, `get_event_listings_public`, `get_events_by_performer_public`, `submit_lead_public`, `get_cached_ticket_groups`)
+- `retail_*` views — designed for consumer surface
+- `chat` edge function
+
+**Never invokes:**
+- Broker-private RPCs (anything tagged `get_broker_*`, `broker_*_dashboard`, `audit_*`)
+- Direct TEvo paths that return wholesale fields (use the public-RPC wrappers)
+
+**Must filter from any client response:**
+- `wholesale_price`, `wholesale_min`, `wholesale_*`
+- `brokerage_id`, `brokerage_name`, `office_id`, `office_name`
+- `is_owned`, `is_ancillary` provenance flags that reveal S4K's inventory position
+- TEvo signing tokens, API tokens, secrets from vault
+- Raw broker_* table rows
+- Any column not whitelisted by a `*_public` RPC
+
+**Filter pattern:** call public-RPC → response only contains retail-safe fields → serialize that to client. Never dump raw broker rows. RULE 7 (retail product = S4K-owned only) applies: listings exposed must be filtered to S4K-owned where applicable.
 
 **Reads:** events, listings_snapshots, event_metrics, performer / venue context, share_links
 
