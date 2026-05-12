@@ -7,6 +7,8 @@
 //
 // Will be tombstoned after migration 15 lands.
 
+import { requireCronSecret } from "../_shared/cron-auth.ts";
+
 const HOST = "api.ticketevolution.com";
 const BASE = `https://${HOST}`;
 
@@ -38,6 +40,8 @@ async function tevoGet(token: string, secret: string, path: string, params: any)
 }
 
 Deno.serve(async (req) => {
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
   const token = Deno.env.get("TEVO_API_TOKEN") ?? "";
   const secret = Deno.env.get("TEVO_API_SECRET") ?? "";
   if (!token || !secret) return new Response(JSON.stringify({ ok: false, error: "missing TEvo creds" }), { status: 500 });

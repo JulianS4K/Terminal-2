@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Search — VibePass</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">checking…</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+    </nav>
+
+    <main class="content">
+      <h1>Find tickets</h1>
+      <p class="subtitle">Search by artist, team, venue, or city.</p>
+
+      <div class="row" style="margin: 16px 0 24px">
+        <input id="q" type="search" placeholder="e.g. Knicks, Madison Square Garden, Yankees" autofocus style="flex: 1; padding: 12px 14px; font-size: 15px" />
+        <button id="go" style="padding: 12px 22px">Search</button>
+      </div>
+
+      <div id="status" style="color: var(--muted); font-size: 13px; margin-bottom: 12px"></div>
+
+      <div id="cards" class="cards"></div>
+
+      <div id="empty" class="empty-state" hidden>
+        <h2>No matches</h2>
+        <p>Try a broader keyword, or browse <a href="/store/test/performer" style="color: var(--accent-2)">performers</a> or <a href="/store/test/venue" style="color: var(--accent-2)">venues</a> instead.</p>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/store/test/test.js"></script>
+  <script>
+    const { $, fmtMoney, fmtWhen } = Test;
+
+    let allEvents = [];
+
+    function renderCards(events) {
+      const grid = $("#cards");
+      grid.innerHTML = "";
+      $("#status").textContent = events.length
+        ? `${events.length} event${events.length === 1 ? "" : "s"} available`
+        : "";
+      if (!events.length) {
+        $("#empty").hidden = false;
+        return;
+      }
+      $("#empty").hidden = true;
+      for (const ev of events) {
+        const c = document.createElement("a");
+        c.className = "card";
+        c.href = `/store/test/event?id=${ev.id}`;
+        if (ev.primary_performer_color) {
+          c.style.setProperty("--card-accent", ev.primary_performer_color);
+        }
+        c.innerHTML = `
+          <div class="when">${fmtWhen(ev.occurs_at_local)}</div>
+          <div class="name">${ev.name || "—"}</div>
+          <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+          <div class="price">from ${fmtMoney(ev.from_price)}</div>
+        `;
+        grid.append(c);
+      }
+    }
+
+    function filterLocal(q) {
+      const needle = (q || "").trim().toLowerCase();
+      if (!needle) return renderCards(allEvents);
+      const filtered = allEvents.filter(e => {
+        const hay = [e.name, e.venue_name, e.venue_location, e.primary_performer_name]
+          .filter(Boolean).join(" ").toLowerCase();
+        return hay.includes(needle);
+      });
+      renderCards(filtered);
+    }
+
+    async function load() {
+      $("#status").textContent = "Loading available events…";
+      try {
+        const r = await fetch("/api/store/events?limit=500");
+        const body = await r.json();
+        allEvents = body.events || [];
+        const initialQ = new URLSearchParams(location.search).get("q") || "";
+        if (initialQ) {
+          $("#q").value = initialQ;
+          filterLocal(initialQ);
+        } else {
+          renderCards(allEvents);
+        }
+      } catch (e) {
+        $("#status").textContent = "Couldn't load events. " + e.message;
+        $("#status").style.color = "var(--bad)";
+      }
+    }
+
+    $("#go").addEventListener("click", () => filterLocal($("#q").value));
+    $("#q").addEventListener("input", () => filterLocal($("#q").value));
+    $("#q").addEventListener("keydown", (e) => { if (e.key === "Enter") filterLocal($("#q").value); });
+
+    load();
+  </script>
+</body>
+</html>

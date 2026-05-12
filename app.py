@@ -16,6 +16,8 @@ Optional:
 
 from __future__ import annotations
 
+import hmac
+import math
 import os
 import re
 import secrets
@@ -24,9 +26,11 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import requests
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from evo_client import EvoClient
 
@@ -39,7 +43,57 @@ SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 CRON_SECRET = os.environ.get("CRON_SECRET")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
-AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+
+# AUTH_DISABLED is a local-dev kill switch. To prevent a misconfig from
+# accidentally opening the whole API, it ONLY takes effect when:
+#   (a) AUTH_DISABLED=true is set explicitly, AND
+#   (b) at least ONE indicator says we're NOT in production.
+# Hardened 2026-05-11; broadened beyond Railway-only check to be portable.
+_AUTH_DISABLED_REQUESTED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+
+def _is_production() -> bool:
+    """Conservative production detector. If ANY of these indicators say
+    production, we treat it as production (deny the kill-switch)."""
+    railway = (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
+    generic = (os.environ.get("ENVIRONMENT") or "").lower() == "production"
+    node = (os.environ.get("NODE_ENV") or "").lower() == "production"
+    py = (os.environ.get("PYTHON_ENV") or "").lower() == "production"
+    fly = bool(os.environ.get("FLY_APP_NAME"))  # Fly.io
+    render = bool(os.environ.get("RENDER"))     # Render
+    # If NO env-indicator is set at all, we're likely local dev — only then
+    # honor the kill switch. This errs heavily on the side of safety.
+    any_prod_signal = railway or generic or node or py or fly or render
+    return any_prod_signal
+
+AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
+if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+    print("WARNING: AUTH_DISABLED=true ignored — production indicator detected (RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / FLY_APP_NAME / RENDER).")
+
+# STOREFRONT_SQL_ONLY — demo mode for pre-checkout MVP. When on:
+#   - /api/store/events/{id} reads ticket_groups from listings_snapshots
+#     (cron-collected) instead of going live to TEvo.
+#   - /api/store/reserve skips TEvo validation and returns a mock receipt.
+#   - /api/store/events/near forces source=supabase (no TEvo geo call).
+#
+# Why: until real checkout is wired, live TEvo only buys us freshness, and
+# the test environment shouldn't burn TEvo quota on every page load. Flip
+# off the moment real /v9/orders calls go live — stale snapshots are
+# dangerous when shoppers can actually buy.
+STOREFRONT_SQL_ONLY = os.environ.get("STOREFRONT_SQL_ONLY", "false").lower() == "true"
+if STOREFRONT_SQL_ONLY:
+    print("STOREFRONT_SQL_ONLY=true — storefront serves from listings_snapshots; no live TEvo calls on store routes.")
+
+# STOREFRONT_PREFER_INTERNAL_ZONES — flip on once the hand-curated granular
+# zones (NYK at MSG taxonomy, etc.) cover most/all sections. Today most of
+# them have coverage gaps that leave shoppers with un-filterable listings,
+# so the default surfaces the consumer-bowl layer (Lower 100s / Club 200s
+# etc.) which is well-covered. Internal detection logic stays wired so a
+# flip flag does the right thing event-by-event when data matures.
+STOREFRONT_PREFER_INTERNAL_ZONES = (
+    os.environ.get("STOREFRONT_PREFER_INTERNAL_ZONES", "false").lower() == "true"
+)
+if STOREFRONT_PREFER_INTERNAL_ZONES:
+    print("STOREFRONT_PREFER_INTERNAL_ZONES=true — granular zones preferred when (performer, venue) has them.")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -81,12 +135,26 @@ def resolve_tevo_creds():
 SANDBOX = os.environ.get("TEVO_SANDBOX", "false").lower() == "true"
 TOKEN, SECRET, CREDS_SOURCE = resolve_tevo_creds()
 if not TOKEN or not SECRET:
-    sys.exit(
-        "No TEvo credentials found. Insert into Supabase `settings` table "
-        "(tevo_token, tevo_secret) or set TEVO_TOKEN + TEVO_SECRET env vars."
-    )
-print(f"TEvo creds loaded from: {CREDS_SOURCE}")
-client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
+    # In SQL-only demo mode the storefront never calls TEvo — the EvoClient
+    # is never invoked. Boot in degraded mode (no TEvo client) so the
+    # storefront still serves from listings_snapshots. Any non-storefront
+    # route that needs the live client (broker terminal, /api/admin/*) will
+    # crash on the missing global, which is the right failure mode.
+    if STOREFRONT_SQL_ONLY:
+        print(
+            "TEvo creds missing — running in STOREFRONT_SQL_ONLY mode without a live "
+            "EvoClient. /api/store/* routes will serve from listings_snapshots only."
+        )
+        client = None
+    else:
+        sys.exit(
+            "No TEvo credentials found. Insert into Supabase `settings` table "
+            "(tevo_token, tevo_secret) or set TEVO_TOKEN + TEVO_SECRET env vars. "
+            "Or set STOREFRONT_SQL_ONLY=true to boot in demo mode without TEvo."
+        )
+else:
+    print(f"TEvo creds loaded from: {CREDS_SOURCE}")
+    client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
 
 
 # ---------- Auth dependency ----------
@@ -126,6 +194,125 @@ def require_auth(authorization: str | None = Header(None)):
 
 app = FastAPI(title="Evo Terminal — data-only API (UI on rebuild)")
 
+# CORS allowlist. CORS_ALLOWED_ORIGINS env var is a comma-separated list of
+# origins; default permits local dev only. Added 2026-05-11 (security chat).
+_CORS_ORIGINS = [
+    o.strip()
+    for o in (os.environ.get("CORS_ALLOWED_ORIGINS") or "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Cron-Secret"],
+)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Emit baseline security headers on every response. The CSP is tight
+    enough to block the inline-script + third-party-script vectors but
+    permissive enough that the retail HTML keeps working (own-origin only).
+    Added 2026-05-11 (security chat)."""
+
+    _CSP = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://*.supabase.co; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("Content-Security-Policy", self._CSP)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+
+# ---------- Per-IP rate limiter (added 2026-05-11 security chat) ----------
+# In-process sliding-window limiter keyed by client IP + path-prefix bucket.
+# Single-instance Railway deploy makes a process-local limiter sufficient.
+# If you scale to >1 dyno, swap to Redis-backed slowapi or move to Cloudflare.
+import time as _time
+import time  # public alias for in-process caches that want time.time()
+from collections import defaultdict as _dd, deque as _dq
+
+class _IPRateLimiter:
+    def __init__(self):
+        self._hits: dict = _dd(_dq)
+        self._lock = threading.Lock()
+
+    def check(self, key: str, max_per_window: int, window_sec: float) -> bool:
+        now = _time.monotonic()
+        with self._lock:
+            dq = self._hits[key]
+            cutoff = now - window_sec
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+            if len(dq) >= max_per_window:
+                return False
+            dq.append(now)
+            return True
+
+_ip_limiter = _IPRateLimiter()
+
+
+class _RateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-IP rate limit. Path-prefix buckets — most-specific match wins.
+    Returns 429 with a brief retry hint. Hits are dropped after window."""
+
+    # (path_prefix, max_calls, window_seconds)
+    _BUCKETS: list = [
+        ("/api/store/share/",   10,  60.0),  # POST/DELETE/GET-by-id — spam vector
+        ("/api/store/shares",   60,  60.0),  # list endpoint
+        ("/api/store/share",    10,  60.0),  # POST create
+        ("/api/store/reserve",  20,  60.0),  # mock reserve, but hits TEvo
+        ("/api/store/",         60,  60.0),  # public catalog reads
+        ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
+        ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
+        ("/api/admin/",          5,  60.0),  # admin write surface
+    ]
+    _DEFAULT = (200, 60.0)
+
+    def _bucket(self, path: str):
+        for prefix, n, w in self._BUCKETS:
+            if path.startswith(prefix):
+                return n, w
+        return self._DEFAULT
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # Skip CORS preflight + healthcheck — preflights aren't load-bearing.
+        if request.method == "OPTIONS" or path in ("/", "/health"):
+            return await call_next(request)
+        # Trust X-Forwarded-For when present (Railway sets it). Fall back to
+        # request.client. First entry of XFF is the original client.
+        xff = request.headers.get("x-forwarded-for") or ""
+        ip = (xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")) or "unknown"
+        n, w = self._bucket(path)
+        if not _ip_limiter.check(f"{ip}|{path}", n, w):
+            return JSONResponse(
+                {"error": "rate limited", "retry_after_seconds": int(w)},
+                status_code=429,
+                headers={"Retry-After": str(int(w))},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(_RateLimitMiddleware)
+
+
 # (SMS / WhatsApp / web bot moved to Supabase Edge Functions in v2.7:
 #  supabase/functions/sms-bot, web-bot, chat. The legacy bot.py is unused.)
 
@@ -148,6 +335,45 @@ def root_health():
     return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
 
 
+@app.get("/healthz")
+def healthz():
+    """Diagnostic endpoint. Public — no secrets returned, just boot + connectivity
+    facts. Useful when a deploy goes orange and we need a one-curl picture.
+
+    Reports:
+      python_version, is_production, storefront_sql_only,
+      supabase_url_set, supabase_service_role_key_length,
+      supabase_anon_key_length, evo_client_configured,
+      supabase_smoke: pass | fail (with truncated error message)
+    """
+    import sys as _sys
+    out = {
+        "ok": True,
+        "python": _sys.version.split()[0],
+        "is_production": _is_production(),
+        "storefront_sql_only": STOREFRONT_SQL_ONLY,
+        "supabase_url_set": bool(SUPABASE_URL),
+        "supabase_service_role_key_length": len(SUPABASE_SERVICE_ROLE_KEY or ""),
+        "supabase_anon_key_length": len(SUPABASE_ANON_KEY or ""),
+        "supabase_client_initialized": sb is not None,
+        "evo_client_configured": client is not None,
+    }
+    # Tiny safe query against a table we know exists.
+    if sb is None:
+        out["supabase_smoke"] = "skipped — sb is None"
+    else:
+        try:
+            r = sb.table("events").select("id").limit(1).execute()
+            out["supabase_smoke"] = "pass"
+            out["supabase_smoke_rows"] = len(r.data or [])
+        except Exception as e:
+            out["ok"] = False
+            out["supabase_smoke"] = "fail"
+            # Truncate so we don't leak full traces over a public endpoint.
+            out["supabase_smoke_error"] = str(e)[:300]
+    return out
+
+
 @app.get("/api/public/config")
 def public_config():
     """Browser-safe config for the login page. No secrets."""
@@ -155,6 +381,9 @@ def public_config():
         "supabase_url": SUPABASE_URL,
         "supabase_anon_key": SUPABASE_ANON_KEY,
         "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
+        # Storefront SQL-only demo mode flag. UI hides geolocation + shows
+        # a 'demo · sql snapshot' pill so users know what they're seeing.
+        "storefront_sql_only": STOREFRONT_SQL_ONLY,
     }
 
 # ---------- Protected routes ----------
@@ -452,6 +681,404 @@ def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
               .in_("performer_id", performer_ids)
               .execute()).data or []
     return {int(r["performer_id"]): r for r in rows}
+
+
+# Playoff-specific phrases we recognize in event names. Order matters: more
+# specific labels (NBA Finals) are tried before generic round indicators so
+# the badge surfaces "NBA Finals" instead of "Playoffs" when both match.
+_PLAYOFF_SPECIFIC_RE = re.compile(
+    r"\b("
+    r"NBA\s+Finals|"
+    r"NBA\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
+    r"NHL\s+Stanley\s+Cup\s+Finals|"
+    r"NHL\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
+    r"Stanley\s+Cup(?:\s+Finals?)?|"
+    r"World\s+Series|"
+    r"Super\s+Bowl(?:\s+L[IVX]+)?|"
+    r"MLS\s+Cup|"
+    r"NCAA\s+(?:Final\s+Four|National\s+Championship)|"
+    r"College\s+Football\s+Playoff(?:\s+National\s+Championship)?"
+    r")\b",
+    re.IGNORECASE,
+)
+_PLAYOFF_GENERIC_RE = re.compile(
+    r"\((?:Game\s+\d+|Round\s+\d+)|"           # parenthetical TEvo markers
+    r"\b(?:Playoffs?|Postseason|Wild\s+Card|"
+    r"Conference\s+Finals?|Conference\s+Semifinals?|"
+    r"Division\s+Series)\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_playoff(event_name: str | None) -> dict | None:
+    """Return a playoff badge dict for the event name, or None.
+
+    Two-tier:
+      - specific  match (e.g. "NBA Finals") → that phrase is the label
+      - generic   match (e.g. "Round 3", "(Game 7,") → label = "Playoffs"
+
+    Falls back to None when nothing matches. Case-insensitive throughout.
+    """
+    if not event_name:
+        return None
+    m = _PLAYOFF_SPECIFIC_RE.search(event_name)
+    if m:
+        # Normalize whitespace so multi-word matches print cleanly.
+        label = re.sub(r"\s+", " ", m.group(1)).strip()
+        return {"label": label, "kind": "specific"}
+    if _PLAYOFF_GENERIC_RE.search(event_name):
+        return {"label": "Playoffs", "kind": "generic"}
+    return None
+
+
+def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
+    """Bulk-fetch all six context dimensions a storefront card / detail page
+    might surface, in one helper.
+
+    Returns:
+      { event_id: { "rivalry":    {...}|None,
+                    "mlb_series": {...}|None,
+                    "tournament": {...}|None,
+                    "weather":    {...}|None,
+                    "holiday":    {...}|None,
+                    "playoff":    {...}|None } }
+
+    Backing views (audit / context lanes — P1 reads only):
+      rivalry      ← v_rivalry_events             (mig 20260509530000)
+      mlb_series   ← v_mlb_game_series            (mig 20260509470000)
+      tournament   ← v_event_tournament_context   (mig 20260510010000)
+      weather      ← v_event_weather_with_fallback (mig 20260509560000)
+      holiday      ← v_event_calendar_context     (mig 20260509550000)
+      playoff      ← regex on events.name + performer_metadata series tags
+
+    Weather + holiday + playoff rules are applied here, not in the client, so
+    the storefront UI doesn't have to know about climatology vs forecast vs
+    severity tiers, or playoff naming conventions — it just renders what
+    the server hands it.
+
+    Missing views (per-env) degrade gracefully to None for that key.
+    """
+    if not event_ids:
+        return {}
+
+    ids = [int(e) for e in event_ids if e is not None]
+    ctx: dict[int, dict] = {
+        eid: {"rivalry": None, "mlb_series": None, "tournament": None,
+              "weather": None, "holiday": None, "playoff": None}
+        for eid in ids
+    }
+
+    # Playoff: read event names + series-tag performer membership in one
+    # roundtrip. Series tags like "NBA Finals" / "NBA Eastern Conference
+    # Semifinals" attach to the event via performer_ids and give us the
+    # most specific label; the name regex covers Round 3 / Game 7 events
+    # that don't yet have a series-tag attached.
+    try:
+        ev_rows = (db.table("events").select("id,name,performer_ids")
+                     .in_("id", ids).execute().data) or []
+        # Collect all unique non-primary performer ids so we can resolve
+        # series-tag names in one query.
+        candidate_perf_ids: set[int] = set()
+        for er in ev_rows:
+            for p in (er.get("performer_ids") or []):
+                try:
+                    candidate_perf_ids.add(int(p))
+                except (TypeError, ValueError):
+                    pass
+        series_tag_by_id: dict[int, str] = {}
+        if candidate_perf_ids:
+            try:
+                pm_rows = (db.table("performer_metadata")
+                             .select("performer_id,name")
+                             .in_("performer_id", list(candidate_perf_ids))
+                             .execute().data) or []
+                for pm in pm_rows:
+                    nm = (pm.get("name") or "")
+                    # Only keep "series tag" performers — leagues + rounds.
+                    if _PLAYOFF_SPECIFIC_RE.search(nm) or re.search(
+                        r"\b(NBA|NHL|NFL|MLB|MLS|WNBA)\s+(Playoffs?|Postseason|"
+                        r"Wild\s+Card|Finals?|Semifinals?|Championship|"
+                        r"Conference)\b",
+                        nm, re.IGNORECASE,
+                    ):
+                        series_tag_by_id[int(pm["performer_id"])] = nm
+            except Exception:
+                series_tag_by_id = {}
+        for er in ev_rows:
+            eid = int(er.get("id") or 0)
+            if eid not in ctx:
+                continue
+            # Prefer the most-specific series-tag performer if attached.
+            tagged: str | None = None
+            for p in (er.get("performer_ids") or []):
+                try:
+                    pid = int(p)
+                except (TypeError, ValueError):
+                    continue
+                name = series_tag_by_id.get(pid)
+                if not name:
+                    continue
+                # Specific (e.g. "NBA Finals") beats generic ("NBA Playoffs").
+                if _PLAYOFF_SPECIFIC_RE.search(name):
+                    tagged = name
+                    break
+                if tagged is None:
+                    tagged = name
+            if tagged:
+                # Strip umbrella "Playoffs" / "Postseason" when we have a
+                # more specific round-tag handy.
+                kind = "specific" if _PLAYOFF_SPECIFIC_RE.search(tagged) else "generic"
+                ctx[eid]["playoff"] = {"label": tagged, "kind": kind}
+                continue
+            # Fall back to regex on the event name.
+            ctx[eid]["playoff"] = _classify_playoff(er.get("name"))
+    except Exception:
+        pass
+
+    # Rivalry: v_rivalry_events can emit duplicate rows when both the
+    # performer-id and name joins match the same matchup, so dedup at the
+    # event id level (first row wins; intensity is the same either way).
+    try:
+        rows = (db.table("v_rivalry_events")
+                  .select("tevo_event_id,rivalry_name,league,is_branded,"
+                          "rivalry_intensity,wikipedia_url")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+        seen: set[int] = set()
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid in seen or eid not in ctx:
+                continue
+            seen.add(eid)
+            ctx[eid]["rivalry"] = {
+                "name": r.get("rivalry_name"),
+                "league": r.get("league"),
+                "is_branded": bool(r.get("is_branded")),
+                "intensity": r.get("rivalry_intensity"),
+                "wikipedia_url": r.get("wikipedia_url"),
+            }
+    except Exception:
+        pass
+
+    # MLB series: v_mlb_game_series rows hold the full tevo_event_ids array
+    # for the series. Pull every series whose end-date is today or later, then
+    # walk the array to attach the series context to each game in the set,
+    # adding game_number (1-based position within the series).
+    try:
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+        rows = (db.table("v_mlb_game_series")
+                  .select("home_team,away_team,venue_name,series_start,series_end,"
+                          "series_span_days,game_count,tevo_event_ids,branded_series_name")
+                  .gte("series_end", today_iso)
+                  .execute()).data or []
+        for r in rows:
+            tevo_ids = r.get("tevo_event_ids") or []
+            tevo_ids = [int(e) for e in tevo_ids if e is not None]
+            for pos, eid in enumerate(tevo_ids, start=1):
+                if eid not in ctx:
+                    continue
+                ctx[eid]["mlb_series"] = {
+                    "home_team": r.get("home_team"),
+                    "away_team": r.get("away_team"),
+                    "venue_name": r.get("venue_name"),
+                    "series_start": r.get("series_start"),
+                    "series_end": r.get("series_end"),
+                    "span_days": r.get("series_span_days"),
+                    "game_count": r.get("game_count"),
+                    "branded_name": r.get("branded_series_name"),
+                    "sibling_event_ids": tevo_ids,
+                    "game_number": pos,
+                }
+    except Exception:
+        pass
+
+    # Tournament: one row per TEvo event in v_event_tournament_context (left
+    # join on event_xref + espn_tournament_events). Surfaces a multi-day
+    # parent so "Round 2 of US Open · Aug 26 – Sep 8" can render.
+    try:
+        rows = (db.table("v_event_tournament_context")
+                  .select("tevo_event_id,tournament_name,tournament_short_name,"
+                          "tournament_start,tournament_end,tournament_venue,"
+                          "espn_league,circuit_name")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid not in ctx:
+                continue
+            ctx[eid]["tournament"] = {
+                "name": r.get("tournament_name"),
+                "short_name": r.get("tournament_short_name"),
+                "start_date": r.get("tournament_start"),
+                "end_date": r.get("tournament_end"),
+                "venue": r.get("tournament_venue"),
+                "league": r.get("espn_league"),
+                "circuit_name": r.get("circuit_name"),
+            }
+    except Exception:
+        pass
+
+    # Weather: v_event_weather_with_fallback has fallback-coalesced + raw
+    # forecast/climatology columns + NWS alert JSON. Apply display rules
+    # server-side so the client just renders what's set:
+    #   - indoor + no alert       → None (hide)
+    #   - any venue + active NWS  → alert (always shows up to 16d)
+    #   - outdoor + ≤7d forecast  → full forecast
+    #   - outdoor 8-16d + alert   → alert only
+    #   - otherwise               → None
+    try:
+        rows = (db.table("v_event_weather_with_fallback")
+                  .select("tevo_event_id,days_to_event,weather_kind,is_indoor,"
+                          "fcst_temp_f,fcst_precip_pct,fcst_precip_in,"
+                          "fcst_wind_mph,fcst_gust_mph,fcst_summary,"
+                          "weather_alerts")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid not in ctx:
+                continue
+            days = r.get("days_to_event")
+            if days is None or days > 16 or days < 0:
+                continue  # too far out or past
+            alerts = r.get("weather_alerts") or []
+            kind = r.get("weather_kind") or ""
+            is_indoor = bool(r.get("is_indoor"))
+
+            # Slim NWS alerts down to fields the UI actually shows.
+            slim_alerts = []
+            for a in alerts[:3]:  # cap at 3 — anything more is noise
+                slim_alerts.append({
+                    "event": a.get("event"),
+                    "severity": a.get("severity"),
+                    "impact_tier": a.get("impact_tier"),
+                    "headline": a.get("headline"),
+                    "expires_at": a.get("expires_at"),
+                })
+
+            has_alert = bool(slim_alerts)
+            show_forecast = (
+                not is_indoor
+                and kind.startswith("forecast_outdoor")
+                and days <= 7
+                and r.get("fcst_temp_f") is not None
+            )
+
+            if not has_alert and not show_forecast:
+                continue  # nothing worth showing
+
+            w: dict = {
+                "days_to_event": days,
+                "is_indoor": is_indoor,
+                "alerts": slim_alerts,
+            }
+            if show_forecast:
+                w["forecast"] = {
+                    "temp_f": r.get("fcst_temp_f"),
+                    "summary": r.get("fcst_summary"),
+                    "precip_pct": r.get("fcst_precip_pct"),
+                    "precip_in": r.get("fcst_precip_in"),
+                    "wind_mph": r.get("fcst_wind_mph"),
+                    "gust_mph": r.get("fcst_gust_mph"),
+                }
+            ctx[eid]["weather"] = w
+    except Exception:
+        pass
+
+    # Holiday: v_event_calendar_context returns JSON arrays of holidays
+    # on/near the event date + active school breaks, each with precision
+    # (national/state/city) and impact (boost/neutral). Pick the single
+    # most-relevant pill to show — day-of beats nearby, city beats state
+    # beats national, "boost" beats "neutral".
+    try:
+        rows = (db.table("v_event_calendar_context")
+                  .select("tevo_event_id,event_date,is_holiday,"
+                          "within_holiday_window,school_break_active,"
+                          "holidays_today,holidays_nearby,school_breaks_active")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+
+        def _precision_rank(p: str) -> int:
+            return {"city": 0, "state": 1, "national": 2}.get(p or "national", 3)
+
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid not in ctx:
+                continue
+
+            today = r.get("holidays_today") or []
+            nearby = r.get("holidays_nearby") or []
+            breaks = r.get("school_breaks_active") or []
+
+            best: dict | None = None
+
+            # Day-of holiday: any precision, boost wins over neutral.
+            if today:
+                today_sorted = sorted(
+                    today,
+                    key=lambda h: (
+                        0 if h.get("impact") == "boost" else 1,
+                        _precision_rank(h.get("precision")),
+                    ),
+                )
+                h = today_sorted[0]
+                best = {
+                    "kind": "day_of",
+                    "label": h.get("name"),
+                    "impact": h.get("impact"),
+                    "precision": h.get("precision"),
+                    "date": r.get("event_date"),
+                }
+
+            # Nearby (±1 day) — only show if no day-of beat us.
+            if best is None and nearby:
+                nearby_sorted = sorted(
+                    nearby,
+                    key=lambda h: (
+                        0 if h.get("impact") == "boost" else 1,
+                        _precision_rank(h.get("precision")),
+                        abs(int(h.get("days_offset") or 0)),
+                    ),
+                )
+                h = nearby_sorted[0]
+                offset = int(h.get("days_offset") or 0)
+                suffix = " weekend" if abs(offset) == 1 else ""
+                best = {
+                    "kind": "nearby",
+                    "label": (h.get("name") or "") + suffix,
+                    "impact": h.get("impact"),
+                    "precision": h.get("precision"),
+                    "date": h.get("date"),
+                    "days_offset": offset,
+                }
+
+            # School break — only summer/winter (the only ones that meaningfully
+            # boost attendance for weekday games). Otherwise we'd label half
+            # the calendar with spring/fall breaks that don't move pricing.
+            if best is None and breaks:
+                summer_winter = [
+                    b for b in breaks
+                    if any(k in (b.get("name") or "").lower()
+                           for k in ("summer", "winter"))
+                ]
+                if summer_winter:
+                    summer_winter.sort(key=lambda b: _precision_rank(b.get("precision")))
+                    b = summer_winter[0]
+                    best = {
+                        "kind": "school_break",
+                        "label": b.get("name"),
+                        "impact": "boost",
+                        "precision": b.get("precision"),
+                        "start_date": b.get("start_date"),
+                        "end_date": b.get("end_date"),
+                    }
+
+            if best is not None:
+                ctx[eid]["holiday"] = best
+    except Exception:
+        pass
+
+    return ctx
 
 
 @app.get("/api/broker/news")
@@ -2702,15 +3329,20 @@ def seatdata_auto_search(event_id: int, _=Depends(require_auth)):
 # ============================================================================
 # Auth on this route: either a normal Bearer token (manual trigger from UI)
 # or a matching X-Cron-Secret header (pg_cron-driven). The cron secret is
-# expected in env var CRON_SECRET on Railway. Per existing convention, the
-# placeholder string 'pick-any-random-string-and-save-it' is used.
+# expected in env var CRON_SECRET on Railway. Hardened 2026-05-11:
+# fail-closed if unset (was: defaulted to a known placeholder string),
+# constant-time compare to avoid timing-leak.
 
-CRON_SECRET = os.environ.get("CRON_SECRET", "pick-any-random-string-and-save-it")
+CRON_SECRET = os.environ.get("CRON_SECRET")
 
 
 def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
-    """Allow either authenticated user OR matching X-Cron-Secret."""
-    if x_cron_secret and x_cron_secret == CRON_SECRET:
+    """Allow either authenticated user OR matching X-Cron-Secret.
+
+    Fails closed if CRON_SECRET is not configured on the server — never
+    accepts an empty/placeholder secret.
+    """
+    if x_cron_secret and CRON_SECRET and hmac.compare_digest(x_cron_secret, CRON_SECRET):
         return {"cron": True}
     return require_auth(authorization)
 
@@ -3371,33 +4003,140 @@ def _ticket_group_to_listing(tg: dict) -> dict:
 @app.get("/api/store/events")
 def store_events(
     q: str | None = None,
+    performer_id: int | None = None,
+    venue_id: int | None = None,
     limit: int = 60,
     offset: int = 0,
+    include_inactive: bool = False,
 ):
     """Catalog: events for which we have owned inventory in TEvo.
 
-    Driven by Supabase event_metrics (collector populates owned_tickets_count
-    via /v9/ticket_groups?owned=true on every run). Falling back to the bare
-    events table if Supabase is unavailable still keeps the page alive.
+    Driven by Supabase `latest_event_metrics` (collector populates
+    owned_tickets_count via /v9/ticket_groups?owned=true on every run).
+
+    Wiring:
+    - Filtered by `event_lifecycle.is_active` so ghosts / completed /
+      postponed events are dropped (set include_inactive=true to bypass).
+    - Performer assets (logos / brand colors) bulk-fetched from
+      performer_metadata so cards can render branding without N+1.
+    - Search is in-Python over the already-narrowed result set; cheap
+      because the DB query already caps at limit×2 candidate rows.
     """
     db = require_sb()
-    # Pull events ordered by upcoming first, only those with owned tickets
-    # available right now. The latest_event_metrics view exposes the
-    # most-recent event_metrics row per event.
-    sel = (
-        db.table("latest_event_metrics")
-        .select(
-            "event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
-            "tickets_count,retail_min,captured_at,"
-            "events(id,name,occurs_at_local,venue_name,venue_location,"
-            "primary_performer_name)"
-        )
-        .gt("owned_tickets_count", 0)
-        .order("captured_at", desc=True)
-        .limit(min(limit, 200))
-        .offset(max(offset, 0))
+    # Cap raised from 200 -> 500 so consumer search pages can cover the full
+    # owned-inventory set in one fetch. Prod has ~270 events with owned
+    # tickets at any given time; capping at 200 was leaving ~25% invisible
+    # to anyone searching by performer name on the storefront. Pagination
+    # is the next step if the catalog grows past ~500.
+    cap = min(max(limit, 1), 500)
+
+    # Pull a wider candidate set so we can post-filter by lifecycle + search
+    # and still serve a full page.
+    candidate_limit = min(cap * 2, 1000) if not include_inactive else cap
+
+    # Events-first two-query merge (was `events!inner(...)` embedding,
+    # which PostgREST PGRST200s on view→table FK after cache rebuilds).
+    #
+    # Always start from `events` filtered to upcoming so we don't waste
+    # candidate slots on yesterday's games. Step 1: pull `events` ordered
+    # by occurs_at_local (with optional performer/venue filter). Step 2:
+    # join `latest_event_metrics` for owned-only. Step 3: merge in Python.
+    #
+    # Over-pull events by 3x so we have headroom after the owned filter
+    # narrows the set. include_inactive=true skips the upcoming filter
+    # (debug / admin only).
+    evs_q = db.table("events").select(
+        "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+        "primary_performer_id,primary_performer_name"
     )
-    rows = (sel.execute().data) or []
+    if not include_inactive:
+        # "Today or later" — local-time strings sort correctly here.
+        evs_q = evs_q.gte("occurs_at_local", datetime.now(timezone.utc).date().isoformat())
+    if performer_id is not None:
+        evs_q = evs_q.eq("primary_performer_id", int(performer_id))
+    if venue_id is not None:
+        evs_q = evs_q.eq("venue_id", int(venue_id))
+    evs_q = evs_q.order("occurs_at_local", desc=False).limit(candidate_limit * 3)
+    events_rows = (evs_q.execute().data) or []
+    if not events_rows:
+        return {"count": 0, "events": [], "limit": cap, "offset": offset}
+    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+    event_ids = list(events_by_id.keys())
+
+    # Owned-only metrics for those event ids.
+    metrics_rows = (
+        db.table("latest_event_metrics")
+        .select("event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
+                "tickets_count,retail_min,captured_at")
+        .gt("owned_tickets_count", 0)
+        .in_("event_id", event_ids)
+        .limit(candidate_limit)
+        .offset(max(offset, 0))
+        .execute().data
+    ) or []
+    if not metrics_rows:
+        return {"count": 0, "events": [], "limit": cap, "offset": offset}
+
+    # Merge into the row shape downstream code expects (the old !inner
+    # response: each row has a nested `events` dict).
+    rows = [{**m, "events": events_by_id.get(int(m["event_id"]))} for m in metrics_rows]
+    rows = [r for r in rows if r.get("events")]
+    # Event-list sort hierarchy (per 2026-05-12 directive):
+    #   1. date  asc   — soonest event first
+    #   2. time  asc   — earliest start within a day first
+    #   3. qty   desc  — more owned tickets ranks higher
+    #   4. listings desc — more distinct listings ranks higher
+    #   5. getin desc  — higher cheapest-price (= "premium first") ranks higher
+    #
+    # occurs_at_local is text in YYYY-MM-DDTHH:MM:SS+TZ form; lexicographic
+    # ascending comparison naturally gives correct date+time order. Desc
+    # numeric columns are negated to fit a single ascending tuple sort.
+    def _catalog_sort_key(r):
+        ev = r.get("events") or {}
+        occurs = ev.get("occurs_at_local") or "9999-12-31T23:59:59"
+        qty = -(int(r.get("owned_tickets_count") or 0))
+        listings = -(int(r.get("owned_groups_count") or 0))
+        rmin = r.get("retail_min")
+        try:
+            price = -float(rmin) if rmin is not None else 0.0
+        except (TypeError, ValueError):
+            price = 0.0
+        return (occurs, qty, listings, price)
+    rows.sort(key=_catalog_sort_key)
+
+    # Drop ghosts / completed / postponed unless caller opts in. Same
+    # pattern as broker_movers — small id-set, single roundtrip to the
+    # event_lifecycle view (over derive_event_lifecycle()).
+    if rows and not include_inactive:
+        ev_ids = [(r.get("events") or {}).get("id") for r in rows]
+        ev_ids = [e for e in ev_ids if e]
+        if ev_ids:
+            try:
+                lc_rows = (
+                    db.table("event_lifecycle")
+                    .select("event_id,status,is_active")
+                    .in_("event_id", ev_ids)
+                    .execute()
+                ).data or []
+                inactive = {r["event_id"] for r in lc_rows if not r.get("is_active")}
+                if inactive:
+                    rows = [r for r in rows
+                            if (r.get("events") or {}).get("id") not in inactive]
+            except Exception:
+                # event_lifecycle view missing in some envs; better to show
+                # everything than 500 the storefront.
+                pass
+
+    # Bulk-fetch performer assets so card branding doesn't N+1.
+    perf_ids = [(r.get("events") or {}).get("primary_performer_id") for r in rows]
+    perf_ids = [int(p) for p in perf_ids if p]
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+
+    # Bulk-fetch rivalry / MLB-series / tournament context per event. Three
+    # cheap view reads → flat lookup map keyed by event_id. Each card may
+    # render zero, one, or several badges.
+    ev_ids_for_ctx = [int(e["id"]) for e in (r.get("events") or {} for r in rows) if e.get("id")]
+    ctx_by_id = _bulk_event_context(db, ev_ids_for_ctx) if ev_ids_for_ctx else {}
 
     out: list[dict] = []
     needle = (q or "").strip().lower()
@@ -3416,6 +4155,8 @@ def store_events(
             ).lower()
             if needle not in hay:
                 continue
+        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
+        ctx = ctx_by_id.get(int(ev.get("id") or 0)) or {}
         out.append({
             "id": ev.get("id"),
             "name": ev.get("name"),
@@ -3423,12 +4164,725 @@ def store_events(
             "venue_name": ev.get("venue_name"),
             "venue_location": ev.get("venue_location"),
             "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_id": ev.get("primary_performer_id"),
+            "primary_performer_logo": (a or {}).get("logo_default_url"),
+            "primary_performer_color": (a or {}).get("color_primary"),
+            # League gates the MLB "Series" tab on the catalog. Clients
+            # use this to decide whether to render the tabbed UI when the
+            # user is filtered to one performer.
+            "primary_performer_league": (a or {}).get("espn_league"),
             "from_price": r.get("retail_min"),
             "owned_tickets_count": r.get("owned_tickets_count"),
             "owned_groups_count": r.get("owned_groups_count"),
             "captured_at": r.get("captured_at"),
+            # Optional context badges — keys are always present so the client
+            # can do `if (ev.rivalry) render(...)` without ?-chaining.
+            "rivalry": ctx.get("rivalry"),
+            "mlb_series": ctx.get("mlb_series"),
+            "tournament": ctx.get("tournament"),
+            "weather": ctx.get("weather"),
+            "holiday": ctx.get("holiday"),
+            "playoff": ctx.get("playoff"),
         })
-    return {"count": len(out), "events": out}
+        if len(out) >= cap:
+            break
+    return {"count": len(out), "events": out, "limit": cap, "offset": offset}
+
+
+def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in miles between two (lat,lon) pairs."""
+    R_MI = 3958.7613  # Earth's mean radius in miles
+    lat1r, lat2r = math.radians(lat1), math.radians(lat2)
+    dlat = lat2r - lat1r
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1r) * math.cos(lat2r) * math.sin(dlon / 2) ** 2
+    return 2 * R_MI * math.asin(math.sqrt(a))
+
+
+def _attach_owned_metadata(
+    db,
+    candidate_ids: list[int],
+    user_lat: float,
+    user_lon: float,
+) -> list[dict]:
+    """Given a list of TEvo event_ids, intersect with our owned + active set
+    and decorate with metadata + display distance. Used by both 'hybrid' and
+    'supabase' near-me modes to keep response shape identical.
+    """
+    if not candidate_ids:
+        return []
+    # Two-query merge (was `events!inner(...)` — PostgREST PGRST200 after
+    # cache rebuilds because view-to-table FK inference is flaky).
+    metrics_rows = (
+        db.table("latest_event_metrics")
+        .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
+        .gt("owned_tickets_count", 0)
+        .in_("event_id", [int(e) for e in candidate_ids])
+        .execute().data
+    ) or []
+    if not metrics_rows:
+        return []
+    metric_event_ids = [int(m["event_id"]) for m in metrics_rows if m.get("event_id")]
+    events_rows = (
+        db.table("events")
+        .select("id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+                "primary_performer_id,primary_performer_name")
+        .in_("id", metric_event_ids)
+        .execute().data
+    ) or []
+    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+    rows = [
+        {**m, "events": events_by_id.get(int(m["event_id"]))}
+        for m in metrics_rows
+        if events_by_id.get(int(m["event_id"]))
+    ]
+    if not rows:
+        return []
+
+    ev_ids = [r["event_id"] for r in rows]
+    try:
+        lc = (
+            db.table("event_lifecycle").select("event_id,is_active")
+            .in_("event_id", ev_ids).execute().data
+        ) or []
+        inactive = {r["event_id"] for r in lc if not r.get("is_active")}
+    except Exception:
+        inactive = set()
+
+    venue_ids = list({(r.get("events") or {}).get("venue_id") for r in rows
+                      if (r.get("events") or {}).get("venue_id")})
+    coord_map: dict[int, tuple[float, float]] = {}
+    if venue_ids:
+        try:
+            ca = (
+                db.table("venue_assets").select("tevo_venue_id,latitude,longitude")
+                .in_("tevo_venue_id", venue_ids).execute().data
+            ) or []
+            for c in ca:
+                if c.get("latitude") is not None and c.get("longitude") is not None:
+                    coord_map[int(c["tevo_venue_id"])] = (float(c["latitude"]), float(c["longitude"]))
+        except Exception:
+            coord_map = {}
+
+    perf_ids = [int((r.get("events") or {}).get("primary_performer_id"))
+                for r in rows
+                if (r.get("events") or {}).get("primary_performer_id")
+                and r["event_id"] not in inactive]
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+
+    out: list[dict] = []
+    for r in rows:
+        eid = r["event_id"]
+        if eid in inactive:
+            continue
+        ev = r.get("events") or {}
+        coords = coord_map.get(int(ev.get("venue_id"))) if ev.get("venue_id") else None
+        dist = _haversine_miles(user_lat, user_lon, coords[0], coords[1]) if coords else None
+        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
+        out.append({
+            "id": eid,
+            "name": ev.get("name"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue_name": ev.get("venue_name"),
+            "venue_location": ev.get("venue_location"),
+            "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_logo": (a or {}).get("logo_default_url"),
+            "primary_performer_color": (a or {}).get("color_primary"),
+            "from_price": r.get("retail_min"),
+            "owned_tickets_count": r.get("owned_tickets_count"),
+            "distance_miles": round(dist, 1) if dist is not None else None,
+        })
+    return out
+
+
+# In-memory TTL cache for storefront search results. TEvo's
+# /v9/searches/suggestions has no upstream cache — 5 repeated calls vary
+# 785-2833ms (empirical 2026-05-12). 60s window means even an aggressive
+# typist won't burn quota on common queries.
+_search_cache: dict[str, tuple[float, dict]] = {}
+_SEARCH_CACHE_TTL = 60.0
+
+
+def _search_cache_get(key: str) -> dict | None:
+    hit = _search_cache.get(key)
+    if not hit:
+        return None
+    ts, payload = hit
+    if time.time() - ts > _SEARCH_CACHE_TTL:
+        _search_cache.pop(key, None)
+        return None
+    return payload
+
+
+def _search_cache_put(key: str, payload: dict) -> None:
+    _search_cache[key] = (time.time(), payload)
+    # Drop oldest entries when the cache grows past 200 — keeps a long
+    # uptime from leaking memory on a steady drip of unique queries.
+    if len(_search_cache) > 200:
+        oldest = min(_search_cache.items(), key=lambda kv: kv[1][0])
+        _search_cache.pop(oldest[0], None)
+
+
+def _search_sql_only(db, q_norm: str, limit: int) -> dict:
+    """SQL-only search: ILIKE across our `events` + `performer_metadata` for
+    queries when STOREFRONT_SQL_ONLY=true. Always hits Supabase, never TEvo.
+    Returns the same shape as the live path so the client is mode-agnostic.
+    """
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    # Strip characters that break PostgREST's or_() clause parser:
+    # commas (clause separator), periods (operator separator), parens
+    # (grouping). The replacement char is a space so multi-token queries
+    # still work via ILIKE's wildcard handling.
+    safe_q = re.sub(r"[,.()\"]", " ", q_norm).strip()
+    if not safe_q:
+        return {"events": [], "performers": [], "venues": [], "source": "sql"}
+    pattern = f"%{safe_q}%"
+
+    # Events: search by event name, venue name, venue location, primary
+    # performer name. Limit to future + active so we don't surface ghosts.
+    try:
+        ev_rows = (db.table("events")
+                     .select("id,name,occurs_at_local,venue_name,venue_location,"
+                             "primary_performer_id,primary_performer_name")
+                     .gte("occurs_at_local", today_iso)
+                     .or_(f"name.ilike.{pattern},"
+                          f"venue_name.ilike.{pattern},"
+                          f"venue_location.ilike.{pattern},"
+                          f"primary_performer_name.ilike.{pattern}")
+                     .order("occurs_at_local", desc=False)
+                     .limit(80)
+                     .execute().data) or []
+    except Exception as e:
+        print(f"search_sql_only events query failed: {e}")
+        ev_rows = []
+
+    # Tag with we_own + from_price via latest_event_metrics. Drop CANCELLED
+    # name strings (rare in our table but cheap to filter).
+    ev_rows = [e for e in ev_rows if "CANCELLED" not in (e.get("name") or "").upper()]
+    if ev_rows:
+        ev_ids = [int(e["id"]) for e in ev_rows if e.get("id")]
+        metrics: dict[int, dict] = {}
+        if ev_ids:
+            try:
+                rows = (db.table("latest_event_metrics")
+                          .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
+                          .in_("event_id", ev_ids).execute().data) or []
+                metrics = {int(r["event_id"]): r for r in rows if r.get("event_id")}
+            except Exception:
+                metrics = {}
+        # Drop inactive (ghost/cancelled) events.
+        try:
+            lc = (db.table("event_lifecycle")
+                    .select("event_id,is_active")
+                    .in_("event_id", ev_ids).execute().data) or []
+            inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+        except Exception:
+            inactive = set()
+        ev_rows = [e for e in ev_rows if int(e.get("id") or 0) not in inactive]
+    else:
+        metrics = {}
+
+    events_out = []
+    for e in ev_rows[:limit]:
+        eid = int(e.get("id") or 0)
+        m = metrics.get(eid) or {}
+        events_out.append({
+            "id": eid,
+            "name": e.get("name"),
+            "venue_name": e.get("venue_name"),
+            "location": e.get("venue_location"),
+            "occurs_at": e.get("occurs_at_local"),
+            "we_own": bool(m.get("owned_tickets_count")),
+            "from_price": m.get("retail_min"),
+            "owned_tix": m.get("owned_tickets_count"),
+        })
+
+    # Performers via performer_metadata name match.
+    try:
+        pf_rows = (db.table("performer_metadata")
+                     .select("performer_id,name,espn_league")
+                     .ilike("name", pattern)
+                     .limit(limit)
+                     .execute().data) or []
+    except Exception:
+        pf_rows = []
+    performers_out = [{
+        "id": int(p.get("performer_id") or 0),
+        "name": p.get("name"),
+        "league": p.get("espn_league"),
+    } for p in pf_rows if p.get("performer_id")]
+
+    # Venues — derive from events distinct venue rows for SQL-only mode.
+    # We don't have a public venues table; use distinct venue_name from
+    # upcoming events matching the query.
+    venues_out: list[dict] = []
+    try:
+        vn_rows = (db.table("events")
+                     .select("venue_id,venue_name,venue_location")
+                     .gte("occurs_at_local", today_iso)
+                     .or_(f"venue_name.ilike.{pattern},venue_location.ilike.{pattern}")
+                     .limit(40)
+                     .execute().data) or []
+        seen: set[int] = set()
+        for v in vn_rows:
+            vid = int(v.get("venue_id") or 0)
+            if vid in seen or not vid:
+                continue
+            seen.add(vid)
+            venues_out.append({
+                "id": vid,
+                "name": v.get("venue_name"),
+                "location": v.get("venue_location"),
+            })
+            if len(venues_out) >= limit:
+                break
+    except Exception:
+        pass
+
+    return {
+        "events": events_out,
+        "performers": performers_out,
+        "venues": venues_out,
+        "source": "sql",
+    }
+
+
+def _search_live(db, q_norm: str, limit: int) -> dict:
+    """Live search: hits TEvo /v9/searches/suggestions, then cross-joins the
+    returned event IDs against our SQL to tag we_own + from_price. Used in
+    non-SQL-only deployments."""
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    try:
+        resp = client.search_suggestions(
+            q_norm, entities="events,performers,venues",
+            fuzzy=True, limit=20, occurs_at_gte=today_iso,
+        )
+    except RuntimeError as e:
+        # Don't break the page on TEvo error; fall back to SQL.
+        print(f"search_live TEvo failed, falling back to SQL: {e}")
+        return _search_sql_only(db, q_norm, limit)
+
+    s = (resp.get("suggestions") or {})
+    ev_in = s.get("events", []) or []
+    pf_in = s.get("performers", []) or []
+    vn_in = s.get("venues", []) or []
+
+    # Drop CANCELLED (TEvo bakes the marker right into the name string).
+    ev_in = [e for e in ev_in if "CANCELLED" not in (e.get("name") or "").upper()]
+
+    # Cross-check against our SQL to know which events we actually own.
+    ev_ids = [int(e.get("id") or 0) for e in ev_in if e.get("id")]
+    metrics: dict[int, dict] = {}
+    if ev_ids:
+        try:
+            rows = (db.table("latest_event_metrics")
+                      .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
+                      .in_("event_id", ev_ids).execute().data) or []
+            metrics = {int(r["event_id"]): r for r in rows if r.get("event_id")}
+        except Exception:
+            metrics = {}
+
+    events_out = []
+    for e in ev_in[:limit]:
+        eid = int(e.get("id") or 0)
+        m = metrics.get(eid) or {}
+        events_out.append({
+            "id": eid,
+            "name": e.get("name"),
+            "venue_name": e.get("venue_name"),
+            "location": e.get("location"),
+            "occurs_at": e.get("occurs_at"),
+            "we_own": bool(m.get("owned_tickets_count")),
+            "from_price": m.get("retail_min"),
+            "owned_tix": m.get("owned_tickets_count"),
+        })
+
+    return {
+        "events": events_out,
+        "performers": [{
+            "id": int(p.get("id") or 0),
+            "name": p.get("name"),
+            "location": p.get("location"),
+            "venue_name": p.get("venue_name"),
+        } for p in pf_in[:limit] if p.get("id")],
+        "venues": [{
+            "id": int(v.get("id") or 0),
+            "name": v.get("name"),
+            "location": v.get("location"),
+        } for v in vn_in[:limit] if v.get("id")],
+        "source": "live",
+    }
+
+
+@app.get("/api/store/search")
+def store_search(q: str, limit: int = 8):
+    """Live storefront search. Hits TEvo /v9/searches/suggestions in live
+    mode (and cross-joins our SQL for we_own/from_price tagging), or
+    ILIKE-searches our tables when STOREFRONT_SQL_ONLY=true.
+
+    Returns three buckets the dropdown UI renders separately:
+      events:     [ { id, name, venue_name, location, occurs_at, we_own,
+                      from_price, owned_tix } ]
+      performers: [ { id, name, location, venue_name?, league? } ]
+      venues:     [ { id, name, location } ]
+
+    Cached per-q for 60s in process memory so a typist's stream of
+    keystrokes doesn't burn TEvo quota.
+    """
+    q_norm = (q or "").strip()
+    if not q_norm:
+        return {"q": "", "events": [], "performers": [], "venues": [],
+                "source": "empty", "latency_ms": 0}
+
+    # Cap at 50; the upstream cap is 20, so anything past that just trims.
+    lim = max(1, min(int(limit), 50))
+    cache_key = f"{q_norm.lower()}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
+    cached = _search_cache_get(cache_key)
+    if cached is not None:
+        return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
+
+    t0 = time.time()
+    db = require_sb()
+    if STOREFRONT_SQL_ONLY:
+        payload = _search_sql_only(db, q_norm, lim)
+    else:
+        payload = _search_live(db, q_norm, lim)
+
+    elapsed_ms = int((time.time() - t0) * 1000)
+    payload["q"] = q_norm
+    payload["latency_ms"] = elapsed_ms
+    _search_cache_put(cache_key, payload)
+    return payload
+
+
+@app.get("/api/store/movers")
+def store_movers(
+    city: str = "NYC",
+    days: int = 21,
+    limit: int = 8,
+):
+    """Homepage "moving fast" strip — owned-inventory events in a target
+    city sorted by 24h ticket-velocity (most negative tickets_delta first).
+
+    Only one city supported today (`city=NYC`); future versions can resolve
+    user location → city automatically. Days defaults to 21 (3 weeks). Each
+    returned event carries an optional `signal` field with one of three
+    labels (no others surfaced per 2026-05-12 directive):
+
+        'selling_fast'  — TEvo market lost ≥50 tickets in last 24h
+        'demand_rising' — tickets dropped AND getin price firmed ≥5%
+        'premium'       — getin price ≥ $500 (e.g. playoff games)
+
+    Hidden when nothing matches. Driven by v_event_velocity_windows joined
+    against latest_event_metrics + events + event_lifecycle.
+    """
+    db = require_sb()
+    cap = max(1, min(int(limit), 24))
+    day_cap = max(1, min(int(days), 90))
+
+    # City filter — hardcoded NYC venue patterns for v1. Matches everywhere
+    # the storefront would consider "New York metro" inventory.
+    city_norm = (city or "").upper()
+    if city_norm in ("NYC", "NEW YORK", "NEW YORK CITY"):
+        venue_patterns = ("%New York%", "%Brooklyn%", "%Bronx%",
+                          "%Queens%", "%Manhattan%", "%, NY%")
+    else:
+        # Unknown city → empty result; cleaner than a 400 for the home view.
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    horizon_iso = (datetime.now(timezone.utc) + timedelta(days=day_cap)).date().isoformat()
+
+    # Pull events in the window with owned inventory + active lifecycle.
+    # Two queries + merge (consistent with the catalog pattern; view-to-
+    # table FK inference under PostgREST has been flaky).
+    try:
+        ev_q = db.table("events").select(
+            "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+            "primary_performer_id,primary_performer_name"
+        ).gte("occurs_at_local", today_iso).lte("occurs_at_local", horizon_iso + "T23:59:59")
+        # PostgREST `or_()` with a comma-separated list of `<col>.ilike.<pat>`
+        # supports OR filters across multiple patterns.
+        or_clauses = ",".join(f"venue_location.ilike.{p}" for p in venue_patterns)
+        ev_q = ev_q.or_(or_clauses)
+        events_rows = ev_q.limit(800).execute().data or []
+    except Exception as e:
+        # Conservative fallback: don't break the homepage if the filter
+        # syntax ever drifts.
+        print(f"store_movers events query failed: {e}")
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+
+    if not events_rows:
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+    ev_ids = list(events_by_id.keys())
+
+    # Owned-only metrics so we don't list events we can't actually sell.
+    metrics = (db.table("latest_event_metrics")
+                 .select("event_id,owned_tickets_count,owned_groups_count,"
+                         "tickets_count,retail_min,captured_at")
+                 .gt("owned_tickets_count", 0)
+                 .in_("event_id", ev_ids)
+                 .execute().data) or []
+    if not metrics:
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+    metrics_by_id = {int(m["event_id"]): m for m in metrics if m.get("event_id")}
+
+    # Lifecycle filter — drop ghost/cancelled/postponed.
+    try:
+        lc = (db.table("event_lifecycle")
+                .select("event_id,is_active")
+                .in_("event_id", list(metrics_by_id.keys()))
+                .execute().data) or []
+        inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+    except Exception:
+        inactive = set()
+
+    # Velocity windows for the 1h/24h ticket delta + getin pct moves.
+    try:
+        vw = (db.table("v_event_velocity_windows")
+                .select("tevo_event_id,tevo_tix_now,tevo_tix_d1h,tevo_tix_d24h,"
+                        "tevo_getin_now,tevo_getin_d24h_pct,tevo_now_at")
+                .in_("tevo_event_id", list(metrics_by_id.keys()))
+                .execute().data) or []
+    except Exception:
+        vw = []
+    velocity_by_id = {int(v["tevo_event_id"]): v for v in vw if v.get("tevo_event_id") is not None}
+
+    # Bulk performer assets for card branding consistency.
+    perf_ids = [events_by_id[i].get("primary_performer_id") for i in metrics_by_id if i not in inactive]
+    perf_ids = [int(p) for p in perf_ids if p]
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+
+    candidates: list[dict] = []
+    for eid, m in metrics_by_id.items():
+        if eid in inactive:
+            continue
+        ev = events_by_id.get(eid) or {}
+        v = velocity_by_id.get(eid) or {}
+        tix_d24h = v.get("tevo_tix_d24h")
+        tix_d1h = v.get("tevo_tix_d1h")
+        getin_pct_24h = v.get("tevo_getin_d24h_pct")
+        getin_now = v.get("tevo_getin_now")
+        from_price = m.get("retail_min") if m.get("retail_min") is not None else getin_now
+
+        # Signal classification — only the three labels the directive allows.
+        # Priority: premium > selling_fast > demand_rising. Premium runs
+        # first because expensive playoff inventory should always carry the
+        # "⭐" badge even when ticket delta is small.
+        signal: str | None = None
+        try:
+            getin_val = float(getin_now) if getin_now is not None else None
+        except (TypeError, ValueError):
+            getin_val = None
+        try:
+            d24h_val = int(tix_d24h) if tix_d24h is not None else None
+        except (TypeError, ValueError):
+            d24h_val = None
+        try:
+            pct_val = float(getin_pct_24h) if getin_pct_24h is not None else None
+        except (TypeError, ValueError):
+            pct_val = None
+
+        if getin_val is not None and getin_val >= 500:
+            signal = "premium"
+        elif d24h_val is not None and d24h_val <= -50:
+            signal = "selling_fast"
+        elif d24h_val is not None and d24h_val < 0 and pct_val is not None and pct_val >= 5.0:
+            signal = "demand_rising"
+
+        # Mover-worthy if it has any signal OR meaningful 24h activity (so
+        # the strip isn't a blank slate when no event hits the strict gates).
+        if signal is None and (d24h_val is None or d24h_val > -5):
+            continue
+
+        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
+        candidates.append({
+            "id": ev.get("id"),
+            "name": ev.get("name"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue_name": ev.get("venue_name"),
+            "venue_location": ev.get("venue_location"),
+            "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_logo": (a or {}).get("logo_default_url"),
+            "primary_performer_color": (a or {}).get("color_primary"),
+            "from_price": from_price,
+            "tix_d24h": d24h_val,
+            "tix_d1h": tix_d1h,
+            "getin_pct_24h": pct_val,
+            "signal": signal,
+        })
+
+    # Sort by absolute 24h ticket-drop magnitude desc, tie-break to soonest.
+    # Events with no d24h fall to the end (treat None as 0 activity).
+    def _mover_sort_key(c):
+        d = c.get("tix_d24h")
+        # Most negative = highest priority. Convert to positive magnitude.
+        mag = -int(d) if isinstance(d, int) and d < 0 else 0
+        occurs = c.get("occurs_at_local") or "9999"
+        # Sort key wants most-active FIRST = larger magnitudes first → negate.
+        return (-mag, occurs)
+    candidates.sort(key=_mover_sort_key)
+    candidates = candidates[:cap]
+
+    return {
+        "city": city,
+        "days": day_cap,
+        "count": len(candidates),
+        "events": candidates,
+    }
+
+
+@app.get("/api/store/events/near")
+def store_events_near(
+    lat: float,
+    lon: float,
+    within: float = 50.0,       # miles
+    limit: int = 10,
+    source: str = "hybrid",     # 'hybrid' | 'supabase' | 'tevo'
+):
+    """Owned-inventory events sorted by distance from (lat, lon).
+
+    Implements evo-docs §05 ("Displaying Events Near Your Users"). Three
+    modes selectable via `?source=`:
+
+    1. **hybrid** (default) — TEvo's `/v9/events?lat&lon&within` provides
+       authoritative geo filtering (100% venue coverage). We then intersect
+       the result with our `latest_event_metrics WHERE owned_tickets_count
+       > 0` and apply `event_lifecycle.is_active`. Best of both: TEvo's
+       geo authority + our owned/lifecycle filtering.
+
+    2. **supabase** — pure local: read our owned+active set, join
+       `venue_assets` for lat/lon (83% coverage), compute Python haversine,
+       filter by within. Faster (no TEvo round-trip), zero TEvo quota,
+       but caps coverage at venues we've geocoded.
+
+    3. **tevo** — raw TEvo geo result, no owned filter. Useful for
+       comparison/debug only; the storefront wall says we never show
+       inventory we don't own, so this mode is debug-only and excluded
+       from the consumer UI.
+
+    Distance display uses our `venue_assets` coords for both hybrid and
+    supabase modes (TEvo's events response doesn't include lat/lon on
+    the venue object). Events with no coord yield `distance_miles: null`
+    and sort to the end.
+    """
+    within = max(1.0, min(within, 500.0))
+    cap = max(1, min(limit, 50))
+
+    # SQL-only mode: force supabase mode regardless of ?source=. No TEvo
+    # calls on the home page during demo testing.
+    if STOREFRONT_SQL_ONLY:
+        source = "supabase"
+
+    if source == "tevo":
+        # No Supabase needed for debug mode — straight passthrough.
+        # Debug mode: raw TEvo geo, NO owned filter. Returns whatever TEvo
+        # has nearby. Not used by the consumer UI.
+        try:
+            tevo_resp = client.list_events(
+                lat=lat, lon=lon, within=within,
+                only_with_available_tickets=True,
+                order_by="events.occurs_at ASC",
+                per_page=min(cap, 100),
+            )
+        except RuntimeError as e:
+            raise HTTPException(502, f"TEvo geo lookup failed: {e}")
+        evs = tevo_resp.get("events") or []
+        return {
+            "count": len(evs),
+            "events": [
+                {
+                    "id": e.get("id"),
+                    "name": e.get("name"),
+                    "occurs_at_local": e.get("occurs_at_local"),
+                    "venue_name": (e.get("venue") or {}).get("name"),
+                    "venue_location": (e.get("venue") or {}).get("location"),
+                    "distance_miles": None,
+                }
+                for e in evs
+            ],
+            "user_lat": lat, "user_lon": lon, "within_miles": within,
+            "source": "tevo",
+        }
+
+    db = require_sb()
+
+    if source == "hybrid":
+        # Step 1: TEvo geo query for events near (lat, lon) with available
+        # marketplace tickets. Authoritative venue coords; per_page is
+        # capped at 100 by TEvo so we take all of them as candidates.
+        try:
+            tevo_resp = client.list_events(
+                lat=lat, lon=lon, within=within,
+                only_with_available_tickets=True,
+                order_by="events.occurs_at ASC",
+                per_page=100,
+            )
+        except RuntimeError as e:
+            # On TEvo failure, fall through to supabase mode rather than
+            # 502'ing the home page. Logged for observability.
+            print(f"near (hybrid): TEvo failed, falling back to supabase: {e}")
+            source = "supabase"
+        else:
+            candidate_ids = [int(e["id"]) for e in (tevo_resp.get("events") or []) if e.get("id")]
+            decorated = _attach_owned_metadata(db, candidate_ids, lat, lon)
+            decorated.sort(key=lambda x: (x["distance_miles"] is None, x["distance_miles"] or 1e9))
+            return {
+                "count": len(decorated[:cap]),
+                "events": decorated[:cap],
+                "user_lat": lat, "user_lon": lon, "within_miles": within,
+                "total_within_radius": len(decorated),
+                "tevo_candidates": len(candidate_ids),
+                "source": "hybrid",
+            }
+
+    # source == "supabase" (or hybrid fallback)
+    # Pull all owned event ids; _attach_owned_metadata does its own join
+    # via the two-query merge pattern. (No `events!inner(...)` here either
+    # — PostgREST view→table FK inference is flaky after cache rebuilds.)
+    rows = (
+        db.table("latest_event_metrics")
+        .select("event_id")
+        .gt("owned_tickets_count", 0)
+        .limit(500)
+        .execute().data
+    ) or []
+    candidate_ids = [int(r["event_id"]) for r in rows if r.get("event_id")]
+    decorated = _attach_owned_metadata(db, candidate_ids, lat, lon)
+    # Drop events outside the radius (or missing coords entirely).
+    in_radius = [d for d in decorated
+                 if d["distance_miles"] is not None and d["distance_miles"] <= within]
+    in_radius.sort(key=lambda x: x["distance_miles"])
+    return {
+        "count": len(in_radius[:cap]),
+        "events": in_radius[:cap],
+        "user_lat": lat, "user_lon": lon, "within_miles": within,
+        "total_within_radius": len(in_radius),
+        "supabase_candidates": len(rows),
+        "missing_coords": sum(1 for d in decorated if d["distance_miles"] is None),
+        "source": "supabase",
+    }
+
+
+def _section_sort_key(s: str) -> tuple:
+    """Sort key for venue sections. Letters before digits (Floor, Courtside,
+    GA come before 100, 101, etc.); within each group, natural-numeric for
+    digits and case-insensitive alpha for letters. Mixed strings (e.g. "100A")
+    sort with the numeric group by their leading digits."""
+    s = (s or "").strip()
+    if not s:
+        return (2, "")
+    if s[0].isalpha():
+        return (0, s.lower())
+    # Numeric or mixed (digit-leading) — extract leading digits for natural sort.
+    digits = ""
+    for ch in s:
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    return (1, int(digits) if digits else 0, s.lower())
 
 
 def _csv(v: str | None) -> list[str]:
@@ -3501,20 +4955,339 @@ def _normalize_filters(raw: dict | None) -> dict:
     }
 
 
-def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
-    """Fetch event + owned listings, apply filters, return the same shape
-    /api/store/events/{id} returns. Shared by the public detail endpoint
-    and the share-link resolver."""
+def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
+    """Fire-and-forget kick to the audit lane's collect-listings Edge Function
+    so canonical SQL stays as fresh as the storefront sees.
+
+    Two paths:
+    - **Tracked event** (row exists in `events`): hit
+      `collect-listings?event_id=X&min_age_seconds=10`. The audit-lane
+      function dedupes against recent snapshots, so 100 shoppers in 10s
+      trigger one collector run, not 100.
+    - **Untracked event** (row missing): insert primary performer into
+      `watchlist`, then call `collect-listings?watchlist_id=N`. The
+      sweep populates `events` + `listings_snapshots` + `event_metrics`
+      for that performer's full calendar. From now on the regular cron
+      cadence covers the event automatically.
+
+    Lane note: writes to `watchlist` (audit-lane table) using the same
+    insert pattern as the existing `/api/watchlist` POST endpoint. We're
+    using the existing API surface, not creating a parallel writer — the
+    unique constraint on (kind, ext_id) keeps the table consistent.
+
+    Always non-blocking; runs on a daemon thread. Failures are logged to
+    stdout, never raised back to the page handler.
+    """
+    if not (sb is not None and SUPABASE_URL and CRON_SECRET):
+        return  # Best-effort only; missing config silently no-ops.
+
+    def _go():
+        try:
+            existing = (
+                sb.table("events").select("id").eq("id", event_id).limit(1).execute().data
+            )
+        except Exception as e:
+            print(f"canonical refresh: events lookup failed for {event_id}: {e}")
+            return
+
+        if existing:
+            url = (
+                f"{SUPABASE_URL}/functions/v1/collect-listings"
+                f"?event_id={event_id}&min_age_seconds=10"
+            )
+            _fire_collect(url, CRON_SECRET)
+            return
+
+        # Auto-track path: this event is brand new to us. Add primary
+        # performer to watchlist so the cron picks it up going forward.
+        performances = ev.get("performances") or []
+        primary = next(
+            ((p.get("performer") or {}) for p in performances if p.get("primary")),
+            ((performances[0].get("performer") or {}) if performances else {}),
+        )
+        pid = primary.get("id")
+        if not pid:
+            print(f"auto-track: event {event_id} has no primary performer; skipping")
+            return
+        pid = int(pid)
+        pname = primary.get("name") or f"performer {pid}"
+
+        watchlist_id: int | None = None
+        try:
+            ins = sb.table("watchlist").insert(
+                {"kind": "performer", "ext_id": pid, "label": pname}
+            ).execute()
+            row = (ins.data or [None])[0]
+            if row:
+                watchlist_id = row.get("id")
+                print(f"auto-track: added performer {pid} ({pname}) to watchlist as id={watchlist_id}")
+        except Exception as e:
+            msg = str(e)
+            if "duplicate" in msg.lower() or "23505" in msg or "unique" in msg.lower():
+                # Already in watchlist — find the existing id so we can scope the kick.
+                try:
+                    found = (
+                        sb.table("watchlist").select("id")
+                        .eq("kind", "performer").eq("ext_id", pid)
+                        .limit(1).execute().data
+                    )
+                    if found:
+                        watchlist_id = found[0]["id"]
+                except Exception as e2:
+                    print(f"auto-track: lookup after dup failed: {e2}")
+            else:
+                print(f"auto-track: watchlist insert failed for performer {pid}: {e}")
+
+        if watchlist_id:
+            url = f"{SUPABASE_URL}/functions/v1/collect-listings?watchlist_id={watchlist_id}"
+            _fire_collect(url, CRON_SECRET)
+
+    threading.Thread(target=_go, daemon=True).start()
+
+
+def _fetch_event_from_db(event_id: int) -> dict:
+    """SQL-only mode: synthesize the TEvo /v9/events/{id} response shape
+    from our local `events` table so the storefront can render without a
+    live TEvo call. Configuration (seating chart) is TEvo-only data we
+    don't mirror, so it comes back empty — UI hides the image.
+    """
+    db = require_sb()
+    row = (
+        db.table("events")
+        .select("id,name,occurs_at_local,state,venue_id,venue_name,venue_location,"
+                "primary_performer_id,primary_performer_name,performer_ids")
+        .eq("id", event_id)
+        .limit(1)
+        .execute().data
+    )
+    if not row:
+        raise HTTPException(404, f"event {event_id} not found in local snapshot")
+    e = row[0]
+    # Build the performances list: primary first, then secondaries (names
+    # resolved via a second lookup so we don't return bare ids).
+    perfs: list[dict] = []
+    if e.get("primary_performer_id"):
+        perfs.append({
+            "performer": {
+                "id": e["primary_performer_id"],
+                "name": e.get("primary_performer_name"),
+            },
+            "primary": True,
+        })
+    other_ids = [int(p) for p in (e.get("performer_ids") or [])
+                 if int(p) != int(e.get("primary_performer_id") or 0)]
+    if other_ids:
+        # Look up names from performer_metadata (covers all ~56k performers),
+        # not from events.primary_performer_name (only covers performers who
+        # have been primary in some event). NBA playoff games carry "series"
+        # performer IDs that never appear as primary — those would render as
+        # "null" in the UI without this. We drop any performer we still can't
+        # name as a defensive belt-and-suspenders.
+        names = (
+            db.table("performer_metadata")
+            .select("performer_id,name")
+            .in_("performer_id", other_ids)
+            .execute().data
+        ) or []
+        name_map = {int(r["performer_id"]): r.get("name")
+                    for r in names if r.get("performer_id") and r.get("name")}
+        for pid in other_ids:
+            nm = name_map.get(int(pid))
+            if not nm:
+                # Unnamed — likely a TEvo-internal "series" tag (e.g. the
+                # conference label on a playoff game). Skip.
+                continue
+            perfs.append({
+                "performer": {"id": pid, "name": nm},
+                "primary": False,
+            })
+    return {
+        "id": e["id"],
+        "name": e.get("name"),
+        "occurs_at_local": e.get("occurs_at_local"),
+        # occurs_at not stored — UI uses occurs_at_local exclusively, so this
+        # is fine. Synthesized to match the TEvo shape.
+        "occurs_at": e.get("occurs_at_local"),
+        "state": e.get("state"),
+        "venue": {
+            "id": e.get("venue_id"),
+            "name": e.get("venue_name"),
+            "location": e.get("venue_location"),
+            "time_zone": None,
+        },
+        "configuration": {},   # TEvo-only; UI gracefully renders without
+        "performances": perfs,
+    }
+
+
+def _fetch_owned_ticket_groups_from_db(event_id: int) -> tuple[list[dict], str, str | None]:
+    """SQL-only mode: pull the latest snapshot of owned ticket_groups for
+    an event from `listings_snapshots` and shape rows like TEvo's response.
+    Returns (groups, source, captured_at_iso). source is always 'snapshot'.
+    """
+    db = require_sb()
+    # Latest captured_at for this event — single round-trip.
+    latest = (
+        db.table("listings_snapshots")
+        .select("captured_at")
+        .eq("event_id", event_id)
+        .order("captured_at", desc=True)
+        .limit(1)
+        .execute().data
+    )
+    if not latest:
+        return [], "snapshot", None
+    captured_at = latest[0]["captured_at"]
+    rows = (
+        db.table("listings_snapshots")
+        .select("tevo_ticket_group_id,section,row,quantity,retail_price,format,splits,"
+                "wheelchair,instant_delivery,eticket,is_ancillary,type,is_owned")
+        .eq("event_id", event_id)
+        .eq("captured_at", captured_at)
+        .eq("is_owned", True)
+        .execute().data
+    ) or []
+    groups = []
+    for r in rows:
+        # Shape like TEvo's /v9/ticket_groups response so the existing
+        # filter + render pipeline works unchanged.
+        groups.append({
+            "id": r.get("tevo_ticket_group_id"),
+            "type": r.get("type") or "event",
+            "section": r.get("section"),
+            "row": r.get("row"),
+            "quantity": r.get("quantity"),
+            "available_quantity": r.get("quantity"),
+            "retail_price": r.get("retail_price"),
+            "format": r.get("format"),
+            "splits": r.get("splits") or [],
+            "wheelchair": r.get("wheelchair"),
+            "instant_delivery": r.get("instant_delivery"),
+            "eticket": r.get("eticket"),
+            "in_hand": True,        # snapshot doesn't track this; assume yes
+            "in_hand_on": None,
+            "public_notes": None,    # not mirrored to listings_snapshots
+        })
+    return groups, "snapshot", captured_at
+
+
+def _fetch_owned_ticket_groups(
+    event_id: int,
+    max_age_seconds: int | None = None,
+) -> tuple[list[dict], str]:
+    """Pull owned-only ticket_groups for an event. Returns (groups, source)
+    where source is 'cache' (≤max_age) or 'live'.
+
+    Cache strategy:
+    - Read: gated on `max_age_seconds`. Storefront passes ~10 to keep retail
+      pages near-real-time; broker terminal passes None (uses the row's own
+      90s expires_at). This lets one cache table serve both consumers with
+      different freshness contracts.
+    - Write: always 90s TTL so the broker terminal still gets long-lived
+      data after a storefront refresh.
+
+    Note: cache key is event_id only; owned=true is implied for both
+    storefront and broker call sites that hit this helper.
+    """
+    if sb is not None:
+        try:
+            cached = sb.rpc("get_cached_ticket_groups", {"p_event_id": event_id}).execute().data
+            if cached:
+                payload_age_ok = True
+                if max_age_seconds is not None:
+                    captured_at_str = (cached or {}).get("captured_at")
+                    if captured_at_str:
+                        try:
+                            captured_at = datetime.fromisoformat(
+                                str(captured_at_str).replace("Z", "+00:00")
+                            )
+                            age = (datetime.now(timezone.utc) - captured_at).total_seconds()
+                            payload_age_ok = age <= max_age_seconds
+                        except (ValueError, TypeError):
+                            payload_age_ok = False
+                    else:
+                        payload_age_ok = False
+                if payload_age_ok:
+                    return (cached or {}).get("ticket_groups", []) or [], "cache"
+        except Exception:
+            # Cache failure must never block the page; fall through to live.
+            pass
     try:
-        ev = client.get_event(event_id)
-    except RuntimeError as e:
-        raise HTTPException(502, f"TEvo event lookup failed: {e}")
-    try:
-        tg_resp = client.get_ticket_groups(event_id, owned=True)
+        live = client.get_ticket_groups(event_id, owned=True)
     except RuntimeError as e:
         raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+    groups = live.get("ticket_groups", []) or []
+    if sb is not None:
+        try:
+            sb.rpc("put_cached_ticket_groups", {
+                "p_event_id": event_id,
+                "p_payload": {
+                    "ticket_groups": groups,
+                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "p_ttl_seconds": 90,
+            }).execute()
+        except Exception:
+            pass
+    return groups, "live"
 
-    groups = tg_resp.get("ticket_groups") or []
+
+def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: bool = False) -> dict:
+    """Fetch event + owned listings, apply filters, return the same shape
+    /api/store/events/{id} returns. Shared by the public detail endpoint
+    and the share-link resolver.
+
+    SQL-only mode (STOREFRONT_SQL_ONLY=true): reads from `events` +
+    `listings_snapshots` instead of TEvo. Same response shape so the UI
+    is unchanged. inventory_source reflects 'snapshot' + adds
+    snapshot_age_seconds so the demo banner can show staleness honestly.
+
+    Lifecycle gate: events flagged `is_active=false` by event_lifecycle
+    (ghost_eliminated, cancelled, postponed, completed) 404 by default —
+    same policy as the catalog, applied to direct hits and share-link
+    resolution. Set include_inactive=true to bypass for admin/debug paths.
+    """
+    # Bail early on inactive events so we don't show ghost/cancelled inventory
+    # to the public. event_lifecycle is the audit lane's canonical truth on
+    # whether an event is still "alive" — TEvo keeps returning ghost rows
+    # with stale prices long after a team is eliminated. Catalog already
+    # filters this; doing it here closes the direct-URL bypass.
+    if not include_inactive and sb is not None:
+        try:
+            lc = (
+                sb.table("event_lifecycle")
+                .select("status,is_active")
+                .eq("event_id", event_id)
+                .limit(1)
+                .execute()
+            ).data or []
+            if lc and lc[0].get("is_active") is False:
+                status = lc[0].get("status") or "inactive"
+                raise HTTPException(
+                    404,
+                    f"event {event_id} is {status}; not shown by default",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            # event_lifecycle view missing in some envs; better to fall
+            # through than to 500 the storefront.
+            pass
+
+    snapshot_captured_at: str | None = None
+    if STOREFRONT_SQL_ONLY:
+        ev = _fetch_event_from_db(event_id)
+        groups, tg_source, snapshot_captured_at = _fetch_owned_ticket_groups_from_db(event_id)
+    else:
+        try:
+            ev = client.get_event(event_id)
+        except RuntimeError as e:
+            raise HTTPException(502, f"TEvo event lookup failed: {e}")
+
+        # Storefront freshness contract: 10s. Tighter than broker's 90s because
+        # this is the buy-decision page — stale availability => bad UX.
+        groups, tg_source = _fetch_owned_ticket_groups(event_id, max_age_seconds=10)
+
     eligible = [
         tg
         for tg in groups
@@ -3522,6 +5295,21 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
         and (tg.get("available_quantity") or tg.get("quantity") or 0) > 0
     ]
     total_before_filters = len(eligible)
+
+    # Parking inventory — TEvo splits seats vs parking via the type field.
+    # We surface parking on a separate tab so its prices don't pollute
+    # from_price / min-price filters / seat zone+section filters. Cap
+    # display at $5K so a known-bad parking outlier (max retail $994K
+    # observed in raw data, clearly a mis-priced parking pass) doesn't
+    # blow up the tab.
+    parking_groups = [
+        tg
+        for tg in groups
+        if (tg.get("type") or "").lower() == "parking"
+        and (tg.get("available_quantity") or tg.get("quantity") or 0) > 0
+        and float(tg.get("retail_price") or 0) <= 5000
+    ]
+    parking_groups.sort(key=lambda tg: float(tg.get("retail_price") or 1e12))
 
     venue = ev.get("venue") or {}
     performances = ev.get("performances") or []
@@ -3533,6 +5321,27 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
     venue_id = venue.get("id")
 
     f = _normalize_filters(filters)
+
+    # Capture the full section universe BEFORE applying any section filter
+    # so the UI can render section chips that don't disappear when the user
+    # narrows the listings. Letter-prefixed sections (Floor, Courtside, GA,
+    # etc.) sort BEFORE numeric sections per the StubHub/SeatGeek convention;
+    # numeric sections sort naturally (1, 2, 10, 100 — not lex-order).
+    sections_available = sorted(
+        {str(tg.get("section") or "").strip()
+         for tg in eligible if tg.get("section")},
+        key=_section_sort_key,
+    )
+
+    # Distinct quantities the seller offers across the unfiltered listing
+    # set. UI uses this to build the min-qty dropdown so we don't offer
+    # "any" when nothing sells in singles, or "4+" when no listing has a
+    # split ≥ 4. Pre-min_qty-filter so the dropdown stays useful as the
+    # user narrows.
+    splits_available = sorted({
+        int(s) for tg in eligible for s in (tg.get("splits") or [])
+        if (isinstance(s, int) or str(s).isdigit())
+    })
 
     section_set = {s.lower() for s in f["section"]}
     if section_set:
@@ -3578,7 +5387,87 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
     config = ev.get("configuration") or {}
     seating = (config.get("seating_chart") or {})
 
-    return {
+    # Bulk-attach branded assets (logo / colors) for the performers on
+    # this event. performer_metadata is populated by the audit lane's ESPN
+    # ingest — we read only. Falls through gracefully when a performer has
+    # no asset row yet (most non-MLB/NBA/NFL/NHL teams don't).
+    perf_assets: dict[int, dict] = {}
+    if sb is not None:
+        try:
+            perf_ids = [int((p.get("performer") or {}).get("id"))
+                        for p in performances
+                        if (p.get("performer") or {}).get("id")]
+            if perf_ids:
+                perf_assets = _bulk_performer_assets(sb, perf_ids)
+        except Exception:
+            perf_assets = {}
+
+    def _attach_assets(p):
+        perf = p.get("performer") or {}
+        pid = perf.get("id")
+        a = perf_assets.get(int(pid)) if pid else None
+        return {
+            "id": pid,
+            "name": perf.get("name"),
+            "primary": p.get("primary"),
+            "logo_url": (a or {}).get("logo_default_url"),
+            "color_primary": (a or {}).get("color_primary"),
+        }
+
+    # Snapshot age (SQL-only mode only) — UI uses this to show honest staleness.
+    snapshot_age_seconds: int | None = None
+    if snapshot_captured_at:
+        try:
+            ts = datetime.fromisoformat(str(snapshot_captured_at).replace("Z", "+00:00"))
+            snapshot_age_seconds = int((datetime.now(timezone.utc) - ts).total_seconds())
+        except (ValueError, TypeError):
+            snapshot_age_seconds = None
+
+    # Pull asset bundle from v_event_seating_chart — audit-lane-maintained
+    # view that joins events × configurations × venue_assets × performer
+    # metadata into one row per event. Single round-trip, single source of
+    # truth. Includes TEvo seating chart URLs (configurations.static_maps)
+    # AND fanvenues_key for dynamic interactive seatmaps. Silently degrades
+    # to the minimal payload when the row is missing.
+    asset_bundle: dict = {}
+    if sb is not None and ev.get("id"):
+        try:
+            ab_rows = (
+                sb.table("v_event_seating_chart")
+                .select(
+                    "configuration_id,configuration_name,seating_chart_medium,"
+                    "seating_chart_large,fanvenues_key,venue_hero_url,venue_map_url,"
+                    "venue_capacity,venue_is_indoor,team_color_primary,team_color_alternate,"
+                    "team_logo_url,team_logo_dark_url,team_espn_url"
+                )
+                .eq("event_id", int(ev["id"]))
+                .limit(1)
+                .execute().data
+            ) or []
+            if ab_rows:
+                asset_bundle = ab_rows[0]
+        except Exception:
+            asset_bundle = {}
+
+    # Also pull venue coords from venue_assets (not exposed by the view —
+    # used by the near-me feature, separate from the event page UX).
+    venue_assets: dict = {}
+    if sb is not None and venue.get("id"):
+        try:
+            va_rows = (
+                sb.table("venue_assets")
+                .select("latitude,longitude,city,state,country,"
+                        "espn_venue_id,espn_venue_name")
+                .eq("tevo_venue_id", int(venue["id"]))
+                .limit(1)
+                .execute().data
+            ) or []
+            if va_rows:
+                venue_assets = va_rows[0]
+        except Exception:
+            venue_assets = {}
+
+    response = {
         "event": {
             "id": ev.get("id"),
             "name": ev.get("name"),
@@ -3589,27 +5478,101 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
                 "name": venue.get("name"),
                 "location": venue.get("location"),
                 "time_zone": venue.get("time_zone"),
+                # Audit-lane assets (v_event_seating_chart + venue_assets).
+                # All optional — UI hides any field that's null.
+                "hero_image_url": asset_bundle.get("venue_hero_url"),
+                "venue_map_url": asset_bundle.get("venue_map_url"),
+                "is_indoor": asset_bundle.get("venue_is_indoor"),
+                "capacity": asset_bundle.get("venue_capacity"),
+                "latitude": venue_assets.get("latitude"),
+                "longitude": venue_assets.get("longitude"),
+                "city": venue_assets.get("city"),
+                "state": venue_assets.get("state"),
+                "country": venue_assets.get("country"),
+                "espn_venue_id": venue_assets.get("espn_venue_id"),
+                "espn_venue_name": venue_assets.get("espn_venue_name"),
             },
             "configuration": {
-                "id": config.get("id"),
-                "name": config.get("name"),
-                "seating_chart_medium": seating.get("medium"),
-                "seating_chart_large": seating.get("large"),
+                # Static seating chart from TEvo's /v9/configurations.
+                # Both medium (~500px) and large (~1000px) URLs available;
+                # UI defaults to medium and lazy-loads large on click.
+                # SQL-only mode reads these from v_event_seating_chart; live
+                # mode falls back to the inline config dict from TEvo's
+                # /v9/events/:id response.
+                "id": asset_bundle.get("configuration_id") or config.get("id"),
+                "name": asset_bundle.get("configuration_name") or config.get("name"),
+                "seating_chart_medium": (
+                    asset_bundle.get("seating_chart_medium") or seating.get("medium")
+                ),
+                "seating_chart_large": (
+                    asset_bundle.get("seating_chart_large") or seating.get("large")
+                ),
+                # fanvenues_key — opaque ID for TEvo's seatmaps-client.js
+                # interactive seat picker. Surfaced so a future enhancement
+                # can mount the dynamic seatmap (today the UI uses the static
+                # jpg). Per docs/api-08 §Seating Charts.
+                "fanvenues_key": asset_bundle.get("fanvenues_key"),
             },
+            # TEvo carries "series" performers alongside competing teams on
+            # playoff games (e.g. "NBA Playoffs", "NBA Western Conference
+            # Semifinals"). They show up in events.performer_ids and have rows
+            # in performer_metadata, but with no logo / color / ESPN xref.
+            # Drop them (non-primary only) so the header doesn't read
+            # "Lakers (home) vs NBA Playoffs vs NBA Western Conference
+            # Semifinals vs Thunder". Always keep the primary even when it
+            # has minimal metadata (Peso Pluma etc. — would otherwise leave
+            # a headliner-less event card).
             "performers": [
-                {
-                    "id": (p.get("performer") or {}).get("id"),
-                    "name": (p.get("performer") or {}).get("name"),
-                    "primary": p.get("primary"),
-                }
-                for p in performances
+                p_meta for p_meta in (_attach_assets(p) for p in performances)
+                if p_meta.get("primary")
+                or p_meta.get("logo_url") or p_meta.get("color_primary")
             ],
         },
         "listings": listings,
         "listings_count": len(listings),
+        # Parking is a separate tab on the event page (when present).
+        # Stays out of sections_available / splits_available / from_price
+        # so the seat-tab UX is unaffected by parking inventory.
+        "parking_listings": [_ticket_group_to_listing(tg) for tg in parking_groups],
+        "parking_count": len(parking_groups),
         "total_before_filters": total_before_filters,
+        # All section names present in the unfiltered set so the UI can
+        # render the section chip group without it collapsing as the user
+        # narrows. Without this the chips disappear after one click and
+        # multi-select feels broken.
+        "sections_available": sections_available,
+        # Distinct seller-offered quantities (union of splits arrays in the
+        # unfiltered set). UI builds the min-qty dropdown from this so we
+        # don't offer values no listing actually sells in.
+        "splits_available": splits_available,
         "filters": f,
+        # 'cache' (≤10s old, live mode) | 'live' (live mode) | 'snapshot' (SQL-only mode)
+        "inventory_source": tg_source,
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "demo_mode": STOREFRONT_SQL_ONLY,
     }
+
+    # Context badges — rivalry / MLB series / tournament / weather / holiday
+    # / playoff. All nullable; UI hides the badge when None. Single bulk
+    # call to keep the per-detail roundtrip count low.
+    _empty_ctx = {
+        "rivalry": None, "mlb_series": None, "tournament": None,
+        "weather": None, "holiday": None, "playoff": None,
+    }
+    if sb is not None:
+        ctx_by_id = _bulk_event_context(sb, [event_id])
+        response["context"] = ctx_by_id.get(event_id) or dict(_empty_ctx)
+    else:
+        response["context"] = dict(_empty_ctx)
+
+    # Fire-and-forget: refresh canonical SQL via the audit-lane Edge Function.
+    # Auto-tracks the event (adds performer to watchlist) if we've never seen
+    # it before. Never blocks the response. SKIPPED in SQL-only mode — no
+    # point firing a TEvo collector while we're trying to keep TEvo out.
+    if not STOREFRONT_SQL_ONLY:
+        _fire_canonical_refresh(event_id, ev)
+
+    return response
 
 
 @app.get("/api/store/events/{event_id}")
@@ -3636,11 +5599,53 @@ def store_event_detail(
     )
 
 
+# Consumer-grade zone names match a programmatic bowl pattern:
+# "{Lower|Club|Upper|Floor|...} (Xs)" — e.g. "Lower (100s)", "Upper (400s)".
+# But many performer+venue pairs ALSO get venue-specific bowl additions like
+# "Floor / Pit / GA" or "Special" that DON'T match this pattern yet are
+# still part of the consumer seed (Lakers at Crypto.com Arena has 5 such
+# zones total, none granular).
+#
+# A name regex alone misclassifies these. So we use a TWO-STEP heuristic:
+#   1. Look at the PAIR (performer + venue) total zone count. NYK at MSG
+#      has 26 zones (22 granular + 4 bowl) — well above the consumer-only
+#      ceiling of ~5–7. Anything > 8 zones almost certainly has a granular
+#      hand-curated layer.
+#   2. Within a "has-granular" pair, classify each individual zone by name
+#      regex (bowl-pattern → consumer, else granular).
+_CONSUMER_ZONE_NAME_RE = re.compile(
+    r"^(Lower|Club|Upper|Floor|Field|Mezzanine|Balcony|Loge|Terrace)\s*\(\d+s\)$",
+    re.IGNORECASE,
+)
+# Threshold above which a pair almost certainly has hand-curated granular
+# zones in addition to the consumer-bowl baseline. The seeded consumer
+# baseline tops out at ~5–7 zones per pair empirically.
+_GRANULAR_LAYER_ZONE_COUNT_THRESHOLD = 8
+
+
+def _is_bowl_pattern_name(name: str | None) -> bool:
+    """Whether a zone name matches the programmatic bowl-level pattern."""
+    return bool(_CONSUMER_ZONE_NAME_RE.match((name or "").strip()))
+
+
 @app.get("/api/store/events/{event_id}/zones")
 def store_event_zones(event_id: int):
     """List curated zones with owned-ticket counts so the Share dialog can
-    offer zone choices. Falls through to an empty list if the event's
-    performer+venue has no curated zones yet (most events outside NYK@MSG)."""
+    offer zone choices.
+
+    Layer preference (per Julian's 2026-05-11 direction):
+      1. If the event's performer+venue has any INTERNAL (granular) zones
+         with matching owned tickets, return ONLY those. The granular
+         taxonomy is hand-curated (NYK at MSG has 22 zones — Courtside,
+         Club Platinum, etc.) and is the right shopper UX where available.
+      2. Else fall back to CONSUMER (coarse bowl-level) zones — the
+         "Lower (100s) / Club (200s) / Upper (300s) / Upper (400s)" set
+         that's been programmatically seeded across ~30 venues.
+      3. Else empty (most events outside the seeded set).
+
+    Response includes `layer` so the UI can label the chip group
+    appropriately if it ever wants to.
+    """
     db = require_sb()
     try:
         rows = db.rpc(
@@ -3649,8 +5654,50 @@ def store_event_zones(event_id: int):
         ).execute().data or []
     except Exception:
         rows = []
-    # Only surface curated zones — fallback/unmapped values are noisy and
-    # not stable enough to share by name.
+    # Only consider curated zones — fallback/unmapped names from
+    # derive_zone_fallback() are noisy and not safe to share by name.
+    curated = [r for r in rows if r.get("source") == "curated"]
+
+    # Step 1: count the FULL zone universe for this event's performer+venue.
+    # If it's larger than the consumer-only ceiling, we know the pair has
+    # been hand-curated with granular zones layered on top of the bowl seed.
+    pair_zone_count = 0
+    try:
+        ev_meta = (
+            db.table("events").select("primary_performer_id,venue_id")
+            .eq("id", event_id).limit(1).execute().data
+        ) or []
+        if ev_meta:
+            perf_id = ev_meta[0].get("primary_performer_id")
+            venue_id_x = ev_meta[0].get("venue_id")
+            if perf_id and venue_id_x:
+                pair_rows = (
+                    db.table("performer_zones").select("id", count="exact")
+                    .eq("performer_id", perf_id).eq("venue_id", venue_id_x)
+                    .execute()
+                )
+                pair_zone_count = pair_rows.count or len(pair_rows.data or [])
+    except Exception:
+        pair_zone_count = 0
+
+    has_granular_layer = pair_zone_count > _GRANULAR_LAYER_ZONE_COUNT_THRESHOLD
+
+    # Step 2: pick the layer to surface. Off by default — granular taxonomy
+    # has coverage gaps right now (NYK at MSG covers ~25 of 89 owned tickets
+    # in section ranges with curated rules; the rest fall through). Once A1
+    # closes those gaps, flip STOREFRONT_PREFER_INTERNAL_ZONES=true.
+    if has_granular_layer and STOREFRONT_PREFER_INTERNAL_ZONES:
+        # Granular layer exists AND we're configured to prefer it.
+        chosen = [r for r in curated if not _is_bowl_pattern_name(r.get("zone"))]
+        layer = "internal" if chosen else "none"
+    else:
+        # Default path — return whatever curated zones exist. For pairs with
+        # both layers (NYK at MSG), this returns the bowl-level set since
+        # match_performer_zone() now picks bowl-pattern names by display
+        # order. For consumer-only pairs (most events), returns those.
+        chosen = curated
+        layer = "consumer" if chosen else "none"
+
     zones = [
         {
             "name": r.get("zone"),
@@ -3658,10 +5705,16 @@ def store_event_zones(event_id: int):
             "min_retail": r.get("min_retail"),
             "max_retail": r.get("max_retail"),
         }
-        for r in rows
-        if r.get("source") == "curated"
+        for r in chosen
     ]
-    return {"event_id": event_id, "zones": zones}
+    return {
+        "event_id": event_id,
+        "zones": zones,
+        "layer": layer,
+        "pair_zone_count": pair_zone_count,  # debug: # of zones for performer+venue
+        "has_granular_available": has_granular_layer,  # UI can show a 'switch to expert view' toggle
+        "prefer_internal_enabled": STOREFRONT_PREFER_INTERNAL_ZONES,
+    }
 
 
 @app.post("/api/store/reserve")
@@ -3678,16 +5731,31 @@ def store_reserve(payload: dict = Body(...)):
     if not (event_id and ticket_group_id and quantity > 0):
         raise HTTPException(400, "event_id, ticket_group_id and quantity > 0 required")
 
-    try:
-        tg_resp = client.get_ticket_groups(event_id, owned=True)
-    except RuntimeError as e:
-        raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
-    match = next(
-        (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
-        None,
-    )
-    if not match:
-        raise HTTPException(404, "ticket group is no longer available from this seller")
+    if STOREFRONT_SQL_ONLY:
+        # SQL-only mode: validate against listings_snapshots' latest capture
+        # for this event. Same validation surface (available + splits) so
+        # the UX is identical, just slightly stale-tolerant.
+        groups, _src, _captured = _fetch_owned_ticket_groups_from_db(event_id)
+        match = next(
+            (tg for tg in groups if int(tg.get("id") or 0) == ticket_group_id),
+            None,
+        )
+        if not match:
+            raise HTTPException(
+                404,
+                "ticket group is no longer available from this seller (snapshot-based)",
+            )
+    else:
+        try:
+            tg_resp = client.get_ticket_groups(event_id, owned=True)
+        except RuntimeError as e:
+            raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+        match = next(
+            (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
+            None,
+        )
+        if not match:
+            raise HTTPException(404, "ticket group is no longer available from this seller")
 
     avail = int(match.get("available_quantity") or match.get("quantity") or 0)
     splits = match.get("splits") or []
@@ -3762,7 +5830,7 @@ def _share_to_dict(row: dict) -> dict:
 
 
 @app.post("/api/store/share")
-def store_share_create(payload: dict = Body(...)):
+def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
     """Create a revocable share link for one event with saved filters.
 
     Body:
@@ -3771,9 +5839,8 @@ def store_share_create(payload: dict = Body(...)):
       note: str (optional, ≤ 500 chars)
       expires_in_days: int (optional, 1-365; null = never expires)
 
-    Auth note (MVP): currently open. Tighten with require_auth once the
-    storefront has a sign-in flow. Worst case today is link spam — a share
-    can never expose more than the public /api/store/events/{id} already does.
+    Auth: require_auth (Supabase JWT + allowed-domain email). Closed on
+    2026-05-11 (security chat) — see SECURITY BACKLOG in KANBAN.md.
     """
     # Validate before touching Supabase so 4xx errors surface the real reason
     # instead of "Supabase not configured" when both are wrong.
@@ -3798,8 +5865,39 @@ def store_share_create(payload: dict = Body(...)):
     if note and len(note) > 500:
         raise HTTPException(400, "note too long (max 500 chars)")
 
-    expires_at = None
+    # All validation passed — now we need Supabase to persist.
+    db = require_sb()
+
+    # Compute the auto-expiry ceiling: event_start + 1h. Past this point the
+    # share is effectively useless (event has started + small buffer for
+    # walk-up viewing), so we always cap expires_at here. User-chosen
+    # expires_in_days narrows further; null/0/never == "use the cap".
+    #
+    # Default: cap. User explicit shorter days: min(user_days_date, cap).
+    # Buffer is 1h chosen so a recipient opening the link AT tip-off still
+    # sees the inventory; past +1h they get a 410 from /api/store/share/{id}.
+    event_end_ceiling: datetime | None = None
+    try:
+        ev_row = (
+            db.table("events")
+            .select("occurs_at_local")
+            .eq("id", event_id)
+            .limit(1)
+            .execute().data
+        )
+        if ev_row and ev_row[0].get("occurs_at_local"):
+            ev_start = datetime.fromisoformat(
+                str(ev_row[0]["occurs_at_local"]).replace("Z", "+00:00")
+            )
+            # `occurs_at_local` carries the real offset (it's stored as TZ-
+            # qualified ISO), so the resulting datetime is timezone-aware.
+            event_end_ceiling = ev_start + timedelta(hours=1)
+    except Exception:
+        event_end_ceiling = None  # No event row found — fall back to user-only.
+
+    expires_at: str | None = None
     raw_days = payload.get("expires_in_days")
+    user_pick: datetime | None = None
     if raw_days not in (None, "", 0):
         try:
             days = int(raw_days)
@@ -3807,10 +5905,17 @@ def store_share_create(payload: dict = Body(...)):
             raise HTTPException(400, "expires_in_days must be an integer")
         if not (1 <= days <= 365):
             raise HTTPException(400, "expires_in_days must be between 1 and 365")
-        expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+        user_pick = datetime.now(timezone.utc) + timedelta(days=days)
 
-    # All validation passed — now we need Supabase to persist.
-    db = require_sb()
+    # Pick the tighter of (user choice, event-end ceiling). When the event
+    # is unknown, fall back to the user choice. When neither is set the
+    # share never expires (legacy behavior preserved).
+    if user_pick and event_end_ceiling:
+        chosen = min(user_pick, event_end_ceiling)
+    else:
+        chosen = user_pick or event_end_ceiling
+    if chosen:
+        expires_at = chosen.astimezone(timezone.utc).isoformat()
 
     # ~12 chars (9 random bytes → 12 url-safe chars) ≈ 72 bits of entropy.
     # Retry once on the astronomically unlikely collision.
@@ -3879,9 +5984,13 @@ def store_share_resolve(share_id: str):
 
 
 @app.delete("/api/store/share/{share_id}")
-def store_share_revoke(share_id: str):
+def store_share_revoke(share_id: str, _=Depends(require_auth)):
     """Soft-delete: stamps revoked_at. The row stays so view history survives.
-    Idempotent — revoking an already-revoked link is fine."""
+    Idempotent — revoking an already-revoked link is fine.
+
+    Auth: require_auth. Closed on 2026-05-11 (security chat) — any unauth
+    user used to be able to revoke any share link by id.
+    """
     db = require_sb()
     res = (
         db.table("share_links")
@@ -3899,8 +6008,13 @@ def store_share_list(
     event_id: int | None = None,
     include_inactive: bool = False,
     limit: int = 50,
+    _=Depends(require_auth),
 ):
-    """List share links, newest first. Filter by event_id when present."""
+    """List share links, newest first. Filter by event_id when present.
+
+    Auth: require_auth. Closed on 2026-05-11 (security chat) — used to
+    leak every share row (event_id, filters, notes, view counts) to anon.
+    """
     db = require_sb()
     q = db.table("share_links").select(
         "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"
@@ -3929,6 +6043,51 @@ def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
 @app.get("/store/shares")
 def store_shares_page():
     return FileResponse(os.path.join(STATIC_DIR, "store", "shares.html"))
+
+
+def _require_non_prod():
+    """Test-harness gate: 404 in production. Test pages expose debug info
+    (source-mode dropdown, hybrid candidate counts, inventory_source pill)
+    that we don't want anonymous prod users to see. Per #57 A1 review:
+    'Either @require_auth or gate behind a non-prod env check' — taking
+    the non-prod gate so the test pages remain useful in staging without
+    a Bearer-token auth handshake on HTML page loads."""
+    if _is_production():
+        raise HTTPException(404, "not found")
+
+
+@app.get("/store/test")
+def store_test_index_page(_=Depends(_require_non_prod)):
+    """Multi-page wiring test harness — index. Sidebar navigates to one
+    page per evo-doc workflow (search, performer, venue, event landing)
+    plus storefront-specific share links. Useful for verifying the store
+    works against real data before merging."""
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "index.html"))
+
+
+@app.get("/store/test/search")
+def store_test_search_page(_=Depends(_require_non_prod)):
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "search.html"))
+
+
+@app.get("/store/test/performer")
+def store_test_performer_page(_=Depends(_require_non_prod)):
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "performer.html"))
+
+
+@app.get("/store/test/venue")
+def store_test_venue_page(_=Depends(_require_non_prod)):
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "venue.html"))
+
+
+@app.get("/store/test/event")
+def store_test_event_page(_=Depends(_require_non_prod)):
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "event.html"))
+
+
+@app.get("/store/test/share")
+def store_test_share_page(_=Depends(_require_non_prod)):
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "share.html"))
 
 
 # Static assets (CSS / JS / images) served from /static.

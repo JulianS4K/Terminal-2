@@ -3,10 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>VibePass — tickets</title>
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
-<body>
+<body data-page="catalog">
   <header class="topbar">
     <a class="brand" href="/store">VibePass</a>
     <div class="badge mvp">MVP · browse only · no real purchases</div>
@@ -15,7 +18,7 @@
   <main class="wrap">
     <section class="hero">
       <h1>Find tickets to anything we have.</h1>
-      <p class="sub">Live inventory from our seller account. No middlemen, no markup we can't see.</p>
+      <p class="sub">Direct inventory, transparent pricing.</p>
       <form id="searchForm" class="search">
         <input
           id="q"
@@ -23,12 +26,30 @@
           placeholder="artist · team · venue · city"
           autocomplete="off"
           autofocus
+          aria-autocomplete="list"
+          aria-controls="searchSuggest"
         />
         <button type="submit">Search</button>
+        <!-- Suggestion dropdown — populated as the user types. Calls
+             /api/store/search?q=... debounced at 300ms with a 2-char
+             minimum. Three sections: events you can buy now, performers,
+             venues. Hidden when no q or no results. -->
+        <div id="searchSuggest" class="search-suggest" hidden role="listbox"></div>
       </form>
     </section>
 
     <section id="results" class="results" aria-live="polite">
+      <!-- Filter banner — shown when the catalog was opened via a
+           ?performer_id= or ?venue_id= link from an event page. -->
+      <div id="catalogFilterBanner" class="banner" hidden></div>
+      <!-- Movers strip — top events in NYC for the next 3 weeks by
+           24h ticket velocity. Hidden when the user is filtered (the
+           strip is a home-view discovery aid, not a filter-respecting
+           list). Populated by /api/store/movers. -->
+      <section id="moversStrip" class="movers-strip" hidden aria-label="Moving fast in NYC">
+        <h2 class="movers-title">Moving fast in NYC · next 3 weeks</h2>
+        <div id="moversRow" class="movers-row"></div>
+      </section>
       <div id="status" class="status">Loading available events…</div>
       <div id="grid" class="grid" hidden></div>
       <div id="empty" class="empty" hidden>
@@ -38,12 +59,9 @@
   </main>
 
   <footer class="foot">
-    <span>powered by Ticket Evolution · /v9/ticket_groups?owned=true</span>
+    <span>VibePass &middot; MVP preview</span>
   </footer>
 
-  <script src="/static/store/store.js"></script>
-  <script>
-    Store.mountCatalog();
-  </script>
+  <script src="/static/store/store.js" defer></script>
 </body>
 </html>

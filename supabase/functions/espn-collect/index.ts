@@ -428,11 +428,11 @@ async function collectEventSnapshots(db: any, state: CollectorState, opts: { gam
 // Webhook
 // ---------------------------------------------------------------------------
 
+import { requireCronSecret } from "../_shared/cron-auth.ts";
+
 Deno.serve(async (req) => {
-  const expected = Deno.env.get("CRON_SECRET");
-  if (expected && req.headers.get("x-cron-secret") !== expected) {
-    return new Response("unauthorized", { status: 401 });
-  }
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
 
   const url = new URL(req.url);
   const scope = (url.searchParams.get("scope") ?? "all") as Scope;

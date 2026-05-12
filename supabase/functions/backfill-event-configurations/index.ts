@@ -2,6 +2,7 @@
 // a time and stops gracefully after 50s wall-clock so we don't lose progress to
 // the 60s edge-fn timeout.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCronSecret } from "../_shared/cron-auth.ts";
 const HOST = "api.ticketevolution.com"; const BASE = `https://${HOST}`;
 async function hmac(secret: string, msg: string): Promise<string> {
   const enc = new TextEncoder();
@@ -21,6 +22,8 @@ async function tevoEvent(token: string, secret: string, id: number, attempt = 0)
 }
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("POST only", { status: 405 });
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
   const t0 = Date.now();
   const WALL_BUDGET_MS = 50_000;
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
