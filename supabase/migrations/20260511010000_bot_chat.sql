@@ -45,9 +45,13 @@ CREATE OR REPLACE FUNCTION public.bot_chat_log(
   p_related_pr int DEFAULT NULL, p_related_mig text DEFAULT NULL,
   p_in_reply_to bigint DEFAULT NULL, p_meta jsonb DEFAULT NULL
 ) RETURNS bigint
-LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE v_id bigint;
 BEGIN
+  -- Defense-in-depth: only service_role may invoke (grants enforce; assert at body in case grants ever widen).
+  IF current_user NOT IN ('service_role', 'postgres') THEN
+    RAISE EXCEPTION 'bot_chat_log: caller % not authorized', current_user;
+  END IF;
   INSERT INTO bot_chat (bot_level, bot_lane, event_type, message,
                         related_pr, related_mig, in_reply_to, meta)
   VALUES (p_level, p_lane, p_event_type, p_message,
@@ -59,9 +63,12 @@ END $$;
 CREATE OR REPLACE FUNCTION public.bot_chat_resolve(
   p_id bigint, p_resolver_level text, p_resolver_lane text, p_note text DEFAULT NULL
 ) RETURNS boolean
-LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE v_event_type text;
 BEGIN
+  IF current_user NOT IN ('service_role', 'postgres') THEN
+    RAISE EXCEPTION 'bot_chat_resolve: caller % not authorized', current_user;
+  END IF;
   SELECT event_type INTO v_event_type FROM bot_chat WHERE id = p_id;
   IF v_event_type IS NULL THEN RAISE EXCEPTION 'bot_chat row % not found', p_id; END IF;
   IF p_resolver_level = 'admin' THEN NULL;
@@ -76,15 +83,28 @@ BEGIN
   RETURN true;
 END $$;
 
-GRANT SELECT, INSERT ON bot_chat TO authenticated, service_role;
-GRANT SELECT ON v_bot_chat_unresolved TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.bot_chat_log TO authenticated, service_role;
+-- Lockdown per B1 review on PR #64 (CRIT + 2 HIGH):
+-- (a) CRIT: coworker_readonly auto-inherits SELECT via 20260509460000 ALTER DEFAULT PRIVILEGES.
+--     UI role must not read p0_security broadcasts or any cross-bot message → explicit REVOKE.
+-- (b) HIGH: authenticated grants + open RLS policies allow level spoofing via PostgREST. Removed.
+-- (c) HIGH: bot_chat_resolve no longer trusts caller-claimed level — function asserts current_user.
+REVOKE ALL ON bot_chat FROM PUBLIC, anon, authenticated, coworker_readonly;
+REVOKE ALL ON v_bot_chat_unresolved FROM PUBLIC, anon, authenticated, coworker_readonly;
+REVOKE EXECUTE ON FUNCTION public.bot_chat_log(text, text, text, text, int, text, bigint, jsonb)
+  FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.bot_chat_resolve(bigint, text, text, text)
+  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON SEQUENCE bot_chat_id_seq FROM PUBLIC, anon, authenticated, coworker_readonly;
+
+GRANT SELECT, INSERT ON bot_chat TO service_role;
+GRANT SELECT ON v_bot_chat_unresolved TO service_role;
+GRANT EXECUTE ON FUNCTION public.bot_chat_log TO service_role;
 GRANT EXECUTE ON FUNCTION public.bot_chat_resolve TO service_role;
-GRANT USAGE, SELECT ON SEQUENCE bot_chat_id_seq TO authenticated, service_role;
+GRANT USAGE, SELECT ON SEQUENCE bot_chat_id_seq TO service_role;
 
 ALTER TABLE bot_chat ENABLE ROW LEVEL SECURITY;
-CREATE POLICY bot_chat_select_all ON bot_chat FOR SELECT TO authenticated, service_role USING (true);
-CREATE POLICY bot_chat_insert_all ON bot_chat FOR INSERT TO authenticated, service_role WITH CHECK (true);
+-- service_role bypasses RLS by design. No authenticated/anon policies — they have no grant.
+-- If per-bot JWT auth lands later, add policies deriving level/lane from claims.
 
 INSERT INTO bot_chat (bot_level, bot_lane, event_type, message, meta)
 VALUES (
