@@ -228,13 +228,16 @@ class BroadwayClient:
         self.pace_s = pace_s
         self._last_request_at: float = 0.0
         self.session = requests.Session()
+        _ua = user_agent or os.environ.get(
+            "BROADWAY_USER_AGENT",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 "
+            "Safari/537.36",
+        )
+        if "\r" in _ua or "\n" in _ua:
+            raise ValueError("invalid User-Agent: CR/LF not allowed")
         self.session.headers.update({
-            "User-Agent": user_agent or os.environ.get(
-                "BROADWAY_USER_AGENT",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 "
-                "Safari/537.36",
-            ),
+            "User-Agent": _ua,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",
@@ -662,7 +665,14 @@ def _main(argv: list[str]) -> int:
         for s in cli.snapshot_show(argv[2]):
             _print_snapshot(s)
     elif cmd == "dump-raw":
-        url, out_path = argv[2], argv[3]
+        import pathlib as _pl
+        url, out_arg = argv[2], argv[3]
+        out_path = _pl.Path(out_arg).resolve()
+        cwd = _pl.Path.cwd().resolve()
+        try:
+            out_path.relative_to(cwd)
+        except ValueError:
+            raise SystemExit("dump-raw output path must be inside the current working directory")
         status, html = cli._get(url)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(html)
