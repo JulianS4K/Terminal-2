@@ -149,10 +149,24 @@ class EvoClient:
             time.sleep(wait)
 
         # Out of retries, or non-retryable status.
+        # Security: do NOT include URL or response body in the exception
+        # message — both bubble through `f"...: {e}"` patterns to HTTP
+        # responses (e.g., app.py:5218). URL contains user-supplied query
+        # params (recon vector); body can leak TEvo internal data or
+        # intermediate-proxy info. Pattern matches seatgeek_client.py:495
+        # (B1 SEC-MED SW-1, security chat 2026-05-10).
+        # Log full detail server-side; only generic status reaches caller.
+        import logging
+        logging.getLogger(__name__).warning(
+            "TEvo API non-2xx response: %s %s on %s %s — body: %s",
+            last_resp.status_code if last_resp else "no-resp",
+            last_resp.reason if last_resp else "",
+            last_resp.request.method if last_resp else "",
+            last_resp.url if last_resp else "",
+            (last_resp.text[:500] if last_resp else "")
+        )
         raise RuntimeError(
-            f"{last_resp.status_code} {last_resp.reason} on "
-            f"{last_resp.request.method} {last_resp.url}\n"
-            f"Response body: {last_resp.text}"
+            f"TEvo API returned {last_resp.status_code if last_resp else 'no response'}"
         )
 
     def _iter_paginated(
