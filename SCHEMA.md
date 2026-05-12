@@ -373,8 +373,11 @@ to follow.
 
 ### The read-only external API rule (RULE 2)
 
-**TEvo and SeatGeek (broker + seller-direct) integrations are strictly
-READ-ONLY.** We pull data — we never POST/PUT/PATCH/DELETE.
+**TEvo, SeatGeek (broker + seller-direct), TickPick, and Vivid Seats
+integrations are strictly READ-ONLY.** We pull data (orders, sales,
+listings) — we never POST/PUT/PATCH/DELETE. TickPick and Vivid orders
+sit in the same bucket as the Evo `/v9/orders` and SG `/sales` feeds:
+they're our sales data, ingested only.
 
 This rule is enforced in **three layers** so that no human and no AI session
 (this one or future ones) can ship a write without flipping a tracked file:
@@ -385,6 +388,8 @@ This rule is enforced in **three layers** so that no human and no AI session
 |---|---|---|
 | `evo_client.py` | `_assert_readonly_method()` raises `EvoReadOnlyError` | `frozenset({"GET"})` |
 | `seatgeek_client.py` | `_assert_readonly_method()` raises `SeatGeekError` | `frozenset({"GET"})` |
+| `tickpick_client.py` | `_assert_readonly_method()` raises `TickPickReadOnlyError` | `frozenset({"GET"})` |
+| `vivid_client.py` | `_assert_readonly_method()` raises `VividReadOnlyError` | `frozenset({"GET"})` |
 | `seatdata_client.py` | `_assert_readonly_method()` | GET + the single `POST /v0.4/events/event-request-add` (metadata only — asks SD to add an event to their catalog; no S4K data) |
 
 Each guard is called inside the transport method (`_get`, `_get_seller`,
