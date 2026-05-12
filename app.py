@@ -4568,6 +4568,10 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
         payload = _search_sql_only(db, q_norm, limit)
         payload["fallback"] = True
         payload["fallback_reason"] = "tevo_unavailable"
+        # Surface the bare RuntimeError message (already sanitized of
+        # URL + body by evo_client.py — just status code) so an operator
+        # curling the endpoint can diagnose without tailing Render logs.
+        payload["fallback_detail"] = str(e)[:120]
         return payload
 
     s = (resp.get("suggestions") or {})
