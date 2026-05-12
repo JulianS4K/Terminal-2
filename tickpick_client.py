@@ -18,6 +18,7 @@ this module appears in CLIENT_FILES.
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import requests
@@ -55,7 +56,7 @@ class TickPickClient:
     def __init__(self, token: str, *, timeout: int = 30):
         if not token:
             raise TickPickError("TickPick token is required")
-        self.token = token
+        self.token = (token or "").strip()
         self.timeout = timeout
 
     # ---------- transport ----------
@@ -68,12 +69,20 @@ class TickPickClient:
             "Accept": "application/json",
         }
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
+        # Retry-After honoring backoff for 429/503; mirrors seatgeek_client._get
+        for attempt in range(5):
+            r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
+            if r.status_code in (429, 503) and attempt < 4:
+                retry_after = r.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after) if retry_after else (0.5 * (2 ** attempt))
+                except (TypeError, ValueError):
+                    delay = 0.5 * (2 ** attempt)
+                time.sleep(min(delay, 30.0))
+                continue
+            break
         if not r.ok:
-            raise TickPickError(
-                f"{r.status_code} {r.reason} on GET {r.request.url}\n"
-                f"Response body: {r.text}"
-            )
+            raise TickPickError(f"HTTP {r.status_code}")
         try:
             return r.json()
         except ValueError:
@@ -100,5 +109,5 @@ class TickPickClient:
 
     def get_order_details(self, order_id: str | int) -> dict[str, Any]:
         """GET /1.0/orders/:id/details — full detail for one order."""
-        body = self._get(f"/orders/{order_id}/details")
+        body = self._get(f"/orders/{int(order_id)}/details")
         return body if isinstance(body, dict) else {}

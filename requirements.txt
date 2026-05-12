@@ -3,3 +3,4 @@ uvicorn[standard]
 requests
 supabase
 anthropic
+defusedxml>=0.7,<1.0

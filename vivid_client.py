@@ -21,7 +21,8 @@ this module appears in CLIENT_FILES.
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
+import time
+from defusedxml import ElementTree as ET
 from typing import Any
 
 import requests
@@ -58,7 +59,7 @@ class VividClient:
     def __init__(self, api_token: str, *, timeout: int = 30):
         if not api_token:
             raise VividError("Vivid Seats apiToken is required")
-        self.api_token = api_token
+        self.api_token = (api_token or "").strip()
         self.timeout = timeout
 
     # ---------- transport ----------
@@ -70,12 +71,20 @@ class VividClient:
         for k, v in (params or {}).items():
             if v is not None:
                 clean[k] = v
-        r = requests.get(url, params=clean, timeout=self.timeout)
+        # Retry-After honoring backoff for 429/503; mirrors seatgeek_client._get
+        for attempt in range(5):
+            r = requests.get(url, params=clean, timeout=self.timeout)
+            if r.status_code in (429, 503) and attempt < 4:
+                retry_after = r.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after) if retry_after else (0.5 * (2 ** attempt))
+                except (TypeError, ValueError):
+                    delay = 0.5 * (2 ** attempt)
+                time.sleep(min(delay, 30.0))
+                continue
+            break
         if not r.ok:
-            raise VividError(
-                f"{r.status_code} {r.reason} on GET {r.request.url}\n"
-                f"Response body: {r.text}"
-            )
+            raise VividError(f"HTTP {r.status_code}")
         return r.content
 
     # ---------- XML helpers ----------
@@ -133,7 +142,7 @@ class VividClient:
                 unique[oid] = row
         return list(unique.values())
 
-    def get_order(self, order_id: str | int) -> dict[str, str]:
+    def get_order(self, order_id: int) -> dict[str, str]:
         """GET /getOrder — single-order detail."""
-        xml = self._get("/getOrder", {"orderId": order_id})
+        xml = self._get("/getOrder", {"orderId": int(order_id)})
         return self._parse_single_order(xml)
