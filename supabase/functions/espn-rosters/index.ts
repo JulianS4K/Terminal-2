@@ -82,11 +82,11 @@ interface RunStats {
   team_changes: number; releases: number; errors: number; log: string[];
 }
 
+import { requireCronSecret } from "../_shared/cron-auth.ts";
+
 Deno.serve(async (req) => {
-  const expected = Deno.env.get("CRON_SECRET");
-  if (expected && req.headers.get("x-cron-secret") !== expected) {
-    return new Response("unauthorized", { status: 401 });
-  }
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   let body: any = {}; try { body = await req.json(); } catch (_) {}
   const leagueFilter = (body.league as string | undefined)?.toLowerCase();

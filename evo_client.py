@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import time
 from typing import Any, Iterator
 from urllib.parse import urlencode
 
@@ -104,6 +105,16 @@ class EvoClient:
     # the runtime enforcement. Any non-GET attempt raises EvoReadOnlyError
     # before a network call is made.
 
+    # 429 backoff config — TEvo doesn't publish hard rate limits but
+    # empirical testing shows ~5 req/sec sustained is the safe band, with
+    # bursts of ~30 sequential requests triggering 429s. Other clients in
+    # the repo (chat fn, espn-collect, seatgeek, seatdata) implement their
+    # own backoff because this client previously did not. Closes that gap.
+    _MAX_RETRIES = 4
+    _BACKOFF_BASE_SEC = 0.5     # 0.5, 1, 2, 4 — caps below the 5s order-of-magnitude
+    _BACKOFF_CAP_SEC = 30.0
+    _RETRY_STATUSES = frozenset({429, 502, 503, 504})
+
     def _get(self, path: str, params: dict | None = None) -> dict[str, Any]:
         _assert_readonly_method("GET")  # RULE 2 enforcement
         clean = self._normalize(params)
@@ -115,13 +126,34 @@ class EvoClient:
             "X-Signature": signature,
             "Accept": "application/vnd.ticketevolution.api+json; version=9",
         }
-        r = requests.get(url, headers=headers, timeout=self.timeout)
-        if not r.ok:
-            raise RuntimeError(
-                f"{r.status_code} {r.reason} on {r.request.method} {r.url}\n"
-                f"Response body: {r.text}"
-            )
-        return r.json()
+
+        last_resp = None
+        for attempt in range(self._MAX_RETRIES + 1):
+            r = requests.get(url, headers=headers, timeout=self.timeout)
+            last_resp = r
+            if r.ok:
+                return r.json()
+            if r.status_code not in self._RETRY_STATUSES or attempt == self._MAX_RETRIES:
+                break
+            # Honor Retry-After when TEvo provides it; else exponential.
+            wait: float
+            ra = r.headers.get("Retry-After")
+            if ra:
+                try:
+                    wait = float(ra)
+                except (TypeError, ValueError):
+                    wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
+            else:
+                wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
+            wait = min(wait, self._BACKOFF_CAP_SEC)
+            time.sleep(wait)
+
+        # Out of retries, or non-retryable status.
+        raise RuntimeError(
+            f"{last_resp.status_code} {last_resp.reason} on "
+            f"{last_resp.request.method} {last_resp.url}\n"
+            f"Response body: {last_resp.text}"
+        )
 
     def _iter_paginated(
         self,
@@ -184,6 +216,50 @@ class EvoClient:
         """GET /v9/events/search — full-text search endpoint.
         Accepts identical params to list_events per the docs."""
         return self._get("/v9/events/search", {**kwargs, "q": q})
+
+    def search_suggestions(
+        self,
+        q: str,
+        *,
+        entities: str = "events,performers,venues",
+        fuzzy: bool = True,
+        limit: int = 8,
+        occurs_at_gte: str | None = None,
+    ) -> dict[str, Any]:
+        """GET /v9/searches/suggestions — multi-entity autocomplete.
+
+        Returns shape:
+          { "total_entries": N,   (count of entity types, not hits)
+            "suggestions": {
+              "events":     [ { id, name, slug, location, venue_name,
+                                occurs_at, ... }, ... ],
+              "performers": [ { id, name, slug, location, venue_name, ... }, ... ],
+              "venues":     [ { id, name, slug, location, ... }, ... ],
+            }
+          }
+
+        Empirical limits (verified 2026-05-12 against api.ticketevolution.com):
+        - `limit` is hard-capped at 20 per entity by the API regardless of
+          what we send. Pass 20 if you want the max; smaller values trim.
+        - Each entity bucket caps independently — 20 events AND 20 performers
+          AND 20 venues can all return on a single call.
+        - Multi-word matchup queries ("yankees vs red sox") return zero
+          events. Use single-team queries + intersect client-side if you
+          need matchup search.
+        - Latency varies 380-2800ms with no upstream caching. Cache caller-
+          side if you're hitting the same q repeatedly.
+        """
+        params = {
+            "q": q,
+            "entities": entities,
+            "fuzzy": fuzzy,
+            "limit": min(int(limit), 20),
+        }
+        if occurs_at_gte:
+            # TEvo accepts both occurs_at.gte and occurs_at_gte; the dotted
+            # form is canonical. _normalize() preserves the key as-is.
+            params["occurs_at.gte"] = occurs_at_gte
+        return self._get("/v9/searches/suggestions", params)
 
     def iter_events(self, max_pages: int = 50, **kwargs) -> Iterator[dict]:
         """Yield events across all pages (uses /v9/events)."""

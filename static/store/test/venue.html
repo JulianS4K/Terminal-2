@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Venues — VibePass</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">checking…</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+    </nav>
+
+    <main class="content">
+      <h1>Browse by venue</h1>
+      <p class="subtitle">Type a venue or city. Pick one to see what's coming up there.</p>
+
+      <div class="row" style="margin: 16px 0 16px">
+        <input id="q" type="search" placeholder="e.g. Madison Square Garden, Yankee Stadium, NYC" autofocus style="flex: 1; padding: 12px 14px; font-size: 15px" />
+      </div>
+
+      <div id="status" style="color: var(--muted); font-size: 13px; margin-bottom: 12px"></div>
+
+      <div id="venuesRow" hidden style="margin-bottom: 24px">
+        <div class="filter-label">Venues</div>
+        <div id="venueChips" class="chip-group" style="margin-top: 8px"></div>
+      </div>
+
+      <div id="eventsHeader" style="font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px"></div>
+      <div id="cards" class="cards"></div>
+
+      <div id="empty" class="empty-state" hidden>
+        <h2>No venues match</h2>
+        <p>Try a broader keyword or city. We only show venues with tickets currently available.</p>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/store/test/test.js"></script>
+  <script>
+    const { $, $$, fmtMoney, fmtWhen } = Test;
+
+    let allEvents = [];
+    let selectedVenueKey = null;  // composite "name|location" since venue_id isn't on the catalog row
+
+    // The catalog response doesn't include venue_id directly (it's nested
+    // under events.venue_id, which we surface via /api/store/events?venue_id=X
+    // but not in the response payload). For chip resolution we fall back
+    // to grouping by (venue_name, venue_location) and matching client-side.
+    function venueKey(e) {
+      return [e.venue_name, e.venue_location].filter(Boolean).join("|") || null;
+    }
+
+    function aggregateVenues(events) {
+      const map = new Map();
+      for (const e of events) {
+        const key = venueKey(e);
+        if (!key) continue;
+        const existing = map.get(key);
+        if (existing) {
+          existing.events.push(e);
+        } else {
+          map.set(key, {
+            key,
+            name: e.venue_name || "",
+            location: e.venue_location || "",
+            events: [e],
+          });
+        }
+      }
+      return [...map.values()].sort((a, b) => b.events.length - a.events.length);
+    }
+
+    function renderVenueChips(venues) {
+      const row = $("#venuesRow");
+      const chipsEl = $("#venueChips");
+      chipsEl.innerHTML = "";
+      if (!venues.length) {
+        row.hidden = true;
+        return;
+      }
+      row.hidden = false;
+      for (const v of venues.slice(0, 30)) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "filter-chip" + (v.key === selectedVenueKey ? " on" : "");
+        chip.dataset.value = v.key;
+        const label = v.location ? `${v.name} · ${v.location}` : v.name;
+        chip.textContent = `${label} (${v.events.length})`;
+        chip.addEventListener("click", () => {
+          selectedVenueKey = (selectedVenueKey === v.key) ? null : v.key;
+          renderVenueChips(venues);
+          renderEventCards(currentEvents());
+        });
+        chipsEl.append(chip);
+      }
+    }
+
+    function renderEventCards(events) {
+      const grid = $("#cards");
+      grid.innerHTML = "";
+      const header = $("#eventsHeader");
+      if (!events.length) {
+        header.textContent = "";
+        return;
+      }
+      const sel = selectedVenueKey
+        ? `${events[0].venue_name}${events[0].venue_location ? " · " + events[0].venue_location : ""}`
+        : null;
+      header.textContent = sel
+        ? `${sel} · ${events.length} upcoming`
+        : `${events.length} event${events.length === 1 ? "" : "s"}`;
+      for (const ev of events) {
+        const c = document.createElement("a");
+        c.className = "card";
+        c.href = `/store/test/event?id=${ev.id}`;
+        if (ev.primary_performer_color) {
+          c.style.setProperty("--card-accent", ev.primary_performer_color);
+        }
+        c.innerHTML = `
+          <div class="when">${fmtWhen(ev.occurs_at_local)}</div>
+          <div class="name">${ev.name || "—"}</div>
+          <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+          <div class="price">from ${fmtMoney(ev.from_price)}</div>
+        `;
+        grid.append(c);
+      }
+    }
+
+    function currentEvents() {
+      const q = ($("#q").value || "").trim().toLowerCase();
+      const matchQuery = (e) => {
+        if (!q) return true;
+        const hay = [e.name, e.venue_name, e.venue_location, e.primary_performer_name]
+          .filter(Boolean).join(" ").toLowerCase();
+        return hay.includes(q);
+      };
+      let events = allEvents.filter(matchQuery);
+      if (selectedVenueKey) {
+        events = events.filter(e => venueKey(e) === selectedVenueKey);
+      }
+      return events;
+    }
+
+    function refresh() {
+      const events = currentEvents();
+      const venues = aggregateVenues(events);
+      const empty = !events.length;
+      $("#empty").hidden = !empty;
+      renderVenueChips(venues);
+      renderEventCards(selectedVenueKey ? events : events.slice(0, 60));
+    }
+
+    async function load() {
+      $("#status").textContent = "Loading…";
+      try {
+        const r = await fetch("/api/store/events?limit=500");
+        const body = await r.json();
+        allEvents = body.events || [];
+        $("#status").textContent = `${aggregateVenues(allEvents).length} venues with tickets available`;
+        refresh();
+      } catch (e) {
+        $("#status").textContent = "Couldn't load. " + e.message;
+        $("#status").style.color = "var(--bad)";
+      }
+    }
+
+    $("#q").addEventListener("input", () => {
+      selectedVenueKey = null;
+      refresh();
+    });
+
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VibePass — find tickets</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">checking…</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+    </nav>
+
+    <main class="content">
+      <h1>Find tickets to anything we have</h1>
+      <p class="subtitle">Direct inventory, transparent pricing.</p>
+
+      <!-- Hero search — the primary entry point. -->
+      <form id="searchForm" class="row" style="margin: 18px 0 12px">
+        <input id="q" type="search" placeholder="Search artists, teams, venues, cities" autofocus
+               style="flex: 1; padding: 14px 16px; font-size: 15px" />
+        <button type="submit" style="padding: 14px 24px">Search</button>
+      </form>
+
+      <!-- "Find events near me" — sits below the search bar. Browser geolocation
+           prompt only fires on click. Hidden in SQL-only demo mode (no TEvo
+           geo call available, and per Julian's 2026-05-11 direction we're
+           keeping geolocation off until real checkout is wired). -->
+      <div id="nearMeRow" hidden style="margin: 0 0 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+        <button id="findNearMe" class="ghost" style="padding: 8px 14px; font-size: 13px">
+          📍 Find events near me
+        </button>
+        <select id="nearMeSource" style="padding: 6px 8px; font-size: 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px">
+          <option value="hybrid" selected>hybrid (TEvo geo + owned filter)</option>
+          <option value="supabase">supabase only (venue_assets)</option>
+          <option value="tevo">TEvo only (debug)</option>
+        </select>
+        <span id="nearMeStatus" style="font-size: 12px; color: var(--muted)"></span>
+      </div>
+
+      <!-- Near-you strip. Hidden until user grants location and we have matches. -->
+      <section id="nearMeSection" hidden style="margin-bottom: 28px">
+        <h2 style="font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px">
+          Near you · <span id="nearMeRadius">50 mi</span>
+        </h2>
+        <div id="nearMeCards" class="cards"></div>
+      </section>
+
+      <!-- Featured events — surface upcoming inventory so users have something to click. -->
+      <h2 style="font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px">
+        Featured this week
+      </h2>
+      <div id="status" style="color: var(--muted); font-size: 13px; margin-bottom: 12px">Loading…</div>
+      <div id="featured" class="cards"></div>
+
+      <!-- Browse-by callouts -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 28px">
+        <a href="/store/test/performer" style="background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; text-decoration: none; color: inherit">
+          <div style="font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px">Browse</div>
+          <div style="font-size: 16px; font-weight: 600; margin-top: 4px">Performers →</div>
+          <div style="font-size: 13px; color: var(--muted); margin-top: 4px">Find a team, artist, or speaker</div>
+        </a>
+        <a href="/store/test/venue" style="background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; text-decoration: none; color: inherit">
+          <div style="font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px">Browse</div>
+          <div style="font-size: 16px; font-weight: 600; margin-top: 4px">Venues →</div>
+          <div style="font-size: 13px; color: var(--muted); margin-top: 4px">Find a stadium, arena, or theater</div>
+        </a>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/store/test/test.js"></script>
+  <script>
+    const { $, fmtMoney, fmtWhen } = Test;
+
+    // Hero search -> hand off to the search page.
+    $("#searchForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const q = $("#q").value.trim();
+      location.href = "/store/test/search" + (q ? `?q=${encodeURIComponent(q)}` : "");
+    });
+
+    // "Find events near me" — geolocate on click, fetch /api/store/events/near,
+    // render up to 10 closest events. Permission is requested only when the
+    // button is pressed (no auto-prompt on load).
+    const findBtn = $("#findNearMe");
+    const nearStatus = $("#nearMeStatus");
+    const nearSection = $("#nearMeSection");
+    const nearGrid = $("#nearMeCards");
+    const RADIUS_MILES = 50;
+    $("#nearMeRadius").textContent = RADIUS_MILES + " mi";
+
+    findBtn.addEventListener("click", () => {
+      if (!navigator.geolocation) {
+        nearStatus.textContent = "Your browser doesn't support location.";
+        return;
+      }
+      findBtn.disabled = true;
+      nearStatus.textContent = "Asking for your location…";
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const { latitude, longitude } = pos.coords;
+          nearStatus.textContent = "Finding events nearby…";
+          const source = $("#nearMeSource").value || "hybrid";
+          try {
+            const r = await fetch(
+              `/api/store/events/near?lat=${latitude}&lon=${longitude}` +
+              `&within=${RADIUS_MILES}&limit=10&source=${encodeURIComponent(source)}`
+            );
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const body = await r.json();
+            const events = body.events || [];
+            if (!events.length) {
+              nearStatus.textContent = `No events within ${RADIUS_MILES} miles (${source}). Try searching by artist or team.`;
+              nearSection.hidden = true;
+              findBtn.disabled = false;
+              findBtn.textContent = "📍 Try again";
+              return;
+            }
+            // Render the near-you strip.
+            nearGrid.innerHTML = "";
+            for (const ev of events) {
+              const c = document.createElement("a");
+              c.className = "card";
+              c.href = `/store/test/event?id=${ev.id}`;
+              if (ev.primary_performer_color) {
+                c.style.setProperty("--card-accent", ev.primary_performer_color);
+              }
+              const distLabel = ev.distance_miles != null
+                ? `${ev.distance_miles} mi away`
+                : "distance n/a";
+              c.innerHTML = `
+                <div class="when">${fmtWhen(ev.occurs_at_local)} · ${distLabel}</div>
+                <div class="name">${ev.name || "—"}</div>
+                <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+                <div class="price">${ev.from_price != null ? "from " + fmtMoney(ev.from_price) : ""}</div>
+              `;
+              nearGrid.append(c);
+            }
+            nearSection.hidden = false;
+            const more = (body.total_within_radius || 0) > events.length
+              ? ` (${body.total_within_radius - events.length} more — refine via search)`
+              : "";
+            // Status line shows which source served + helpful debug numbers.
+            const srcLabel = body.source === "hybrid"
+              ? `hybrid · TEvo returned ${body.tevo_candidates ?? "?"} candidates`
+              : body.source === "supabase"
+                ? `supabase · ${body.supabase_candidates ?? "?"} candidates, ${body.missing_coords ?? 0} no-coord`
+                : `${body.source}`;
+            nearStatus.textContent = `${events.length} closest${more} · ${srcLabel}`;
+            findBtn.disabled = false;
+            findBtn.textContent = "📍 Refresh nearby";
+          } catch (e) {
+            nearStatus.textContent = "Couldn't load: " + e.message;
+            findBtn.disabled = false;
+          }
+        },
+        (err) => {
+          // err.code 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
+          const msg = err.code === 1
+            ? "Location access denied — you can always search instead."
+            : err.code === 3
+              ? "Location lookup timed out — try again."
+              : "Couldn't get your location.";
+          nearStatus.textContent = msg;
+          findBtn.disabled = false;
+        },
+        { timeout: 10000, maximumAge: 60000 }
+      );
+    });
+
+    // Featured = first ~12 events from the catalog, sorted by date.
+    async function loadFeatured() {
+      try {
+        const r = await fetch("/api/store/events?limit=24");
+        const body = await r.json();
+        const events = body.events || [];
+        $("#status").textContent = events.length
+          ? `${events.length} event${events.length === 1 ? "" : "s"} with tickets available`
+          : "No events with tickets right now. Check back soon.";
+        const grid = $("#featured");
+        grid.innerHTML = "";
+        for (const ev of events.slice(0, 12)) {
+          const c = document.createElement("a");
+          c.className = "card";
+          c.href = `/store/test/event?id=${ev.id}`;
+          if (ev.primary_performer_color) {
+            c.style.setProperty("--card-accent", ev.primary_performer_color);
+          }
+          c.innerHTML = `
+            <div class="when">${fmtWhen(ev.occurs_at_local)}</div>
+            <div class="name">${ev.name || "—"}</div>
+            <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+            <div class="price">from ${fmtMoney(ev.from_price)}</div>
+          `;
+          grid.append(c);
+        }
+      } catch (e) {
+        $("#status").textContent = "Couldn't load events. " + e.message;
+        $("#status").style.color = "var(--bad)";
+      }
+    }
+    loadFeatured();
+  </script>
+</body>
+</html>

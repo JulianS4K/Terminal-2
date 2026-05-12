@@ -1,6 +1,7 @@
 // v2: drop order_by (422s), also capture event-level category to refine
 // events.event_type while we're crawling.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCronSecret } from "../_shared/cron-auth.ts";
 const HOST = "api.ticketevolution.com"; const BASE = `https://${HOST}`;
 
 async function hmac(secret: string, msg: string): Promise<string> {
@@ -26,6 +27,8 @@ async function tevoGet(token: string, secret: string, path: string, params: Reco
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('POST only', { status: 405 });
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
   const t0 = Date.now(); const WALL = 50_000;
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const { data: settings } = await db.from('settings').select('key,value').in('key',['tevo_token','tevo_secret']);
