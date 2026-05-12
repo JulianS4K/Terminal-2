@@ -35,19 +35,16 @@
       <!-- Filter banner — shown when the catalog was opened via a
            ?performer_id= or ?venue_id= link from an event page. -->
       <div id="catalogFilterBanner" class="banner" hidden></div>
-      <!-- Tab toggle — only shown when the user is filtered to one MLB
-           performer (`?performer_id=` + league=MLB). Default tab is
-           "Events" (existing behavior); "Series" calls /api/store/series
-           and renders one row per upcoming 3- or 4-game series. -->
-      <nav id="catalogTabs" class="catalog-tabs" hidden role="tablist" aria-label="View toggle">
-        <button type="button" class="catalog-tab is-active" data-tab="events" role="tab" aria-selected="true">Events</button>
-        <button type="button" class="catalog-tab" data-tab="series" role="tab" aria-selected="false">Series</button>
-      </nav>
+      <!-- Movers strip — top events in NYC for the next 3 weeks by
+           24h ticket velocity. Hidden when the user is filtered (the
+           strip is a home-view discovery aid, not a filter-respecting
+           list). Populated by /api/store/movers. -->
+      <section id="moversStrip" class="movers-strip" hidden aria-label="Moving fast in NYC">
+        <h2 class="movers-title">Moving fast in NYC · next 3 weeks</h2>
+        <div id="moversRow" class="movers-row"></div>
+      </section>
       <div id="status" class="status">Loading available events…</div>
       <div id="grid" class="grid" hidden></div>
-      <!-- Series list shown when the user toggles to the Series tab. JS
-           hides the grid + shows this when active. -->
-      <div id="seriesList" class="series-list" hidden></div>
       <div id="empty" class="empty" hidden>
         No events match. Try a broader search, or clear the box to see all.
       </div>

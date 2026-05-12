@@ -3962,7 +3962,28 @@ def store_events(
     # response: each row has a nested `events` dict).
     rows = [{**m, "events": events_by_id.get(int(m["event_id"]))} for m in metrics_rows]
     rows = [r for r in rows if r.get("events")]
-    rows.sort(key=lambda r: (r.get("events") or {}).get("occurs_at_local") or "9999")
+    # Event-list sort hierarchy (per 2026-05-12 directive):
+    #   1. date  asc   — soonest event first
+    #   2. time  asc   — earliest start within a day first
+    #   3. qty   desc  — more owned tickets ranks higher
+    #   4. listings desc — more distinct listings ranks higher
+    #   5. getin desc  — higher cheapest-price (= "premium first") ranks higher
+    #
+    # occurs_at_local is text in YYYY-MM-DDTHH:MM:SS+TZ form; lexicographic
+    # ascending comparison naturally gives correct date+time order. Desc
+    # numeric columns are negated to fit a single ascending tuple sort.
+    def _catalog_sort_key(r):
+        ev = r.get("events") or {}
+        occurs = ev.get("occurs_at_local") or "9999-12-31T23:59:59"
+        qty = -(int(r.get("owned_tickets_count") or 0))
+        listings = -(int(r.get("owned_groups_count") or 0))
+        rmin = r.get("retail_min")
+        try:
+            price = -float(rmin) if rmin is not None else 0.0
+        except (TypeError, ValueError):
+            price = 0.0
+        return (occurs, qty, listings, price)
+    rows.sort(key=_catalog_sort_key)
 
     # Drop ghosts / completed / postponed unless caller opts in. Same
     # pattern as broker_movers — small id-set, single roundtrip to the
@@ -4152,6 +4173,184 @@ def _attach_owned_metadata(
             "distance_miles": round(dist, 1) if dist is not None else None,
         })
     return out
+
+
+@app.get("/api/store/movers")
+def store_movers(
+    city: str = "NYC",
+    days: int = 21,
+    limit: int = 8,
+):
+    """Homepage "moving fast" strip — owned-inventory events in a target
+    city sorted by 24h ticket-velocity (most negative tickets_delta first).
+
+    Only one city supported today (`city=NYC`); future versions can resolve
+    user location → city automatically. Days defaults to 21 (3 weeks). Each
+    returned event carries an optional `signal` field with one of three
+    labels (no others surfaced per 2026-05-12 directive):
+
+        'selling_fast'  — TEvo market lost ≥50 tickets in last 24h
+        'demand_rising' — tickets dropped AND getin price firmed ≥5%
+        'premium'       — getin price ≥ $500 (e.g. playoff games)
+
+    Hidden when nothing matches. Driven by v_event_velocity_windows joined
+    against latest_event_metrics + events + event_lifecycle.
+    """
+    db = require_sb()
+    cap = max(1, min(int(limit), 24))
+    day_cap = max(1, min(int(days), 90))
+
+    # City filter — hardcoded NYC venue patterns for v1. Matches everywhere
+    # the storefront would consider "New York metro" inventory.
+    city_norm = (city or "").upper()
+    if city_norm in ("NYC", "NEW YORK", "NEW YORK CITY"):
+        venue_patterns = ("%New York%", "%Brooklyn%", "%Bronx%",
+                          "%Queens%", "%Manhattan%", "%, NY%")
+    else:
+        # Unknown city → empty result; cleaner than a 400 for the home view.
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    horizon_iso = (datetime.now(timezone.utc) + timedelta(days=day_cap)).date().isoformat()
+
+    # Pull events in the window with owned inventory + active lifecycle.
+    # Two queries + merge (consistent with the catalog pattern; view-to-
+    # table FK inference under PostgREST has been flaky).
+    try:
+        ev_q = db.table("events").select(
+            "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+            "primary_performer_id,primary_performer_name"
+        ).gte("occurs_at_local", today_iso).lte("occurs_at_local", horizon_iso + "T23:59:59")
+        # PostgREST `or_()` with a comma-separated list of `<col>.ilike.<pat>`
+        # supports OR filters across multiple patterns.
+        or_clauses = ",".join(f"venue_location.ilike.{p}" for p in venue_patterns)
+        ev_q = ev_q.or_(or_clauses)
+        events_rows = ev_q.limit(800).execute().data or []
+    except Exception as e:
+        # Conservative fallback: don't break the homepage if the filter
+        # syntax ever drifts.
+        print(f"store_movers events query failed: {e}")
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+
+    if not events_rows:
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
+    ev_ids = list(events_by_id.keys())
+
+    # Owned-only metrics so we don't list events we can't actually sell.
+    metrics = (db.table("latest_event_metrics")
+                 .select("event_id,owned_tickets_count,owned_groups_count,"
+                         "tickets_count,retail_min,captured_at")
+                 .gt("owned_tickets_count", 0)
+                 .in_("event_id", ev_ids)
+                 .execute().data) or []
+    if not metrics:
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+    metrics_by_id = {int(m["event_id"]): m for m in metrics if m.get("event_id")}
+
+    # Lifecycle filter — drop ghost/cancelled/postponed.
+    try:
+        lc = (db.table("event_lifecycle")
+                .select("event_id,is_active")
+                .in_("event_id", list(metrics_by_id.keys()))
+                .execute().data) or []
+        inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+    except Exception:
+        inactive = set()
+
+    # Velocity windows for the 1h/24h ticket delta + getin pct moves.
+    try:
+        vw = (db.table("v_event_velocity_windows")
+                .select("tevo_event_id,tevo_tix_now,tevo_tix_d1h,tevo_tix_d24h,"
+                        "tevo_getin_now,tevo_getin_d24h_pct,tevo_now_at")
+                .in_("tevo_event_id", list(metrics_by_id.keys()))
+                .execute().data) or []
+    except Exception:
+        vw = []
+    velocity_by_id = {int(v["tevo_event_id"]): v for v in vw if v.get("tevo_event_id") is not None}
+
+    # Bulk performer assets for card branding consistency.
+    perf_ids = [events_by_id[i].get("primary_performer_id") for i in metrics_by_id if i not in inactive]
+    perf_ids = [int(p) for p in perf_ids if p]
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+
+    candidates: list[dict] = []
+    for eid, m in metrics_by_id.items():
+        if eid in inactive:
+            continue
+        ev = events_by_id.get(eid) or {}
+        v = velocity_by_id.get(eid) or {}
+        tix_d24h = v.get("tevo_tix_d24h")
+        tix_d1h = v.get("tevo_tix_d1h")
+        getin_pct_24h = v.get("tevo_getin_d24h_pct")
+        getin_now = v.get("tevo_getin_now")
+        from_price = m.get("retail_min") if m.get("retail_min") is not None else getin_now
+
+        # Signal classification — only the three labels the directive allows.
+        # Priority: premium > selling_fast > demand_rising. Premium runs
+        # first because expensive playoff inventory should always carry the
+        # "⭐" badge even when ticket delta is small.
+        signal: str | None = None
+        try:
+            getin_val = float(getin_now) if getin_now is not None else None
+        except (TypeError, ValueError):
+            getin_val = None
+        try:
+            d24h_val = int(tix_d24h) if tix_d24h is not None else None
+        except (TypeError, ValueError):
+            d24h_val = None
+        try:
+            pct_val = float(getin_pct_24h) if getin_pct_24h is not None else None
+        except (TypeError, ValueError):
+            pct_val = None
+
+        if getin_val is not None and getin_val >= 500:
+            signal = "premium"
+        elif d24h_val is not None and d24h_val <= -50:
+            signal = "selling_fast"
+        elif d24h_val is not None and d24h_val < 0 and pct_val is not None and pct_val >= 5.0:
+            signal = "demand_rising"
+
+        # Mover-worthy if it has any signal OR meaningful 24h activity (so
+        # the strip isn't a blank slate when no event hits the strict gates).
+        if signal is None and (d24h_val is None or d24h_val > -5):
+            continue
+
+        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
+        candidates.append({
+            "id": ev.get("id"),
+            "name": ev.get("name"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue_name": ev.get("venue_name"),
+            "venue_location": ev.get("venue_location"),
+            "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_logo": (a or {}).get("logo_default_url"),
+            "primary_performer_color": (a or {}).get("color_primary"),
+            "from_price": from_price,
+            "tix_d24h": d24h_val,
+            "tix_d1h": tix_d1h,
+            "getin_pct_24h": pct_val,
+            "signal": signal,
+        })
+
+    # Sort by absolute 24h ticket-drop magnitude desc, tie-break to soonest.
+    # Events with no d24h fall to the end (treat None as 0 activity).
+    def _mover_sort_key(c):
+        d = c.get("tix_d24h")
+        # Most negative = highest priority. Convert to positive magnitude.
+        mag = -int(d) if isinstance(d, int) and d < 0 else 0
+        occurs = c.get("occurs_at_local") or "9999"
+        # Sort key wants most-active FIRST = larger magnitudes first → negate.
+        return (-mag, occurs)
+    candidates.sort(key=_mover_sort_key)
+    candidates = candidates[:cap]
+
+    return {
+        "city": city,
+        "days": day_cap,
+        "count": len(candidates),
+        "events": candidates,
+    }
 
 
 @app.get("/api/store/events/near")
@@ -5116,294 +5315,6 @@ def store_event_zones(event_id: int):
     }
 
 
-def _resolve_series_row(db, event_id: int) -> dict | None:
-    """Look up the v_mlb_game_series row that contains this event_id (if any).
-    PostgREST can't filter on array membership cleanly via the table builder,
-    so we pull the seriess for the event's date window then scan in Python.
-    Returns the matching row dict or None.
-    """
-    # Look up event date + venue to narrow the v_mlb_game_series scan.
-    ev = (db.table("events")
-            .select("id,venue_id,occurs_at_local,primary_performer_name")
-            .eq("id", event_id).limit(1).execute().data) or []
-    if not ev:
-        return None
-    row = ev[0]
-    occurs = row.get("occurs_at_local")
-    if not occurs:
-        return None
-    # Series span ≤ a week — pull anything that ends on or after the event
-    # date with the same venue. Smaller candidate set than scanning the view.
-    target_date = str(occurs)[:10]
-    rows = (db.table("v_mlb_game_series")
-              .select("home_team,away_team,venue_name,venue_id,"
-                      "series_start,series_end,series_span_days,"
-                      "game_count,tevo_event_ids,branded_series_name")
-              .gte("series_end", target_date)
-              .eq("venue_id", row.get("venue_id"))
-              .execute().data) or []
-    for s in rows:
-        ids_arr = s.get("tevo_event_ids") or []
-        ids_arr = [int(x) for x in ids_arr if x is not None]
-        if event_id in ids_arr:
-            s["tevo_event_ids"] = ids_arr
-            return s
-    return None
-
-
-def _attach_series_pricing(db, series_rows: list[dict]) -> None:
-    """Mutates each series row to add `from_price` (cheapest retail_min across
-    sibling event ids) and `total_tickets`. Single roundtrip across all
-    siblings via latest_event_metrics."""
-    if not series_rows:
-        return
-    all_ids: list[int] = []
-    for s in series_rows:
-        all_ids.extend(s.get("tevo_event_ids") or [])
-    all_ids = [int(x) for x in all_ids if x is not None]
-    if not all_ids:
-        return
-    try:
-        metrics = (db.table("latest_event_metrics")
-                     .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
-                     .in_("event_id", all_ids)
-                     .execute().data) or []
-    except Exception:
-        metrics = []
-    by_id = {int(m["event_id"]): m for m in metrics if m.get("event_id") is not None}
-    for s in series_rows:
-        sibs = s.get("tevo_event_ids") or []
-        prices = [by_id[i]["retail_min"] for i in sibs
-                  if i in by_id and by_id[i].get("retail_min") is not None]
-        tix = sum(by_id[i].get("owned_tickets_count") or 0 for i in sibs if i in by_id)
-        s["from_price"] = min(prices) if prices else None
-        s["total_tickets"] = tix
-
-
-@app.get("/api/store/series")
-def store_series_list(performer_id: int, limit: int = 20):
-    """List upcoming MLB series for one performer. Powers the 'Series' tab
-    on /store?performer_id=<id> when the performer is in MLB.
-
-    Each series row holds: matchup (home vs away), is_home flag for the
-    performer, date range, venue, game count, cheapest from_price across
-    games, optional branded name (Subway Series), and a rivalry tag joined
-    via v_rivalry_events on any sibling event.
-
-    Non-MLB performers return an empty list (200, not 404) so the client
-    can hide the tab without distinguishing 'no series yet' from 'wrong league'.
-    """
-    db = require_sb()
-
-    # Performer existence + league gate.
-    pm = (db.table("performer_metadata")
-            .select("performer_id,name,espn_league")
-            .eq("performer_id", performer_id).limit(1).execute().data) or []
-    if not pm:
-        raise HTTPException(404, f"performer {performer_id} not found")
-    perf_name = pm[0].get("name") or ""
-    league = (pm[0].get("espn_league") or "").upper()
-    if league != "MLB":
-        return {"performer_id": performer_id, "performer_name": perf_name,
-                "league": league, "series": []}
-
-    # Series the performer is on EITHER side of, ending today or later.
-    # Two queries instead of a PostgREST or_() filter: team names like
-    # "St. Louis Cardinals" contain periods, which PostgREST treats as
-    # operator separators inside or_(). Splitting + merging in Python is
-    # cheap and robust.
-    today_iso = datetime.now(timezone.utc).date().isoformat()
-    cap = max(1, min(limit, 60))
-
-    def _pull(side: str) -> list[dict]:
-        try:
-            return (db.table("v_mlb_game_series")
-                      .select("home_team,away_team,venue_name,venue_id,"
-                              "series_start,series_end,series_span_days,"
-                              "game_count,tevo_event_ids,branded_series_name")
-                      .gte("series_end", today_iso)
-                      .eq(side, perf_name)
-                      .order("series_start", desc=False)
-                      .limit(cap)
-                      .execute().data) or []
-        except Exception:
-            return []
-
-    home_rows = _pull("home_team")
-    away_rows = _pull("away_team")
-    # Dedupe by (home, away, venue, series_start) — shouldn't ever overlap
-    # since a team can't be both home and away in the same series, but
-    # belt+suspenders if the view ever returns surprises.
-    seen: set[tuple] = set()
-    rows: list[dict] = []
-    for r in sorted(home_rows + away_rows, key=lambda x: x.get("series_start") or ""):
-        key = (r.get("home_team"), r.get("away_team"),
-               r.get("venue_id"), r.get("series_start"))
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append(r)
-    rows = rows[:cap]
-
-    # Coerce id arrays + attach pricing.
-    for s in rows:
-        ids_arr = s.get("tevo_event_ids") or []
-        s["tevo_event_ids"] = [int(x) for x in ids_arr if x is not None]
-    _attach_series_pricing(db, rows)
-
-    # Rivalry tag — check whether ANY sibling event matches v_rivalry_events.
-    # We dedupe per series since the rivalry is matchup-level, not per-game.
-    all_sibling_ids: list[int] = []
-    for s in rows:
-        all_sibling_ids.extend(s.get("tevo_event_ids") or [])
-    rival_by_event: dict[int, dict] = {}
-    if all_sibling_ids:
-        try:
-            rr = (db.table("v_rivalry_events")
-                    .select("tevo_event_id,rivalry_name,league,is_branded,"
-                            "rivalry_intensity,wikipedia_url")
-                    .in_("tevo_event_id", all_sibling_ids)
-                    .execute().data) or []
-            for r in rr:
-                rival_by_event.setdefault(int(r["tevo_event_id"]), r)
-        except Exception:
-            rival_by_event = {}
-
-    out = []
-    for s in rows:
-        sib_ids = s.get("tevo_event_ids") or []
-        is_home = (s.get("home_team") == perf_name)
-        opponent = s.get("away_team") if is_home else s.get("home_team")
-        rivalry = None
-        for i in sib_ids:
-            if i in rival_by_event:
-                rr = rival_by_event[i]
-                rivalry = {
-                    "name": rr.get("rivalry_name"),
-                    "is_branded": bool(rr.get("is_branded")),
-                    "intensity": rr.get("rivalry_intensity"),
-                    "wikipedia_url": rr.get("wikipedia_url"),
-                }
-                break
-        out.append({
-            "lead_event_id": sib_ids[0] if sib_ids else None,
-            "is_home": is_home,
-            "opponent": opponent,
-            "venue_name": s.get("venue_name"),
-            "series_start": s.get("series_start"),
-            "series_end": s.get("series_end"),
-            "span_days": s.get("series_span_days"),
-            "game_count": s.get("game_count"),
-            "branded_name": s.get("branded_series_name"),
-            "from_price": s.get("from_price"),
-            "total_tickets": s.get("total_tickets"),
-            "tevo_event_ids": sib_ids,
-            "rivalry": rivalry,
-        })
-
-    return {
-        "performer_id": performer_id,
-        "performer_name": perf_name,
-        "league": league,
-        "series": out,
-        "count": len(out),
-    }
-
-
-@app.get("/api/store/series/{event_id}")
-def store_series_detail(event_id: int):
-    """Resolve an MLB series by any of its event ids. Returns the series
-    header (matchup, venue, date range, branded name) + per-game cards
-    (each with pricing, owned counts, weather + holiday context).
-
-    404s when the event isn't part of a known MLB regular-season series
-    (postseason, single-game, or non-MLB events).
-    """
-    db = require_sb()
-    s = _resolve_series_row(db, event_id)
-    if not s:
-        raise HTTPException(404, "event is not part of a known MLB series")
-
-    sib_ids: list[int] = s.get("tevo_event_ids") or []
-
-    # Per-game cards — name, date, venue, pricing, owned counts.
-    games_meta = (db.table("events")
-                    .select("id,name,occurs_at_local,venue_name,venue_location,"
-                            "primary_performer_name,primary_performer_id")
-                    .in_("id", sib_ids)
-                    .execute().data) or []
-    by_id = {int(g["id"]): g for g in games_meta}
-
-    try:
-        metrics = (db.table("latest_event_metrics")
-                     .select("event_id,owned_tickets_count,owned_groups_count,"
-                             "retail_min,retail_median,captured_at")
-                     .in_("event_id", sib_ids)
-                     .execute().data) or []
-    except Exception:
-        metrics = []
-    metrics_by_id = {int(m["event_id"]): m for m in metrics if m.get("event_id") is not None}
-
-    # Reuse the central context helper for rivalry / weather / holiday on
-    # every game card. Tournament + mlb_series unused here but harmless.
-    ctx_by_id = _bulk_event_context(db, sib_ids)
-
-    games_out: list[dict] = []
-    prices: list[float] = []
-    for pos, gid in enumerate(sib_ids, start=1):
-        g = by_id.get(gid) or {}
-        m = metrics_by_id.get(gid) or {}
-        c = ctx_by_id.get(gid) or {}
-        rp = m.get("retail_min")
-        if rp is not None:
-            try:
-                prices.append(float(rp))
-            except (TypeError, ValueError):
-                pass
-        games_out.append({
-            "id": gid,
-            "game_number": pos,
-            "name": g.get("name"),
-            "occurs_at_local": g.get("occurs_at_local"),
-            "venue_name": g.get("venue_name"),
-            "venue_location": g.get("venue_location"),
-            "primary_performer_name": g.get("primary_performer_name"),
-            "primary_performer_id": g.get("primary_performer_id"),
-            "from_price": rp,
-            "retail_median": m.get("retail_median"),
-            "owned_tickets_count": m.get("owned_tickets_count"),
-            "owned_groups_count": m.get("owned_groups_count"),
-            "captured_at": m.get("captured_at"),
-            "weather": c.get("weather"),
-            "holiday": c.get("holiday"),
-            "rivalry": c.get("rivalry"),
-        })
-
-    # Series-level rivalry (first hit on any game wins).
-    series_rivalry = None
-    for go in games_out:
-        if go.get("rivalry"):
-            series_rivalry = go["rivalry"]
-            break
-
-    return {
-        "series": {
-            "home_team": s.get("home_team"),
-            "away_team": s.get("away_team"),
-            "venue_name": s.get("venue_name"),
-            "venue_id": s.get("venue_id"),
-            "series_start": s.get("series_start"),
-            "series_end": s.get("series_end"),
-            "span_days": s.get("series_span_days"),
-            "game_count": s.get("game_count"),
-            "branded_name": s.get("branded_series_name"),
-            "rivalry": series_rivalry,
-            "from_price": min(prices) if prices else None,
-        },
-        "games": games_out,
-    }
-
-
 @app.post("/api/store/reserve")
 def store_reserve(payload: dict = Body(...)):
     """MVP placeholder: a real checkout is not wired up yet. Validates that
@@ -5478,14 +5389,6 @@ def store_index_page():
 @app.get("/store/event/{event_id}")
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
     return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
-
-
-@app.get("/store/series/{event_id}")
-def store_series_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
-    """MLB series detail page — the stacked-cards view that resolves from
-    any event id in the series. Served as a static page; JS calls
-    /api/store/series/{event_id} to populate it."""
-    return FileResponse(os.path.join(STATIC_DIR, "store", "series.html"))
 
 
 # ---------- Share links (revocable, trackable) ----------

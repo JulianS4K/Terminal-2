@@ -785,188 +785,121 @@ a.perf-chip:hover {
   margin-top: 60px;
 }
 
-/* ----- Catalog tabs (Events / Series) -----
-   Only surfaced when the user is filtered to one MLB performer. Tab
-   indicator is the bottom accent border, like the existing chip groups. */
-.catalog-tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--line);
-  margin: 0 0 16px;
+/* ----- Movers strip (homepage NYC widget) -----
+   Horizontal scroll row above the main grid. One card per top mover.
+   Hidden when the user is filtered (performer_id / venue_id) since the
+   strip is a home-view discovery aid, not a filter-respecting list. */
+.movers-strip {
+  margin: 0 0 24px;
 }
-.catalog-tab {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 10px 18px;
+.movers-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
   color: var(--muted);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color .12s, border-color .12s;
+  margin: 0 0 10px;
 }
-.catalog-tab:hover { color: var(--text); }
-.catalog-tab.is-active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
+.movers-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 6px;
+}
+.movers-row::-webkit-scrollbar { height: 8px; }
+.movers-row::-webkit-scrollbar-track { background: transparent; }
+.movers-row::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
 }
 
-/* ----- Series list (catalog Series tab) ----- */
-.series-list {
+.mover-card {
+  flex: 0 0 240px;
+  scroll-snap-align: start;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-.series-row {
-  display: block;
-  text-decoration: none;
-  color: inherit;
-  padding: 14px 16px;
+  gap: 4px;
+  padding: 12px 14px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  text-decoration: none;
+  color: inherit;
   transition: border-color .12s, transform .12s;
 }
-.series-row:hover {
+.mover-card:hover {
   border-color: var(--accent-2);
   transform: translateY(-1px);
 }
-.series-row-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 4px;
+.mover-card[style*="--card-accent"]::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--card-accent);
+  border-radius: var(--radius) var(--radius) 0 0;
 }
-.series-row-title {
-  font-weight: 700;
-  font-size: 16px;
-  margin-right: 4px;
-}
-.series-row-tag {
+.mover-badge {
+  align-self: flex-start;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
   padding: 2px 8px;
   border-radius: 999px;
-  text-transform: uppercase;
+  margin-bottom: 4px;
 }
-.series-row-tag.home {
-  background: rgba(110, 207, 130, 0.15);
-  color: #cfeed7;
-  border: 1px solid rgba(110, 207, 130, 0.4);
+.mover-badge.selling_fast {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #ffb6b6;
 }
-.series-row-tag.away {
-  background: rgba(156, 163, 175, 0.12);
-  color: var(--muted);
-  border: 1px solid var(--line);
+.mover-badge.demand_rising {
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  color: #b6f0c8;
 }
-.series-row-meta {
-  color: var(--muted);
-  font-size: 13px;
-  margin-bottom: 6px;
+.mover-badge.premium {
+  background: rgba(250, 204, 21, 0.12);
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  color: #ffe69a;
 }
-.series-row-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-.series-row-foot .from { font-size: 12px; color: var(--muted); }
-.series-row-foot .price {
-  font-size: 17px;
-  font-weight: 800;
-  color: var(--accent-2);
-}
-.series-row-foot .muted { color: var(--muted); font-size: 11px; }
-
-/* ----- Series detail page (the stacked-cards view) ----- */
-.series-head { margin-bottom: 20px; }
-.series-head-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-.series-head h1 {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1.2;
-}
-.series-head-badges {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.series-games {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.series-game-card {
-  display: block;
-  text-decoration: none;
-  color: inherit;
-  padding: 16px 18px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  transition: border-color .12s, transform .12s;
-}
-.series-game-card:hover {
-  border-color: var(--accent-2);
-  transform: translateY(-1px);
-}
-.series-game-head {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-.series-game-num {
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--accent-2);
-}
-.series-game-when {
-  color: var(--muted);
+.mover-title {
   font-size: 14px;
-}
-.series-game-premium {
-  margin-left: auto;
-  font-size: 11px;
   font-weight: 700;
-  color: var(--warn);
-  letter-spacing: 0.4px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.series-game-context {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+.mover-where {
+  font-size: 12px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.series-game-meta {
+.mover-meta {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
 }
-.series-game-meta .from { font-size: 13px; color: var(--muted); }
-.series-game-meta .price {
-  font-size: 19px;
+.mover-price {
+  font-size: 14px;
   font-weight: 800;
   color: var(--accent-2);
 }
-.series-game-meta .qty {
-  font-size: 11px;
-  color: var(--good);
+.mover-note {
+  font-size: 10px;
+  color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
 }
 
 /* ----- Holiday pills (calendar overlay) -----
@@ -1072,6 +1005,5 @@ a.perf-chip:hover {
   .row .pbox { grid-column: 2; }
   .row .btn { grid-column: 1 / -1; }
 
-  .series-head h1 { font-size: 22px; }
-  .catalog-tab { padding: 10px 14px; }
+  .mover-card { flex-basis: 200px; }
 }
