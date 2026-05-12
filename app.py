@@ -372,7 +372,16 @@ async def _runtime_error_handler(request, exc: RuntimeError):
 
 @app.get("/")
 def root_health():
-    """Liveness probe. Phase-1 data-collection mode."""
+    """Root endpoint.
+
+    Default: JSON liveness probe (so the API host stays a clean JSON surface).
+    Storefront-test deploys set STOREFRONT_AS_LANDING=true so the bare host
+    redirects to /store — saves users from hitting a JSON wall of text when
+    they tap the URL. /healthz remains the canonical health probe either way.
+    """
+    if os.environ.get("STOREFRONT_AS_LANDING", "false").lower() == "true":
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/store", status_code=307)
     return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
 
 
