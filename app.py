@@ -3975,6 +3975,26 @@ def store_events_near(
     }
 
 
+def _section_sort_key(s: str) -> tuple:
+    """Sort key for venue sections. Letters before digits (Floor, Courtside,
+    GA come before 100, 101, etc.); within each group, natural-numeric for
+    digits and case-insensitive alpha for letters. Mixed strings (e.g. "100A")
+    sort with the numeric group by their leading digits."""
+    s = (s or "").strip()
+    if not s:
+        return (2, "")
+    if s[0].isalpha():
+        return (0, s.lower())
+    # Numeric or mixed (digit-leading) — extract leading digits for natural sort.
+    digits = ""
+    for ch in s:
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    return (1, int(digits) if digits else 0, s.lower())
+
+
 def _csv(v: str | None) -> list[str]:
     return [s.strip() for s in (v or "").split(",") if s.strip()]
 
@@ -4365,17 +4385,26 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
 
     f = _normalize_filters(filters)
 
-    # Capture the full section universe BEFORE applying any section filter,
-    # so the UI can render section chips that don't disappear once the user
-    # narrows the listings. Sorted naturally (so "100, 102, 200" not
-    # alphabetic). Section + zone filters DO narrow this set (you only see
-    # sections within the picked zone) — that's intentional, the section
-    # picker should reflect the zone context.
+    # Capture the full section universe BEFORE applying any section filter
+    # so the UI can render section chips that don't disappear when the user
+    # narrows the listings. Letter-prefixed sections (Floor, Courtside, GA,
+    # etc.) sort BEFORE numeric sections per the StubHub/SeatGeek convention;
+    # numeric sections sort naturally (1, 2, 10, 100 — not lex-order).
     sections_available = sorted(
         {str(tg.get("section") or "").strip()
          for tg in eligible if tg.get("section")},
-        key=lambda s: (len(s), s),  # rough natural sort: "100" before "1000"
+        key=_section_sort_key,
     )
+
+    # Distinct quantities the seller offers across the unfiltered listing
+    # set. UI uses this to build the min-qty dropdown so we don't offer
+    # "any" when nothing sells in singles, or "4+" when no listing has a
+    # split ≥ 4. Pre-min_qty-filter so the dropdown stays useful as the
+    # user narrows.
+    splits_available = sorted({
+        int(s) for tg in eligible for s in (tg.get("splits") or [])
+        if (isinstance(s, int) or str(s).isdigit())
+    })
 
     section_set = {s.lower() for s in f["section"]}
     if section_set:
@@ -4570,6 +4599,10 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
         # narrows. Without this the chips disappear after one click and
         # multi-select feels broken.
         "sections_available": sections_available,
+        # Distinct seller-offered quantities (union of splits arrays in the
+        # unfiltered set). UI builds the min-qty dropdown from this so we
+        # don't offer values no listing actually sells in.
+        "splits_available": splits_available,
         "filters": f,
         # 'cache' (≤10s old, live mode) | 'live' (live mode) | 'snapshot' (SQL-only mode)
         "inventory_source": tg_source,

@@ -7,6 +7,17 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+  // Section sort key — mirrors the server's _section_sort_key. Letter-prefixed
+  // sections (Floor, Courtside, GA) come before numeric (100, 101). Numeric
+  // sections sort naturally (1, 2, 10, 100 — not lex 1, 10, 100, 2).
+  function sectionSortCmp(a, b) {
+    const aAlpha = /^[A-Za-z]/.test(a);
+    const bAlpha = /^[A-Za-z]/.test(b);
+    if (aAlpha && !bAlpha) return -1;
+    if (!aAlpha && bAlpha) return 1;
+    return a.localeCompare(b, undefined, { numeric: true });
+  }
+
   function fmtMoney(v) {
     if (v == null || isNaN(Number(v))) return "—";
     return "$" + Number(v).toLocaleString(undefined, {
@@ -264,6 +275,10 @@
     // selects one and the listings narrow. Multi-select needs all chips
     // to stay clickable.
     let sectionsAvailable = [];
+    // Quantities the seller offers (`splits_available`). The min-qty
+    // dropdown is rebuilt from this list — no "any" when nothing sells
+    // singles, no "4+" when no listing has a split ≥ 4.
+    let splitsAvailable = [];
     let event = null;
     let zonesAvailable = [];   // populated from /api/store/events/{id}/zones
     let resolvedShare = null;  // populated when arriving via /s/{id}
@@ -585,6 +600,46 @@
       }
     }
 
+    // Rebuild the min-qty <select> so it only lists qtys the seller actually
+    // offers. Server passes us `splits_available` — the distinct split values
+    // across all listings (pre-min_qty-filter). We add "any" as the first
+    // option only when at least one listing has a single-seat split, so a
+    // venue that sells exclusively in pairs/quads doesn't tease "any" to
+    // a shopper. Preserves the user's current selection if still valid.
+    function rebuildMinQtyOptions(splits, currentValue) {
+      if (!minQtyInput) return;
+      const has1 = splits.includes(1);
+      const uniques = Array.from(new Set(splits)).filter(n => n > 1).sort((a, b) => a - b);
+      const desired = [
+        // "any" only when single tickets exist somewhere
+        ...(has1 ? [{ v: "", label: "any" }] : []),
+        ...uniques.map(n => ({ v: String(n), label: `${n}+` })),
+      ];
+      if (!desired.length) {
+        // No listings at all (or no split data) — show a single inert option.
+        desired.push({ v: "", label: "any" });
+      }
+      minQtyInput.innerHTML = "";
+      const wanted = currentValue != null ? String(currentValue) : "";
+      let preserveOK = false;
+      for (const o of desired) {
+        const opt = document.createElement("option");
+        opt.value = o.v;
+        opt.textContent = o.label;
+        if (o.v === wanted) { opt.selected = true; preserveOK = true; }
+        minQtyInput.append(opt);
+      }
+      // If the user's previous selection isn't valid anymore (e.g. they
+      // had "4+" and the filter now leaves only single+pair listings),
+      // fall back to the first option and re-fire the filter to keep
+      // URL state honest.
+      if (!preserveOK && currentValue != null && currentValue !== "") {
+        suppressApply = true;
+        try { minQtyInput.value = ""; } finally { suppressApply = false; }
+        scheduleApply();
+      }
+    }
+
     function renderSectionChips(activeSections) {
       // Sections come from `sections_available` (server-side, unfiltered
       // universe). Falls back to the currently-loaded listings if the
@@ -595,8 +650,9 @@
       const fromServer = sectionsAvailable || [];
       const fromListings = allListings.map(l => String(l.section || "").trim()).filter(Boolean);
       const activeSet = new Set(activeSections || []);
+      // Letter-prefixed sections (Floor, Courtside, GA) come before numeric.
       const all = Array.from(new Set([...fromServer, ...fromListings, ...activeSet]))
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        .sort(sectionSortCmp);
       if (!all.length) {
         sectionRow.hidden = true;
         return;
@@ -695,6 +751,12 @@
       // chip group keeps showing every section even after the user narrows.
       if (Array.isArray(res.sections_available) && res.sections_available.length) {
         sectionsAvailable = res.sections_available;
+      }
+      // Same trick for split-quantities. Rebuild the min-qty dropdown to
+      // match what's actually offered.
+      if (Array.isArray(res.splits_available)) {
+        splitsAvailable = res.splits_available.slice();
+        rebuildMinQtyOptions(splitsAvailable, readFiltersFromUI().min_qty);
       }
       const filters = res.filters || readFiltersFromUI();
 
@@ -951,6 +1013,10 @@
           const url = `${location.origin}${created.url}`;
           urlInput.value = url;
           await copyToClipboard(url);
+          // Surface the expiry the server actually chose (may be capped at
+          // event_start + 1h even if user picked 7 days). DOM-built so the
+          // server's ISO string never lands in innerHTML.
+          renderShareExpiryHint(mb, created.expires_at);
         } catch (e) {
           alert(`Could not create link: ${e.message}`);
           copyBtn.textContent = "Generate link";
@@ -1010,6 +1076,33 @@
     }
 
     bootstrap();
+  }
+
+  // Replace any prior expiry hint in the share modal with a fresh "Expires at
+  // {date}" note. Called after a revocable link is generated so the user can
+  // confirm the server's chosen expiry (auto-cap may have moved it earlier
+  // than the dropdown selection). DOM-built — date string from server.
+  function renderShareExpiryHint(modalBody, expiresAtIso) {
+    if (!modalBody) return;
+    // Remove any prior hint so repeated Generate clicks don't stack.
+    const prior = modalBody.querySelector(".share-expiry-hint");
+    if (prior) prior.remove();
+    if (!expiresAtIso) return;
+    let when;
+    try {
+      const d = new Date(expiresAtIso);
+      when = isNaN(d.getTime()) ? null : d.toLocaleString();
+    } catch { when = null; }
+    if (!when) return;
+    const note = document.createElement("p");
+    note.className = "share-expiry-hint muted";
+    note.style.cssText = "font-size: 12px; margin: 8px 0 0; padding: 8px 10px; background: rgba(74,222,128,0.06); border: 1px solid rgba(74,222,128,0.18); border-radius: 6px; color: var(--good);";
+    note.append(document.createTextNode("Active until "));
+    const strong = document.createElement("strong");
+    strong.textContent = when;
+    note.append(strong);
+    note.append(document.createTextNode(" · revoke any time at /store/shares"));
+    modalBody.append(note);
   }
 
   function escapeHtml(s) {
