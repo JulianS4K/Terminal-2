@@ -145,6 +145,101 @@
     return out;
   }
 
+  // Format a single holiday/calendar hit as a small chip. Returns a span
+  // element or null when nothing meaningful is set. Three kinds:
+  //   day_of       → "Memorial Day"
+  //   nearby       → "Memorial Day weekend (Mon May 25)"
+  //   school_break → "Summer Break"
+  function buildHolidayBadge(holiday, opts) {
+    if (!holiday || !holiday.label) return null;
+    const compact = !!(opts && opts.compact);
+    const span = document.createElement("span");
+    const impact = holiday.impact === "boost" ? "boost" : "neutral";
+    span.className = `holiday-pill kind-${holiday.kind || "day_of"} impact-${impact}`;
+    let label = holiday.label;
+    // Nearby gets a short date suffix when not compact ("(Mon May 25)").
+    if (holiday.kind === "nearby" && !compact && holiday.date) {
+      const m = String(holiday.date).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) {
+        const d = new Date(+m[1], +m[2] - 1, +m[3]);
+        const day = d.toLocaleDateString(undefined, {
+          weekday: "short", month: "short", day: "numeric",
+        });
+        label += ` (${day})`;
+      }
+    }
+    span.textContent = label;
+    return span;
+  }
+
+  // Render the weather row for an event detail page. Two layouts:
+  //   - With alerts: red severity-aware banner first, then forecast line
+  //     (when present)
+  //   - No alerts, forecast only: a single neutral pill
+  // Returns a DocumentFragment ready to append; empty when nothing to show.
+  function buildWeatherRow(weather) {
+    const frag = document.createDocumentFragment();
+    if (!weather) return frag;
+
+    // Alerts: render each as a top-line warning. Severity-aware coloring.
+    const alerts = Array.isArray(weather.alerts) ? weather.alerts : [];
+    alerts.forEach((a) => {
+      const div = document.createElement("div");
+      const sev = (a.severity || "").toLowerCase();
+      div.className = `weather-alert severity-${sev || "minor"}`;
+      const icon = document.createElement("span");
+      icon.className = "weather-alert-icon";
+      icon.textContent = "⚠";
+      const txt = document.createElement("span");
+      txt.className = "weather-alert-text";
+      // Prefer the short event ("Severe Thunderstorm Warning") + headline if
+      // short enough; otherwise just the event name.
+      const headline = a.headline || "";
+      const evtName = a.event || "Weather alert";
+      txt.textContent = headline && headline.length < 90
+        ? `${evtName} — ${headline}`
+        : evtName;
+      div.append(icon, txt);
+      frag.append(div);
+    });
+
+    // Forecast line — only when set (outdoor + ≤7d per server rules).
+    if (weather.forecast) {
+      const f = weather.forecast;
+      const div = document.createElement("div");
+      div.className = "weather-row";
+      const parts = [];
+      if (f.temp_f != null) {
+        parts.push(`${Math.round(Number(f.temp_f))}°F`);
+      }
+      if (f.summary) parts.push(String(f.summary));
+      if (f.precip_pct != null) {
+        parts.push(`${Number(f.precip_pct)}% rain`);
+      }
+      if (f.wind_mph != null && Number(f.wind_mph) >= 1) {
+        parts.push(`${Math.round(Number(f.wind_mph))}mph wind`);
+      }
+      const icon = document.createElement("span");
+      icon.className = "weather-icon";
+      // Pick an icon by summary keyword — cheap heuristic, no emoji library.
+      const summary = String(f.summary || "").toLowerCase();
+      let glyph = "🌤";
+      if (summary.includes("thunder")) glyph = "⛈";
+      else if (summary.includes("snow")) glyph = "❄";
+      else if (summary.includes("rain") || summary.includes("drizzle") || summary.includes("shower")) glyph = "🌧";
+      else if (summary.includes("fog")) glyph = "🌫";
+      else if (summary.includes("overcast")) glyph = "☁";
+      else if (summary.includes("clear")) glyph = "☀";
+      icon.textContent = glyph;
+      const txt = document.createElement("span");
+      txt.textContent = parts.join(" · ");
+      div.append(icon, txt);
+      frag.append(div);
+    }
+
+    return frag;
+  }
+
   // ---------- Catalog page ----------
   function mountCatalog() {
     const form = $("#searchForm");
@@ -203,9 +298,10 @@
         where.className = "where";
         where.textContent = [ev.venue_name, ev.venue_location].filter(Boolean).join(" · ");
 
-        // Context strip (rivalry / series / tournament) — compact variant for
-        // catalog cards. Skipped silently when none apply. Compact mode drops
-        // date ranges and the Wikipedia link so the card stays scannable.
+        // Context strip (rivalry / series / tournament / holiday) — compact
+        // variant for catalog cards. Skipped silently when none apply.
+        // Compact mode drops date ranges and the Wikipedia link so the card
+        // stays scannable. Holiday gets its own pill kind (warm yellow).
         const ctxRow = document.createElement("div");
         ctxRow.className = "card-context";
         const badges = buildContextBadges(
@@ -213,6 +309,8 @@
           { compact: true },
         );
         badges.forEach((b) => ctxRow.append(b));
+        const holidayBadge = buildHolidayBadge(ev.holiday, { compact: true });
+        if (holidayBadge) ctxRow.append(holidayBadge);
 
         const meta = document.createElement("div");
         meta.className = "meta";
@@ -234,7 +332,7 @@
         meta.append(left, right);
 
         a.append(head, where);
-        if (badges.length) a.append(ctxRow);
+        if (badges.length || holidayBadge) a.append(ctxRow);
         a.append(meta);
         grid.append(a);
       }
@@ -263,6 +361,7 @@
     const urlParams = new URLSearchParams(location.search);
     const performerId = urlParams.get("performer_id");
     const venueId = urlParams.get("venue_id");
+    const startingTab = urlParams.get("tab") === "series" ? "series" : "events";
     const qs = new URLSearchParams({ limit: "500" });
     if (performerId) qs.set("performer_id", performerId);
     if (venueId) qs.set("venue_id", venueId);
@@ -272,11 +371,189 @@
         allEvents = res.events || [];
         renderCatalogFilterBanner(performerId, venueId, allEvents);
         render(allEvents, "all");
+        // Tab toggle: only meaningful for one-MLB-performer views. We can't
+        // know the league until we've loaded the events (since the league
+        // tag rides on each event row). Once we have data, decide whether
+        // to surface the [Events] [Series] tabs.
+        wireCatalogTabs({
+          performerId,
+          startingTab,
+          isMlb: detectMlbPerformer(allEvents, performerId),
+        });
       })
       .catch((err) => {
         status.textContent = `Couldn't load events: ${err.message}`;
         status.style.color = "var(--bad)";
       });
+  }
+
+  // Returns true when the user filtered to a single performer and that
+  // performer is in MLB. Uses the primary_performer_league field attached
+  // to each catalog row. Falls back to checking any row's league since
+  // performer_id filter guarantees they're all the same performer.
+  function detectMlbPerformer(events, performerId) {
+    if (!performerId || !events || !events.length) return false;
+    for (const e of events) {
+      if (e.primary_performer_league && String(e.primary_performer_league).toUpperCase() === "MLB") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Wire the [Events] [Series] tab toggle. Hidden when isMlb=false. When
+  // user clicks Series, fetches /api/store/series and replaces the grid
+  // with a stacked series list.
+  function wireCatalogTabs({ performerId, startingTab, isMlb }) {
+    const tabs = $("#catalogTabs");
+    const grid = $("#grid");
+    const seriesList = $("#seriesList");
+    const empty = $("#empty");
+    const status = $("#status");
+    if (!tabs || !grid || !seriesList) return;
+
+    if (!isMlb || !performerId) {
+      tabs.hidden = true;
+      return;
+    }
+    tabs.hidden = false;
+
+    const eventsTab = tabs.querySelector('[data-tab="events"]');
+    const seriesTab = tabs.querySelector('[data-tab="series"]');
+
+    let seriesLoaded = false;
+    let seriesData = null;
+
+    function setActive(name) {
+      const isEv = name === "events";
+      eventsTab.classList.toggle("is-active", isEv);
+      seriesTab.classList.toggle("is-active", !isEv);
+      eventsTab.setAttribute("aria-selected", String(isEv));
+      seriesTab.setAttribute("aria-selected", String(!isEv));
+
+      if (isEv) {
+        grid.hidden = false;
+        seriesList.hidden = true;
+        empty.hidden = grid.children.length > 0;
+      } else {
+        grid.hidden = true;
+        seriesList.hidden = false;
+        empty.hidden = true;
+        if (!seriesLoaded) {
+          status.hidden = false;
+          status.textContent = "Loading series…";
+          api(`/api/store/series?performer_id=${encodeURIComponent(performerId)}`)
+            .then((res) => {
+              seriesData = res;
+              seriesLoaded = true;
+              renderSeriesList(seriesList, res);
+              status.hidden = true;
+            })
+            .catch((err) => {
+              status.textContent = `Couldn't load series: ${err.message}`;
+              status.style.color = "var(--bad)";
+            });
+        }
+      }
+
+      // Reflect into the URL so the choice is shareable + survives reload.
+      const url = new URL(location.href);
+      if (isEv) {
+        url.searchParams.delete("tab");
+      } else {
+        url.searchParams.set("tab", "series");
+      }
+      history.replaceState({}, "", url.toString());
+    }
+
+    eventsTab.addEventListener("click", () => setActive("events"));
+    seriesTab.addEventListener("click", () => setActive("series"));
+
+    setActive(startingTab);
+  }
+
+  // Render the Series tab body — one card per upcoming series. Each row
+  // shows opponent, home/away tag, dates, venue, game count, cheapest
+  // from_price, and (when applicable) the rivalry chip + branded name.
+  function renderSeriesList(host, payload) {
+    host.replaceChildren();
+    const list = (payload && payload.series) || [];
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No upcoming series for this team. They may all be single-game weeks.";
+      host.append(empty);
+      return;
+    }
+    for (const s of list) {
+      const a = document.createElement("a");
+      a.className = "series-row";
+      // Click → /store/series/<lead_event_id> drops into the stacked view.
+      a.href = s.lead_event_id ? `/store/series/${Number(s.lead_event_id) || 0}` : "#";
+
+      const head = document.createElement("div");
+      head.className = "series-row-head";
+      const title = document.createElement("div");
+      title.className = "series-row-title";
+      // "vs Boston Red Sox" or "at Seattle Mariners" — matchup line.
+      title.textContent = (s.is_home ? "vs " : "at ") + (s.opponent || "?");
+      head.append(title);
+      const tag = document.createElement("span");
+      tag.className = "series-row-tag " + (s.is_home ? "home" : "away");
+      tag.textContent = s.is_home ? "HOME" : "AWAY";
+      head.append(tag);
+      if (s.branded_name) {
+        const branded = document.createElement("span");
+        branded.className = "ctx-badge series";
+        branded.textContent = s.branded_name;
+        head.append(branded);
+      }
+      if (s.rivalry) {
+        const r = s.rivalry;
+        const intensity = r.intensity || "high";
+        const span = document.createElement("span");
+        span.className = `ctx-badge rivalry intensity-${intensity}`;
+        span.textContent = r.is_branded ? (r.name || "rivalry") : (intensity === "historic" ? "Historic rivalry" : "Rivalry");
+        head.append(span);
+      }
+      a.append(head);
+
+      const meta = document.createElement("div");
+      meta.className = "series-row-meta";
+      const datesEl = document.createElement("span");
+      datesEl.textContent = fmtDateRange(s.series_start, s.series_end);
+      meta.append(datesEl);
+      meta.append(document.createTextNode(" · "));
+      const countEl = document.createElement("span");
+      countEl.textContent = `${s.game_count || 0} games`;
+      meta.append(countEl);
+      meta.append(document.createTextNode(" · "));
+      const venueEl = document.createElement("span");
+      venueEl.textContent = s.venue_name || "";
+      meta.append(venueEl);
+      a.append(meta);
+
+      const foot = document.createElement("div");
+      foot.className = "series-row-foot";
+      if (s.from_price != null) {
+        const fp = document.createElement("span");
+        fp.className = "from";
+        const price = document.createElement("span");
+        price.className = "price";
+        price.textContent = fmtMoney(s.from_price);
+        fp.append("from ", price);
+        foot.append(fp);
+      }
+      if (s.total_tickets) {
+        const tx = document.createElement("span");
+        tx.className = "muted";
+        tx.textContent = `${s.total_tickets} tix across series`;
+        foot.append(tx);
+      }
+      a.append(foot);
+
+      host.append(a);
+    }
   }
 
   // Shows a "Showing events for ___" banner above the catalog when the user
@@ -946,20 +1223,34 @@
         perfEl.append(wrap);
       });
 
-      // Context strip — rivalry / MLB series / tournament. Full variant
-      // (includes date ranges and Wikipedia link). Container stays hidden
-      // when none of the three apply so the heading area doesn't reserve
-      // empty space.
+      // Context strip — rivalry / MLB series / tournament / holiday +
+      // weather. Full variant (includes date ranges and Wikipedia link).
+      // Container stays hidden when nothing applies so the header area
+      // doesn't reserve empty space.
       const ctxEl = $("#evContext");
       if (ctxEl) {
         ctxEl.replaceChildren();
-        const ctxBadges = buildContextBadges(res.context, { compact: false });
-        if (ctxBadges.length) {
-          ctxBadges.forEach((b) => ctxEl.append(b));
-          ctxEl.hidden = false;
-        } else {
-          ctxEl.hidden = true;
+        const ctx = res.context || {};
+        const ctxBadges = buildContextBadges(ctx, { compact: false });
+        const holidayBadge = buildHolidayBadge(ctx.holiday, { compact: false });
+        let any = false;
+        if (ctxBadges.length || holidayBadge) {
+          // Pills row first (badges + holiday share a flex line).
+          const pills = document.createElement("div");
+          pills.className = "context-pills";
+          ctxBadges.forEach((b) => pills.append(b));
+          if (holidayBadge) pills.append(holidayBadge);
+          ctxEl.append(pills);
+          any = true;
         }
+        // Weather row beneath the pills — alerts + forecast line. Renders
+        // its own fragment so we don't have to know the alert count here.
+        const weatherFrag = buildWeatherRow(ctx.weather);
+        if (weatherFrag && weatherFrag.childNodes.length) {
+          ctxEl.append(weatherFrag);
+          any = true;
+        }
+        ctxEl.hidden = !any;
       }
 
       const map = event.configuration?.seating_chart_medium || event.configuration?.seating_chart_large;
@@ -1391,7 +1682,158 @@
     load();
   }
 
-  window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
+  // ---------- MLB series detail page ----------
+  //
+  // URL: /store/series/{event_id}
+  //
+  // Loads /api/store/series/{event_id} which returns:
+  //   series: { home_team, away_team, venue_name, series_start, series_end,
+  //             span_days, game_count, branded_name, rivalry, from_price }
+  //   games:  [ { id, game_number, name, occurs_at_local, venue_name,
+  //               from_price, retail_median, owned_tickets_count,
+  //               owned_groups_count, weather, holiday, rivalry } ]
+  //
+  // Renders the stacked-cards layout: header (matchup + branded name +
+  // rivalry tag + dates) followed by one card per game. Each game card
+  // links into the standard event-detail page where the user can filter
+  // and reserve.
+  function mountSeries() {
+    const status = $("#status");
+    const header = $("#header");
+    const games = $("#games");
+
+    const m = location.pathname.match(/^\/store\/series\/(\d+)$/);
+    const eventId = m ? Number(m[1]) : null;
+    if (!eventId) {
+      status.textContent = "Couldn't parse event id from URL.";
+      status.style.color = "var(--bad)";
+      return;
+    }
+
+    api(`/api/store/series/${eventId}`)
+      .then((res) => {
+        const s = res.series || {};
+        const gs = Array.isArray(res.games) ? res.games : [];
+
+        // Header — matchup line "Yankees vs Red Sox" with branded name
+        // surfacing as the H1 when set ("Subway Series"). Falls back to
+        // the raw matchup otherwise.
+        const titleEl = $("#seriesTitle");
+        titleEl.textContent = s.branded_name
+          ? s.branded_name
+          : `${s.away_team || ""} at ${s.home_team || ""}`.trim();
+
+        const badgesEl = $("#seriesBadges");
+        badgesEl.replaceChildren();
+        if (s.branded_name) {
+          // When using branded as H1, surface the matchup as a subtitle
+          // chip so users can confirm who's playing without guessing
+          // which two teams are in this rivalry.
+          const matchup = document.createElement("span");
+          matchup.className = "ctx-badge series";
+          matchup.textContent = `${s.away_team} at ${s.home_team}`;
+          badgesEl.append(matchup);
+        }
+        if (s.rivalry) {
+          const ctxBadges = buildContextBadges(
+            { rivalry: s.rivalry },
+            { compact: false },
+          );
+          ctxBadges.forEach((b) => badgesEl.append(b));
+        }
+
+        $("#seriesVenue").textContent = s.venue_name || "";
+        $("#seriesDates").textContent = fmtDateRange(s.series_start, s.series_end);
+        $("#seriesCount").textContent = `${s.game_count || gs.length} games`;
+        const fp = $("#seriesFromPrice");
+        if (s.from_price != null) {
+          fp.textContent = `from ${fmtMoney(s.from_price)} (cheapest game)`;
+        } else {
+          fp.textContent = "";
+        }
+
+        // Per-game cards — sortable left-to-right by game_number / date.
+        // Marks the highest-priced game as "premium" so buyers see at a
+        // glance which date sells highest (typically weekend / closing).
+        games.replaceChildren();
+        let premiumGameIdx = -1;
+        let premiumPrice = -Infinity;
+        gs.forEach((g, i) => {
+          const p = g.from_price != null ? Number(g.from_price) : null;
+          if (p != null && p > premiumPrice) {
+            premiumPrice = p;
+            premiumGameIdx = i;
+          }
+        });
+
+        gs.forEach((g, idx) => {
+          const a = document.createElement("a");
+          a.className = "series-game-card";
+          a.href = `/store/event/${Number(g.id) || 0}`;
+
+          const head = document.createElement("div");
+          head.className = "series-game-head";
+          const num = document.createElement("span");
+          num.className = "series-game-num";
+          num.textContent = `Game ${g.game_number || idx + 1}`;
+          head.append(num);
+          const when = document.createElement("span");
+          when.className = "series-game-when";
+          when.textContent = fmtWhen(g.occurs_at_local);
+          head.append(when);
+          if (idx === premiumGameIdx && gs.length > 1) {
+            const star = document.createElement("span");
+            star.className = "series-game-premium";
+            star.textContent = "★ priciest";
+            head.append(star);
+          }
+          a.append(head);
+
+          // Per-game weather + holiday badges live in their own row so
+          // the meta line stays clean. Holiday gets the compact pill;
+          // weather uses the same fragment builder as event detail.
+          const ctxRow = document.createElement("div");
+          ctxRow.className = "series-game-context";
+          const hBadge = buildHolidayBadge(g.holiday, { compact: true });
+          if (hBadge) ctxRow.append(hBadge);
+          const wFrag = buildWeatherRow(g.weather);
+          if (wFrag.childNodes.length) ctxRow.append(wFrag);
+          if (ctxRow.childNodes.length) a.append(ctxRow);
+
+          const meta = document.createElement("div");
+          meta.className = "series-game-meta";
+          const left = document.createElement("span");
+          left.className = "from";
+          if (g.from_price != null) {
+            const price = document.createElement("span");
+            price.className = "price";
+            price.textContent = fmtMoney(g.from_price);
+            left.append("from ", price);
+          } else {
+            left.textContent = "no listings";
+          }
+          const right = document.createElement("span");
+          right.className = "qty";
+          right.textContent = g.owned_tickets_count
+            ? `${g.owned_tickets_count} tix · ${g.owned_groups_count || 0} listings`
+            : "—";
+          meta.append(left, right);
+          a.append(meta);
+
+          games.append(a);
+        });
+
+        status.hidden = true;
+        header.hidden = false;
+        games.hidden = false;
+      })
+      .catch((err) => {
+        status.textContent = `Couldn't load series: ${err.message}`;
+        status.style.color = "var(--bad)";
+      });
+  }
+
+  window.Store = { mountCatalog, mountEvent, mountSharesAdmin, mountSeries };
 
   // Auto-mount based on body data-page. Lets HTML pages drop their inline
   // `<script>Store.mountX()</script>` so we can ship a strict CSP without
@@ -1401,6 +1843,7 @@
     if (page === "catalog") mountCatalog();
     else if (page === "event") mountEvent();
     else if (page === "shares") mountSharesAdmin();
+    else if (page === "series") mountSeries();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _autoMount);

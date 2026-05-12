@@ -683,27 +683,36 @@ def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
 
 
 def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
-    """Bulk-fetch rivalry / MLB-series / tournament context for many events.
+    """Bulk-fetch all five context dimensions a storefront card / detail page
+    might surface, in one helper.
 
     Returns:
-      { event_id: { "rivalry": {...}|None,
+      { event_id: { "rivalry":    {...}|None,
                     "mlb_series": {...}|None,
-                    "tournament": {...}|None } }
+                    "tournament": {...}|None,
+                    "weather":    {...}|None,
+                    "holiday":    {...}|None } }
 
-    Three views back this, each maintained by the context lane (not P1):
-      rivalry      ← v_rivalry_events            (mig 20260509530000)
-      mlb_series   ← v_mlb_game_series           (mig 20260509470000)
-      tournament   ← v_event_tournament_context  (mig 20260510010000)
+    Backing views (audit / context lanes — P1 reads only):
+      rivalry      ← v_rivalry_events             (mig 20260509530000)
+      mlb_series   ← v_mlb_game_series            (mig 20260509470000)
+      tournament   ← v_event_tournament_context   (mig 20260510010000)
+      weather      ← v_event_weather_with_fallback (mig 20260509560000)
+      holiday      ← v_event_calendar_context     (mig 20260509550000)
 
-    Missing views (per-env) degrade gracefully to None for that key — better
-    to show events without badges than to 500 the storefront.
+    Weather + holiday rules are applied here, not in the client, so the
+    storefront UI doesn't have to know about climatology vs forecast vs
+    severity tiers — it just renders what the server hands it.
+
+    Missing views (per-env) degrade gracefully to None for that key.
     """
     if not event_ids:
         return {}
 
     ids = [int(e) for e in event_ids if e is not None]
     ctx: dict[int, dict] = {
-        eid: {"rivalry": None, "mlb_series": None, "tournament": None}
+        eid: {"rivalry": None, "mlb_series": None, "tournament": None,
+              "weather": None, "holiday": None}
         for eid in ids
     }
 
@@ -787,6 +796,166 @@ def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
                 "league": r.get("espn_league"),
                 "circuit_name": r.get("circuit_name"),
             }
+    except Exception:
+        pass
+
+    # Weather: v_event_weather_with_fallback has fallback-coalesced + raw
+    # forecast/climatology columns + NWS alert JSON. Apply display rules
+    # server-side so the client just renders what's set:
+    #   - indoor + no alert       → None (hide)
+    #   - any venue + active NWS  → alert (always shows up to 16d)
+    #   - outdoor + ≤7d forecast  → full forecast
+    #   - outdoor 8-16d + alert   → alert only
+    #   - otherwise               → None
+    try:
+        rows = (db.table("v_event_weather_with_fallback")
+                  .select("tevo_event_id,days_to_event,weather_kind,is_indoor,"
+                          "fcst_temp_f,fcst_precip_pct,fcst_precip_in,"
+                          "fcst_wind_mph,fcst_gust_mph,fcst_summary,"
+                          "weather_alerts")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid not in ctx:
+                continue
+            days = r.get("days_to_event")
+            if days is None or days > 16 or days < 0:
+                continue  # too far out or past
+            alerts = r.get("weather_alerts") or []
+            kind = r.get("weather_kind") or ""
+            is_indoor = bool(r.get("is_indoor"))
+
+            # Slim NWS alerts down to fields the UI actually shows.
+            slim_alerts = []
+            for a in alerts[:3]:  # cap at 3 — anything more is noise
+                slim_alerts.append({
+                    "event": a.get("event"),
+                    "severity": a.get("severity"),
+                    "impact_tier": a.get("impact_tier"),
+                    "headline": a.get("headline"),
+                    "expires_at": a.get("expires_at"),
+                })
+
+            has_alert = bool(slim_alerts)
+            show_forecast = (
+                not is_indoor
+                and kind.startswith("forecast_outdoor")
+                and days <= 7
+                and r.get("fcst_temp_f") is not None
+            )
+
+            if not has_alert and not show_forecast:
+                continue  # nothing worth showing
+
+            w: dict = {
+                "days_to_event": days,
+                "is_indoor": is_indoor,
+                "alerts": slim_alerts,
+            }
+            if show_forecast:
+                w["forecast"] = {
+                    "temp_f": r.get("fcst_temp_f"),
+                    "summary": r.get("fcst_summary"),
+                    "precip_pct": r.get("fcst_precip_pct"),
+                    "precip_in": r.get("fcst_precip_in"),
+                    "wind_mph": r.get("fcst_wind_mph"),
+                    "gust_mph": r.get("fcst_gust_mph"),
+                }
+            ctx[eid]["weather"] = w
+    except Exception:
+        pass
+
+    # Holiday: v_event_calendar_context returns JSON arrays of holidays
+    # on/near the event date + active school breaks, each with precision
+    # (national/state/city) and impact (boost/neutral). Pick the single
+    # most-relevant pill to show — day-of beats nearby, city beats state
+    # beats national, "boost" beats "neutral".
+    try:
+        rows = (db.table("v_event_calendar_context")
+                  .select("tevo_event_id,event_date,is_holiday,"
+                          "within_holiday_window,school_break_active,"
+                          "holidays_today,holidays_nearby,school_breaks_active")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+
+        def _precision_rank(p: str) -> int:
+            return {"city": 0, "state": 1, "national": 2}.get(p or "national", 3)
+
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid not in ctx:
+                continue
+
+            today = r.get("holidays_today") or []
+            nearby = r.get("holidays_nearby") or []
+            breaks = r.get("school_breaks_active") or []
+
+            best: dict | None = None
+
+            # Day-of holiday: any precision, boost wins over neutral.
+            if today:
+                today_sorted = sorted(
+                    today,
+                    key=lambda h: (
+                        0 if h.get("impact") == "boost" else 1,
+                        _precision_rank(h.get("precision")),
+                    ),
+                )
+                h = today_sorted[0]
+                best = {
+                    "kind": "day_of",
+                    "label": h.get("name"),
+                    "impact": h.get("impact"),
+                    "precision": h.get("precision"),
+                    "date": r.get("event_date"),
+                }
+
+            # Nearby (±1 day) — only show if no day-of beat us.
+            if best is None and nearby:
+                nearby_sorted = sorted(
+                    nearby,
+                    key=lambda h: (
+                        0 if h.get("impact") == "boost" else 1,
+                        _precision_rank(h.get("precision")),
+                        abs(int(h.get("days_offset") or 0)),
+                    ),
+                )
+                h = nearby_sorted[0]
+                offset = int(h.get("days_offset") or 0)
+                suffix = " weekend" if abs(offset) == 1 else ""
+                best = {
+                    "kind": "nearby",
+                    "label": (h.get("name") or "") + suffix,
+                    "impact": h.get("impact"),
+                    "precision": h.get("precision"),
+                    "date": h.get("date"),
+                    "days_offset": offset,
+                }
+
+            # School break — only summer/winter (the only ones that meaningfully
+            # boost attendance for weekday games). Otherwise we'd label half
+            # the calendar with spring/fall breaks that don't move pricing.
+            if best is None and breaks:
+                summer_winter = [
+                    b for b in breaks
+                    if any(k in (b.get("name") or "").lower()
+                           for k in ("summer", "winter"))
+                ]
+                if summer_winter:
+                    summer_winter.sort(key=lambda b: _precision_rank(b.get("precision")))
+                    b = summer_winter[0]
+                    best = {
+                        "kind": "school_break",
+                        "label": b.get("name"),
+                        "impact": "boost",
+                        "precision": b.get("precision"),
+                        "start_date": b.get("start_date"),
+                        "end_date": b.get("end_date"),
+                    }
+
+            if best is not None:
+                ctx[eid]["holiday"] = best
     except Exception:
         pass
 
@@ -3855,8 +4024,13 @@ def store_events(
             "venue_name": ev.get("venue_name"),
             "venue_location": ev.get("venue_location"),
             "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_id": ev.get("primary_performer_id"),
             "primary_performer_logo": (a or {}).get("logo_default_url"),
             "primary_performer_color": (a or {}).get("color_primary"),
+            # League gates the MLB "Series" tab on the catalog. Clients
+            # use this to decide whether to render the tabbed UI when the
+            # user is filtered to one performer.
+            "primary_performer_league": (a or {}).get("espn_league"),
             "from_price": r.get("retail_min"),
             "owned_tickets_count": r.get("owned_tickets_count"),
             "owned_groups_count": r.get("owned_groups_count"),
@@ -3866,6 +4040,8 @@ def store_events(
             "rivalry": ctx.get("rivalry"),
             "mlb_series": ctx.get("mlb_series"),
             "tournament": ctx.get("tournament"),
+            "weather": ctx.get("weather"),
+            "holiday": ctx.get("holiday"),
         })
         if len(out) >= cap:
             break
@@ -4940,6 +5116,294 @@ def store_event_zones(event_id: int):
     }
 
 
+def _resolve_series_row(db, event_id: int) -> dict | None:
+    """Look up the v_mlb_game_series row that contains this event_id (if any).
+    PostgREST can't filter on array membership cleanly via the table builder,
+    so we pull the seriess for the event's date window then scan in Python.
+    Returns the matching row dict or None.
+    """
+    # Look up event date + venue to narrow the v_mlb_game_series scan.
+    ev = (db.table("events")
+            .select("id,venue_id,occurs_at_local,primary_performer_name")
+            .eq("id", event_id).limit(1).execute().data) or []
+    if not ev:
+        return None
+    row = ev[0]
+    occurs = row.get("occurs_at_local")
+    if not occurs:
+        return None
+    # Series span ≤ a week — pull anything that ends on or after the event
+    # date with the same venue. Smaller candidate set than scanning the view.
+    target_date = str(occurs)[:10]
+    rows = (db.table("v_mlb_game_series")
+              .select("home_team,away_team,venue_name,venue_id,"
+                      "series_start,series_end,series_span_days,"
+                      "game_count,tevo_event_ids,branded_series_name")
+              .gte("series_end", target_date)
+              .eq("venue_id", row.get("venue_id"))
+              .execute().data) or []
+    for s in rows:
+        ids_arr = s.get("tevo_event_ids") or []
+        ids_arr = [int(x) for x in ids_arr if x is not None]
+        if event_id in ids_arr:
+            s["tevo_event_ids"] = ids_arr
+            return s
+    return None
+
+
+def _attach_series_pricing(db, series_rows: list[dict]) -> None:
+    """Mutates each series row to add `from_price` (cheapest retail_min across
+    sibling event ids) and `total_tickets`. Single roundtrip across all
+    siblings via latest_event_metrics."""
+    if not series_rows:
+        return
+    all_ids: list[int] = []
+    for s in series_rows:
+        all_ids.extend(s.get("tevo_event_ids") or [])
+    all_ids = [int(x) for x in all_ids if x is not None]
+    if not all_ids:
+        return
+    try:
+        metrics = (db.table("latest_event_metrics")
+                     .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
+                     .in_("event_id", all_ids)
+                     .execute().data) or []
+    except Exception:
+        metrics = []
+    by_id = {int(m["event_id"]): m for m in metrics if m.get("event_id") is not None}
+    for s in series_rows:
+        sibs = s.get("tevo_event_ids") or []
+        prices = [by_id[i]["retail_min"] for i in sibs
+                  if i in by_id and by_id[i].get("retail_min") is not None]
+        tix = sum(by_id[i].get("owned_tickets_count") or 0 for i in sibs if i in by_id)
+        s["from_price"] = min(prices) if prices else None
+        s["total_tickets"] = tix
+
+
+@app.get("/api/store/series")
+def store_series_list(performer_id: int, limit: int = 20):
+    """List upcoming MLB series for one performer. Powers the 'Series' tab
+    on /store?performer_id=<id> when the performer is in MLB.
+
+    Each series row holds: matchup (home vs away), is_home flag for the
+    performer, date range, venue, game count, cheapest from_price across
+    games, optional branded name (Subway Series), and a rivalry tag joined
+    via v_rivalry_events on any sibling event.
+
+    Non-MLB performers return an empty list (200, not 404) so the client
+    can hide the tab without distinguishing 'no series yet' from 'wrong league'.
+    """
+    db = require_sb()
+
+    # Performer existence + league gate.
+    pm = (db.table("performer_metadata")
+            .select("performer_id,name,espn_league")
+            .eq("performer_id", performer_id).limit(1).execute().data) or []
+    if not pm:
+        raise HTTPException(404, f"performer {performer_id} not found")
+    perf_name = pm[0].get("name") or ""
+    league = (pm[0].get("espn_league") or "").upper()
+    if league != "MLB":
+        return {"performer_id": performer_id, "performer_name": perf_name,
+                "league": league, "series": []}
+
+    # Series the performer is on EITHER side of, ending today or later.
+    # Two queries instead of a PostgREST or_() filter: team names like
+    # "St. Louis Cardinals" contain periods, which PostgREST treats as
+    # operator separators inside or_(). Splitting + merging in Python is
+    # cheap and robust.
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    cap = max(1, min(limit, 60))
+
+    def _pull(side: str) -> list[dict]:
+        try:
+            return (db.table("v_mlb_game_series")
+                      .select("home_team,away_team,venue_name,venue_id,"
+                              "series_start,series_end,series_span_days,"
+                              "game_count,tevo_event_ids,branded_series_name")
+                      .gte("series_end", today_iso)
+                      .eq(side, perf_name)
+                      .order("series_start", desc=False)
+                      .limit(cap)
+                      .execute().data) or []
+        except Exception:
+            return []
+
+    home_rows = _pull("home_team")
+    away_rows = _pull("away_team")
+    # Dedupe by (home, away, venue, series_start) — shouldn't ever overlap
+    # since a team can't be both home and away in the same series, but
+    # belt+suspenders if the view ever returns surprises.
+    seen: set[tuple] = set()
+    rows: list[dict] = []
+    for r in sorted(home_rows + away_rows, key=lambda x: x.get("series_start") or ""):
+        key = (r.get("home_team"), r.get("away_team"),
+               r.get("venue_id"), r.get("series_start"))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(r)
+    rows = rows[:cap]
+
+    # Coerce id arrays + attach pricing.
+    for s in rows:
+        ids_arr = s.get("tevo_event_ids") or []
+        s["tevo_event_ids"] = [int(x) for x in ids_arr if x is not None]
+    _attach_series_pricing(db, rows)
+
+    # Rivalry tag — check whether ANY sibling event matches v_rivalry_events.
+    # We dedupe per series since the rivalry is matchup-level, not per-game.
+    all_sibling_ids: list[int] = []
+    for s in rows:
+        all_sibling_ids.extend(s.get("tevo_event_ids") or [])
+    rival_by_event: dict[int, dict] = {}
+    if all_sibling_ids:
+        try:
+            rr = (db.table("v_rivalry_events")
+                    .select("tevo_event_id,rivalry_name,league,is_branded,"
+                            "rivalry_intensity,wikipedia_url")
+                    .in_("tevo_event_id", all_sibling_ids)
+                    .execute().data) or []
+            for r in rr:
+                rival_by_event.setdefault(int(r["tevo_event_id"]), r)
+        except Exception:
+            rival_by_event = {}
+
+    out = []
+    for s in rows:
+        sib_ids = s.get("tevo_event_ids") or []
+        is_home = (s.get("home_team") == perf_name)
+        opponent = s.get("away_team") if is_home else s.get("home_team")
+        rivalry = None
+        for i in sib_ids:
+            if i in rival_by_event:
+                rr = rival_by_event[i]
+                rivalry = {
+                    "name": rr.get("rivalry_name"),
+                    "is_branded": bool(rr.get("is_branded")),
+                    "intensity": rr.get("rivalry_intensity"),
+                    "wikipedia_url": rr.get("wikipedia_url"),
+                }
+                break
+        out.append({
+            "lead_event_id": sib_ids[0] if sib_ids else None,
+            "is_home": is_home,
+            "opponent": opponent,
+            "venue_name": s.get("venue_name"),
+            "series_start": s.get("series_start"),
+            "series_end": s.get("series_end"),
+            "span_days": s.get("series_span_days"),
+            "game_count": s.get("game_count"),
+            "branded_name": s.get("branded_series_name"),
+            "from_price": s.get("from_price"),
+            "total_tickets": s.get("total_tickets"),
+            "tevo_event_ids": sib_ids,
+            "rivalry": rivalry,
+        })
+
+    return {
+        "performer_id": performer_id,
+        "performer_name": perf_name,
+        "league": league,
+        "series": out,
+        "count": len(out),
+    }
+
+
+@app.get("/api/store/series/{event_id}")
+def store_series_detail(event_id: int):
+    """Resolve an MLB series by any of its event ids. Returns the series
+    header (matchup, venue, date range, branded name) + per-game cards
+    (each with pricing, owned counts, weather + holiday context).
+
+    404s when the event isn't part of a known MLB regular-season series
+    (postseason, single-game, or non-MLB events).
+    """
+    db = require_sb()
+    s = _resolve_series_row(db, event_id)
+    if not s:
+        raise HTTPException(404, "event is not part of a known MLB series")
+
+    sib_ids: list[int] = s.get("tevo_event_ids") or []
+
+    # Per-game cards — name, date, venue, pricing, owned counts.
+    games_meta = (db.table("events")
+                    .select("id,name,occurs_at_local,venue_name,venue_location,"
+                            "primary_performer_name,primary_performer_id")
+                    .in_("id", sib_ids)
+                    .execute().data) or []
+    by_id = {int(g["id"]): g for g in games_meta}
+
+    try:
+        metrics = (db.table("latest_event_metrics")
+                     .select("event_id,owned_tickets_count,owned_groups_count,"
+                             "retail_min,retail_median,captured_at")
+                     .in_("event_id", sib_ids)
+                     .execute().data) or []
+    except Exception:
+        metrics = []
+    metrics_by_id = {int(m["event_id"]): m for m in metrics if m.get("event_id") is not None}
+
+    # Reuse the central context helper for rivalry / weather / holiday on
+    # every game card. Tournament + mlb_series unused here but harmless.
+    ctx_by_id = _bulk_event_context(db, sib_ids)
+
+    games_out: list[dict] = []
+    prices: list[float] = []
+    for pos, gid in enumerate(sib_ids, start=1):
+        g = by_id.get(gid) or {}
+        m = metrics_by_id.get(gid) or {}
+        c = ctx_by_id.get(gid) or {}
+        rp = m.get("retail_min")
+        if rp is not None:
+            try:
+                prices.append(float(rp))
+            except (TypeError, ValueError):
+                pass
+        games_out.append({
+            "id": gid,
+            "game_number": pos,
+            "name": g.get("name"),
+            "occurs_at_local": g.get("occurs_at_local"),
+            "venue_name": g.get("venue_name"),
+            "venue_location": g.get("venue_location"),
+            "primary_performer_name": g.get("primary_performer_name"),
+            "primary_performer_id": g.get("primary_performer_id"),
+            "from_price": rp,
+            "retail_median": m.get("retail_median"),
+            "owned_tickets_count": m.get("owned_tickets_count"),
+            "owned_groups_count": m.get("owned_groups_count"),
+            "captured_at": m.get("captured_at"),
+            "weather": c.get("weather"),
+            "holiday": c.get("holiday"),
+            "rivalry": c.get("rivalry"),
+        })
+
+    # Series-level rivalry (first hit on any game wins).
+    series_rivalry = None
+    for go in games_out:
+        if go.get("rivalry"):
+            series_rivalry = go["rivalry"]
+            break
+
+    return {
+        "series": {
+            "home_team": s.get("home_team"),
+            "away_team": s.get("away_team"),
+            "venue_name": s.get("venue_name"),
+            "venue_id": s.get("venue_id"),
+            "series_start": s.get("series_start"),
+            "series_end": s.get("series_end"),
+            "span_days": s.get("series_span_days"),
+            "game_count": s.get("game_count"),
+            "branded_name": s.get("branded_series_name"),
+            "rivalry": series_rivalry,
+            "from_price": min(prices) if prices else None,
+        },
+        "games": games_out,
+    }
+
+
 @app.post("/api/store/reserve")
 def store_reserve(payload: dict = Body(...)):
     """MVP placeholder: a real checkout is not wired up yet. Validates that
@@ -5014,6 +5478,14 @@ def store_index_page():
 @app.get("/store/event/{event_id}")
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
     return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+
+
+@app.get("/store/series/{event_id}")
+def store_series_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
+    """MLB series detail page — the stacked-cards view that resolves from
+    any event id in the series. Served as a static page; JS calls
+    /api/store/series/{event_id} to populate it."""
+    return FileResponse(os.path.join(STATIC_DIR, "store", "series.html"))
 
 
 # ---------- Share links (revocable, trackable) ----------

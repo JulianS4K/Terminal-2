@@ -785,6 +785,284 @@ a.perf-chip:hover {
   margin-top: 60px;
 }
 
+/* ----- Catalog tabs (Events / Series) -----
+   Only surfaced when the user is filtered to one MLB performer. Tab
+   indicator is the bottom accent border, like the existing chip groups. */
+.catalog-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 16px;
+}
+.catalog-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 18px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.catalog-tab:hover { color: var(--text); }
+.catalog-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* ----- Series list (catalog Series tab) ----- */
+.series-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.series-row {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color .12s, transform .12s;
+}
+.series-row:hover {
+  border-color: var(--accent-2);
+  transform: translateY(-1px);
+}
+.series-row-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.series-row-title {
+  font-weight: 700;
+  font-size: 16px;
+  margin-right: 4px;
+}
+.series-row-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+.series-row-tag.home {
+  background: rgba(110, 207, 130, 0.15);
+  color: #cfeed7;
+  border: 1px solid rgba(110, 207, 130, 0.4);
+}
+.series-row-tag.away {
+  background: rgba(156, 163, 175, 0.12);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.series-row-meta {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.series-row-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.series-row-foot .from { font-size: 12px; color: var(--muted); }
+.series-row-foot .price {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--accent-2);
+}
+.series-row-foot .muted { color: var(--muted); font-size: 11px; }
+
+/* ----- Series detail page (the stacked-cards view) ----- */
+.series-head { margin-bottom: 20px; }
+.series-head-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.series-head h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+.series-head-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.series-games {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.series-game-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color .12s, transform .12s;
+}
+.series-game-card:hover {
+  border-color: var(--accent-2);
+  transform: translateY(-1px);
+}
+.series-game-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.series-game-num {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--accent-2);
+}
+.series-game-when {
+  color: var(--muted);
+  font-size: 14px;
+}
+.series-game-premium {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warn);
+  letter-spacing: 0.4px;
+}
+.series-game-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.series-game-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.series-game-meta .from { font-size: 13px; color: var(--muted); }
+.series-game-meta .price {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--accent-2);
+}
+.series-game-meta .qty {
+  font-size: 11px;
+  color: var(--good);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ----- Holiday pills (calendar overlay) -----
+   Warm yellow palette, distinct from rivalry (orange) and series (blue).
+   "boost" gets full color, "neutral" stays muted so the eye lands on
+   high-impact dates first. */
+.holiday-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* Default glyph is day-of celebration; kind variants override below. */
+.holiday-pill::before {
+  content: "🎉";
+  font-size: 12px;
+  margin-right: 1px;
+}
+.holiday-pill.kind-nearby::before       { content: "📅"; }
+.holiday-pill.kind-school_break::before { content: "🎒"; }
+.holiday-pill.impact-boost {
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  background: rgba(250, 204, 21, 0.10);
+  color: #ffe69a;
+}
+.holiday-pill.impact-neutral {
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+}
+
+/* ----- Weather (event detail + series cards) -----
+   Two pieces: a top-tier alert line (severity-aware) and a forecast row
+   underneath. They flow vertically and both keep the same horizontal
+   rhythm as venue tags / context pills. */
+.context-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.weather-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.10);
+  color: #ffd1d1;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.weather-alert.severity-extreme,
+.weather-alert.severity-severe {
+  border-color: rgba(239, 68, 68, 0.7);
+  background: rgba(239, 68, 68, 0.18);
+  color: #ffe3e3;
+}
+.weather-alert.severity-moderate {
+  border-color: rgba(250, 204, 21, 0.5);
+  background: rgba(250, 204, 21, 0.10);
+  color: #ffe69a;
+}
+.weather-alert-icon { font-size: 14px; }
+.weather-alert-text { flex: 1; }
+
+.weather-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.10);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: #c6dcff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.weather-icon { font-size: 13px; }
+
+/* Card-level series game variant — match thinner card spacing */
+.series-game-context .weather-row {
+  margin-top: 0;
+}
+.series-game-context .weather-alert {
+  margin-top: 0;
+}
+
 /* ----- Responsive ----- */
 @media (max-width: 760px) {
   .event-body { grid-template-columns: 1fr; }
@@ -793,4 +1071,7 @@ a.perf-chip:hover {
   .row .qbox { grid-column: 1; text-align: left; }
   .row .pbox { grid-column: 2; }
   .row .btn { grid-column: 1 / -1; }
+
+  .series-head h1 { font-size: 22px; }
+  .catalog-tab { padding: 10px 14px; }
 }
