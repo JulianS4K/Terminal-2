@@ -4644,11 +4644,43 @@ def store_event_detail(
     )
 
 
+# Consumer-grade zone names follow a strict programmatic pattern:
+# "{Lower|Club|Upper|Floor|...} (Xs)" — e.g. "Lower (100s)", "Upper (400s)".
+# These were seeded across ~30 performer+venue pairs as a coarse bowl-level
+# fallback. Anything NOT matching this pattern is treated as the internal
+# (granular) taxonomy that S4K hand-curated per venue (e.g. "Courtside
+# Apples", "Club Platinum", "100 Garbage" for NYK at MSG).
+_CONSUMER_ZONE_NAME_RE = re.compile(
+    r"^(Lower|Club|Upper|Floor|Field|Mezzanine|Balcony|Loge|Terrace)\s*\(\d+s\)$",
+    re.IGNORECASE,
+)
+
+
+def _classify_zone_layer(name: str | None) -> str:
+    """Return 'consumer' for coarse bowl-level zones, 'internal' for the
+    hand-curated granular ones. Used by the storefront to prefer the
+    granular layer when both exist for an event."""
+    return "consumer" if _CONSUMER_ZONE_NAME_RE.match((name or "").strip()) else "internal"
+
+
 @app.get("/api/store/events/{event_id}/zones")
 def store_event_zones(event_id: int):
     """List curated zones with owned-ticket counts so the Share dialog can
-    offer zone choices. Falls through to an empty list if the event's
-    performer+venue has no curated zones yet (most events outside NYK@MSG)."""
+    offer zone choices.
+
+    Layer preference (per Julian's 2026-05-11 direction):
+      1. If the event's performer+venue has any INTERNAL (granular) zones
+         with matching owned tickets, return ONLY those. The granular
+         taxonomy is hand-curated (NYK at MSG has 22 zones — Courtside,
+         Club Platinum, etc.) and is the right shopper UX where available.
+      2. Else fall back to CONSUMER (coarse bowl-level) zones — the
+         "Lower (100s) / Club (200s) / Upper (300s) / Upper (400s)" set
+         that's been programmatically seeded across ~30 venues.
+      3. Else empty (most events outside the seeded set).
+
+    Response includes `layer` so the UI can label the chip group
+    appropriately if it ever wants to.
+    """
     db = require_sb()
     try:
         rows = db.rpc(
@@ -4657,8 +4689,23 @@ def store_event_zones(event_id: int):
         ).execute().data or []
     except Exception:
         rows = []
-    # Only surface curated zones — fallback/unmapped values are noisy and
-    # not stable enough to share by name.
+    # Only consider curated zones — fallback/unmapped names from
+    # derive_zone_fallback() are noisy and not safe to share by name.
+    curated = [r for r in rows if r.get("source") == "curated"]
+
+    internal = [r for r in curated if _classify_zone_layer(r.get("zone")) == "internal"]
+    consumer = [r for r in curated if _classify_zone_layer(r.get("zone")) == "consumer"]
+
+    if internal:
+        chosen = internal
+        layer = "internal"
+    elif consumer:
+        chosen = consumer
+        layer = "consumer"
+    else:
+        chosen = []
+        layer = "none"
+
     zones = [
         {
             "name": r.get("zone"),
@@ -4666,10 +4713,9 @@ def store_event_zones(event_id: int):
             "min_retail": r.get("min_retail"),
             "max_retail": r.get("max_retail"),
         }
-        for r in rows
-        if r.get("source") == "curated"
+        for r in chosen
     ]
-    return {"event_id": event_id, "zones": zones}
+    return {"event_id": event_id, "zones": zones, "layer": layer}
 
 
 @app.post("/api/store/reserve")
