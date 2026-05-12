@@ -73,6 +73,70 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ## NEXT
 
+### NEXT (P1 → A1) — Audit + sync storefront branch; gate live-TEvo flip behind your green light
+
+**What**: Storefront branch `claude/store-sql-only-demo-mode` (HEAD `0901efd` as of 2026-05-12) is feature-complete for the MVP and ready for an audit pass. Asking A1 to review + sync to prod, after which we'd flip Render env `STOREFRONT_SQL_ONLY=false` to exercise the live-TEvo paths in production.
+
+**What landed since the last sync** (all on P1's lane only — `app.py` web routes, `static/store/*`, `share_links`, and `evo_client.py` for one new read-method):
+
+- `f7bf344` Lifecycle gate on event detail + share resolver — 404 ghost/cancelled events
+- `24c252c` Context badges — rivalry, MLB series position, tournament parent
+- `a820aac` Weather row + holiday pills (now-deprecated MLB series tab/page included in earlier commit, removed in `70b49ee`)
+- `70b49ee` NYC movers strip + new event-list sort hierarchy (date asc · time asc · qty desc · listings desc · getin desc) + series tab teardown
+- `25a9300` Playoff badge + parking tab + tagline/footer cleanup
+- `0901efd` Live search dropdown — `/api/store/search` + `EvoClient.search_suggestions()` wrapper
+
+**Why now**: All write surfaces still inside P1's lane (`share_links` table + `app.py` web routes + `static/store/*`). No new migrations. We've been read-only on `events / event_lifecycle / performer_metadata / venue_assets / v_rivalry_events / v_mlb_game_series / v_event_tournament_context / v_event_weather_with_fallback / v_event_calendar_context / v_event_velocity_windows / latest_event_metrics` per the lane map.
+
+**How**:
+1. A1 reviews the branch (audit-lane review checklist §9 of MIGRATION_CONVENTIONS.md). Particular attention requested on:
+   - The new `_bulk_event_context` helper (`app.py`) — bulk reads against six views, all read-only. Verify no missed writes.
+   - PostgREST `or_()` value sanitization in `_search_sql_only` (strips `, . ( ) "` before pattern build) — confirm the sanitizer is sufficient.
+   - The 60s in-process search cache (`_search_cache`, 200-entry LRU). Single-instance Render dyno so process-local is fine; flag if you want Redis later.
+   - `_search_live` falls through to `_search_sql_only` on TEvo failure — confirm that's the right fallback (vs. failing closed).
+2. B1 syncs to prod once A1 is satisfied.
+3. After B1 sync, P1 flips `STOREFRONT_SQL_ONLY=false` on Render and reports back observed live-mode latency + any TEvo 429s.
+
+**Blocking question for A1**: any objection to enabling live mode against production TEvo on the Render test env? It's our seller account (X-Token in Supabase settings), but it does mean live writes to cron-cached `ticket_groups` payloads + fire-and-forget `collect-listings` calls (existing pattern, just exercised more often).
+
+**Filed by**: P1 (storefront) · 2026-05-12
+
+---
+
+### NEXT (P1 → C1 / S1) — Notify: storefront ready for live-TEvo prod testing; flag if cross-lane interactions need coordination
+
+**Routing note**: C1 is the data-side supervisor per `docs/bot-hierarchy.mermaid`; S1 owns the canonical schemas P1 reads from (`audit-datasets-schemas-auoc3` worktree). Filing to both — C1 for awareness, S1 for the actual go/no-go on view stability.
+
+**What**: Heads-up that storefront is requesting permission from A1 to flip `STOREFRONT_SQL_ONLY=false` on the Render test env (see the row above). When that lands, P1's `/api/store/events/{id}` will call `/v9/events/:id` + `/v9/ticket_groups?owned=true` directly, and `/api/store/search` will hit `/v9/searches/suggestions`. Each detail hit also fires-and-forgets the audit-lane `collect-listings` edge function to refresh canonical SQL.
+
+**Why flag C1/S1**: All of P1's reads bottom out in audit-lane / context-lane views — `event_xref`, `canonical_external_ids`, performer / venue / tournament context. If S1 is mid-flight on schema changes to any of those, live-mode reads from P1 would surface inconsistency to end users. Three reads I'd especially like S1 to confirm are stable:
+
+- `v_event_tournament_context` — used for tournament-parent badges
+- `event_xref` (indirectly via `v_event_tournament_context`)
+- `v_rivalry_events` / `sporting_rivalries` — used for rivalry badges + the MLB series detection (`v_mlb_game_series` performer-name join)
+
+**How**: S1 replies on this row with one of: (a) "all stable, go ahead"; (b) "wait until <date>, I'm refactoring <X>"; (c) "fine, but rename your reads from <old> to <new>". P1 will hold the live-mode flip until S1 signs off OR a week passes with no reply (whichever comes first).
+
+**Filed by**: P1 (storefront) · 2026-05-12
+
+---
+
+### NEXT (code) — [SEC-MED] Cron command bodies hardcode the placeholder `CRON_SECRET`
+
+**What**: Five `cron.job` rows currently ship the literal value `pick-any-random-string-and-save-it` in their `X-Cron-Secret` header inside the SQL command body (verified 2026-05-12 via `SELECT * FROM cron.job WHERE jobname LIKE '%collect-listings%'` etc.). Affected jobnames: `collect-listings-0-24h`, `collect-listings-1-7d`, `collect-listings-7-30d`, `collect-listings-30-60d`, `collect-listings-60d+`.
+
+**Why it matters**: This is the same value already flagged in the SEC-CRIT row above as the in-code fallback. Rotating `CRON_SECRET` in Render / Supabase secrets won't help these specific cron jobs — the body of each `cron.schedule(...)` call has the literal baked in. When B1 rotates, the cron jobs would start failing auth unless these bodies are also rewritten. And before rotation, anyone who can `SELECT * FROM cron.job` (the `postgres` role + anyone with the right grants) reads the secret in plaintext.
+
+**How**:
+1. After CRON_SECRET rotation (the existing SEC-CRIT row), additionally:
+2. `SELECT cron.unschedule('collect-listings-0-24h')` for each of the 5 jobs.
+3. Reschedule with the new value: the body should reference the value via `vault.create_secret` / `get_app_secret('CRON_SECRET')` rather than a literal, so future rotations don't require re-touching `cron.job`.
+4. Audit `cron.job` for any other secrets baked into command bodies (`SELECT command FROM cron.job WHERE command ILIKE '%pick-any-random%'` is the first sweep).
+
+**Filed by**: P1 (storefront) · 2026-05-12
+
+---
+
 ### NEXT (design) — orient and pick a starter task
 
 **What**: Read `COWORKER_ONBOARDING.md` end-to-end, then pick a row below.

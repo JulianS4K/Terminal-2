@@ -23,7 +23,7 @@
 
     <main class="content">
       <h1>Find tickets to anything we have</h1>
-      <p class="subtitle">Live inventory from our seller account. No middlemen.</p>
+      <p class="subtitle">Direct inventory, transparent pricing.</p>
 
       <!-- Hero search — the primary entry point. -->
       <form id="searchForm" class="row" style="margin: 18px 0 12px">
@@ -33,11 +33,10 @@
       </form>
 
       <!-- "Find events near me" — sits below the search bar. Browser geolocation
-           prompt only fires on click (no auto-prompt on page load — that's
-           intrusive). Renders up to 10 closest events sorted by distance.
-           Source toggle (hybrid vs supabase) lets us A/B test the two
-           implementations against the same coordinates. -->
-      <div style="margin: 0 0 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+           prompt only fires on click. Hidden in SQL-only demo mode (no TEvo
+           geo call available, and per Julian's 2026-05-11 direction we're
+           keeping geolocation off until real checkout is wired). -->
+      <div id="nearMeRow" hidden style="margin: 0 0 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
         <button id="findNearMe" class="ghost" style="padding: 8px 14px; font-size: 13px">
           📍 Find events near me
         </button>

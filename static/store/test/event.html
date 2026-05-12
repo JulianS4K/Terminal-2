@@ -149,6 +149,9 @@
 
       let allListings = [];
       let zonesAvailable = [];
+      // Server-supplied section universe (pre-filter) so chips don't collapse
+      // when the user picks one. Multi-select needs all chips clickable.
+      let sectionsAvailable = [];
       let suppressApply = false;
 
       // ---- URL <-> filter state ----
@@ -244,11 +247,14 @@
       }
 
       function renderSectionChips(active) {
-        const sectionsPresent = Array.from(new Set(
-          allListings.map(l => String(l.section || "").trim()).filter(Boolean)
-        ));
+        // Union of: server-side unfiltered universe, currently-loaded
+        // sections (fallback for older share resolves), and active filters.
+        // Keeps every section clickable so multi-select works after a
+        // narrowing click.
+        const fromServer = sectionsAvailable || [];
+        const fromListings = allListings.map(l => String(l.section || "").trim()).filter(Boolean);
         const activeSet = new Set(active || []);
-        const all = Array.from(new Set([...sectionsPresent, ...activeSet]))
+        const all = Array.from(new Set([...fromServer, ...fromListings, ...activeSet]))
           .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
         if (!all.length) {
           sectionRow.hidden = true;
@@ -485,12 +491,15 @@
           <div id="revOpts" hidden>
             <input id="shareNote" maxlength="500" placeholder="Optional note for the recipient" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit;margin-bottom:6px" />
             <select id="shareExpires" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit">
-              <option value="">never expires</option>
-              <option value="1">expires in 1 day</option>
-              <option value="7" selected>expires in 7 days</option>
-              <option value="30">expires in 30 days</option>
-              <option value="90">expires in 90 days</option>
+              <option value="" selected>auto · 1h after event start</option>
+              <option value="1">expires in 1 day (capped at event end)</option>
+              <option value="7">expires in 7 days (capped at event end)</option>
+              <option value="30">expires in 30 days (capped at event end)</option>
+              <option value="90">expires in 90 days (capped at event end)</option>
             </select>
+            <p style="color:var(--muted);font-size:11px;margin:6px 0 0">
+              All links auto-expire 1h after event start regardless of choice.
+            </p>
           </div>
           <button id="shareCopy" class="buy-btn" style="width:100%;padding:10px;margin-top:12px">Copy link</button>
         `;
@@ -561,6 +570,11 @@
       function applyResponse(res) {
         const ev = res.event || {};
         allListings = res.listings || [];
+        // Cache the server-supplied section universe so chips stay clickable
+        // after the user narrows.
+        if (Array.isArray(res.sections_available) && res.sections_available.length) {
+          sectionsAvailable = res.sections_available;
+        }
         const filters = res.filters || readFiltersFromUI();
 
         $("#evName").textContent = ev.name || "Untitled event";
@@ -575,6 +589,15 @@
           fr.textContent = "live"; fr.className = "freshness live";
         } else if (res.inventory_source === "cache") {
           fr.textContent = "cached"; fr.className = "freshness cached";
+        } else if (res.inventory_source === "snapshot") {
+          // SQL-only demo mode — show age so it's obvious this isn't live.
+          const age = Number(res.snapshot_age_seconds) || 0;
+          const human = age < 60 ? `${age}s`
+                      : age < 3600 ? `${Math.round(age/60)}m`
+                      : age < 86400 ? `${Math.round(age/3600)}h`
+                      : `${Math.round(age/86400)}d`;
+          fr.textContent = `demo · ${human} old`;
+          fr.className = "freshness cached";
         } else {
           fr.textContent = "";
         }

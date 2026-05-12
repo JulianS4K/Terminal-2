@@ -75,25 +75,47 @@
     }
   }
 
-  // Boot — fill the server-env pill, mark sidebar.
+  // Shared SQL-only mode state — pages can read Test.config after boot.
+  let _config = null;
+
+  // Boot — fill the server-env pill, mark sidebar, surface demo-mode UI.
   async function boot() {
     markCurrentNav();
+    try {
+      const r = await fetch("/api/public/config");
+      _config = await r.json();
+    } catch {
+      _config = null;
+    }
     const envEl = $("#serverEnv");
     if (envEl) {
-      try {
-        const r = await fetch("/api/public/config");
-        const cfg = await r.json();
-        const env = cfg && cfg.supabase_url
-          ? new URL(cfg.supabase_url).hostname.split(".")[0]
-          : "?";
-        envEl.textContent = `supabase: ${env}`;
-      } catch {
+      if (!_config) {
         envEl.textContent = "config unreachable";
         envEl.className = "pill err";
+      } else if (_config.storefront_sql_only) {
+        // SQL-only demo mode — make it visually obvious so testers know
+        // what they're seeing isn't live.
+        envEl.textContent = "demo · sql snapshot";
+        envEl.className = "pill cache";
+      } else {
+        const env = _config.supabase_url
+          ? new URL(_config.supabase_url).hostname.split(".")[0]
+          : "?";
+        envEl.textContent = `supabase: ${env}`;
       }
     }
+    // Hide the geolocation row when we're in SQL-only mode (no TEvo geo
+    // call available, and Julian's 2026-05-11 direction was geolocation
+    // off until checkout). Show it otherwise.
+    const nearRow = $("#nearMeRow");
+    if (nearRow) {
+      nearRow.hidden = !!(_config && _config.storefront_sql_only);
+    }
+    document.dispatchEvent(new CustomEvent("test:configReady", { detail: _config }));
   }
 
-  window.Test = { $, $$, fmtMoney, fmtWhen, fmtJson, log, api, boot };
+  function config() { return _config; }
+
+  window.Test = { $, $$, fmtMoney, fmtWhen, fmtJson, log, api, boot, config };
   document.addEventListener("DOMContentLoaded", boot);
 })();

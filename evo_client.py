@@ -217,6 +217,50 @@ class EvoClient:
         Accepts identical params to list_events per the docs."""
         return self._get("/v9/events/search", {**kwargs, "q": q})
 
+    def search_suggestions(
+        self,
+        q: str,
+        *,
+        entities: str = "events,performers,venues",
+        fuzzy: bool = True,
+        limit: int = 8,
+        occurs_at_gte: str | None = None,
+    ) -> dict[str, Any]:
+        """GET /v9/searches/suggestions — multi-entity autocomplete.
+
+        Returns shape:
+          { "total_entries": N,   (count of entity types, not hits)
+            "suggestions": {
+              "events":     [ { id, name, slug, location, venue_name,
+                                occurs_at, ... }, ... ],
+              "performers": [ { id, name, slug, location, venue_name, ... }, ... ],
+              "venues":     [ { id, name, slug, location, ... }, ... ],
+            }
+          }
+
+        Empirical limits (verified 2026-05-12 against api.ticketevolution.com):
+        - `limit` is hard-capped at 20 per entity by the API regardless of
+          what we send. Pass 20 if you want the max; smaller values trim.
+        - Each entity bucket caps independently — 20 events AND 20 performers
+          AND 20 venues can all return on a single call.
+        - Multi-word matchup queries ("yankees vs red sox") return zero
+          events. Use single-team queries + intersect client-side if you
+          need matchup search.
+        - Latency varies 380-2800ms with no upstream caching. Cache caller-
+          side if you're hitting the same q repeatedly.
+        """
+        params = {
+            "q": q,
+            "entities": entities,
+            "fuzzy": fuzzy,
+            "limit": min(int(limit), 20),
+        }
+        if occurs_at_gte:
+            # TEvo accepts both occurs_at.gte and occurs_at_gte; the dotted
+            # form is canonical. _normalize() preserves the key as-is.
+            params["occurs_at.gte"] = occurs_at_gte
+        return self._get("/v9/searches/suggestions", params)
+
     def iter_events(self, max_pages: int = 50, **kwargs) -> Iterator[dict]:
         """Yield events across all pages (uses /v9/events)."""
         kwargs.pop("page", None)

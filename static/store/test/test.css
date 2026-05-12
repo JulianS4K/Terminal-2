@@ -366,7 +366,12 @@ pre.json .null { color: var(--muted); }
 }
 
 /* --- Modal (buy confirmation) --- */
-.modal {
+/* :not([hidden]) on every layout property so the modal is fully invisible
+   when the `hidden` attribute is set. Without this guard, .modal's
+   display: flex has equal specificity to [hidden] and the cascade wins —
+   the modal stays on screen with an empty body, looking like a thin bar
+   stuck to the page. */
+.modal:not([hidden]) {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.6);

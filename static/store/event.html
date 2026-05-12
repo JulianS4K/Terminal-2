@@ -21,6 +21,10 @@
     <div id="status" class="status">Loading event…</div>
 
     <section id="header" class="event-head" hidden>
+      <!-- Venue hero image — subtle background banner, populated when
+           venue_assets.hero_image_url exists. JS sets backgroundImage
+           inline; CSS handles the dim overlay so the heading stays readable. -->
+      <div id="evHero" class="event-hero-bg" hidden></div>
       <div class="head-row">
         <div>
           <h1 id="evName"></h1>
@@ -28,10 +32,17 @@
             <span id="evVenue"></span>
             <span class="dot">·</span>
             <span id="evDate"></span>
+            <!-- Venue tags — indoor/outdoor + capacity when available -->
+            <span id="evVenueTags" class="venue-tags"></span>
           </p>
           <p class="event-meta sub">
             <span id="evPerformers"></span>
           </p>
+          <!-- Context strip: rivalry tag, MLB series position, tournament
+               parent. All three are optional; the container stays hidden
+               when none of them apply. Populated by store.js from
+               res.context.{rivalry,mlb_series,tournament}. -->
+          <div id="evContext" class="event-context" hidden></div>
         </div>
         <div class="head-actions">
           <span id="freshness" class="freshness"></span>
@@ -54,11 +65,23 @@
       <div class="listings">
         <h2>Available from us <span id="listCount" class="muted"></span></h2>
 
+        <!-- Tab toggle: Seats (always) + Parking (only when at least one
+             parking listing exists for this event). TEvo's ticket_groups
+             type field separates 'event' (seats) from 'parking'; we keep
+             them on separate tabs so parking prices don't pollute the seat
+             from-price / filters. Hidden when parking_count = 0. -->
+        <nav id="listingTabs" class="listing-tabs" hidden role="tablist" aria-label="Inventory type">
+          <button type="button" class="listing-tab is-active" data-tab="seats" role="tab" aria-selected="true">Seats</button>
+          <button type="button" class="listing-tab" data-tab="parking" role="tab" aria-selected="false">
+            Parking <span id="parkingTabCount" class="listing-tab-count"></span>
+          </button>
+        </nav>
+
         <!-- Inline filters drive the page view AND the share URL. URL is the
              source of truth: every change updates ?zones=&section=&min_price=
              &max_price=&min_qty= via replaceState and re-fetches the listings.
              Zone row only renders when this event's performer+venue has
-             curated zones in performer_zones. -->
+             curated zones in performer_zones. Filters apply only to Seats. -->
         <div id="filterBar" class="filter-bar">
           <div id="zoneRow" class="filter-row" hidden>
             <span class="filter-label">Zone</span>
@@ -88,6 +111,8 @@
         <p id="noListings" class="empty" hidden>
           Nothing matches those filters. Loosen them or check back — inventory shifts.
         </p>
+        <!-- Parking listings (separate tab; no filters, no zones). -->
+        <ul id="parkingListings" class="list parking-list" hidden></ul>
       </div>
     </section>
   </main>
@@ -103,7 +128,7 @@
   </div>
 
   <footer class="foot">
-    <span>powered by Ticket Evolution · /v9/ticket_groups?owned=true</span>
+    <span>VibePass &middot; MVP preview</span>
   </footer>
 
   <script src="/static/store/store.js" defer></script>

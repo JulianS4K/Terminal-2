@@ -103,6 +103,73 @@ a { color: inherit; }
 }
 .search button:hover { background: var(--accent-2); }
 
+/* ----- Search suggestion dropdown -----
+   Floats below the search input. Three sections (events you can buy, more
+   events, performers, venues) with subtle section headers. Click outside
+   the form closes it; Escape returns focus. */
+.search {
+  /* Position context so the absolute-positioned dropdown anchors here. */
+  position: relative;
+}
+.search-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px 0;
+}
+.suggest-header {
+  padding: 6px 14px 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  font-weight: 700;
+}
+.suggest-row {
+  display: block;
+  padding: 8px 14px;
+  text-decoration: none;
+  color: inherit;
+  border-left: 2px solid transparent;
+  transition: background-color .1s, border-color .1s;
+}
+.suggest-row:hover {
+  background: rgba(255,255,255,0.04);
+  border-left-color: var(--accent-2);
+}
+.suggest-row.we-own {
+  /* Subtle accent on rows we can actually sell. */
+  border-left-color: var(--good);
+}
+.suggest-row.we-own:hover {
+  border-left-color: var(--good);
+}
+.suggest-row-name {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+}
+.suggest-row-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.suggest-row-price {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-2);
+}
+
 /* ----- Catalog grid ----- */
 .results { margin-top: 8px; }
 .status, .empty {
@@ -193,6 +260,90 @@ a { color: inherit; }
   letter-spacing: 0.5px;
 }
 
+/* ----- Context badges (rivalry / MLB series / tournament) -----
+   Used on both catalog cards (.card-context) and the event detail header
+   (.event-context). One container, three badge variants. Compact mode
+   trims dates + Wikipedia links; full mode shows everything. */
+.card-context,
+.event-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+.event-context { margin-top: 8px; }
+
+.ctx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+  /* Border-color is overridden per variant below. Default keeps the chip
+     visible on unknown variants instead of disappearing. */
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Rivalry — orange/red palette graded by intensity */
+.ctx-badge.rivalry {
+  border-color: rgba(255, 138, 76, 0.45);
+  background: rgba(255, 138, 76, 0.10);
+  color: #ffb892;
+}
+.ctx-badge.rivalry.intensity-historic {
+  border-color: rgba(255, 92, 92, 0.55);
+  background: rgba(255, 92, 92, 0.14);
+  color: #ffb6b6;
+}
+.ctx-badge.rivalry.intensity-medium {
+  border-color: rgba(255, 180, 100, 0.35);
+  background: rgba(255, 180, 100, 0.08);
+  color: #ffd09a;
+}
+
+/* MLB series — cool blue (distinct from rivalry, neutral feel) */
+.ctx-badge.series {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(96, 165, 250, 0.10);
+  color: #c6dcff;
+}
+
+/* Tournament — green (multi-day, parent-event feel) */
+.ctx-badge.tournament {
+  border-color: rgba(110, 207, 130, 0.45);
+  background: rgba(110, 207, 130, 0.10);
+  color: #cfeed7;
+}
+
+/* Playoff — regal purple, distinct from rivalry orange / series blue. */
+.ctx-badge.playoff {
+  border-color: rgba(167, 139, 250, 0.50);
+  background: rgba(167, 139, 250, 0.12);
+  color: #e0d6ff;
+}
+.ctx-badge.playoff.kind-specific {
+  border-color: rgba(167, 139, 250, 0.75);
+  background: rgba(167, 139, 250, 0.18);
+  color: #f0e7ff;
+  font-weight: 700;
+}
+
+/* Wikipedia link badge appendage — kept subtle so it doesn't compete
+   with the badge label. Only present in full (non-compact) variant. */
+.ctx-badge-link {
+  color: inherit;
+  opacity: 0.7;
+  text-decoration: none;
+  font-size: 12px;
+}
+.ctx-badge-link:hover { opacity: 1; }
+
 /* ----- Event page ----- */
 .back {
   display: inline-block;
@@ -238,6 +389,43 @@ a { color: inherit; }
   gap: 8px;
 }
 .muted { color: var(--muted); font-weight: 400; font-size: 13px; }
+
+/* ----- Listing tabs (Seats / Parking) -----
+   Surfaced on event detail only when at least one parking listing exists.
+   Sits between the "Available from us" header and the filter bar. Mimics
+   the catalog tab look but smaller. */
+.listing-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 12px;
+}
+.listing-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.listing-tab:hover { color: var(--text); }
+.listing-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.listing-tab-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.listing-tab.is-active .listing-tab-count { color: var(--accent-2); }
+
+/* Parking-list rows reuse .row styles but trim some seat-only ornaments. */
+.parking-list .parking-row { /* same .row grid; no overrides needed today */ }
 
 /* ----- Inline filter bar on event page ----- */
 .filter-bar {
@@ -366,7 +554,11 @@ a { color: inherit; }
 .tag.warn { background: rgba(250,204,21,0.12); color: var(--warn); }
 
 /* ----- Modal ----- */
-.modal {
+/* :not([hidden]) guard so display: flex doesn't override the `hidden`
+   attribute (equal specificity — cascade wins without this). Without the
+   guard the modal renders as a thin bar with the close X visible even
+   when hidden=true is set in JS. */
+.modal:not([hidden]) {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.6);
@@ -432,6 +624,46 @@ a { color: inherit; }
 }
 
 /* ----- Performer chips on event header ----- */
+/* ----- Event hero (venue_assets.hero_image_url backdrop) ----- */
+.event-hero-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  /* Dim + dark gradient overlay so the heading + meta text stay readable
+     no matter the hero's brightness. Gradient bottom-fades into the
+     event-head's normal background. */
+  filter: brightness(0.32) saturate(1.15);
+  z-index: 0;
+  border-radius: var(--radius);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.event-head {
+  position: relative;
+  overflow: hidden;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+}
+.event-head > .head-row { position: relative; z-index: 1; }
+
+/* ----- Venue tags (indoor/outdoor, capacity) ----- */
+.venue-tags {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+}
+.venue-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
 .perf-chip {
   display: inline-flex;
   align-items: center;
@@ -440,8 +672,27 @@ a { color: inherit; }
   border-radius: 999px;
   border: 1px solid var(--perf-color, var(--line));
   background: var(--panel);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color .12s, border-color .12s;
+}
+a.perf-chip:hover {
+  background: var(--perf-color, rgba(255,255,255,0.06));
+  /* Use --perf-color when set; falls back to a subtle highlight. Color
+     mixed with low-alpha so chip stays legible. */
 }
 .perf-chip:has(img) { padding-left: 4px; }
+
+/* Venue clickable link in the event header */
+.venue-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--muted);
+}
+.venue-link:hover {
+  color: var(--accent-2);
+  border-bottom-color: var(--accent-2);
+}
 .perf-logo {
   width: 18px;
   height: 18px;
@@ -651,6 +902,217 @@ a { color: inherit; }
   margin-top: 60px;
 }
 
+/* ----- Movers strip (homepage NYC widget) -----
+   Horizontal scroll row above the main grid. One card per top mover.
+   Hidden when the user is filtered (performer_id / venue_id) since the
+   strip is a home-view discovery aid, not a filter-respecting list. */
+.movers-strip {
+  margin: 0 0 24px;
+}
+.movers-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+.movers-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 6px;
+}
+.movers-row::-webkit-scrollbar { height: 8px; }
+.movers-row::-webkit-scrollbar-track { background: transparent; }
+.movers-row::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+
+.mover-card {
+  flex: 0 0 240px;
+  scroll-snap-align: start;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color .12s, transform .12s;
+}
+.mover-card:hover {
+  border-color: var(--accent-2);
+  transform: translateY(-1px);
+}
+.mover-card[style*="--card-accent"]::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--card-accent);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.mover-badge {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-bottom: 4px;
+}
+.mover-badge.selling_fast {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #ffb6b6;
+}
+.mover-badge.demand_rising {
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  color: #b6f0c8;
+}
+.mover-badge.premium {
+  background: rgba(250, 204, 21, 0.12);
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  color: #ffe69a;
+}
+.mover-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mover-where {
+  font-size: 12px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mover-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.mover-price {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--accent-2);
+}
+.mover-note {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ----- Holiday pills (calendar overlay) -----
+   Warm yellow palette, distinct from rivalry (orange) and series (blue).
+   "boost" gets full color, "neutral" stays muted so the eye lands on
+   high-impact dates first. */
+.holiday-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* Default glyph is day-of celebration; kind variants override below. */
+.holiday-pill::before {
+  content: "🎉";
+  font-size: 12px;
+  margin-right: 1px;
+}
+.holiday-pill.kind-nearby::before       { content: "📅"; }
+.holiday-pill.kind-school_break::before { content: "🎒"; }
+.holiday-pill.impact-boost {
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  background: rgba(250, 204, 21, 0.10);
+  color: #ffe69a;
+}
+.holiday-pill.impact-neutral {
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+}
+
+/* ----- Weather (event detail + series cards) -----
+   Two pieces: a top-tier alert line (severity-aware) and a forecast row
+   underneath. They flow vertically and both keep the same horizontal
+   rhythm as venue tags / context pills. */
+.context-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.weather-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.10);
+  color: #ffd1d1;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.weather-alert.severity-extreme,
+.weather-alert.severity-severe {
+  border-color: rgba(239, 68, 68, 0.7);
+  background: rgba(239, 68, 68, 0.18);
+  color: #ffe3e3;
+}
+.weather-alert.severity-moderate {
+  border-color: rgba(250, 204, 21, 0.5);
+  background: rgba(250, 204, 21, 0.10);
+  color: #ffe69a;
+}
+.weather-alert-icon { font-size: 14px; }
+.weather-alert-text { flex: 1; }
+
+.weather-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.10);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: #c6dcff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.weather-icon { font-size: 13px; }
+
+/* Card-level series game variant — match thinner card spacing */
+.series-game-context .weather-row {
+  margin-top: 0;
+}
+.series-game-context .weather-alert {
+  margin-top: 0;
+}
+
 /* ----- Responsive ----- */
 @media (max-width: 760px) {
   .event-body { grid-template-columns: 1fr; }
@@ -659,4 +1121,6 @@ a { color: inherit; }
   .row .qbox { grid-column: 1; text-align: left; }
   .row .pbox { grid-column: 2; }
   .row .btn { grid-column: 1 / -1; }
+
+  .mover-card { flex-basis: 200px; }
 }

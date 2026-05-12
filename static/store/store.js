@@ -7,6 +7,17 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+  // Section sort key — mirrors the server's _section_sort_key. Letter-prefixed
+  // sections (Floor, Courtside, GA) come before numeric (100, 101). Numeric
+  // sections sort naturally (1, 2, 10, 100 — not lex 1, 10, 100, 2).
+  function sectionSortCmp(a, b) {
+    const aAlpha = /^[A-Za-z]/.test(a);
+    const bAlpha = /^[A-Za-z]/.test(b);
+    if (aAlpha && !bAlpha) return -1;
+    if (!aAlpha && bAlpha) return 1;
+    return a.localeCompare(b, undefined, { numeric: true });
+  }
+
   function fmtMoney(v) {
     if (v == null || isNaN(Number(v))) return "—";
     return "$" + Number(v).toLocaleString(undefined, {
@@ -40,6 +51,212 @@
       throw new Error(`${r.status} ${msg}`);
     }
     return r.json();
+  }
+
+  // Short date range like "Aug 26 – Aug 28" (or "Aug 26 – Sep 2" when the
+  // span crosses a month). Used by the MLB-series + tournament context
+  // badges where a wall-clock weekday/time would be noise.
+  //
+  // Parses just the YYYY-MM-DD prefix as a LOCAL date so a tournament
+  // recorded as "2026-05-22T00:00:00+00:00" doesn't render as May 21 in
+  // the US east coast (UTC midnight = previous day local). The audit
+  // lane writes these dates as wall-clock dates, not instant timestamps.
+  function fmtDateRange(startIso, endIso) {
+    if (!startIso) return "";
+    const opts = { month: "short", day: "numeric" };
+    const parseLocal = (s) => {
+      if (!s) return null;
+      const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!m) return null;
+      return new Date(+m[1], +m[2] - 1, +m[3]);
+    };
+    const start = parseLocal(startIso);
+    if (!start) return "";
+    const startStr = start.toLocaleDateString(undefined, opts);
+    const end = parseLocal(endIso);
+    if (!end || +end === +start) return startStr;
+    return `${startStr} – ${end.toLocaleDateString(undefined, opts)}`;
+  }
+
+  // Build badge nodes for the optional context dimensions a row can carry:
+  // rivalry, MLB series, tournament. Returns an array (possibly empty); the
+  // caller decides where to append it. Each badge is a small chip; on cards
+  // we render a compact "lite" variant.
+  //
+  // ctx shape: { rivalry: {...}|null, mlb_series: {...}|null, tournament: {...}|null }
+  function buildContextBadges(ctx, opts) {
+    if (!ctx) return [];
+    const compact = !!(opts && opts.compact);
+    const out = [];
+
+    if (ctx.rivalry && ctx.rivalry.name) {
+      const r = ctx.rivalry;
+      // Branded rivalries get the rivalry name verbatim ("Subway Series").
+      // Generic rivalries get "Rivalry game · intensity" so the user knows
+      // what they're looking at without a Wikipedia trip.
+      const span = document.createElement("span");
+      span.className = `ctx-badge rivalry intensity-${r.intensity || "high"}`;
+      const label = r.is_branded
+        ? r.name
+        : (compact
+            ? (r.intensity === "historic" ? "Historic rivalry" : "Rivalry game")
+            : `${r.name} · ${r.intensity || "rivalry"}`);
+      span.textContent = label;
+      // Wikipedia link only on the full (non-compact) variant; cards stay
+      // click-through to the event detail without a competing link.
+      if (!compact && r.wikipedia_url) {
+        const a = document.createElement("a");
+        a.href = r.wikipedia_url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.className = "ctx-badge-link";
+        a.textContent = "ⓘ";
+        span.appendChild(document.createTextNode(" "));
+        span.appendChild(a);
+      }
+      out.push(span);
+    }
+
+    if (ctx.mlb_series && ctx.mlb_series.game_count) {
+      const s = ctx.mlb_series;
+      const span = document.createElement("span");
+      span.className = "ctx-badge series";
+      const pos = s.game_number ? `Game ${s.game_number} of ${s.game_count}` : `${s.game_count}-game series`;
+      const range = fmtDateRange(s.series_start, s.series_end);
+      // Branded series name surfaces when set; falls back to the generic
+      // "Part of N-game series" tag the user asked for.
+      const lead = s.branded_name
+        ? s.branded_name
+        : (compact ? `${s.game_count}-game series` : `Part of a ${s.game_count}-game series`);
+      span.textContent = compact ? `${lead} · ${pos}` : `${lead} · ${pos} · ${range}`;
+      out.push(span);
+    }
+
+    if (ctx.tournament && (ctx.tournament.name || ctx.tournament.short_name)) {
+      const t = ctx.tournament;
+      const span = document.createElement("span");
+      span.className = "ctx-badge tournament";
+      const name = t.short_name || t.name;
+      const range = fmtDateRange(t.start_date, t.end_date);
+      span.textContent = range ? `${name} · ${range}` : name;
+      out.push(span);
+    }
+
+    // Playoff badge — distinct purple palette. Server returns the most
+    // specific label available ("NBA Finals", "NBA Eastern Conference
+    // Semifinals", "World Series"); falls back to generic "Playoffs"
+    // when only a Round-N / Game-N hint is detectable.
+    if (ctx.playoff && ctx.playoff.label) {
+      const p = ctx.playoff;
+      const span = document.createElement("span");
+      span.className = `ctx-badge playoff kind-${p.kind || "generic"}`;
+      if (compact && p.label.length > 22) {
+        // Long names like "NBA Eastern Conference Semifinals" eat real
+        // estate on a card. Compact shortens to "Playoffs" so the layout
+        // stays scannable; full label keeps showing on event detail.
+        span.textContent = "🏆 Playoffs";
+      } else {
+        span.textContent = `🏆 ${p.label}`;
+      }
+      out.push(span);
+    }
+
+    return out;
+  }
+
+  // Format a single holiday/calendar hit as a small chip. Returns a span
+  // element or null when nothing meaningful is set. Three kinds:
+  //   day_of       → "Memorial Day"
+  //   nearby       → "Memorial Day weekend (Mon May 25)"
+  //   school_break → "Summer Break"
+  function buildHolidayBadge(holiday, opts) {
+    if (!holiday || !holiday.label) return null;
+    const compact = !!(opts && opts.compact);
+    const span = document.createElement("span");
+    const impact = holiday.impact === "boost" ? "boost" : "neutral";
+    span.className = `holiday-pill kind-${holiday.kind || "day_of"} impact-${impact}`;
+    let label = holiday.label;
+    // Nearby gets a short date suffix when not compact ("(Mon May 25)").
+    if (holiday.kind === "nearby" && !compact && holiday.date) {
+      const m = String(holiday.date).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) {
+        const d = new Date(+m[1], +m[2] - 1, +m[3]);
+        const day = d.toLocaleDateString(undefined, {
+          weekday: "short", month: "short", day: "numeric",
+        });
+        label += ` (${day})`;
+      }
+    }
+    span.textContent = label;
+    return span;
+  }
+
+  // Render the weather row for an event detail page. Two layouts:
+  //   - With alerts: red severity-aware banner first, then forecast line
+  //     (when present)
+  //   - No alerts, forecast only: a single neutral pill
+  // Returns a DocumentFragment ready to append; empty when nothing to show.
+  function buildWeatherRow(weather) {
+    const frag = document.createDocumentFragment();
+    if (!weather) return frag;
+
+    // Alerts: render each as a top-line warning. Severity-aware coloring.
+    const alerts = Array.isArray(weather.alerts) ? weather.alerts : [];
+    alerts.forEach((a) => {
+      const div = document.createElement("div");
+      const sev = (a.severity || "").toLowerCase();
+      div.className = `weather-alert severity-${sev || "minor"}`;
+      const icon = document.createElement("span");
+      icon.className = "weather-alert-icon";
+      icon.textContent = "⚠";
+      const txt = document.createElement("span");
+      txt.className = "weather-alert-text";
+      // Prefer the short event ("Severe Thunderstorm Warning") + headline if
+      // short enough; otherwise just the event name.
+      const headline = a.headline || "";
+      const evtName = a.event || "Weather alert";
+      txt.textContent = headline && headline.length < 90
+        ? `${evtName} — ${headline}`
+        : evtName;
+      div.append(icon, txt);
+      frag.append(div);
+    });
+
+    // Forecast line — only when set (outdoor + ≤7d per server rules).
+    if (weather.forecast) {
+      const f = weather.forecast;
+      const div = document.createElement("div");
+      div.className = "weather-row";
+      const parts = [];
+      if (f.temp_f != null) {
+        parts.push(`${Math.round(Number(f.temp_f))}°F`);
+      }
+      if (f.summary) parts.push(String(f.summary));
+      if (f.precip_pct != null) {
+        parts.push(`${Number(f.precip_pct)}% rain`);
+      }
+      if (f.wind_mph != null && Number(f.wind_mph) >= 1) {
+        parts.push(`${Math.round(Number(f.wind_mph))}mph wind`);
+      }
+      const icon = document.createElement("span");
+      icon.className = "weather-icon";
+      // Pick an icon by summary keyword — cheap heuristic, no emoji library.
+      const summary = String(f.summary || "").toLowerCase();
+      let glyph = "🌤";
+      if (summary.includes("thunder")) glyph = "⛈";
+      else if (summary.includes("snow")) glyph = "❄";
+      else if (summary.includes("rain") || summary.includes("drizzle") || summary.includes("shower")) glyph = "🌧";
+      else if (summary.includes("fog")) glyph = "🌫";
+      else if (summary.includes("overcast")) glyph = "☁";
+      else if (summary.includes("clear")) glyph = "☀";
+      icon.textContent = glyph;
+      const txt = document.createElement("span");
+      txt.textContent = parts.join(" · ");
+      div.append(icon, txt);
+      frag.append(div);
+    }
+
+    return frag;
   }
 
   // ---------- Catalog page ----------
@@ -100,6 +317,20 @@
         where.className = "where";
         where.textContent = [ev.venue_name, ev.venue_location].filter(Boolean).join(" · ");
 
+        // Context strip (rivalry / series / tournament / holiday) — compact
+        // variant for catalog cards. Skipped silently when none apply.
+        // Compact mode drops date ranges and the Wikipedia link so the card
+        // stays scannable. Holiday gets its own pill kind (warm yellow).
+        const ctxRow = document.createElement("div");
+        ctxRow.className = "card-context";
+        const badges = buildContextBadges(
+          { rivalry: ev.rivalry, mlb_series: ev.mlb_series, tournament: ev.tournament },
+          { compact: true },
+        );
+        badges.forEach((b) => ctxRow.append(b));
+        const holidayBadge = buildHolidayBadge(ev.holiday, { compact: true });
+        if (holidayBadge) ctxRow.append(holidayBadge);
+
         const meta = document.createElement("div");
         meta.className = "meta";
         const left = document.createElement("div");
@@ -119,7 +350,9 @@
           : "available";
         meta.append(left, right);
 
-        a.append(head, where, meta);
+        a.append(head, where);
+        if (badges.length || holidayBadge) a.append(ctxRow);
+        a.append(meta);
         grid.append(a);
       }
     }
@@ -138,18 +371,290 @@
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       filter(input.value);
+      hideSuggest();
     });
-    input.addEventListener("input", () => filter(input.value));
+    // Local in-memory filter on the already-loaded catalog AND a debounced
+    // call to /api/store/search for live suggestions (TEvo + our SQL).
+    input.addEventListener("input", () => {
+      filter(input.value);
+      scheduleSuggest(input.value);
+    });
 
-    api("/api/store/events?limit=500")
+    wireSuggestDropdown();
+
+    // URL params let event-detail links into the catalog filter to a single
+    // performer or venue. Server-side filter, not just client-side, so the
+    // result is bounded even when a performer has hundreds of events.
+    const urlParams = new URLSearchParams(location.search);
+    const performerId = urlParams.get("performer_id");
+    const venueId = urlParams.get("venue_id");
+    const qs = new URLSearchParams({ limit: "500" });
+    if (performerId) qs.set("performer_id", performerId);
+    if (venueId) qs.set("venue_id", venueId);
+
+    api(`/api/store/events?${qs.toString()}`)
       .then((res) => {
         allEvents = res.events || [];
+        renderCatalogFilterBanner(performerId, venueId, allEvents);
         render(allEvents, "all");
       })
       .catch((err) => {
         status.textContent = `Couldn't load events: ${err.message}`;
         status.style.color = "var(--bad)";
       });
+
+    // NYC movers strip — only shown on the bare /store view (no performer
+    // or venue filter). Velocity-driven, sorted by 24h ticket drop.
+    if (!performerId && !venueId) {
+      const strip = $("#moversStrip");
+      const row = $("#moversRow");
+      if (strip && row) {
+        api("/api/store/movers?city=NYC&days=21&limit=8")
+          .then((res) => renderMoversStrip(strip, row, res))
+          .catch(() => { strip.hidden = true; });
+      }
+    }
+
+    // ----- Live search suggestions dropdown -----
+    // Debounced /api/store/search call as the user types. 300ms debounce
+    // + 2-char minimum keeps upstream load reasonable (TEvo doesn't cache
+    // suggestions — see notes in evo_client.search_suggestions). Server
+    // also caches per-q for 60s.
+    const suggestEl = $("#searchSuggest");
+    let suggestTimer = null;
+    let suggestSeq = 0;  // monotonic so stale responses don't overwrite
+
+    function scheduleSuggest(qRaw) {
+      const q = (qRaw || "").trim();
+      if (suggestTimer) {
+        clearTimeout(suggestTimer);
+        suggestTimer = null;
+      }
+      if (q.length < 2) {
+        hideSuggest();
+        return;
+      }
+      const mySeq = ++suggestSeq;
+      suggestTimer = setTimeout(() => {
+        api(`/api/store/search?q=${encodeURIComponent(q)}&limit=8`)
+          .then((res) => {
+            if (mySeq !== suggestSeq) return;  // stale; user typed more
+            renderSuggest(suggestEl, res);
+          })
+          .catch(() => {
+            if (mySeq !== suggestSeq) return;
+            hideSuggest();
+          });
+      }, 300);
+    }
+
+    function hideSuggest() {
+      if (!suggestEl) return;
+      suggestEl.hidden = true;
+      suggestEl.replaceChildren();
+    }
+
+    function wireSuggestDropdown() {
+      if (!suggestEl) return;
+      // Click outside → close. Use mousedown so the suggestion's own
+      // click handler fires first if the user clicked a row.
+      document.addEventListener("mousedown", (e) => {
+        if (!form.contains(e.target)) hideSuggest();
+      });
+      // Escape → close + return focus to the input.
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { hideSuggest(); input.focus(); }
+      });
+    }
+  }
+
+  // Render suggestion dropdown body. Three sections:
+  //   Events you can buy now (we_own=true) — top priority, shown first
+  //   Other events (we_own=false) — surfaced but flagged as "browse"
+  //   Performers + venues — bottom, clickable filter pivots
+  function renderSuggest(host, payload) {
+    if (!host) return;
+    host.replaceChildren();
+    const events = (payload && payload.events) || [];
+    const performers = (payload && payload.performers) || [];
+    const venues = (payload && payload.venues) || [];
+
+    if (!events.length && !performers.length && !venues.length) {
+      host.hidden = true;
+      return;
+    }
+
+    const buyable = events.filter((e) => e.we_own);
+    const browseOnly = events.filter((e) => !e.we_own);
+
+    if (buyable.length) {
+      host.append(suggestHeader("Tickets you can buy"));
+      buyable.forEach((e) => host.append(suggestEventRow(e, true)));
+    }
+    if (browseOnly.length) {
+      host.append(suggestHeader("More events"));
+      browseOnly.forEach((e) => host.append(suggestEventRow(e, false)));
+    }
+    if (performers.length) {
+      host.append(suggestHeader("Performers"));
+      performers.forEach((p) => host.append(suggestPerformerRow(p)));
+    }
+    if (venues.length) {
+      host.append(suggestHeader("Venues"));
+      venues.forEach((v) => host.append(suggestVenueRow(v)));
+    }
+    host.hidden = false;
+  }
+
+  function suggestHeader(text) {
+    const h = document.createElement("div");
+    h.className = "suggest-header";
+    h.textContent = text;
+    return h;
+  }
+
+  function suggestEventRow(ev, weOwn) {
+    const a = document.createElement("a");
+    a.className = "suggest-row event" + (weOwn ? " we-own" : "");
+    a.href = `/store/event/${Number(ev.id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = ev.name || "Untitled event";
+    a.append(name);
+    const meta = document.createElement("div");
+    meta.className = "suggest-row-meta";
+    const parts = [];
+    if (ev.venue_name) parts.push(ev.venue_name);
+    if (ev.occurs_at) parts.push(fmtWhen(ev.occurs_at));
+    meta.textContent = parts.join(" · ");
+    a.append(meta);
+    if (weOwn && ev.from_price != null) {
+      const price = document.createElement("span");
+      price.className = "suggest-row-price";
+      price.textContent = `from ${fmtMoney(ev.from_price)}`;
+      a.append(price);
+    }
+    return a;
+  }
+
+  function suggestPerformerRow(p) {
+    const a = document.createElement("a");
+    a.className = "suggest-row performer";
+    a.href = `/store?performer_id=${Number(p.id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = p.name || "";
+    a.append(name);
+    if (p.location || p.venue_name || p.league) {
+      const meta = document.createElement("div");
+      meta.className = "suggest-row-meta";
+      meta.textContent = [p.league, p.venue_name, p.location].filter(Boolean).join(" · ");
+      a.append(meta);
+    }
+    return a;
+  }
+
+  function suggestVenueRow(v) {
+    const a = document.createElement("a");
+    a.className = "suggest-row venue";
+    a.href = `/store?venue_id=${Number(v.id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = v.name || "";
+    a.append(name);
+    if (v.location) {
+      const meta = document.createElement("div");
+      meta.className = "suggest-row-meta";
+      meta.textContent = v.location;
+      a.append(meta);
+    }
+    return a;
+  }
+
+  // Render the "Moving fast in NYC" strip — horizontal card row above
+  // the main grid. Each card carries at most one velocity badge from
+  // the locked-down trio: 🔥 selling fast, 📈 demand rising, ⭐ premium.
+  function renderMoversStrip(strip, row, payload) {
+    const items = (payload && payload.events) || [];
+    row.replaceChildren();
+    if (!items.length) { strip.hidden = true; return; }
+    strip.hidden = false;
+    for (const ev of items) {
+      const a = document.createElement("a");
+      a.className = "mover-card";
+      a.href = `/store/event/${Number(ev.id) || 0}`;
+      if (ev.primary_performer_color) {
+        a.style.setProperty("--card-accent", ev.primary_performer_color);
+      }
+      // Velocity badge: 'selling_fast' | 'demand_rising' | 'premium' | null
+      if (ev.signal) {
+        const badge = document.createElement("span");
+        badge.className = `mover-badge ${ev.signal}`;
+        badge.textContent = ({
+          selling_fast: "🔥 selling fast",
+          demand_rising: "📈 demand rising",
+          premium: "⭐ premium",
+        })[ev.signal] || "";
+        a.append(badge);
+      }
+      const title = document.createElement("div");
+      title.className = "mover-title";
+      title.textContent = ev.name || "Untitled event";
+      a.append(title);
+      const where = document.createElement("div");
+      where.className = "mover-where";
+      where.textContent = [ev.venue_name, fmtWhen(ev.occurs_at_local)].filter(Boolean).join(" · ");
+      a.append(where);
+      const meta = document.createElement("div");
+      meta.className = "mover-meta";
+      if (ev.from_price != null) {
+        const fp = document.createElement("span");
+        fp.className = "mover-price";
+        fp.textContent = `from ${fmtMoney(ev.from_price)}`;
+        meta.append(fp);
+      }
+      if (ev.tix_d24h != null && Number(ev.tix_d24h) < 0) {
+        const note = document.createElement("span");
+        note.className = "mover-note";
+        note.textContent = `${Math.abs(Number(ev.tix_d24h))} sold today`;
+        meta.append(note);
+      }
+      a.append(meta);
+      row.append(a);
+    }
+  }
+
+  // Shows a "Showing events for ___" banner above the catalog when the user
+  // arrived via a performer/venue link on an event page. DOM-built (no
+  // innerHTML on user-controlled values).
+  function renderCatalogFilterBanner(performerId, venueId, events) {
+    const host = $("#catalogFilterBanner");
+    if (!host) return;
+    if (!performerId && !venueId) { host.hidden = true; return; }
+    const first = events[0] || {};
+    let label = "";
+    if (performerId) {
+      label = first.primary_performer_name
+        || (first.venue_name && first.name)
+        || `Performer #${Number(performerId) || ""}`;
+    } else if (venueId) {
+      label = [first.venue_name, first.venue_location].filter(Boolean).join(" · ")
+        || `Venue #${Number(venueId) || ""}`;
+    }
+    host.replaceChildren();
+    const strong = document.createElement("strong");
+    strong.textContent = `Showing events for ${label}`;
+    host.append(strong);
+    const sep = document.createTextNode(" · ");
+    host.append(sep);
+    const clearA = document.createElement("a");
+    clearA.href = "/store";
+    clearA.textContent = "show all events";
+    host.append(clearA);
+    host.hidden = false;
   }
 
   // ---------- Event detail page ----------
@@ -217,6 +722,16 @@
     const resetBtn = $("#resetFilters");
 
     let allListings = [];
+    // Section universe — server tells us every section present in the
+    // unfiltered owned set (`sections_available`). We cache it so the
+    // section chip group keeps showing every section even after the user
+    // selects one and the listings narrow. Multi-select needs all chips
+    // to stay clickable.
+    let sectionsAvailable = [];
+    // Quantities the seller offers (`splits_available`). The min-qty
+    // dropdown is rebuilt from this list — no "any" when nothing sells
+    // singles, no "4+" when no listing has a split ≥ 4.
+    let splitsAvailable = [];
     let event = null;
     let zonesAvailable = [];   // populated from /api/store/events/{id}/zones
     let resolvedShare = null;  // populated when arriving via /s/{id}
@@ -362,6 +877,91 @@
         }
 
         listEl.append(li);
+      }
+    }
+
+    // Parking tab renderer + toggle wiring. Simpler than the seat list:
+    // no zones, no row labels (parking "row" is rarely meaningful), no
+    // split-quantities (parking is single-pass per listing). One row per
+    // parking lot/section sorted by price asc.
+    function renderParkingTab(parkingListings, parkingCount) {
+      const tabs = $("#listingTabs");
+      const tabCountEl = $("#parkingTabCount");
+      const parkUl = $("#parkingListings");
+      const filterBar = $("#filterBar");
+      if (!tabs || !parkUl) return;
+
+      if (!parkingListings.length) {
+        tabs.hidden = true;
+        parkUl.hidden = true;
+        parkUl.replaceChildren();
+        return;
+      }
+      tabs.hidden = false;
+      tabCountEl.textContent = String(parkingCount);
+
+      parkUl.replaceChildren();
+      for (const l of parkingListings) {
+        const li = document.createElement("li");
+        li.className = "row parking-row";
+
+        const seat = document.createElement("div");
+        seat.className = "seat";
+        const section = document.createElement("div");
+        section.className = "section";
+        section.textContent = l.section || "Parking";
+        seat.append(section);
+        // No row label for parking — most lots don't have meaningful rows.
+
+        const qbox = document.createElement("div");
+        qbox.className = "qbox";
+        qbox.textContent = `${l.available_quantity || 0} pass${(l.available_quantity || 0) === 1 ? "" : "es"} available`;
+
+        const pbox = document.createElement("div");
+        pbox.className = "pbox";
+        pbox.append(document.createTextNode(fmtMoney(l.retail_price)));
+        const each = document.createElement("span");
+        each.className = "each";
+        each.textContent = "per pass";
+        pbox.append(each);
+
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = "Reserve";
+        btn.addEventListener("click", () => openModal(l));
+
+        li.append(seat, qbox, pbox, btn);
+        if (l.public_notes) {
+          const notes = document.createElement("div");
+          notes.className = "notes";
+          notes.textContent = l.public_notes;
+          li.append(notes);
+        }
+        parkUl.append(li);
+      }
+
+      // Wire tab toggle once; idempotent — first click handler win.
+      if (!tabs.dataset.wired) {
+        tabs.dataset.wired = "1";
+        const seatsTab = tabs.querySelector('[data-tab="seats"]');
+        const parkingTab = tabs.querySelector('[data-tab="parking"]');
+        function setActive(name) {
+          const seats = name === "seats";
+          seatsTab.classList.toggle("is-active", seats);
+          parkingTab.classList.toggle("is-active", !seats);
+          seatsTab.setAttribute("aria-selected", String(seats));
+          parkingTab.setAttribute("aria-selected", String(!seats));
+          // Seat-side UI (filters + seat list + no-match line) is shown
+          // only on the Seats tab; parking list flips inverse.
+          if (filterBar) filterBar.hidden = !seats;
+          $("#listings").hidden = !seats;
+          const noMatch = $("#noListings");
+          if (noMatch && !seats) noMatch.hidden = true;
+          parkUl.hidden = seats;
+        }
+        seatsTab.addEventListener("click", () => setActive("seats"));
+        parkingTab.addEventListener("click", () => setActive("parking"));
+        setActive("seats");
       }
     }
 
@@ -538,17 +1138,59 @@
       }
     }
 
+    // Rebuild the min-qty <select> so it only lists qtys the seller actually
+    // offers. Server passes us `splits_available` — the distinct split values
+    // across all listings (pre-min_qty-filter). We add "any" as the first
+    // option only when at least one listing has a single-seat split, so a
+    // venue that sells exclusively in pairs/quads doesn't tease "any" to
+    // a shopper. Preserves the user's current selection if still valid.
+    function rebuildMinQtyOptions(splits, currentValue) {
+      if (!minQtyInput) return;
+      const has1 = splits.includes(1);
+      const uniques = Array.from(new Set(splits)).filter(n => n > 1).sort((a, b) => a - b);
+      const desired = [
+        // "any" only when single tickets exist somewhere
+        ...(has1 ? [{ v: "", label: "any" }] : []),
+        ...uniques.map(n => ({ v: String(n), label: `${n}+` })),
+      ];
+      if (!desired.length) {
+        // No listings at all (or no split data) — show a single inert option.
+        desired.push({ v: "", label: "any" });
+      }
+      minQtyInput.innerHTML = "";
+      const wanted = currentValue != null ? String(currentValue) : "";
+      let preserveOK = false;
+      for (const o of desired) {
+        const opt = document.createElement("option");
+        opt.value = o.v;
+        opt.textContent = o.label;
+        if (o.v === wanted) { opt.selected = true; preserveOK = true; }
+        minQtyInput.append(opt);
+      }
+      // If the user's previous selection isn't valid anymore (e.g. they
+      // had "4+" and the filter now leaves only single+pair listings),
+      // fall back to the first option and re-fire the filter to keep
+      // URL state honest.
+      if (!preserveOK && currentValue != null && currentValue !== "") {
+        suppressApply = true;
+        try { minQtyInput.value = ""; } finally { suppressApply = false; }
+        scheduleApply();
+      }
+    }
+
     function renderSectionChips(activeSections) {
-      // Sections come from the currently-loaded listings. Active sections
-      // that aren't in current listings (e.g., recipient filtered to A,B,C
-      // and only B is present) are still shown as chips so the recipient
-      // can clear them.
-      const sectionsPresent = Array.from(new Set(
-        allListings.map(l => String(l.section || "").trim()).filter(Boolean)
-      ));
+      // Sections come from `sections_available` (server-side, unfiltered
+      // universe). Falls back to the currently-loaded listings if the
+      // server didn't send it (defensive — older share-resolve responses).
+      // Active sections that aren't in either set are still shown so the
+      // user can clear/toggle them. Multi-select works because all chips
+      // stay clickable regardless of how the user narrows.
+      const fromServer = sectionsAvailable || [];
+      const fromListings = allListings.map(l => String(l.section || "").trim()).filter(Boolean);
       const activeSet = new Set(activeSections || []);
-      const all = Array.from(new Set([...sectionsPresent, ...activeSet]))
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      // Letter-prefixed sections (Floor, Courtside, GA) come before numeric.
+      const all = Array.from(new Set([...fromServer, ...fromListings, ...activeSet]))
+        .sort(sectionSortCmp);
       if (!all.length) {
         sectionRow.hidden = true;
         return;
@@ -643,14 +1285,72 @@
     function applyEventResponse(res, share) {
       event = res.event;
       allListings = res.listings || [];
+      // Server tells us every section in the unfiltered set — cache so the
+      // chip group keeps showing every section even after the user narrows.
+      if (Array.isArray(res.sections_available) && res.sections_available.length) {
+        sectionsAvailable = res.sections_available;
+      }
+      // Same trick for split-quantities. Rebuild the min-qty dropdown to
+      // match what's actually offered.
+      if (Array.isArray(res.splits_available)) {
+        splitsAvailable = res.splits_available.slice();
+        rebuildMinQtyOptions(splitsAvailable, readFiltersFromUI().min_qty);
+      }
       const filters = res.filters || readFiltersFromUI();
 
       $("#evName").textContent = event.name || "Untitled event";
-      $("#evVenue").textContent = [event.venue?.name, event.venue?.location].filter(Boolean).join(" · ");
+
+      // Venue hero image (audit-lane venue_assets.hero_image_url). Subtle
+      // backdrop, dimmed by CSS so the heading stays legible.
+      const heroEl = $("#evHero");
+      if (heroEl) {
+        const hero = event.venue?.hero_image_url;
+        if (hero) {
+          heroEl.style.backgroundImage = `url("${String(hero).replace(/"/g, "%22")}")`;
+          heroEl.hidden = false;
+        } else {
+          heroEl.style.backgroundImage = "";
+          heroEl.hidden = true;
+        }
+      }
+
+      // Venue — clickable link to /store?venue_id=X so users can browse
+      // other events at the same venue. Falls back to plain text when no id.
+      const venueEl = $("#evVenue");
+      venueEl.replaceChildren();
+      const venueLabel = [event.venue?.name, event.venue?.location].filter(Boolean).join(" · ");
+      if (event.venue?.id) {
+        const a = document.createElement("a");
+        a.href = `/store?venue_id=${Number(event.venue.id) || 0}`;
+        a.className = "venue-link";
+        a.textContent = venueLabel;
+        venueEl.append(a);
+      } else {
+        venueEl.textContent = venueLabel;
+      }
       $("#evDate").textContent = fmtWhen(event.occurs_at_local);
 
+      // Venue tag pills — indoor/outdoor + capacity (audit-lane data).
+      const tagsEl = $("#evVenueTags");
+      if (tagsEl) {
+        tagsEl.replaceChildren();
+        const v = event.venue || {};
+        if (v.is_indoor === true || v.is_indoor === false) {
+          const pill = document.createElement("span");
+          pill.className = "venue-tag";
+          pill.textContent = v.is_indoor ? "indoor" : "outdoor";
+          tagsEl.append(pill);
+        }
+        if (v.capacity && Number(v.capacity) > 0) {
+          const pill = document.createElement("span");
+          pill.className = "venue-tag";
+          pill.textContent = `cap ${Number(v.capacity).toLocaleString()}`;
+          tagsEl.append(pill);
+        }
+      }
+
       const perfEl = $("#evPerformers");
-      perfEl.innerHTML = "";
+      perfEl.replaceChildren();
       const perfs = event.performers || [];
       perfs.forEach((p, i) => {
         if (i > 0) {
@@ -659,22 +1359,55 @@
           sep.textContent = " vs ";
           perfEl.append(sep);
         }
-        const span = document.createElement("span");
-        span.className = "perf-chip";
-        if (p.color_primary) span.style.setProperty("--perf-color", p.color_primary);
+        // Wrap each performer chip in an anchor to /store?performer_id=X so
+        // users can browse other events for the same performer.
+        const wrap = document.createElement(p.id ? "a" : "span");
+        wrap.className = "perf-chip";
+        if (p.id) wrap.href = `/store?performer_id=${Number(p.id) || 0}`;
+        if (p.color_primary) wrap.style.setProperty("--perf-color", p.color_primary);
         if (p.logo_url) {
           const img = document.createElement("img");
           img.src = p.logo_url;
           img.alt = "";
           img.className = "perf-logo";
           img.loading = "lazy";
-          span.append(img);
+          wrap.append(img);
         }
         const txt = document.createElement("span");
         txt.textContent = p.name + (p.primary ? " (home)" : "");
-        span.append(txt);
-        perfEl.append(span);
+        wrap.append(txt);
+        perfEl.append(wrap);
       });
+
+      // Context strip — rivalry / MLB series / tournament / holiday +
+      // weather. Full variant (includes date ranges and Wikipedia link).
+      // Container stays hidden when nothing applies so the header area
+      // doesn't reserve empty space.
+      const ctxEl = $("#evContext");
+      if (ctxEl) {
+        ctxEl.replaceChildren();
+        const ctx = res.context || {};
+        const ctxBadges = buildContextBadges(ctx, { compact: false });
+        const holidayBadge = buildHolidayBadge(ctx.holiday, { compact: false });
+        let any = false;
+        if (ctxBadges.length || holidayBadge) {
+          // Pills row first (badges + holiday share a flex line).
+          const pills = document.createElement("div");
+          pills.className = "context-pills";
+          ctxBadges.forEach((b) => pills.append(b));
+          if (holidayBadge) pills.append(holidayBadge);
+          ctxEl.append(pills);
+          any = true;
+        }
+        // Weather row beneath the pills — alerts + forecast line. Renders
+        // its own fragment so we don't have to know the alert count here.
+        const weatherFrag = buildWeatherRow(ctx.weather);
+        if (weatherFrag && weatherFrag.childNodes.length) {
+          ctxEl.append(weatherFrag);
+          any = true;
+        }
+        ctxEl.hidden = !any;
+      }
 
       const map = event.configuration?.seating_chart_medium || event.configuration?.seating_chart_large;
       if (map) seatMap.src = map;
@@ -688,6 +1421,16 @@
         } else if (res.inventory_source === "live") {
           freshness.textContent = "live inventory";
           freshness.className = "freshness live";
+        } else if (res.inventory_source === "snapshot") {
+          // SQL-only demo mode — be honest about staleness so testers and
+          // share-link recipients know what they're looking at.
+          const age = Number(res.snapshot_age_seconds) || 0;
+          const human = age < 60 ? `${age}s`
+                      : age < 3600 ? `${Math.round(age/60)}m`
+                      : age < 86400 ? `${Math.round(age/3600)}h`
+                      : `${Math.round(age/86400)}d`;
+          freshness.textContent = `demo · snapshot ${human} old`;
+          freshness.className = "freshness cached";
         } else {
           freshness.textContent = "";
         }
@@ -702,6 +1445,11 @@
       // need re-rendering here.
       renderSectionChips(filters.section || []);
       showSharedBanner(filters, res.total_before_filters || 0, res.listings_count || 0, share);
+
+      // Parking tab — only surfaces when the server returned at least one
+      // parking listing for this event. Tab UI stays inert otherwise so
+      // events without parking inventory don't reserve UI real estate.
+      renderParkingTab(res.parking_listings || [], res.parking_count || 0);
     }
 
     // ---- Filter input wiring ----
@@ -765,12 +1513,15 @@
             <input id="shareNote" class="share-input" maxlength="500"
                    placeholder="Optional note for the recipient" />
             <select id="shareExpires" class="share-input" style="margin-top:6px">
-              <option value="">never expires</option>
-              <option value="1">expires in 1 day</option>
-              <option value="7" selected>expires in 7 days</option>
-              <option value="30">expires in 30 days</option>
-              <option value="90">expires in 90 days</option>
+              <option value="" selected>auto · 1h after event start</option>
+              <option value="1">expires in 1 day (capped at event end)</option>
+              <option value="7">expires in 7 days (capped at event end)</option>
+              <option value="30">expires in 30 days (capped at event end)</option>
+              <option value="90">expires in 90 days (capped at event end)</option>
             </select>
+            <p class="muted" style="font-size:11px;margin:6px 0 0">
+              Links auto-expire 1 hour after event start regardless of choice — past tip-off the inventory is moot anyway.
+            </p>
           </div>
         </div>
 
@@ -835,6 +1586,10 @@
           const url = `${location.origin}${created.url}`;
           urlInput.value = url;
           await copyToClipboard(url);
+          // Surface the expiry the server actually chose (may be capped at
+          // event_start + 1h even if user picked 7 days). DOM-built so the
+          // server's ISO string never lands in innerHTML.
+          renderShareExpiryHint(mb, created.expires_at);
         } catch (e) {
           alert(`Could not create link: ${e.message}`);
           copyBtn.textContent = "Generate link";
@@ -894,6 +1649,33 @@
     }
 
     bootstrap();
+  }
+
+  // Replace any prior expiry hint in the share modal with a fresh "Expires at
+  // {date}" note. Called after a revocable link is generated so the user can
+  // confirm the server's chosen expiry (auto-cap may have moved it earlier
+  // than the dropdown selection). DOM-built — date string from server.
+  function renderShareExpiryHint(modalBody, expiresAtIso) {
+    if (!modalBody) return;
+    // Remove any prior hint so repeated Generate clicks don't stack.
+    const prior = modalBody.querySelector(".share-expiry-hint");
+    if (prior) prior.remove();
+    if (!expiresAtIso) return;
+    let when;
+    try {
+      const d = new Date(expiresAtIso);
+      when = isNaN(d.getTime()) ? null : d.toLocaleString();
+    } catch { when = null; }
+    if (!when) return;
+    const note = document.createElement("p");
+    note.className = "share-expiry-hint muted";
+    note.style.cssText = "font-size: 12px; margin: 8px 0 0; padding: 8px 10px; background: rgba(74,222,128,0.06); border: 1px solid rgba(74,222,128,0.18); border-radius: 6px; color: var(--good);";
+    note.append(document.createTextNode("Active until "));
+    const strong = document.createElement("strong");
+    strong.textContent = when;
+    note.append(strong);
+    note.append(document.createTextNode(" · revoke any time at /store/shares"));
+    modalBody.append(note);
   }
 
   function escapeHtml(s) {
