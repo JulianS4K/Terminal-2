@@ -83,6 +83,18 @@ STOREFRONT_SQL_ONLY = os.environ.get("STOREFRONT_SQL_ONLY", "false").lower() == 
 if STOREFRONT_SQL_ONLY:
     print("STOREFRONT_SQL_ONLY=true — storefront serves from listings_snapshots; no live TEvo calls on store routes.")
 
+# STOREFRONT_PREFER_INTERNAL_ZONES — flip on once the hand-curated granular
+# zones (NYK at MSG taxonomy, etc.) cover most/all sections. Today most of
+# them have coverage gaps that leave shoppers with un-filterable listings,
+# so the default surfaces the consumer-bowl layer (Lower 100s / Club 200s
+# etc.) which is well-covered. Internal detection logic stays wired so a
+# flip flag does the right thing event-by-event when data matures.
+STOREFRONT_PREFER_INTERNAL_ZONES = (
+    os.environ.get("STOREFRONT_PREFER_INTERNAL_ZONES", "false").lower() == "true"
+)
+if STOREFRONT_PREFER_INTERNAL_ZONES:
+    print("STOREFRONT_PREFER_INTERNAL_ZONES=true — granular zones preferred when (performer, venue) has them.")
+
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
@@ -4727,16 +4739,19 @@ def store_event_zones(event_id: int):
 
     has_granular_layer = pair_zone_count > _GRANULAR_LAYER_ZONE_COUNT_THRESHOLD
 
-    # Step 2: pick the layer to surface.
-    if has_granular_layer:
-        # Granular layer exists — return only the hand-curated zones,
-        # filtering out the bowl-pattern names from the rollup output.
+    # Step 2: pick the layer to surface. Off by default — granular taxonomy
+    # has coverage gaps right now (NYK at MSG covers ~25 of 89 owned tickets
+    # in section ranges with curated rules; the rest fall through). Once A1
+    # closes those gaps, flip STOREFRONT_PREFER_INTERNAL_ZONES=true.
+    if has_granular_layer and STOREFRONT_PREFER_INTERNAL_ZONES:
+        # Granular layer exists AND we're configured to prefer it.
         chosen = [r for r in curated if not _is_bowl_pattern_name(r.get("zone"))]
         layer = "internal" if chosen else "none"
     else:
-        # No granular layer — return whatever curated zones exist (the
-        # bowl-pattern set plus any venue-specific bowl additions like
-        # "Floor / Pit / GA" or "Special").
+        # Default path — return whatever curated zones exist. For pairs with
+        # both layers (NYK at MSG), this returns the bowl-level set since
+        # match_performer_zone() now picks bowl-pattern names by display
+        # order. For consumer-only pairs (most events), returns those.
         chosen = curated
         layer = "consumer" if chosen else "none"
 
@@ -4754,6 +4769,8 @@ def store_event_zones(event_id: int):
         "zones": zones,
         "layer": layer,
         "pair_zone_count": pair_zone_count,  # debug: # of zones for performer+venue
+        "has_granular_available": has_granular_layer,  # UI can show a 'switch to expert view' toggle
+        "prefer_internal_enabled": STOREFRONT_PREFER_INTERNAL_ZONES,
     }
 
 
