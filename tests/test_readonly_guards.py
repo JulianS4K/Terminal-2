@@ -77,6 +77,60 @@ def test_sg_allowlist_constant_is_get_only():
     assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
 
 
+# ---------- tickpick_client ----------
+
+def test_tickpick_assert_readonly_raises_on_post():
+    from tickpick_client import _assert_readonly_method, TickPickReadOnlyError
+    with pytest.raises(TickPickReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_tickpick_assert_readonly_raises_on_put_patch_delete():
+    from tickpick_client import _assert_readonly_method, TickPickReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE"):
+        with pytest.raises(TickPickReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_tickpick_assert_readonly_allows_get():
+    from tickpick_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_tickpick_allowlist_constant_is_get_only():
+    from tickpick_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
+# ---------- vivid_client ----------
+
+def test_vivid_assert_readonly_raises_on_post():
+    from vivid_client import _assert_readonly_method, VividReadOnlyError
+    with pytest.raises(VividReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_vivid_assert_readonly_raises_on_put_patch_delete():
+    from vivid_client import _assert_readonly_method, VividReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE"):
+        with pytest.raises(VividReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_vivid_assert_readonly_allows_get():
+    from vivid_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_vivid_allowlist_constant_is_get_only():
+    from vivid_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
 # ---------- audit script catches synthetic violations ----------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

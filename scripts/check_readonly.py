@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """RULE 2 enforcement scan — fail the build on any code that could push to
-TEvo or SeatGeek.
+TEvo, SeatGeek, TickPick, or Vivid Seats.
 
-We integrate with three external read-only data sources:
-  - api.ticketevolution.com           (TEvo)
-  - brokerdata.seatgeek.com           (SG broker data)
+We integrate with five external read-only data sources for our orders /
+sales / listings feeds:
+  - api.ticketevolution.com           (TEvo orders + listings)
+  - brokerdata.seatgeek.com           (SG broker data — listings + sales)
   - sellerdirect-api.seatgeek.com     (SG seller direct)
+  - api.tickpick.com                  (TickPick broker orders)
+  - brokers.vividseats.com            (Vivid Seats broker orders)
 
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
@@ -39,6 +42,8 @@ FORBIDDEN_HOSTS = (
     "api.sandbox.ticketevolution.com",
     "brokerdata.seatgeek.com",
     "sellerdirect-api.seatgeek.com",
+    "api.tickpick.com",
+    "brokers.vividseats.com",
 )
 
 # Files that legitimately reference these hosts (i.e. the client modules).
@@ -46,6 +51,8 @@ FORBIDDEN_HOSTS = (
 CLIENT_FILES = {
     "evo_client.py",
     "seatgeek_client.py",
+    "tickpick_client.py",
+    "vivid_client.py",
 }
 
 # Required guard tokens that must appear in each client module.
@@ -251,13 +258,14 @@ def main() -> int:
         for v in total:
             print(f"  - {v}")
         print()
-        print("Fix: route the call through evo_client.EvoClient or "
-              "seatgeek_client.SeatGeekClient (GET-only) for app code, "
+        print("Fix: route the call through one of the GET-only clients — "
+              "evo_client.EvoClient, seatgeek_client.SeatGeekClient, "
+              "tickpick_client.TickPickClient, vivid_client.VividClient — "
               "or use net.http_get exclusively in plpgsql migrations.")
         return 1
 
     mig_count = len(list((ROOT / "supabase" / "migrations").glob("*.sql"))) if (ROOT / "supabase" / "migrations").exists() else 0
-    print("RULE 2 clean — no write paths detected to TEvo or SeatGeek hosts.")
+    print("RULE 2 clean — no write paths detected to TEvo, SeatGeek, TickPick, or Vivid Seats hosts.")
     print(f"  - Python files scanned   : {len(_walk(('.py',)))}")
     print(f"  - TS/JS files scanned    : {len(_walk(('.ts', '.js', '.tsx', '.jsx')))}")
     print(f"  - plpgsql migrations     : {mig_count}")
