@@ -1,4 +1,4 @@
--- Migration 20260510210000 · level:secondary-sales · lane:canonical · writes:revokes(audit_cross_source_health,v_event_sales_combined) · reads:- · pre:20260510120500,20260510190000
+-- Migration 20260510210050 · level:secondary-sales · lane:canonical · writes:revokes(audit_cross_source_health,v_event_sales_combined) · reads:- · pre:20260510120500,20260510190000
 
 -- Security hardening per A1 review of #51:
 -- - audit_cross_source_health() RPC returns drift/orphan/coverage tallies → reconnaissance surface, revoke anon
