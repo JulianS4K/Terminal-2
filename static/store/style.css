@@ -193,6 +193,77 @@ a { color: inherit; }
   letter-spacing: 0.5px;
 }
 
+/* ----- Context badges (rivalry / MLB series / tournament) -----
+   Used on both catalog cards (.card-context) and the event detail header
+   (.event-context). One container, three badge variants. Compact mode
+   trims dates + Wikipedia links; full mode shows everything. */
+.card-context,
+.event-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+.event-context { margin-top: 8px; }
+
+.ctx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+  /* Border-color is overridden per variant below. Default keeps the chip
+     visible on unknown variants instead of disappearing. */
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Rivalry — orange/red palette graded by intensity */
+.ctx-badge.rivalry {
+  border-color: rgba(255, 138, 76, 0.45);
+  background: rgba(255, 138, 76, 0.10);
+  color: #ffb892;
+}
+.ctx-badge.rivalry.intensity-historic {
+  border-color: rgba(255, 92, 92, 0.55);
+  background: rgba(255, 92, 92, 0.14);
+  color: #ffb6b6;
+}
+.ctx-badge.rivalry.intensity-medium {
+  border-color: rgba(255, 180, 100, 0.35);
+  background: rgba(255, 180, 100, 0.08);
+  color: #ffd09a;
+}
+
+/* MLB series — cool blue (distinct from rivalry, neutral feel) */
+.ctx-badge.series {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(96, 165, 250, 0.10);
+  color: #c6dcff;
+}
+
+/* Tournament — green (multi-day, parent-event feel) */
+.ctx-badge.tournament {
+  border-color: rgba(110, 207, 130, 0.45);
+  background: rgba(110, 207, 130, 0.10);
+  color: #cfeed7;
+}
+
+/* Wikipedia link badge appendage — kept subtle so it doesn't compete
+   with the badge label. Only present in full (non-compact) variant. */
+.ctx-badge-link {
+  color: inherit;
+  opacity: 0.7;
+  text-decoration: none;
+  font-size: 12px;
+}
+.ctx-badge-link:hover { opacity: 1; }
+
 /* ----- Event page ----- */
 .back {
   display: inline-block;

@@ -682,6 +682,117 @@ def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
     return {int(r["performer_id"]): r for r in rows}
 
 
+def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
+    """Bulk-fetch rivalry / MLB-series / tournament context for many events.
+
+    Returns:
+      { event_id: { "rivalry": {...}|None,
+                    "mlb_series": {...}|None,
+                    "tournament": {...}|None } }
+
+    Three views back this, each maintained by the context lane (not P1):
+      rivalry      ← v_rivalry_events            (mig 20260509530000)
+      mlb_series   ← v_mlb_game_series           (mig 20260509470000)
+      tournament   ← v_event_tournament_context  (mig 20260510010000)
+
+    Missing views (per-env) degrade gracefully to None for that key — better
+    to show events without badges than to 500 the storefront.
+    """
+    if not event_ids:
+        return {}
+
+    ids = [int(e) for e in event_ids if e is not None]
+    ctx: dict[int, dict] = {
+        eid: {"rivalry": None, "mlb_series": None, "tournament": None}
+        for eid in ids
+    }
+
+    # Rivalry: v_rivalry_events can emit duplicate rows when both the
+    # performer-id and name joins match the same matchup, so dedup at the
+    # event id level (first row wins; intensity is the same either way).
+    try:
+        rows = (db.table("v_rivalry_events")
+                  .select("tevo_event_id,rivalry_name,league,is_branded,"
+                          "rivalry_intensity,wikipedia_url")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+        seen: set[int] = set()
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid in seen or eid not in ctx:
+                continue
+            seen.add(eid)
+            ctx[eid]["rivalry"] = {
+                "name": r.get("rivalry_name"),
+                "league": r.get("league"),
+                "is_branded": bool(r.get("is_branded")),
+                "intensity": r.get("rivalry_intensity"),
+                "wikipedia_url": r.get("wikipedia_url"),
+            }
+    except Exception:
+        pass
+
+    # MLB series: v_mlb_game_series rows hold the full tevo_event_ids array
+    # for the series. Pull every series whose end-date is today or later, then
+    # walk the array to attach the series context to each game in the set,
+    # adding game_number (1-based position within the series).
+    try:
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+        rows = (db.table("v_mlb_game_series")
+                  .select("home_team,away_team,venue_name,series_start,series_end,"
+                          "series_span_days,game_count,tevo_event_ids,branded_series_name")
+                  .gte("series_end", today_iso)
+                  .execute()).data or []
+        for r in rows:
+            tevo_ids = r.get("tevo_event_ids") or []
+            tevo_ids = [int(e) for e in tevo_ids if e is not None]
+            for pos, eid in enumerate(tevo_ids, start=1):
+                if eid not in ctx:
+                    continue
+                ctx[eid]["mlb_series"] = {
+                    "home_team": r.get("home_team"),
+                    "away_team": r.get("away_team"),
+                    "venue_name": r.get("venue_name"),
+                    "series_start": r.get("series_start"),
+                    "series_end": r.get("series_end"),
+                    "span_days": r.get("series_span_days"),
+                    "game_count": r.get("game_count"),
+                    "branded_name": r.get("branded_series_name"),
+                    "sibling_event_ids": tevo_ids,
+                    "game_number": pos,
+                }
+    except Exception:
+        pass
+
+    # Tournament: one row per TEvo event in v_event_tournament_context (left
+    # join on event_xref + espn_tournament_events). Surfaces a multi-day
+    # parent so "Round 2 of US Open · Aug 26 – Sep 8" can render.
+    try:
+        rows = (db.table("v_event_tournament_context")
+                  .select("tevo_event_id,tournament_name,tournament_short_name,"
+                          "tournament_start,tournament_end,tournament_venue,"
+                          "espn_league,circuit_name")
+                  .in_("tevo_event_id", ids)
+                  .execute()).data or []
+        for r in rows:
+            eid = int(r["tevo_event_id"])
+            if eid not in ctx:
+                continue
+            ctx[eid]["tournament"] = {
+                "name": r.get("tournament_name"),
+                "short_name": r.get("tournament_short_name"),
+                "start_date": r.get("tournament_start"),
+                "end_date": r.get("tournament_end"),
+                "venue": r.get("tournament_venue"),
+                "league": r.get("espn_league"),
+                "circuit_name": r.get("circuit_name"),
+            }
+    except Exception:
+        pass
+
+    return ctx
+
+
 @app.get("/api/broker/news")
 def broker_news(
     limit: int = 20,
@@ -3712,6 +3823,12 @@ def store_events(
     perf_ids = [int(p) for p in perf_ids if p]
     perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
 
+    # Bulk-fetch rivalry / MLB-series / tournament context per event. Three
+    # cheap view reads → flat lookup map keyed by event_id. Each card may
+    # render zero, one, or several badges.
+    ev_ids_for_ctx = [int(e["id"]) for e in (r.get("events") or {} for r in rows) if e.get("id")]
+    ctx_by_id = _bulk_event_context(db, ev_ids_for_ctx) if ev_ids_for_ctx else {}
+
     out: list[dict] = []
     needle = (q or "").strip().lower()
     for r in rows:
@@ -3730,6 +3847,7 @@ def store_events(
             if needle not in hay:
                 continue
         a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
+        ctx = ctx_by_id.get(int(ev.get("id") or 0)) or {}
         out.append({
             "id": ev.get("id"),
             "name": ev.get("name"),
@@ -3743,6 +3861,11 @@ def store_events(
             "owned_tickets_count": r.get("owned_tickets_count"),
             "owned_groups_count": r.get("owned_groups_count"),
             "captured_at": r.get("captured_at"),
+            # Optional context badges — keys are always present so the client
+            # can do `if (ev.rivalry) render(...)` without ?-chaining.
+            "rivalry": ctx.get("rivalry"),
+            "mlb_series": ctx.get("mlb_series"),
+            "tournament": ctx.get("tournament"),
         })
         if len(out) >= cap:
             break
@@ -4653,6 +4776,17 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
         "snapshot_age_seconds": snapshot_age_seconds,
         "demo_mode": STOREFRONT_SQL_ONLY,
     }
+
+    # Context badges — rivalry / MLB series / multi-day tournament. All three
+    # are nullable; UI hides the badge when None. Single bulk call to keep
+    # the per-detail roundtrip count low.
+    if sb is not None:
+        ctx_by_id = _bulk_event_context(sb, [event_id])
+        response["context"] = ctx_by_id.get(event_id) or {
+            "rivalry": None, "mlb_series": None, "tournament": None
+        }
+    else:
+        response["context"] = {"rivalry": None, "mlb_series": None, "tournament": None}
 
     # Fire-and-forget: refresh canonical SQL via the audit-lane Edge Function.
     # Auto-tracks the event (adds performer to watchlist) if we've never seen

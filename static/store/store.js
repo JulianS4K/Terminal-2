@@ -53,6 +53,98 @@
     return r.json();
   }
 
+  // Short date range like "Aug 26 – Aug 28" (or "Aug 26 – Sep 2" when the
+  // span crosses a month). Used by the MLB-series + tournament context
+  // badges where a wall-clock weekday/time would be noise.
+  //
+  // Parses just the YYYY-MM-DD prefix as a LOCAL date so a tournament
+  // recorded as "2026-05-22T00:00:00+00:00" doesn't render as May 21 in
+  // the US east coast (UTC midnight = previous day local). The audit
+  // lane writes these dates as wall-clock dates, not instant timestamps.
+  function fmtDateRange(startIso, endIso) {
+    if (!startIso) return "";
+    const opts = { month: "short", day: "numeric" };
+    const parseLocal = (s) => {
+      if (!s) return null;
+      const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!m) return null;
+      return new Date(+m[1], +m[2] - 1, +m[3]);
+    };
+    const start = parseLocal(startIso);
+    if (!start) return "";
+    const startStr = start.toLocaleDateString(undefined, opts);
+    const end = parseLocal(endIso);
+    if (!end || +end === +start) return startStr;
+    return `${startStr} – ${end.toLocaleDateString(undefined, opts)}`;
+  }
+
+  // Build badge nodes for the optional context dimensions a row can carry:
+  // rivalry, MLB series, tournament. Returns an array (possibly empty); the
+  // caller decides where to append it. Each badge is a small chip; on cards
+  // we render a compact "lite" variant.
+  //
+  // ctx shape: { rivalry: {...}|null, mlb_series: {...}|null, tournament: {...}|null }
+  function buildContextBadges(ctx, opts) {
+    if (!ctx) return [];
+    const compact = !!(opts && opts.compact);
+    const out = [];
+
+    if (ctx.rivalry && ctx.rivalry.name) {
+      const r = ctx.rivalry;
+      // Branded rivalries get the rivalry name verbatim ("Subway Series").
+      // Generic rivalries get "Rivalry game · intensity" so the user knows
+      // what they're looking at without a Wikipedia trip.
+      const span = document.createElement("span");
+      span.className = `ctx-badge rivalry intensity-${r.intensity || "high"}`;
+      const label = r.is_branded
+        ? r.name
+        : (compact
+            ? (r.intensity === "historic" ? "Historic rivalry" : "Rivalry game")
+            : `${r.name} · ${r.intensity || "rivalry"}`);
+      span.textContent = label;
+      // Wikipedia link only on the full (non-compact) variant; cards stay
+      // click-through to the event detail without a competing link.
+      if (!compact && r.wikipedia_url) {
+        const a = document.createElement("a");
+        a.href = r.wikipedia_url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.className = "ctx-badge-link";
+        a.textContent = "ⓘ";
+        span.appendChild(document.createTextNode(" "));
+        span.appendChild(a);
+      }
+      out.push(span);
+    }
+
+    if (ctx.mlb_series && ctx.mlb_series.game_count) {
+      const s = ctx.mlb_series;
+      const span = document.createElement("span");
+      span.className = "ctx-badge series";
+      const pos = s.game_number ? `Game ${s.game_number} of ${s.game_count}` : `${s.game_count}-game series`;
+      const range = fmtDateRange(s.series_start, s.series_end);
+      // Branded series name surfaces when set; falls back to the generic
+      // "Part of N-game series" tag the user asked for.
+      const lead = s.branded_name
+        ? s.branded_name
+        : (compact ? `${s.game_count}-game series` : `Part of a ${s.game_count}-game series`);
+      span.textContent = compact ? `${lead} · ${pos}` : `${lead} · ${pos} · ${range}`;
+      out.push(span);
+    }
+
+    if (ctx.tournament && (ctx.tournament.name || ctx.tournament.short_name)) {
+      const t = ctx.tournament;
+      const span = document.createElement("span");
+      span.className = "ctx-badge tournament";
+      const name = t.short_name || t.name;
+      const range = fmtDateRange(t.start_date, t.end_date);
+      span.textContent = range ? `${name} · ${range}` : name;
+      out.push(span);
+    }
+
+    return out;
+  }
+
   // ---------- Catalog page ----------
   function mountCatalog() {
     const form = $("#searchForm");
@@ -111,6 +203,17 @@
         where.className = "where";
         where.textContent = [ev.venue_name, ev.venue_location].filter(Boolean).join(" · ");
 
+        // Context strip (rivalry / series / tournament) — compact variant for
+        // catalog cards. Skipped silently when none apply. Compact mode drops
+        // date ranges and the Wikipedia link so the card stays scannable.
+        const ctxRow = document.createElement("div");
+        ctxRow.className = "card-context";
+        const badges = buildContextBadges(
+          { rivalry: ev.rivalry, mlb_series: ev.mlb_series, tournament: ev.tournament },
+          { compact: true },
+        );
+        badges.forEach((b) => ctxRow.append(b));
+
         const meta = document.createElement("div");
         meta.className = "meta";
         const left = document.createElement("div");
@@ -130,7 +233,9 @@
           : "available";
         meta.append(left, right);
 
-        a.append(head, where, meta);
+        a.append(head, where);
+        if (badges.length) a.append(ctxRow);
+        a.append(meta);
         grid.append(a);
       }
     }
@@ -840,6 +945,22 @@
         wrap.append(txt);
         perfEl.append(wrap);
       });
+
+      // Context strip — rivalry / MLB series / tournament. Full variant
+      // (includes date ranges and Wikipedia link). Container stays hidden
+      // when none of the three apply so the heading area doesn't reserve
+      // empty space.
+      const ctxEl = $("#evContext");
+      if (ctxEl) {
+        ctxEl.replaceChildren();
+        const ctxBadges = buildContextBadges(res.context, { compact: false });
+        if (ctxBadges.length) {
+          ctxBadges.forEach((b) => ctxEl.append(b));
+          ctxEl.hidden = false;
+        } else {
+          ctxEl.hidden = true;
+        }
+      }
 
       const map = event.configuration?.seating_chart_medium || event.configuration?.seating_chart_large;
       if (map) seatMap.src = map;

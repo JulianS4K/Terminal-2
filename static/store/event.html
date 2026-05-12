@@ -38,6 +38,11 @@
           <p class="event-meta sub">
             <span id="evPerformers"></span>
           </p>
+          <!-- Context strip: rivalry tag, MLB series position, tournament
+               parent. All three are optional; the container stays hidden
+               when none of them apply. Populated by store.js from
+               res.context.{rivalry,mlb_series,tournament}. -->
+          <div id="evContext" class="event-context" hidden></div>
         </div>
         <div class="head-actions">
           <span id="freshness" class="freshness"></span>
