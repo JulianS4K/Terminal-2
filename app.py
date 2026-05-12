@@ -245,6 +245,7 @@ app.add_middleware(_SecurityHeadersMiddleware)
 # Single-instance Railway deploy makes a process-local limiter sufficient.
 # If you scale to >1 dyno, swap to Redis-backed slowapi or move to Cloudflare.
 import time as _time
+import time  # public alias for in-process caches that want time.time()
 from collections import defaultdict as _dd, deque as _dq
 
 class _IPRateLimiter:
@@ -4292,6 +4293,266 @@ def _attach_owned_metadata(
             "distance_miles": round(dist, 1) if dist is not None else None,
         })
     return out
+
+
+# In-memory TTL cache for storefront search results. TEvo's
+# /v9/searches/suggestions has no upstream cache — 5 repeated calls vary
+# 785-2833ms (empirical 2026-05-12). 60s window means even an aggressive
+# typist won't burn quota on common queries.
+_search_cache: dict[str, tuple[float, dict]] = {}
+_SEARCH_CACHE_TTL = 60.0
+
+
+def _search_cache_get(key: str) -> dict | None:
+    hit = _search_cache.get(key)
+    if not hit:
+        return None
+    ts, payload = hit
+    if time.time() - ts > _SEARCH_CACHE_TTL:
+        _search_cache.pop(key, None)
+        return None
+    return payload
+
+
+def _search_cache_put(key: str, payload: dict) -> None:
+    _search_cache[key] = (time.time(), payload)
+    # Drop oldest entries when the cache grows past 200 — keeps a long
+    # uptime from leaking memory on a steady drip of unique queries.
+    if len(_search_cache) > 200:
+        oldest = min(_search_cache.items(), key=lambda kv: kv[1][0])
+        _search_cache.pop(oldest[0], None)
+
+
+def _search_sql_only(db, q_norm: str, limit: int) -> dict:
+    """SQL-only search: ILIKE across our `events` + `performer_metadata` for
+    queries when STOREFRONT_SQL_ONLY=true. Always hits Supabase, never TEvo.
+    Returns the same shape as the live path so the client is mode-agnostic.
+    """
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    # Strip characters that break PostgREST's or_() clause parser:
+    # commas (clause separator), periods (operator separator), parens
+    # (grouping). The replacement char is a space so multi-token queries
+    # still work via ILIKE's wildcard handling.
+    safe_q = re.sub(r"[,.()\"]", " ", q_norm).strip()
+    if not safe_q:
+        return {"events": [], "performers": [], "venues": [], "source": "sql"}
+    pattern = f"%{safe_q}%"
+
+    # Events: search by event name, venue name, venue location, primary
+    # performer name. Limit to future + active so we don't surface ghosts.
+    try:
+        ev_rows = (db.table("events")
+                     .select("id,name,occurs_at_local,venue_name,venue_location,"
+                             "primary_performer_id,primary_performer_name")
+                     .gte("occurs_at_local", today_iso)
+                     .or_(f"name.ilike.{pattern},"
+                          f"venue_name.ilike.{pattern},"
+                          f"venue_location.ilike.{pattern},"
+                          f"primary_performer_name.ilike.{pattern}")
+                     .order("occurs_at_local", desc=False)
+                     .limit(80)
+                     .execute().data) or []
+    except Exception as e:
+        print(f"search_sql_only events query failed: {e}")
+        ev_rows = []
+
+    # Tag with we_own + from_price via latest_event_metrics. Drop CANCELLED
+    # name strings (rare in our table but cheap to filter).
+    ev_rows = [e for e in ev_rows if "CANCELLED" not in (e.get("name") or "").upper()]
+    if ev_rows:
+        ev_ids = [int(e["id"]) for e in ev_rows if e.get("id")]
+        metrics: dict[int, dict] = {}
+        if ev_ids:
+            try:
+                rows = (db.table("latest_event_metrics")
+                          .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
+                          .in_("event_id", ev_ids).execute().data) or []
+                metrics = {int(r["event_id"]): r for r in rows if r.get("event_id")}
+            except Exception:
+                metrics = {}
+        # Drop inactive (ghost/cancelled) events.
+        try:
+            lc = (db.table("event_lifecycle")
+                    .select("event_id,is_active")
+                    .in_("event_id", ev_ids).execute().data) or []
+            inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+        except Exception:
+            inactive = set()
+        ev_rows = [e for e in ev_rows if int(e.get("id") or 0) not in inactive]
+    else:
+        metrics = {}
+
+    events_out = []
+    for e in ev_rows[:limit]:
+        eid = int(e.get("id") or 0)
+        m = metrics.get(eid) or {}
+        events_out.append({
+            "id": eid,
+            "name": e.get("name"),
+            "venue_name": e.get("venue_name"),
+            "location": e.get("venue_location"),
+            "occurs_at": e.get("occurs_at_local"),
+            "we_own": bool(m.get("owned_tickets_count")),
+            "from_price": m.get("retail_min"),
+            "owned_tix": m.get("owned_tickets_count"),
+        })
+
+    # Performers via performer_metadata name match.
+    try:
+        pf_rows = (db.table("performer_metadata")
+                     .select("performer_id,name,espn_league")
+                     .ilike("name", pattern)
+                     .limit(limit)
+                     .execute().data) or []
+    except Exception:
+        pf_rows = []
+    performers_out = [{
+        "id": int(p.get("performer_id") or 0),
+        "name": p.get("name"),
+        "league": p.get("espn_league"),
+    } for p in pf_rows if p.get("performer_id")]
+
+    # Venues — derive from events distinct venue rows for SQL-only mode.
+    # We don't have a public venues table; use distinct venue_name from
+    # upcoming events matching the query.
+    venues_out: list[dict] = []
+    try:
+        vn_rows = (db.table("events")
+                     .select("venue_id,venue_name,venue_location")
+                     .gte("occurs_at_local", today_iso)
+                     .or_(f"venue_name.ilike.{pattern},venue_location.ilike.{pattern}")
+                     .limit(40)
+                     .execute().data) or []
+        seen: set[int] = set()
+        for v in vn_rows:
+            vid = int(v.get("venue_id") or 0)
+            if vid in seen or not vid:
+                continue
+            seen.add(vid)
+            venues_out.append({
+                "id": vid,
+                "name": v.get("venue_name"),
+                "location": v.get("venue_location"),
+            })
+            if len(venues_out) >= limit:
+                break
+    except Exception:
+        pass
+
+    return {
+        "events": events_out,
+        "performers": performers_out,
+        "venues": venues_out,
+        "source": "sql",
+    }
+
+
+def _search_live(db, q_norm: str, limit: int) -> dict:
+    """Live search: hits TEvo /v9/searches/suggestions, then cross-joins the
+    returned event IDs against our SQL to tag we_own + from_price. Used in
+    non-SQL-only deployments."""
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    try:
+        resp = client.search_suggestions(
+            q_norm, entities="events,performers,venues",
+            fuzzy=True, limit=20, occurs_at_gte=today_iso,
+        )
+    except RuntimeError as e:
+        # Don't break the page on TEvo error; fall back to SQL.
+        print(f"search_live TEvo failed, falling back to SQL: {e}")
+        return _search_sql_only(db, q_norm, limit)
+
+    s = (resp.get("suggestions") or {})
+    ev_in = s.get("events", []) or []
+    pf_in = s.get("performers", []) or []
+    vn_in = s.get("venues", []) or []
+
+    # Drop CANCELLED (TEvo bakes the marker right into the name string).
+    ev_in = [e for e in ev_in if "CANCELLED" not in (e.get("name") or "").upper()]
+
+    # Cross-check against our SQL to know which events we actually own.
+    ev_ids = [int(e.get("id") or 0) for e in ev_in if e.get("id")]
+    metrics: dict[int, dict] = {}
+    if ev_ids:
+        try:
+            rows = (db.table("latest_event_metrics")
+                      .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
+                      .in_("event_id", ev_ids).execute().data) or []
+            metrics = {int(r["event_id"]): r for r in rows if r.get("event_id")}
+        except Exception:
+            metrics = {}
+
+    events_out = []
+    for e in ev_in[:limit]:
+        eid = int(e.get("id") or 0)
+        m = metrics.get(eid) or {}
+        events_out.append({
+            "id": eid,
+            "name": e.get("name"),
+            "venue_name": e.get("venue_name"),
+            "location": e.get("location"),
+            "occurs_at": e.get("occurs_at"),
+            "we_own": bool(m.get("owned_tickets_count")),
+            "from_price": m.get("retail_min"),
+            "owned_tix": m.get("owned_tickets_count"),
+        })
+
+    return {
+        "events": events_out,
+        "performers": [{
+            "id": int(p.get("id") or 0),
+            "name": p.get("name"),
+            "location": p.get("location"),
+            "venue_name": p.get("venue_name"),
+        } for p in pf_in[:limit] if p.get("id")],
+        "venues": [{
+            "id": int(v.get("id") or 0),
+            "name": v.get("name"),
+            "location": v.get("location"),
+        } for v in vn_in[:limit] if v.get("id")],
+        "source": "live",
+    }
+
+
+@app.get("/api/store/search")
+def store_search(q: str, limit: int = 8):
+    """Live storefront search. Hits TEvo /v9/searches/suggestions in live
+    mode (and cross-joins our SQL for we_own/from_price tagging), or
+    ILIKE-searches our tables when STOREFRONT_SQL_ONLY=true.
+
+    Returns three buckets the dropdown UI renders separately:
+      events:     [ { id, name, venue_name, location, occurs_at, we_own,
+                      from_price, owned_tix } ]
+      performers: [ { id, name, location, venue_name?, league? } ]
+      venues:     [ { id, name, location } ]
+
+    Cached per-q for 60s in process memory so a typist's stream of
+    keystrokes doesn't burn TEvo quota.
+    """
+    q_norm = (q or "").strip()
+    if not q_norm:
+        return {"q": "", "events": [], "performers": [], "venues": [],
+                "source": "empty", "latency_ms": 0}
+
+    # Cap at 50; the upstream cap is 20, so anything past that just trims.
+    lim = max(1, min(int(limit), 50))
+    cache_key = f"{q_norm.lower()}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
+    cached = _search_cache_get(cache_key)
+    if cached is not None:
+        return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
+
+    t0 = time.time()
+    db = require_sb()
+    if STOREFRONT_SQL_ONLY:
+        payload = _search_sql_only(db, q_norm, lim)
+    else:
+        payload = _search_live(db, q_norm, lim)
+
+    elapsed_ms = int((time.time() - t0) * 1000)
+    payload["q"] = q_norm
+    payload["latency_ms"] = elapsed_ms
+    _search_cache_put(cache_key, payload)
+    return payload
 
 
 @app.get("/api/store/movers")

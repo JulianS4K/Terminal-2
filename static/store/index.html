@@ -26,8 +26,15 @@
           placeholder="artist · team · venue · city"
           autocomplete="off"
           autofocus
+          aria-autocomplete="list"
+          aria-controls="searchSuggest"
         />
         <button type="submit">Search</button>
+        <!-- Suggestion dropdown — populated as the user types. Calls
+             /api/store/search?q=... debounced at 300ms with a 2-char
+             minimum. Three sections: events you can buy now, performers,
+             venues. Hidden when no q or no results. -->
+        <div id="searchSuggest" class="search-suggest" hidden role="listbox"></div>
       </form>
     </section>
 

@@ -371,8 +371,16 @@
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       filter(input.value);
+      hideSuggest();
     });
-    input.addEventListener("input", () => filter(input.value));
+    // Local in-memory filter on the already-loaded catalog AND a debounced
+    // call to /api/store/search for live suggestions (TEvo + our SQL).
+    input.addEventListener("input", () => {
+      filter(input.value);
+      scheduleSuggest(input.value);
+    });
+
+    wireSuggestDropdown();
 
     // URL params let event-detail links into the catalog filter to a single
     // performer or venue. Server-side filter, not just client-side, so the
@@ -406,6 +414,164 @@
           .catch(() => { strip.hidden = true; });
       }
     }
+
+    // ----- Live search suggestions dropdown -----
+    // Debounced /api/store/search call as the user types. 300ms debounce
+    // + 2-char minimum keeps upstream load reasonable (TEvo doesn't cache
+    // suggestions — see notes in evo_client.search_suggestions). Server
+    // also caches per-q for 60s.
+    const suggestEl = $("#searchSuggest");
+    let suggestTimer = null;
+    let suggestSeq = 0;  // monotonic so stale responses don't overwrite
+
+    function scheduleSuggest(qRaw) {
+      const q = (qRaw || "").trim();
+      if (suggestTimer) {
+        clearTimeout(suggestTimer);
+        suggestTimer = null;
+      }
+      if (q.length < 2) {
+        hideSuggest();
+        return;
+      }
+      const mySeq = ++suggestSeq;
+      suggestTimer = setTimeout(() => {
+        api(`/api/store/search?q=${encodeURIComponent(q)}&limit=8`)
+          .then((res) => {
+            if (mySeq !== suggestSeq) return;  // stale; user typed more
+            renderSuggest(suggestEl, res);
+          })
+          .catch(() => {
+            if (mySeq !== suggestSeq) return;
+            hideSuggest();
+          });
+      }, 300);
+    }
+
+    function hideSuggest() {
+      if (!suggestEl) return;
+      suggestEl.hidden = true;
+      suggestEl.replaceChildren();
+    }
+
+    function wireSuggestDropdown() {
+      if (!suggestEl) return;
+      // Click outside → close. Use mousedown so the suggestion's own
+      // click handler fires first if the user clicked a row.
+      document.addEventListener("mousedown", (e) => {
+        if (!form.contains(e.target)) hideSuggest();
+      });
+      // Escape → close + return focus to the input.
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { hideSuggest(); input.focus(); }
+      });
+    }
+  }
+
+  // Render suggestion dropdown body. Three sections:
+  //   Events you can buy now (we_own=true) — top priority, shown first
+  //   Other events (we_own=false) — surfaced but flagged as "browse"
+  //   Performers + venues — bottom, clickable filter pivots
+  function renderSuggest(host, payload) {
+    if (!host) return;
+    host.replaceChildren();
+    const events = (payload && payload.events) || [];
+    const performers = (payload && payload.performers) || [];
+    const venues = (payload && payload.venues) || [];
+
+    if (!events.length && !performers.length && !venues.length) {
+      host.hidden = true;
+      return;
+    }
+
+    const buyable = events.filter((e) => e.we_own);
+    const browseOnly = events.filter((e) => !e.we_own);
+
+    if (buyable.length) {
+      host.append(suggestHeader("Tickets you can buy"));
+      buyable.forEach((e) => host.append(suggestEventRow(e, true)));
+    }
+    if (browseOnly.length) {
+      host.append(suggestHeader("More events"));
+      browseOnly.forEach((e) => host.append(suggestEventRow(e, false)));
+    }
+    if (performers.length) {
+      host.append(suggestHeader("Performers"));
+      performers.forEach((p) => host.append(suggestPerformerRow(p)));
+    }
+    if (venues.length) {
+      host.append(suggestHeader("Venues"));
+      venues.forEach((v) => host.append(suggestVenueRow(v)));
+    }
+    host.hidden = false;
+  }
+
+  function suggestHeader(text) {
+    const h = document.createElement("div");
+    h.className = "suggest-header";
+    h.textContent = text;
+    return h;
+  }
+
+  function suggestEventRow(ev, weOwn) {
+    const a = document.createElement("a");
+    a.className = "suggest-row event" + (weOwn ? " we-own" : "");
+    a.href = `/store/event/${Number(ev.id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = ev.name || "Untitled event";
+    a.append(name);
+    const meta = document.createElement("div");
+    meta.className = "suggest-row-meta";
+    const parts = [];
+    if (ev.venue_name) parts.push(ev.venue_name);
+    if (ev.occurs_at) parts.push(fmtWhen(ev.occurs_at));
+    meta.textContent = parts.join(" · ");
+    a.append(meta);
+    if (weOwn && ev.from_price != null) {
+      const price = document.createElement("span");
+      price.className = "suggest-row-price";
+      price.textContent = `from ${fmtMoney(ev.from_price)}`;
+      a.append(price);
+    }
+    return a;
+  }
+
+  function suggestPerformerRow(p) {
+    const a = document.createElement("a");
+    a.className = "suggest-row performer";
+    a.href = `/store?performer_id=${Number(p.id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = p.name || "";
+    a.append(name);
+    if (p.location || p.venue_name || p.league) {
+      const meta = document.createElement("div");
+      meta.className = "suggest-row-meta";
+      meta.textContent = [p.league, p.venue_name, p.location].filter(Boolean).join(" · ");
+      a.append(meta);
+    }
+    return a;
+  }
+
+  function suggestVenueRow(v) {
+    const a = document.createElement("a");
+    a.className = "suggest-row venue";
+    a.href = `/store?venue_id=${Number(v.id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = v.name || "";
+    a.append(name);
+    if (v.location) {
+      const meta = document.createElement("div");
+      meta.className = "suggest-row-meta";
+      meta.textContent = v.location;
+      a.append(meta);
+    }
+    return a;
   }
 
   // Render the "Moving fast in NYC" strip — horizontal card row above

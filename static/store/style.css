@@ -103,6 +103,73 @@ a { color: inherit; }
 }
 .search button:hover { background: var(--accent-2); }
 
+/* ----- Search suggestion dropdown -----
+   Floats below the search input. Three sections (events you can buy, more
+   events, performers, venues) with subtle section headers. Click outside
+   the form closes it; Escape returns focus. */
+.search {
+  /* Position context so the absolute-positioned dropdown anchors here. */
+  position: relative;
+}
+.search-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px 0;
+}
+.suggest-header {
+  padding: 6px 14px 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  font-weight: 700;
+}
+.suggest-row {
+  display: block;
+  padding: 8px 14px;
+  text-decoration: none;
+  color: inherit;
+  border-left: 2px solid transparent;
+  transition: background-color .1s, border-color .1s;
+}
+.suggest-row:hover {
+  background: rgba(255,255,255,0.04);
+  border-left-color: var(--accent-2);
+}
+.suggest-row.we-own {
+  /* Subtle accent on rows we can actually sell. */
+  border-left-color: var(--good);
+}
+.suggest-row.we-own:hover {
+  border-left-color: var(--good);
+}
+.suggest-row-name {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+}
+.suggest-row-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.suggest-row-price {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-2);
+}
+
 /* ----- Catalog grid ----- */
 .results { margin-top: 8px; }
 .status, .empty {
