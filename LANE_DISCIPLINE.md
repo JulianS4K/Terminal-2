@@ -12,7 +12,7 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
 | B1 | Security Manager | `review-supabase-access-v8Dtl` | active |
 | C1 | Data + Chat Supervisor | this session | active |
 | D0 | Terminal FE (read-only) | `audit-datasets-schemas-auoc3` | reassigned |
-| D1 | Consumer Retail | `eloquent-chatterjee-aaedf0` | active |
+| D1 | Consumer Retail + Render workspace owner | `eloquent-chatterjee-aaedf0` | active |
 | D2 | Order Clients | `review-unified-order-suite-FA0qA` | active |
 | (sub D2) | Undelivered FE | same as D2 (or split when scope activates) | deferred |
 | D3 | Broadway (sub of D2) | `broadway-scraper-eChQ6` | active |
@@ -83,6 +83,7 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
 - Any cron schedule
 - Any edge function that mutates data
 - Any other lane's files
+- **Render workspace** (D1 owns; D0 has no deploy infra of its own yet)
 
 **Reads:** entire data plane (charts, predictive models, possibly Grok integration)
 
@@ -103,6 +104,9 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
 
 **Reads:** events, listings_snapshots, event_metrics, performer / venue context, share_links
 
+**Owns deploy infra:**
+- **Render workspace** (sole owner — see Cross-cutting Rule #6). D1 may provision services, modify env vars, configure crons, and manage all Render-side infrastructure for the storefront / `app.py` stack. Other subordinates are explicitly barred from Render writes.
+
 ### D2 — Order Clients
 
 **Writes:**
@@ -119,6 +123,7 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
 - Broker terminal files
 - Broadway code
 - `SCHEMA.md` (propose updates via PR comment to A1)
+- **Render workspace** (D1 owns)
 
 **Reads:** events, performer / venue context for join purposes, A1's listings tables for cross-validation
 
@@ -145,6 +150,7 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
 - Storefront
 - Other ingest clients
 - Edge functions outside `broadway_collect/`
+- **Render workspace** (D1 owns)
 
 **Reads:** `canonical_external_ids` for xref propagation (write into own `broadway_event_xref`, propagation handled by drift triggers in A1 / canonical lane)
 
@@ -152,7 +158,9 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
 
 **Writes:** TBD when scope activates. AR codes, custom ticketing infrastructure.
 
-**NEVER writes:** anything outside its own future namespace.
+**NEVER writes:**
+- Anything outside its own future namespace
+- **Render workspace** (D1 owns) — D4 gets its own deploy target when scoped, not Render
 
 ## Cross-cutting rules
 
@@ -173,6 +181,12 @@ See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md
    - `REVOKE EXECUTE ... FROM PUBLIC, anon, authenticated`
    - Explicit `GRANT EXECUTE ... TO service_role`
    - `IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN RAISE EXCEPTION` at body start
+
+6. **Deploy infrastructure ownership** — per-lane infra exclusivity:
+   - **Render workspace** — owned by **D1 (Consumer Retail)** exclusively. Storefront / app.py / static assets deploy targets. No other subordinate (D0, D2, D3, D4, or future) may provision services, push deploys, or modify environment variables in the Render workspace without explicit operator approval. Render MCP tools (`mcp__render__*`) are gated to D1's lane.
+   - **Railway** — current legacy deploy home for the broker terminal + backend. A1 governs migration off Railway → Render as scope warrants. Subordinates do not touch Railway configuration.
+   - **Supabase** — shared platform; per-table ownership via `MIGRATION_CONVENTIONS §4`. RLS coverage maintained by B1.
+   - **Future D4 infra** — when scope activates, D4 gets its own deploy target. Choice (Render workspace, Cloudflare Workers, custom) deferred until then.
 
 ## Enforcement
 
