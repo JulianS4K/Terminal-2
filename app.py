@@ -4644,23 +4644,33 @@ def store_event_detail(
     )
 
 
-# Consumer-grade zone names follow a strict programmatic pattern:
+# Consumer-grade zone names match a programmatic bowl pattern:
 # "{Lower|Club|Upper|Floor|...} (Xs)" — e.g. "Lower (100s)", "Upper (400s)".
-# These were seeded across ~30 performer+venue pairs as a coarse bowl-level
-# fallback. Anything NOT matching this pattern is treated as the internal
-# (granular) taxonomy that S4K hand-curated per venue (e.g. "Courtside
-# Apples", "Club Platinum", "100 Garbage" for NYK at MSG).
+# But many performer+venue pairs ALSO get venue-specific bowl additions like
+# "Floor / Pit / GA" or "Special" that DON'T match this pattern yet are
+# still part of the consumer seed (Lakers at Crypto.com Arena has 5 such
+# zones total, none granular).
+#
+# A name regex alone misclassifies these. So we use a TWO-STEP heuristic:
+#   1. Look at the PAIR (performer + venue) total zone count. NYK at MSG
+#      has 26 zones (22 granular + 4 bowl) — well above the consumer-only
+#      ceiling of ~5–7. Anything > 8 zones almost certainly has a granular
+#      hand-curated layer.
+#   2. Within a "has-granular" pair, classify each individual zone by name
+#      regex (bowl-pattern → consumer, else granular).
 _CONSUMER_ZONE_NAME_RE = re.compile(
     r"^(Lower|Club|Upper|Floor|Field|Mezzanine|Balcony|Loge|Terrace)\s*\(\d+s\)$",
     re.IGNORECASE,
 )
+# Threshold above which a pair almost certainly has hand-curated granular
+# zones in addition to the consumer-bowl baseline. The seeded consumer
+# baseline tops out at ~5–7 zones per pair empirically.
+_GRANULAR_LAYER_ZONE_COUNT_THRESHOLD = 8
 
 
-def _classify_zone_layer(name: str | None) -> str:
-    """Return 'consumer' for coarse bowl-level zones, 'internal' for the
-    hand-curated granular ones. Used by the storefront to prefer the
-    granular layer when both exist for an event."""
-    return "consumer" if _CONSUMER_ZONE_NAME_RE.match((name or "").strip()) else "internal"
+def _is_bowl_pattern_name(name: str | None) -> bool:
+    """Whether a zone name matches the programmatic bowl-level pattern."""
+    return bool(_CONSUMER_ZONE_NAME_RE.match((name or "").strip()))
 
 
 @app.get("/api/store/events/{event_id}/zones")
@@ -4693,18 +4703,42 @@ def store_event_zones(event_id: int):
     # derive_zone_fallback() are noisy and not safe to share by name.
     curated = [r for r in rows if r.get("source") == "curated"]
 
-    internal = [r for r in curated if _classify_zone_layer(r.get("zone")) == "internal"]
-    consumer = [r for r in curated if _classify_zone_layer(r.get("zone")) == "consumer"]
+    # Step 1: count the FULL zone universe for this event's performer+venue.
+    # If it's larger than the consumer-only ceiling, we know the pair has
+    # been hand-curated with granular zones layered on top of the bowl seed.
+    pair_zone_count = 0
+    try:
+        ev_meta = (
+            db.table("events").select("primary_performer_id,venue_id")
+            .eq("id", event_id).limit(1).execute().data
+        ) or []
+        if ev_meta:
+            perf_id = ev_meta[0].get("primary_performer_id")
+            venue_id_x = ev_meta[0].get("venue_id")
+            if perf_id and venue_id_x:
+                pair_rows = (
+                    db.table("performer_zones").select("id", count="exact")
+                    .eq("performer_id", perf_id).eq("venue_id", venue_id_x)
+                    .execute()
+                )
+                pair_zone_count = pair_rows.count or len(pair_rows.data or [])
+    except Exception:
+        pair_zone_count = 0
 
-    if internal:
-        chosen = internal
-        layer = "internal"
-    elif consumer:
-        chosen = consumer
-        layer = "consumer"
+    has_granular_layer = pair_zone_count > _GRANULAR_LAYER_ZONE_COUNT_THRESHOLD
+
+    # Step 2: pick the layer to surface.
+    if has_granular_layer:
+        # Granular layer exists — return only the hand-curated zones,
+        # filtering out the bowl-pattern names from the rollup output.
+        chosen = [r for r in curated if not _is_bowl_pattern_name(r.get("zone"))]
+        layer = "internal" if chosen else "none"
     else:
-        chosen = []
-        layer = "none"
+        # No granular layer — return whatever curated zones exist (the
+        # bowl-pattern set plus any venue-specific bowl additions like
+        # "Floor / Pit / GA" or "Special").
+        chosen = curated
+        layer = "consumer" if chosen else "none"
 
     zones = [
         {
@@ -4715,7 +4749,12 @@ def store_event_zones(event_id: int):
         }
         for r in chosen
     ]
-    return {"event_id": event_id, "zones": zones, "layer": layer}
+    return {
+        "event_id": event_id,
+        "zones": zones,
+        "layer": layer,
+        "pair_zone_count": pair_zone_count,  # debug: # of zones for performer+venue
+    }
 
 
 @app.post("/api/store/reserve")
