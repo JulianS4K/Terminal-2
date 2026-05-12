@@ -682,8 +682,56 @@ def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
     return {int(r["performer_id"]): r for r in rows}
 
 
+# Playoff-specific phrases we recognize in event names. Order matters: more
+# specific labels (NBA Finals) are tried before generic round indicators so
+# the badge surfaces "NBA Finals" instead of "Playoffs" when both match.
+_PLAYOFF_SPECIFIC_RE = re.compile(
+    r"\b("
+    r"NBA\s+Finals|"
+    r"NBA\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
+    r"NHL\s+Stanley\s+Cup\s+Finals|"
+    r"NHL\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
+    r"Stanley\s+Cup(?:\s+Finals?)?|"
+    r"World\s+Series|"
+    r"Super\s+Bowl(?:\s+L[IVX]+)?|"
+    r"MLS\s+Cup|"
+    r"NCAA\s+(?:Final\s+Four|National\s+Championship)|"
+    r"College\s+Football\s+Playoff(?:\s+National\s+Championship)?"
+    r")\b",
+    re.IGNORECASE,
+)
+_PLAYOFF_GENERIC_RE = re.compile(
+    r"\((?:Game\s+\d+|Round\s+\d+)|"           # parenthetical TEvo markers
+    r"\b(?:Playoffs?|Postseason|Wild\s+Card|"
+    r"Conference\s+Finals?|Conference\s+Semifinals?|"
+    r"Division\s+Series)\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_playoff(event_name: str | None) -> dict | None:
+    """Return a playoff badge dict for the event name, or None.
+
+    Two-tier:
+      - specific  match (e.g. "NBA Finals") → that phrase is the label
+      - generic   match (e.g. "Round 3", "(Game 7,") → label = "Playoffs"
+
+    Falls back to None when nothing matches. Case-insensitive throughout.
+    """
+    if not event_name:
+        return None
+    m = _PLAYOFF_SPECIFIC_RE.search(event_name)
+    if m:
+        # Normalize whitespace so multi-word matches print cleanly.
+        label = re.sub(r"\s+", " ", m.group(1)).strip()
+        return {"label": label, "kind": "specific"}
+    if _PLAYOFF_GENERIC_RE.search(event_name):
+        return {"label": "Playoffs", "kind": "generic"}
+    return None
+
+
 def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
-    """Bulk-fetch all five context dimensions a storefront card / detail page
+    """Bulk-fetch all six context dimensions a storefront card / detail page
     might surface, in one helper.
 
     Returns:
@@ -691,7 +739,8 @@ def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
                     "mlb_series": {...}|None,
                     "tournament": {...}|None,
                     "weather":    {...}|None,
-                    "holiday":    {...}|None } }
+                    "holiday":    {...}|None,
+                    "playoff":    {...}|None } }
 
     Backing views (audit / context lanes — P1 reads only):
       rivalry      ← v_rivalry_events             (mig 20260509530000)
@@ -699,10 +748,12 @@ def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
       tournament   ← v_event_tournament_context   (mig 20260510010000)
       weather      ← v_event_weather_with_fallback (mig 20260509560000)
       holiday      ← v_event_calendar_context     (mig 20260509550000)
+      playoff      ← regex on events.name + performer_metadata series tags
 
-    Weather + holiday rules are applied here, not in the client, so the
-    storefront UI doesn't have to know about climatology vs forecast vs
-    severity tiers — it just renders what the server hands it.
+    Weather + holiday + playoff rules are applied here, not in the client, so
+    the storefront UI doesn't have to know about climatology vs forecast vs
+    severity tiers, or playoff naming conventions — it just renders what
+    the server hands it.
 
     Missing views (per-env) degrade gracefully to None for that key.
     """
@@ -712,9 +763,76 @@ def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
     ids = [int(e) for e in event_ids if e is not None]
     ctx: dict[int, dict] = {
         eid: {"rivalry": None, "mlb_series": None, "tournament": None,
-              "weather": None, "holiday": None}
+              "weather": None, "holiday": None, "playoff": None}
         for eid in ids
     }
+
+    # Playoff: read event names + series-tag performer membership in one
+    # roundtrip. Series tags like "NBA Finals" / "NBA Eastern Conference
+    # Semifinals" attach to the event via performer_ids and give us the
+    # most specific label; the name regex covers Round 3 / Game 7 events
+    # that don't yet have a series-tag attached.
+    try:
+        ev_rows = (db.table("events").select("id,name,performer_ids")
+                     .in_("id", ids).execute().data) or []
+        # Collect all unique non-primary performer ids so we can resolve
+        # series-tag names in one query.
+        candidate_perf_ids: set[int] = set()
+        for er in ev_rows:
+            for p in (er.get("performer_ids") or []):
+                try:
+                    candidate_perf_ids.add(int(p))
+                except (TypeError, ValueError):
+                    pass
+        series_tag_by_id: dict[int, str] = {}
+        if candidate_perf_ids:
+            try:
+                pm_rows = (db.table("performer_metadata")
+                             .select("performer_id,name")
+                             .in_("performer_id", list(candidate_perf_ids))
+                             .execute().data) or []
+                for pm in pm_rows:
+                    nm = (pm.get("name") or "")
+                    # Only keep "series tag" performers — leagues + rounds.
+                    if _PLAYOFF_SPECIFIC_RE.search(nm) or re.search(
+                        r"\b(NBA|NHL|NFL|MLB|MLS|WNBA)\s+(Playoffs?|Postseason|"
+                        r"Wild\s+Card|Finals?|Semifinals?|Championship|"
+                        r"Conference)\b",
+                        nm, re.IGNORECASE,
+                    ):
+                        series_tag_by_id[int(pm["performer_id"])] = nm
+            except Exception:
+                series_tag_by_id = {}
+        for er in ev_rows:
+            eid = int(er.get("id") or 0)
+            if eid not in ctx:
+                continue
+            # Prefer the most-specific series-tag performer if attached.
+            tagged: str | None = None
+            for p in (er.get("performer_ids") or []):
+                try:
+                    pid = int(p)
+                except (TypeError, ValueError):
+                    continue
+                name = series_tag_by_id.get(pid)
+                if not name:
+                    continue
+                # Specific (e.g. "NBA Finals") beats generic ("NBA Playoffs").
+                if _PLAYOFF_SPECIFIC_RE.search(name):
+                    tagged = name
+                    break
+                if tagged is None:
+                    tagged = name
+            if tagged:
+                # Strip umbrella "Playoffs" / "Postseason" when we have a
+                # more specific round-tag handy.
+                kind = "specific" if _PLAYOFF_SPECIFIC_RE.search(tagged) else "generic"
+                ctx[eid]["playoff"] = {"label": tagged, "kind": kind}
+                continue
+            # Fall back to regex on the event name.
+            ctx[eid]["playoff"] = _classify_playoff(er.get("name"))
+    except Exception:
+        pass
 
     # Rivalry: v_rivalry_events can emit duplicate rows when both the
     # performer-id and name joins match the same matchup, so dedup at the
@@ -4063,6 +4181,7 @@ def store_events(
             "tournament": ctx.get("tournament"),
             "weather": ctx.get("weather"),
             "holiday": ctx.get("holiday"),
+            "playoff": ctx.get("playoff"),
         })
         if len(out) >= cap:
             break
@@ -4916,6 +5035,21 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
     ]
     total_before_filters = len(eligible)
 
+    # Parking inventory — TEvo splits seats vs parking via the type field.
+    # We surface parking on a separate tab so its prices don't pollute
+    # from_price / min-price filters / seat zone+section filters. Cap
+    # display at $5K so a known-bad parking outlier (max retail $994K
+    # observed in raw data, clearly a mis-priced parking pass) doesn't
+    # blow up the tab.
+    parking_groups = [
+        tg
+        for tg in groups
+        if (tg.get("type") or "").lower() == "parking"
+        and (tg.get("available_quantity") or tg.get("quantity") or 0) > 0
+        and float(tg.get("retail_price") or 0) <= 5000
+    ]
+    parking_groups.sort(key=lambda tg: float(tg.get("retail_price") or 1e12))
+
     venue = ev.get("venue") or {}
     performances = ev.get("performances") or []
     primary_perf = next(
@@ -5135,6 +5269,11 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
         },
         "listings": listings,
         "listings_count": len(listings),
+        # Parking is a separate tab on the event page (when present).
+        # Stays out of sections_available / splits_available / from_price
+        # so the seat-tab UX is unaffected by parking inventory.
+        "parking_listings": [_ticket_group_to_listing(tg) for tg in parking_groups],
+        "parking_count": len(parking_groups),
         "total_before_filters": total_before_filters,
         # All section names present in the unfiltered set so the UI can
         # render the section chip group without it collapsing as the user
@@ -5152,16 +5291,18 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
         "demo_mode": STOREFRONT_SQL_ONLY,
     }
 
-    # Context badges — rivalry / MLB series / multi-day tournament. All three
-    # are nullable; UI hides the badge when None. Single bulk call to keep
-    # the per-detail roundtrip count low.
+    # Context badges — rivalry / MLB series / tournament / weather / holiday
+    # / playoff. All nullable; UI hides the badge when None. Single bulk
+    # call to keep the per-detail roundtrip count low.
+    _empty_ctx = {
+        "rivalry": None, "mlb_series": None, "tournament": None,
+        "weather": None, "holiday": None, "playoff": None,
+    }
     if sb is not None:
         ctx_by_id = _bulk_event_context(sb, [event_id])
-        response["context"] = ctx_by_id.get(event_id) or {
-            "rivalry": None, "mlb_series": None, "tournament": None
-        }
+        response["context"] = ctx_by_id.get(event_id) or dict(_empty_ctx)
     else:
-        response["context"] = {"rivalry": None, "mlb_series": None, "tournament": None}
+        response["context"] = dict(_empty_ctx)
 
     # Fire-and-forget: refresh canonical SQL via the audit-lane Edge Function.
     # Auto-tracks the event (adds performer to watchlist) if we've never seen

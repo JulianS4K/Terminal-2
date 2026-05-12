@@ -142,6 +142,25 @@
       out.push(span);
     }
 
+    // Playoff badge — distinct purple palette. Server returns the most
+    // specific label available ("NBA Finals", "NBA Eastern Conference
+    // Semifinals", "World Series"); falls back to generic "Playoffs"
+    // when only a Round-N / Game-N hint is detectable.
+    if (ctx.playoff && ctx.playoff.label) {
+      const p = ctx.playoff;
+      const span = document.createElement("span");
+      span.className = `ctx-badge playoff kind-${p.kind || "generic"}`;
+      if (compact && p.label.length > 22) {
+        // Long names like "NBA Eastern Conference Semifinals" eat real
+        // estate on a card. Compact shortens to "Playoffs" so the layout
+        // stays scannable; full label keeps showing on event detail.
+        span.textContent = "🏆 Playoffs";
+      } else {
+        span.textContent = `🏆 ${p.label}`;
+      }
+      out.push(span);
+    }
+
     return out;
   }
 
@@ -695,6 +714,91 @@
       }
     }
 
+    // Parking tab renderer + toggle wiring. Simpler than the seat list:
+    // no zones, no row labels (parking "row" is rarely meaningful), no
+    // split-quantities (parking is single-pass per listing). One row per
+    // parking lot/section sorted by price asc.
+    function renderParkingTab(parkingListings, parkingCount) {
+      const tabs = $("#listingTabs");
+      const tabCountEl = $("#parkingTabCount");
+      const parkUl = $("#parkingListings");
+      const filterBar = $("#filterBar");
+      if (!tabs || !parkUl) return;
+
+      if (!parkingListings.length) {
+        tabs.hidden = true;
+        parkUl.hidden = true;
+        parkUl.replaceChildren();
+        return;
+      }
+      tabs.hidden = false;
+      tabCountEl.textContent = String(parkingCount);
+
+      parkUl.replaceChildren();
+      for (const l of parkingListings) {
+        const li = document.createElement("li");
+        li.className = "row parking-row";
+
+        const seat = document.createElement("div");
+        seat.className = "seat";
+        const section = document.createElement("div");
+        section.className = "section";
+        section.textContent = l.section || "Parking";
+        seat.append(section);
+        // No row label for parking — most lots don't have meaningful rows.
+
+        const qbox = document.createElement("div");
+        qbox.className = "qbox";
+        qbox.textContent = `${l.available_quantity || 0} pass${(l.available_quantity || 0) === 1 ? "" : "es"} available`;
+
+        const pbox = document.createElement("div");
+        pbox.className = "pbox";
+        pbox.append(document.createTextNode(fmtMoney(l.retail_price)));
+        const each = document.createElement("span");
+        each.className = "each";
+        each.textContent = "per pass";
+        pbox.append(each);
+
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = "Reserve";
+        btn.addEventListener("click", () => openModal(l));
+
+        li.append(seat, qbox, pbox, btn);
+        if (l.public_notes) {
+          const notes = document.createElement("div");
+          notes.className = "notes";
+          notes.textContent = l.public_notes;
+          li.append(notes);
+        }
+        parkUl.append(li);
+      }
+
+      // Wire tab toggle once; idempotent — first click handler win.
+      if (!tabs.dataset.wired) {
+        tabs.dataset.wired = "1";
+        const seatsTab = tabs.querySelector('[data-tab="seats"]');
+        const parkingTab = tabs.querySelector('[data-tab="parking"]');
+        function setActive(name) {
+          const seats = name === "seats";
+          seatsTab.classList.toggle("is-active", seats);
+          parkingTab.classList.toggle("is-active", !seats);
+          seatsTab.setAttribute("aria-selected", String(seats));
+          parkingTab.setAttribute("aria-selected", String(!seats));
+          // Seat-side UI (filters + seat list + no-match line) is shown
+          // only on the Seats tab; parking list flips inverse.
+          if (filterBar) filterBar.hidden = !seats;
+          $("#listings").hidden = !seats;
+          const noMatch = $("#noListings");
+          if (noMatch && !seats) noMatch.hidden = true;
+          parkUl.hidden = seats;
+        }
+        seatsTab.addEventListener("click", () => setActive("seats"));
+        parkingTab.addEventListener("click", () => setActive("parking"));
+        setActive("seats");
+      }
+    }
+
     function openModal(listing) {
       const splits = listing.splits || [];
       const defaultQ = splits[0] || 1;
@@ -1175,6 +1279,11 @@
       // need re-rendering here.
       renderSectionChips(filters.section || []);
       showSharedBanner(filters, res.total_before_filters || 0, res.listings_count || 0, share);
+
+      // Parking tab — only surfaces when the server returned at least one
+      // parking listing for this event. Tab UI stays inert otherwise so
+      // events without parking inventory don't reserve UI real estate.
+      renderParkingTab(res.parking_listings || [], res.parking_count || 0);
     }
 
     // ---- Filter input wiring ----

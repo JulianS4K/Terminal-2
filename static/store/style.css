@@ -254,6 +254,19 @@ a { color: inherit; }
   color: #cfeed7;
 }
 
+/* Playoff — regal purple, distinct from rivalry orange / series blue. */
+.ctx-badge.playoff {
+  border-color: rgba(167, 139, 250, 0.50);
+  background: rgba(167, 139, 250, 0.12);
+  color: #e0d6ff;
+}
+.ctx-badge.playoff.kind-specific {
+  border-color: rgba(167, 139, 250, 0.75);
+  background: rgba(167, 139, 250, 0.18);
+  color: #f0e7ff;
+  font-weight: 700;
+}
+
 /* Wikipedia link badge appendage — kept subtle so it doesn't compete
    with the badge label. Only present in full (non-compact) variant. */
 .ctx-badge-link {
@@ -309,6 +322,43 @@ a { color: inherit; }
   gap: 8px;
 }
 .muted { color: var(--muted); font-weight: 400; font-size: 13px; }
+
+/* ----- Listing tabs (Seats / Parking) -----
+   Surfaced on event detail only when at least one parking listing exists.
+   Sits between the "Available from us" header and the filter bar. Mimics
+   the catalog tab look but smaller. */
+.listing-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 12px;
+}
+.listing-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.listing-tab:hover { color: var(--text); }
+.listing-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.listing-tab-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.listing-tab.is-active .listing-tab-count { color: var(--accent-2); }
+
+/* Parking-list rows reuse .row styles but trim some seat-only ornaments. */
+.parking-list .parking-row { /* same .row grid; no overrides needed today */ }
 
 /* ----- Inline filter bar on event page ----- */
 .filter-bar {
