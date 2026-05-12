@@ -435,17 +435,36 @@
         return;
       }
       const mySeq = ++suggestSeq;
+      // Render a loading state immediately on debounce arm so the user sees
+      // SOMETHING during cold-start latency (live TEvo can take 10-30s on
+      // free-tier Render). Without this, an empty dropdown reads as "broken."
+      showSuggestStatus("Searching…");
       suggestTimer = setTimeout(() => {
         api(`/api/store/search?q=${encodeURIComponent(q)}&limit=8`)
           .then((res) => {
             if (mySeq !== suggestSeq) return;  // stale; user typed more
             renderSuggest(suggestEl, res);
           })
-          .catch(() => {
+          .catch((err) => {
             if (mySeq !== suggestSeq) return;
-            hideSuggest();
+            // Show the error inline rather than silently hiding. Users
+            // need feedback when network/server hiccups happen — the most
+            // common failure modes on this deploy are 502 (sleeping
+            // dyno) and 5xx during cold starts.
+            const msg = err && err.message ? String(err.message) : "Search unavailable";
+            showSuggestStatus(`${msg.slice(0, 80)} · try again`);
           });
       }, 300);
+    }
+
+    function showSuggestStatus(text) {
+      if (!suggestEl) return;
+      suggestEl.replaceChildren();
+      const div = document.createElement("div");
+      div.className = "suggest-status";
+      div.textContent = text;
+      suggestEl.append(div);
+      suggestEl.hidden = false;
     }
 
     function hideSuggest() {
