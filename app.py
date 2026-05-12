@@ -4354,7 +4354,7 @@ def _fetch_owned_ticket_groups(
     return groups, "live"
 
 
-def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
+def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: bool = False) -> dict:
     """Fetch event + owned listings, apply filters, return the same shape
     /api/store/events/{id} returns. Shared by the public detail endpoint
     and the share-link resolver.
@@ -4363,7 +4363,39 @@ def _resolve_event_with_filters(event_id: int, filters: dict) -> dict:
     `listings_snapshots` instead of TEvo. Same response shape so the UI
     is unchanged. inventory_source reflects 'snapshot' + adds
     snapshot_age_seconds so the demo banner can show staleness honestly.
+
+    Lifecycle gate: events flagged `is_active=false` by event_lifecycle
+    (ghost_eliminated, cancelled, postponed, completed) 404 by default —
+    same policy as the catalog, applied to direct hits and share-link
+    resolution. Set include_inactive=true to bypass for admin/debug paths.
     """
+    # Bail early on inactive events so we don't show ghost/cancelled inventory
+    # to the public. event_lifecycle is the audit lane's canonical truth on
+    # whether an event is still "alive" — TEvo keeps returning ghost rows
+    # with stale prices long after a team is eliminated. Catalog already
+    # filters this; doing it here closes the direct-URL bypass.
+    if not include_inactive and sb is not None:
+        try:
+            lc = (
+                sb.table("event_lifecycle")
+                .select("status,is_active")
+                .eq("event_id", event_id)
+                .limit(1)
+                .execute()
+            ).data or []
+            if lc and lc[0].get("is_active") is False:
+                status = lc[0].get("status") or "inactive"
+                raise HTTPException(
+                    404,
+                    f"event {event_id} is {status}; not shown by default",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            # event_lifecycle view missing in some envs; better to fall
+            # through than to 500 the storefront.
+            pass
+
     snapshot_captured_at: str | None = None
     if STOREFRONT_SQL_ONLY:
         ev = _fetch_event_from_db(event_id)
