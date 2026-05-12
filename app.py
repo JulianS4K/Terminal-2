@@ -246,6 +246,7 @@ app.add_middleware(_SecurityHeadersMiddleware)
 # If you scale to >1 dyno, swap to Redis-backed slowapi or move to Cloudflare.
 import time as _time
 import time  # public alias for in-process caches that want time.time()
+import hashlib
 from collections import defaultdict as _dd, deque as _dq
 
 class _IPRateLimiter:
@@ -342,9 +343,13 @@ def healthz():
 
     Reports:
       python_version, is_production, storefront_sql_only,
-      supabase_url_set, supabase_service_role_key_length,
-      supabase_anon_key_length, evo_client_configured,
+      supabase_url_set, supabase_service_role_key_set, supabase_anon_key_set,
+      evo_client_configured,
       supabase_smoke: pass | fail (with truncated error message)
+
+    Key fingerprints intentionally absent — even the length leaks info about
+    which key format (legacy JWT ~200+ chars vs new `sb_*_*` ~40 chars) is
+    in use, which is recon-grade. Per A1 PR #63 [LOW] 2026-05-12.
     """
     import sys as _sys
     out = {
@@ -353,8 +358,8 @@ def healthz():
         "is_production": _is_production(),
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "supabase_url_set": bool(SUPABASE_URL),
-        "supabase_service_role_key_length": len(SUPABASE_SERVICE_ROLE_KEY or ""),
-        "supabase_anon_key_length": len(SUPABASE_ANON_KEY or ""),
+        "supabase_service_role_key_set": bool(SUPABASE_SERVICE_ROLE_KEY),
+        "supabase_anon_key_set": bool(SUPABASE_ANON_KEY),
         "supabase_client_initialized": sb is not None,
         "evo_client_configured": client is not None,
     }
@@ -4303,6 +4308,20 @@ _search_cache: dict[str, tuple[float, dict]] = {}
 _SEARCH_CACHE_TTL = 60.0
 
 
+def _search_cache_key(q: str, limit: int, mode: str) -> str:
+    """Stable cache key derived from query + limit + mode. Normalizes
+    whitespace + case so "Knicks ", " knicks", and "KNICKS" all hit the
+    same slot; SHA1 keeps the key short and avoids weird-char collisions.
+
+    Per A1 PR #63 [MED] 2026-05-12 — prior version used raw `q.lower()`
+    which let case-variant + leading/trailing whitespace pollute the
+    200-entry LRU with duplicate slots.
+    """
+    canon = re.sub(r"\s+", " ", (q or "").strip().lower())
+    raw = f"{canon}|{int(limit)}|{mode}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -4336,7 +4355,15 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
     safe_q = re.sub(r"[,.()\"]", " ", q_norm).strip()
     if not safe_q:
         return {"events": [], "performers": [], "venues": [], "source": "sql"}
-    pattern = f"%{safe_q}%"
+    # Escape ILIKE wildcards in the user query before wrapping with our own
+    # leading/trailing `%`. Without this, a query containing `%` matches
+    # everything; `_` is the single-char wildcard. Backslash first (so we
+    # don't double-escape our own escapes). Per A1 PR #63 [LOW] 2026-05-12.
+    escaped = (safe_q
+               .replace("\\", "\\\\")
+               .replace("%", "\\%")
+               .replace("_", "\\_"))
+    pattern = f"%{escaped}%"
 
     # Events: search by event name, venue name, venue location, primary
     # performer name. Limit to future + active so we don't surface ghosts.
@@ -4458,9 +4485,19 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
             fuzzy=True, limit=20, occurs_at_gte=today_iso,
         )
     except RuntimeError as e:
-        # Don't break the page on TEvo error; fall back to SQL.
-        print(f"search_live TEvo failed, falling back to SQL: {e}")
-        return _search_sql_only(db, q_norm, limit)
+        # Don't break the page on TEvo error; fall back to SQL. The
+        # response is tagged so the client (or downstream observability)
+        # can see freshness degraded vs swallowing it silently.
+        # Per A1 PR #63 [MED] 2026-05-12.
+        import logging
+        logging.getLogger(__name__).warning(
+            "search_live: TEvo /v9/searches/suggestions failed (%s); "
+            "falling back to _search_sql_only", e,
+        )
+        payload = _search_sql_only(db, q_norm, limit)
+        payload["fallback"] = True
+        payload["fallback_reason"] = "tevo_unavailable"
+        return payload
 
     s = (resp.get("suggestions") or {})
     ev_in = s.get("events", []) or []
@@ -4536,7 +4573,8 @@ def store_search(q: str, limit: int = 8):
 
     # Cap at 50; the upstream cap is 20, so anything past that just trims.
     lim = max(1, min(int(limit), 50))
-    cache_key = f"{q_norm.lower()}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
+    mode = "sql" if STOREFRONT_SQL_ONLY else "live"
+    cache_key = _search_cache_key(q_norm, lim, mode)
     cached = _search_cache_get(cache_key)
     if cached is not None:
         return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
