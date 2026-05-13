@@ -34,9 +34,13 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.7"
 
-      # Auth — Supabase JWT gate
+      # Supabase — required for SQL-backed reads of evo + seatgeek from
+      # unified_orders. Falls back to direct upstream API on missing keys.
       - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Anon key — only needed when AUTH_DISABLED=false (Supabase JWT gate).
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: ALLOWED_EMAIL_DOMAIN

@@ -51,6 +51,21 @@ function formatDate(iso) {
   }
 }
 
+function formatAgo(iso) {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const diffMs = Date.now() - t;
+  if (diffMs < 0) return "just now";
+  const m = Math.floor(diffMs / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
 function formatAmount(amount, currency) {
   if (amount == null) return "";
   const num = Number(amount).toLocaleString(undefined, {
@@ -272,10 +287,19 @@ function renderOrders() {
   bar.innerHTML = (body.sources || [])
     .map((s) => {
       const cls = s.ok ? "chip ok" : "chip err";
-      const detail = s.ok
-        ? `${s.count} row${s.count === 1 ? "" : "s"}` + (s.total_reported != null ? ` / ${s.total_reported} total` : "")
-        : (s.error || "error");
-      return `<span class="${cls}"><strong>${escapeHtml(s.source)}</strong> · ${escapeHtml(detail)}</span>`;
+      const origin = s.origin === "sql"
+        ? `<span class="chip-origin chip-origin-sql" title="from unified_orders (cron-fresh)">SQL</span>`
+        : s.origin === "api"
+          ? `<span class="chip-origin chip-origin-api" title="direct upstream call">API</span>`
+          : "";
+      let detail;
+      if (s.ok) {
+        detail = `${s.count} row${s.count === 1 ? "" : "s"}` + (s.total_reported != null ? ` / ${s.total_reported} total` : "");
+        if (s.origin === "sql" && s.as_of) detail += ` · ${formatAgo(s.as_of)}`;
+      } else {
+        detail = s.error || "error";
+      }
+      return `<span class="${cls}">${origin}<strong>${escapeHtml(s.source)}</strong> · ${escapeHtml(detail)}</span>`;
     })
     .join("");
 

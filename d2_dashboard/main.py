@@ -54,6 +54,10 @@ from fastapi.staticfiles import StaticFiles
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+# Service-role key — server-side reads against unified_orders / v_event_base.
+# Independent of the Supabase JWT auth gate (which uses ANON_KEY). Required
+# for the SQL-first hybrid in /api/d2/orders.
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
 # Canonical public URL of this service. Used as the OAuth redirectTo origin so
 # Supabase Auth bounces back to the right host post-Google. Set on Render to
@@ -213,6 +217,32 @@ def _seatdata_client():
     return SeatDataClient(api_key=api_key)
 
 
+# ---------- Supabase (server-side SQL reads) ----------
+
+_SB_SINGLETON = None
+_SB_INIT_ATTEMPTED = False
+
+
+def _sb():
+    """Lazy-init the Supabase service-role client. Returns None when
+    SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY are unset — the SQL-backed
+    fetchers then short-circuit and the API-backed fan-out runs instead."""
+    global _SB_SINGLETON, _SB_INIT_ATTEMPTED
+    if _SB_INIT_ATTEMPTED:
+        return _SB_SINGLETON
+    _SB_INIT_ATTEMPTED = True
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+        return None
+    try:
+        from supabase import create_client
+        _SB_SINGLETON = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] supabase client init failed: {e!r}", file=_sys.stderr, flush=True)
+        _SB_SINGLETON = None
+    return _SB_SINGLETON
+
+
 # ---------- Normalizer ----------
 #
 # Target shape per row:
@@ -309,6 +339,78 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+# ---------- SQL-backed fetchers (preferred for sources that cron-persist) ----------
+
+# Which sources are mirrored to public.unified_orders by an upstream cron.
+# Tickpick + Vivid have no SQL backing — they fall through to the API path.
+_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek"})
+
+
+def _fetch_orders_from_sql(source: str, per_page: int) -> dict | None:
+    """Pull a source's recent orders out of unified_orders, joined to
+    v_event_base for event_name + event_date. Returns None when Supabase
+    isn't configured so the caller can fall back to the upstream API.
+
+    Two queries, merged in Python (no FK exists between unified_orders and
+    v_event_base, so PostgREST embedded-resource syntax doesn't apply).
+    The cron is the source of truth for freshness; surfaced via `as_of`
+    so the front-end can show staleness."""
+    sb = _sb()
+    if sb is None:
+        return None
+    try:
+        uo_res = (
+            sb.table("unified_orders")
+            .select("source,source_order_id,tevo_event_id,source_status,quantity,gross_value,created_at,last_seen_at")
+            .eq("source", source)
+            .order("created_at", desc=True)
+            .limit(per_page)
+            .execute()
+        )
+        uo_rows = uo_res.data or []
+        event_ids = list({r["tevo_event_id"] for r in uo_rows if r.get("tevo_event_id")})
+        events_by_id: dict = {}
+        if event_ids:
+            ev_res = (
+                sb.table("v_event_base")
+                .select("tevo_event_id,event_name,event_at_local,event_at_utc")
+                .in_("tevo_event_id", event_ids)
+                .execute()
+            )
+            events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
+        rows = []
+        for r in uo_rows:
+            ev = events_by_id.get(r.get("tevo_event_id")) or {}
+            rows.append({
+                "source": source,
+                "order_id": str(r.get("source_order_id") or ""),
+                "event_name": ev.get("event_name"),
+                "event_date": ev.get("event_at_local") or ev.get("event_at_utc"),
+                "qty": _to_int(r.get("quantity")),
+                "status": r.get("source_status"),
+                "amount": _to_float(r.get("gross_value")),
+                "currency": None,
+                "ordered_at": r.get("created_at"),
+            })
+        as_of = max((r.get("last_seen_at") for r in uo_rows if r.get("last_seen_at")), default=None)
+        return {
+            "source": source,
+            "ok": True,
+            "rows": rows,
+            "total": None,           # avoid the extra count(*) round-trip
+            "origin": "sql",
+            "as_of": as_of,
+        }
+    except Exception as e:
+        return {
+            "source": source,
+            "ok": False,
+            "error": _scrub_err(f"{source}.sql", e),
+            "rows": [],
+            "origin": "sql",
+        }
+
+
 # ---------- Fan-out helpers ----------
 
 _SAFE_CLIENT_ERROR_NAMES = frozenset({
@@ -338,12 +440,18 @@ def _scrub_err(source: str, exc: Exception) -> str:
 
 
 def _fetch_evo(per_page: int) -> dict:
+    # SQL-first: if Supabase is configured and unified_orders has evo rows,
+    # serve from SQL (cron-fresh, no broker-API quota burn). Fall through
+    # to the upstream API when SQL isn't available or returns empty.
+    sql_row = _fetch_orders_from_sql("evo", per_page) if "evo" in _SQL_BACKED_SOURCES else None
+    if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
+        return sql_row
     # Mirrors the operator's reference Tkinter app: pull orders in both
     # accepted and pending states, merge + dedupe by id. Evo's list_orders
     # caps per_page at 10 server-side, so per_page maps to "per state".
     c = _evo_client()
     if c is None:
-        return {"source": "evo", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "evo", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
         cap = min(per_page, 10)
         seen: dict[str, dict] = {}
@@ -357,45 +465,51 @@ def _fetch_evo(per_page: int) -> dict:
                 if row["order_id"]:
                     seen.setdefault(row["order_id"], row)
         rows = list(seen.values())
-        return {"source": "evo", "ok": True, "rows": rows, "total": total_any}
+        return {"source": "evo", "ok": True, "rows": rows, "total": total_any, "origin": "api"}
     except Exception as e:
-        return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": []}
+        return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": [], "origin": "api"}
 
 
 def _fetch_sg(per_page: int) -> dict:
+    sql_row = _fetch_orders_from_sql("seatgeek", per_page) if "seatgeek" in _SQL_BACKED_SOURCES else None
+    if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
+        return sql_row
     c = _sg_client()
     if c is None:
-        return {"source": "seatgeek", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "seatgeek", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
         body = c.seller_orders("open", page=1)
         rows = [_norm_sg(o) for o in (body.get("orders") or [])][:per_page]
-        return {"source": "seatgeek", "ok": True, "rows": rows, "total": (body.get("meta") or {}).get("total")}
+        return {"source": "seatgeek", "ok": True, "rows": rows, "total": (body.get("meta") or {}).get("total"), "origin": "api"}
     except Exception as e:
-        return {"source": "seatgeek", "ok": False, "error": _scrub_err("seatgeek", e), "rows": []}
+        return {"source": "seatgeek", "ok": False, "error": _scrub_err("seatgeek", e), "rows": [], "origin": "api"}
 
 
 def _fetch_tickpick(per_page: int) -> dict:
+    # No SQL backing — direct upstream call. Will be added to unified_orders
+    # in a follow-up cron PR; until then the chip shows origin="api".
     c = _tickpick_client()
     if c is None:
-        return {"source": "tickpick", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "tickpick", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
         body = c.list_orders()
         rows = [_norm_tickpick(o) for o in (body or [])][:per_page]
-        return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body or [])}
+        return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body or []), "origin": "api"}
     except Exception as e:
-        return {"source": "tickpick", "ok": False, "error": _scrub_err("tickpick", e), "rows": []}
+        return {"source": "tickpick", "ok": False, "error": _scrub_err("tickpick", e), "rows": [], "origin": "api"}
 
 
 def _fetch_vivid(per_page: int) -> dict:
+    # No SQL backing — direct upstream call. Same as tickpick.
     c = _vivid_client()
     if c is None:
-        return {"source": "vivid", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "vivid", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
         body = c.list_active_orders()
         rows = [_norm_vivid(o) for o in (body or [])][:per_page]
-        return {"source": "vivid", "ok": True, "rows": rows, "total": len(body or [])}
+        return {"source": "vivid", "ok": True, "rows": rows, "total": len(body or []), "origin": "api"}
     except Exception as e:
-        return {"source": "vivid", "ok": False, "error": _scrub_err("vivid", e), "rows": []}
+        return {"source": "vivid", "ok": False, "error": _scrub_err("vivid", e), "rows": [], "origin": "api"}
 
 
 # ---------- Sample fan-out ----------
@@ -616,6 +730,8 @@ def orders(per_page: int = 25, _=Depends(require_auth)):
             "count": len(r.get("rows") or []),
             "total_reported": r.get("total"),
             "error": r.get("error"),
+            "origin": r.get("origin"),     # "sql" | "api" | None
+            "as_of": r.get("as_of"),       # ISO timestamp when origin="sql"
         })
     # Sort newest first by ordered_at (string ISO compares fine, None last).
     merged.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)

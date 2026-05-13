@@ -367,7 +367,99 @@ def test_norm_vivid_legacy_eventname_fallback():
     assert row["event_name"] == "Legacy Show"
 
 
+def test_fetch_orders_from_sql_returns_none_when_unconfigured(monkeypatch):
+    """When Supabase isn't configured (_sb returns None), the SQL fetcher
+    short-circuits with None so the caller falls back to the upstream API."""
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
+    assert d2_main._fetch_orders_from_sql("evo", 25) is None
+
+
+def test_fetch_orders_from_sql_joins_unified_orders_and_v_event_base(monkeypatch):
+    """The SQL path pulls unified_orders, then v_event_base for the referenced
+    tevo_event_ids, and merges them into the normalized row shape with
+    event_name + event_date populated."""
+    captured: dict = {}
+
+    class FakeQuery:
+        def __init__(self, table_name, rows):
+            self.table_name = table_name
+            self._rows = rows
+            captured.setdefault("tables", []).append(table_name)
+        def select(self, *_a, **_kw):  return self
+        def eq(self, key, val):        captured.setdefault("eq",  []).append((key, val)); return self
+        def in_(self, key, vals):      captured.setdefault("in",  []).append((key, list(vals))); return self
+        def order(self, *_a, **_kw):   return self
+        def limit(self, *_a, **_kw):   return self
+        def execute(self):
+            return type("Res", (), {"data": self._rows})()
+
+    class FakeSb:
+        def table(self, name):
+            if name == "unified_orders":
+                return FakeQuery(name, [
+                    {"source": "evo", "source_order_id": "111", "tevo_event_id": 42,
+                     "source_status": "accepted", "quantity": 2, "gross_value": "180.50",
+                     "created_at": "2026-05-13T19:00:00Z", "last_seen_at": "2026-05-13T20:35:00Z"},
+                ])
+            if name == "v_event_base":
+                return FakeQuery(name, [
+                    {"tevo_event_id": 42, "event_name": "Knicks vs Lakers",
+                     "event_at_local": "2026-06-01T19:30:00-04:00",
+                     "event_at_utc":   "2026-06-01T23:30:00"},
+                ])
+            raise AssertionError(f"unexpected table: {name}")
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    out = d2_main._fetch_orders_from_sql("evo", 25)
+    assert out["ok"] is True
+    assert out["origin"] == "sql"
+    assert out["as_of"] == "2026-05-13T20:35:00Z"
+    row = out["rows"][0]
+    assert row["source"] == "evo"
+    assert row["order_id"] == "111"
+    assert row["event_name"] == "Knicks vs Lakers"
+    assert row["event_date"] == "2026-06-01T19:30:00-04:00"  # prefers _local over _utc
+    assert row["qty"] == 2
+    assert row["amount"] == 180.5
+    # Both tables queried; second query filtered by the discovered tevo_event_id.
+    assert captured["tables"] == ["unified_orders", "v_event_base"]
+    assert ("tevo_event_id", [42]) in captured["in"]
+
+
+def test_fetch_evo_uses_sql_when_rows_present(monkeypatch):
+    """_fetch_evo prefers the SQL row when it's ok and non-empty; the
+    upstream API client is never called."""
+    monkeypatch.setattr(
+        d2_main, "_fetch_orders_from_sql",
+        lambda src, n: {"source": "evo", "ok": True, "rows": [{"source": "evo", "order_id": "X"}], "origin": "sql"},
+    )
+    called = {}
+    def fail_evo_client():
+        called["api"] = True
+        raise AssertionError("API should not be called when SQL has rows")
+    monkeypatch.setattr(d2_main, "_evo_client", fail_evo_client)
+
+    out = d2_main._fetch_evo(per_page=10)
+    assert out["origin"] == "sql"
+    assert "api" not in called
+
+
+def test_fetch_evo_falls_back_to_api_when_sql_empty(monkeypatch):
+    """When the SQL row is ok but rows is empty, the API path runs."""
+    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n: {"source": "evo", "ok": True, "rows": [], "origin": "sql"})
+
+    class FakeEvo:
+        def list_orders(self, **kw):
+            return {"orders": [{"id": 99, "items": [{"quantity": 1, "ticket_group": {"event": {"name": "API event"}}}]}], "total_entries": 1}
+
+    monkeypatch.setattr(d2_main, "_evo_client", lambda: FakeEvo())
+    out = d2_main._fetch_evo(per_page=10)
+    assert out["origin"] == "api"
+    assert out["rows"][0]["event_name"] == "API event"
+
+
 def test_fetch_evo_dedupes_accepted_and_pending(monkeypatch):
+    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n: None)
     """_fetch_evo fans out across state=accepted + state=pending and dedupes
     by order_id. Mirrors the operator's reference Tkinter app's pattern."""
     calls: list[str] = []

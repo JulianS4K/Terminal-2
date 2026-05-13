@@ -35,7 +35,15 @@ Entry point: `uvicorn d2_dashboard.main:app`.
    storefront names (`TEVO_TOKEN`, `TEVO_SECRET`, `TICKPICK_TOKEN`) are also
    accepted by the loader — pick whichever you already have populated.
 
-   **Required (broker creds for the data fan-out):**
+   **Required (SQL reads for cron-backed sources):**
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY` (server-side reads against
+     `unified_orders` + `v_event_base`. Independent of the Supabase JWT
+     auth gate. Without these, the dashboard falls back to direct upstream
+     API calls for every refresh, burning broker-API quota.)
+
+   **Required (broker creds for sources NOT in unified_orders, i.e. tickpick
+   + vivid, and as a fallback when SQL is empty):**
    - `TEVO_API_TOKEN`, `TEVO_API_SECRET`
    - `SEATGEEK_API_TOKEN`
    - `TICKPICK_API_TOKEN`

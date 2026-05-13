@@ -95,6 +95,18 @@ main { padding: 16px 20px; }
 }
 .chip.ok { border-color: var(--ok); }
 .chip.err { border-color: var(--err); color: var(--err); }
+.chip-origin {
+  display: inline-block;
+  padding: 1px 5px;
+  margin-right: 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chip-origin-sql { background: rgba(63, 185, 80, 0.18);  color: var(--ok); }
+.chip-origin-api { background: rgba(88, 166, 255, 0.18); color: var(--accent); }
 table {
   width: 100%;
   border-collapse: collapse;
