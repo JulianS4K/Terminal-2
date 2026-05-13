@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Media MVP — evo storefront test</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+  <style>
+    /* Media test surface — C1-authored sandbox for the 2026-05-13 evo MVP test.
+       Operator-routed per LANE_DISCIPLINE §"free reign on respective HTML and
+       wiring." Companion file: docs/c1_operating_constraints.md §"Active
+       operator routings."
+
+       Goal: prove the media wiring works end-to-end. Performer logos and
+       primary colors are already in /api/store/events payload (lines 4236-7
+       of app.py) but D1's existing test cards never render them. */
+
+    /* Hero strip per card — logo on the left, brand color band on top */
+    .cards .card {
+      padding: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .cards .card .accent-bar {
+      height: 4px;
+      background: var(--card-accent, var(--line));
+    }
+    .cards .card .card-body {
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .cards .card .logo-frame {
+      width: 56px;
+      height: 56px;
+      border-radius: 8px;
+      background: var(--card-accent, var(--panel-2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .cards .card .logo-frame img {
+      max-width: 48px;
+      max-height: 48px;
+      object-fit: contain;
+    }
+    .cards .card .logo-frame .fallback {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+    .cards .card .card-meta { min-width: 0; }
+    .cards .card .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .cards .card .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255,160,102,0.12);
+      color: var(--accent-2);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .cards .card .badge.league {
+      background: rgba(124,181,255,0.12);
+      color: #7cb5ff;
+    }
+
+    /* Coverage strip */
+    .coverage {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin: 12px 0 18px;
+    }
+    .coverage .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .coverage .metric .v {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--accent-2);
+    }
+    .coverage .metric .k {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+    }
+    .coverage .metric .sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* Search dropdown preview */
+    .search-results {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .search-results .bucket {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .search-results .bucket h4 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+    }
+    .search-results .hit {
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 12px;
+    }
+    .search-results .hit:last-child { border-bottom: none; }
+    .search-results .hit .where {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">checking…</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+      <h3>C1 sandbox</h3>
+      <a href="/store/test/media_test" class="current"><span class="num"></span> Media MVP</a>
+    </nav>
+
+    <main class="content">
+      <h1>Media MVP — evo storefront wiring test</h1>
+      <p class="subtitle">
+        Validates that <code>primary_performer_logo</code> / <code>primary_performer_color</code> from
+        <code>performer_metadata</code> flow through <code>/api/store/events</code> → cards. Built under the
+        2026-05-13 read-only-SQL / TEvo-search-only protocol. C1 sandbox; no prod writes.
+      </p>
+
+      <h2>Coverage (SQL-side)</h2>
+      <p>Read-only probes of <code>performer_metadata</code> + <code>venue_assets</code> against owned-inventory upcoming events.</p>
+      <div class="coverage" id="coverageStrip">
+        <div class="metric">
+          <div class="k">Owned upcoming events</div>
+          <div class="v" id="covEvents">…</div>
+          <div class="sub" id="covEventsSub">loading via /api/store/events</div>
+        </div>
+        <div class="metric">
+          <div class="k">Cards with logo</div>
+          <div class="v" id="covLogos">…</div>
+          <div class="sub" id="covLogosSub">primary_performer_logo not null</div>
+        </div>
+        <div class="metric">
+          <div class="k">Cards with color</div>
+          <div class="v" id="covColors">…</div>
+          <div class="sub" id="covColorsSub">primary_performer_color not null</div>
+        </div>
+        <div class="metric">
+          <div class="k">Cards with context</div>
+          <div class="v" id="covContext">…</div>
+          <div class="sub" id="covContextSub">rivalry / playoff / weather / etc.</div>
+        </div>
+      </div>
+
+      <h2>Live event cards (with media)</h2>
+      <p>Cards render <strong>logo</strong>, <strong>brand color accent bar</strong>, and <strong>context badges</strong>. Fallback initials shown when a logo is missing.</p>
+      <div id="status" style="color: var(--muted); font-size: 13px; margin-bottom: 12px">Loading…</div>
+      <div id="cardsGrid" class="cards"></div>
+
+      <h2>Search dropdown — /api/store/search probe</h2>
+      <p>Test the three-bucket dropdown (events / performers / venues). TEvo-direct in live mode, ILIKE in SQL-only mode.</p>
+      <form id="searchForm" class="row" style="margin: 10px 0">
+        <input id="q" type="search" placeholder="Try: knicks, mets, beyonce, Madison Square Garden" style="flex: 1" />
+        <button type="submit">Probe search</button>
+      </form>
+      <div class="search-results">
+        <div class="bucket">
+          <h4>Events</h4>
+          <div id="searchEvents"><div class="hit" style="color: var(--muted)">no probe yet</div></div>
+        </div>
+        <div class="bucket">
+          <h4>Performers</h4>
+          <div id="searchPerformers"><div class="hit" style="color: var(--muted)">no probe yet</div></div>
+        </div>
+        <div class="bucket">
+          <h4>Venues</h4>
+          <div id="searchVenues"><div class="hit" style="color: var(--muted)">no probe yet</div></div>
+        </div>
+      </div>
+
+      <h2>Activity console</h2>
+      <div id="log" class="console"></div>
+    </main>
+  </div>
+
+  <script src="/static/store/test/test.js"></script>
+  <script>
+    const { $, fmtMoney, fmtWhen, api } = Test;
+
+    // Compute "is dark" for a hex color so we can pick contrasting text on
+    // the logo-frame fallback initials. Cheap luma calc — Y'CbCr coefficient
+    // approximation, no perceptual model needed.
+    function isDarkHex(hex) {
+      if (!hex) return true;
+      const h = hex.replace(/^#/, "");
+      if (h.length !== 6) return true;
+      const r = parseInt(h.slice(0, 2), 16);
+      const g = parseInt(h.slice(2, 4), 16);
+      const b = parseInt(h.slice(4, 6), 16);
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      return luma < 140;
+    }
+
+    function initials(name) {
+      if (!name) return "?";
+      const parts = name.split(/\s+/).filter(Boolean);
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+
+    function renderCard(ev) {
+      const c = document.createElement("a");
+      c.className = "card";
+      c.href = `/store/test/event?id=${ev.id}`;
+      const accent = ev.primary_performer_color ? `#${ev.primary_performer_color}` : null;
+      if (accent) c.style.setProperty("--card-accent", accent);
+
+      // Build context badges from the payload's optional fields.
+      const badgeBits = [];
+      if (ev.primary_performer_league) {
+        badgeBits.push(`<span class="badge league">${ev.primary_performer_league}</span>`);
+      }
+      if (ev.rivalry) badgeBits.push(`<span class="badge">⚡ rivalry</span>`);
+      if (ev.playoff) badgeBits.push(`<span class="badge">★ playoff</span>`);
+      if (ev.mlb_series) badgeBits.push(`<span class="badge">series</span>`);
+      if (ev.tournament) badgeBits.push(`<span class="badge">tournament</span>`);
+      if (ev.weather) badgeBits.push(`<span class="badge">${ev.weather}</span>`);
+      if (ev.holiday) badgeBits.push(`<span class="badge">${ev.holiday}</span>`);
+
+      // Logo frame — img if URL present, otherwise initials on the brand color.
+      const logoFrame = ev.primary_performer_logo
+        ? `<div class="logo-frame"><img src="${ev.primary_performer_logo}" alt="" loading="lazy" /></div>`
+        : `<div class="logo-frame"><span class="fallback">${initials(ev.primary_performer_name || ev.name)}</span></div>`;
+
+      c.innerHTML = `
+        <div class="accent-bar"></div>
+        <div class="card-body">
+          ${logoFrame}
+          <div class="card-meta">
+            <div class="when">${fmtWhen(ev.occurs_at_local)}</div>
+            <div class="name">${ev.name || "—"}</div>
+            <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+            <div class="price">${ev.from_price != null ? "from " + fmtMoney(ev.from_price) : "—"}</div>
+            ${badgeBits.length ? `<div class="badges">${badgeBits.join("")}</div>` : ""}
+          </div>
+        </div>
+      `;
+      return c;
+    }
+
+    async function loadCatalog() {
+      $("#status").textContent = "Loading /api/store/events…";
+      try {
+        const { body } = await api("/api/store/events?limit=24");
+        const events = body.events || [];
+        const total = events.length;
+        const withLogo = events.filter(e => !!e.primary_performer_logo).length;
+        const withColor = events.filter(e => !!e.primary_performer_color).length;
+        const withCtx = events.filter(e =>
+          e.rivalry || e.playoff || e.mlb_series || e.tournament || e.weather || e.holiday
+        ).length;
+
+        $("#covEvents").textContent = total;
+        $("#covLogos").textContent = withLogo;
+        $("#covLogosSub").textContent = `${total ? Math.round(100 * withLogo / total) : 0}% of returned cards`;
+        $("#covColors").textContent = withColor;
+        $("#covColorsSub").textContent = `${total ? Math.round(100 * withColor / total) : 0}% of returned cards`;
+        $("#covContext").textContent = withCtx;
+        $("#covContextSub").textContent = `${total ? Math.round(100 * withCtx / total) : 0}% with ≥1 badge`;
+
+        $("#status").textContent = total
+          ? `${total} owned-inventory event${total === 1 ? "" : "s"} (api returned ≤ limit)`
+          : "No owned-inventory events. Check matview freshness.";
+        const grid = $("#cardsGrid");
+        grid.innerHTML = "";
+        for (const ev of events) grid.append(renderCard(ev));
+      } catch (e) {
+        $("#status").textContent = "Couldn't load. " + e.message;
+        $("#status").style.color = "var(--bad)";
+      }
+    }
+
+    function renderBucket(targetId, hits, formatter) {
+      const el = $(`#${targetId}`);
+      el.innerHTML = "";
+      if (!hits || !hits.length) {
+        el.innerHTML = `<div class="hit" style="color: var(--muted)">no matches</div>`;
+        return;
+      }
+      for (const h of hits) {
+        const d = document.createElement("div");
+        d.className = "hit";
+        d.innerHTML = formatter(h);
+        el.append(d);
+      }
+    }
+
+    async function probeSearch(q) {
+      if (!q || !q.trim()) return;
+      try {
+        const { body } = await api(`/api/store/search?q=${encodeURIComponent(q)}&limit=6`);
+        renderBucket("searchEvents", body.events, (h) => `
+          <div><strong>${h.name || "—"}</strong>${h.we_own ? ' <span class="badge">owned</span>' : ""}</div>
+          <div class="where">${[h.venue_name, h.location].filter(Boolean).join(" · ")}</div>
+        `);
+        renderBucket("searchPerformers", body.performers, (h) => `
+          <div><strong>${h.name || "—"}</strong>${h.league ? ` · ${h.league}` : ""}</div>
+          <div class="where">${h.location || ""}</div>
+        `);
+        renderBucket("searchVenues", body.venues, (h) => `
+          <div><strong>${h.name || "—"}</strong></div>
+          <div class="where">${h.location || ""}</div>
+        `);
+      } catch (e) {
+        Test.log("search probe failed: " + e.message, "err");
+      }
+    }
+
+    $("#searchForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      probeSearch($("#q").value);
+    });
+
+    loadCatalog();
+  </script>
+</body>
+</html>
