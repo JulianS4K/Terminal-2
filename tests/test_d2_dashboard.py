@@ -418,6 +418,26 @@ def test_order_detail_no_creds(monkeypatch, client):
     assert body == {"ok": False, "error": "no creds"}
 
 
+def test_scrub_err_passes_typed_client_errors(monkeypatch):
+    """Typed client errors (TickPickError, EvoError, etc.) only carry an HTTP
+    status code — no URL / token / body. Surface them verbatim so the operator
+    can tell 401 from 404 from 502. Generic exceptions still get scrubbed."""
+    # Typed error → pass-through.
+    from tickpick_client import TickPickError
+    out = d2_main._scrub_err("tickpick", TickPickError("HTTP 401"))
+    assert out == "HTTP 401"
+
+    # Generic exception → scrubbed.
+    out = d2_main._scrub_err("evo", RuntimeError("traceback with /v9/orders?token=secret"))
+    assert out == "upstream error"
+
+    # Typed error containing a URL → defensive scrub (shouldn't happen in
+    # practice but the guard exists in case a client adds a URL to its
+    # error message in the future).
+    out = d2_main._scrub_err("tickpick", TickPickError("HTTP 500 https://api.tickpick.com/orders"))
+    assert out == "upstream error"
+
+
 def test_order_detail_dispatches_to_client(monkeypatch, client):
     """Happy path: the endpoint dispatches to the source's by-id fetcher and
     wraps the response. The /v9/orders/:id call hits get_order on evo_client."""

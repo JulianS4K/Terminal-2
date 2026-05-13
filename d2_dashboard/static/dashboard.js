@@ -27,12 +27,25 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
+// Cached Intl formatter — operator preference is America/New_York (EST/EDT)
+// because the "Hide past -12h" filter is mentally evaluated against EST, and
+// all displayed dates lining up with that reference removes ambiguity. The
+// formatter auto-handles DST so the suffix reads EST or EDT correctly.
+const _EST_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+  hour12: false, timeZoneName: "short",
+});
+
 function formatDate(iso) {
   if (!iso) return "";
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return escapeHtml(iso);
-    return d.toISOString().replace("T", " ").replace(/\..+$/, "Z");
+    // Intl returns "05/13/2026, 16:34:52 EDT" — reshape to "2026-05-13 16:34:52 EDT".
+    const parts = Object.fromEntries(_EST_FMT.formatToParts(d).map((p) => [p.type, p.value]));
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} ${parts.timeZoneName}`;
   } catch (e) {
     return escapeHtml(iso);
   }

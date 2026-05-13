@@ -311,12 +311,29 @@ def _to_float(v: Any) -> float | None:
 
 # ---------- Fan-out helpers ----------
 
+_SAFE_CLIENT_ERROR_NAMES = frozenset({
+    "TickPickError", "EvoError", "SeatGeekError", "VividError", "SeatDataError",
+    "GoTicketsError",
+})
+
+
 def _scrub_err(source: str, exc: Exception) -> str:
     """Log full exception server-side (operator sees in Render logs); return a
-    stable, generic message to the client so upstream error text — which can
-    include URLs, partial tokens, internal IDs — never makes it to the wire."""
+    safe message to the client.
+
+    Typed client errors (e.g. TickPickError("HTTP 401")) are constructed by
+    the client modules to carry only an HTTP status code — no URLs, tokens,
+    or response bodies. Those are passed through so the operator sees what's
+    actually wrong (401 vs 404 vs 502) instead of an opaque "upstream error".
+    Anything else is scrubbed to the generic message."""
     import sys as _sys
     print(f"[d2_dashboard] {source} fetch failed: {exc!r}", file=_sys.stderr, flush=True)
+    if type(exc).__name__ in _SAFE_CLIENT_ERROR_NAMES:
+        msg = str(exc).strip()
+        # Belt-and-suspenders: even for typed errors, refuse anything that
+        # looks like it carries a URL or a long token.
+        if msg and "://" not in msg and len(msg) <= 120:
+            return msg
     return "upstream error"
 
 
