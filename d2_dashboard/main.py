@@ -288,7 +288,40 @@ def _fetch_vivid(per_page: int) -> dict:
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "service": "d2_dashboard"}
+    """Diagnostic snapshot. Public — no secrets, only booleans + lengths.
+    Lets the operator confirm in one curl which app is running, whether
+    auth is gated, which broker creds are wired, and where the service
+    is hosted."""
+    import sys as _sys
+    return {
+        "ok": True,
+        "service": "d2_dashboard",
+        "python": _sys.version.split()[0],
+        "auth_disabled": AUTH_DISABLED,
+        "supabase": {
+            "url_set": bool(SUPABASE_URL),
+            "anon_key_length": len(SUPABASE_ANON_KEY or ""),
+            "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
+        },
+        "brokers": {
+            "evo":      {"token_set": bool(_env_first("TEVO_API_TOKEN", "TEVO_TOKEN")),
+                         "secret_set": bool(_env_first("TEVO_API_SECRET", "TEVO_SECRET")),
+                         "sandbox": os.environ.get("TEVO_SANDBOX", "false").lower() == "true"},
+            "seatgeek": {"token_set": bool(os.environ.get("SEATGEEK_API_TOKEN"))},
+            "tickpick": {"token_set": bool(_env_first("TICKPICK_API_TOKEN", "TICKPICK_TOKEN"))},
+            "vivid":    {"token_set": bool(os.environ.get("VIVID_API_TOKEN"))},
+            "seatdata": {"key_set":   bool(os.environ.get("SEATDATA_API_KEY"))},
+        },
+        "platform": {
+            "render": bool(os.environ.get("RENDER")),
+            "fly": bool(os.environ.get("FLY_APP_NAME")),
+            "environment": os.environ.get("ENVIRONMENT") or os.environ.get("NODE_ENV") or None,
+        },
+        "templates": {
+            "dir_exists": TEMPLATES_DIR.is_dir(),
+            "dashboard_html_exists": (TEMPLATES_DIR / "dashboard.html").is_file(),
+        },
+    }
 
 
 @app.get("/")

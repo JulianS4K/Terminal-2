@@ -74,7 +74,12 @@ def test_healthz(client):
     r = client.get("/healthz")
     assert r.status_code == 200
     body = r.json()
-    assert body == {"ok": True, "service": "d2_dashboard"}
+    assert body["ok"] is True
+    assert body["service"] == "d2_dashboard"
+    assert body["auth_disabled"] is True  # test env sets AUTH_DISABLED=true
+    assert "python" in body
+    assert set(body["brokers"]) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
+    assert body["templates"]["dashboard_html_exists"] is True
 
 
 def test_root_serves_html(client):
