@@ -41,6 +41,11 @@ services:
         sync: false
       - key: ALLOWED_EMAIL_DOMAIN
         value: s4kent.com
+      # Canonical origin — used as the OAuth redirectTo origin so Supabase
+      # Auth returns to the right host post-Google. Must match the URL
+      # registered in Supabase Auth → URL Configuration → Redirect URLs.
+      - key: D2_CANONICAL_ORIGIN
+        value: https://d2-orders-dashboard.onrender.com
 
       # Order-client creds — each source is independent; missing creds for
       # one source just blanks that row in the merged table, nothing breaks.

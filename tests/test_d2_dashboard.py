@@ -81,13 +81,23 @@ def _stub_vivid_err(per_page):
     return {"source": "vivid", "ok": False, "error": "boom", "rows": []}
 
 
-def test_healthz(client):
+def test_healthz_public_minimal(client):
+    """Public /healthz exposes only ok + service — no fingerprintable detail."""
     r = client.get("/healthz")
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"ok": True, "service": "d2_dashboard"}
+
+
+def test_healthz_detail_under_auth_disabled(client):
+    """Full diagnostic moved to /healthz/detail behind require_auth. With
+    AUTH_DISABLED=true (test env), the route returns the rich shape."""
+    r = client.get("/healthz/detail")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
     assert body["service"] == "d2_dashboard"
-    assert body["auth_disabled"] is True  # test env sets AUTH_DISABLED=true
+    assert body["auth_disabled"] is True
     assert "python" in body
     assert set(body["brokers"]) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
     assert body["templates"]["dashboard_html_exists"] is True
@@ -98,6 +108,64 @@ def test_root_serves_html(client):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
     assert "D2 Orders Dashboard" in r.text
+
+
+def test_root_injects_config_blob(client):
+    """The shell substitutes a JSON config blob in place of the placeholder
+    so the front-end module can read window.__D2_CONFIG__ synchronously
+    without a /api/d2/config-public round trip on boot."""
+    r = client.get("/")
+    assert r.status_code == 200
+    body = r.text
+    # Placeholder must be fully replaced.
+    assert "__D2_CONFIG_JSON__" not in body
+    # The config script tag is present and contains valid JSON with expected keys.
+    assert '<script id="d2-config" type="application/json">' in body
+    # Expected fields land in the inline blob.
+    assert '"allowed_email_domain":' in body
+    assert '"auth_disabled":' in body
+    assert '"canonical_origin":' in body
+
+
+def test_root_returns_503_when_production_missing_supabase(monkeypatch, client):
+    """When the service is on a prod platform without Supabase env vars set,
+    `/` returns 503 with a clear error instead of serving a misleading shell
+    that would surface a 'Server misconfigured' panel after JS boot."""
+    monkeypatch.setattr(d2_main, "PROD_MISSING_SUPABASE", True)
+    r = client.get("/")
+    assert r.status_code == 503
+    # Healthz stays public + minimal regardless.
+    r = client.get("/healthz")
+    assert r.status_code == 200
+
+
+def test_static_css_and_js_mounted(client):
+    """The split assets must be reachable under /static/d2/ so the shell's
+    <link> and <script src=> resolve. 404 here means StaticFiles didn't mount."""
+    r = client.get("/static/d2/dashboard.css")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/css")
+    assert "--bg:" in r.text  # CSS variables block
+
+    r = client.get("/static/d2/dashboard.js")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/javascript") or \
+           r.headers["content-type"].startswith("text/javascript")
+    assert "window.__D2_CONFIG__" in r.text
+
+
+def test_config_public_includes_canonical_origin(client, monkeypatch):
+    """Pre-auth bootstrap endpoint mirrors the shell-injected blob so API
+    consumers and any front-end fallback path get the same shape."""
+    monkeypatch.setattr(d2_main, "D2_CANONICAL_ORIGIN", "https://d2.example.com")
+    r = client.get("/api/d2/config-public")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["canonical_origin"] == "https://d2.example.com"
+    assert body["allowed_email_domain"] == d2_main.ALLOWED_EMAIL_DOMAIN
+    assert "supabase_url" in body
+    assert "supabase_anon_key" in body
+    assert "auth_disabled" in body
 
 
 def test_orders_merges_all_sources(monkeypatch, client):

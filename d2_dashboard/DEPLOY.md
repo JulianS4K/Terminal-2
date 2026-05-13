@@ -29,6 +29,8 @@ Entry point: `uvicorn d2_dashboard.main:app`.
    storefront names (`TEVO_TOKEN`, `TEVO_SECRET`, `TICKPICK_TOKEN`) are also
    accepted by the loader — pick whichever you already have populated.
    - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ALLOWED_EMAIL_DOMAIN`
+   - `D2_CANONICAL_ORIGIN=https://d2-orders-dashboard.onrender.com` (must
+     match a Redirect URL registered under Supabase Auth → URL Configuration)
    - `TEVO_API_TOKEN`, `TEVO_API_SECRET`
    - `SEATGEEK_API_TOKEN`
    - `TICKPICK_API_TOKEN`

@@ -16,10 +16,16 @@ Env vars (set on Render — D1 provisions):
   SUPABASE_URL                  https://xxxx.supabase.co
   SUPABASE_ANON_KEY             public anon key
   ALLOWED_EMAIL_DOMAIN          default "s4kent.com"
+  D2_CANONICAL_ORIGIN           https://d2-orders-dashboard.onrender.com
+                                Used as the OAuth redirectTo origin so Supabase
+                                Auth bounces back to the right host post-Google.
+                                Optional — front-end falls back to window.origin
+                                when unset. Set this on Render to avoid surprises
+                                with custom domains / preview URLs.
   AUTH_DISABLED                 "true" to bypass the Supabase JWT gate entirely.
-                                Works regardless of platform — operator opts in
-                                explicitly. Loud startup stderr warning when on.
-                                TESTING ONLY; unset for production.
+                                Self-disables on prod platforms (RENDER /
+                                FLY_APP_NAME / ENVIRONMENT=production). Loud
+                                startup stderr warning when on. TESTING ONLY.
 
   TEVO_API_TOKEN / TEVO_API_SECRET   Evo broker creds (vault-canonical names;
                                      legacy TEVO_TOKEN / TEVO_SECRET also honored)
@@ -33,6 +39,7 @@ Start: uvicorn d2_dashboard.main:app --host 0.0.0.0 --port $PORT
 """
 from __future__ import annotations
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -40,13 +47,19 @@ from typing import Any
 
 import requests
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 # ---------- Bootstrap ----------
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
+# Canonical public URL of this service. Used as the OAuth redirectTo origin so
+# Supabase Auth bounces back to the right host post-Google. Set on Render to
+# https://d2-orders-dashboard.onrender.com (or your custom domain). Falls back
+# to the browser's window.location.origin when unset.
+D2_CANONICAL_ORIGIN = (os.environ.get("D2_CANONICAL_ORIGIN") or "").rstrip("/")
 
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
 
@@ -85,8 +98,41 @@ elif AUTH_DISABLED:
     )
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# Boot-time sanity check. When running on a production platform indicator
+# (RENDER / FLY_APP_NAME / ENVIRONMENT=production / etc.) without the Supabase
+# env vars set, the JWT gate cannot work and the dashboard JS would silently
+# render a "Server misconfigured" panel. Surface that loudly in the server log
+# and let `/` return 503 so the operator sees a clear signal in their browser.
+PROD_MISSING_SUPABASE = _is_production() and not (SUPABASE_URL and SUPABASE_ANON_KEY)
+if PROD_MISSING_SUPABASE:
+    import sys as _sys
+    print(
+        "ERROR: d2_dashboard is running on a production platform "
+        "(RENDER / FLY_APP_NAME / ENVIRONMENT=production detected) but "
+        "SUPABASE_URL / SUPABASE_ANON_KEY are not set. The Supabase JWT gate "
+        "cannot function. Set both env vars on the service and redeploy. "
+        "Serving 503 at / until resolved.",
+        file=_sys.stderr,
+        flush=True,
+    )
+
+# Read the dashboard shell once at import time. The template contains a single
+# `__D2_CONFIG_JSON__` placeholder that gets replaced with the per-request JSON
+# config blob on each `/` hit. Cheaper than Jinja and avoids the dep.
+_DASHBOARD_SHELL_PATH = TEMPLATES_DIR / "dashboard.html"
+_DASHBOARD_SHELL = (
+    _DASHBOARD_SHELL_PATH.read_text(encoding="utf-8")
+    if _DASHBOARD_SHELL_PATH.is_file()
+    else None
+)
+_CONFIG_PLACEHOLDER = "__D2_CONFIG_JSON__"
 
 app = FastAPI(title="D2 Orders Dashboard — unified broker view")
+
+if STATIC_DIR.is_dir():
+    app.mount("/static/d2", StaticFiles(directory=str(STATIC_DIR)), name="d2_static")
 
 
 # ---------- Auth (mirrors app.py require_auth) ----------
@@ -373,12 +419,31 @@ def healthz_detail(_=Depends(require_auth)):
     }
 
 
+def _shell_config_blob() -> dict:
+    """Per-request bootstrap config injected into the HTML shell. Anon key is
+    safe to expose by design; no secrets here. The canonical_origin lets the
+    front-end build an OAuth redirectTo that matches what's registered in
+    Supabase Auth rather than guessing from window.location."""
+    return {
+        "supabase_url": SUPABASE_URL,
+        "supabase_anon_key": SUPABASE_ANON_KEY,
+        "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
+        "auth_disabled": AUTH_DISABLED,
+        "canonical_origin": D2_CANONICAL_ORIGIN or None,
+    }
+
+
 @app.get("/")
 def root():
-    path = TEMPLATES_DIR / "dashboard.html"
-    if not path.exists():
+    if PROD_MISSING_SUPABASE:
+        raise HTTPException(503, "d2_dashboard misconfigured: SUPABASE_URL / SUPABASE_ANON_KEY not set")
+    if not _DASHBOARD_SHELL:
         raise HTTPException(500, "dashboard.html missing")
-    return FileResponse(str(path), media_type="text/html")
+    # JSON.stringify equivalent — escape `<` to defuse `</script>` injection
+    # from any future config field that ends up reflecting user input.
+    blob = json.dumps(_shell_config_blob()).replace("<", "\\u003c")
+    html = _DASHBOARD_SHELL.replace(_CONFIG_PLACEHOLDER, blob)
+    return HTMLResponse(html)
 
 
 @app.get("/api/d2/config")
@@ -393,16 +458,11 @@ def config(_=Depends(require_auth)):
 
 @app.get("/api/d2/config-public")
 def config_public():
-    """Pre-auth bootstrap — front-end needs SUPABASE_URL + ANON_KEY to show
-    the login UI. These are public values (anon key is safe to expose;
-    that's its design). `auth_disabled` lets the front-end skip the login
-    screen when the server is in testing mode."""
-    return {
-        "supabase_url": SUPABASE_URL,
-        "supabase_anon_key": SUPABASE_ANON_KEY,
-        "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
-        "auth_disabled": AUTH_DISABLED,
-    }
+    """Pre-auth bootstrap — mirror of the blob server-rendered into the HTML
+    shell. Kept as a JSON endpoint for API consumers and for the front-end's
+    fallback path; the shell normally doesn't fetch this on boot. Anon key is
+    safe to expose (that's its design)."""
+    return _shell_config_blob()
 
 
 @app.get("/api/d2/orders")
