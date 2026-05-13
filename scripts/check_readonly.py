@@ -9,6 +9,7 @@ sales / listings feeds:
   - sellerdirect-api.seatgeek.com     (SG seller direct)
   - api.tickpick.com                  (TickPick broker orders)
   - brokers.vividseats.com            (Vivid Seats broker orders)
+  - sc.gotickets.com                  (GoTickets broker sales)
 
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
@@ -44,6 +45,7 @@ FORBIDDEN_HOSTS = (
     "sellerdirect-api.seatgeek.com",
     "api.tickpick.com",
     "brokers.vividseats.com",
+    "sc.gotickets.com",
 )
 
 # Files that legitimately reference these hosts (i.e. the client modules).
@@ -53,6 +55,7 @@ CLIENT_FILES = {
     "seatgeek_client.py",
     "tickpick_client.py",
     "vivid_client.py",
+    "gotickets_client.py",
 }
 
 # Required guard tokens that must appear in each client module.
