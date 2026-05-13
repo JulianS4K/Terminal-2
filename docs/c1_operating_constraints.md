@@ -15,7 +15,7 @@ Everything. C1 supervises D0-D4 + Undelivered FE, so it must be able to read acr
 - All `bot_chat` rows (cross-lane coordination history)
 - All GitHub PRs in the repo (`pull_request_read`, `issue_read`, `search_pull_requests`)
 - All Render service metadata via Render MCP (read-only — D1 owns writes)
-- All TEvo GET endpoints (search, events, performers, venues, ticket_groups)
+- All upstream third-party API GET endpoints: TEvo, SeatGeek, SeatData, TickPick, Vivid (search, events, performers, venues, ticket_groups, listings)
 
 ## Write surface (authored files)
 
@@ -45,7 +45,7 @@ Operator must explicitly approve each of these:
 - Cron schedule changes
 - Edge function deploys / mutations
 - Render workspace writes (forbidden entirely — D1's lane per Cross-cutting Rule #6)
-- Any TEvo write path (orders, holds, inventory mutations)
+- Any upstream API write path on TEvo / SeatGeek / SeatData / TickPick / Vivid (orders, holds, reservations, inventory mutations, webhook config, seller-side changes)
 - Any file write outside the write surface above
 
 ## Forbidden actions (no permission unblocks)

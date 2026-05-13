@@ -24,14 +24,18 @@ Read freely: `SELECT`, `information_schema`, `pg_*` views, log inspection, MCP `
 - Supabase **branch** creation (`create_branch` produces a copy-on-write fork — no prod-data mutation)
 - Author migrations as files in `supabase/migrations/` — application to prod is gated separately
 
-### 2. TEvo is read-only
+### 2. Upstream third-party APIs are read-only
 
-OK: `/v9/searches/suggestions`, `/v9/events`, `/v9/performers`, `/v9/venues`, `/v9/ticket_groups` GET, any read endpoint.
+Applies to **every** external API the project integrates with — TEvo, SeatGeek, SeatData, TickPick, Vivid, and any future client (`*_client.py`).
+
+OK: search / suggestions / events / performers / venues / ticket_groups / listings — any GET / read endpoint.
 
 **Forbidden without explicit operator authorization:**
-- Order creation / `POST /v9/orders`
-- Holds, locks, inventory mutations
-- Any TEvo write endpoint
+- Order creation (`POST /orders`, `POST /v9/orders`, equivalent on SG / TP / Vivid)
+- Holds, locks, reservations, inventory mutations
+- Any write / mutation endpoint on any upstream API
+- Webhook subscription changes
+- Account / seller-side configuration changes
 
 ### 3. Free reign on HTML / wiring within your lane
 

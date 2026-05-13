@@ -152,7 +152,7 @@ Follow the D1 pattern. Each subordinate lane should declare:
 
 7. **Operator-lockdown rules (global)** — apply to every bot, supersede prior MCP-applied autonomy:
    - **SQL/database writes** — read-only by default. Need explicit operator permission for any `INSERT` / `UPDATE` / `DELETE` / DDL / `apply_migration` against prod. Exceptions: coordination-table writes via designed helper functions (standing permission); database branch creation (copy-on-write, no prod mutation); migration file authoring (application separately gated).
-   - **Upstream API writes** — read-only by default. Search / GET endpoints OK. Write paths (orders, mutations, holds) need explicit authorization.
+   - **Upstream third-party APIs (every integration)** — read-only by default. Search / GET endpoints OK. Order creation, holds, reservations, inventory mutations, webhook config, seller-side config — all require explicit authorization. Applies uniformly to every `*_client.py` integration regardless of upstream provider (ticketing APIs, data brokers, scraping targets, etc.).
    - **HTML / UI / wiring** — free reign on lane-assigned UI files. Build, iterate, refactor without per-step approval. Operator may explicitly route HTML work to a bot outside its default lane (this is the override path; document the routing).
 
 ## Enforcement
