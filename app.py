@@ -4002,40 +4002,94 @@ def _ticket_group_to_listing(tg: dict) -> dict:
 
 @app.get("/api/store/_probe_owned")
 def store_probe_owned():
-    """TEMP probe: try several owned-only filter syntaxes against TEvo
-    /v9/events and report which ones server-side filter to we-own only.
-    Removed once we've picked the winner."""
+    """TEMP probe v2: hunt for an owned-only enumeration path."""
     if client is None:
         raise HTTPException(503, "TEvo client not configured")
     today_iso = datetime.now(timezone.utc).date().isoformat()
-    variants = [
-        ("baseline", {}),
-        ("owned_by_office=true", {"owned_by_office": True}),
-        ("owned=true", {"owned": True}),
-        ("only_with_owned_tickets=true", {"only_with_owned_tickets": True}),
-    ]
-    report = {}
-    for label, extra in variants:
+    report: dict = {}
+
+    # ---- Probe A: extract our office_id from /v9/orders ----
+    office_id: int | None = None
+    seller_office: dict | None = None
+    try:
+        orders_resp = client.list_orders(per_page=3)
+        orders = orders_resp.get("orders") or []
+        if orders:
+            first = orders[0]
+            seller_office = first.get("seller") or {}
+            office_id = (seller_office or {}).get("id")
+            report["A_orders_probe"] = {
+                "ok": True, "total_orders": orders_resp.get("total_entries"),
+                "first_order_keys": sorted(first.keys()),
+                "seller_office": seller_office,
+                "extracted_office_id": office_id,
+            }
+        else:
+            report["A_orders_probe"] = {"ok": True, "orders": "none returned"}
+    except Exception as e:
+        report["A_orders_probe"] = {"ok": False, "error": str(e)}
+
+    # ---- Probe B: /v9/events?office_id=X if we found one ----
+    if office_id:
         try:
             resp = client.list_events(
-                occurs_at_gte=today_iso,
-                only_with_available_tickets=True,
-                order_by="events.occurs_at ASC",
-                per_page=50,
-                page=1,
-                **extra,
+                occurs_at_gte=today_iso, only_with_available_tickets=True,
+                order_by="events.occurs_at ASC", per_page=50, page=1,
+                **{"office_id": office_id},
             )
-            events = resp.get("events", []) or []
-            we_own = sum(1 for e in events if e.get("owned_by_office"))
-            report[label] = {
-                "ok": True,
-                "total_entries": resp.get("total_entries"),
-                "events_returned": len(events),
+            evs = resp.get("events", []) or []
+            we_own = sum(1 for e in evs if e.get("owned_by_office"))
+            report["B_events_office_id"] = {
+                "ok": True, "total_entries": resp.get("total_entries"),
+                "returned": len(evs),
                 "we_own_count": we_own,
-                "we_own_pct": (round(we_own / len(events) * 100, 1) if events else None),
+                "we_own_pct": round(we_own / len(evs) * 100, 1) if evs else None,
             }
-        except RuntimeError as e:
-            report[label] = {"ok": False, "error": str(e)}
+        except Exception as e:
+            report["B_events_office_id"] = {"ok": False, "error": str(e)}
+    else:
+        report["B_events_office_id"] = {"skipped": "no office_id found"}
+
+    # ---- Probe C: /v9/ticket_groups?owned=true (no event_id) ----
+    try:
+        # Use _get directly since list_ticket_groups requires event_id.
+        resp = client._get("/v9/ticket_groups", {"owned": True, "per_page": 50})
+        tgs = resp.get("ticket_groups") or []
+        # Pull event_ids from the response if present
+        event_ids = set()
+        for tg in tgs[:20]:
+            ev = (tg.get("event") or {})
+            if ev.get("id"):
+                event_ids.add(ev["id"])
+        report["C_ticket_groups_no_event_id"] = {
+            "ok": True,
+            "total_entries": resp.get("total_entries"),
+            "returned_groups": len(tgs),
+            "distinct_events_in_first_20": len(event_ids),
+            "sample_event_ids": sorted(event_ids)[:5],
+            "first_tg_keys": sorted(tgs[0].keys()) if tgs else None,
+        }
+    except Exception as e:
+        report["C_ticket_groups_no_event_id"] = {"ok": False, "error": str(e)}
+
+    # ---- Probe D: /v9/events?owned_by_office.eq=true ----
+    try:
+        resp = client.list_events(
+            occurs_at_gte=today_iso, only_with_available_tickets=True,
+            order_by="events.occurs_at ASC", per_page=50, page=1,
+            **{"owned_by_office.eq": "true"},
+        )
+        evs = resp.get("events", []) or []
+        we_own = sum(1 for e in evs if e.get("owned_by_office"))
+        report["D_events_owned_by_office_eq"] = {
+            "ok": True, "total_entries": resp.get("total_entries"),
+            "returned": len(evs),
+            "we_own_count": we_own,
+            "we_own_pct": round(we_own / len(evs) * 100, 1) if evs else None,
+        }
+    except Exception as e:
+        report["D_events_owned_by_office_eq"] = {"ok": False, "error": str(e)}
+
     return report
 
 
