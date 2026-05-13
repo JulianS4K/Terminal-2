@@ -68,38 +68,19 @@ D2_CANONICAL_ORIGIN = (os.environ.get("D2_CANONICAL_ORIGIN") or "").rstrip("/")
 D2_PHASE = os.environ.get("D2_PHASE", "data-collection")
 D2_UI_STATUS = os.environ.get("D2_UI_STATUS", "rebuild-pending")
 
-AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+# Anonymous-by-default. Operator decision 2026-05-13: the dashboard goes
+# straight into the orders view with no Google sign-in step. Set
+# AUTH_DISABLED=false on the Render service env to restore the Supabase JWT
+# gate later (front-end will then surface the login screen). No production
+# self-disable — the lack of a gate is the intended posture, not a leak.
+AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "true").lower() == "true"
 
-
-def _is_production() -> bool:
-    """Production detector mirrored from app.py:54-66. If ANY indicator says
-    production, treat as production and deny the AUTH_DISABLED kill switch."""
-    return bool(
-        (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
-        or (os.environ.get("ENVIRONMENT") or "").lower() == "production"
-        or (os.environ.get("NODE_ENV") or "").lower() == "production"
-        or (os.environ.get("PYTHON_ENV") or "").lower() == "production"
-        or os.environ.get("FLY_APP_NAME")
-        or os.environ.get("RENDER")
-    )
-
-
-_AUTH_DISABLED_REQUESTED = AUTH_DISABLED
-AUTH_DISABLED = AUTH_DISABLED and not _is_production()
-if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+if AUTH_DISABLED:
     import sys as _sys
     print(
-        "WARNING: AUTH_DISABLED=true ignored — production indicator detected "
-        "(RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / "
-        "FLY_APP_NAME / RENDER). The Supabase JWT gate stays on.",
-        file=_sys.stderr,
-        flush=True,
-    )
-elif AUTH_DISABLED:
-    import sys as _sys
-    print(
-        "WARNING: AUTH_DISABLED=true — /api/d2/* endpoints are unauthenticated. "
-        "TESTING ONLY. Unset AUTH_DISABLED to restore the Supabase JWT gate.",
+        "d2_dashboard: AUTH_DISABLED=true — /api/d2/* endpoints serve "
+        "unauthenticated reads of merged broker order data. Set "
+        "AUTH_DISABLED=false on the service env to restore the Supabase JWT gate.",
         file=_sys.stderr,
         flush=True,
     )
@@ -107,20 +88,22 @@ elif AUTH_DISABLED:
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-# Boot-time sanity check. When running on a production platform indicator
-# (RENDER / FLY_APP_NAME / ENVIRONMENT=production / etc.) without the Supabase
-# env vars set, the JWT gate cannot work and the dashboard JS would silently
-# render a "Server misconfigured" panel. Surface that loudly in the server log
-# and let `/` return 503 so the operator sees a clear signal in their browser.
-PROD_MISSING_SUPABASE = _is_production() and not (SUPABASE_URL and SUPABASE_ANON_KEY)
+# Boot-time sanity check. Only meaningful when AUTH_DISABLED is *false* — in
+# that mode the JWT gate needs Supabase env vars; surface their absence loudly
+# instead of silently serving a "Server misconfigured" panel after JS boot.
+# With AUTH_DISABLED=true (the new default), Supabase env vars are unused.
+PROD_MISSING_SUPABASE = (
+    (not AUTH_DISABLED)
+    and bool(os.environ.get("RENDER") or os.environ.get("FLY_APP_NAME"))
+    and not (SUPABASE_URL and SUPABASE_ANON_KEY)
+)
 if PROD_MISSING_SUPABASE:
     import sys as _sys
     print(
-        "ERROR: d2_dashboard is running on a production platform "
-        "(RENDER / FLY_APP_NAME / ENVIRONMENT=production detected) but "
-        "SUPABASE_URL / SUPABASE_ANON_KEY are not set. The Supabase JWT gate "
-        "cannot function. Set both env vars on the service and redeploy. "
-        "Serving 503 at / until resolved.",
+        "ERROR: d2_dashboard has AUTH_DISABLED=false on a production platform "
+        "but SUPABASE_URL / SUPABASE_ANON_KEY are not set. The Supabase JWT "
+        "gate cannot function. Either set both env vars or set "
+        "AUTH_DISABLED=true. Serving 503 at / until resolved.",
         file=_sys.stderr,
         flush=True,
     )

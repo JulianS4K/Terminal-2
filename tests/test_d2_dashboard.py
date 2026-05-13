@@ -130,10 +130,12 @@ def test_root_injects_config_blob(client):
     assert '"canonical_origin":' in body
 
 
-def test_root_returns_503_when_production_missing_supabase(monkeypatch, client):
-    """When the service is on a prod platform without Supabase env vars set,
-    `/` returns 503 with a clear error instead of serving a misleading shell
-    that would surface a 'Server misconfigured' panel after JS boot."""
+def test_root_returns_503_when_prod_missing_supabase_with_auth_on(monkeypatch, client):
+    """`/` returns 503 when the boot guard fires — operator set
+    AUTH_DISABLED=false on a prod platform without Supabase env vars. Catches
+    the misconfiguration before users see a 'Server misconfigured' panel.
+    With AUTH_DISABLED=true (the default), Supabase env vars are unused and
+    the guard never trips."""
     monkeypatch.setattr(d2_main, "PROD_MISSING_SUPABASE", True)
     r = client.get("/")
     assert r.status_code == 503
