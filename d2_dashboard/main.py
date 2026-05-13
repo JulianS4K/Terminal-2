@@ -515,11 +515,82 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
-# ---------- SQL-backed fetchers (preferred for sources that cron-persist) ----------
+# ---------- SQL-backed fetchers ----------
 
-# Which sources are mirrored to public.unified_orders by an upstream cron.
-# Tickpick + Vivid have no SQL backing — they fall through to the API path.
-_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek"})
+# Sources mirrored to public.unified_orders by an upstream cron. The
+# /api/d2/orders endpoint drives entirely from this table — no direct
+# broker-API fan-out for the orders list. Sources NOT in this set surface
+# in the chip row as "no sql backing — needs persistence cron" with count=0.
+_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata"})
+
+# All sources the dashboard tracks. Listed in display order. Tickpick + Vivid
+# remain visible (operator knows they're on the roadmap) even with no SQL
+# persistence yet — their chip surfaces the gap explicitly.
+_ALL_SOURCES = ("evo", "seatgeek", "seatdata", "tickpick", "vivid")
+
+
+def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
+    """Pull a global page of recent rows from unified_orders, joined to
+    v_event_base for event_name + event_date. Returns None when Supabase
+    isn't configured.
+
+    Single PostgREST query across all sources — pagination is by global
+    row count (newest-first by created_at), not per-source. Tickpick +
+    Vivid simply don't appear in the row list because they're not in
+    unified_orders yet."""
+    sb = _sb()
+    if sb is None:
+        return None
+    try:
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page - 1
+        uo_res = (
+            sb.table("unified_orders")
+            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
+            .order("created_at", desc=True)
+            .range(start, end)
+            .execute()
+        )
+        uo_rows = uo_res.data or []
+        event_ids = list({r["tevo_event_id"] for r in uo_rows if r.get("tevo_event_id")})
+        events_by_id: dict = {}
+        if event_ids:
+            ev_res = (
+                sb.table("v_event_base")
+                .select("tevo_event_id,event_name,event_at_local,event_at_utc")
+                .in_("tevo_event_id", event_ids)
+                .execute()
+            )
+            events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
+        rows = []
+        per_source_as_of: dict[str, str] = {}
+        per_source_count: dict[str, int] = {}
+        for r in uo_rows:
+            ev = events_by_id.get(r.get("tevo_event_id")) or {}
+            src = r.get("source") or ""
+            rows.append({
+                "source": src,
+                "order_id": str(r.get("source_order_id") or ""),
+                "event_name": ev.get("event_name"),
+                "event_date": ev.get("event_at_local") or ev.get("event_at_utc"),
+                "qty": _to_int(r.get("quantity")),
+                "status": r.get("source_status"),
+                "canonical_status": r.get("canonical_status"),
+                "amount": _to_float(r.get("gross_value")),
+                "currency": None,
+                "ordered_at": r.get("created_at"),
+            })
+            ls = r.get("last_seen_at")
+            if ls and (per_source_as_of.get(src, "") < ls):
+                per_source_as_of[src] = ls
+            per_source_count[src] = per_source_count.get(src, 0) + 1
+        return {
+            "rows": rows,
+            "per_source_count": per_source_count,
+            "per_source_as_of": per_source_as_of,
+        }
+    except Exception as e:
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "error": _scrub_err("unified_orders.sql", e)}
 
 
 def _fetch_orders_from_sql(source: str, per_page: int, page: int = 1) -> dict | None:
@@ -903,36 +974,57 @@ def config_public():
 
 @app.get("/api/d2/orders")
 def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
-    """Fan out to all 4 broker order surfaces in parallel, return one
-    normalized table. Each source reports ok/error independently so a
-    single dead source doesn't blank the page. `page` is 1-based — the
-    front-end's Prev/Next buttons increment / decrement it."""
+    """SQL-only orders feed (2026-05-13: operator switched from per-source
+    API fan-out to a single unified_orders query).
+
+    One PostgREST query against public.unified_orders, joined to v_event_base
+    for event_name + event_date. No broker-API calls. Sources NOT in
+    unified_orders (tickpick, vivid) surface in the source-chip list with
+    ok=False + 'no sql backing' so the operator can see the gap, but no
+    rows from those sources appear in the table until persistence ships.
+
+    Pagination is by *global* row count (newest-first by created_at across
+    all sources), not per-source. Page is 1-based."""
     per_page = max(1, min(per_page, 100))
     page = max(1, page)
-    fetchers = (_fetch_evo, _fetch_sg, _fetch_tickpick, _fetch_vivid)
-    results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = [ex.submit(fn, per_page, page) for fn in fetchers]
-        for f in futures:
-            results.append(f.result())
-    merged: list[dict] = []
+    bundle = _fetch_unified_orders_page(per_page, page)
+    if bundle is None:
+        # Supabase not configured — the dashboard can't function in SQL-only
+        # mode. Surface 503 explicitly so the operator sees the misconfig.
+        raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+    rows = bundle["rows"]
+    per_source_count = bundle.get("per_source_count", {})
+    per_source_as_of = bundle.get("per_source_as_of", {})
+    sql_err = bundle.get("error")
+
     sources_summary = []
-    for r in results:
-        merged.extend(r.get("rows") or [])
-        sources_summary.append({
-            "source": r["source"],
-            "ok": r.get("ok", False),
-            "count": len(r.get("rows") or []),
-            "total_reported": r.get("total"),
-            "error": r.get("error"),
-            "origin": r.get("origin"),     # "sql" | "api" | None
-            "as_of": r.get("as_of"),       # ISO timestamp when origin="sql"
-        })
-    # Sort newest first by ordered_at (string ISO compares fine, None last).
-    merged.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
+    for src in _ALL_SOURCES:
+        if src in _SQL_BACKED_SOURCES:
+            sources_summary.append({
+                "source": src,
+                "ok": True if not sql_err else False,
+                "count": per_source_count.get(src, 0),
+                "total_reported": None,
+                "error": sql_err,
+                "origin": "sql",
+                "as_of": per_source_as_of.get(src),
+            })
+        else:
+            sources_summary.append({
+                "source": src,
+                "ok": False,
+                "count": 0,
+                "total_reported": None,
+                "error": "no sql backing — needs persistence cron",
+                "origin": "sql",
+                "as_of": None,
+            })
+    # Already sorted newest-first by created_at in SQL; keep ordered_at sort
+    # as a tie-breaker / safety net for any equal timestamps.
+    rows.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
     return JSONResponse({
         "sources": sources_summary,
-        "rows": merged,
+        "rows": rows,
         "page": page,
         "per_page": per_page,
     })

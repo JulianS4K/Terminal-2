@@ -179,49 +179,69 @@ def test_config_public_includes_canonical_origin(client, monkeypatch):
     assert "auth_disabled" in body
 
 
-def test_orders_merges_all_sources(monkeypatch, client):
-    monkeypatch.setattr(d2_main, "_fetch_evo", _stub_evo)
-    monkeypatch.setattr(d2_main, "_fetch_sg", _stub_sg)
-    monkeypatch.setattr(d2_main, "_fetch_tickpick", _stub_tickpick)
-    monkeypatch.setattr(d2_main, "_fetch_vivid", _stub_vivid_err)
-
+def test_orders_503_when_supabase_unconfigured(monkeypatch, client):
+    """Dashboard is SQL-only — when Supabase isn't configured the orders
+    endpoint surfaces 503 explicitly instead of silently serving empty."""
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", lambda n, p=1: None)
     r = client.get("/api/d2/orders")
-    assert r.status_code == 200
-    body = r.json()
+    assert r.status_code == 503
 
-    # Summary chip per source.
-    sources_by_name = {s["source"]: s for s in body["sources"]}
-    assert set(sources_by_name) == {"evo", "seatgeek", "tickpick", "vivid"}
-    assert sources_by_name["evo"]["ok"] is True
-    assert sources_by_name["seatgeek"]["ok"] is True
-    assert sources_by_name["tickpick"]["ok"] is True
-    assert sources_by_name["vivid"]["ok"] is False
-    assert sources_by_name["vivid"]["error"] == "boom"
 
-    # Merged rows: evo + seatgeek, sorted newest first (by ordered_at).
+def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client):
+    """SQL-backed sources (evo / seatgeek / seatdata) get ok=True chips
+    with their per-source row counts. Non-SQL sources (tickpick, vivid)
+    surface ok=False with 'no sql backing' so the operator sees the gap."""
+    monkeypatch.setattr(
+        d2_main, "_fetch_unified_orders_page",
+        lambda n, p=1: {
+            "rows": [
+                {"source": "seatgeek", "order_id": "SG-9", "event_name": "Hamilton",
+                 "event_date": "2026-07-01T20:00:00Z", "qty": 4, "status": "open",
+                 "canonical_status": "pending", "amount": 1200.5, "currency": None,
+                 "ordered_at": "2026-05-12T09:00:00Z"},
+                {"source": "evo", "order_id": "111", "event_name": "Knicks vs Lakers",
+                 "event_date": "2026-06-01T19:30:00Z", "qty": 2, "status": "accepted",
+                 "canonical_status": "accepted", "amount": 450.0, "currency": None,
+                 "ordered_at": "2026-05-10T12:00:00Z"},
+            ],
+            "per_source_count": {"evo": 1, "seatgeek": 1},
+            "per_source_as_of": {"evo": "2026-05-13T20:35:00Z", "seatgeek": "2026-05-09T02:57:00Z"},
+        },
+    )
+    body = client.get("/api/d2/orders").json()
+    sources = {s["source"]: s for s in body["sources"]}
+    assert set(sources) == {"evo", "seatgeek", "seatdata", "tickpick", "vivid"}
+    # SQL-backed: ok=True with origin sql + as_of from cron's last_seen_at.
+    assert sources["evo"]["ok"] is True
+    assert sources["evo"]["origin"] == "sql"
+    assert sources["evo"]["as_of"] == "2026-05-13T20:35:00Z"
+    assert sources["evo"]["count"] == 1
+    assert sources["seatgeek"]["count"] == 1
+    assert sources["seatdata"]["count"] == 0   # backed but no rows on this page
+    assert sources["seatdata"]["ok"] is True
+    # Not in unified_orders → operator sees the gap explicitly.
+    assert sources["tickpick"]["ok"] is False
+    assert sources["tickpick"]["error"] == "no sql backing — needs persistence cron"
+    assert sources["vivid"]["ok"] is False
+    # Rows: 2 returned, sorted newest-first by ordered_at.
     rows = body["rows"]
-    assert len(rows) == 2
-    assert rows[0]["source"] == "seatgeek"   # 2026-05-12 > 2026-05-10
-    assert rows[1]["source"] == "evo"
+    assert [r["source"] for r in rows] == ["seatgeek", "evo"]
 
 
-def test_orders_per_page_bounds(monkeypatch, client):
-    """per_page is clamped to [1, 100]."""
+def test_orders_per_page_bounds_503_passthrough_when_unconfigured(monkeypatch, client):
+    """per_page clamping still applies; verifies the clamp fires before the
+    SQL call so a malformed query string can't blow up downstream."""
     seen = {}
 
-    def stub(per_page, page=1):
+    def fake_page(per_page, page=1):
         seen["per_page"] = per_page
-        return {"source": "evo", "ok": True, "rows": [], "total": 0}
+        seen["page"] = page
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
 
-    monkeypatch.setattr(d2_main, "_fetch_evo", stub)
-    monkeypatch.setattr(d2_main, "_fetch_sg", lambda n, p=1: {"source": "seatgeek", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_tickpick", lambda n, p=1: {"source": "tickpick", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_vivid", lambda n, p=1: {"source": "vivid", "ok": True, "rows": [], "total": 0})
-
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
     r = client.get("/api/d2/orders?per_page=999")
     assert r.status_code == 200
     assert seen["per_page"] == 100
-
     r = client.get("/api/d2/orders?per_page=0")
     assert r.status_code == 200
     assert seen["per_page"] == 1
@@ -697,48 +717,40 @@ def test_diag_tickpick_scrubs_token_if_echoed_in_body(monkeypatch, client):
 def test_orders_returns_pagination_metadata(monkeypatch, client):
     """`/api/d2/orders` echoes the requested page + per_page so the front-end
     can size the Prev/Next buttons without a separate count query."""
-    monkeypatch.setattr(d2_main, "_fetch_evo",      lambda n, p=1: {"source": "evo",      "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_sg",       lambda n, p=1: {"source": "seatgeek", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_tickpick", lambda n, p=1: {"source": "tickpick", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_vivid",    lambda n, p=1: {"source": "vivid",    "ok": True, "rows": [], "total": 0})
-    r = client.get("/api/d2/orders?per_page=25&page=3")
-    body = r.json()
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page",
+                        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}})
+    body = client.get("/api/d2/orders?per_page=25&page=3").json()
     assert body["page"] == 3
     assert body["per_page"] == 25
 
 
-def test_orders_page_param_threads_to_fetchers(monkeypatch, client):
-    """The page param reaches each per-source fetcher so SQL/.range() and
-    the Evo/SG/TickPick/Vivid API pages line up with the operator's
-    Next/Prev clicks."""
-    seen_pages: dict[str, int] = {}
+def test_orders_page_param_threads_to_sql(monkeypatch, client):
+    """The page param reaches the unified-orders SQL fetcher so PostgREST
+    .range() lines up with the operator's Next/Prev clicks."""
+    seen = {}
 
-    def make_stub(name):
-        def _s(n, p=1):
-            seen_pages[name] = p
-            return {"source": name, "ok": True, "rows": [], "total": 0}
-        return _s
+    def fake_page(per_page, page=1):
+        seen["per_page"] = per_page
+        seen["page"] = page
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
 
-    monkeypatch.setattr(d2_main, "_fetch_evo",      make_stub("evo"))
-    monkeypatch.setattr(d2_main, "_fetch_sg",       make_stub("seatgeek"))
-    monkeypatch.setattr(d2_main, "_fetch_tickpick", make_stub("tickpick"))
-    monkeypatch.setattr(d2_main, "_fetch_vivid",    make_stub("vivid"))
-    r = client.get("/api/d2/orders?page=4")
-    assert r.status_code == 200
-    assert seen_pages == {"evo": 4, "seatgeek": 4, "tickpick": 4, "vivid": 4}
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
+    assert client.get("/api/d2/orders?page=4").status_code == 200
+    assert seen == {"per_page": 25, "page": 4}
 
 
 def test_orders_page_clamped_to_minimum_one(monkeypatch, client):
     """Negative or zero page values clamp to 1 so a malformed query string
-    doesn't blow up downstream fetchers (Evo's API would 400)."""
+    doesn't blow up the SQL fetcher (PostgREST .range() would 416)."""
     seen = {}
-    monkeypatch.setattr(d2_main, "_fetch_evo",      lambda n, p=1: (seen.setdefault("p", p), {"source": "evo", "ok": True, "rows": [], "total": 0})[1])
-    monkeypatch.setattr(d2_main, "_fetch_sg",       lambda n, p=1: {"source": "seatgeek", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_tickpick", lambda n, p=1: {"source": "tickpick", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_vivid",    lambda n, p=1: {"source": "vivid", "ok": True, "rows": [], "total": 0})
-    r = client.get("/api/d2/orders?page=-5")
-    assert r.status_code == 200
-    assert seen["p"] == 1
+
+    def fake_page(per_page, page=1):
+        seen["page"] = page
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
+    assert client.get("/api/d2/orders?page=-5").status_code == 200
+    assert seen["page"] == 1
 
 
 def test_broker_diag_masks_token_and_reports_env_var(monkeypatch):
