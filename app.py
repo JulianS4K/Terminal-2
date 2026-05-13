@@ -6090,6 +6090,14 @@ def store_test_share_page(_=Depends(_require_non_prod)):
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "share.html"))
 
 
+@app.get("/store/test/media_test")
+def store_test_media_test_page(_=Depends(_require_non_prod)):
+    # C1-authored sandbox under 2026-05-13 operator routing. Validates that
+    # primary_performer_logo / primary_performer_color (already in the
+    # /api/store/events payload) actually render through the test harness.
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "media_test.html"))
+
+
 # Static assets (CSS / JS / images) served from /static.
 # Keep this LAST so explicit routes above win.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
