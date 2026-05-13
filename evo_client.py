@@ -156,18 +156,29 @@ class EvoClient:
         # intermediate-proxy info. Pattern matches seatgeek_client.py:495
         # (B1 SEC-MED SW-1, security chat 2026-05-10).
         # Log full detail server-side; only generic status reaches caller.
+        #
+        # Truthiness note: `requests.Response.__bool__` returns `self.ok`
+        # (`status_code < 400`), so `if last_resp` is FALSE for the exact
+        # case we want to log — a non-2xx response. Use `is not None` to
+        # distinguish "no response object at all" (connection failure) from
+        # "response object that happens to be non-2xx". Flagged by D1 in
+        # the 2026-05-13 MVP-deploy debugging session.
         import logging
-        logging.getLogger(__name__).warning(
-            "TEvo API non-2xx response: %s %s on %s %s — body: %s",
-            last_resp.status_code if last_resp else "no-resp",
-            last_resp.reason if last_resp else "",
-            last_resp.request.method if last_resp else "",
-            last_resp.url if last_resp else "",
-            (last_resp.text[:500] if last_resp else "")
-        )
-        raise RuntimeError(
-            f"TEvo API returned {last_resp.status_code if last_resp else 'no response'}"
-        )
+        if last_resp is not None:
+            logging.getLogger(__name__).warning(
+                "TEvo API non-2xx response: %s %s on %s %s — body: %s",
+                last_resp.status_code,
+                last_resp.reason,
+                last_resp.request.method,
+                last_resp.url,
+                last_resp.text[:500],
+            )
+            raise RuntimeError(f"TEvo API returned {last_resp.status_code}")
+        else:
+            logging.getLogger(__name__).warning(
+                "TEvo API call failed with no response (connection/timeout/DNS)"
+            )
+            raise RuntimeError("TEvo API returned no response")
 
     def _iter_paginated(
         self,
