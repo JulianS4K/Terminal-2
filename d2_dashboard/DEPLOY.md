@@ -48,12 +48,17 @@ Entry point: `uvicorn d2_dashboard.main:app`.
      API calls for every refresh, burning broker-API quota.)
 
    **Required (broker creds for sources NOT in unified_orders, i.e. tickpick
-   + vivid, and as a fallback when SQL is empty):**
+   + vivid + gotickets, and as a fallback when SQL is empty):**
    - `TEVO_API_TOKEN`, `TEVO_API_SECRET`
    - `SEATGEEK_API_TOKEN`
    - `TICKPICK_API_TOKEN`
    - `VIVID_API_TOKEN`
    - `SEATDATA_API_KEY` (optional — only the SeatData tab needs it)
+   - `GOTICKETS_ACCESS_ID` + `GOTICKETS_API_SECRET` (GoTickets has no list
+     endpoint — by-id lookup only via the Samples tab's GoTickets form)
+   - `GOTICKETS_SAMPLE_ORDER_ID` (optional — a known-good GoTickets order
+     ID. When set, the Samples tab's gotickets chip exercises `get_sale()`
+     against it on each refresh)
    - `PYTHON_VERSION=3.12.7`
 
    **Auth-related (only needed when AUTH_DISABLED=false):**

@@ -224,16 +224,17 @@ def test_orders_per_page_bounds(monkeypatch, client):
 def test_samples_no_creds_all_sources(monkeypatch, client):
     """When every client factory returns None (no creds), /api/d2/samples
     still returns 200 with one entry per source, each ok=False."""
-    monkeypatch.setattr(d2_main, "_evo_client",      lambda: None)
-    monkeypatch.setattr(d2_main, "_sg_client",       lambda: None)
-    monkeypatch.setattr(d2_main, "_tickpick_client", lambda: None)
-    monkeypatch.setattr(d2_main, "_vivid_client",    lambda: None)
-    monkeypatch.setattr(d2_main, "_seatdata_client", lambda: None)
+    monkeypatch.setattr(d2_main, "_evo_client",       lambda: None)
+    monkeypatch.setattr(d2_main, "_sg_client",        lambda: None)
+    monkeypatch.setattr(d2_main, "_tickpick_client",  lambda: None)
+    monkeypatch.setattr(d2_main, "_vivid_client",     lambda: None)
+    monkeypatch.setattr(d2_main, "_seatdata_client",  lambda: None)
+    monkeypatch.setattr(d2_main, "_gotickets_client", lambda: None)
     r = client.get("/api/d2/samples")
     assert r.status_code == 200
     body = r.json()
     sources = {s["source"]: s for s in body["samples"]}
-    assert set(sources) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
+    assert set(sources) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata", "gotickets"}
     for s in sources.values():
         assert s["ok"] is False
         assert s["error"] == "no creds"
@@ -492,6 +493,104 @@ def test_fetch_evo_dedupes_accepted_and_pending(monkeypatch):
     assert result["ok"] is True
     ids = sorted(r["order_id"] for r in result["rows"])
     assert ids == ["1", "2", "3"]
+
+
+def test_canonical_status_maps_per_source():
+    """Every source's raw status enum maps to a canonical bucket from
+    order_status_xref. Unknown values return None (caller can surface raw)."""
+    assert d2_main._canonical_status("evo", "completed") == "fulfilled"
+    assert d2_main._canonical_status("evo", "rejected") == "rejected"
+    assert d2_main._canonical_status("seatgeek", "open") == "pending"
+    assert d2_main._canonical_status("seatgeek", "delivered") == "fulfilled"
+    # TickPick — list_orders defaults to status=unfulfilled, which maps
+    # to canonical "accepted" (broker holds, awaiting delivery).
+    assert d2_main._canonical_status("tickpick", "unfulfilled") == "accepted"
+    # Vivid is case-sensitive uppercase in the XML feed.
+    assert d2_main._canonical_status("vivid", "PENDING_SHIPMENT") == "accepted"
+    # Case-insensitive fallback.
+    assert d2_main._canonical_status("vivid", "pending_shipment") == "accepted"
+    # Unknown values + nones.
+    assert d2_main._canonical_status("evo", "wat") is None
+    assert d2_main._canonical_status("evo", None) is None
+
+
+def test_norm_tickpick_includes_canonical_status():
+    row = d2_main._norm_tickpick({"orderId": "T-1", "status": "unfulfilled", "quantity": 2})
+    assert row["status"] == "unfulfilled"
+    assert row["canonical_status"] == "accepted"
+
+
+def test_norm_vivid_includes_canonical_status():
+    row = d2_main._norm_vivid({"orderId": "V-1", "status": "PENDING_SHIPMENT", "event": "Show"})
+    assert row["canonical_status"] == "accepted"
+
+
+def test_norm_gotickets_derives_status_from_fulfilled_and_cancel():
+    fulfilled = d2_main._norm_gotickets({"id": 1, "fulfilled": True, "fulfillmentTime": "2026-05-13T20:00:00Z"})
+    assert fulfilled["canonical_status"] == "fulfilled"
+    assert fulfilled["fulfillment_time"] == "2026-05-13T20:00:00Z"
+
+    cancelled = d2_main._norm_gotickets({"id": 2, "cancelReason": "REJECTED", "fulfilled": False})
+    assert cancelled["canonical_status"] == "cancelled"
+    assert "REJECTED" in cancelled["status"]
+
+    pending = d2_main._norm_gotickets({"id": 3, "fulfilled": False, "sellerStatus": "NONE"})
+    assert pending["canonical_status"] == "pending"
+
+
+def test_order_detail_routes_gotickets_to_get_sale(monkeypatch, client):
+    class FakeGoTickets:
+        def get_sale(self, order_id):
+            assert order_id == "S-42"
+            return {"id": "S-42", "fulfilled": True, "fulfillmentTime": "2026-05-13T20:00:00Z"}
+
+    monkeypatch.setattr(d2_main, "_gotickets_client", lambda: FakeGoTickets())
+    r = client.get("/api/d2/order/gotickets/S-42")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["data"]["fulfilled"] is True
+
+
+def test_samples_includes_gotickets_when_sample_id_set(monkeypatch, client):
+    class FakeGoTickets:
+        def get_sale(self, order_id):
+            assert order_id == "S-99"
+            return {"id": "S-99", "fulfilled": True}
+
+    monkeypatch.setenv("GOTICKETS_SAMPLE_ORDER_ID", "S-99")
+    monkeypatch.setattr(d2_main, "_evo_client",       lambda: None)
+    monkeypatch.setattr(d2_main, "_sg_client",        lambda: None)
+    monkeypatch.setattr(d2_main, "_tickpick_client",  lambda: None)
+    monkeypatch.setattr(d2_main, "_vivid_client",     lambda: None)
+    monkeypatch.setattr(d2_main, "_seatdata_client",  lambda: None)
+    monkeypatch.setattr(d2_main, "_gotickets_client", lambda: FakeGoTickets())
+    r = client.get("/api/d2/samples")
+    assert r.status_code == 200
+    sources = {s["source"]: s for s in r.json()["samples"]}
+    gt = sources["gotickets"]
+    assert gt["ok"] is True
+    assert gt["method"] == "get_sale(S-99)"
+    assert gt["sample"]["id"] == "S-99"
+
+
+def test_samples_gotickets_without_sample_id_surfaces_clear_error(monkeypatch, client):
+    """Without GOTICKETS_SAMPLE_ORDER_ID set, the chip shows 'upstream error'
+    (generic — RuntimeError isn't in the typed-error allowlist). Operator
+    sees the underlying reason in Render logs."""
+    monkeypatch.delenv("GOTICKETS_SAMPLE_ORDER_ID", raising=False)
+    # Stub every other client to None so the gotickets-specific sampler is
+    # the only one that runs into the env check.
+    monkeypatch.setattr(d2_main, "_evo_client",       lambda: None)
+    monkeypatch.setattr(d2_main, "_sg_client",        lambda: None)
+    monkeypatch.setattr(d2_main, "_tickpick_client",  lambda: None)
+    monkeypatch.setattr(d2_main, "_vivid_client",     lambda: None)
+    monkeypatch.setattr(d2_main, "_seatdata_client",  lambda: None)
+    monkeypatch.setattr(d2_main, "_gotickets_client", lambda: object())  # truthy stub
+    r = client.get("/api/d2/samples")
+    sources = {s["source"]: s for s in r.json()["samples"]}
+    assert sources["gotickets"]["ok"] is False
+    assert sources["gotickets"]["sample"] is None
 
 
 def test_order_detail_unknown_source(client):

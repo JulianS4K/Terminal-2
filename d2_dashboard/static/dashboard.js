@@ -202,6 +202,15 @@ function renderDashboard(domain) {
         <div id="order-detail-wrap" class="order-detail-wrap"></div>
       </section>
       <section id="panel-samples" class="panel">
+        <div class="orders-toolbar">
+          <form id="gt-lookup-form" class="gt-lookup">
+            <label class="toolbar-meta">GoTickets order:</label>
+            <input type="text" id="gt-order-id" placeholder="e.g. 123456" />
+            <button type="submit">Look up</button>
+          </form>
+          <span class="toolbar-meta">Random pulls below re-roll on each refresh.</span>
+        </div>
+        <div id="gt-lookup-result"></div>
         <div id="samples-wrap"><div class="empty">not loaded yet</div></div>
       </section>
       <section id="panel-seatdata" class="panel">
@@ -225,7 +234,70 @@ function renderDashboard(domain) {
   }
   // Re-render (not re-fetch) when the user toggles Hide-Past-12h.
   document.getElementById("chk-hide-past").addEventListener("change", renderOrders);
+  // GoTickets lookup form (Samples tab). Wired once on render so the form
+  // works regardless of which tab is currently visible.
+  document.getElementById("gt-lookup-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const orderId = document.getElementById("gt-order-id").value.trim();
+    if (!orderId) return;
+    loadGoTicketsLookup(orderId);
+  });
   loadOrders();
+}
+
+async function loadGoTicketsLookup(orderId) {
+  const wrap = document.getElementById("gt-lookup-result");
+  wrap.innerHTML = `
+    <section class="sample-card">
+      <div class="sample-head">
+        <span class="chip"><strong>gotickets</strong> · order ${escapeHtml(orderId)}</span>
+        <span class="toolbar-meta"><span class="spinner"></span> looking up&hellip;</span>
+      </div>
+    </section>
+  `;
+  let body;
+  try {
+    body = await authedFetch(`/api/d2/order/gotickets/${encodeURIComponent(orderId)}`);
+  } catch (e) {
+    wrap.innerHTML = `<section class="sample-card"><div class="empty err-text">${escapeHtml(e.message)}</div></section>`;
+    return;
+  }
+  if (!body.ok) {
+    wrap.innerHTML = `
+      <section class="sample-card">
+        <div class="sample-head">
+          <span class="chip err"><strong>gotickets</strong> · order ${escapeHtml(orderId)}</span>
+        </div>
+        <div class="empty err-text">${escapeHtml(body.error || "fetch failed")}</div>
+      </section>
+    `;
+    return;
+  }
+  const d = body.data || {};
+  const fulfilled = d.fulfilled === true ? "yes" : "no";
+  const kv = [
+    ["Sale ID",          d.id || d.orderId || d.saleId || orderId],
+    ["Event",            (d.event && (d.event.name || d.event.title)) || ""],
+    ["Event date",       (d.event && (d.event.startsAt || d.event.date)) || ""],
+    ["Fulfilled",        fulfilled],
+    ["Fulfillment time", d.fulfillmentTime || ""],
+    ["Seller status",    d.sellerStatus || ""],
+    ["Cancel reason",    d.cancelReason || ""],
+    ["Event status",     (d.event && d.event.status) || ""],
+  ];
+  const rows = kv.map(([k, v]) => `<tr><td class="kv-key">${escapeHtml(k)}</td><td>${escapeHtml(v == null || v === "" ? "—" : String(v))}</td></tr>`).join("");
+  wrap.innerHTML = `
+    <section class="sample-card">
+      <div class="sample-head">
+        <span class="chip ok"><strong>gotickets</strong> · order ${escapeHtml(orderId)}</span>
+      </div>
+      <table class="kv">${rows}</table>
+      <details>
+        <summary class="toolbar-meta">raw JSON</summary>
+        <pre class="json">${escapeHtml(JSON.stringify(d, null, 2))}</pre>
+      </details>
+    </section>
+  `;
 }
 
 function activateTab(name) {
@@ -345,7 +417,7 @@ function renderOrders() {
             <td>${escapeHtml(r.event_name || "")}</td>
             <td>${formatDate(r.event_date)}</td>
             <td class="num">${r.qty != null ? escapeHtml(String(r.qty)) : ""}</td>
-            <td>${escapeHtml(r.status || "")}</td>
+            <td>${escapeHtml(r.status || "")}${r.canonical_status && r.canonical_status !== r.status ? ` <span class="canon-badge" title="canonical status from order_status_xref">${escapeHtml(r.canonical_status)}</span>` : ""}</td>
             <td class="num">${formatAmount(r.amount, r.currency)}</td>
             <td>${formatDate(r.ordered_at)}</td>
           </tr>

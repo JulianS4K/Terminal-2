@@ -217,6 +217,15 @@ def _seatdata_client():
     return SeatDataClient(api_key=api_key)
 
 
+def _gotickets_client():
+    from gotickets_client import GoTicketsClient
+    access_id = os.environ.get("GOTICKETS_ACCESS_ID")
+    api_secret = os.environ.get("GOTICKETS_API_SECRET")
+    if not (access_id and api_secret):
+        return None
+    return GoTicketsClient(access_id, api_secret)
+
+
 # ---------- Supabase (server-side SQL reads) ----------
 
 _SB_SINGLETON = None
@@ -266,13 +275,15 @@ def _norm_evo(o: dict) -> dict:
     first_tg = (items[0] or {}).get("ticket_group") or {} if items else {}
     event = first_tg.get("event") or {}
     qty = sum(int(it.get("quantity") or 0) for it in items) if items else None
+    status = o.get("state")
     return {
         "source": "evo",
         "order_id": str(o.get("id") or ""),
         "event_name": event.get("name"),
         "event_date": event.get("occurs_at"),
         "qty": qty,
-        "status": o.get("state"),
+        "status": status,
+        "canonical_status": _canonical_status("evo", status),
         "amount": _to_float(o.get("total")),
         "currency": o.get("currency"),
         "ordered_at": o.get("created_at"),
@@ -281,13 +292,15 @@ def _norm_evo(o: dict) -> dict:
 
 def _norm_sg(o: dict) -> dict:
     event = o.get("event") or {}
+    status = o.get("status")
     return {
         "source": "seatgeek",
         "order_id": str(o.get("order_id") or o.get("id") or ""),
         "event_name": event.get("title") or o.get("event_title"),
         "event_date": event.get("datetime_local") or event.get("datetime_utc"),
         "qty": _to_int(o.get("quantity")),
-        "status": o.get("status"),
+        "status": status,
+        "canonical_status": _canonical_status("seatgeek", status),
         "amount": _to_float(o.get("total") or o.get("payout")),
         "currency": o.get("currency"),
         "ordered_at": o.get("created_at") or o.get("ordered_at"),
@@ -295,13 +308,15 @@ def _norm_sg(o: dict) -> dict:
 
 
 def _norm_tickpick(o: dict) -> dict:
+    status = o.get("status")
     return {
         "source": "tickpick",
         "order_id": str(o.get("orderId") or o.get("order_id") or o.get("id") or ""),
         "event_name": o.get("eventName") or o.get("event_name"),
         "event_date": o.get("eventDate") or o.get("event_date"),
         "qty": _to_int(o.get("quantity") or o.get("qty")),
-        "status": o.get("status"),
+        "status": status,
+        "canonical_status": _canonical_status("tickpick", status),
         "amount": _to_float(o.get("total") or o.get("payout")),
         "currency": o.get("currency"),
         "ordered_at": o.get("orderDate") or o.get("createdAt"),
@@ -312,17 +327,131 @@ def _norm_vivid(o: dict) -> dict:
     # Vivid orders come from XML — flat-dict, all string values. The XML uses
     # a lowercase <event> tag for the event name (not <eventName>); reading
     # the wrong key was leaving event_name blank in the dashboard.
+    status = o.get("status")
     return {
         "source": "vivid",
         "order_id": str(o.get("orderId") or ""),
         "event_name": o.get("event") or o.get("eventName"),
         "event_date": o.get("eventDate"),
         "qty": _to_int(o.get("quantity")),
-        "status": o.get("status"),
+        "status": status,
+        "canonical_status": _canonical_status("vivid", status),
         "amount": _to_float(o.get("total") or o.get("price")),
         "currency": o.get("currency"),
         "ordered_at": o.get("orderDate"),
     }
+
+
+def _norm_gotickets(o: dict) -> dict:
+    """GoTickets /rest/sales/:id response. The API doesn't return a single
+    'status' string — the operator's Apps Script derives state from the
+    `fulfilled` bool + `cancelReason` + `sellerStatus`. Mirror that here:
+        cancelReason set → cancelled
+        fulfilled=true   → fulfilled
+        else             → pending
+    """
+    fulfilled = bool(o.get("fulfilled"))
+    cancel = (o.get("cancelReason") or "").strip()
+    if cancel and cancel.lower() not in ("", "null"):
+        canonical = "cancelled"
+        raw_status = f"cancelReason:{cancel}"
+    elif fulfilled:
+        canonical = "fulfilled"
+        raw_status = "fulfilled"
+    else:
+        canonical = "pending"
+        raw_status = o.get("sellerStatus") or "pending"
+    event = o.get("event") or {}
+    return {
+        "source": "gotickets",
+        "order_id": str(o.get("id") or o.get("orderId") or o.get("saleId") or ""),
+        "event_name": event.get("name") or event.get("title"),
+        "event_date": event.get("startsAt") or event.get("date") or event.get("eventDate"),
+        "qty": _to_int(o.get("quantity") or o.get("ticketCount")),
+        "status": raw_status,
+        "canonical_status": canonical,
+        "amount": _to_float(o.get("total") or o.get("salePrice")),
+        "currency": o.get("currency"),
+        "ordered_at": o.get("createdAt") or o.get("saleDate"),
+        "fulfillment_time": o.get("fulfillmentTime"),
+    }
+
+
+# Canonical status mapping — buckets borrowed from public.order_status_xref.
+# Keeps the dashboard's Status column comparable across sources. Evo + SG
+# rows coming from SQL already have unified_orders.canonical_status; this
+# table is the in-Python equivalent for the API-path rows (tickpick, vivid,
+# gotickets, plus the SQL-empty fallback path for evo + sg).
+_CANONICAL_STATUS: dict[str, dict[str, str]] = {
+    "evo": {
+        "pending": "pending",
+        "accepted": "accepted",
+        "completed": "fulfilled",
+        "rejected": "rejected",
+        "pending_substitution": "substitution",
+    },
+    "seatgeek": {
+        "open": "pending",
+        "pending": "pending",
+        "confirmed": "accepted",
+        "fulfilled": "fulfilled",
+        "delivered": "fulfilled",
+        "cancelled": "cancelled",
+        "pending_substitution": "substitution",
+    },
+    # TickPick's broker list is fetched with status=unfulfilled, so the
+    # bare value "unfulfilled" maps to accepted (broker has the order,
+    # awaiting delivery). Other terminal states map per Apps Script semantics.
+    "tickpick": {
+        "unfulfilled": "accepted",
+        "pending":     "pending",
+        "fulfilled":   "fulfilled",
+        "filled":      "fulfilled",
+        "cancelled":   "cancelled",
+        "canceled":    "cancelled",
+        "rejected":    "rejected",
+    },
+    # Vivid's getOrders endpoint surfaces PENDING_SHIPMENT / PENDING_RETRANSFER
+    # for the active-order feed. Both = broker holds, awaiting shipment.
+    "vivid": {
+        "PENDING_SHIPMENT":   "accepted",
+        "PENDING_RETRANSFER": "accepted",
+        "FULFILLED":          "fulfilled",
+        "SHIPPED":            "fulfilled",
+        "CANCELLED":          "cancelled",
+        "CANCELED":           "cancelled",
+        "REJECTED":           "rejected",
+    },
+    # GoTickets: the Apps Script reads fulfilled (bool) + cancelReason + sellerStatus.
+    # Status field varies — we map common values; the read-only fetcher
+    # also derives a canonical via the fulfilled/cancelReason booleans
+    # in _norm_gotickets below.
+    "gotickets": {
+        "fulfilled": "fulfilled",
+        "cancelled": "cancelled",
+        "canceled":  "cancelled",
+        "rejected":  "rejected",
+        "pending":   "pending",
+    },
+}
+
+
+def _canonical_status(source: str, raw: str | None) -> str | None:
+    """Map a source's raw status enum to the canonical bucket
+    (pending / accepted / fulfilled / rejected / cancelled / substitution).
+    Returns None on unrecognized values so the caller can decide whether to
+    surface the raw value untranslated or hide it. Case-insensitive — handles
+    Vivid's UPPERCASE XML enum and TickPick's lowercase JSON enum uniformly."""
+    if not raw:
+        return None
+    table = _CANONICAL_STATUS.get(source, {})
+    if raw in table:
+        return table[raw]
+    raw_low = raw.lower()
+    for k, v in table.items():
+        if k.lower() == raw_low:
+            return v
+    return None
 
 
 def _to_int(v: Any) -> int | None:
@@ -361,7 +490,7 @@ def _fetch_orders_from_sql(source: str, per_page: int) -> dict | None:
     try:
         uo_res = (
             sb.table("unified_orders")
-            .select("source,source_order_id,tevo_event_id,source_status,quantity,gross_value,created_at,last_seen_at")
+            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
             .eq("source", source)
             .order("created_at", desc=True)
             .limit(per_page)
@@ -388,6 +517,7 @@ def _fetch_orders_from_sql(source: str, per_page: int) -> dict | None:
                 "event_date": ev.get("event_at_local") or ev.get("event_at_utc"),
                 "qty": _to_int(r.get("quantity")),
                 "status": r.get("source_status"),
+                "canonical_status": r.get("canonical_status"),
                 "amount": _to_float(r.get("gross_value")),
                 "currency": None,
                 "ordered_at": r.get("created_at"),
@@ -576,15 +706,27 @@ def _sample_seatdata(c) -> tuple[str, Any, int | None]:
     return label, fn(), None
 
 
+def _sample_gotickets(c) -> tuple[str, Any, int | None]:
+    """GoTickets has no list endpoint — the operator's Apps Script obtains
+    order IDs from Gmail-surfaced 'PEDDLING SALE RECEIVED' emails. To get a
+    sample on the dashboard's Samples tab, set GOTICKETS_SAMPLE_ORDER_ID on
+    the service env to a known-good order ID."""
+    sample_id = os.environ.get("GOTICKETS_SAMPLE_ORDER_ID")
+    if not sample_id:
+        raise RuntimeError("no sample id (set GOTICKETS_SAMPLE_ORDER_ID env)")
+    return f"get_sale({sample_id})", c.get_sale(sample_id), None
+
+
 # Client factories referenced by name (not by direct binding) so tests can
 # monkeypatch d2_main._evo_client etc. and have the override take effect at
 # call time instead of being shadowed by an early-captured reference.
 _SAMPLE_FETCHERS = (
-    ("evo",      "_evo_client",      _sample_evo),
-    ("seatgeek", "_sg_client",       _sample_seatgeek),
-    ("tickpick", "_tickpick_client", _sample_tickpick),
-    ("vivid",    "_vivid_client",    _sample_vivid),
-    ("seatdata", "_seatdata_client", _sample_seatdata),
+    ("evo",       "_evo_client",       _sample_evo),
+    ("seatgeek",  "_sg_client",        _sample_seatgeek),
+    ("tickpick",  "_tickpick_client",  _sample_tickpick),
+    ("vivid",     "_vivid_client",     _sample_vivid),
+    ("seatdata",  "_seatdata_client",  _sample_seatdata),
+    ("gotickets", "_gotickets_client", _sample_gotickets),
 )
 
 
@@ -754,11 +896,18 @@ def _deep_order_vivid(c, order_id: str) -> dict:
     return c.get_order(int(order_id))
 
 
+def _deep_order_gotickets(c, order_id: str) -> dict:
+    # GoTickets only exposes a by-id GET (no list endpoint). The deep-detail
+    # path is the *only* way to surface a GoTickets order in the dashboard.
+    return c.get_sale(order_id)
+
+
 _DEEP_ORDER = {
-    "evo":      ("_evo_client",      _deep_order_evo),
-    "seatgeek": ("_sg_client",       _deep_order_seatgeek),
-    "tickpick": ("_tickpick_client", _deep_order_tickpick),
-    "vivid":    ("_vivid_client",    _deep_order_vivid),
+    "evo":       ("_evo_client",       _deep_order_evo),
+    "seatgeek":  ("_sg_client",        _deep_order_seatgeek),
+    "tickpick":  ("_tickpick_client",  _deep_order_tickpick),
+    "vivid":     ("_vivid_client",     _deep_order_vivid),
+    "gotickets": ("_gotickets_client", _deep_order_gotickets),
 }
 
 

@@ -107,6 +107,34 @@ main { padding: 16px 20px; }
 }
 .chip-origin-sql { background: rgba(63, 185, 80, 0.18);  color: var(--ok); }
 .chip-origin-api { background: rgba(88, 166, 255, 0.18); color: var(--accent); }
+.gt-lookup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.gt-lookup input {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  width: 140px;
+}
+.canon-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 table {
   width: 100%;
   border-collapse: collapse;
