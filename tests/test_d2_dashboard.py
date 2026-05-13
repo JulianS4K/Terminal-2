@@ -600,6 +600,100 @@ def test_samples_gotickets_without_sample_id_surfaces_clear_error(monkeypatch, c
     assert sources["gotickets"]["sample"] is None
 
 
+def test_diag_tickpick_no_token(monkeypatch, client):
+    """No token configured → ok=False, error 'no token configured'.
+    base_diag fields still present so the operator can see WHY (env_var=None)."""
+    monkeypatch.delenv("TICKPICK_API_TOKEN", raising=False)
+    monkeypatch.delenv("TICKPICK_TOKEN",     raising=False)
+    r = client.get("/api/d2/diag/tickpick")
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"] == "no token configured"
+    assert body["token_env_var"] is None
+    assert body["token_masked"] is None
+
+
+def test_diag_tickpick_surfaces_upstream_status_and_body(monkeypatch, client):
+    """The probe captures the upstream HTTP status + response body so the
+    operator can see exactly why a 401 is firing (invalid_token vs
+    expired_token vs whatever the upstream returns)."""
+    captured = {}
+
+    class FakeResp:
+        def __init__(self):
+            self.status_code = 401
+            self.ok = False
+            self.text = '{"error":"invalid_token","error_description":"The access token expired"}'
+            self.headers = {
+                "Content-Type": "application/json",
+                "WWW-Authenticate": 'Bearer error="invalid_token"',
+                "X-RateLimit-Remaining": "499",
+            }
+
+    def fake_get(url, **kw):
+        captured["url"] = url
+        captured["headers"] = kw.get("headers", {})
+        captured["params"] = kw.get("params", {})
+        captured["allow_redirects"] = kw.get("allow_redirects")
+        return FakeResp()
+
+    monkeypatch.setenv("TICKPICK_API_TOKEN", "tok-secret-WXYZ")
+    monkeypatch.delenv("TICKPICK_TOKEN", raising=False)
+    monkeypatch.setattr(d2_main.requests, "get", fake_get)
+    r = client.get("/api/d2/diag/tickpick")
+    body = r.json()
+    assert body["ok"] is False
+    assert body["status_code"] == 401
+    assert "invalid_token" in body["response_body"]
+    assert body["response_headers"]["WWW-Authenticate"] == 'Bearer error="invalid_token"'
+    assert body["response_headers"]["X-RateLimit-Remaining"] == "499"
+    assert body["token_env_var"] == "TICKPICK_API_TOKEN"
+    assert body["token_masked"] == "...WXYZ"
+    # We sent the actual token in the Authorization header, but never echoed
+    # it back in the response body or in any returned header.
+    assert "tok-secret-WXYZ" not in r.text
+    # Probe must not follow redirects (could leak token to a 3xx Location host).
+    assert captured["allow_redirects"] is False
+
+
+def test_diag_tickpick_warns_on_duplicate_env_vars(monkeypatch, client):
+    """Both vault-canonical AND legacy keys set with different values is a
+    common cause of 401 — surface it explicitly in the probe response."""
+    monkeypatch.setenv("TICKPICK_API_TOKEN", "new-AAAA")
+    monkeypatch.setenv("TICKPICK_TOKEN",     "old-BBBB")
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        text = "[]"
+        headers = {"Content-Type": "application/json"}
+
+    monkeypatch.setattr(d2_main.requests, "get", lambda *a, **kw: FakeResp())
+    body = client.get("/api/d2/diag/tickpick").json()
+    assert body["token_env_var"] == "TICKPICK_API_TOKEN"
+    assert body["token_warning"] is not None
+    assert "TICKPICK_API_TOKEN" in body["token_warning"]
+    assert "TICKPICK_TOKEN" in body["token_warning"]
+
+
+def test_diag_tickpick_scrubs_token_if_echoed_in_body(monkeypatch, client):
+    """Belt-and-suspenders: if the upstream somehow echoes the token back in
+    the response body, mask it before returning to the client."""
+    monkeypatch.setenv("TICKPICK_API_TOKEN", "echo-me-XYZW")
+    monkeypatch.delenv("TICKPICK_TOKEN", raising=False)
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        text = '{"orders":[],"debug_token":"echo-me-XYZW"}'
+        headers = {"Content-Type": "application/json"}
+
+    monkeypatch.setattr(d2_main.requests, "get", lambda *a, **kw: FakeResp())
+    body = client.get("/api/d2/diag/tickpick").json()
+    assert "echo-me-XYZW" not in body["response_body"]
+    assert "...XYZW" in body["response_body"]
+
+
 def test_orders_returns_pagination_metadata(monkeypatch, client):
     """`/api/d2/orders` echoes the requested page + per_page so the front-end
     can size the Prev/Next buttons without a separate count query."""

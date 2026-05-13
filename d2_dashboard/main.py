@@ -969,6 +969,63 @@ _DEEP_ORDER = {
 }
 
 
+@app.get("/api/d2/diag/tickpick")
+def diag_tickpick(_=Depends(require_auth)):
+    """One-shot diagnostic probe against the live TickPick API. Surfaces the
+    actual HTTP status, response body, and response headers so the operator
+    can see *why* TickPick is 401-ing instead of getting a scrubbed
+    'upstream error'. Read-only — issues a single GET against the same
+    /1.0/orders endpoint the dashboard uses on every refresh.
+
+    Auth-gated. Token is masked in the response (last 4 chars only).
+    Response body truncated to 500 chars to keep it bounded."""
+    token, env_var = _env_first_named("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
+    set_variants = [n for n in ("TICKPICK_API_TOKEN", "TICKPICK_TOKEN") if os.environ.get(n)]
+    base_diag = {
+        "endpoint":      "https://api.tickpick.com/1.0/orders?status=unfulfilled",
+        "token_env_var": env_var,
+        "token_masked":  _mask_token(token),
+        "token_warning": (
+            f"multiple env vars set ({', '.join(set_variants)}); using {env_var}"
+            if len(set_variants) > 1 else None
+        ),
+    }
+    if not token:
+        return JSONResponse({**base_diag, "ok": False, "error": "no token configured"}, status_code=200)
+    try:
+        r = requests.get(
+            "https://api.tickpick.com/1.0/orders",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            params={"status": "unfulfilled"},
+            timeout=10,
+            allow_redirects=False,  # don't follow 3xx — could leak token
+        )
+    except Exception as e:
+        return JSONResponse(
+            {**base_diag, "ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"},
+            status_code=200,
+        )
+    body_text = (r.text or "")[:500]
+    # Defensive scrub: if the response somehow echoed the token back, mask it.
+    if token in body_text:
+        body_text = body_text.replace(token, _mask_token(token) or "***")
+    return JSONResponse({
+        **base_diag,
+        "ok": r.ok,
+        "status_code": r.status_code,
+        "response_body": body_text,
+        "response_headers": {
+            k: v for k, v in r.headers.items()
+            if k.lower() in {"content-type", "www-authenticate", "x-ratelimit-limit",
+                             "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after",
+                             "server", "date"}
+        },
+    })
+
+
 @app.get("/api/d2/order/{source}/{order_id}")
 def order_detail(source: str, order_id: str, _=Depends(require_auth)):
     """Single-order deep fetch. Hits the source's by-id read endpoint and
