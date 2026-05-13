@@ -113,7 +113,16 @@ def require_sb():
 
 
 def resolve_tevo_creds():
-    """Prefer Supabase settings table, fall back to env vars."""
+    """Prefer Supabase settings table, fall back to env vars.
+
+    Env-var fallback accepts either naming convention:
+      - `TEVO_TOKEN`     + `TEVO_SECRET`      (legacy)
+      - `TEVO_API_TOKEN` + `TEVO_API_SECRET`  (what Render's IaC sets)
+
+    The dual names are intentional: A1 added `TEVO_API_*` to Render as a
+    safety net when the Supabase JWT rotation broke the settings lookup
+    on 2026-05-12 (bot_chat row 28). Both name forms now resolve.
+    """
     if sb is not None:
         try:
             res = (
@@ -129,7 +138,38 @@ def resolve_tevo_creds():
                 return t, s, "supabase.settings"
         except Exception as e:
             print(f"Could not load TEvo creds from settings: {e}")
-    return os.environ.get("TEVO_TOKEN"), os.environ.get("TEVO_SECRET"), "env"
+    # Env fallback — accept either name convention.
+    env_t = os.environ.get("TEVO_TOKEN") or os.environ.get("TEVO_API_TOKEN")
+    env_s = os.environ.get("TEVO_SECRET") or os.environ.get("TEVO_API_SECRET")
+    if env_t and env_s:
+        return env_t, env_s, "env"
+    return None, None, "missing"
+
+
+def ensure_tevo_client():
+    """Lazy-initialize the EvoClient if the boot-time attempt failed.
+
+    Boot can fail to populate `client` when:
+      - Supabase keys were stale at boot (resolve_tevo_creds raises silently)
+      - Env vars were missing or mis-named
+      - STOREFRONT_SQL_ONLY=true at boot, so we intentionally skipped the
+        client creation, and now the operator wants to flip live
+
+    Called from any request path that needs TEvo. Idempotent — returns
+    the existing client when already populated. Re-resolves creds and
+    builds the client on demand otherwise. Avoids forcing a redeploy
+    every time creds change.
+    """
+    global client, TOKEN, SECRET, CREDS_SOURCE
+    if client is not None:
+        return client
+    t, s, src = resolve_tevo_creds()
+    if not (t and s):
+        return None  # caller decides what to do; usually 502
+    TOKEN, SECRET, CREDS_SOURCE = t, s, src
+    client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
+    print(f"TEvo client lazy-initialized (creds source: {src})")
+    return client
 
 
 SANDBOX = os.environ.get("TEVO_SANDBOX", "false").lower() == "true"
@@ -246,6 +286,7 @@ app.add_middleware(_SecurityHeadersMiddleware)
 # If you scale to >1 dyno, swap to Redis-backed slowapi or move to Cloudflare.
 import time as _time
 import time  # public alias for in-process caches that want time.time()
+import hashlib
 from collections import defaultdict as _dd, deque as _dq
 
 class _IPRateLimiter:
@@ -331,7 +372,16 @@ async def _runtime_error_handler(request, exc: RuntimeError):
 
 @app.get("/")
 def root_health():
-    """Liveness probe. Phase-1 data-collection mode."""
+    """Root endpoint.
+
+    Default: JSON liveness probe (so the API host stays a clean JSON surface).
+    Storefront-test deploys set STOREFRONT_AS_LANDING=true so the bare host
+    redirects to /store — saves users from hitting a JSON wall of text when
+    they tap the URL. /healthz remains the canonical health probe either way.
+    """
+    if os.environ.get("STOREFRONT_AS_LANDING", "false").lower() == "true":
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/store", status_code=307)
     return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
 
 
@@ -342,9 +392,13 @@ def healthz():
 
     Reports:
       python_version, is_production, storefront_sql_only,
-      supabase_url_set, supabase_service_role_key_length,
-      supabase_anon_key_length, evo_client_configured,
+      supabase_url_set, supabase_service_role_key_set, supabase_anon_key_set,
+      evo_client_configured,
       supabase_smoke: pass | fail (with truncated error message)
+
+    Key fingerprints intentionally absent — even the length leaks info about
+    which key format (legacy JWT ~200+ chars vs new `sb_*_*` ~40 chars) is
+    in use, which is recon-grade. Per A1 PR #63 [LOW] 2026-05-12.
     """
     import sys as _sys
     out = {
@@ -353,10 +407,24 @@ def healthz():
         "is_production": _is_production(),
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "supabase_url_set": bool(SUPABASE_URL),
-        "supabase_service_role_key_length": len(SUPABASE_SERVICE_ROLE_KEY or ""),
-        "supabase_anon_key_length": len(SUPABASE_ANON_KEY or ""),
+        "supabase_service_role_key_set": bool(SUPABASE_SERVICE_ROLE_KEY),
+        "supabase_anon_key_set": bool(SUPABASE_ANON_KEY),
         "supabase_client_initialized": sb is not None,
         "evo_client_configured": client is not None,
+        # creds_source tells you whether boot got TEvo creds from Supabase
+        # settings, env vars, or neither — diagnostic for the 2026-05-12
+        # JWT-rotation incident (bot_chat row 28). Values: supabase.settings
+        # | env | missing.
+        "evo_creds_source": CREDS_SOURCE,
+        # tevo_env_resolves shows which env-name convention is populated
+        # so an operator can confirm Render's TEVO_API_* matches the code
+        # expectation without echoing the values.
+        "tevo_env_resolves": {
+            "TEVO_TOKEN_set": bool(os.environ.get("TEVO_TOKEN")),
+            "TEVO_API_TOKEN_set": bool(os.environ.get("TEVO_API_TOKEN")),
+            "TEVO_SECRET_set": bool(os.environ.get("TEVO_SECRET")),
+            "TEVO_API_SECRET_set": bool(os.environ.get("TEVO_API_SECRET")),
+        },
     }
     # Tiny safe query against a table we know exists.
     if sb is None:
@@ -4303,6 +4371,20 @@ _search_cache: dict[str, tuple[float, dict]] = {}
 _SEARCH_CACHE_TTL = 60.0
 
 
+def _search_cache_key(q: str, limit: int, mode: str) -> str:
+    """Stable cache key derived from query + limit + mode. Normalizes
+    whitespace + case so "Knicks ", " knicks", and "KNICKS" all hit the
+    same slot; SHA1 keeps the key short and avoids weird-char collisions.
+
+    Per A1 PR #63 [MED] 2026-05-12 — prior version used raw `q.lower()`
+    which let case-variant + leading/trailing whitespace pollute the
+    200-entry LRU with duplicate slots.
+    """
+    canon = re.sub(r"\s+", " ", (q or "").strip().lower())
+    raw = f"{canon}|{int(limit)}|{mode}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -4336,7 +4418,15 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
     safe_q = re.sub(r"[,.()\"]", " ", q_norm).strip()
     if not safe_q:
         return {"events": [], "performers": [], "venues": [], "source": "sql"}
-    pattern = f"%{safe_q}%"
+    # Escape ILIKE wildcards in the user query before wrapping with our own
+    # leading/trailing `%`. Without this, a query containing `%` matches
+    # everything; `_` is the single-char wildcard. Backslash first (so we
+    # don't double-escape our own escapes). Per A1 PR #63 [LOW] 2026-05-12.
+    escaped = (safe_q
+               .replace("\\", "\\\\")
+               .replace("%", "\\%")
+               .replace("_", "\\_"))
+    pattern = f"%{escaped}%"
 
     # Events: search by event name, venue name, venue location, primary
     # performer name. Limit to future + active so we don't surface ghosts.
@@ -4452,15 +4542,37 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
     returned event IDs against our SQL to tag we_own + from_price. Used in
     non-SQL-only deployments."""
     today_iso = datetime.now(timezone.utc).date().isoformat()
+    c = ensure_tevo_client()
+    if c is None:
+        # No client; fall back to SQL with a clear tag so the client can
+        # surface "degraded mode" — same shape as the TEvo-failure path.
+        payload = _search_sql_only(db, q_norm, limit)
+        payload["fallback"] = True
+        payload["fallback_reason"] = "tevo_unconfigured"
+        return payload
     try:
-        resp = client.search_suggestions(
+        resp = c.search_suggestions(
             q_norm, entities="events,performers,venues",
             fuzzy=True, limit=20, occurs_at_gte=today_iso,
         )
     except RuntimeError as e:
-        # Don't break the page on TEvo error; fall back to SQL.
-        print(f"search_live TEvo failed, falling back to SQL: {e}")
-        return _search_sql_only(db, q_norm, limit)
+        # Don't break the page on TEvo error; fall back to SQL. The
+        # response is tagged so the client (or downstream observability)
+        # can see freshness degraded vs swallowing it silently.
+        # Per A1 PR #63 [MED] 2026-05-12.
+        import logging
+        logging.getLogger(__name__).warning(
+            "search_live: TEvo /v9/searches/suggestions failed (%s); "
+            "falling back to _search_sql_only", e,
+        )
+        payload = _search_sql_only(db, q_norm, limit)
+        payload["fallback"] = True
+        payload["fallback_reason"] = "tevo_unavailable"
+        # Surface the bare RuntimeError message (already sanitized of
+        # URL + body by evo_client.py — just status code) so an operator
+        # curling the endpoint can diagnose without tailing Render logs.
+        payload["fallback_detail"] = str(e)[:120]
+        return payload
 
     s = (resp.get("suggestions") or {})
     ev_in = s.get("events", []) or []
@@ -4536,7 +4648,8 @@ def store_search(q: str, limit: int = 8):
 
     # Cap at 50; the upstream cap is 20, so anything past that just trims.
     lim = max(1, min(int(limit), 50))
-    cache_key = f"{q_norm.lower()}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
+    mode = "sql" if STOREFRONT_SQL_ONLY else "live"
+    cache_key = _search_cache_key(q_norm, lim, mode)
     cached = _search_cache_get(cache_key)
     if cached is not None:
         return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
@@ -5212,8 +5325,15 @@ def _fetch_owned_ticket_groups(
         except Exception:
             # Cache failure must never block the page; fall through to live.
             pass
+    # Lazy-init the EvoClient if boot couldn't resolve creds (e.g. when
+    # Supabase keys were stale during deploy). Idempotent.
+    c = ensure_tevo_client()
+    if c is None:
+        raise HTTPException(503,
+            "TEvo client not configured. Set tevo_token+tevo_secret in "
+            "Supabase settings or TEVO_API_TOKEN+TEVO_API_SECRET env.")
     try:
-        live = client.get_ticket_groups(event_id, owned=True)
+        live = c.get_ticket_groups(event_id, owned=True)
     except RuntimeError as e:
         raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
     groups = live.get("ticket_groups", []) or []
@@ -5279,8 +5399,13 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
         ev = _fetch_event_from_db(event_id)
         groups, tg_source, snapshot_captured_at = _fetch_owned_ticket_groups_from_db(event_id)
     else:
+        c = ensure_tevo_client()
+        if c is None:
+            raise HTTPException(503,
+                "TEvo client not configured. Set tevo_token+tevo_secret in "
+                "Supabase settings or TEVO_API_TOKEN+TEVO_API_SECRET env.")
         try:
-            ev = client.get_event(event_id)
+            ev = c.get_event(event_id)
         except RuntimeError as e:
             raise HTTPException(502, f"TEvo event lookup failed: {e}")
 

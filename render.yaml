@@ -29,8 +29,10 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
 
-    healthCheckPath: /
-    # Health endpoint returns {"ok": true, ...} so Render's HTTP probe succeeds.
+    healthCheckPath: /healthz
+    # /healthz is the canonical 200-OK probe. We can't use / here because the
+    # storefront-as-landing redirect (STOREFRONT_AS_LANDING=true below) makes
+    # / return a 307 to /store, which Render's probe would treat as a failure.
 
     envVars:
       # Pin to Python 3.12 — Render's auto-pick of 3.14.3 is brand-new and
@@ -40,6 +42,12 @@ services:
         value: "3.12.7"
       # ---- Demo mode (the new flag this PR introduces) ----
       - key: STOREFRONT_SQL_ONLY
+        value: "true"
+      # ---- Root URL behavior ----
+      # When true, GET / redirects to /store. This deploy is storefront-only,
+      # so a bare URL should land on the catalog instead of the JSON liveness
+      # probe. /healthz remains the canonical health endpoint.
+      - key: STOREFRONT_AS_LANDING
         value: "true"
       # ---- Storefront constants ----
       - key: ALLOWED_EMAIL_DOMAIN

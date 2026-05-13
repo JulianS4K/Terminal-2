@@ -169,6 +169,26 @@ a { color: inherit; }
   font-weight: 700;
   color: var(--accent-2);
 }
+.suggest-status {
+  /* Loading + error states inside the dropdown — same height/position as
+     a hit row so the dropdown doesn't jump-resize when results land. */
+  padding: 10px 14px;
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+}
+/* Error variant — reuses .suggest-status shape but recolors so the typer
+   can distinguish "Searching…" (muted, in-flight) from "Search unavailable"
+   (bad-tone, terminal). Per D1 UX audit 2026-05-12 fix #2. */
+.suggest-status.error {
+  color: var(--bad);
+  font-style: normal;
+  font-weight: 600;
+}
+.suggest-status.error::before {
+  content: "⚠ ";
+  margin-right: 2px;
+}
 
 /* ----- Catalog grid ----- */
 .results { margin-top: 8px; }
@@ -380,6 +400,22 @@ a { color: inherit; }
   display: block;
   background: #0a0b0e;
 }
+/* Empty-state placeholder when the venue has no seating chart. Keeps the
+   left-column footprint so the listings grid doesn't reflow. Per D1 UX
+   audit 2026-05-12 fix #3. */
+.map-placeholder {
+  background: #0a0b0e;
+  border-radius: 6px;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .listings h2 {
   font-size: 18px;
@@ -419,13 +455,44 @@ a { color: inherit; }
 .listing-tab-count {
   display: inline-block;
   margin-left: 4px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
+  /* Don't wrap the count beneath the tab label on narrow viewports. Under
+     760px the tab text + numeric count would otherwise break across lines
+     and double the tab's height. Per D1 UX audit 2026-05-12 fix #6. */
+  white-space: nowrap;
 }
 .listing-tab.is-active .listing-tab-count { color: var(--accent-2); }
+/* Disabled-look tab (e.g. Parking with count=0). Reuses the same DOM as
+   the live tab so layout doesn't shift — just visually demotes it. Per
+   D1 UX audit 2026-05-12 fix #4. */
+.listing-tab[aria-disabled="true"] {
+  color: var(--line);
+  cursor: not-allowed;
+}
+.listing-tab[aria-disabled="true"]:hover { color: var(--line); }
+.listing-tab[aria-disabled="true"] .listing-tab-count { color: var(--line); }
 
 /* Parking-list rows reuse .row styles but trim some seat-only ornaments. */
 .parking-list .parking-row { /* same .row grid; no overrides needed today */ }
+
+/* Inline filter-bar error pill — surfaces when applyFiltersAndFetch
+   catches. Mirrors search-dropdown error tone so the bad-state vocabulary
+   is consistent. Per D1 UX audit 2026-05-12 fix #5. */
+.filter-error {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: var(--bad);
+  font-size: 12px;
+  font-weight: 600;
+}
+.filter-error::before {
+  content: "⚠ ";
+  margin-right: 2px;
+}
 
 /* ----- Inline filter bar on event page ----- */
 .filter-bar {
@@ -1123,4 +1190,18 @@ a.perf-chip:hover {
   .row .btn { grid-column: 1 / -1; }
 
   .mover-card { flex-basis: 200px; }
+
+  /* "MVP · browse only · no real purchases" crowds the topbar on narrow
+     viewports; shrink to bare "MVP" so the brand stays visible. Full
+     copy returns at >760px. Per D1 UX audit 2026-05-12 fix #8. */
+  .badge.mvp {
+    font-size: 0;          /* hide the long text */
+    padding: 4px 8px;
+    letter-spacing: 0;
+  }
+  .badge.mvp::before {
+    content: "MVP";
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
 }
