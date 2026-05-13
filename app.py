@@ -4080,16 +4080,6 @@ def store_events(
     ]
     raw_events = raw_events[:cap]
 
-    # TEMPORARY DEBUG (remove once mapping is confirmed): log keys of the
-    # first raw TEvo event so we can see whether performers nest under
-    # 'performers', 'primary_performer', 'performances', etc.
-    if raw_events:
-        first = raw_events[0]
-        print(f"[mvp-debug] /v9/events item keys: {sorted(first.keys())}")
-        perf_field = first.get("performers")
-        print(f"[mvp-debug] performers raw: {perf_field!r}")
-        print(f"[mvp-debug] primary_performer raw: {first.get('primary_performer')!r}")
-
     out: list[dict] = []
     for ev in raw_events:
         venue = ev.get("venue") or {}
@@ -4102,11 +4092,21 @@ def store_events(
             state = venue.get("state") or ""
             venue_loc = f"{city}, {state}".strip(", ") or None
 
-        performers = ev.get("performers") or []
-        primary = (
-            next((p for p in performers if p.get("primary")), None)
-            or (performers[0] if performers else {})
+        # /v9/events list response uses `performances`, NOT `performers`
+        # (that's the /v9/events/:id show shape). Each performance nests
+        # a `performer: {id, name}` object plus a `primary` boolean.
+        performances = ev.get("performances") or []
+        primary_perf = (
+            next((p for p in performances if p.get("primary")), None)
+            or (performances[0] if performances else {})
         )
+        performer = (primary_perf or {}).get("performer") or {}
+
+        # owned_by_office is TEvo's native we-own signal — true when our
+        # token's brokerage office has inventory listed for this event.
+        # Removes the need for a per-event /v9/ticket_groups probe on
+        # the catalog render.
+        we_own = bool(ev.get("owned_by_office"))
 
         out.append({
             "id": ev.get("id"),
@@ -4116,8 +4116,18 @@ def store_events(
             "occurs_at_local": ev.get("occurs_at_local") or ev.get("occurs_at"),
             "venue_name": venue.get("name"),
             "venue_location": venue_loc,
-            "primary_performer_name": (primary or {}).get("name"),
-            "primary_performer_id": (primary or {}).get("id"),
+            "primary_performer_name": performer.get("name"),
+            "primary_performer_id": performer.get("id"),
+            # available_count is deprecated for authoritative pricing but
+            # is fine as a "tickets available" indicator on cards (the
+            # detail page uses /v9/events/:id/stats for exact numbers).
+            "available_count": ev.get("available_count"),
+            # we_own straight from TEvo. owned_tickets_count and
+            # from_price still need a per-event call so stay null on
+            # the catalog payload; revealed on click-through.
+            "we_own": we_own,
+            "tbd": bool(ev.get("tbd")),
+            "popularity_score": ev.get("popularity_score"),
             # Enrichment keys held nullable so the front-end's
             # `if (ev.rivalry) {...}` checks stay valid. Reintroduced
             # once raw TEvo flow is verified end-to-end.
