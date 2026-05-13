@@ -23,14 +23,18 @@ services:
     plan: free
     region: oregon          # closest to Supabase us-east-2; tradeoff vs us-east-ohio (~50ms)
     # If your Supabase project is us-east-2 specifically, prefer 'ohio' region instead.
-    branch: claude/store-sql-only-demo-mode
-    autoDeploy: true        # every push to the branch redeploys
+    branch: main
+    autoDeploy: true        # every push to main redeploys (post-consolidation: A1 row 81 directive)
 
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
 
-    healthCheckPath: /
-    # Health endpoint returns {"ok": true, ...} so Render's HTTP probe succeeds.
+    healthCheckPath: /healthz
+    # /healthz returns {"ok": true, ...} fast (<50ms warm, ~1s cold) and
+    # doesn't load the storefront's static bundle. Previously /, but that
+    # rendered the full landing page (90KB JS) + timed out the cold-dyno
+    # healthcheck window on free tier — Sprint 1.5 deploy (a8f44d2) failed
+    # for exactly that reason. /healthz boots cleanly even on cold start.
 
     envVars:
       # Pin to Python 3.12 — Render's auto-pick of 3.14.3 is brand-new and
