@@ -16,9 +16,11 @@
 5. **No secrets in repo.** Vault or Railway env only.
 
 ## Required reading
-1. `docs/bot-hierarchy.mermaid` — where you fit
-2. `MIGRATION_CONVENTIONS.md` — the full rules
-3. `KANBAN.md` — what's in flight
+1. `BOT_HIERARCHY.md` — push restrictions + lane chart (`docs/bot-hierarchy.mermaid` is the visual)
+2. `SYNC_PROTOCOL.md` — track choice, slot reservation, apply-before-PR, broadcast format
+3. `MIGRATION_CONVENTIONS.md` — the full rules
+4. `RESOURCES_BIBLE.md` — what exists (tables/views/crons/edge fns/secrets)
+5. `KANBAN.md` — what's in flight
 
 ## Your environment
 - Git branch: `claude/<lane>-<purpose>-<id>`
