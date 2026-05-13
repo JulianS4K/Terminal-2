@@ -4000,97 +4000,12 @@ def _ticket_group_to_listing(tg: dict) -> dict:
     }
 
 
-@app.get("/api/store/_probe_owned")
-def store_probe_owned():
-    """TEMP probe v2: hunt for an owned-only enumeration path."""
-    if client is None:
-        raise HTTPException(503, "TEvo client not configured")
-    today_iso = datetime.now(timezone.utc).date().isoformat()
-    report: dict = {}
-
-    # ---- Probe A: extract our office_id from /v9/orders ----
-    office_id: int | None = None
-    seller_office: dict | None = None
-    try:
-        orders_resp = client.list_orders(per_page=3)
-        orders = orders_resp.get("orders") or []
-        if orders:
-            first = orders[0]
-            seller_office = first.get("seller") or {}
-            office_id = (seller_office or {}).get("id")
-            report["A_orders_probe"] = {
-                "ok": True, "total_orders": orders_resp.get("total_entries"),
-                "first_order_keys": sorted(first.keys()),
-                "seller_office": seller_office,
-                "extracted_office_id": office_id,
-            }
-        else:
-            report["A_orders_probe"] = {"ok": True, "orders": "none returned"}
-    except Exception as e:
-        report["A_orders_probe"] = {"ok": False, "error": str(e)}
-
-    # ---- Probe B: /v9/events?office_id=X if we found one ----
-    if office_id:
-        try:
-            resp = client.list_events(
-                occurs_at_gte=today_iso, only_with_available_tickets=True,
-                order_by="events.occurs_at ASC", per_page=50, page=1,
-                **{"office_id": office_id},
-            )
-            evs = resp.get("events", []) or []
-            we_own = sum(1 for e in evs if e.get("owned_by_office"))
-            report["B_events_office_id"] = {
-                "ok": True, "total_entries": resp.get("total_entries"),
-                "returned": len(evs),
-                "we_own_count": we_own,
-                "we_own_pct": round(we_own / len(evs) * 100, 1) if evs else None,
-            }
-        except Exception as e:
-            report["B_events_office_id"] = {"ok": False, "error": str(e)}
-    else:
-        report["B_events_office_id"] = {"skipped": "no office_id found"}
-
-    # ---- Probe C: /v9/ticket_groups?owned=true (no event_id) ----
-    try:
-        # Use _get directly since list_ticket_groups requires event_id.
-        resp = client._get("/v9/ticket_groups", {"owned": True, "per_page": 50})
-        tgs = resp.get("ticket_groups") or []
-        # Pull event_ids from the response if present
-        event_ids = set()
-        for tg in tgs[:20]:
-            ev = (tg.get("event") or {})
-            if ev.get("id"):
-                event_ids.add(ev["id"])
-        report["C_ticket_groups_no_event_id"] = {
-            "ok": True,
-            "total_entries": resp.get("total_entries"),
-            "returned_groups": len(tgs),
-            "distinct_events_in_first_20": len(event_ids),
-            "sample_event_ids": sorted(event_ids)[:5],
-            "first_tg_keys": sorted(tgs[0].keys()) if tgs else None,
-        }
-    except Exception as e:
-        report["C_ticket_groups_no_event_id"] = {"ok": False, "error": str(e)}
-
-    # ---- Probe D: /v9/events?owned_by_office.eq=true ----
-    try:
-        resp = client.list_events(
-            occurs_at_gte=today_iso, only_with_available_tickets=True,
-            order_by="events.occurs_at ASC", per_page=50, page=1,
-            **{"owned_by_office.eq": "true"},
-        )
-        evs = resp.get("events", []) or []
-        we_own = sum(1 for e in evs if e.get("owned_by_office"))
-        report["D_events_owned_by_office_eq"] = {
-            "ok": True, "total_entries": resp.get("total_entries"),
-            "returned": len(evs),
-            "we_own_count": we_own,
-            "we_own_pct": round(we_own / len(evs) * 100, 1) if evs else None,
-        }
-    except Exception as e:
-        report["D_events_owned_by_office_eq"] = {"ok": False, "error": str(e)}
-
-    return report
+# Our TEvo brokerage's office id. Resolved via probe `/v9/orders` (probe v2,
+# 2026-05-13): brokerage=S4K Entertainment (id 1768), office=Office 3
+# (id 42029, NYC). Filter /v9/events with office_id=this to get only events
+# our office has inventory for (server-side filter, 100% we_own match).
+# Override via TEVO_OFFICE_ID env var if the brokerage adds offices later.
+TEVO_OFFICE_ID = int(os.environ.get("TEVO_OFFICE_ID", "42029"))
 
 
 @app.get("/api/store/events")
@@ -4102,26 +4017,27 @@ def store_events(
     offset: int = 0,
     include_inactive: bool = False,
 ):
-    """Catalog: upcoming events from TEvo /v9/events (MVP pass-through).
+    """Catalog: upcoming events our brokerage office has inventory for.
 
-    Pulls directly from the TEvo API — no Supabase joins. Cards carry
-    raw TEvo metadata: id, name, venue, occurs_at_local, primary performer.
-    The Supabase enrichment layer (we_own flag, from_price, performer logos
-    / brand colors, rivalry / MLB-series / tournament / weather / holiday
-    / playoff badges) is intentionally OMITTED in this build — the front
-    end null-checks every enrichment key so cards still render cleanly.
+    Pulled directly from TEvo /v9/events with office_id=TEVO_OFFICE_ID,
+    which is TEvo's native server-side filter for "events MY office has
+    listings on". 100% we_own — there is no "browse market" fallthrough.
 
-    Ownership and pricing are revealed on the detail page
-    (/api/store/events/:id), which hits /v9/ticket_groups?owned=true.
+    Performer media (logos + brand colors) is bulk-enriched from Supabase
+    performer_metadata. That's the only Supabase touch on this route —
+    the events themselves come from TEvo. Rest of the prior badge
+    enrichments (rivalry / MLB-series / tournament / weather / holiday /
+    playoff) stay nullable for now; they get re-layered after the prod
+    checkpoint.
 
     Pagination: TEvo caps per_page at 100; this handler pages through
     enough TEvo pages to fill the requested `limit` (max 500 → up to
-    5 TEvo calls, ~1-2s warm).
+    5 TEvo calls).
 
     Args mirror the prior shape so the front-end + share-link routes
     don't need to change. `include_inactive` is kept as a no-op for
-    callsite compatibility (TEvo's only_with_available_tickets already
-    drops most stale events; CANCELLED markers are filtered by name).
+    callsite compatibility (CANCELLED markers are still filtered by
+    name string in case TEvo leaks them through the office filter).
     """
     if client is None:
         # SQL-only demo mode boots without TEvo. MVP catalog requires it.
@@ -4138,11 +4054,10 @@ def store_events(
     raw_events: list[dict] = []
     try:
         for p in range(start_page, start_page + pages_needed):
-            # order_by uses the same syntax as the broker /api/events route
-            # ("table.column DIRECTION"). The simpler "occurs_at asc" form
-            # is rejected by TEvo with a non-2xx that bubbles back as
-            # "no response" because of the __bool__ quirk in evo_client's
-            # warning logger. Stick with the verified pattern.
+            # office_id=TEVO_OFFICE_ID filters TEvo to ONLY events our office
+            # has inventory for. Verified 100% we_own match in probe v2.
+            # `office_id` goes through evo_client.list_events's **extra
+            # kwarg so it reaches the request as-is.
             resp = client.list_events(
                 q=q or None,
                 performer_id=performer_id,
@@ -4152,6 +4067,7 @@ def store_events(
                 order_by="events.occurs_at ASC",
                 per_page=per_page,
                 page=p,
+                **{"office_id": TEVO_OFFICE_ID},
             )
             batch = resp.get("events", []) or []
             if not batch:
@@ -4172,6 +4088,29 @@ def store_events(
         if "CANCELLED" not in (e.get("name") or "").upper()
     ]
     raw_events = raw_events[:cap]
+
+    # ---- Bulk-fetch performer media from Supabase performer_metadata ----
+    # Single SQL roundtrip pulls logo + color for every performer that
+    # appears on the catalog page. The TEvo /v9/events response only
+    # carries performer id + name — logos and ESPN team data live in our
+    # SQL enrichment table (populated by the crawl-venues-and-performers
+    # collector). This is the only Supabase touch on the catalog.
+    perf_ids: set[int] = set()
+    for ev in raw_events:
+        for perf in (ev.get("performances") or []):
+            pid = (perf.get("performer") or {}).get("id")
+            if pid:
+                perf_ids.add(int(pid))
+    perf_assets: dict[int, dict] = {}
+    if perf_ids:
+        try:
+            db = require_sb()
+            perf_assets = _bulk_performer_assets(db, list(perf_ids))
+        except Exception as e:
+            # Don't break the catalog if performer_metadata is unavailable;
+            # cards just render without logos/colors.
+            print(f"performer_metadata bulk-fetch failed: {e}")
+            perf_assets = {}
 
     out: list[dict] = []
     for ev in raw_events:
@@ -4197,9 +4136,14 @@ def store_events(
 
         # owned_by_office is TEvo's native we-own signal — true when our
         # token's brokerage office has inventory listed for this event.
-        # Removes the need for a per-event /v9/ticket_groups probe on
-        # the catalog render.
+        # With office_id filter applied to /v9/events, this is always
+        # true; kept on the response shape for forward-compat.
         we_own = bool(ev.get("owned_by_office"))
+
+        # Performer media: logo + brand color from Supabase performer_metadata.
+        # Falls back to None on either side if the performer isn't seeded.
+        perf_id = performer.get("id")
+        assets = perf_assets.get(int(perf_id)) if perf_id else None
 
         out.append({
             "id": ev.get("id"),
@@ -4210,27 +4154,25 @@ def store_events(
             "venue_name": venue.get("name"),
             "venue_location": venue_loc,
             "primary_performer_name": performer.get("name"),
-            "primary_performer_id": performer.get("id"),
+            "primary_performer_id": perf_id,
+            "primary_performer_logo": (assets or {}).get("logo_default_url"),
+            "primary_performer_color": (assets or {}).get("color_primary"),
+            "primary_performer_league": (assets or {}).get("espn_league"),
             # available_count is deprecated for authoritative pricing but
             # is fine as a "tickets available" indicator on cards (the
             # detail page uses /v9/events/:id/stats for exact numbers).
             "available_count": ev.get("available_count"),
-            # we_own straight from TEvo. owned_tickets_count and
-            # from_price still need a per-event call so stay null on
-            # the catalog payload; revealed on click-through.
             "we_own": we_own,
             "tbd": bool(ev.get("tbd")),
             "popularity_score": ev.get("popularity_score"),
-            # Enrichment keys held nullable so the front-end's
-            # `if (ev.rivalry) {...}` checks stay valid. Reintroduced
-            # once raw TEvo flow is verified end-to-end.
-            "primary_performer_logo": None,
-            "primary_performer_color": None,
-            "primary_performer_league": None,
+            # from_price + owned_tickets_count still need a per-event call
+            # so stay null on the catalog payload; revealed on click-through.
             "from_price": None,
             "owned_tickets_count": None,
             "owned_groups_count": None,
             "captured_at": None,
+            # Other badge enrichments (rivalry / series / weather / holiday
+            # / playoff) — re-layer in a follow-up after the prod checkpoint.
             "rivalry": None,
             "mlb_series": None,
             "tournament": None,
