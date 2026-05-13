@@ -49,7 +49,33 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
 
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
-if AUTH_DISABLED:
+
+
+def _is_production() -> bool:
+    """Production detector mirrored from app.py:54-66. If ANY indicator says
+    production, treat as production and deny the AUTH_DISABLED kill switch."""
+    return bool(
+        (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
+        or (os.environ.get("ENVIRONMENT") or "").lower() == "production"
+        or (os.environ.get("NODE_ENV") or "").lower() == "production"
+        or (os.environ.get("PYTHON_ENV") or "").lower() == "production"
+        or os.environ.get("FLY_APP_NAME")
+        or os.environ.get("RENDER")
+    )
+
+
+_AUTH_DISABLED_REQUESTED = AUTH_DISABLED
+AUTH_DISABLED = AUTH_DISABLED and not _is_production()
+if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+    import sys as _sys
+    print(
+        "WARNING: AUTH_DISABLED=true ignored — production indicator detected "
+        "(RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / "
+        "FLY_APP_NAME / RENDER). The Supabase JWT gate stays on.",
+        file=_sys.stderr,
+        flush=True,
+    )
+elif AUTH_DISABLED:
     import sys as _sys
     print(
         "WARNING: AUTH_DISABLED=true — /api/d2/* endpoints are unauthenticated. "
@@ -84,6 +110,13 @@ def require_auth(authorization: str | None = Header(None)):
     if not r.ok:
         raise HTTPException(401, "invalid session")
     user = r.json()
+    # Stop-gap hardening (full local PyJWT verify is followup):
+    #   - aud must be "authenticated"  → rejects service-role / anon tokens
+    #   - email_confirmed_at must be set → rejects unconfirmed signups
+    if user.get("aud") != "authenticated":
+        raise HTTPException(401, "invalid token audience")
+    if not user.get("email_confirmed_at"):
+        raise HTTPException(403, "email not confirmed")
     email = (user.get("email") or "").lower()
     if not email.endswith("@" + ALLOWED_EMAIL_DOMAIN.lower()):
         raise HTTPException(403, f"access restricted to @{ALLOWED_EMAIL_DOMAIN}")
@@ -236,6 +269,15 @@ def _to_float(v: Any) -> float | None:
 
 # ---------- Fan-out helpers ----------
 
+def _scrub_err(source: str, exc: Exception) -> str:
+    """Log full exception server-side (operator sees in Render logs); return a
+    stable, generic message to the client so upstream error text — which can
+    include URLs, partial tokens, internal IDs — never makes it to the wire."""
+    import sys as _sys
+    print(f"[d2_dashboard] {source} fetch failed: {exc!r}", file=_sys.stderr, flush=True)
+    return "upstream error"
+
+
 def _fetch_evo(per_page: int) -> dict:
     c = _evo_client()
     if c is None:
@@ -245,7 +287,7 @@ def _fetch_evo(per_page: int) -> dict:
         rows = [_norm_evo(o) for o in (body.get("orders") or [])]
         return {"source": "evo", "ok": True, "rows": rows, "total": body.get("total_entries")}
     except Exception as e:
-        return {"source": "evo", "ok": False, "error": str(e)[:200], "rows": []}
+        return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": []}
 
 
 def _fetch_sg(per_page: int) -> dict:
@@ -257,7 +299,7 @@ def _fetch_sg(per_page: int) -> dict:
         rows = [_norm_sg(o) for o in (body.get("orders") or [])][:per_page]
         return {"source": "seatgeek", "ok": True, "rows": rows, "total": (body.get("meta") or {}).get("total")}
     except Exception as e:
-        return {"source": "seatgeek", "ok": False, "error": str(e)[:200], "rows": []}
+        return {"source": "seatgeek", "ok": False, "error": _scrub_err("seatgeek", e), "rows": []}
 
 
 def _fetch_tickpick(per_page: int) -> dict:
@@ -269,7 +311,7 @@ def _fetch_tickpick(per_page: int) -> dict:
         rows = [_norm_tickpick(o) for o in (body or [])][:per_page]
         return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body or [])}
     except Exception as e:
-        return {"source": "tickpick", "ok": False, "error": str(e)[:200], "rows": []}
+        return {"source": "tickpick", "ok": False, "error": _scrub_err("tickpick", e), "rows": []}
 
 
 def _fetch_vivid(per_page: int) -> dict:
@@ -281,17 +323,24 @@ def _fetch_vivid(per_page: int) -> dict:
         rows = [_norm_vivid(o) for o in (body or [])][:per_page]
         return {"source": "vivid", "ok": True, "rows": rows, "total": len(body or [])}
     except Exception as e:
-        return {"source": "vivid", "ok": False, "error": str(e)[:200], "rows": []}
+        return {"source": "vivid", "ok": False, "error": _scrub_err("vivid", e), "rows": []}
 
 
 # ---------- Endpoints ----------
 
 @app.get("/healthz")
 def healthz():
-    """Diagnostic snapshot. Public — no secrets, only booleans + lengths.
-    Lets the operator confirm in one curl which app is running, whether
-    auth is gated, which broker creds are wired, and where the service
-    is hosted."""
+    """Public health check. Stripped to a minimal shape — operator can still
+    confirm the service is up, but no fingerprintable detail is exposed.
+    Use /healthz?detail=1 with a valid Bearer token for the full diagnostic."""
+    return {"ok": True, "service": "d2_dashboard"}
+
+
+@app.get("/healthz/detail")
+def healthz_detail(_=Depends(require_auth)):
+    """Authenticated diagnostic snapshot. Same shape the old /healthz had —
+    booleans + lengths + platform indicators. Behind require_auth so only
+    operator (or any @allowed-domain user) can see it."""
     import sys as _sys
     return {
         "ok": True,
@@ -395,9 +444,9 @@ def seatdata(_=Depends(require_auth)):
     try:
         payload["account"] = c.account()
     except Exception as e:
-        payload["account_error"] = str(e)[:200]
+        payload["account_error"] = _scrub_err("seatdata.account", e)
     try:
         payload["usage"] = c.usage()
     except Exception as e:
-        payload["usage_error"] = str(e)[:200]
+        payload["usage_error"] = _scrub_err("seatdata.usage", e)
     return JSONResponse(payload)

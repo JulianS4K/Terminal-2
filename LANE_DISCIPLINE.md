@@ -138,8 +138,9 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **Writes:**
 - `seatdata_client.py`, `seatgeek_client.py`, `evo_client.py` (order paths only)
-- `tickpick_client.py`, `vivid_client.py`
-- `tests/test_readonly_guards.py`, `scripts/check_readonly.py` (RULE 2 enforcement)
+- `tickpick_client.py`, `vivid_client.py`, `gotickets_client.py`
+- `d2_dashboard/` — standalone FastAPI service rendering all broker order surfaces (PR #85). D2-exclusive write surface.
+- `tests/test_readonly_guards.py`, `tests/test_d2_dashboard.py`, `scripts/check_readonly.py` (RULE 2 enforcement)
 - Order tables: `evo_orders`, `evo_order_items`, `evo_orders_pending`, `evo_event_backfill_pending`, `seatgeek_orders`, `seatgeek_order_tickets`, `sg_seller_pending`, `seatdata_sales_snapshots`, `seatdata_pull_budget`, `seatdata_pull_log`
 - Order-related crons (evo_orders_*, sg_seller_orders_*, seatdata sales)
 - `requirements.txt` (when adding D2-specific deps; pinning shape per A1 convention)

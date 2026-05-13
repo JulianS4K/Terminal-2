@@ -95,14 +95,15 @@ STOREFRONT_PREFER_INTERNAL_ZONES = (
 if STOREFRONT_PREFER_INTERNAL_ZONES:
     print("STOREFRONT_PREFER_INTERNAL_ZONES=true — granular zones preferred when (performer, venue) has them.")
 
-# Reserve endpoint auth gate. MVP demo runs without auth (front-end button
-# would 401 if always-on). Flip to true at Sprint 2 (real-purchase path)
-# unfreeze, after the front-end starts attaching Authorization headers.
+# Reserve endpoint auth gate. Default is `true` — unauthenticated state-changing
+# routes are wrong by default. MVP demo envs that want the front-end button to
+# work without a Supabase session must explicitly set STOREFRONT_RESERVE_REQUIRES_AUTH=false.
+# Sprint 2 (real-purchase path) keeps this true unconditionally.
 STOREFRONT_RESERVE_REQUIRES_AUTH = (
-    os.environ.get("STOREFRONT_RESERVE_REQUIRES_AUTH", "false").lower() == "true"
+    os.environ.get("STOREFRONT_RESERVE_REQUIRES_AUTH", "true").lower() == "true"
 )
-if STOREFRONT_RESERVE_REQUIRES_AUTH:
-    print("STOREFRONT_RESERVE_REQUIRES_AUTH=true — /api/store/reserve gated by require_auth.")
+if not STOREFRONT_RESERVE_REQUIRES_AUTH:
+    print("STOREFRONT_RESERVE_REQUIRES_AUTH=false — /api/store/reserve is UNAUTHENTICATED (MVP demo mode).")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -210,6 +211,22 @@ _CORS_ORIGINS = [
     for o in (os.environ.get("CORS_ALLOWED_ORIGINS") or "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000").split(",")
     if o.strip()
 ]
+# Reject wildcards loudly at boot. CORS allow_credentials=True with a
+# wildcard origin is a critical misconfiguration — browsers will send cookies
+# + Authorization headers cross-origin to /api/store/reserve and friends.
+# Fail-fast at startup rather than discover via security incident.
+for _origin in _CORS_ORIGINS:
+    if _origin == "*" or "*" in _origin:
+        raise RuntimeError(
+            f"CORS_ALLOWED_ORIGINS contains a wildcard ({_origin!r}); rejected because "
+            "allow_credentials=True is incompatible with wildcard origins. List concrete "
+            "https://… URLs in the env var instead."
+        )
+    if not (_origin.startswith("http://localhost") or _origin.startswith("http://127.0.0.1") or _origin.startswith("https://")):
+        raise RuntimeError(
+            f"CORS_ALLOWED_ORIGINS entry {_origin!r} is not a concrete http(s) URL. "
+            "Localhost dev origins (http://localhost / http://127.0.0.1) and https://… origins are accepted."
+        )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
@@ -4062,8 +4079,13 @@ def store_events(
     cap = min(max(limit, 1), 500)
     # offset → TEvo page index. TEvo paginates 1-based.
     per_page = min(cap, 100)
-    start_page = (max(offset, 0) // per_page) + 1
-    pages_needed = (cap + per_page - 1) // per_page
+    offset = max(offset, 0)
+    start_page = (offset // per_page) + 1
+    # When offset is NOT a multiple of per_page, we land mid-page and have to
+    # slice the leading rows off the first fetched page. Account for that in
+    # pages_needed so the post-slice list still contains `cap` rows.
+    offset_in_first_page = offset % per_page
+    pages_needed = ((offset_in_first_page + cap) + per_page - 1) // per_page
 
     today_iso = datetime.now(timezone.utc).date().isoformat()
 
@@ -4096,14 +4118,21 @@ def store_events(
             if total and len(raw_events) >= total:
                 break
     except RuntimeError as e:
-        raise HTTPException(502, f"TEvo events fetch failed: {e}")
+        # Log full upstream error server-side; return a stable string so TEvo's
+        # response text (URLs, partial tokens, internal IDs from the requests
+        # exception) never reaches the public storefront.
+        print(f"[store_events] TEvo events fetch failed: {e!r}")
+        raise HTTPException(502, "events fetch failed")
 
     # TEvo bakes CANCELLED markers into the event name string.
     raw_events = [
         e for e in raw_events
         if "CANCELLED" not in (e.get("name") or "").upper()
     ]
-    raw_events = raw_events[:cap]
+    # Slice from the offset-in-first-page so callers requesting a non-multiple
+    # offset get the records they asked for (vs records starting at the page
+    # boundary).
+    raw_events = raw_events[offset_in_first_page : offset_in_first_page + cap]
 
     # ---- Bulk-fetch performer media from Supabase performer_metadata ----
     # Single SQL roundtrip pulls logo + color for every performer that
