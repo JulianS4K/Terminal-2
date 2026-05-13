@@ -18,11 +18,13 @@ Env vars (set on Render — D1 provisions):
   ALLOWED_EMAIL_DOMAIN          default "s4kent.com"
   AUTH_DISABLED                 "true" for local dev only (refuses in prod)
 
-  TEVO_TOKEN / TEVO_SECRET      Evo broker creds
-  SEATGEEK_API_TOKEN            SG seller-direct token
-  TICKPICK_TOKEN                TickPick broker token
-  VIVID_API_TOKEN               Vivid Seats broker apiToken
-  SEATDATA_API_KEY              SeatData (optional — analytics tab only)
+  TEVO_API_TOKEN / TEVO_API_SECRET   Evo broker creds (vault-canonical names;
+                                     legacy TEVO_TOKEN / TEVO_SECRET also honored)
+  SEATGEEK_API_TOKEN                 SG seller-direct token
+  TICKPICK_API_TOKEN                 TickPick broker token (legacy TICKPICK_TOKEN
+                                     also honored)
+  VIVID_API_TOKEN                    Vivid Seats broker apiToken
+  SEATDATA_API_KEY                   SeatData (optional — analytics tab only)
 
 Start: uvicorn d2_dashboard.main:app --host 0.0.0.0 --port $PORT
 """
@@ -89,10 +91,21 @@ def require_auth(authorization: str | None = Header(None)):
 
 # ---------- Client factories (lazy — only init when called) ----------
 
+def _env_first(*names: str) -> str | None:
+    """Return the first set env var from `names`. Lets us accept either the
+    vault-canonical key (TEVO_API_TOKEN) or the legacy storefront key
+    (TEVO_TOKEN) without forcing the operator to pick."""
+    for n in names:
+        v = os.environ.get(n)
+        if v:
+            return v
+    return None
+
+
 def _evo_client():
     from evo_client import EvoClient
-    token = os.environ.get("TEVO_TOKEN")
-    secret = os.environ.get("TEVO_SECRET")
+    token = _env_first("TEVO_API_TOKEN", "TEVO_TOKEN")
+    secret = _env_first("TEVO_API_SECRET", "TEVO_SECRET")
     if not (token and secret):
         return None
     return EvoClient(token, secret, sandbox=os.environ.get("TEVO_SANDBOX", "false").lower() == "true")
@@ -108,7 +121,7 @@ def _sg_client():
 
 def _tickpick_client():
     from tickpick_client import TickPickClient
-    token = os.environ.get("TICKPICK_TOKEN")
+    token = _env_first("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
     if not token:
         return None
     return TickPickClient(token)

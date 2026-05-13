@@ -44,13 +44,15 @@ services:
 
       # Order-client creds — each source is independent; missing creds for
       # one source just blanks that row in the merged table, nothing breaks.
-      - key: TEVO_TOKEN
+      # Names below match the Supabase Vault canonical keys. Legacy
+      # TEVO_TOKEN / TEVO_SECRET / TICKPICK_TOKEN are also honored.
+      - key: TEVO_API_TOKEN
         sync: false
-      - key: TEVO_SECRET
+      - key: TEVO_API_SECRET
         sync: false
       - key: SEATGEEK_API_TOKEN
         sync: false
-      - key: TICKPICK_TOKEN
+      - key: TICKPICK_API_TOKEN
         sync: false
       - key: VIVID_API_TOKEN
         sync: false

@@ -24,14 +24,23 @@ Entry point: `uvicorn d2_dashboard.main:app`.
    - **Health Check Path**: `/healthz`
    - **Plan**: free (sleep-after-15-min is fine for an internal tool)
    - **Region**: `oregon` (matches storefront)
-4. Add env vars (see `render.yaml.example` for the full list):
+4. Add env vars (see `render.yaml.example` for the full list). Names below
+   match the Supabase Vault canonical keys (uppercase with `_API_`). Legacy
+   storefront names (`TEVO_TOKEN`, `TEVO_SECRET`, `TICKPICK_TOKEN`) are also
+   accepted by the loader — pick whichever you already have populated.
    - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ALLOWED_EMAIL_DOMAIN`
-   - `TEVO_TOKEN`, `TEVO_SECRET`
+   - `TEVO_API_TOKEN`, `TEVO_API_SECRET`
    - `SEATGEEK_API_TOKEN`
-   - `TICKPICK_TOKEN`
+   - `TICKPICK_API_TOKEN`
    - `VIVID_API_TOKEN`
    - `SEATDATA_API_KEY` (optional)
    - `PYTHON_VERSION=3.12.7`
+
+   **Not wired yet** (Vault has values, no client module exists in D2):
+   `GOTICKETS_ACCESS_ID/GOTICKETS_API_SECRET`, `STUBHUB_API_TOKEN`,
+   `VIAGOGO_API_TOKEN`, `VIVID_AUTOMATOR_TOKEN`. Setting these on the
+   service is harmless — they just won't appear in the merged orders
+   table until D2 ships clients for them.
 5. Deploy. First boot ≈ 70–80s on free tier (cold).
 6. Hit `https://<service>.onrender.com/healthz` → `{"ok": true, ...}`.
 7. Hit `https://<service>.onrender.com/` → login screen → Google OAuth.
@@ -47,7 +56,7 @@ export SUPABASE_URL=...
 export SUPABASE_ANON_KEY=...
 export ALLOWED_EMAIL_DOMAIN=s4kent.com
 export AUTH_DISABLED=true   # local only; refuses to apply in prod
-export TEVO_TOKEN=... TEVO_SECRET=...
+export TEVO_API_TOKEN=... TEVO_API_SECRET=...
 # (optional creds for the other 3 sources)
 
 uvicorn d2_dashboard.main:app --reload --port 8000
