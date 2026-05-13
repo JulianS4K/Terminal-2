@@ -229,8 +229,12 @@ def _seatdata_client():
 #   }
 
 def _norm_evo(o: dict) -> dict:
-    event = o.get("event") or {}
+    # Evo list_orders doesn't return event at the top level — it lives inside
+    # the first item's ticket_group. Pattern verified against the operator's
+    # reference Tkinter app: o.items[0].ticket_group.event.{name,occurs_at}.
     items = o.get("items") or []
+    first_tg = (items[0] or {}).get("ticket_group") or {} if items else {}
+    event = first_tg.get("event") or {}
     qty = sum(int(it.get("quantity") or 0) for it in items) if items else None
     return {
         "source": "evo",
@@ -275,11 +279,13 @@ def _norm_tickpick(o: dict) -> dict:
 
 
 def _norm_vivid(o: dict) -> dict:
-    # Vivid orders come from XML — flat-dict, all string values.
+    # Vivid orders come from XML — flat-dict, all string values. The XML uses
+    # a lowercase <event> tag for the event name (not <eventName>); reading
+    # the wrong key was leaving event_name blank in the dashboard.
     return {
         "source": "vivid",
         "order_id": str(o.get("orderId") or ""),
-        "event_name": o.get("eventName"),
+        "event_name": o.get("event") or o.get("eventName"),
         "event_date": o.get("eventDate"),
         "qty": _to_int(o.get("quantity")),
         "status": o.get("status"),
@@ -315,13 +321,26 @@ def _scrub_err(source: str, exc: Exception) -> str:
 
 
 def _fetch_evo(per_page: int) -> dict:
+    # Mirrors the operator's reference Tkinter app: pull orders in both
+    # accepted and pending states, merge + dedupe by id. Evo's list_orders
+    # caps per_page at 10 server-side, so per_page maps to "per state".
     c = _evo_client()
     if c is None:
         return {"source": "evo", "ok": False, "error": "no creds", "rows": []}
     try:
-        body = c.list_orders(per_page=min(per_page, 10))
-        rows = [_norm_evo(o) for o in (body.get("orders") or [])]
-        return {"source": "evo", "ok": True, "rows": rows, "total": body.get("total_entries")}
+        cap = min(per_page, 10)
+        seen: dict[str, dict] = {}
+        total_any: int | None = None
+        for state in ("accepted", "pending"):
+            body = c.list_orders(per_page=cap, state=state)
+            if total_any is None:
+                total_any = body.get("total_entries")
+            for o in body.get("orders") or []:
+                row = _norm_evo(o)
+                if row["order_id"]:
+                    seen.setdefault(row["order_id"], row)
+        rows = list(seen.values())
+        return {"source": "evo", "ok": True, "rows": rows, "total": total_any}
     except Exception as e:
         return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": []}
 
@@ -584,6 +603,53 @@ def orders(per_page: int = 25, _=Depends(require_auth)):
     # Sort newest first by ordered_at (string ISO compares fine, None last).
     merged.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
     return JSONResponse({"sources": sources_summary, "rows": merged})
+
+
+def _deep_order_evo(c, order_id: str) -> dict:
+    return c.get_order(int(order_id))
+
+
+def _deep_order_seatgeek(c, order_id: str) -> dict:
+    return c.seller_order(order_id)
+
+
+def _deep_order_tickpick(c, order_id: str) -> dict:
+    return c.get_order_details(order_id)
+
+
+def _deep_order_vivid(c, order_id: str) -> dict:
+    return c.get_order(int(order_id))
+
+
+_DEEP_ORDER = {
+    "evo":      ("_evo_client",      _deep_order_evo),
+    "seatgeek": ("_sg_client",       _deep_order_seatgeek),
+    "tickpick": ("_tickpick_client", _deep_order_tickpick),
+    "vivid":    ("_vivid_client",    _deep_order_vivid),
+}
+
+
+@app.get("/api/d2/order/{source}/{order_id}")
+def order_detail(source: str, order_id: str, _=Depends(require_auth)):
+    """Single-order deep fetch. Hits the source's by-id read endpoint and
+    returns the raw response so the dashboard can render seats, customer,
+    notes, etc. Read-only — no fulfillment / transfer / write endpoints are
+    wired here per the 2026-05-13 lockdown."""
+    if source not in _DEEP_ORDER:
+        raise HTTPException(404, f"unknown source: {source}")
+    import sys as _sys
+    factory_name, fetcher = _DEEP_ORDER[source]
+    client_factory = getattr(_sys.modules[__name__], factory_name)
+    c = client_factory()
+    if c is None:
+        return JSONResponse({"ok": False, "error": "no creds"}, status_code=200)
+    try:
+        return JSONResponse({"ok": True, "source": source, "order_id": order_id, "data": fetcher(c, order_id)})
+    except Exception as e:
+        return JSONResponse(
+            {"ok": False, "source": source, "order_id": order_id, "error": _scrub_err(f"{source}.order_detail", e)},
+            status_code=200,
+        )
 
 
 @app.get("/api/d2/samples")

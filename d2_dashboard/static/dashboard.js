@@ -51,6 +51,11 @@ let SB = null;
 let SESSION = null;
 let AUTH_BYPASS = false;
 
+// Cached last successful /api/d2/orders body — lets the Hide-Past-12h toggle
+// re-render without re-hitting the upstream APIs. Cleared on each new fetch.
+let LAST_ORDERS_BODY = null;
+let LAST_ORDERS_AT = null;
+
 async function importWithTimeout(url, ms) {
   // Race the dynamic import against a timeout so we don't hang on a blocked CDN.
   let timer;
@@ -157,8 +162,16 @@ function renderDashboard(domain) {
         <button class="tab" data-tab="seatdata">SeatData</button>
       </div>
       <section id="panel-orders" class="panel active">
+        <div class="orders-toolbar">
+          <label class="toolbar-toggle">
+            <input type="checkbox" id="chk-hide-past" checked />
+            <span>Hide past (&minus;12h)</span>
+          </label>
+          <span class="toolbar-meta" id="last-refreshed">last refresh: never</span>
+        </div>
         <div class="sources-bar" id="sources-bar"><span class="chip">loading...</span></div>
         <div id="orders-table-wrap"><div class="empty"><span class="spinner"></span> fetching orders...</div></div>
+        <div id="order-detail-wrap" class="order-detail-wrap"></div>
       </section>
       <section id="panel-samples" class="panel">
         <div id="samples-wrap"><div class="empty">not loaded yet</div></div>
@@ -182,6 +195,8 @@ function renderDashboard(domain) {
       await SB.auth.signOut();
     });
   }
+  // Re-render (not re-fetch) when the user toggles Hide-Past-12h.
+  document.getElementById("chk-hide-past").addEventListener("change", renderOrders);
   loadOrders();
 }
 
@@ -213,8 +228,10 @@ async function authedFetch(path) {
 async function loadOrders() {
   const wrap = document.getElementById("orders-table-wrap");
   const bar = document.getElementById("sources-bar");
+  const detailWrap = document.getElementById("order-detail-wrap");
   wrap.innerHTML = `<div class="empty"><span class="spinner"></span> fetching orders...</div>`;
   bar.innerHTML = `<span class="chip">loading...</span>`;
+  detailWrap.innerHTML = "";
   let body;
   try {
     body = await authedFetch("/api/d2/orders?per_page=50");
@@ -223,6 +240,22 @@ async function loadOrders() {
     bar.innerHTML = "";
     return;
   }
+  LAST_ORDERS_BODY = body;
+  LAST_ORDERS_AT = new Date();
+  renderOrders();
+}
+
+function renderOrders() {
+  const wrap = document.getElementById("orders-table-wrap");
+  const bar = document.getElementById("sources-bar");
+  const refreshedEl = document.getElementById("last-refreshed");
+  if (!LAST_ORDERS_BODY) return;
+  const body = LAST_ORDERS_BODY;
+
+  refreshedEl.textContent = LAST_ORDERS_AT
+    ? `last refresh: ${LAST_ORDERS_AT.toLocaleTimeString()}`
+    : "last refresh: never";
+
   bar.innerHTML = (body.sources || [])
     .map((s) => {
       const cls = s.ok ? "chip ok" : "chip err";
@@ -232,11 +265,27 @@ async function loadOrders() {
       return `<span class="${cls}"><strong>${escapeHtml(s.source)}</strong> · ${escapeHtml(detail)}</span>`;
     })
     .join("");
-  const rows = body.rows || [];
+
+  const hidePast = document.getElementById("chk-hide-past")?.checked;
+  const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+  let rows = body.rows || [];
+  let filtered = 0;
+  if (hidePast) {
+    const before = rows.length;
+    rows = rows.filter((r) => {
+      if (!r.event_date) return true;       // keep rows where event_date is missing
+      const t = Date.parse(r.event_date);
+      if (Number.isNaN(t)) return true;     // keep unparseable dates
+      return t >= cutoff;
+    });
+    filtered = before - rows.length;
+  }
+
   if (!rows.length) {
-    wrap.innerHTML = `<div class="empty">No orders across any source.</div>`;
+    wrap.innerHTML = `<div class="empty">No orders to show${filtered ? ` (${filtered} hidden by past-12h filter)` : " across any source"}.</div>`;
     return;
   }
+
   wrap.innerHTML = `
     <table>
       <thead>
@@ -253,7 +302,7 @@ async function loadOrders() {
       </thead>
       <tbody>
         ${rows.map((r) => `
-          <tr>
+          <tr class="order-row" data-source="${escapeHtml(r.source)}" data-order-id="${escapeHtml(r.order_id)}">
             <td class="source ${escapeHtml(r.source)}">${escapeHtml(r.source)}</td>
             <td>${escapeHtml(r.order_id)}</td>
             <td>${escapeHtml(r.event_name || "")}</td>
@@ -266,7 +315,121 @@ async function loadOrders() {
         `).join("")}
       </tbody>
     </table>
+    ${filtered ? `<div class="empty toolbar-meta">${filtered} row${filtered === 1 ? "" : "s"} hidden by past-12h filter</div>` : ""}
   `;
+  // Row click → fetch deep order detail. Listener at table-level so we don't
+  // attach N listeners after every re-render.
+  wrap.querySelector("tbody")?.addEventListener("click", (ev) => {
+    const tr = ev.target.closest("tr.order-row");
+    if (!tr) return;
+    document.querySelectorAll(".order-row.selected").forEach((el) => el.classList.remove("selected"));
+    tr.classList.add("selected");
+    loadOrderDetail(tr.dataset.source, tr.dataset.orderId);
+  });
+}
+
+async function loadOrderDetail(source, orderId) {
+  const wrap = document.getElementById("order-detail-wrap");
+  wrap.innerHTML = `
+    <section class="sample-card">
+      <div class="sample-head">
+        <span class="chip"><strong>${escapeHtml(source)}</strong> · order ${escapeHtml(orderId)}</span>
+        <span class="toolbar-meta"><span class="spinner"></span> loading detail&hellip;</span>
+      </div>
+    </section>
+  `;
+  let body;
+  try {
+    body = await authedFetch(`/api/d2/order/${encodeURIComponent(source)}/${encodeURIComponent(orderId)}`);
+  } catch (e) {
+    wrap.innerHTML = `<section class="sample-card"><div class="empty err-text">${escapeHtml(e.message)}</div></section>`;
+    return;
+  }
+  if (!body.ok) {
+    wrap.innerHTML = `
+      <section class="sample-card">
+        <div class="sample-head">
+          <span class="chip err"><strong>${escapeHtml(source)}</strong> · order ${escapeHtml(orderId)}</span>
+        </div>
+        <div class="empty err-text">${escapeHtml(body.error || "fetch failed")}</div>
+      </section>
+    `;
+    return;
+  }
+  const readable = renderReadableOrder(source, body.data || {});
+  wrap.innerHTML = `
+    <section class="sample-card">
+      <div class="sample-head">
+        <span class="chip ok"><strong>${escapeHtml(source)}</strong> · order ${escapeHtml(orderId)}</span>
+      </div>
+      ${readable}
+      <details>
+        <summary class="toolbar-meta">raw JSON</summary>
+        <pre class="json">${escapeHtml(JSON.stringify(body.data, null, 2))}</pre>
+      </details>
+    </section>
+  `;
+}
+
+// Per-source pretty-print, ported from the operator's reference Tkinter app's
+// make_readable(). Read-only — no fulfillment fields, just what's in the data.
+function renderReadableOrder(source, d) {
+  const row = (k, v) => `<tr><td class="kv-key">${escapeHtml(k)}</td><td>${escapeHtml(v == null || v === "" ? "—" : String(v))}</td></tr>`;
+  let rows = "";
+  if (source === "tickpick") {
+    const seats = Array.isArray(d.seat_numbers) ? d.seat_numbers.join(", ") : (d.seat_numbers || "");
+    rows = [
+      row("Order ID",   d.order_number),
+      row("Event",      d.event_name),
+      row("Event date", formatDate(d.event_date)),
+      row("Section",    d.section),
+      row("Row",        d.row),
+      row("Seats",      seats),
+      row("Status",     d.status),
+      row("Quantity",   d.quantity),
+      row("Notes",      d.notes),
+    ].join("");
+  } else if (source === "vivid") {
+    rows = [
+      row("Order ID",   d.orderId),
+      row("Event",      d.event),
+      row("Event date", d.eventDate),
+      row("Section",    d.section),
+      row("Row",        d.row),
+      row("Status",     d.status),
+      row("Quantity",   d.quantity),
+      row("Customer",   [d.firstName, d.lastName].filter(Boolean).join(" ")),
+      row("Email",      d.emailAddress),
+    ].join("");
+  } else if (source === "evo") {
+    const o = d || {};
+    const item = (Array.isArray(o.items) && o.items[0]) || {};
+    const tg = item.ticket_group || {};
+    const ev = tg.event || {};
+    rows = [
+      row("Order ID",   o.id),
+      row("Event",      ev.name),
+      row("Event date", formatDate(ev.occurs_at)),
+      row("Section",    tg.section),
+      row("Row",        tg.row),
+      row("Status",     o.state),
+      row("Quantity",   item.quantity),
+      row("Total",      o.total),
+      row("Currency",   o.currency),
+    ].join("");
+  } else if (source === "seatgeek") {
+    const ev = d.event || {};
+    rows = [
+      row("Order ID",   d.order_id || d.id),
+      row("Event",      ev.title || d.event_title),
+      row("Event date", formatDate(ev.datetime_local || ev.datetime_utc)),
+      row("Status",     d.status),
+      row("Quantity",   d.quantity),
+      row("Total",      d.total),
+      row("Currency",   d.currency),
+    ].join("");
+  }
+  return `<table class="kv">${rows}</table>`;
 }
 
 async function loadSamples() {

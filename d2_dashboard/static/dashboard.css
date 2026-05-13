@@ -150,6 +150,49 @@ pre.json {
   color: var(--muted);
 }
 .sample-card pre.json { margin: 0; max-height: 280px; }
+.orders-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.toolbar-meta { color: var(--muted); font-size: 11px; }
+tbody tr.order-row { cursor: pointer; }
+tbody tr.order-row:hover { background: rgba(88, 166, 255, 0.06); }
+tbody tr.order-row.selected { background: rgba(88, 166, 255, 0.14); }
+.order-detail-wrap { margin-top: 12px; }
+.order-detail-wrap details {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+}
+.order-detail-wrap summary { cursor: pointer; user-select: none; }
+table.kv {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+table.kv td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+table.kv td.kv-key {
+  width: 140px;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
 .spinner {
   display: inline-block;
   width: 12px;

@@ -328,16 +328,112 @@ def test_norm_evo_sums_item_quantities():
     assert row["qty"] == 6
 
 
+def test_norm_evo_pulls_event_from_nested_ticket_group():
+    """list_orders puts the event inside items[0].ticket_group.event — not at
+    the top level. Earlier reads of o.get('event') silently returned None and
+    left the dashboard's Event / Event Date columns blank."""
+    row = d2_main._norm_evo({
+        "id": 99, "state": "accepted",
+        "items": [{
+            "quantity": 2,
+            "ticket_group": {
+                "event": {"name": "Knicks vs Lakers", "occurs_at": "2026-12-15T19:30:00Z"},
+            },
+        }],
+    })
+    assert row["event_name"] == "Knicks vs Lakers"
+    assert row["event_date"] == "2026-12-15T19:30:00Z"
+    assert row["qty"] == 2
+
+
 def test_norm_vivid_xml_flat_dict():
-    """Vivid clients return dicts with all string values (XML-flattened)."""
+    """Vivid clients return dicts with all string values (XML-flattened).
+    The XML uses lowercase <event> as the event-name tag; camelCase
+    'eventName' is accepted as a fallback for legacy data."""
     row = d2_main._norm_vivid({
-        "orderId": "V-100", "eventName": "Show", "eventDate": "2026-09-01",
+        "orderId": "V-100", "event": "Show", "eventDate": "2026-09-01",
         "quantity": "3", "status": "PENDING_SHIPMENT", "total": "275.00",
     })
     assert row["source"] == "vivid"
     assert row["order_id"] == "V-100"
+    assert row["event_name"] == "Show"
     assert row["qty"] == 3
     assert row["amount"] == 275.0
+
+
+def test_norm_vivid_legacy_eventname_fallback():
+    """Records persisted with the older 'eventName' key still resolve."""
+    row = d2_main._norm_vivid({"orderId": "V-1", "eventName": "Legacy Show"})
+    assert row["event_name"] == "Legacy Show"
+
+
+def test_fetch_evo_dedupes_accepted_and_pending(monkeypatch):
+    """_fetch_evo fans out across state=accepted + state=pending and dedupes
+    by order_id. Mirrors the operator's reference Tkinter app's pattern."""
+    calls: list[str] = []
+
+    class FakeEvo:
+        def list_orders(self, *, state=None, **kw):
+            calls.append(state)
+            if state == "accepted":
+                return {
+                    "orders": [
+                        {"id": 1, "state": "accepted", "items": [{"quantity": 2, "ticket_group": {"event": {"name": "A"}}}]},
+                        {"id": 2, "state": "accepted", "items": [{"quantity": 1, "ticket_group": {"event": {"name": "B"}}}]},
+                    ],
+                    "total_entries": 50,
+                }
+            if state == "pending":
+                # Order 2 appears in both lists — must dedupe.
+                return {
+                    "orders": [
+                        {"id": 2, "state": "pending",  "items": [{"quantity": 1, "ticket_group": {"event": {"name": "B"}}}]},
+                        {"id": 3, "state": "pending",  "items": [{"quantity": 4, "ticket_group": {"event": {"name": "C"}}}]},
+                    ],
+                    "total_entries": 50,
+                }
+            return {"orders": []}
+
+    monkeypatch.setattr(d2_main, "_evo_client", lambda: FakeEvo())
+    result = d2_main._fetch_evo(per_page=10)
+    assert calls == ["accepted", "pending"]
+    assert result["ok"] is True
+    ids = sorted(r["order_id"] for r in result["rows"])
+    assert ids == ["1", "2", "3"]
+
+
+def test_order_detail_unknown_source(client):
+    """/api/d2/order/<bad>/<id> returns 404 for unrecognized sources."""
+    r = client.get("/api/d2/order/bogus/123")
+    assert r.status_code == 404
+
+
+def test_order_detail_no_creds(monkeypatch, client):
+    """When the client factory returns None, the endpoint returns 200 with
+    ok=False instead of 500 — front-end can render a clear error card."""
+    monkeypatch.setattr(d2_main, "_tickpick_client", lambda: None)
+    r = client.get("/api/d2/order/tickpick/42")
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"ok": False, "error": "no creds"}
+
+
+def test_order_detail_dispatches_to_client(monkeypatch, client):
+    """Happy path: the endpoint dispatches to the source's by-id fetcher and
+    wraps the response. The /v9/orders/:id call hits get_order on evo_client."""
+    class FakeEvo:
+        def get_order(self, order_id):
+            assert order_id == 42
+            return {"id": 42, "state": "accepted", "items": []}
+
+    monkeypatch.setattr(d2_main, "_evo_client", lambda: FakeEvo())
+    r = client.get("/api/d2/order/evo/42")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["source"] == "evo"
+    assert body["order_id"] == "42"
+    assert body["data"]["id"] == 42
 
 
 def test_to_int_to_float_handle_garbage():
