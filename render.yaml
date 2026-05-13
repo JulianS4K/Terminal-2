@@ -23,8 +23,8 @@ services:
     plan: free
     region: oregon          # closest to Supabase us-east-2; tradeoff vs us-east-ohio (~50ms)
     # If your Supabase project is us-east-2 specifically, prefer 'ohio' region instead.
-    branch: claude/d1-mvp-tevo-direct
-    autoDeploy: true        # every push to the branch redeploys
+    branch: main
+    autoDeploy: true        # every push to main redeploys (post-consolidation: A1 row 81 directive)
 
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
