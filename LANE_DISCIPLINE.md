@@ -1,8 +1,10 @@
-# LANE_DISCIPLINE.md — bot scope restrictions
+# LANE_DISCIPLINE.md — per-lane operating rules
 
 Per 2026-05-12 hierarchy restructure. Each bot writes only to its assigned files / tables / crons / edge functions. Out-of-lane writes require PR comment to the lane owner first.
 
-See `docs/bot-hierarchy.mermaid` for the org chart and `MIGRATION_CONVENTIONS.md` for the migration / commit conventions that overlay this scope map.
+**Companion to `BOT_HIERARCHY.md`** (repo root) — that doc is the quick-reference: hierarchy diagram, push restrictions matrix, single-writer table ownership, fast-path workflow, SECURITY DEFINER convention. **This doc is the detail**: per-lane writes / never-writes / function-call rules / client-response filters.
+
+See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIONS.md` (migration / commit conventions that overlay this scope map).
 
 ## Lane assignments
 
