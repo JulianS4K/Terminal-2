@@ -9,12 +9,17 @@ A standalone FastAPI service that renders a single window across all 4
 broker order surfaces (Evo / SeatGeek / TickPick / Vivid) plus a SeatData
 analytics tab. Read-only — no writes to any external API.
 
-**Auth posture (2026-05-13 operator decision)**: anonymous-by-default.
-`AUTH_DISABLED=true` is the shipped default; the dashboard goes straight
-into the orders view with no Google sign-in. Anyone with the URL sees the
-merged broker order table. To restore the Supabase JWT gate, set
-`AUTH_DISABLED=false` on the service env (also requires `SUPABASE_URL` +
-`SUPABASE_ANON_KEY` + the OAuth setup below).
+**Auth posture (2026-05-13 — Google OAuth re-enabled)**: gated by default.
+`AUTH_DISABLED=false` is the shipped default; the dashboard surfaces the
+Supabase login screen → Google OAuth → @s4kent.com email check. Set
+`AUTH_DISABLED=true` on the service env for a one-off testing bypass
+(loud stderr warning at boot; no production self-disable).
+
+Supabase Auth setup (one-time, operator-side):
+- Supabase Auth → URL Configuration → Redirect URLs: add
+  `https://d2-orders-dashboard.onrender.com/` (or your custom domain)
+- Google Cloud Console → OAuth Credentials → Authorized redirect URIs:
+  add `https://hzrizjeaxlqcxfrtczpq.supabase.co/auth/v1/callback`
 
 Entry point: `uvicorn d2_dashboard.main:app`.
 

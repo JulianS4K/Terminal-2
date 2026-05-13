@@ -72,19 +72,19 @@ D2_CANONICAL_ORIGIN = (os.environ.get("D2_CANONICAL_ORIGIN") or "").rstrip("/")
 D2_PHASE = os.environ.get("D2_PHASE", "data-collection")
 D2_UI_STATUS = os.environ.get("D2_UI_STATUS", "rebuild-pending")
 
-# Anonymous-by-default. Operator decision 2026-05-13: the dashboard goes
-# straight into the orders view with no Google sign-in step. Set
-# AUTH_DISABLED=false on the Render service env to restore the Supabase JWT
-# gate later (front-end will then surface the login screen). No production
-# self-disable — the lack of a gate is the intended posture, not a leak.
-AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "true").lower() == "true"
+# Auth-on by default (2026-05-13: operator re-enabled Google OAuth after
+# wiring the Supabase Auth redirect URI). Set AUTH_DISABLED=true on the
+# service env for a one-off testing bypass. No production self-disable —
+# the operator opts in explicitly when they want the gate off.
+AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
 
 if AUTH_DISABLED:
     import sys as _sys
     print(
         "d2_dashboard: AUTH_DISABLED=true — /api/d2/* endpoints serve "
         "unauthenticated reads of merged broker order data. Set "
-        "AUTH_DISABLED=false on the service env to restore the Supabase JWT gate.",
+        "AUTH_DISABLED=false (the default) on the service env to restore "
+        "the Supabase JWT gate.",
         file=_sys.stderr,
         flush=True,
     )
