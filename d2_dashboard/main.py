@@ -16,7 +16,10 @@ Env vars (set on Render — D1 provisions):
   SUPABASE_URL                  https://xxxx.supabase.co
   SUPABASE_ANON_KEY             public anon key
   ALLOWED_EMAIL_DOMAIN          default "s4kent.com"
-  AUTH_DISABLED                 "true" for local dev only (refuses in prod)
+  AUTH_DISABLED                 "true" to bypass the Supabase JWT gate entirely.
+                                Works regardless of platform — operator opts in
+                                explicitly. Loud startup stderr warning when on.
+                                TESTING ONLY; unset for production.
 
   TEVO_API_TOKEN / TEVO_API_SECRET   Evo broker creds (vault-canonical names;
                                      legacy TEVO_TOKEN / TEVO_SECRET also honored)
@@ -45,17 +48,15 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
 
-_AUTH_DISABLED_REQUESTED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
-
-
-def _is_production() -> bool:
-    for key in ("RAILWAY_ENVIRONMENT", "ENVIRONMENT", "NODE_ENV", "PYTHON_ENV"):
-        if (os.environ.get(key) or "").lower() == "production":
-            return True
-    return bool(os.environ.get("FLY_APP_NAME") or os.environ.get("RENDER"))
-
-
-AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
+AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+if AUTH_DISABLED:
+    import sys as _sys
+    print(
+        "WARNING: AUTH_DISABLED=true — /api/d2/* endpoints are unauthenticated. "
+        "TESTING ONLY. Unset AUTH_DISABLED to restore the Supabase JWT gate.",
+        file=_sys.stderr,
+        flush=True,
+    )
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -312,11 +313,13 @@ def config(_=Depends(require_auth)):
 def config_public():
     """Pre-auth bootstrap — front-end needs SUPABASE_URL + ANON_KEY to show
     the login UI. These are public values (anon key is safe to expose;
-    that's its design)."""
+    that's its design). `auth_disabled` lets the front-end skip the login
+    screen when the server is in testing mode."""
     return {
         "supabase_url": SUPABASE_URL,
         "supabase_anon_key": SUPABASE_ANON_KEY,
         "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
+        "auth_disabled": AUTH_DISABLED,
     }
 
 

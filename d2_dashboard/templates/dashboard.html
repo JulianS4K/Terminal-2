@@ -199,8 +199,9 @@
     return currency ? `${num} ${escapeHtml(currency)}` : num;
   }
 
-  let SB = null;       // supabase client instance
-  let SESSION = null;  // current session (with access_token)
+  let SB = null;             // supabase client instance (null when AUTH_BYPASS)
+  let SESSION = null;        // current session (with access_token); null when AUTH_BYPASS
+  let AUTH_BYPASS = false;   // server reports auth_disabled — skip login + bearer
 
   async function bootstrap() {
     let cfg;
@@ -210,6 +211,12 @@
       cfg = await r.json();
     } catch (e) {
       render(`<div class="login"><h2>Boot error</h2><p class="err-text">${escapeHtml(e.message)}</p></div>`);
+      return;
+    }
+    AUTH_BYPASS = !!cfg.auth_disabled;
+    if (AUTH_BYPASS) {
+      // Server has AUTH_DISABLED=true (testing). Skip Supabase entirely.
+      renderDashboard(cfg.allowed_email_domain);
       return;
     }
     if (!cfg.supabase_url || !cfg.supabase_anon_key) {
@@ -252,14 +259,19 @@
   }
 
   function renderDashboard(domain) {
-    const email = (SESSION && SESSION.user && SESSION.user.email) || "";
+    const email = AUTH_BYPASS
+      ? "auth disabled (testing)"
+      : ((SESSION && SESSION.user && SESSION.user.email) || "");
+    const signoutBtn = AUTH_BYPASS
+      ? ""
+      : `<button id="btn-signout">Sign out</button>`;
     render(`
       <header>
         <h1>D2 Orders Dashboard</h1>
         <div>
           <span class="who">${escapeHtml(email)}</span>
           <button id="btn-refresh" style="margin-left:8px;">Refresh</button>
-          <button id="btn-signout">Sign out</button>
+          ${signoutBtn}
         </div>
       </header>
       <main>
@@ -283,9 +295,11 @@
       loadOrders();
       if (document.querySelector(".tab.active").dataset.tab === "seatdata") loadSeatData();
     });
-    document.getElementById("btn-signout").addEventListener("click", async () => {
-      await SB.auth.signOut();
-    });
+    if (!AUTH_BYPASS) {
+      document.getElementById("btn-signout").addEventListener("click", async () => {
+        await SB.auth.signOut();
+      });
+    }
     loadOrders();
   }
 
@@ -300,10 +314,12 @@
   }
 
   async function authedFetch(path) {
-    if (!SESSION) throw new Error("no session");
-    const r = await fetch(path, {
-      headers: { Authorization: `Bearer ${SESSION.access_token}` },
-    });
+    const headers = {};
+    if (!AUTH_BYPASS) {
+      if (!SESSION) throw new Error("no session");
+      headers.Authorization = `Bearer ${SESSION.access_token}`;
+    }
+    const r = await fetch(path, { headers });
     if (!r.ok) {
       const text = await r.text();
       throw new Error(`${path} → HTTP ${r.status}: ${text.slice(0, 200)}`);
