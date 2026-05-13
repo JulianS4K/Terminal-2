@@ -1,300 +1,221 @@
 # DOCUMENTATION_INDEX.md
 
-Authoritative map of every doc in the Terminal-2 repo, organized by which bot reads what. Read this before searching for a doc by filename. Updated 2026-05-10.
+Authoritative map of every doc in the Terminal-2 repo, organized by what each bot needs to read.
+**Anchored to checkpoint** `main-checkpoint-2026-05-13-post-cleanup` (commit `70fbbdf`).
+
+> Updated 2026-05-13 after the cleanup sweep that landed 9 PRs (#70, #73, #81, #82, #84, #85, #86, #87, #88), closed 4 (#69, #76, #77, #79), reset the bot roster to the A1/B1/C1/D1/D2 hierarchy, and codified the operator lockdown protocol.
 
 ---
 
 ## TL;DR
 
-- **59 markdown files total** across the repo (9 root, 26 `docs/`, 6 `docs/coworker-handoff/`, 2 `docs/seatgeek/`, 16 `design/`).
-- **6 bot lanes** active or paused (see §2). Three documented in `AGENTS.md`, three new arrivals from today's session not yet rostered.
-- **5 universal must-reads** for any bot before doing anything (see §1).
-- **2 governance docs landed today**: `MIGRATION_CONVENTIONS.md` (new), and the migrations behind PRs #50/#53/#54 (3 new migration files, 1 modified `app.py`).
+- **One umbrella, three layers**:
+  - **Universal must-reads** (§1) — every bot reads these.
+  - **Per-bot self-contracts** (`docs/<bot>_operating_constraints.md`) — each bot owns its own.
+  - **Coordination surface** — `bot_chat` table (cross-bot append-only log).
+- **70+ markdown files total** across the repo. New since 2026-05-10: `BOT_HIERARCHY.md`, `RESOURCES_BIBLE.md`, `SYNC_PROTOCOL.md`, `LANE_DISCIPLINE.md`, `CLAUDE.md`, `START_HERE.md`, `docs/c1_operating_constraints.md`, `docs/d1_operating_constraints.md`, `docs/d1_pending_merge_back.md`, plus two templates.
+- **Operator lockdown protocol** (active since 2026-05-13): SQL data, TEvo, SeatGeek, TickPick, Vivid, GoTickets, SeatData are **all read-only by default**. Standing permissions: `bot_chat_log()`, Supabase branch creation, migration-file authoring. Everything else needs explicit operator OK each time. See `CLAUDE.md` + `docs/c1_operating_constraints.md`.
+- **Bot roster has changed** since the 2026-05-10 version of this doc: `code` / `canonical` / `broadway` / `storefront` are replaced by **A1 / B1 / C1 / D1 / D2** (see §2). Old worktree-name references are obsolete.
 
 ---
 
 ## 1. Universal must-reads (every bot, in this order)
 
-| # | Doc | Why |
+| # | Doc | Why | Updated |
+|---|---|---|---|
+| 1 | **`START_HERE.md`** | 2-minute onboarding. Hard rules, required reading list, environment setup. Read FIRST. | 2026-05-13 |
+| 2 | **`BOT_HIERARCHY.md`** | Push restrictions matrix, single-writer table ownership, fast-path workflow, lane chart. | 2026-05-12 |
+| 3 | **`LANE_DISCIPLINE.md`** | Per-lane operating rules (detail). Companion to `BOT_HIERARCHY.md`. | 2026-05-13 |
+| 4 | **`SYNC_PROTOCOL.md`** | Track choice (Fast / Careful / Emergency), slot reservation, apply-before-PR, broadcast format. | 2026-05-13 |
+| 5 | **`MIGRATION_CONVENTIONS.md`** | Migration header convention, single-writer rule, A1 push gate. | 2026-05-10 |
+| 6 | **`RESOURCES_BIBLE.md`** | Living inventory: tables, views, crons, edge fns, vault secrets, external services. | 2026-05-13 |
+| 7 | **`CLAUDE.md`** | Auto-loaded by Claude Code on every session — operator lockdown protocol summary. | 2026-05-13 |
+| 8 | **`KANBAN.md`** | Live work board, proxy-commit pattern, parked items. | live |
+
+If you read these eight (~45 min) you have enough context to avoid 95% of drift incidents.
+
+**Then read your own self-contract**: `docs/<lane>_operating_constraints.md` (see §3).
+
+---
+
+## 2. Bot roster (current — supersedes `AGENTS.md` which is stale)
+
+The 2026-05-12 hierarchy restructure (PR #74) renamed lanes to a single-letter+digit scheme:
+
+| Lane | Level | Owns | Active worktree pattern |
+|---|---|---|---|
+| **A1** | admin | DB schema, **sole prod migration applier**, cron, edge fns (admin-owned), governance docs, push to `main` | `claude/resume-a1-*` |
+| **B1** | security | RULE 2 audits, SECURITY DEFINER hardening, vault grants, `_security_*` migrations | `claude/fix-security-*`, `claude/security-*` |
+| **C1** | supervisor | Schema canonical (xref, drift triggers, overlays), audit reports, supervisor-authored migrations | `claude/audit-data-sources-*`, `claude/feat-c1-*` |
+| **D1** | data-collection | Consumer Retail storefront: `app.py` storefront routes, `static/store/*`, `share_links`, Render (sole owner) | `claude/d1-*`, `claude/resume-d1-*`, `claude/store-*` |
+| **D2** | data-collection | Broker order pulls (Evo, SG, TickPick, Vivid, GoTickets, SeatData), `*_client.py`, `_pending` tables, `tests/`, `d2_dashboard/` | `claude/d2-*`, `claude/resume-d2-*`, `claude/continue-d2-*` |
+
+**Paused / superseded** (pre-rename): `code` lane → became A1+C1 split. `claude design` and `copilot` not in current rotation.
+
+**Coordination surface**: `bot_chat` table (`bot_chat_log()` RPC). Append-only, all lanes can write. Used for cross-lane sync, change_log, flag, question events. Latest row: 91 (B1 get_app_secret lockdown).
+
+---
+
+## 3. Per-bot self-contracts
+
+Each bot has its own contract under `docs/`. These layer **below** `LANE_DISCIPLINE.md` — they're operational detail, not authority. Always-must-match: `BOT_HIERARCHY.md` > `LANE_DISCIPLINE.md` > `docs/<bot>_operating_constraints.md`.
+
+| Lane | Contract doc | Highlights |
 |---|---|---|
-| 1 | `AGENTS.md` | Lane roster, status board, WIP claims, ACCESS MATRIX. Read start-to-finish before touching anything. |
-| 2 | `MIGRATION_CONVENTIONS.md` | **NEW today.** Production push gate (audit lane only), lane discipline, migration filename/header convention. Required reading before any migration. |
-| 3 | `KANBAN.md` | What's in flight, what's parked. Proxy-commit pattern documented here. |
-| 4 | `SCHEMA.md` | Current schema reference. Updated as part of every backend commit by the audit lane. |
-| 5 | `README.md` | Top-level orientation. |
+| **A1** | _(implicit — A1 is the authority layer; no self-contract needed)_ | |
+| **B1** | _(none yet — recommend adding `docs/b1_operating_constraints.md` for the security lane)_ | |
+| **C1** | `docs/c1_operating_constraints.md` | Read/write surface, forbidden actions, historical drift (#61/#64/#65/#68 prod migrations) ack |
+| **D1** | `docs/d1_operating_constraints.md` | Read surface (TEvo + 15 Supabase tables), write surface (storefront routes only), Sprint 2 freeze conditions |
+| **D2** | _(implicit via `LANE_DISCIPLINE.md` + per-`*_client.py` RULE 2 guards)_ | |
 
-If you read these five (≈30 min) you have enough context to avoid 95% of drift incidents.
-
----
-
-## 2. Bot roster (current state — supersedes `AGENTS.md` until it's updated)
-
-| # | Bot | Worktree | Status | Owns |
-|---|---|---|---|---|
-| 1 | **code** (audit lane / xref+macro) | `mystifying-lederberg-ea407b` | ACTIVE | Backend, all migrations, ESPN/TEvo/Wiki/NOAA ingest, FRED macro, schema audit, **sole git pusher to production** |
-| 2 | **claude design** | (no separate worktree — works through `code` proxy) | ACTIVE | All `static/*.html`, design system, `design/*`. No push, no prod writes. |
-| 3 | ~~**copilot**~~ | (paused) | PAUSED | Retail chat edge function, chat ingest helpers, chatbot NLU pipeline |
-| 4 | **canonical** | `audit-datasets-schemas-auoc3` | ACTIVE (PR #51 DRAFT) | `canonical_external_ids`, `seatgeek_event_xref`, all drift triggers, cross-source overlays, event/performer view wireframe SQL |
-| 5 | **broadway** | `broadway-scraper-eChQ6` | ACTIVE (PR #52 DRAFT) | `broadway_client.py`, Broadway.com scraper, related tests |
-| 6 | **storefront** | `eloquent-chatterjee-aaedf0` | ACTIVE (PR #54 MERGED) | `app.py` storefront routes, `static/store/*`, `share_links` table + endpoints |
-
-**Gap to fix**: `AGENTS.md` only documents bots 1-3. Bots 4-6 (canonical / broadway / storefront) emerged from parallel sessions and need a roster update. Audit lane should refresh `AGENTS.md` to match.
-
----
-
-## 3. Per-bot reading lists
-
-### 3.1 — code (audit lane / xref + macro)
-
-**Must-read** (in addition to the 5 universal):
-- `INSTRUCTIONS_FOR_CLAUDE_DESIGN.md` — knows what design needs from you
-- `INSTRUCTIONS_FOR_COPILOT.md` — knows the chat lane when it returns
-- `docs/full-audit-2026-05-09.md` — most recent full system audit
-- `docs/database-audit-2026-05-09.md` + `docs/database-map-2026-05-09.md` — DB state
-- `docs/cron-landscape-2026-05-09.md` — current cron landscape (you maintain this)
-- `docs/audit-2026-05-09.md` — cross-source audit
-- `docs/canonical-data-map-2026-05-09.md` — what canonical is doing
-- `docs/evo-seatgeek-field-mapping-2026-05-09.md` — TEvo↔SG field mapping
-- `docs/coworker-handoff/QUERY_CATALOG.md` — query patterns you've built
-
-**Reference** (read when relevant):
-- `docs/tevo-api-workflow.md`, `docs/data-sources-terminal-uses.md`, `docs/terminal-data-inventory.md`
-- `docs/concerts-broadway-tours-residencies.md`, `docs/tournament-event-detection.md`, `docs/mlb-game-series-detection.md`
-- `docs/storage-audit-2026-05-08.md`, `docs/sync-audit-2026-05-08.md`, `docs/workflow-audit-2026-05-08.md`
-- `docs/historical-data-and-multi-view-strategy-2026-05-09.md`
-- `docs/seatdata-blocker-2026-05-09.md`, `docs/weather-sources-2026-05-09.md`, `docs/wikipedia-usage-2026-05-09.md`
-- `docs/seatgeek/migration-guide.md`, `docs/seatgeek/kanban-tasks.md`
-- `SESSION_2026-05-07.md`, `docs/broker-audit-2026-05-08.md` (historical context)
-
-### 3.2 — claude design (frontend)
-
-**Must-read**:
-- `COWORKER_ONBOARDING.md` — your dedicated onboarding (full setup)
-- `INSTRUCTIONS_FOR_CLAUDE_DESIGN.md` — your lane spec
-- `design/main.fig.md` — design system source of truth
-- `design/README.md` — design folder orientation
-- `docs/retail-ui-kit.md` — retail surface design tokens
-- `docs/terminal-redesign-2026-05-09.md` — current redesign direction
-- `docs/phase2-ui-kanban.md` — UI roadmap
-- `docs/coworker-handoff/HANDOFF_INSTRUCTIONS.md` — proxy-commit pattern
-
-**Reference**:
-- All `design/*.md` (16 files — design memos, simulations, wireframes)
-- `docs/interactive-venue-maps-options.md`
-- `docs/coworker-handoff/SCOPE.md`, `docs/coworker-handoff/PHASE_2_HANDOFF.md`
-
-### 3.3 — copilot (PAUSED — retail chat)
-
-**Must-read when reactivated**:
-- `INSTRUCTIONS_FOR_COPILOT.md` — lane spec, schema sandbox rules
-- `docs/coworker-handoff/QUERY_COOKBOOK.md` — query patterns
-- `docs/data-sources-terminal-uses.md`
-- `docs/canonical-data-map-2026-05-09.md` — for chat-side retrieval
-
-### 3.4 — canonical (PR #51 / audit-datasets-schemas-auoc3)
-
-**Must-read**:
-- All 5 universal
-- `docs/canonical-data-map-2026-05-09.md` — your own primary reference
-- `docs/database-map-2026-05-09.md` — table inventory
-- `docs/evo-seatgeek-field-mapping-2026-05-09.md` — your cross-source mapping work
-- `docs/coworker-handoff/QUERY_CATALOG.md` — query patterns to mirror
-
-**Reference**:
-- `SCHEMA.md` — read-only on most tables
-- `docs/seatgeek/migration-guide.md`
-- `docs/audit-2026-05-09.md` and `docs/full-audit-2026-05-09.md` — context on what was already audited
-
-### 3.5 — broadway (PR #52 / broadway-scraper-eChQ6)
-
-**Must-read**:
-- All 5 universal
-- `docs/concerts-broadway-tours-residencies.md` — your primary reference
-- `docs/tevo-api-workflow.md` — how TEvo events get ingested (your scraped data will sit alongside)
-
-**Reference**:
-- `docs/canonical-data-map-2026-05-09.md` — when you eventually need to xref Broadway events to TEvo
-- `MIGRATION_CONVENTIONS.md` §4 (single-writer rule) — when you start adding `broadway_*` tables
-
-### 3.6 — storefront (PR #54 / eloquent-chatterjee-aaedf0)
-
-**Must-read**:
-- All 5 universal
-- `docs/retail-ui-kit.md` — design system you'll consume
-- `INSTRUCTIONS_FOR_COPILOT.md` — when copilot returns, you'll share retail surface area
-- `docs/data-sources-terminal-uses.md` — what data flows through retail
-
-**Reference**:
-- `design/retail-site-2026-05-08.md` — retail design direction
-- `design/terminal-only-redesign-2026-05-08.md` — broker terminal context
-- `docs/coworker-handoff/DATA_QUALITY_DASHBOARD.md` — UI quality patterns
+**Pattern template**: `docs/templates/bot_lane_constraints_template.md` (D1-authored, PR #84).
+**Cross-bot template**: `docs/templates/LANE_DISCIPLINE.template.md` (C1-authored, PR #82) — skeleton for future multi-bot projects.
 
 ---
 
 ## 4. Categorized inventory (full)
 
-### 4.1 — Governance + cross-bot (9 docs, all root-level)
+### 4.1 — Governance + cross-bot (root, **all must-read**)
+
 | File | Purpose | Updated |
 |---|---|---|
-| `AGENTS.md` | Bot roster, ACCESS MATRIX, status board | 2026-05-09 (needs refresh for bots 4-6) |
-| **`MIGRATION_CONVENTIONS.md`** | **Production push gate + lane discipline (NEW)** | **2026-05-10** |
-| `KANBAN.md` | Active work board, proxy-commit pattern | live |
+| `START_HERE.md` | 2-min onboarding | 2026-05-13 |
+| `BOT_HIERARCHY.md` | Push matrix, lane chart, hierarchy diagram | 2026-05-12 |
+| `LANE_DISCIPLINE.md` | Per-lane operating rules | 2026-05-13 |
+| `SYNC_PROTOCOL.md` | Track + sync rules | 2026-05-13 |
+| `MIGRATION_CONVENTIONS.md` | Migration rules | 2026-05-10 |
+| `RESOURCES_BIBLE.md` | Living resource inventory | 2026-05-13 |
+| `CLAUDE.md` | Operator lockdown protocol (auto-loaded) | 2026-05-13 |
+| `KANBAN.md` | Live work board | live |
 | `README.md` | Top-level orientation | live |
 | `SCHEMA.md` | Schema reference | live |
-| `COWORKER_ONBOARDING.md` | Design coworker onboarding | 2026-05-09 |
-| `INSTRUCTIONS_FOR_CLAUDE_DESIGN.md` | Design lane spec | 2026-05-09 |
-| `INSTRUCTIONS_FOR_COPILOT.md` | Copilot lane spec (paused) | live |
+| `AGENTS.md` | **STALE** — pre-A1/B1/C1/D1/D2 rename. Pending refresh. | 2026-05-09 |
+| `COWORKER_ONBOARDING.md` | Design coworker onboarding (historical) | 2026-05-09 |
+| `INSTRUCTIONS_FOR_CLAUDE_DESIGN.md` | Design lane spec (paused) | 2026-05-09 |
+| `INSTRUCTIONS_FOR_COPILOT.md` | Copilot spec (paused) | live |
 | `SESSION_2026-05-07.md` | Historical session log | static |
 
-### 4.2 — Audit + system state (8 docs, `docs/`)
-- `docs/audit-2026-05-09.md` — cross-source audit
-- `docs/broker-audit-2026-05-08.md`, `docs/full-audit-2026-05-09.md`, `docs/workflow-audit-2026-05-08.md`
-- `docs/storage-audit-2026-05-08.md`, `docs/sync-audit-2026-05-08.md`
-- `docs/database-audit-2026-05-09.md`, `docs/database-map-2026-05-09.md`
+### 4.2 — Per-bot self-contracts + templates (`docs/`)
 
-### 4.3 — Schema + data flow (10 docs, `docs/`)
-- `docs/canonical-data-map-2026-05-09.md`
-- `docs/data-sources-terminal-uses.md`
-- `docs/evo-seatgeek-field-mapping-2026-05-09.md`
-- `docs/historical-data-and-multi-view-strategy-2026-05-09.md`
-- `docs/terminal-data-inventory.md`
-- `docs/tevo-api-workflow.md`
-- `docs/concerts-broadway-tours-residencies.md`
-- `docs/mlb-game-series-detection.md`
-- `docs/tournament-event-detection.md`
-- `docs/knicks-next-home-event-snapshot-2026-05-09.md` (point-in-time debug snapshot)
+| File | Owner | Updated |
+|---|---|---|
+| `docs/c1_operating_constraints.md` | C1 | 2026-05-13 |
+| `docs/d1_operating_constraints.md` | D1 | 2026-05-13 |
+| `docs/d1_pending_merge_back.md` | D1 | 2026-05-13 — known-deferred work |
+| `docs/templates/LANE_DISCIPLINE.template.md` | C1 (cross-project template) | 2026-05-13 |
+| `docs/templates/bot_lane_constraints_template.md` | D1 (per-bot template) | 2026-05-13 |
 
-### 4.4 — Operations (4 docs, `docs/`)
-- `docs/cron-landscape-2026-05-09.md`
-- `docs/weather-sources-2026-05-09.md`
-- `docs/wikipedia-usage-2026-05-09.md`
-- `docs/seatdata-blocker-2026-05-09.md`
+### 4.3 — Punch lists / next-steps (`docs/`)
 
-### 4.5 — Design + UI (16 design/ + 3 docs/)
-- All `design/*.md` (16 files — wireframes, simulations, redesign memos, code-reply notes)
-- `docs/retail-ui-kit.md`, `docs/terminal-redesign-2026-05-09.md`, `docs/phase2-ui-kanban.md`, `docs/interactive-venue-maps-options.md`
+| File | Purpose |
+|---|---|
+| `docs/d1_retail_finish_punchlist.md` | A1-authored: what D1 needs to finish for retail MVP |
+| `docs/evo_store_next_steps.md` | A1-authored: next-steps notes for evo-store integration |
 
-### 4.6 — SeatGeek subdir (2 docs, `docs/seatgeek/`)
-- `docs/seatgeek/kanban-tasks.md`
-- `docs/seatgeek/migration-guide.md`
+### 4.4 — Audit + system state (`docs/`)
 
-### 4.7 — Coworker handoff (6 docs, `docs/coworker-handoff/`)
-- `docs/coworker-handoff/SCOPE.md`
-- `docs/coworker-handoff/HANDOFF_INSTRUCTIONS.md`
-- `docs/coworker-handoff/QUERY_CATALOG.md`
-- `docs/coworker-handoff/QUERY_COOKBOOK.md`
-- `docs/coworker-handoff/DATA_QUALITY_DASHBOARD.md`
-- `docs/coworker-handoff/PHASE_2_HANDOFF.md`
+`docs/audit-2026-05-09.md`, `docs/audit-handoff-2026-05-11.md`, `docs/broker-audit-2026-05-08.md`, `docs/cron-and-queue-health-2026-05-11.md`, `docs/cron-landscape-2026-05-09.md`, `docs/data-sources-audit-2026-05-11.md`, `docs/database-audit-2026-05-09.md`, `docs/database-map-2026-05-09.md`, `docs/full-audit-2026-05-09.md`, `docs/function-inventory-2026-05-11.md`, `docs/storage-audit-2026-05-08.md`, `docs/sync-audit-2026-05-08.md`, `docs/workflow-audit-2026-05-08.md`
 
----
+### 4.5 — Schema + data flow (`docs/`)
 
-## 5. New additions this session (2026-05-10)
+`docs/canonical-data-map-2026-05-09.md`, `docs/canonical-mapping-notes-2026-05-10.md`, `docs/cross-source-entity-resolution-2026-05-11.md`, `docs/data-sources-terminal-uses.md`, `docs/evo-seatgeek-field-mapping-2026-05-09.md`, `docs/historical-data-and-multi-view-strategy-2026-05-09.md`, `docs/terminal-data-inventory.md`, `docs/tevo-api-workflow.md`, `docs/concerts-broadway-tours-residencies.md`, `docs/mlb-game-series-detection.md`, `docs/tournament-event-detection.md`, `docs/knicks-next-home-event-snapshot-2026-05-09.md`
 
-### 5.1 — Files added (10 new, 1 modified)
+### 4.6 — Operations (`docs/`)
 
-| File | Lane | Lines | Status |
-|---|---|---|---|
-| `MIGRATION_CONVENTIONS.md` | audit | 413 | ✅ Merged (#55) |
-| `supabase/migrations/20260510120000_in_db_event_matcher_v1.sql` | audit | 222 | ✅ Merged (#50) |
-| `supabase/migrations/20260510130000_fred_macro_indicators_umcsent.sql` | audit | 279 | ✅ Merged (#53) |
-| `supabase/migrations/20260510120150_share_links.sql` | storefront | 103 | ✅ Merged (#54) |
-| `static/store/event.html` | storefront | 93 | ✅ Merged (#54) |
-| `static/store/index.html` | storefront | 49 | ✅ Merged (#54) |
-| `static/store/shares.html` | storefront | 65 | ✅ Merged (#54) |
-| `static/store/store.js` | storefront | 853 | ✅ Merged (#54) |
-| `static/store/style.css` | storefront | 553 | ✅ Merged (#54) |
-| `app.py` (modified) | storefront | +600 | ✅ Merged (#54) |
-| **`DOCUMENTATION_INDEX.md`** *(this file)* | audit | TBD | pending PR |
+`docs/seatdata-blocker-2026-05-09.md`, `docs/weather-sources-2026-05-09.md`, `docs/wikipedia-usage-2026-05-09.md`
 
-### 5.2 — Reviews
+### 4.7 — Design + UI
 
-#### `MIGRATION_CONVENTIONS.md` — audit lane
-- **Verdict**: ✅ Ships clean. Codifies what was previously implicit chat-driven coordination.
-- **Strength**: Production push gate is explicit and enforceable. Header convention makes audits grep-able.
-- **Watch for**: Bots 4-6 haven't been onboarded to these rules yet — make sure first follow-up PR after this lands gets reviewed against §9 checklist visibly so the precedent is set.
+`docs/retail-ui-kit.md`, `docs/terminal-redesign-2026-05-09.md`, `docs/phase2-ui-kanban.md`, `docs/interactive-venue-maps-options.md`, `docs/event-view-wireframe-v3.md`, `docs/event-view-wireframe-v4.md`, `docs/performer-view-wireframe-v5.md`, all `design/*.md` (16 files)
 
-#### Migration `20260510120000_in_db_event_matcher_v1.sql` — audit lane
-- **Verdict**: ✅ Live in production, draining backlog as designed.
-- **Strength**: Pacific TZ date join eliminates the UTC/ET ambiguity that caused the 60-collision bug.
-- **Watch for**: Doesn't overwrite existing `team_date_legacy` rows. Game 7 verification showed a `team_date_legacy` xref that happened to be correct by luck — for systemic cleanup, need the "re-match-legacy mode" follow-up (already in todos).
+### 4.8 — SeatGeek subdir
 
-#### Migration `20260510130000_fred_macro_indicators_umcsent.sql` — audit lane
-- **Verdict**: ✅ Schema clean, cron scheduled, generic enough to add more series later.
-- **Strength**: Revision history preserved (`realtime_start`) for backtest integrity.
-- **Watch for**: **Pre-req `FRED_API_KEY` in vault is still pending** — until set, cron writes sentinel rows. Operator (Julian) action required.
+`docs/seatgeek/kanban-tasks.md`, `docs/seatgeek/migration-guide.md`
 
-#### Migration `20260510120150_share_links.sql` + storefront UI — storefront lane
-- **Verdict**: ✅ Migration follows conventions (renamed to clear collision with phase2). UI is large (~1,700 lines) but lives in clean storefront namespace.
-- **Strength**: Storefront bot demonstrated correct cross-bot etiquette when the collision was flagged.
-- **Watch for**: First PR from this lane that lands SQL. `share_links` schema not reviewed against `MIGRATION_CONVENTIONS.md` §6 header requirement (predates that doc). Audit lane should retrospectively spot-check.
+### 4.9 — Coworker handoff (`docs/coworker-handoff/`)
 
-#### `app.py` modifications — storefront lane
-- **Verdict**: ⚠️ Worth a deeper review.
-- **Concern**: 600 lines added to `app.py` (the broker terminal backend). Per `AGENTS.md` and `INSTRUCTIONS_FOR_CLAUDE_DESIGN.md`, `app.py` is the audit lane's. Storefront lane writing to `app.py` crosses lane boundaries.
-- **Mitigation**: The new code is presumably storefront-specific routes (the `static/store/*` UI needs backend endpoints). The right pattern going forward is to either: (a) move storefront routes to a separate `store_app.py` or `app/store.py` module that the storefront lane owns, or (b) leave them in `app.py` but explicitly carve out storefront-route ownership in `MIGRATION_CONVENTIONS.md` §2.
-- **Follow-up**: Audit lane should review `app.py` diff for cross-lane regressions and propose a refactor if scale warrants.
+`SCOPE.md`, `HANDOFF_INSTRUCTIONS.md`, `QUERY_CATALOG.md`, `QUERY_COOKBOOK.md`, `DATA_QUALITY_DASHBOARD.md`, `PHASE_2_HANDOFF.md`
 
-### 5.3 — PRs landed today
+### 4.10 — Visual
 
-| PR | Title | Merged | SHA |
-|---|---|---|---|
-| #50 | feat(xref): in-DB strict matcher v1 + self-paced cron | 16:47 UTC | `f9bfa58` |
-| #53 | feat(macro): FRED ingestion + UMCSENT seed | 16:48 UTC | `ce7e906` |
-| #54 | feat(store): MVP storefront + revocable share links | 16:48 UTC | `6a9c5cc` |
-| #55 | docs(governance): MIGRATION_CONVENTIONS.md | 16:47 UTC | `24f4be8` |
-
-### 5.4 — Still open
-
-| PR | Title | Status | Blocker |
-|---|---|---|---|
-| #51 | canonical phases 7-13 | DRAFT | Awaiting canonical bot's rebase + filename bump |
-| #52 | Broadway scraper | DRAFT | Awaiting their CI green |
+`docs/bot-hierarchy.mermaid` — companion to `BOT_HIERARCHY.md` (rendered diagram)
 
 ---
 
-## 6. Gaps + recommendations
+## 5. Checkpoint tags
 
-### 6.1 — `AGENTS.md` is stale
-Documents bots 1-3 only. Bots 4-6 (canonical / broadway / storefront) have shipped code today but aren't rostered. **Audit lane should refresh `AGENTS.md`** to reflect the actual current bot landscape, with updated ACCESS MATRIX entries for the new lanes.
+| Tag | Commit | Notes |
+|---|---|---|
+| `phase1-baseline` | `b1ab0c4` | PR #49 era (ESPN xref + performer matcher) |
+| `d1-mvp-prod-checkpoint-2026-05-13` | `7913c20` | D1 MVP TEvo-direct, on now-closed `claude/d1-mvp-tevo-direct` |
+| `main-checkpoint-2026-05-13-pre-cleanup` (local only) | `e1ad31e` | Anchor BEFORE the 2026-05-13 cleanup sweep |
+| **`main-checkpoint-2026-05-13-post-cleanup`** (local only) | `70fbbdf` | Anchor AFTER the cleanup sweep — **all new bot_chat coordination references this** |
 
-### 6.2 — `SCHEMA.md` post-merge update needed
-3 new migrations landed today (xref strict matcher, FRED macro, share_links). `SCHEMA.md` needs new sections for `macro_indicators`, `macro_series_config`, `fred_pending`, `espn_scoreboard_pending`, `share_links`, plus updated entries for `event_xref` (new match_method values) and `v_event_xref_collisions` (refined definition).
+Remote tag push currently 403s on the proxy — local tags only. Commit SHAs are the authoritative rollback anchors.
 
-### 6.3 — `KANBAN.md` cleanup
-Many today's todos are done but may still be listed. Audit lane should sweep.
+---
 
-### 6.4 — Cross-lane `app.py` ownership
-Per §5.2 above — the storefront lane wrote 600 lines into the audit lane's `app.py`. Either formalize storefront-routes-in-`app.py` as a permitted exception in `MIGRATION_CONVENTIONS.md` §2, or factor out a `app/store.py` module the storefront lane owns cleanly.
+## 6. The 2026-05-13 cleanup sweep (what just landed)
 
-### 6.5 — Stale dated docs
-Several docs are dated `2026-05-08` or `2026-05-09` and may be superseded. Audit lane should evaluate whether to:
-- Mark obsolete docs `ARCHIVED` (move to `docs/archive/`)
-- Update in place with current dates
-- Leave as-is for historical context
+### 6.1 — PRs merged (9)
 
-Recommend a quarterly doc-pruning pass to keep the index from drifting.
+| PR | Title | Squash SHA |
+|---|---|---|
+| #81 | `fix(evo_client)`: correct Response truthiness in error logger | `cadd966` |
+| #70 | `feat(infra)`: Render MCP server config | `bcab8fa` |
+| #73 | `docs(session)`: D2 session note 2026-05-13 | `b94b916` |
+| #87 | `fix(security)`: REVOKE get_app_secret from anon/authenticated + body assert | `78673c5` |
+| #86 | `feat(admin)+feat(d2)`: cron IO diet (P0) + GoTickets client (1/3) | `0237f20` |
+| #84 | `feat(store)`: D1 MVP TEvo-direct + Sprint 1.5 UX + D1 self-contract | `3971416` |
+| #85 | `feat(d2)`: unified orders dashboard | `99cf145` |
+| #82 | `feat(c1)`: lockdown protocol + CLAUDE.md + media test surface | `5c6b8e7` |
+| #88 | `docs(governance)`: LANE_DISCIPLINE.md — cherry-pick from #69 | `70fbbdf` |
 
-### 6.6 — No bot-specific README in each lane's worktree
-Each bot's worktree could benefit from a `WORKTREE_README.md` at the worktree root that:
-- Names the lane
-- Links the must-read reading list from this index
-- Has a "session resume" checklist
-- Documents the bot's local conventions
+### 6.2 — PRs closed as superseded (4)
+
+| PR | Reason |
+|---|---|
+| #76 | Static commits landed via #84 cherry-pick. 4 app.py polish commits deferred to follow-up D1 PR (see `docs/d1_pending_merge_back.md`). |
+| #77 | `docs/d1_operating_constraints.md` landed via #84 cherry-pick. |
+| #79 | Full diff landed as #84's bundle base. Prod tag preserved. |
+| #69 | `LANE_DISCIPLINE.md` cherry-picked via #88. Other content already in main via #82 + #84. |
+
+### 6.3 — P0 incident timeline (cron IO budget)
+
+| Time (UTC) | Event |
+|---|---|
+| 17:34 | `jobid 98 zone-backfill-isolated-10min` begins failing — `backfill_stale_zone_metrics(3)` seq-scans `listings_snapshots` (2.4 GB / 2.7M rows) every 10 min for `MAX(captured_at) GROUP BY event_id` driver CTE |
+| 17:44, 17:54 | Statement timeouts after 132s, 203s |
+| 18:04:21 | **Postgres server restart** (IO budget exhausted) |
+| 18:07 | Cloudflare 522 surfaces on `d2_dashboard` (PR #85) sign-in flow |
+| 18:25 | A1 pauses all 70 active cron jobs (`bot_chat` row 88) |
+| 18:50 | A1 applies `cron_io_diet` migration (version `20260513185058`) — 69 jobs re-enabled at leaner cadences, job 98 stays paused |
+| 18:53 | B1 (from D2 session) applies `security_get_app_secret_lockdown` (version `20260513185248`) — REVOKE EXECUTE from anon/authenticated |
+| 19:00–19:05 | A1 cleanup-sweep merges land |
+| 19:10 | Post-sweep: 69 crons active, 0 failures since diet, IO recovered |
+
+### 6.4 — Follow-up work tracked
+
+1. **Index migration on `listings_snapshots(event_id, captured_at DESC)`** so `backfill_stale_zone_metrics` driver CTE can use an index-only scan. Re-enable job 98 after.
+2. **D1 follow-up PR**: reconcile #76's 4 deferred app.py polish commits (`b5258f7`, `46ee738`, `d0ffaac`, `669ed59`) against post-#84 TEvo-direct codebase.
+3. **D2 follow-up commits**: sources 2 + 3 in the GoTickets-series PR pattern. Vault entries `GOTICKETS_ACCESS_ID` + `GOTICKETS_API_SECRET` pending operator.
+4. **Operator action**: repoint Render service source `claude/store-sql-only-demo-mode → main` per #84 (render.yaml IaC now declares `branch: main`).
+5. **Operator action**: provision second Render service for `d2_dashboard` per `d2_dashboard/DEPLOY.md` (PR #85).
+6. **B1 audit**: how did `anon`/`authenticated` get re-granted EXECUTE on `get_app_secret` after the 2026-05-09 lockdown? No migration in repo did it. One-pass audit of every SECURITY DEFINER fn with `anon` EXECUTE.
 
 ---
 
 ## 7. Maintenance
 
-This doc lives at root level next to `AGENTS.md`. **Audit lane owns updates.** When a new doc is added:
-1. Add to §4 (categorized inventory) in the correct subsection
-2. Add to relevant bots' reading lists in §3
-3. If new this session: add to §5
-4. Update §1 TL;DR counts
+This doc lives at root level. **A1 owns updates.** When a new doc is added:
+1. Add to §4 (categorized inventory)
+2. If a must-read: add to §1 (universal) or §3 (per-bot)
+3. Update §2 if bot roster changes
+4. Update §5 if a new checkpoint tag is cut
+5. Update §6 if a significant batch of work lands
 
-When a bot is added or paused:
-1. Update §2 roster
-2. Add/update §3 reading list
-3. Update `AGENTS.md` in lockstep
+When a bot is added or paused: update §2, §3, and `BOT_HIERARCHY.md` in lockstep.
 
-Last updated: 2026-05-10.
-Owner: audit lane (`mystifying-lederberg-ea407b` worktree, "code" agent in AGENTS.md).
+Last updated: 2026-05-13.
+Owner: A1 (admin lane).
+Anchor: `main-checkpoint-2026-05-13-post-cleanup` (commit `70fbbdf`).
