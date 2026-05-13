@@ -153,11 +153,15 @@ function renderDashboard(domain) {
     <main>
       <div class="tabs">
         <button class="tab active" data-tab="orders">Orders</button>
+        <button class="tab" data-tab="samples">Samples</button>
         <button class="tab" data-tab="seatdata">SeatData</button>
       </div>
       <section id="panel-orders" class="panel active">
         <div class="sources-bar" id="sources-bar"><span class="chip">loading...</span></div>
         <div id="orders-table-wrap"><div class="empty"><span class="spinner"></span> fetching orders...</div></div>
+      </section>
+      <section id="panel-samples" class="panel">
+        <div id="samples-wrap"><div class="empty">not loaded yet</div></div>
       </section>
       <section id="panel-seatdata" class="panel">
         <div id="seatdata-wrap"><div class="empty">not loaded yet</div></div>
@@ -168,8 +172,10 @@ function renderDashboard(domain) {
     el.addEventListener("click", () => activateTab(el.dataset.tab));
   });
   document.getElementById("btn-refresh").addEventListener("click", () => {
-    loadOrders();
-    if (document.querySelector(".tab.active").dataset.tab === "seatdata") loadSeatData();
+    const active = document.querySelector(".tab.active").dataset.tab;
+    if (active === "orders") loadOrders();
+    else if (active === "samples") loadSamples();
+    else if (active === "seatdata") loadSeatData();
   });
   if (!AUTH_BYPASS) {
     document.getElementById("btn-signout").addEventListener("click", async () => {
@@ -187,6 +193,7 @@ function activateTab(name) {
     el.classList.toggle("active", el.id === `panel-${name}`)
   );
   if (name === "seatdata") loadSeatData();
+  else if (name === "samples") loadSamples();
 }
 
 async function authedFetch(path) {
@@ -260,6 +267,43 @@ async function loadOrders() {
       </tbody>
     </table>
   `;
+}
+
+async function loadSamples() {
+  const wrap = document.getElementById("samples-wrap");
+  wrap.innerHTML = `<div class="empty"><span class="spinner"></span> sampling sources...</div>`;
+  let body;
+  try {
+    body = await authedFetch("/api/d2/samples");
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  const samples = body.samples || [];
+  if (!samples.length) {
+    wrap.innerHTML = `<div class="empty">No samples returned.</div>`;
+    return;
+  }
+  wrap.innerHTML = samples.map((s) => {
+    const headerCls = s.ok ? "chip ok" : "chip err";
+    const totalDetail = s.ok && s.total_available != null
+      ? ` · ${escapeHtml(String(s.total_available))} available`
+      : "";
+    const methodDetail = s.method ? ` · <code>${escapeHtml(s.method)}()</code>` : "";
+    const bodyDetail = s.ok
+      ? (s.sample == null
+          ? `<div class="empty">empty — source has no records right now</div>`
+          : `<pre class="json">${escapeHtml(JSON.stringify(s.sample, null, 2))}</pre>`)
+      : `<div class="empty err-text">${escapeHtml(s.error || "error")}</div>`;
+    return `
+      <section class="sample-card">
+        <div class="sample-head">
+          <span class="${headerCls}"><strong>${escapeHtml(s.source)}</strong>${methodDetail}${totalDetail}</span>
+        </div>
+        ${bodyDetail}
+      </section>
+    `;
+  }).join("");
 }
 
 async function loadSeatData() {

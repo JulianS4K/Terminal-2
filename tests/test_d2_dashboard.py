@@ -221,6 +221,69 @@ def test_orders_per_page_bounds(monkeypatch, client):
     assert seen["per_page"] == 1
 
 
+def test_samples_no_creds_all_sources(monkeypatch, client):
+    """When every client factory returns None (no creds), /api/d2/samples
+    still returns 200 with one entry per source, each ok=False."""
+    monkeypatch.setattr(d2_main, "_evo_client",      lambda: None)
+    monkeypatch.setattr(d2_main, "_sg_client",       lambda: None)
+    monkeypatch.setattr(d2_main, "_tickpick_client", lambda: None)
+    monkeypatch.setattr(d2_main, "_vivid_client",    lambda: None)
+    monkeypatch.setattr(d2_main, "_seatdata_client", lambda: None)
+    r = client.get("/api/d2/samples")
+    assert r.status_code == 200
+    body = r.json()
+    sources = {s["source"]: s for s in body["samples"]}
+    assert set(sources) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
+    for s in sources.values():
+        assert s["ok"] is False
+        assert s["error"] == "no creds"
+        assert s["sample"] is None
+
+
+def test_samples_mixed_ok_and_error(monkeypatch, client):
+    """One broken sampler doesn't blank the others — the broken one surfaces
+    ok=False with a scrubbed error, the rest carry their records."""
+    class FakeEvo:
+        def list_events(self, **kw):     return {"events":     [{"id": 1, "name": "Concert"}],   "total_entries": 42}
+        def list_performers(self, **kw): return {"performers": [{"id": 2, "name": "Performer"}], "total_entries": 7}
+        def list_venues(self, **kw):     return {"venues":     [{"id": 3, "name": "Arena"}],     "total_entries": 9}
+        def list_orders(self, **kw):     return {"orders":     [{"id": 4, "state": "open"}],     "total_entries": 5620}
+
+    class FakeVivid:
+        def list_active_orders(self):             return [{"orderId": "V-1", "eventName": "Show"}]
+        def list_pending_retransfer_orders(self): return []
+
+    class BrokenTickpick:
+        def list_orders(self): raise RuntimeError("upstream 500")
+
+    monkeypatch.setattr(d2_main, "_evo_client",      lambda: FakeEvo())
+    monkeypatch.setattr(d2_main, "_sg_client",       lambda: None)
+    monkeypatch.setattr(d2_main, "_tickpick_client", lambda: BrokenTickpick())
+    monkeypatch.setattr(d2_main, "_vivid_client",    lambda: FakeVivid())
+    monkeypatch.setattr(d2_main, "_seatdata_client", lambda: None)
+
+    r = client.get("/api/d2/samples")
+    assert r.status_code == 200
+    sources = {s["source"]: s for s in r.json()["samples"]}
+
+    # Evo + Vivid have records → ok=True, sample present, method labeled.
+    assert sources["evo"]["ok"] is True
+    assert sources["evo"]["sample"] is not None
+    assert sources["evo"]["method"] in {"list_events", "list_performers", "list_venues", "list_orders"}
+    assert sources["vivid"]["ok"] is True
+    assert sources["vivid"]["method"] in {"list_active_orders", "list_pending_retransfer_orders"}
+
+    # SG + SeatData lack creds → ok=False, "no creds".
+    assert sources["seatgeek"]["ok"] is False
+    assert sources["seatgeek"]["error"] == "no creds"
+    assert sources["seatdata"]["error"] == "no creds"
+
+    # TickPick raised → ok=False, scrubbed error (no stack trace on wire).
+    assert sources["tickpick"]["ok"] is False
+    assert sources["tickpick"]["error"] == "upstream error"
+    assert "500" not in sources["tickpick"]["error"]
+
+
 def test_seatdata_no_creds(monkeypatch, client):
     """When SEATDATA_API_KEY is missing, endpoint returns ok=False gracefully."""
     monkeypatch.setattr(d2_main, "_seatdata_client", lambda: None)

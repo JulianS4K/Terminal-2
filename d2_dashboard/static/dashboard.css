@@ -136,6 +136,20 @@ pre.json {
   max-height: 60vh;
 }
 .err-text { color: var(--err); }
+.sample-card {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.sample-head { margin-bottom: 8px; font-size: 12px; }
+.sample-head code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.sample-card pre.json { margin: 0; max-height: 280px; }
 .spinner {
   display: inline-block;
   width: 12px;
