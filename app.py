@@ -95,6 +95,15 @@ STOREFRONT_PREFER_INTERNAL_ZONES = (
 if STOREFRONT_PREFER_INTERNAL_ZONES:
     print("STOREFRONT_PREFER_INTERNAL_ZONES=true — granular zones preferred when (performer, venue) has them.")
 
+# Reserve endpoint auth gate. MVP demo runs without auth (front-end button
+# would 401 if always-on). Flip to true at Sprint 2 (real-purchase path)
+# unfreeze, after the front-end starts attaching Authorization headers.
+STOREFRONT_RESERVE_REQUIRES_AUTH = (
+    os.environ.get("STOREFRONT_RESERVE_REQUIRES_AUTH", "false").lower() == "true"
+)
+if STOREFRONT_RESERVE_REQUIRES_AUTH:
+    print("STOREFRONT_RESERVE_REQUIRES_AUTH=true — /api/store/reserve gated by require_auth.")
+
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
@@ -234,6 +243,13 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        # HSTS: tell browsers to upgrade to HTTPS for this host for 2y +
+        # include subdomains. Render terminates TLS at the proxy so the
+        # response is always HTTPS-served regardless of how we send it.
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=63072000; includeSubDomains",
+        )
         return response
 
 
@@ -5693,10 +5709,17 @@ def store_event_zones(event_id: int):
 
 
 @app.post("/api/store/reserve")
-def store_reserve(payload: dict = Body(...)):
+def store_reserve(payload: dict = Body(...), authorization: str | None = Header(None)):
     """MVP placeholder: a real checkout is not wired up yet. Validates that
     the requested ticket_group + quantity matches the live owned inventory in
-    TEvo, then returns a mock confirmation. NEVER calls /v9/orders."""
+    TEvo, then returns a mock confirmation. NEVER calls /v9/orders.
+
+    Auth: gated by STOREFRONT_RESERVE_REQUIRES_AUTH env flag. MVP demo
+    leaves it off so the front-end's "Reserve (mock)" button works without
+    a Supabase session. Sprint 2 (real-purchase path) flips the flag on
+    once the front-end attaches Authorization headers."""
+    if STOREFRONT_RESERVE_REQUIRES_AUTH:
+        require_auth(authorization)
     try:
         event_id = int(payload.get("event_id") or 0)
         ticket_group_id = int(payload.get("ticket_group_id") or 0)
