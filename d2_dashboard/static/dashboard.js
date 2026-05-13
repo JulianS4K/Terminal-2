@@ -83,6 +83,8 @@ let AUTH_BYPASS = false;
 // re-render without re-hitting the upstream APIs. Cleared on each new fetch.
 let LAST_ORDERS_BODY = null;
 let LAST_ORDERS_AT = null;
+let CURRENT_PAGE = 1;
+const PER_PAGE = 50;
 
 async function importWithTimeout(url, ms) {
   // Race the dynamic import against a timeout so we don't hang on a blocked CDN.
@@ -197,8 +199,38 @@ function renderDashboard(domain) {
           </label>
           <span class="toolbar-meta" id="last-refreshed">last refresh: never</span>
         </div>
+        <div class="orders-toolbar orders-filters">
+          <div class="filter-group">
+            <span class="toolbar-meta">Order ID:</span>
+            <input type="search" id="flt-order-id" placeholder="search id..." />
+          </div>
+          <div class="filter-group">
+            <span class="toolbar-meta">Source:</span>
+            <label><input type="checkbox" class="flt-source" value="evo"      checked /> evo</label>
+            <label><input type="checkbox" class="flt-source" value="seatgeek" checked /> sg</label>
+            <label><input type="checkbox" class="flt-source" value="tickpick" checked /> tickpick</label>
+            <label><input type="checkbox" class="flt-source" value="vivid"    checked /> vivid</label>
+          </div>
+          <div class="filter-group">
+            <span class="toolbar-meta">Event:</span>
+            <input type="date" id="flt-date-from" />
+            <span class="toolbar-meta">to</span>
+            <input type="date" id="flt-date-to" />
+          </div>
+          <div class="filter-group">
+            <span class="toolbar-meta">Amount:</span>
+            <input type="number" id="flt-amount-min" placeholder="min" step="0.01" />
+            <input type="number" id="flt-amount-max" placeholder="max" step="0.01" />
+          </div>
+          <button type="button" id="btn-clear-filters" class="btn-link">clear</button>
+        </div>
         <div class="sources-bar" id="sources-bar"><span class="chip">loading...</span></div>
         <div id="orders-table-wrap"><div class="empty"><span class="spinner"></span> fetching orders...</div></div>
+        <div class="orders-toolbar orders-pager">
+          <button type="button" id="btn-prev" disabled>&larr; Prev</button>
+          <span class="toolbar-meta" id="page-indicator">page 1</span>
+          <button type="button" id="btn-next">Next &rarr;</button>
+        </div>
         <div id="order-detail-wrap" class="order-detail-wrap"></div>
       </section>
       <section id="panel-samples" class="panel">
@@ -223,7 +255,7 @@ function renderDashboard(domain) {
   });
   document.getElementById("btn-refresh").addEventListener("click", () => {
     const active = document.querySelector(".tab.active").dataset.tab;
-    if (active === "orders") loadOrders();
+    if (active === "orders") { CURRENT_PAGE = 1; loadOrders(); }
     else if (active === "samples") loadSamples();
     else if (active === "seatdata") loadSeatData();
   });
@@ -232,8 +264,29 @@ function renderDashboard(domain) {
       await SB.auth.signOut();
     });
   }
-  // Re-render (not re-fetch) when the user toggles Hide-Past-12h.
+  // Re-render (not re-fetch) when the user toggles Hide-Past-12h or any of
+  // the in-memory filters. Source / date / amount filters all just re-slice
+  // the cached body — no new API call, no new SQL query.
   document.getElementById("chk-hide-past").addEventListener("change", renderOrders);
+  document.querySelectorAll(".flt-source").forEach((el) => el.addEventListener("change", renderOrders));
+  ["flt-date-from", "flt-date-to", "flt-amount-min", "flt-amount-max", "flt-order-id"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", renderOrders);
+  });
+  document.getElementById("btn-clear-filters")?.addEventListener("click", () => {
+    document.querySelectorAll(".flt-source").forEach((el) => { el.checked = true; });
+    ["flt-date-from", "flt-date-to", "flt-amount-min", "flt-amount-max", "flt-order-id"].forEach((id) => {
+      const el = document.getElementById(id); if (el) el.value = "";
+    });
+    renderOrders();
+  });
+  // Pagination — Prev/Next re-fetch (not re-render) since the server holds
+  // the per-page slice. Reset CURRENT_PAGE to 1 on full Refresh from the header.
+  document.getElementById("btn-prev")?.addEventListener("click", () => {
+    if (CURRENT_PAGE > 1) { CURRENT_PAGE -= 1; loadOrders(); }
+  });
+  document.getElementById("btn-next")?.addEventListener("click", () => {
+    CURRENT_PAGE += 1; loadOrders();
+  });
   // GoTickets lookup form (Samples tab). Wired once on render so the form
   // works regardless of which tab is currently visible.
   document.getElementById("gt-lookup-form").addEventListener("submit", (ev) => {
@@ -334,7 +387,7 @@ async function loadOrders() {
   detailWrap.innerHTML = "";
   let body;
   try {
-    body = await authedFetch("/api/d2/orders?per_page=50");
+    body = await authedFetch(`/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}`);
   } catch (e) {
     wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
     bar.innerHTML = "";
@@ -343,6 +396,25 @@ async function loadOrders() {
   LAST_ORDERS_BODY = body;
   LAST_ORDERS_AT = new Date();
   renderOrders();
+}
+
+function readFilters() {
+  const sources = new Set(
+    Array.from(document.querySelectorAll(".flt-source"))
+      .filter((el) => el.checked)
+      .map((el) => el.value)
+  );
+  const dateFrom = document.getElementById("flt-date-from")?.value || null;
+  const dateTo   = document.getElementById("flt-date-to")?.value   || null;
+  const amtMinRaw = document.getElementById("flt-amount-min")?.value;
+  const amtMaxRaw = document.getElementById("flt-amount-max")?.value;
+  const amtMin = amtMinRaw === "" || amtMinRaw == null ? null : Number(amtMinRaw);
+  const amtMax = amtMaxRaw === "" || amtMaxRaw == null ? null : Number(amtMaxRaw);
+  // dateFrom/To come from <input type="date"> as YYYY-MM-DD; convert to UTC ms.
+  const dateFromMs = dateFrom ? Date.parse(`${dateFrom}T00:00:00`) : null;
+  const dateToMs   = dateTo   ? Date.parse(`${dateTo}T23:59:59`)   : null;
+  const orderIdQuery = (document.getElementById("flt-order-id")?.value || "").trim().toLowerCase();
+  return { sources, dateFromMs, dateToMs, amtMin, amtMax, orderIdQuery };
 }
 
 function renderOrders() {
@@ -377,21 +449,50 @@ function renderOrders() {
 
   const hidePast = document.getElementById("chk-hide-past")?.checked;
   const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+  const { sources: filtSources, dateFromMs, dateToMs, amtMin, amtMax, orderIdQuery } = readFilters();
   let rows = body.rows || [];
-  let filtered = 0;
-  if (hidePast) {
-    const before = rows.length;
-    rows = rows.filter((r) => {
-      if (!r.event_date) return true;       // keep rows where event_date is missing
+  const beforeCount = rows.length;
+  rows = rows.filter((r) => {
+    // Order-ID search: substring match (case-insensitive). Empty string skips.
+    if (orderIdQuery && !(String(r.order_id || "").toLowerCase().includes(orderIdQuery))) return false;
+    // Hide-past-12h cutoff (event_date is the relevant time, not ordered_at).
+    if (hidePast && r.event_date) {
       const t = Date.parse(r.event_date);
-      if (Number.isNaN(t)) return true;     // keep unparseable dates
-      return t >= cutoff;
-    });
-    filtered = before - rows.length;
-  }
+      if (!Number.isNaN(t) && t < cutoff) return false;
+    }
+    // Source checkbox filter — empty selection = show all (operator unchecked
+    // everything by accident; better to show than to blank).
+    if (filtSources.size > 0 && !filtSources.has(r.source)) return false;
+    // Event-date range filter (against event_date).
+    if (dateFromMs != null && r.event_date) {
+      const t = Date.parse(r.event_date);
+      if (!Number.isNaN(t) && t < dateFromMs) return false;
+    }
+    if (dateToMs != null && r.event_date) {
+      const t = Date.parse(r.event_date);
+      if (!Number.isNaN(t) && t > dateToMs) return false;
+    }
+    // Amount range filter (skip if row has no amount — keep it visible).
+    if (amtMin != null && r.amount != null && Number(r.amount) < amtMin) return false;
+    if (amtMax != null && r.amount != null && Number(r.amount) > amtMax) return false;
+    return true;
+  });
+  const filtered = beforeCount - rows.length;
+
+  // Page indicator + Prev/Next state. Prev disabled at page 1; Next disabled
+  // when the current page came back with fewer rows than per_page (no more
+  // to fetch). Filter-hidden rows don't disable Next — they're a render-time
+  // concern, separate from server-side pagination.
+  const page = body.page || CURRENT_PAGE;
+  const pageInd = document.getElementById("page-indicator");
+  const prevBtn = document.getElementById("btn-prev");
+  const nextBtn = document.getElementById("btn-next");
+  if (pageInd) pageInd.textContent = filtered ? `page ${page} · ${filtered} hidden by filters` : `page ${page}`;
+  if (prevBtn) prevBtn.disabled = page <= 1;
+  if (nextBtn) nextBtn.disabled = beforeCount < (body.per_page || PER_PAGE);
 
   if (!rows.length) {
-    wrap.innerHTML = `<div class="empty">No orders to show${filtered ? ` (${filtered} hidden by past-12h filter)` : " across any source"}.</div>`;
+    wrap.innerHTML = `<div class="empty">No orders to show${filtered ? ` (${filtered} hidden by filters)` : " across any source"}.</div>`;
     return;
   }
 

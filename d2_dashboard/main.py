@@ -176,6 +176,53 @@ def _env_first(*names: str) -> str | None:
     return None
 
 
+def _env_first_named(*names: str) -> tuple[str | None, str | None]:
+    """Like _env_first but also returns the env-var name that resolved.
+    Used by /healthz/detail so the operator can see which token variant was
+    loaded (e.g. when a 401 fires on TickPick — was the right env var read?)."""
+    for n in names:
+        v = os.environ.get(n)
+        if v:
+            return v, n
+    return None, None
+
+
+def _mask_token(t: str | None) -> str | None:
+    """Show only the last 4 chars of a token. Lets the operator confirm a
+    token rotation took effect without exposing the full value in logs or
+    on /healthz/detail."""
+    if not t:
+        return None
+    if len(t) <= 4:
+        return "***"
+    return f"...{t[-4:]}"
+
+
+def _broker_diag(*token_names: str, secret_names: tuple[str, ...] = ()) -> dict:
+    """Build the per-broker diagnostic blob shown on /healthz/detail.
+    Reports which env-var name was actually read and a masked tail of its
+    value — enough for the operator to confirm a token rotation took
+    effect without exposing the secret. Adds duplicate-set detection
+    so when both vault-canonical and legacy names are populated with
+    different values (a common cause of TickPick 401 — wrong key wins),
+    the dashboard surfaces it explicitly."""
+    token_val, token_src = _env_first_named(*token_names)
+    set_variants = [n for n in token_names if os.environ.get(n)]
+    diag: dict = {
+        "token_set": bool(token_val),
+        "token_env_var": token_src,
+        "token_masked": _mask_token(token_val),
+    }
+    if len(set_variants) > 1:
+        diag["token_warning"] = f"multiple env vars set ({', '.join(set_variants)}); using {token_src}"
+    if secret_names:
+        secret_val, secret_src = _env_first_named(*secret_names)
+        diag["secret_set"] = bool(secret_val)
+        diag["secret_env_var"] = secret_src
+        diag["secret_masked"] = _mask_token(secret_val)
+    return diag
+
+
 def _evo_client():
     from evo_client import EvoClient
     token = _env_first("TEVO_API_TOKEN", "TEVO_TOKEN")
@@ -475,25 +522,25 @@ def _to_float(v: Any) -> float | None:
 _SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek"})
 
 
-def _fetch_orders_from_sql(source: str, per_page: int) -> dict | None:
-    """Pull a source's recent orders out of unified_orders, joined to
-    v_event_base for event_name + event_date. Returns None when Supabase
-    isn't configured so the caller can fall back to the upstream API.
+def _fetch_orders_from_sql(source: str, per_page: int, page: int = 1) -> dict | None:
+    """Pull a source's orders out of unified_orders, joined to v_event_base
+    for event_name + event_date. Returns None when Supabase isn't configured
+    so the caller can fall back to the upstream API.
 
-    Two queries, merged in Python (no FK exists between unified_orders and
-    v_event_base, so PostgREST embedded-resource syntax doesn't apply).
-    The cron is the source of truth for freshness; surfaced via `as_of`
-    so the front-end can show staleness."""
+    Pagination via PostgREST .range() — `page` is 1-based to match the
+    /api/d2/orders ?page= query semantics."""
     sb = _sb()
     if sb is None:
         return None
     try:
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page - 1
         uo_res = (
             sb.table("unified_orders")
             .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
             .eq("source", source)
             .order("created_at", desc=True)
-            .limit(per_page)
+            .range(start, end)
             .execute()
         )
         uo_rows = uo_res.data or []
@@ -569,11 +616,11 @@ def _scrub_err(source: str, exc: Exception) -> str:
     return "upstream error"
 
 
-def _fetch_evo(per_page: int) -> dict:
+def _fetch_evo(per_page: int, page: int = 1) -> dict:
     # SQL-first: if Supabase is configured and unified_orders has evo rows,
     # serve from SQL (cron-fresh, no broker-API quota burn). Fall through
     # to the upstream API when SQL isn't available or returns empty.
-    sql_row = _fetch_orders_from_sql("evo", per_page) if "evo" in _SQL_BACKED_SOURCES else None
+    sql_row = _fetch_orders_from_sql("evo", per_page, page) if "evo" in _SQL_BACKED_SOURCES else None
     if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
         return sql_row
     # Mirrors the operator's reference Tkinter app: pull orders in both
@@ -587,7 +634,7 @@ def _fetch_evo(per_page: int) -> dict:
         seen: dict[str, dict] = {}
         total_any: int | None = None
         for state in ("accepted", "pending"):
-            body = c.list_orders(per_page=cap, state=state)
+            body = c.list_orders(per_page=cap, state=state, page=page)
             if total_any is None:
                 total_any = body.get("total_entries")
             for o in body.get("orders") or []:
@@ -600,44 +647,49 @@ def _fetch_evo(per_page: int) -> dict:
         return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": [], "origin": "api"}
 
 
-def _fetch_sg(per_page: int) -> dict:
-    sql_row = _fetch_orders_from_sql("seatgeek", per_page) if "seatgeek" in _SQL_BACKED_SOURCES else None
+def _fetch_sg(per_page: int, page: int = 1) -> dict:
+    sql_row = _fetch_orders_from_sql("seatgeek", per_page, page) if "seatgeek" in _SQL_BACKED_SOURCES else None
     if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
         return sql_row
     c = _sg_client()
     if c is None:
         return {"source": "seatgeek", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
-        body = c.seller_orders("open", page=1)
+        body = c.seller_orders("open", page=page)
         rows = [_norm_sg(o) for o in (body.get("orders") or [])][:per_page]
         return {"source": "seatgeek", "ok": True, "rows": rows, "total": (body.get("meta") or {}).get("total"), "origin": "api"}
     except Exception as e:
         return {"source": "seatgeek", "ok": False, "error": _scrub_err("seatgeek", e), "rows": [], "origin": "api"}
 
 
-def _fetch_tickpick(per_page: int) -> dict:
-    # No SQL backing — direct upstream call. Will be added to unified_orders
-    # in a follow-up cron PR; until then the chip shows origin="api".
+def _fetch_tickpick(per_page: int, page: int = 1) -> dict:
+    # No SQL backing and no list-pagination on the upstream — slice the full
+    # response client-side. Will be added to unified_orders in a follow-up
+    # cron PR; until then the chip shows origin="api".
     c = _tickpick_client()
     if c is None:
         return {"source": "tickpick", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
-        body = c.list_orders()
-        rows = [_norm_tickpick(o) for o in (body or [])][:per_page]
-        return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body or []), "origin": "api"}
+        body = c.list_orders() or []
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page
+        rows = [_norm_tickpick(o) for o in body[start:end]]
+        return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body), "origin": "api"}
     except Exception as e:
         return {"source": "tickpick", "ok": False, "error": _scrub_err("tickpick", e), "rows": [], "origin": "api"}
 
 
-def _fetch_vivid(per_page: int) -> dict:
-    # No SQL backing — direct upstream call. Same as tickpick.
+def _fetch_vivid(per_page: int, page: int = 1) -> dict:
+    # Same as tickpick — slice the full response client-side.
     c = _vivid_client()
     if c is None:
         return {"source": "vivid", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
-        body = c.list_active_orders()
-        rows = [_norm_vivid(o) for o in (body or [])][:per_page]
-        return {"source": "vivid", "ok": True, "rows": rows, "total": len(body or []), "origin": "api"}
+        body = c.list_active_orders() or []
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page
+        rows = [_norm_vivid(o) for o in body[start:end]]
+        return {"source": "vivid", "ok": True, "rows": rows, "total": len(body), "origin": "api"}
     except Exception as e:
         return {"source": "vivid", "ok": False, "error": _scrub_err("vivid", e), "rows": [], "origin": "api"}
 
@@ -784,13 +836,12 @@ def healthz_detail(_=Depends(require_auth)):
             "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
         },
         "brokers": {
-            "evo":      {"token_set": bool(_env_first("TEVO_API_TOKEN", "TEVO_TOKEN")),
-                         "secret_set": bool(_env_first("TEVO_API_SECRET", "TEVO_SECRET")),
-                         "sandbox": os.environ.get("TEVO_SANDBOX", "false").lower() == "true"},
-            "seatgeek": {"token_set": bool(os.environ.get("SEATGEEK_API_TOKEN"))},
-            "tickpick": {"token_set": bool(_env_first("TICKPICK_API_TOKEN", "TICKPICK_TOKEN"))},
-            "vivid":    {"token_set": bool(os.environ.get("VIVID_API_TOKEN"))},
-            "seatdata": {"key_set":   bool(os.environ.get("SEATDATA_API_KEY"))},
+            "evo":      _broker_diag("TEVO_API_TOKEN", "TEVO_TOKEN", secret_names=("TEVO_API_SECRET", "TEVO_SECRET")) | {"sandbox": os.environ.get("TEVO_SANDBOX", "false").lower() == "true"},
+            "seatgeek": _broker_diag("SEATGEEK_API_TOKEN"),
+            "tickpick": _broker_diag("TICKPICK_API_TOKEN", "TICKPICK_TOKEN"),
+            "vivid":    _broker_diag("VIVID_API_TOKEN"),
+            "seatdata": _broker_diag("SEATDATA_API_KEY"),
+            "gotickets": _broker_diag("GOTICKETS_ACCESS_ID", secret_names=("GOTICKETS_API_SECRET",)),
         },
         "platform": {
             "render": bool(os.environ.get("RENDER")),
@@ -851,15 +902,17 @@ def config_public():
 
 
 @app.get("/api/d2/orders")
-def orders(per_page: int = 25, _=Depends(require_auth)):
+def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
     """Fan out to all 4 broker order surfaces in parallel, return one
     normalized table. Each source reports ok/error independently so a
-    single dead source doesn't blank the page."""
+    single dead source doesn't blank the page. `page` is 1-based — the
+    front-end's Prev/Next buttons increment / decrement it."""
     per_page = max(1, min(per_page, 100))
+    page = max(1, page)
     fetchers = (_fetch_evo, _fetch_sg, _fetch_tickpick, _fetch_vivid)
     results: list[dict] = []
     with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = [ex.submit(fn, per_page) for fn in fetchers]
+        futures = [ex.submit(fn, per_page, page) for fn in fetchers]
         for f in futures:
             results.append(f.result())
     merged: list[dict] = []
@@ -877,7 +930,12 @@ def orders(per_page: int = 25, _=Depends(require_auth)):
         })
     # Sort newest first by ordered_at (string ISO compares fine, None last).
     merged.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
-    return JSONResponse({"sources": sources_summary, "rows": merged})
+    return JSONResponse({
+        "sources": sources_summary,
+        "rows": merged,
+        "page": page,
+        "per_page": per_page,
+    })
 
 
 def _deep_order_evo(c, order_id: str) -> dict:

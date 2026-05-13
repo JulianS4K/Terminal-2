@@ -107,6 +107,63 @@ main { padding: 16px 20px; }
 }
 .chip-origin-sql { background: rgba(63, 185, 80, 0.18);  color: var(--ok); }
 .chip-origin-api { background: rgba(88, 166, 255, 0.18); color: var(--accent); }
+.orders-filters {
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.filter-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text);
+  cursor: pointer;
+}
+.filter-group input[type="date"],
+.filter-group input[type="number"] {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.filter-group input[type="number"] { width: 80px; }
+.filter-group input[type="date"]   { width: 130px; }
+.filter-group input[type="search"] {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  width: 140px;
+}
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.orders-pager {
+  justify-content: center;
+  margin-top: 8px;
+}
+.orders-pager button[disabled] { opacity: 0.4; }
 .gt-lookup {
   display: inline-flex;
   align-items: center;

@@ -47,7 +47,7 @@ def client(monkeypatch):
     return TestClient(d2_main.app)
 
 
-def _stub_evo(per_page):
+def _stub_evo(per_page, page=1):
     return {
         "source": "evo",
         "ok": True,
@@ -60,7 +60,7 @@ def _stub_evo(per_page):
     }
 
 
-def _stub_sg(per_page):
+def _stub_sg(per_page, page=1):
     return {
         "source": "seatgeek",
         "ok": True,
@@ -73,11 +73,11 @@ def _stub_sg(per_page):
     }
 
 
-def _stub_tickpick(per_page):
+def _stub_tickpick(per_page, page=1):
     return {"source": "tickpick", "ok": True, "rows": [], "total": 0}
 
 
-def _stub_vivid_err(per_page):
+def _stub_vivid_err(per_page, page=1):
     return {"source": "vivid", "ok": False, "error": "boom", "rows": []}
 
 
@@ -99,7 +99,13 @@ def test_healthz_detail_under_auth_disabled(client):
     assert body["service"] == "d2_dashboard"
     assert body["auth_disabled"] is True
     assert "python" in body
-    assert set(body["brokers"]) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
+    assert set(body["brokers"]) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata", "gotickets"}
+    # Per-broker diag carries the env-var name actually read + a masked tail
+    # so the operator can verify a token rotation took effect (e.g. when a
+    # 401 fires on TickPick and they need to confirm the right key is loaded).
+    assert "token_set" in body["brokers"]["tickpick"]
+    assert "token_env_var" in body["brokers"]["tickpick"]
+    assert "token_masked" in body["brokers"]["tickpick"]
     assert body["templates"]["dashboard_html_exists"] is True
     # Lane-status fields default to data-collection / rebuild-pending.
     assert body["phase"] == "data-collection"
@@ -203,14 +209,14 @@ def test_orders_per_page_bounds(monkeypatch, client):
     """per_page is clamped to [1, 100]."""
     seen = {}
 
-    def stub(per_page):
+    def stub(per_page, page=1):
         seen["per_page"] = per_page
         return {"source": "evo", "ok": True, "rows": [], "total": 0}
 
     monkeypatch.setattr(d2_main, "_fetch_evo", stub)
-    monkeypatch.setattr(d2_main, "_fetch_sg", lambda n: {"source": "seatgeek", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_tickpick", lambda n: {"source": "tickpick", "ok": True, "rows": [], "total": 0})
-    monkeypatch.setattr(d2_main, "_fetch_vivid", lambda n: {"source": "vivid", "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_sg", lambda n, p=1: {"source": "seatgeek", "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_tickpick", lambda n, p=1: {"source": "tickpick", "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_vivid", lambda n, p=1: {"source": "vivid", "ok": True, "rows": [], "total": 0})
 
     r = client.get("/api/d2/orders?per_page=999")
     assert r.status_code == 200
@@ -391,6 +397,7 @@ def test_fetch_orders_from_sql_joins_unified_orders_and_v_event_base(monkeypatch
         def in_(self, key, vals):      captured.setdefault("in",  []).append((key, list(vals))); return self
         def order(self, *_a, **_kw):   return self
         def limit(self, *_a, **_kw):   return self
+        def range(self, *a, **_kw):    captured.setdefault("range", []).append(tuple(a)); return self
         def execute(self):
             return type("Res", (), {"data": self._rows})()
 
@@ -432,7 +439,7 @@ def test_fetch_evo_uses_sql_when_rows_present(monkeypatch):
     upstream API client is never called."""
     monkeypatch.setattr(
         d2_main, "_fetch_orders_from_sql",
-        lambda src, n: {"source": "evo", "ok": True, "rows": [{"source": "evo", "order_id": "X"}], "origin": "sql"},
+        lambda src, n, p=1: {"source": "evo", "ok": True, "rows": [{"source": "evo", "order_id": "X"}], "origin": "sql"},
     )
     called = {}
     def fail_evo_client():
@@ -447,7 +454,7 @@ def test_fetch_evo_uses_sql_when_rows_present(monkeypatch):
 
 def test_fetch_evo_falls_back_to_api_when_sql_empty(monkeypatch):
     """When the SQL row is ok but rows is empty, the API path runs."""
-    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n: {"source": "evo", "ok": True, "rows": [], "origin": "sql"})
+    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n, p=1: {"source": "evo", "ok": True, "rows": [], "origin": "sql"})
 
     class FakeEvo:
         def list_orders(self, **kw):
@@ -460,7 +467,7 @@ def test_fetch_evo_falls_back_to_api_when_sql_empty(monkeypatch):
 
 
 def test_fetch_evo_dedupes_accepted_and_pending(monkeypatch):
-    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n: None)
+    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n, p=1: None)
     """_fetch_evo fans out across state=accepted + state=pending and dedupes
     by order_id. Mirrors the operator's reference Tkinter app's pattern."""
     calls: list[str] = []
@@ -591,6 +598,78 @@ def test_samples_gotickets_without_sample_id_surfaces_clear_error(monkeypatch, c
     sources = {s["source"]: s for s in r.json()["samples"]}
     assert sources["gotickets"]["ok"] is False
     assert sources["gotickets"]["sample"] is None
+
+
+def test_orders_returns_pagination_metadata(monkeypatch, client):
+    """`/api/d2/orders` echoes the requested page + per_page so the front-end
+    can size the Prev/Next buttons without a separate count query."""
+    monkeypatch.setattr(d2_main, "_fetch_evo",      lambda n, p=1: {"source": "evo",      "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_sg",       lambda n, p=1: {"source": "seatgeek", "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_tickpick", lambda n, p=1: {"source": "tickpick", "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_vivid",    lambda n, p=1: {"source": "vivid",    "ok": True, "rows": [], "total": 0})
+    r = client.get("/api/d2/orders?per_page=25&page=3")
+    body = r.json()
+    assert body["page"] == 3
+    assert body["per_page"] == 25
+
+
+def test_orders_page_param_threads_to_fetchers(monkeypatch, client):
+    """The page param reaches each per-source fetcher so SQL/.range() and
+    the Evo/SG/TickPick/Vivid API pages line up with the operator's
+    Next/Prev clicks."""
+    seen_pages: dict[str, int] = {}
+
+    def make_stub(name):
+        def _s(n, p=1):
+            seen_pages[name] = p
+            return {"source": name, "ok": True, "rows": [], "total": 0}
+        return _s
+
+    monkeypatch.setattr(d2_main, "_fetch_evo",      make_stub("evo"))
+    monkeypatch.setattr(d2_main, "_fetch_sg",       make_stub("seatgeek"))
+    monkeypatch.setattr(d2_main, "_fetch_tickpick", make_stub("tickpick"))
+    monkeypatch.setattr(d2_main, "_fetch_vivid",    make_stub("vivid"))
+    r = client.get("/api/d2/orders?page=4")
+    assert r.status_code == 200
+    assert seen_pages == {"evo": 4, "seatgeek": 4, "tickpick": 4, "vivid": 4}
+
+
+def test_orders_page_clamped_to_minimum_one(monkeypatch, client):
+    """Negative or zero page values clamp to 1 so a malformed query string
+    doesn't blow up downstream fetchers (Evo's API would 400)."""
+    seen = {}
+    monkeypatch.setattr(d2_main, "_fetch_evo",      lambda n, p=1: (seen.setdefault("p", p), {"source": "evo", "ok": True, "rows": [], "total": 0})[1])
+    monkeypatch.setattr(d2_main, "_fetch_sg",       lambda n, p=1: {"source": "seatgeek", "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_tickpick", lambda n, p=1: {"source": "tickpick", "ok": True, "rows": [], "total": 0})
+    monkeypatch.setattr(d2_main, "_fetch_vivid",    lambda n, p=1: {"source": "vivid", "ok": True, "rows": [], "total": 0})
+    r = client.get("/api/d2/orders?page=-5")
+    assert r.status_code == 200
+    assert seen["p"] == 1
+
+
+def test_broker_diag_masks_token_and_reports_env_var(monkeypatch):
+    """The /healthz/detail diag exposes which env var resolved + a masked
+    tail (last 4 chars) so the operator can verify a token rotation took
+    effect without exposing the secret."""
+    monkeypatch.setenv("TICKPICK_API_TOKEN", "supersecret-abcd")
+    monkeypatch.delenv("TICKPICK_TOKEN", raising=False)
+    diag = d2_main._broker_diag("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
+    assert diag["token_set"] is True
+    assert diag["token_env_var"] == "TICKPICK_API_TOKEN"
+    assert diag["token_masked"] == "...abcd"
+    assert "token_warning" not in diag
+
+
+def test_broker_diag_warns_when_multiple_env_vars_set(monkeypatch):
+    """Both vault-canonical AND legacy env vars set is a common cause of
+    auth failures (operator rotates one but not the other). Surface it."""
+    monkeypatch.setenv("TICKPICK_API_TOKEN", "new-XXXX")
+    monkeypatch.setenv("TICKPICK_TOKEN",     "old-YYYY")
+    diag = d2_main._broker_diag("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
+    assert diag["token_env_var"] == "TICKPICK_API_TOKEN"
+    assert "token_warning" in diag
+    assert "TICKPICK_API_TOKEN" in diag["token_warning"]
+    assert "TICKPICK_TOKEN" in diag["token_warning"]
 
 
 def test_order_detail_unknown_source(client):
