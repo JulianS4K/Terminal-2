@@ -66,6 +66,40 @@ function formatAgo(iso) {
   return `${d}d ago`;
 }
 
+// Translate a cron expression into a human-readable interval. Covers the
+// patterns our actual cron jobs use; falls back to the raw expression for
+// anything exotic. Examples:
+//   "*/30 * * * *"   → "every 30m"
+//   "5-59/30 * * * *"→ "every 30m"
+//   "0 * * * *"      → "every hour"
+//   "7 * * * *"      → "every hour"
+function formatCronSchedule(expr) {
+  if (!expr) return "";
+  const m = expr.match(/^(\*\/|\d+-\d+\/)(\d+)\s+\*/);
+  if (m) return `every ${m[2]}m`;
+  if (/^\d+\s+\*\s+\*\s+\*\s+\*$/.test(expr)) return "every hour";
+  if (/^\d+\s+\*\/(\d+)\s+\*/.test(expr)) {
+    const h = expr.match(/^\d+\s+\*\/(\d+)/)[1];
+    return `every ${h}h`;
+  }
+  return expr;
+}
+
+// Decide whether the last cron run is older than the expected interval.
+// Flags the chip with a "stale" CSS class so the operator sees a missed
+// run at a glance — works for "*/Nm" and "N-N/Nm" minute schedules.
+function cronStaleClass(lastRunIso, schedule) {
+  if (!lastRunIso || !schedule) return "";
+  const m = schedule.match(/^(?:\*\/|\d+-\d+\/)(\d+)\s+\*/);
+  if (!m) return "";
+  const intervalMin = parseInt(m[1], 10);
+  const ageMin = (Date.now() - Date.parse(lastRunIso)) / 60000;
+  // Allow 2× the interval as the "fresh" window — Render/pg_cron jitter
+  // can push runs a minute or two; we only flag when we're plainly behind.
+  if (ageMin > intervalMin * 2) return "cron-stale";
+  return "";
+}
+
 function formatAmount(amount, currency) {
   if (amount == null) return "";
   const num = Number(amount).toLocaleString(undefined, {
@@ -433,17 +467,30 @@ function renderOrders() {
       const cls = s.ok ? "chip ok" : "chip err";
       const origin = s.origin === "sql"
         ? `<span class="chip-origin chip-origin-sql" title="from unified_orders (cron-fresh)">SQL</span>`
-        : s.origin === "api"
-          ? `<span class="chip-origin chip-origin-api" title="direct upstream call">API</span>`
-          : "";
+        : s.origin === "api+sql-match"
+          ? `<span class="chip-origin chip-origin-api" title="direct upstream call + v_event_base match">API</span>`
+          : s.origin === "api"
+            ? `<span class="chip-origin chip-origin-api" title="direct upstream call">API</span>`
+            : "";
       let detail;
       if (s.ok) {
         detail = `${s.count} row${s.count === 1 ? "" : "s"}` + (s.total_reported != null ? ` / ${s.total_reported} total` : "");
-        if (s.origin === "sql" && s.as_of) detail += ` · ${formatAgo(s.as_of)}`;
+        if (s.origin === "sql" && s.as_of) detail += ` · row ${formatAgo(s.as_of)}`;
       } else {
         detail = s.error || "error";
       }
-      return `<span class="${cls}">${origin}<strong>${escapeHtml(s.source)}</strong> · ${escapeHtml(detail)}</span>`;
+      // Cron freshness line — rendered below the chip when a cron job maps
+      // to this source. Lets the operator see at a glance "last fetch ran
+      // 12m ago against a 30-min schedule" without leaving the dashboard.
+      // .cron-stale class fires when last_run is older than 2× the interval.
+      let cronLine = "";
+      if (s.cron && s.cron.jobname) {
+        const last = s.cron.last_run ? `last cron: ${formatAgo(s.cron.last_run)}` : "cron: never run";
+        const sched = s.cron.schedule ? ` · ${formatCronSchedule(s.cron.schedule)}` : "";
+        const stale = s.cron.last_run ? cronStaleClass(s.cron.last_run, s.cron.schedule) : "";
+        cronLine = `<span class="cron-meta ${stale}" title="job: ${escapeHtml(s.cron.jobname)}">${escapeHtml(last + sched)}</span>`;
+      }
+      return `<div class="source-cell"><span class="${cls}">${origin}<strong>${escapeHtml(s.source)}</strong> · ${escapeHtml(detail)}</span>${cronLine}</div>`;
     })
     .join("");
 

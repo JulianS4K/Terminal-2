@@ -209,16 +209,16 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
             "per_source_as_of": {"evo": "2026-05-13T20:35:00Z", "seatgeek": "2026-05-09T02:57:00Z"},
         },
     )
-    # Stub the event-window pull (no v_event_base candidates → tickpick/vivid
-    # rows go through without enrichment) + API clients (no creds → chips
-    # surface "no creds" not "no sql backing").
-    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
-    monkeypatch.setattr(d2_main, "_tickpick_client",   lambda: None)
-    monkeypatch.setattr(d2_main, "_vivid_client",      lambda: None)
+    # Stub the event-window pull (no v_event_base candidates → vivid rows
+    # go through without enrichment), the cron freshness call, + vivid client.
+    monkeypatch.setattr(d2_main, "_pull_event_window",   lambda *a, **kw: [])
+    monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
+    monkeypatch.setattr(d2_main, "_vivid_client",        lambda: None)
     body = client.get("/api/d2/orders").json()
     sources = {s["source"]: s for s in body["sources"]}
     assert set(sources) == {"evo", "seatgeek", "seatdata", "tickpick", "vivid"}
     # SQL-backed: ok=True with origin sql + as_of from cron's last_seen_at.
+    # tickpick is now SQL-backed too (persistence cron added 2026-05-13).
     assert sources["evo"]["ok"] is True
     assert sources["evo"]["origin"] == "sql"
     assert sources["evo"]["as_of"] == "2026-05-13T20:35:00Z"
@@ -226,21 +226,60 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
     assert sources["seatgeek"]["count"] == 1
     assert sources["seatdata"]["count"] == 0   # backed but no rows on this page
     assert sources["seatdata"]["ok"] is True
-    # API-backed: chip carries the broker-side reason for failure.
-    assert sources["tickpick"]["ok"] is False
-    assert sources["tickpick"]["origin"] == "api+sql-match"
-    assert sources["tickpick"]["error"] == "no creds"
+    assert sources["tickpick"]["origin"] == "sql"
+    assert sources["tickpick"]["count"] == 0   # backed but no rows on this page
+    # Vivid stays on the API+match path until XML ingest lands.
+    assert sources["vivid"]["ok"] is False
     assert sources["vivid"]["origin"] == "api+sql-match"
+    assert sources["vivid"]["error"] == "no creds"
     # SQL rows: 2 returned, sorted newest-first by ordered_at.
     rows = body["rows"]
     assert [r["source"] for r in rows] == ["seatgeek", "evo"]
 
 
-def test_orders_enriches_tickpick_via_event_window(monkeypatch, client):
-    """When a tickpick row matches a v_event_base candidate (>=2 shared
+def test_orders_attaches_cron_freshness_per_source(monkeypatch, client):
+    """Each source chip carries a `cron` blob (jobname/schedule/active/
+    last_run/last_status) so the front-end can render 'last cron pull:
+    Xm ago · every 30m'. _fetch_cron_freshness picks the queue-phase row
+    as the canonical 'last fire'."""
+    monkeypatch.setattr(
+        d2_main, "_fetch_unified_orders_page",
+        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
+    )
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+    monkeypatch.setattr(d2_main, "_vivid_client",      lambda: None)
+    monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {
+        "evo": {
+            "jobname": "evo_orders_queue_30min",
+            "schedule": "*/30 * * * *",
+            "active": True,
+            "last_run": "2026-05-13T22:30:00Z",
+            "last_status": "succeeded",
+        },
+        "tickpick": {
+            "jobname": "tickpick_orders_queue_30min",
+            "schedule": "*/30 * * * *",
+            "active": True,
+            "last_run": None,
+            "last_status": None,
+        },
+    })
+    sources = {s["source"]: s for s in client.get("/api/d2/orders").json()["sources"]}
+    assert sources["evo"]["cron"]["jobname"] == "evo_orders_queue_30min"
+    assert sources["evo"]["cron"]["schedule"] == "*/30 * * * *"
+    assert sources["evo"]["cron"]["last_run"] == "2026-05-13T22:30:00Z"
+    assert sources["tickpick"]["cron"]["jobname"] == "tickpick_orders_queue_30min"
+    assert sources["tickpick"]["cron"]["last_run"] is None
+    # Vivid has no cron job mapped → cron blob is None.
+    assert sources["vivid"]["cron"] is None
+
+
+def test_orders_enriches_vivid_via_event_window(monkeypatch, client):
+    """When a vivid API row matches a v_event_base candidate (>=2 shared
     tokens + date within 12h), the row gets the canonical event_name +
     tevo_event_id stitched in, so it joins cleanly with SQL rows in the
-    table."""
+    table. Vivid is the only source still on the API+match path after
+    tickpick joined unified_orders (2026-05-13)."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
         lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
@@ -251,25 +290,23 @@ def test_orders_enriches_tickpick_via_event_window(monkeypatch, client):
         {"tevo_event_id": 9002, "event_name": "Some Other Concert",
          "event_at_utc": "2026-12-16T23:00:00", "event_at_local": "2026-12-16T18:00:00-05:00"},
     ])
+    monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
 
-    class FakeTickpick:
-        def list_orders(self):
-            # Tickpick names are usually less verbose than v_event_base, but
-            # the matcher should find "knicks" + "lakers" shared tokens.
+    class FakeVivid:
+        def list_active_orders(self):
             return [{
-                "orderId": "T-77", "eventName": "Knicks at Lakers",
+                "orderId": "V-77", "event": "Knicks at Lakers",
                 "eventDate": "2026-12-15T23:30:00Z",
-                "status": "unfulfilled", "quantity": 2,
+                "status": "PENDING_SHIPMENT", "quantity": "2",
             }]
 
-    monkeypatch.setattr(d2_main, "_tickpick_client", lambda: FakeTickpick())
-    monkeypatch.setattr(d2_main, "_vivid_client",    lambda: None)
+    monkeypatch.setattr(d2_main, "_vivid_client", lambda: FakeVivid())
 
     body = client.get("/api/d2/orders").json()
-    tp_rows = [r for r in body["rows"] if r["source"] == "tickpick"]
-    assert len(tp_rows) == 1
-    row = tp_rows[0]
-    # Canonical event info from v_event_base overlaid on the tickpick row.
+    v_rows = [r for r in body["rows"] if r["source"] == "vivid"]
+    assert len(v_rows) == 1
+    row = v_rows[0]
+    # Canonical event info from v_event_base overlaid on the vivid row.
     assert row["event_name"].startswith("Knicks vs Lakers")
     assert row["tevo_event_id"] == 9001
     assert row.get("event_origin") == "matched"

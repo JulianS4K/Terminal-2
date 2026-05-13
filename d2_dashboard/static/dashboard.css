@@ -107,6 +107,22 @@ main { padding: 16px 20px; }
 }
 .chip-origin-sql { background: rgba(63, 185, 80, 0.18);  color: var(--ok); }
 .chip-origin-api { background: rgba(88, 166, 255, 0.18); color: var(--accent); }
+.source-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.cron-meta {
+  font-size: 10px;
+  color: var(--muted);
+  padding-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.cron-meta.cron-stale {
+  color: var(--warn);
+}
+.cron-meta.cron-stale::before { content: "⚠ "; }
 .orders-filters {
   flex-wrap: wrap;
   gap: 16px;

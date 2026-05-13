@@ -518,16 +518,43 @@ def _to_float(v: Any) -> float | None:
 # ---------- SQL-backed fetchers ----------
 
 # Sources mirrored to public.unified_orders by an upstream cron. /api/d2/orders
-# pulls these from SQL with no broker-API call. Tickpick + Vivid don't have
-# unified_orders backing yet, so they hit their upstream APIs directly and
-# get enriched against v_event_base via fuzzy match (see _match_event below).
-_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata"})
+# pulls these from SQL with no broker-API call. Vivid is still on the API+match
+# path (XML ingest needs an edge function — separate ticket).
+_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata", "tickpick"})
 
 # Sources the dashboard pulls via direct API call, enriched with canonical
 # event info from v_event_base. Stopgap until persistence cron ships.
-_API_BACKED_SOURCES = ("tickpick", "vivid")
+_API_BACKED_SOURCES = ("vivid",)
 
 _ALL_SOURCES = ("evo", "seatgeek", "seatdata", "tickpick", "vivid")
+
+
+def _fetch_cron_freshness() -> dict[str, dict]:
+    """Call public.d2_cron_freshness() and reduce to one row per source —
+    preferring the 'queue' phase as the canonical 'when did the upstream
+    pull last fire.' Returns empty dict when Supabase isn't configured.
+
+    Shape per source: {jobname, phase, schedule, active, last_run, last_status}.
+    Front-end uses last_run + schedule to render 'last pull: 12m ago · every 30m'."""
+    sb = _sb()
+    if sb is None:
+        return {}
+    try:
+        res = sb.rpc("d2_cron_freshness").execute()
+        rows = res.data or []
+        by_source: dict[str, dict] = {}
+        for r in rows:
+            src = r.get("source")
+            if not src:
+                continue
+            # Prefer the queue-phase row; fall back to whatever's available.
+            if src not in by_source or r.get("phase") == "queue":
+                by_source[src] = r
+        return by_source
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] cron freshness pull failed: {e!r}", file=_sys.stderr, flush=True)
+        return {}
 
 
 def _pull_event_window(days_back: int = 1, days_forward: int = 120) -> list[dict]:
@@ -1102,15 +1129,17 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
     per_page = max(1, min(per_page, 100))
     page = max(1, page)
 
+    # Tickpick now ships from SQL via the new persistence cron; vivid stays
+    # on the upstream-API+v_event_base-match path until XML ingest lands.
     with ThreadPoolExecutor(max_workers=4) as ex:
         sql_future       = ex.submit(_fetch_unified_orders_page, per_page, page)
         events_future    = ex.submit(_pull_event_window)
-        tickpick_future  = ex.submit(_fetch_tickpick, per_page, page)
         vivid_future     = ex.submit(_fetch_vivid,    per_page, page)
+        cron_future      = ex.submit(_fetch_cron_freshness)
         bundle           = sql_future.result()
         event_window     = events_future.result()
-        tickpick_result  = tickpick_future.result()
         vivid_result     = vivid_future.result()
+        cron_by_source   = cron_future.result()
 
     if bundle is None:
         raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
@@ -1120,9 +1149,11 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
     per_source_as_of = dict(bundle.get("per_source_as_of") or {})
     sql_err = bundle.get("error")
 
-    # Stitch in tickpick + vivid API rows, enriching each with the best
-    # v_event_base match (canonical event_name + tevo_event_id) when found.
-    api_results = {"tickpick": tickpick_result, "vivid": vivid_result}
+    # Stitch in vivid API rows (no SQL backing yet), enriched against
+    # v_event_base via fuzzy match. Tickpick is now SQL-backed via the
+    # tickpick_orders_queue/process cron, so it flows through the
+    # unified_orders pull above.
+    api_results = {"vivid": vivid_result}
     for src, result in api_results.items():
         if result.get("ok"):
             enriched = [_enrich_row_with_event(dict(r), event_window) for r in (result.get("rows") or [])]
@@ -1131,6 +1162,14 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
 
     sources_summary = []
     for src in _ALL_SOURCES:
+        cron_info = cron_by_source.get(src) or {}
+        cron_blob = {
+            "jobname":     cron_info.get("jobname"),
+            "schedule":    cron_info.get("schedule"),
+            "active":      cron_info.get("active"),
+            "last_run":    cron_info.get("last_run"),
+            "last_status": cron_info.get("last_status"),
+        } if cron_info else None
         if src in _SQL_BACKED_SOURCES:
             sources_summary.append({
                 "source": src,
@@ -1140,6 +1179,7 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
                 "error": sql_err,
                 "origin": "sql",
                 "as_of": per_source_as_of.get(src),
+                "cron": cron_blob,
             })
         else:
             api_r = api_results.get(src, {})
@@ -1151,6 +1191,7 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
                 "error": api_r.get("error"),
                 "origin": "api+sql-match",
                 "as_of": None,
+                "cron": cron_blob,   # None for sources without a cron job
             })
 
     rows.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
