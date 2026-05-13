@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>D2 Orders Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --err: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 {
+      font-size: 16px;
+      margin: 0;
+      font-weight: 600;
+    }
+    .who {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    button {
+      font-family: inherit;
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button[disabled] { opacity: 0.5; cursor: default; }
+    main { padding: 16px 20px; }
+    .login {
+      max-width: 360px;
+      margin: 80px auto;
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      text-align: center;
+    }
+    .login h2 { font-size: 18px; margin: 0 0 4px; }
+    .login p { font-size: 13px; color: var(--muted); margin: 0 0 20px; }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .tab {
+      padding: 8px 16px;
+      border-radius: 4px 4px 0 0;
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: none;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .tab.active {
+      color: var(--text);
+      border-color: var(--border);
+      background: var(--panel);
+      margin-bottom: -1px;
+    }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .sources-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+    .chip {
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    .chip.ok { border-color: var(--ok); }
+    .chip.err { border-color: var(--err); color: var(--err); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+    }
+    td.source { font-weight: 600; }
+    td.source.evo { color: #f0883e; }
+    td.source.seatgeek { color: #58a6ff; }
+    td.source.tickpick { color: #bc8cff; }
+    td.source.vivid { color: #56d364; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--muted);
+    }
+    pre.json {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 11px;
+      overflow: auto;
+      max-height: 60vh;
+    }
+    .err-text { color: var(--err); }
+    .spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<div id="app-root">
+  <div class="empty"><span class="spinner"></span> bootstrapping...</div>
+</div>
+
+<script type="module">
+  // Bootstrap: fetch SUPABASE_URL + ANON_KEY from /api/d2/config-public (no
+  // secrets — anon key is designed to be exposed). Then load the Supabase JS
+  // SDK and wire the login flow.
+  const root = document.getElementById("app-root");
+
+  function render(html) { root.innerHTML = html; }
+
+  function escapeHtml(s) {
+    if (s == null) return "";
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatDate(iso) {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return escapeHtml(iso);
+      return d.toISOString().replace("T", " ").replace(/\..+$/, "Z");
+    } catch (e) {
+      return escapeHtml(iso);
+    }
+  }
+
+  function formatAmount(amount, currency) {
+    if (amount == null) return "";
+    const num = Number(amount).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return currency ? `${num} ${escapeHtml(currency)}` : num;
+  }
+
+  let SB = null;             // supabase client instance (null when AUTH_BYPASS)
+  let SESSION = null;        // current session (with access_token); null when AUTH_BYPASS
+  let AUTH_BYPASS = false;   // server reports auth_disabled — skip login + bearer
+
+  async function bootstrap() {
+    let cfg;
+    try {
+      const r = await fetch("/api/d2/config-public");
+      if (!r.ok) throw new Error(`config-public ${r.status}`);
+      cfg = await r.json();
+    } catch (e) {
+      render(`<div class="login"><h2>Boot error</h2><p class="err-text">${escapeHtml(e.message)}</p></div>`);
+      return;
+    }
+    AUTH_BYPASS = !!cfg.auth_disabled;
+    if (AUTH_BYPASS) {
+      // Server has AUTH_DISABLED=true (testing). Skip Supabase entirely.
+      renderDashboard(cfg.allowed_email_domain);
+      return;
+    }
+    if (!cfg.supabase_url || !cfg.supabase_anon_key) {
+      render(`<div class="login"><h2>Server misconfigured</h2><p>SUPABASE_URL / SUPABASE_ANON_KEY not set on the server.</p></div>`);
+      return;
+    }
+    // Dynamic import of supabase-js from CDN.
+    const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+    SB = createClient(cfg.supabase_url, cfg.supabase_anon_key);
+
+    const { data: { session } } = await SB.auth.getSession();
+    SESSION = session;
+    if (!SESSION) {
+      renderLogin(cfg.allowed_email_domain);
+    } else {
+      renderDashboard(cfg.allowed_email_domain);
+    }
+    SB.auth.onAuthStateChange((_event, s) => {
+      SESSION = s;
+      if (!SESSION) renderLogin(cfg.allowed_email_domain);
+      else renderDashboard(cfg.allowed_email_domain);
+    });
+  }
+
+  function renderLogin(domain) {
+    render(`
+      <div class="login">
+        <h2>D2 Orders Dashboard</h2>
+        <p>Sign in with your @${escapeHtml(domain)} Google account.</p>
+        <button id="btn-google">Sign in with Google</button>
+      </div>
+    `);
+    document.getElementById("btn-google").addEventListener("click", async () => {
+      const { error } = await SB.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin + "/" },
+      });
+      if (error) alert(error.message);
+    });
+  }
+
+  function renderDashboard(domain) {
+    const email = AUTH_BYPASS
+      ? "auth disabled (testing)"
+      : ((SESSION && SESSION.user && SESSION.user.email) || "");
+    const signoutBtn = AUTH_BYPASS
+      ? ""
+      : `<button id="btn-signout">Sign out</button>`;
+    render(`
+      <header>
+        <h1>D2 Orders Dashboard</h1>
+        <div>
+          <span class="who">${escapeHtml(email)}</span>
+          <button id="btn-refresh" style="margin-left:8px;">Refresh</button>
+          ${signoutBtn}
+        </div>
+      </header>
+      <main>
+        <div class="tabs">
+          <button class="tab active" data-tab="orders">Orders</button>
+          <button class="tab" data-tab="seatdata">SeatData</button>
+        </div>
+        <section id="panel-orders" class="panel active">
+          <div class="sources-bar" id="sources-bar"><span class="chip">loading...</span></div>
+          <div id="orders-table-wrap"><div class="empty"><span class="spinner"></span> fetching orders...</div></div>
+        </section>
+        <section id="panel-seatdata" class="panel">
+          <div id="seatdata-wrap"><div class="empty">not loaded yet</div></div>
+        </section>
+      </main>
+    `);
+    document.querySelectorAll(".tab").forEach((el) => {
+      el.addEventListener("click", () => activateTab(el.dataset.tab));
+    });
+    document.getElementById("btn-refresh").addEventListener("click", () => {
+      loadOrders();
+      if (document.querySelector(".tab.active").dataset.tab === "seatdata") loadSeatData();
+    });
+    if (!AUTH_BYPASS) {
+      document.getElementById("btn-signout").addEventListener("click", async () => {
+        await SB.auth.signOut();
+      });
+    }
+    loadOrders();
+  }
+
+  function activateTab(name) {
+    document.querySelectorAll(".tab").forEach((el) =>
+      el.classList.toggle("active", el.dataset.tab === name)
+    );
+    document.querySelectorAll(".panel").forEach((el) =>
+      el.classList.toggle("active", el.id === `panel-${name}`)
+    );
+    if (name === "seatdata") loadSeatData();
+  }
+
+  async function authedFetch(path) {
+    const headers = {};
+    if (!AUTH_BYPASS) {
+      if (!SESSION) throw new Error("no session");
+      headers.Authorization = `Bearer ${SESSION.access_token}`;
+    }
+    const r = await fetch(path, { headers });
+    if (!r.ok) {
+      const text = await r.text();
+      throw new Error(`${path} → HTTP ${r.status}: ${text.slice(0, 200)}`);
+    }
+    return r.json();
+  }
+
+  async function loadOrders() {
+    const wrap = document.getElementById("orders-table-wrap");
+    const bar = document.getElementById("sources-bar");
+    wrap.innerHTML = `<div class="empty"><span class="spinner"></span> fetching orders...</div>`;
+    bar.innerHTML = `<span class="chip">loading...</span>`;
+    let body;
+    try {
+      body = await authedFetch("/api/d2/orders?per_page=50");
+    } catch (e) {
+      wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
+      bar.innerHTML = "";
+      return;
+    }
+    bar.innerHTML = (body.sources || [])
+      .map((s) => {
+        const cls = s.ok ? "chip ok" : "chip err";
+        const detail = s.ok
+          ? `${s.count} row${s.count === 1 ? "" : "s"}` + (s.total_reported != null ? ` / ${s.total_reported} total` : "")
+          : (s.error || "error");
+        return `<span class="${cls}"><strong>${escapeHtml(s.source)}</strong> · ${escapeHtml(detail)}</span>`;
+      })
+      .join("");
+    const rows = body.rows || [];
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty">No orders across any source.</div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Order ID</th>
+            <th>Event</th>
+            <th>Event Date</th>
+            <th class="num">Qty</th>
+            <th>Status</th>
+            <th class="num">Amount</th>
+            <th>Ordered At</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((r) => `
+            <tr>
+              <td class="source ${escapeHtml(r.source)}">${escapeHtml(r.source)}</td>
+              <td>${escapeHtml(r.order_id)}</td>
+              <td>${escapeHtml(r.event_name || "")}</td>
+              <td>${formatDate(r.event_date)}</td>
+              <td class="num">${r.qty != null ? escapeHtml(String(r.qty)) : ""}</td>
+              <td>${escapeHtml(r.status || "")}</td>
+              <td class="num">${formatAmount(r.amount, r.currency)}</td>
+              <td>${formatDate(r.ordered_at)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  async function loadSeatData() {
+    const wrap = document.getElementById("seatdata-wrap");
+    wrap.innerHTML = `<div class="empty"><span class="spinner"></span> fetching seatdata...</div>`;
+    let body;
+    try {
+      body = await authedFetch("/api/d2/seatdata");
+    } catch (e) {
+      wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    wrap.innerHTML = `<pre class="json">${escapeHtml(JSON.stringify(body, null, 2))}</pre>`;
+  }
+
+  bootstrap();
+</script>
+
+</body>
+</html>
