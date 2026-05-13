@@ -1,93 +1,68 @@
 %% bot-hierarchy.mermaid — Terminal-2 bot command structure
 %%
+%% Refreshed 2026-05-13. See BOT_HIERARCHY.md for the canonical chart;
+%% this file is the visual companion (kept current with the same data).
+%%
 %% ====================================================================
-%% IN-FLIGHT HANDOFF — A1 -> B1 · 2026-05-10 · "security chat" session
+%% Current lane roster (bot_chat rows 50-58, 2026-05-12)
 %% ====================================================================
 %%
-%% Security audit completed by A1 (Primary/Audit/Push Bot). 16 findings
-%% filed under "SECURITY BACKLOG" in KANBAN.md on branch
-%% claude/review-supabase-access-v8Dtl (PR #57, draft).
+%%   A1 - Audit / Push (Admin)              admin           prod pusher
+%%   B1 - Security Manager                  security        CRIT-only prod
+%%   C1 - Canonical (Data + Chat super)     supervisor      preview only
+%%   D0 - Terminal FE (RO reference)        data-collection
+%%   D1 - Consumer Retail + Render owner    data-collection
+%%   D2 - Order Clients (orders, no list.)  data-collection
+%%   D3 - Broadway Scraper (sub of D2)      data-collection
+%%   D4 - Ticketing infra (AR codes)        UNASSIGNED
 %%
-%% Passing UP to B1 (Security Manager Bot) for triage + delegation —
-%% B1 is the chart's chartered security role; S1->B1 audit-feed already
-%% exists, so this is in-protocol.
+%% Two hard rules surface from this hierarchy:
+%%   1) Only A1 pushes prod DB / merges to main. B1 for CRIT security only.
+%%   2) Render workspace is D1-exclusive. D0/D2/D3/D4 may NOT push to Render.
 %%
-%% B1's delegation map (which executing bot owns each entry):
-%%
-%%   SEC-CRIT: Rotate leaked CRON_SECRET + redact         -> A1
-%%   SEC-CRIT: Rotate coworker_readonly password          -> A1
-%%   SEC-CRIT: Auth on /api/store/share* POST/DEL/list    -> P1
-%%   SEC-CRIT: Fix fail-open CRON_SECRET (app + edge)     -> A1 + C1
-%%   SEC-CRIT: DOM-XSS in static/store/store.js           -> P1
-%%   SEC-HIGH: SET search_path on 3 DEFINER funcs         -> A1
-%%   SEC-HIGH: RLS coverage audit (~120 tables)           -> A1 (B1 signs off)
-%%   SEC-HIGH: Verify Supabase network restrictions       -> A1
-%%   SEC-HIGH: chat edge fn CORS + rate-limit             -> C1
-%%   SEC-HIGH: Move anon JWT out of cron migrations       -> A1
-%%   SEC-HIGH: Replace AUTH_DISABLED kill-switch          -> A1
-%%   SEC-HIGH: Auth-gate 5 unauth'd edge fns              -> C1
-%%   SEC-MED:  CSP + CORS middleware                      -> A1 + P1
-%%   SEC-MED:  Constant-time secret compare               -> A1 + C1
-%%   SEC-MED:  Rate limit /api/store/*                    -> A1 + P1
-%%   SEC-MED:  Bound numeric params in store.js           -> P1
-%%   SEC-LOW:  SRI + clickjacking on retail HTML          -> P1
-%%   SEC-LOW:  Document get_app_secret whitelist          -> B1
-%%
-%% Recommended order: rotate CRON_SECRET first — unblocks safe deploys
-%% for the rest of the backlog (several follow-up fixes need the env in
-%% place first).
-%%
-%% NOT recipients of any entry: S1, S2, S3, D1, D2 — no findings landed
-%% in their surfaces.
-%%
-%% Carrier: PR #57 (https://github.com/JulianS4K/Terminal-2/pull/57)
+%% Sidecar canonical: D2 will NOT add parallel tevo_event_id write paths.
+%% C1 owns *_resolved sidecars. Operator decision 2026-05-12, bot_chat #64.
 %% ====================================================================
 
 graph TD
     subgraph CONTROL[Command & Control]
-        A1[Primary/Audit/Push Bot<br/>Admin<br/>handoff sent -> B1 via PR #57]
-        B1[Security Manager Bot<br/>Manager<br/>INBOX: SECURITY BACKLOG · 16 entries]
-        C1[Data + Chat Bot<br/>Supervisor]
-
+        A1[A1<br/>Audit / Push - Admin<br/>sole prod pusher]
+        B1[B1<br/>Security Manager<br/>CRIT-only prod push]
+        C1[C1<br/>Canonical / Data + Chat<br/>supervisor - preview only]
         A1 --> B1
         B1 --> C1
     end
 
-    subgraph PRIMARY[Primary Sales Environment]
-        P1[Retail Ticket System Bot<br/>Front & Back - Admin]
+    subgraph DATA[Data-Collection Lanes - under C1]
+        D0[D0<br/>Terminal FE<br/>RO reference + prediction]
+        D1[D1<br/>Consumer Retail<br/>SOLE Render owner]
+        D2[D2<br/>Order Clients<br/>orders only - no listings]
+        D3[D3<br/>Broadway Scraper<br/>sub of D2]
+        D4[D4<br/>Our Ticketing Infra<br/>UNASSIGNED]
+        D2 --> D3
     end
 
-    subgraph SECONDARY[Secondary Sales Environment]
-        S1[Terminal Front End Bot<br/>Design & Implementation<br/>audit-datasets-schemas-auoc3]
-        S2[Retail Search Evo Front End Bot<br/>Design & Implementation]
-        S3[Undelivered Front End Bot<br/>Design & Implementation<br/>assigned: review-unified-order-suite-FA0qA / PR #56]
-    end
+    C1 --> D0
+    C1 --> D1
+    C1 --> D2
+    C1 --> D4
 
-    subgraph DATA[Data Collection]
-        D1[Broadway Scraper Bot<br/>Data Scraping]
-        D2[TickPick + Vivid Order Clients<br/>Read-only API Pulls<br/>RULE 2 bucket: Evo / SG / TP / VIV]
-    end
+    A1 -.->|reviews + pushes<br/>all prod changes| C1
+    A1 -.->|reviews + pushes| B1
 
-    C1 --> PRIMARY
-    C1 --> SECONDARY
-    C1 --> DATA
+    D1 -.->|Render workspace<br/>EXCLUSIVE| D1RNDR((Render))
+    D2 -.->|writes raw orders;<br/>C1 resolves to<br/>*_resolved sidecar| C1
 
-    D1 -.->|feeds data| S1
-    D2 -.->|unfulfilled / pending<br/>shipment orders| S3
-    A1 -.->|event_xref writes<br/>cascade via S1's<br/>drift triggers| S1
-    S1 -.->|audit views<br/>drift reports| B1
-    A1 ==>|2026-05-10 security audit<br/>16 backlog entries<br/>PR #57| B1
-
-    classDef adminClass fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:3px
-    classDef managerClass fill:#4c6ef5,stroke:#364fc7,color:#fff,stroke-width:3px
-    classDef supervisorClass fill:#51cf66,stroke:#2f9e44,color:#fff,stroke-width:3px
-    classDef primaryClass fill:#ff8787,stroke:#fa5252,color:#fff,stroke-width:2px
-    classDef secondaryClass fill:#ffd43b,stroke:#fab005,color:#000,stroke-width:2px
-    classDef dataClass fill:#74c0fc,stroke:#339af0,color:#000,stroke-width:2px
+    classDef adminClass     fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:3px
+    classDef securityClass  fill:#4c6ef5,stroke:#364fc7,color:#fff,stroke-width:3px
+    classDef supervClass    fill:#51cf66,stroke:#2f9e44,color:#fff,stroke-width:3px
+    classDef dataClass      fill:#74c0fc,stroke:#339af0,color:#000,stroke-width:2px
+    classDef unassignedCl   fill:#dee2e6,stroke:#868e96,color:#000,stroke-width:1px,stroke-dasharray: 5 5
+    classDef extClass       fill:#fff3bf,stroke:#fab005,color:#000,stroke-width:2px
 
     class A1 adminClass
-    class B1 managerClass
-    class C1 supervisorClass
-    class P1 primaryClass
-    class S1,S2,S3 secondaryClass
-    class D1,D2 dataClass
+    class B1 securityClass
+    class C1 supervClass
+    class D0,D1,D2,D3 dataClass
+    class D4 unassignedCl
+    class D1RNDR extClass
