@@ -5237,38 +5237,18 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
     is unchanged. inventory_source reflects 'snapshot' + adds
     snapshot_age_seconds so the demo banner can show staleness honestly.
 
-    Lifecycle gate: events flagged `is_active=false` by event_lifecycle
-    (ghost_eliminated, cancelled, postponed, completed) 404 by default —
-    same policy as the catalog, applied to direct hits and share-link
-    resolution. Set include_inactive=true to bypass for admin/debug paths.
+    MVP prod checkpoint (2026-05-13): the SQL `event_lifecycle` gate was
+    removed. Rationale: the catalog now filters by office_id at TEvo, so
+    only events our office has inventory for ever surface. The gate was
+    a defensive measure against ghost playoff rows + cancelled-but-still-
+    listed games; with office_id, those edge cases are rare AND the
+    broker terminal is the right place to manage stale listings, not the
+    public detail page. Lifting the gate also fixes a real inconsistency
+    where catalog showed a TBD playoff game (TEvo had inventory) but
+    detail 404'd (audit SQL had marked it 'completed' when the series
+    ended without that game). Set include_inactive=true is now a no-op
+    kept for callsite compatibility.
     """
-    # Bail early on inactive events so we don't show ghost/cancelled inventory
-    # to the public. event_lifecycle is the audit lane's canonical truth on
-    # whether an event is still "alive" — TEvo keeps returning ghost rows
-    # with stale prices long after a team is eliminated. Catalog already
-    # filters this; doing it here closes the direct-URL bypass.
-    if not include_inactive and sb is not None:
-        try:
-            lc = (
-                sb.table("event_lifecycle")
-                .select("status,is_active")
-                .eq("event_id", event_id)
-                .limit(1)
-                .execute()
-            ).data or []
-            if lc and lc[0].get("is_active") is False:
-                status = lc[0].get("status") or "inactive"
-                raise HTTPException(
-                    404,
-                    f"event {event_id} is {status}; not shown by default",
-                )
-        except HTTPException:
-            raise
-        except Exception:
-            # event_lifecycle view missing in some envs; better to fall
-            # through than to 500 the storefront.
-            pass
-
     snapshot_captured_at: str | None = None
     if STOREFRONT_SQL_ONLY:
         ev = _fetch_event_from_db(event_id)
