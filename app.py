@@ -4000,6 +4000,45 @@ def _ticket_group_to_listing(tg: dict) -> dict:
     }
 
 
+@app.get("/api/store/_probe_owned")
+def store_probe_owned():
+    """TEMP probe: try several owned-only filter syntaxes against TEvo
+    /v9/events and report which ones server-side filter to we-own only.
+    Removed once we've picked the winner."""
+    if client is None:
+        raise HTTPException(503, "TEvo client not configured")
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    variants = [
+        ("baseline", {}),
+        ("owned_by_office=true", {"owned_by_office": True}),
+        ("owned=true", {"owned": True}),
+        ("only_with_owned_tickets=true", {"only_with_owned_tickets": True}),
+    ]
+    report = {}
+    for label, extra in variants:
+        try:
+            resp = client.list_events(
+                occurs_at_gte=today_iso,
+                only_with_available_tickets=True,
+                order_by="events.occurs_at ASC",
+                per_page=50,
+                page=1,
+                **extra,
+            )
+            events = resp.get("events", []) or []
+            we_own = sum(1 for e in events if e.get("owned_by_office"))
+            report[label] = {
+                "ok": True,
+                "total_entries": resp.get("total_entries"),
+                "events_returned": len(events),
+                "we_own_count": we_own,
+                "we_own_pct": (round(we_own / len(events) * 100, 1) if events else None),
+            }
+        except RuntimeError as e:
+            report[label] = {"ok": False, "error": str(e)}
+    return report
+
+
 @app.get("/api/store/events")
 def store_events(
     q: str | None = None,
