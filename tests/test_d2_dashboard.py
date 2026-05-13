@@ -31,6 +31,17 @@ from fastapi.testclient import TestClient
 from d2_dashboard import main as d2_main
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _cleanup_d2_env_after_module():
+    """Restore env + module state after this test module finishes so a later
+    test module importing `d2_dashboard.main` doesn't inherit AUTH_DISABLED=true."""
+    yield
+    os.environ.pop("AUTH_DISABLED", None)
+    # Module is already imported; reset the constant on the loaded module so
+    # any test relying on `d2_main.AUTH_DISABLED` sees the default after teardown.
+    d2_main.AUTH_DISABLED = False
+
+
 @pytest.fixture
 def client(monkeypatch):
     return TestClient(d2_main.app)

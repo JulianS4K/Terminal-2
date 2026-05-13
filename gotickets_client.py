@@ -79,8 +79,14 @@ class GoTicketsClient:
         }
         clean = {k: v for k, v in (params or {}).items() if v is not None}
         # Retry-After honoring backoff for 429/503; mirrors tickpick_client._get.
+        # Network failures (ConnectionError / Timeout) re-raised as GoTicketsError
+        # so callers see one consistent exception class at the module boundary.
+        r = None
         for attempt in range(5):
-            r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
+            try:
+                r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                raise GoTicketsError(f"network error: {type(e).__name__}") from e
             if r.status_code in (429, 503) and attempt < 4:
                 retry_after = r.headers.get("Retry-After")
                 try:
