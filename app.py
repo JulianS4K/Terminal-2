@@ -4045,13 +4045,18 @@ def store_events(
     raw_events: list[dict] = []
     try:
         for p in range(start_page, start_page + pages_needed):
+            # order_by uses the same syntax as the broker /api/events route
+            # ("table.column DIRECTION"). The simpler "occurs_at asc" form
+            # is rejected by TEvo with a non-2xx that bubbles back as
+            # "no response" because of the __bool__ quirk in evo_client's
+            # warning logger. Stick with the verified pattern.
             resp = client.list_events(
                 q=q or None,
                 performer_id=performer_id,
                 venue_id=venue_id,
                 occurs_at_gte=today_iso,
                 only_with_available_tickets=True,
-                order_by="occurs_at asc",
+                order_by="events.occurs_at ASC",
                 per_page=per_page,
                 page=p,
             )
