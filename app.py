@@ -4009,183 +4009,118 @@ def store_events(
     offset: int = 0,
     include_inactive: bool = False,
 ):
-    """Catalog: events for which we have owned inventory in TEvo.
+    """Catalog: upcoming events from TEvo /v9/events (MVP pass-through).
 
-    Driven by Supabase `latest_event_metrics` (collector populates
-    owned_tickets_count via /v9/ticket_groups?owned=true on every run).
+    Pulls directly from the TEvo API — no Supabase joins. Cards carry
+    raw TEvo metadata: id, name, venue, occurs_at_local, primary performer.
+    The Supabase enrichment layer (we_own flag, from_price, performer logos
+    / brand colors, rivalry / MLB-series / tournament / weather / holiday
+    / playoff badges) is intentionally OMITTED in this build — the front
+    end null-checks every enrichment key so cards still render cleanly.
 
-    Wiring:
-    - Filtered by `event_lifecycle.is_active` so ghosts / completed /
-      postponed events are dropped (set include_inactive=true to bypass).
-    - Performer assets (logos / brand colors) bulk-fetched from
-      performer_metadata so cards can render branding without N+1.
-    - Search is in-Python over the already-narrowed result set; cheap
-      because the DB query already caps at limit×2 candidate rows.
+    Ownership and pricing are revealed on the detail page
+    (/api/store/events/:id), which hits /v9/ticket_groups?owned=true.
+
+    Pagination: TEvo caps per_page at 100; this handler pages through
+    enough TEvo pages to fill the requested `limit` (max 500 → up to
+    5 TEvo calls, ~1-2s warm).
+
+    Args mirror the prior shape so the front-end + share-link routes
+    don't need to change. `include_inactive` is kept as a no-op for
+    callsite compatibility (TEvo's only_with_available_tickets already
+    drops most stale events; CANCELLED markers are filtered by name).
     """
-    db = require_sb()
-    # Cap raised from 200 -> 500 so consumer search pages can cover the full
-    # owned-inventory set in one fetch. Prod has ~270 events with owned
-    # tickets at any given time; capping at 200 was leaving ~25% invisible
-    # to anyone searching by performer name on the storefront. Pagination
-    # is the next step if the catalog grows past ~500.
+    if client is None:
+        # SQL-only demo mode boots without TEvo. MVP catalog requires it.
+        raise HTTPException(503, "TEvo client not configured")
+
     cap = min(max(limit, 1), 500)
+    # offset → TEvo page index. TEvo paginates 1-based.
+    per_page = min(cap, 100)
+    start_page = (max(offset, 0) // per_page) + 1
+    pages_needed = (cap + per_page - 1) // per_page
 
-    # Pull a wider candidate set so we can post-filter by lifecycle + search
-    # and still serve a full page.
-    candidate_limit = min(cap * 2, 1000) if not include_inactive else cap
+    today_iso = datetime.now(timezone.utc).date().isoformat()
 
-    # Events-first two-query merge (was `events!inner(...)` embedding,
-    # which PostgREST PGRST200s on view→table FK after cache rebuilds).
-    #
-    # Always start from `events` filtered to upcoming so we don't waste
-    # candidate slots on yesterday's games. Step 1: pull `events` ordered
-    # by occurs_at_local (with optional performer/venue filter). Step 2:
-    # join `latest_event_metrics` for owned-only. Step 3: merge in Python.
-    #
-    # Over-pull events by 3x so we have headroom after the owned filter
-    # narrows the set. include_inactive=true skips the upcoming filter
-    # (debug / admin only).
-    evs_q = db.table("events").select(
-        "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-        "primary_performer_id,primary_performer_name"
-    )
-    if not include_inactive:
-        # "Today or later" — local-time strings sort correctly here.
-        evs_q = evs_q.gte("occurs_at_local", datetime.now(timezone.utc).date().isoformat())
-    if performer_id is not None:
-        evs_q = evs_q.eq("primary_performer_id", int(performer_id))
-    if venue_id is not None:
-        evs_q = evs_q.eq("venue_id", int(venue_id))
-    evs_q = evs_q.order("occurs_at_local", desc=False).limit(candidate_limit * 3)
-    events_rows = (evs_q.execute().data) or []
-    if not events_rows:
-        return {"count": 0, "events": [], "limit": cap, "offset": offset}
-    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
-    event_ids = list(events_by_id.keys())
+    raw_events: list[dict] = []
+    try:
+        for p in range(start_page, start_page + pages_needed):
+            resp = client.list_events(
+                q=q or None,
+                performer_id=performer_id,
+                venue_id=venue_id,
+                occurs_at_gte=today_iso,
+                only_with_available_tickets=True,
+                order_by="occurs_at asc",
+                per_page=per_page,
+                page=p,
+            )
+            batch = resp.get("events", []) or []
+            if not batch:
+                break
+            raw_events.extend(batch)
+            if len(raw_events) >= cap:
+                break
+            # Stop early if we've hit the total.
+            total = int(resp.get("total_entries") or 0)
+            if total and len(raw_events) >= total:
+                break
+    except RuntimeError as e:
+        raise HTTPException(502, f"TEvo events fetch failed: {e}")
 
-    # Owned-only metrics for those event ids.
-    metrics_rows = (
-        db.table("latest_event_metrics")
-        .select("event_id,owned_tickets_count,owned_groups_count,owned_median_retail,"
-                "tickets_count,retail_min,captured_at")
-        .gt("owned_tickets_count", 0)
-        .in_("event_id", event_ids)
-        .limit(candidate_limit)
-        .offset(max(offset, 0))
-        .execute().data
-    ) or []
-    if not metrics_rows:
-        return {"count": 0, "events": [], "limit": cap, "offset": offset}
-
-    # Merge into the row shape downstream code expects (the old !inner
-    # response: each row has a nested `events` dict).
-    rows = [{**m, "events": events_by_id.get(int(m["event_id"]))} for m in metrics_rows]
-    rows = [r for r in rows if r.get("events")]
-    # Event-list sort hierarchy (per 2026-05-12 directive):
-    #   1. date  asc   — soonest event first
-    #   2. time  asc   — earliest start within a day first
-    #   3. qty   desc  — more owned tickets ranks higher
-    #   4. listings desc — more distinct listings ranks higher
-    #   5. getin desc  — higher cheapest-price (= "premium first") ranks higher
-    #
-    # occurs_at_local is text in YYYY-MM-DDTHH:MM:SS+TZ form; lexicographic
-    # ascending comparison naturally gives correct date+time order. Desc
-    # numeric columns are negated to fit a single ascending tuple sort.
-    def _catalog_sort_key(r):
-        ev = r.get("events") or {}
-        occurs = ev.get("occurs_at_local") or "9999-12-31T23:59:59"
-        qty = -(int(r.get("owned_tickets_count") or 0))
-        listings = -(int(r.get("owned_groups_count") or 0))
-        rmin = r.get("retail_min")
-        try:
-            price = -float(rmin) if rmin is not None else 0.0
-        except (TypeError, ValueError):
-            price = 0.0
-        return (occurs, qty, listings, price)
-    rows.sort(key=_catalog_sort_key)
-
-    # Drop ghosts / completed / postponed unless caller opts in. Same
-    # pattern as broker_movers — small id-set, single roundtrip to the
-    # event_lifecycle view (over derive_event_lifecycle()).
-    if rows and not include_inactive:
-        ev_ids = [(r.get("events") or {}).get("id") for r in rows]
-        ev_ids = [e for e in ev_ids if e]
-        if ev_ids:
-            try:
-                lc_rows = (
-                    db.table("event_lifecycle")
-                    .select("event_id,status,is_active")
-                    .in_("event_id", ev_ids)
-                    .execute()
-                ).data or []
-                inactive = {r["event_id"] for r in lc_rows if not r.get("is_active")}
-                if inactive:
-                    rows = [r for r in rows
-                            if (r.get("events") or {}).get("id") not in inactive]
-            except Exception:
-                # event_lifecycle view missing in some envs; better to show
-                # everything than 500 the storefront.
-                pass
-
-    # Bulk-fetch performer assets so card branding doesn't N+1.
-    perf_ids = [(r.get("events") or {}).get("primary_performer_id") for r in rows]
-    perf_ids = [int(p) for p in perf_ids if p]
-    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
-
-    # Bulk-fetch rivalry / MLB-series / tournament context per event. Three
-    # cheap view reads → flat lookup map keyed by event_id. Each card may
-    # render zero, one, or several badges.
-    ev_ids_for_ctx = [int(e["id"]) for e in (r.get("events") or {} for r in rows) if e.get("id")]
-    ctx_by_id = _bulk_event_context(db, ev_ids_for_ctx) if ev_ids_for_ctx else {}
+    # TEvo bakes CANCELLED markers into the event name string.
+    raw_events = [
+        e for e in raw_events
+        if "CANCELLED" not in (e.get("name") or "").upper()
+    ]
+    raw_events = raw_events[:cap]
 
     out: list[dict] = []
-    needle = (q or "").strip().lower()
-    for r in rows:
-        ev = r.get("events") or {}
-        if not ev:
-            continue
-        if needle:
-            hay = " ".join(
-                str(x or "") for x in (
-                    ev.get("name"),
-                    ev.get("venue_name"),
-                    ev.get("venue_location"),
-                    ev.get("primary_performer_name"),
-                )
-            ).lower()
-            if needle not in hay:
-                continue
-        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
-        ctx = ctx_by_id.get(int(ev.get("id") or 0)) or {}
+    for ev in raw_events:
+        venue = ev.get("venue") or {}
+        # TEvo venue shape: {id, name, slug, location, time_zone,
+        #   city, state, country, ...}. `location` is "City, ST" string
+        #   on most events; fall back to city/state if absent.
+        venue_loc = venue.get("location")
+        if not venue_loc:
+            city = venue.get("city") or ""
+            state = venue.get("state") or ""
+            venue_loc = f"{city}, {state}".strip(", ") or None
+
+        performers = ev.get("performers") or []
+        primary = (
+            next((p for p in performers if p.get("primary")), None)
+            or (performers[0] if performers else {})
+        )
+
         out.append({
             "id": ev.get("id"),
             "name": ev.get("name"),
-            "occurs_at_local": ev.get("occurs_at_local"),
-            "venue_name": ev.get("venue_name"),
-            "venue_location": ev.get("venue_location"),
-            "primary_performer_name": ev.get("primary_performer_name"),
-            "primary_performer_id": ev.get("primary_performer_id"),
-            "primary_performer_logo": (a or {}).get("logo_default_url"),
-            "primary_performer_color": (a or {}).get("color_primary"),
-            # League gates the MLB "Series" tab on the catalog. Clients
-            # use this to decide whether to render the tabbed UI when the
-            # user is filtered to one performer.
-            "primary_performer_league": (a or {}).get("espn_league"),
-            "from_price": r.get("retail_min"),
-            "owned_tickets_count": r.get("owned_tickets_count"),
-            "owned_groups_count": r.get("owned_groups_count"),
-            "captured_at": r.get("captured_at"),
-            # Optional context badges — keys are always present so the client
-            # can do `if (ev.rivalry) render(...)` without ?-chaining.
-            "rivalry": ctx.get("rivalry"),
-            "mlb_series": ctx.get("mlb_series"),
-            "tournament": ctx.get("tournament"),
-            "weather": ctx.get("weather"),
-            "holiday": ctx.get("holiday"),
-            "playoff": ctx.get("playoff"),
+            # occurs_at_local has the real local offset; occurs_at is the
+            # misleading "Z"-suffixed local time. Prefer _local.
+            "occurs_at_local": ev.get("occurs_at_local") or ev.get("occurs_at"),
+            "venue_name": venue.get("name"),
+            "venue_location": venue_loc,
+            "primary_performer_name": (primary or {}).get("name"),
+            "primary_performer_id": (primary or {}).get("id"),
+            # Enrichment keys held nullable so the front-end's
+            # `if (ev.rivalry) {...}` checks stay valid. Reintroduced
+            # once raw TEvo flow is verified end-to-end.
+            "primary_performer_logo": None,
+            "primary_performer_color": None,
+            "primary_performer_league": None,
+            "from_price": None,
+            "owned_tickets_count": None,
+            "owned_groups_count": None,
+            "captured_at": None,
+            "rivalry": None,
+            "mlb_series": None,
+            "tournament": None,
+            "weather": None,
+            "holiday": None,
+            "playoff": None,
         })
-        if len(out) >= cap:
-            break
+
     return {"count": len(out), "events": out, "limit": cap, "offset": offset}
 
 
