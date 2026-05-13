@@ -188,9 +188,10 @@ def test_orders_503_when_supabase_unconfigured(monkeypatch, client):
 
 
 def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client):
-    """SQL-backed sources (evo / seatgeek / seatdata) get ok=True chips
-    with their per-source row counts. Non-SQL sources (tickpick, vivid)
-    surface ok=False with 'no sql backing' so the operator sees the gap."""
+    """SQL-backed sources (evo / seatgeek / seatdata) get origin=sql chips
+    with per-source row counts + cron freshness. Tickpick + Vivid hit
+    their upstream API and surface origin=api+sql-match — when API has
+    no creds, the chip shows the actual broker-side reason."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
         lambda n, p=1: {
@@ -208,6 +209,12 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
             "per_source_as_of": {"evo": "2026-05-13T20:35:00Z", "seatgeek": "2026-05-09T02:57:00Z"},
         },
     )
+    # Stub the event-window pull (no v_event_base candidates → tickpick/vivid
+    # rows go through without enrichment) + API clients (no creds → chips
+    # surface "no creds" not "no sql backing").
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+    monkeypatch.setattr(d2_main, "_tickpick_client",   lambda: None)
+    monkeypatch.setattr(d2_main, "_vivid_client",      lambda: None)
     body = client.get("/api/d2/orders").json()
     sources = {s["source"]: s for s in body["sources"]}
     assert set(sources) == {"evo", "seatgeek", "seatdata", "tickpick", "vivid"}
@@ -219,13 +226,53 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
     assert sources["seatgeek"]["count"] == 1
     assert sources["seatdata"]["count"] == 0   # backed but no rows on this page
     assert sources["seatdata"]["ok"] is True
-    # Not in unified_orders → operator sees the gap explicitly.
+    # API-backed: chip carries the broker-side reason for failure.
     assert sources["tickpick"]["ok"] is False
-    assert sources["tickpick"]["error"] == "no sql backing — needs persistence cron"
-    assert sources["vivid"]["ok"] is False
-    # Rows: 2 returned, sorted newest-first by ordered_at.
+    assert sources["tickpick"]["origin"] == "api+sql-match"
+    assert sources["tickpick"]["error"] == "no creds"
+    assert sources["vivid"]["origin"] == "api+sql-match"
+    # SQL rows: 2 returned, sorted newest-first by ordered_at.
     rows = body["rows"]
     assert [r["source"] for r in rows] == ["seatgeek", "evo"]
+
+
+def test_orders_enriches_tickpick_via_event_window(monkeypatch, client):
+    """When a tickpick row matches a v_event_base candidate (>=2 shared
+    tokens + date within 12h), the row gets the canonical event_name +
+    tevo_event_id stitched in, so it joins cleanly with SQL rows in the
+    table."""
+    monkeypatch.setattr(
+        d2_main, "_fetch_unified_orders_page",
+        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
+    )
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [
+        {"tevo_event_id": 9001, "event_name": "Knicks vs Lakers — Madison Square Garden",
+         "event_at_utc": "2026-12-15T23:30:00", "event_at_local": "2026-12-15T18:30:00-05:00"},
+        {"tevo_event_id": 9002, "event_name": "Some Other Concert",
+         "event_at_utc": "2026-12-16T23:00:00", "event_at_local": "2026-12-16T18:00:00-05:00"},
+    ])
+
+    class FakeTickpick:
+        def list_orders(self):
+            # Tickpick names are usually less verbose than v_event_base, but
+            # the matcher should find "knicks" + "lakers" shared tokens.
+            return [{
+                "orderId": "T-77", "eventName": "Knicks at Lakers",
+                "eventDate": "2026-12-15T23:30:00Z",
+                "status": "unfulfilled", "quantity": 2,
+            }]
+
+    monkeypatch.setattr(d2_main, "_tickpick_client", lambda: FakeTickpick())
+    monkeypatch.setattr(d2_main, "_vivid_client",    lambda: None)
+
+    body = client.get("/api/d2/orders").json()
+    tp_rows = [r for r in body["rows"] if r["source"] == "tickpick"]
+    assert len(tp_rows) == 1
+    row = tp_rows[0]
+    # Canonical event info from v_event_base overlaid on the tickpick row.
+    assert row["event_name"].startswith("Knicks vs Lakers")
+    assert row["tevo_event_id"] == 9001
+    assert row.get("event_origin") == "matched"
 
 
 def test_orders_per_page_bounds_503_passthrough_when_unconfigured(monkeypatch, client):

@@ -517,16 +517,130 @@ def _to_float(v: Any) -> float | None:
 
 # ---------- SQL-backed fetchers ----------
 
-# Sources mirrored to public.unified_orders by an upstream cron. The
-# /api/d2/orders endpoint drives entirely from this table — no direct
-# broker-API fan-out for the orders list. Sources NOT in this set surface
-# in the chip row as "no sql backing — needs persistence cron" with count=0.
+# Sources mirrored to public.unified_orders by an upstream cron. /api/d2/orders
+# pulls these from SQL with no broker-API call. Tickpick + Vivid don't have
+# unified_orders backing yet, so they hit their upstream APIs directly and
+# get enriched against v_event_base via fuzzy match (see _match_event below).
 _SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata"})
 
-# All sources the dashboard tracks. Listed in display order. Tickpick + Vivid
-# remain visible (operator knows they're on the roadmap) even with no SQL
-# persistence yet — their chip surfaces the gap explicitly.
+# Sources the dashboard pulls via direct API call, enriched with canonical
+# event info from v_event_base. Stopgap until persistence cron ships.
+_API_BACKED_SOURCES = ("tickpick", "vivid")
+
 _ALL_SOURCES = ("evo", "seatgeek", "seatdata", "tickpick", "vivid")
+
+
+def _pull_event_window(days_back: int = 1, days_forward: int = 120) -> list[dict]:
+    """Pull a window of upcoming events from v_event_base for fuzzy-matching
+    tickpick / vivid order responses to canonical tevo_event_ids. Limited
+    window so the in-Python matcher stays cheap. Empty list when Supabase
+    isn't configured."""
+    sb = _sb()
+    if sb is None:
+        return []
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    lo = (now - timedelta(days=days_back)).isoformat()
+    hi = (now + timedelta(days=days_forward)).isoformat()
+    try:
+        res = (
+            sb.table("v_event_base")
+            .select("tevo_event_id,event_name,event_at_local,event_at_utc")
+            .gte("event_at_utc", lo)
+            .lte("event_at_utc", hi)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] event window pull failed: {e!r}", file=_sys.stderr, flush=True)
+        return []
+
+
+_TOKEN_STOPWORDS = frozenset({
+    "the", "vs", "at", "and", "of", "a", "an", "in", "on", "to", "for", "with",
+    "tour", "live", "presents", "featuring", "feat", "ft",
+})
+
+
+def _tokenize_event(name: str | None) -> set[str]:
+    """Best-effort tokenization for fuzzy event matching: lowercase, split on
+    non-alphanumeric, drop stopwords + 1–2 char fragments. Same shape used
+    by the existing in-DB matcher (supabase/migrations/...phase11...)."""
+    if not name:
+        return set()
+    import re
+    toks = re.split(r"[^a-z0-9]+", name.lower())
+    return {t for t in toks if len(t) >= 3 and t not in _TOKEN_STOPWORDS}
+
+
+def _match_event(target_name: str | None, target_date: str | None, candidates: list[dict]) -> dict | None:
+    """Pick the best v_event_base candidate for a tickpick/vivid order based
+    on token overlap + date proximity. Returns None when no candidate clears
+    the heuristic floor.
+
+    Match rules (mirror the in-DB matcher's spirit, simpler):
+      - candidate event_at_utc within ±12h of target_date
+      - >=2 shared 3+char tokens, OR Jaccard similarity >= 0.5
+    Ties broken by smallest date delta."""
+    if not target_name or not candidates:
+        return None
+    target_tokens = _tokenize_event(target_name)
+    if not target_tokens:
+        return None
+    target_ts = None
+    if target_date:
+        from datetime import datetime
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
+            try:
+                target_ts = datetime.strptime(target_date.replace("Z", "+0000"), fmt)
+                break
+            except ValueError:
+                continue
+    best = None
+    best_score = (0, float("inf"))  # (-shared_tokens, date_delta_seconds)
+    for c in candidates:
+        c_tokens = _tokenize_event(c.get("event_name"))
+        if not c_tokens:
+            continue
+        shared = len(target_tokens & c_tokens)
+        jaccard = shared / max(1, len(target_tokens | c_tokens))
+        if shared < 2 and jaccard < 0.5:
+            continue
+        date_delta = float("inf")
+        if target_ts and c.get("event_at_utc"):
+            from datetime import datetime
+            try:
+                c_ts = datetime.fromisoformat(c["event_at_utc"].replace("Z", "+00:00"))
+                if c_ts.tzinfo is None:
+                    from datetime import timezone
+                    c_ts = c_ts.replace(tzinfo=timezone.utc)
+                date_delta = abs((target_ts - c_ts).total_seconds())
+                if date_delta > 12 * 3600:
+                    continue
+            except (ValueError, TypeError):
+                continue
+        score = (shared, -date_delta)
+        if score > (-best_score[0], -best_score[1]):
+            best = c
+            best_score = (shared, date_delta)
+    return best
+
+
+def _enrich_row_with_event(row: dict, event_window: list[dict]) -> dict:
+    """Look up a canonical event for a tickpick/vivid order row. When matched,
+    overlay tevo_event_id + canonical event_name/event_date so the row joins
+    cleanly with the SQL-backed sources in the same table."""
+    if not event_window:
+        return row
+    match = _match_event(row.get("event_name"), row.get("event_date"), event_window)
+    if not match:
+        return row
+    row["tevo_event_id"] = match.get("tevo_event_id")
+    row["event_name"] = match.get("event_name") or row.get("event_name")
+    row["event_date"] = match.get("event_at_local") or match.get("event_at_utc") or row.get("event_date")
+    row["event_origin"] = "matched"
+    return row
 
 
 def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
@@ -974,28 +1088,46 @@ def config_public():
 
 @app.get("/api/d2/orders")
 def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
-    """SQL-only orders feed (2026-05-13: operator switched from per-source
-    API fan-out to a single unified_orders query).
+    """Hybrid orders feed:
+      - evo / seatgeek / seatdata: pulled from public.unified_orders (SQL)
+      - tickpick / vivid: pulled from upstream API (no SQL backing yet),
+        then enriched against v_event_base via fuzzy event match so their
+        rows share canonical event_name / event_date / tevo_event_id with
+        the SQL-backed sources.
 
-    One PostgREST query against public.unified_orders, joined to v_event_base
-    for event_name + event_date. No broker-API calls. Sources NOT in
-    unified_orders (tickpick, vivid) surface in the source-chip list with
-    ok=False + 'no sql backing' so the operator can see the gap, but no
-    rows from those sources appear in the table until persistence ships.
-
-    Pagination is by *global* row count (newest-first by created_at across
-    all sources), not per-source. Page is 1-based."""
+    Three parallel pulls (unified_orders SQL + tickpick API + vivid API)
+    plus a one-shot v_event_base window query for the matcher. Page is
+    1-based; per_page is the global row cap (newest-first across all
+    sources)."""
     per_page = max(1, min(per_page, 100))
     page = max(1, page)
-    bundle = _fetch_unified_orders_page(per_page, page)
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        sql_future       = ex.submit(_fetch_unified_orders_page, per_page, page)
+        events_future    = ex.submit(_pull_event_window)
+        tickpick_future  = ex.submit(_fetch_tickpick, per_page, page)
+        vivid_future     = ex.submit(_fetch_vivid,    per_page, page)
+        bundle           = sql_future.result()
+        event_window     = events_future.result()
+        tickpick_result  = tickpick_future.result()
+        vivid_result     = vivid_future.result()
+
     if bundle is None:
-        # Supabase not configured — the dashboard can't function in SQL-only
-        # mode. Surface 503 explicitly so the operator sees the misconfig.
         raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+
     rows = bundle["rows"]
-    per_source_count = bundle.get("per_source_count", {})
-    per_source_as_of = bundle.get("per_source_as_of", {})
+    per_source_count = dict(bundle.get("per_source_count") or {})
+    per_source_as_of = dict(bundle.get("per_source_as_of") or {})
     sql_err = bundle.get("error")
+
+    # Stitch in tickpick + vivid API rows, enriching each with the best
+    # v_event_base match (canonical event_name + tevo_event_id) when found.
+    api_results = {"tickpick": tickpick_result, "vivid": vivid_result}
+    for src, result in api_results.items():
+        if result.get("ok"):
+            enriched = [_enrich_row_with_event(dict(r), event_window) for r in (result.get("rows") or [])]
+            rows.extend(enriched)
+            per_source_count[src] = len(enriched)
 
     sources_summary = []
     for src in _ALL_SOURCES:
@@ -1010,17 +1142,17 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
                 "as_of": per_source_as_of.get(src),
             })
         else:
+            api_r = api_results.get(src, {})
             sources_summary.append({
                 "source": src,
-                "ok": False,
-                "count": 0,
-                "total_reported": None,
-                "error": "no sql backing — needs persistence cron",
-                "origin": "sql",
+                "ok": bool(api_r.get("ok")),
+                "count": per_source_count.get(src, 0),
+                "total_reported": api_r.get("total"),
+                "error": api_r.get("error"),
+                "origin": "api+sql-match",
                 "as_of": None,
             })
-    # Already sorted newest-first by created_at in SQL; keep ordered_at sort
-    # as a tie-breaker / safety net for any equal timestamps.
+
     rows.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
     return JSONResponse({
         "sources": sources_summary,
