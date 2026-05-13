@@ -392,16 +392,35 @@
     if (performerId) qs.set("performer_id", performerId);
     if (venueId) qs.set("venue_id", venueId);
 
-    api(`/api/store/events?${qs.toString()}`)
-      .then((res) => {
-        allEvents = res.events || [];
-        renderCatalogFilterBanner(performerId, venueId, allEvents);
-        render(allEvents, "all");
-      })
-      .catch((err) => {
-        status.textContent = `Couldn't load events: ${err.message}`;
-        status.style.color = "var(--bad)";
-      });
+    // Catalog fetch with retryable error UI. On failure (502 cold-start,
+     // statement timeout, etc) the user sees the error + an inline Retry
+     // button instead of stuck red text. Per D1 UX audit 2026-05-12 fix #1.
+    function loadCatalog() {
+      status.textContent = "Loading available events…";
+      status.style.color = "";
+      status.hidden = false;
+      api(`/api/store/events?${qs.toString()}`)
+        .then((res) => {
+          allEvents = res.events || [];
+          renderCatalogFilterBanner(performerId, venueId, allEvents);
+          render(allEvents, "all");
+        })
+        .catch((err) => {
+          status.replaceChildren();
+          status.style.color = "var(--bad)";
+          status.hidden = false;
+          const msg = document.createElement("div");
+          msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.className = "btn ghost";
+          retry.style.marginTop = "12px";
+          retry.textContent = "Retry";
+          retry.addEventListener("click", loadCatalog);
+          status.append(msg, retry);
+        });
+    }
+    loadCatalog();
 
     // NYC movers strip — only shown on the bare /store view (no performer
     // or venue filter). Velocity-driven, sorted by 24h ticket drop.
@@ -452,16 +471,18 @@
             // common failure modes on this deploy are 502 (sleeping
             // dyno) and 5xx during cold starts.
             const msg = err && err.message ? String(err.message) : "Search unavailable";
-            showSuggestStatus(`${msg.slice(0, 80)} · try again`);
+            // isError=true → renders with .suggest-status.error styling
+            // (bad-tone color + ⚠ glyph), distinct from "Searching…".
+            showSuggestStatus(`${msg.slice(0, 80)} · try again`, true);
           });
       }, 300);
     }
 
-    function showSuggestStatus(text) {
+    function showSuggestStatus(text, isError) {
       if (!suggestEl) return;
       suggestEl.replaceChildren();
       const div = document.createElement("div");
-      div.className = "suggest-status";
+      div.className = "suggest-status" + (isError ? " error" : "");
       div.textContent = text;
       suggestEl.append(div);
       suggestEl.hidden = false;
@@ -918,6 +939,18 @@
       }
       tabs.hidden = false;
       tabCountEl.textContent = String(parkingCount);
+      // Screen-reader-friendly label so the parking tab announces as
+      // "Parking, 12 listings" instead of two disconnected tokens. Per D1
+      // UX audit 2026-05-12 fix #4.
+      const parkTabBtn = tabs.querySelector('[data-tab="parking"]');
+      if (parkTabBtn) {
+        parkTabBtn.setAttribute(
+          "aria-label",
+          `Parking, ${parkingCount} listing${parkingCount === 1 ? "" : "s"}`,
+        );
+        // Remove any prior aria-disabled (in case earlier render set it).
+        parkTabBtn.removeAttribute("aria-disabled");
+      }
 
       parkUl.replaceChildren();
       for (const l of parkingListings) {
@@ -1241,14 +1274,38 @@
     async function applyFiltersAndFetch() {
       const f = readFiltersFromUI();
       updateUrl(f);
+      // Clear any prior inline filter error before retrying.
+      showFilterError(null);
       try {
         const res = await api(`/api/store/events/${eventId}${buildQueryString(f)}`);
         applyEventResponse(res, resolvedShare);
       } catch (err) {
-        // Filter apply failures don't break the existing rendered state —
-        // surface in the banner only.
+        // Surface in the filter bar so the user knows the apply failed
+        // (was silently console.error'd before). Per D1 UX audit
+        // 2026-05-12 fix #5. Existing rendered listings stay visible —
+        // filter just didn't refresh, not catastrophic.
         console.error("filter apply failed:", err);
+        const msg = (err && err.message ? String(err.message) : "Filter unavailable").slice(0, 120);
+        showFilterError(`Filter didn't apply: ${msg} · listings shown reflect prior state`);
       }
+    }
+
+    // Inline filter-bar error pill. Pass null to clear. Same pattern as
+    // the search dropdown's .suggest-status.error.
+    function showFilterError(text) {
+      const bar = $("#filterBar");
+      if (!bar) return;
+      let pill = bar.querySelector(".filter-error");
+      if (!text) {
+        if (pill) pill.remove();
+        return;
+      }
+      if (!pill) {
+        pill = document.createElement("div");
+        pill.className = "filter-error";
+        bar.append(pill);
+      }
+      pill.textContent = text;
     }
 
     // ---- Banner: shows when any filter is active or arriving via /s/{id} ----
@@ -1428,9 +1485,28 @@
         ctxEl.hidden = !any;
       }
 
+      // Seating chart: prefer medium, fall back to large. When the venue has
+      // no static chart, swap the <img> for a styled empty placeholder so the
+      // 2-column event-body grid keeps its left column (without the placeholder
+      // the listings reflow into the empty space, jumping content around at
+      // the 760px breakpoint). Per D1 UX audit 2026-05-12 fix #3.
       const map = event.configuration?.seating_chart_medium || event.configuration?.seating_chart_large;
-      if (map) seatMap.src = map;
-      else seatMap.style.display = "none";
+      const mapHost = seatMap.parentElement; // the <aside class="map">
+      if (map) {
+        seatMap.src = map;
+        seatMap.style.display = "";
+        // Remove any previously rendered placeholder if we now have a map.
+        const existing = mapHost && mapHost.querySelector(".map-placeholder");
+        if (existing) existing.remove();
+      } else {
+        seatMap.style.display = "none";
+        if (mapHost && !mapHost.querySelector(".map-placeholder")) {
+          const ph = document.createElement("div");
+          ph.className = "map-placeholder";
+          ph.textContent = "Seating chart unavailable for this venue.";
+          mapHost.append(ph);
+        }
+      }
 
       const freshness = $("#freshness");
       if (freshness) {
