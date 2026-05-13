@@ -4080,6 +4080,16 @@ def store_events(
     ]
     raw_events = raw_events[:cap]
 
+    # TEMPORARY DEBUG (remove once mapping is confirmed): log keys of the
+    # first raw TEvo event so we can see whether performers nest under
+    # 'performers', 'primary_performer', 'performances', etc.
+    if raw_events:
+        first = raw_events[0]
+        print(f"[mvp-debug] /v9/events item keys: {sorted(first.keys())}")
+        perf_field = first.get("performers")
+        print(f"[mvp-debug] performers raw: {perf_field!r}")
+        print(f"[mvp-debug] primary_performer raw: {first.get('primary_performer')!r}")
+
     out: list[dict] = []
     for ev in raw_events:
         venue = ev.get("venue") or {}
