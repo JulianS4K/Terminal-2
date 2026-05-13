@@ -4,6 +4,11 @@ Per 2026-05-12 hierarchy restructure. Each bot writes only to its assigned files
 
 **Companion to `BOT_HIERARCHY.md`** (repo root) — that doc is the quick-reference: hierarchy diagram, push restrictions matrix, single-writer table ownership, fast-path workflow, SECURITY DEFINER convention. **This doc is the detail**: per-lane writes / never-writes / function-call rules / client-response filters.
 
+**Per-bot self-contracts** sit one layer below this. Bots may author their own deep operational detail file at `docs/<bot>_operating_constraints.md`. Known instances:
+- `docs/d1_operating_constraints.md` (PR #77) — D1's self-contract: read surface (TEvo endpoints + Supabase tables), write surface (storefront routes only), forbidden actions, Sprint 2 freeze conditions
+
+When a per-bot doc exists, it MUST be consistent with this doc and `BOT_HIERARCHY.md`. If a conflict surfaces, this doc + BOT_HIERARCHY.md win until reconciled.
+
 See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIONS.md` (migration / commit conventions that overlay this scope map).
 
 ## Lane assignments
