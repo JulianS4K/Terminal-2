@@ -101,6 +101,9 @@ def test_healthz_detail_under_auth_disabled(client):
     assert "python" in body
     assert set(body["brokers"]) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
     assert body["templates"]["dashboard_html_exists"] is True
+    # Lane-status fields default to data-collection / rebuild-pending.
+    assert body["phase"] == "data-collection"
+    assert body["ui"] == "rebuild-pending"
 
 
 def test_root_serves_html(client):

@@ -60,6 +60,13 @@ ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
 # https://d2-orders-dashboard.onrender.com (or your custom domain). Falls back
 # to the browser's window.location.origin when unset.
 D2_CANONICAL_ORIGIN = (os.environ.get("D2_CANONICAL_ORIGIN") or "").rstrip("/")
+# Lane-status fields surfaced via /healthz/detail (authed). Lets the operator
+# read the current D2 phase / UI state without scrolling KANBAN.md. Defaults
+# match where the lane stands at this commit: data-collection is healthy, the
+# UI rebuild has shipped to PR but operator hasn't accepted it yet. Flip
+# D2_UI_STATUS on the service env (e.g. to "rebuilt") after acceptance.
+D2_PHASE = os.environ.get("D2_PHASE", "data-collection")
+D2_UI_STATUS = os.environ.get("D2_UI_STATUS", "rebuild-pending")
 
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
 
@@ -391,6 +398,8 @@ def healthz_detail(_=Depends(require_auth)):
     return {
         "ok": True,
         "service": "d2_dashboard",
+        "phase": D2_PHASE,
+        "ui": D2_UI_STATUS,
         "python": _sys.version.split()[0],
         "auth_disabled": AUTH_DISABLED,
         "supabase": {
