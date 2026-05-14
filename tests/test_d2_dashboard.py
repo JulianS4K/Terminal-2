@@ -440,6 +440,43 @@ def test_norm_evo_pulls_event_from_nested_ticket_group():
     assert row["qty"] == 2
 
 
+def test_norm_sg_reads_event_name_date_and_time():
+    """SeatGeek's seller_order/{id} payload uses event.name (not .title) +
+    event.date + event.time (not .datetime_local). Quantity lives under
+    listing. Earlier reads of the wrong keys left event_date + qty blank
+    on the deep-detail panel — the operator's raw JSON dump confirmed
+    the schema 2026-05-14."""
+    row = d2_main._norm_sg({
+        "id": "pp6pbyqnld",
+        "status": "confirmed",
+        "event": {
+            "name": "Los Angeles Angels at Philadelphia Phillies",
+            "date": "2020-07-17",
+            "time": "19:05:00",
+            "venue": "Citizens Bank Park",
+        },
+        "listing": {"quantity": 3, "section": "101", "row": "3"},
+        "total": 267,
+        "created": "2020-02-12T14:14:36",
+    })
+    assert row["event_name"] == "Los Angeles Angels at Philadelphia Phillies"
+    assert row["event_date"] == "2020-07-17T19:05:00"
+    assert row["qty"] == 3
+    assert row["ordered_at"] == "2020-02-12T14:14:36"
+    assert row["status"] == "confirmed"
+
+
+def test_norm_sg_falls_back_to_datetime_local_when_native_missing():
+    """Some older SG records (or other endpoints) might still carry the
+    older datetime_local/datetime_utc shape — fall back gracefully."""
+    row = d2_main._norm_sg({
+        "id": "1",
+        "event": {"title": "Old Format", "datetime_local": "2026-12-31T20:00:00"},
+    })
+    assert row["event_name"] == "Old Format"
+    assert row["event_date"] == "2026-12-31T20:00:00"
+
+
 def test_norm_vivid_xml_flat_dict():
     """Vivid clients return dicts with all string values (XML-flattened).
     The XML uses lowercase <event> as the event-name tag; camelCase

@@ -338,19 +338,32 @@ def _norm_evo(o: dict) -> dict:
 
 
 def _norm_sg(o: dict) -> dict:
+    # SeatGeek's seller_order/{id} payload uses:
+    #   event.name    (not event.title)
+    #   event.date    "YYYY-MM-DD"   (separate from event.time "HH:MM:SS")
+    #   listing.quantity (not o.quantity)
+    #   created / updated (not created_at / ordered_at)
+    # Earlier reading of `.title` / `.datetime_local` left event_date + qty
+    # blank on the deep-detail panel. Combine date + time into an ISO string.
     event = o.get("event") or {}
+    listing = o.get("listing") or {}
     status = o.get("status")
+    ev_date = event.get("date")
+    ev_time = event.get("time") or "00:00:00"
+    event_dt = f"{ev_date}T{ev_time}" if ev_date else (
+        event.get("datetime_local") or event.get("datetime_utc")
+    )
     return {
         "source": "seatgeek",
         "order_id": str(o.get("order_id") or o.get("id") or ""),
-        "event_name": event.get("title") or o.get("event_title"),
-        "event_date": event.get("datetime_local") or event.get("datetime_utc"),
-        "qty": _to_int(o.get("quantity")),
+        "event_name": event.get("name") or event.get("title") or o.get("event_title"),
+        "event_date": event_dt,
+        "qty": _to_int(o.get("quantity") or listing.get("quantity")),
         "status": status,
         "canonical_status": _canonical_status("seatgeek", status),
         "amount": _to_float(o.get("total") or o.get("payout")),
         "currency": o.get("currency"),
-        "ordered_at": o.get("created_at") or o.get("ordered_at"),
+        "ordered_at": o.get("created") or o.get("created_at") or o.get("ordered_at"),
     }
 
 
@@ -711,14 +724,14 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
         any_error = None
 
         # One PostgREST query per source — each gets its own LIMIT slice.
-        # Could ThreadPoolExecutor these but 4 sequential sub-100ms queries
-        # is still under 400ms total, and the calling thread is already
-        # parallelized against the event_window + vivid fetchers.
+        # unified_orders carries native event_name + event_date per source
+        # as of 20260514000000 — no JOIN to v_event_base needed except
+        # for sources that don't surface their own event info (seatdata).
         for src in sorted(_SQL_BACKED_SOURCES):
             try:
                 res = (
                     sb.table("unified_orders")
-                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
+                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
                     .eq("source", src)
                     .order("created_at", desc=True)
                     .range(start, end)
@@ -733,24 +746,35 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
             except Exception as e:
                 any_error = _scrub_err(f"unified_orders.sql.{src}", e)
 
-        event_ids = list({r["tevo_event_id"] for r in all_uo_rows if r.get("tevo_event_id")})
+        # Fallback: rows whose native event_name is NULL (seatdata, or any
+        # source whose ingest left the field blank) get v_event_base via
+        # tevo_event_id, same as before.
+        missing_event_ids = list({
+            r["tevo_event_id"] for r in all_uo_rows
+            if r.get("tevo_event_id") and not r.get("event_name")
+        })
         events_by_id: dict = {}
-        if event_ids:
+        if missing_event_ids:
             ev_res = (
                 sb.table("v_event_base")
                 .select("tevo_event_id,event_name,event_at_local,event_at_utc")
-                .in_("tevo_event_id", event_ids)
+                .in_("tevo_event_id", missing_event_ids)
                 .execute()
             )
             events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
         rows = []
         for r in all_uo_rows:
-            ev = events_by_id.get(r.get("tevo_event_id")) or {}
+            event_name = r.get("event_name")
+            event_date = r.get("event_date")
+            if not event_name:
+                ev = events_by_id.get(r.get("tevo_event_id")) or {}
+                event_name = ev.get("event_name")
+                event_date = ev.get("event_at_local") or ev.get("event_at_utc")
             rows.append({
                 "source": r.get("source") or "",
                 "order_id": str(r.get("source_order_id") or ""),
-                "event_name": ev.get("event_name"),
-                "event_date": ev.get("event_at_local") or ev.get("event_at_utc"),
+                "event_name": event_name,
+                "event_date": event_date,
                 "qty": _to_int(r.get("quantity")),
                 "status": r.get("source_status"),
                 "canonical_status": r.get("canonical_status"),

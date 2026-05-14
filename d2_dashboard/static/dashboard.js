@@ -244,6 +244,10 @@ function renderDashboard(domain) {
             <input type="checkbox" id="chk-hide-past" checked />
             <span>Hide past (&minus;12h)</span>
           </label>
+          <label class="toolbar-toggle">
+            <input type="checkbox" id="chk-auto-refresh" checked />
+            <span title="Pauses the 5-min poll while you're working with the table">Auto-refresh</span>
+          </label>
           <span class="toolbar-meta" id="last-refreshed">last refresh: never</span>
         </div>
         <div class="orders-toolbar orders-filters">
@@ -417,6 +421,8 @@ function activateTab(name) {
 function startOrdersAutoRefresh() {
   if (_ORDERS_REFRESH_TIMER) return;
   _ORDERS_REFRESH_TIMER = setInterval(() => {
+    // Operator paused auto-refresh via the toolbar toggle? Skip silently.
+    if (!document.getElementById("chk-auto-refresh")?.checked) return;
     // Skip a tick while the row-detail panel is open — silently yanking
     // a card the operator is reading would be hostile UX.
     if (_DETAIL_OPEN) return;
@@ -841,15 +847,23 @@ function renderReadableOrder(source, d) {
       row("Hold expires", formatDate(o.hold_expires_at)),
     ].join("");
   } else if (source === "seatgeek") {
+    // SG seller_order/{id} payload: event.name + event.date + event.time
+    // (not event.title / event.datetime_local). Quantity lives under
+    // listing, not at the top level. Combine date+time into ISO for the
+    // formatDate helper.
     const ev = d.event || {};
+    const listing = d.listing || {};
+    const evDate = ev.date ? `${ev.date}T${ev.time || "00:00:00"}` : (ev.datetime_local || ev.datetime_utc);
     rows = [
-      row("Order ID",   d.order_id || d.id),
-      row("Event",      ev.title || d.event_title),
-      row("Event date", formatDate(ev.datetime_local || ev.datetime_utc)),
-      row("Status",     d.status),
-      row("Quantity",   d.quantity),
-      row("Total",      d.total),
-      row("Currency",   d.currency),
+      row("Order ID",      d.order_id || d.id),
+      row("Event",         ev.name || ev.title || d.event_title),
+      row("Event date",    formatDate(evDate)),
+      row("Venue",         ev.venue),
+      row("Section / Row", listing.section ? `${listing.section} / ${listing.row || "—"}` : null),
+      row("Status",        d.status),
+      row("Quantity",      listing.quantity || d.quantity),
+      row("Total",         d.total),
+      row("Delivery",      d.delivery_method || d.delivery),
     ].join("");
   }
   return `<table class="kv">${rows}</table>`;
