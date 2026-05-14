@@ -119,6 +119,14 @@ let LAST_ORDERS_BODY = null;
 let LAST_ORDERS_AT = null;
 let CURRENT_PAGE = 1;
 const PER_PAGE = 50;
+// Auto-refresh interval for the Orders tab. The cron runs every 30 min;
+// a 5-min poll picks up status changes (accepted → fulfilled, etc.) well
+// before the next cron tick and well within human attention spans.
+// Paused while a row-detail panel is open so the operator's inspection
+// flow doesn't get yanked out from under them.
+const ORDERS_AUTO_REFRESH_MS = 5 * 60 * 1000;
+let _ORDERS_REFRESH_TIMER = null;
+let _DETAIL_OPEN = false;
 
 async function importWithTimeout(url, ms) {
   // Race the dynamic import against a timeout so we don't hang on a blocked CDN.
@@ -350,6 +358,8 @@ function renderDashboard(domain) {
     if (!orderId) return;
     loadGoTicketsLookup(orderId);
   });
+  // Orders is the default landing tab — kick off the auto-refresh poll.
+  startOrdersAutoRefresh();
   loadOrders();
 }
 
@@ -415,9 +425,33 @@ function activateTab(name) {
   document.querySelectorAll(".panel").forEach((el) =>
     el.classList.toggle("active", el.id === `panel-${name}`)
   );
+  // Auto-refresh runs only while the Orders tab is the active one — leaving
+  // it clears the timer, returning starts it again.
+  if (name === "orders") startOrdersAutoRefresh();
+  else                   stopOrdersAutoRefresh();
+
   if (name === "seatdata") loadSeatData();
   else if (name === "samples") loadSamples();
   else if (name === "health")  loadHealth();
+}
+
+function startOrdersAutoRefresh() {
+  if (_ORDERS_REFRESH_TIMER) return;
+  _ORDERS_REFRESH_TIMER = setInterval(() => {
+    // Skip a tick while the row-detail panel is open — silently yanking
+    // a card the operator is reading would be hostile UX.
+    if (_DETAIL_OPEN) return;
+    // Also skip when on a non-first page so we don't disrupt mid-paging.
+    if (CURRENT_PAGE !== 1) return;
+    loadOrders();
+  }, ORDERS_AUTO_REFRESH_MS);
+}
+
+function stopOrdersAutoRefresh() {
+  if (_ORDERS_REFRESH_TIMER) {
+    clearInterval(_ORDERS_REFRESH_TIMER);
+    _ORDERS_REFRESH_TIMER = null;
+  }
 }
 
 async function authedFetch(path) {
@@ -441,6 +475,7 @@ async function loadOrders() {
   wrap.innerHTML = `<div class="empty"><span class="spinner"></span> fetching orders...</div>`;
   bar.innerHTML = `<span class="chip">loading...</span>`;
   detailWrap.innerHTML = "";
+  _DETAIL_OPEN = false;
   let body;
   try {
     body = await authedFetch(`/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}`);
@@ -561,6 +596,30 @@ function renderOrders() {
   });
   const filtered = beforeCount - rows.length;
 
+  // Multi-key sort (operator-requested):
+  //   1. event_date ASC — soonest upcoming first; NULLs sink to bottom
+  //   2. amount DESC — higher-value orders win ties (SQL view's gross_value
+  //      is already price × quantity)
+  //   3. ordered_at DESC — newer orders before older as final tiebreaker
+  rows.sort((a, b) => {
+    const aEvT = a.event_date ? Date.parse(a.event_date) : NaN;
+    const bEvT = b.event_date ? Date.parse(b.event_date) : NaN;
+    const aHas = !Number.isNaN(aEvT), bHas = !Number.isNaN(bEvT);
+    if (aHas && bHas && aEvT !== bEvT) return aEvT - bEvT;        // soonest first
+    if (aHas && !bHas) return -1;
+    if (!aHas && bHas) return 1;
+    const aAmt = a.amount != null ? Number(a.amount) : -Infinity;
+    const bAmt = b.amount != null ? Number(b.amount) : -Infinity;
+    if (aAmt !== bAmt) return bAmt - aAmt;                         // higher value first
+    const aOrd = a.ordered_at ? Date.parse(a.ordered_at) : NaN;
+    const bOrd = b.ordered_at ? Date.parse(b.ordered_at) : NaN;
+    const aOrdHas = !Number.isNaN(aOrd), bOrdHas = !Number.isNaN(bOrd);
+    if (aOrdHas && bOrdHas) return bOrd - aOrd;                    // newest first
+    if (aOrdHas) return -1;
+    if (bOrdHas) return 1;
+    return 0;
+  });
+
   // Page indicator + Prev/Next state. Prev disabled at page 1; Next disabled
   // when the current page came back with fewer rows than per_page (no more
   // to fetch). Filter-hidden rows don't disable Next — they're a render-time
@@ -585,11 +644,11 @@ function renderOrders() {
           <th>Source</th>
           <th>Order ID</th>
           <th>Event</th>
-          <th>Event Date</th>
+          <th title="Sort key 1: soonest first">Event Date <span class="sort-key">↑1</span></th>
           <th class="num">Qty</th>
           <th>Status</th>
-          <th class="num">Amount</th>
-          <th>Ordered At</th>
+          <th class="num" title="Sort key 2: higher value first">Amount <span class="sort-key">↓2</span></th>
+          <th title="Sort key 3: newest order first">Ordered At <span class="sort-key">↓3</span></th>
         </tr>
       </thead>
       <tbody>
@@ -622,6 +681,7 @@ function renderOrders() {
 
 async function loadOrderDetail(source, orderId) {
   const wrap = document.getElementById("order-detail-wrap");
+  _DETAIL_OPEN = true;  // pause auto-refresh while operator is inspecting
   wrap.innerHTML = `
     <section class="sample-card">
       <div class="sample-head">

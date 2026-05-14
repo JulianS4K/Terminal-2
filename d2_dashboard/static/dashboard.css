@@ -229,6 +229,17 @@ th {
   background: var(--bg);
 }
 td.source { font-weight: 600; }
+.sort-key {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  background: rgba(88, 166, 255, 0.18);
+  color: var(--accent);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  vertical-align: middle;
+}
 td.source.evo { color: #f0883e; }
 td.source.seatgeek { color: #58a6ff; }
 td.source.tickpick { color: #bc8cff; }
