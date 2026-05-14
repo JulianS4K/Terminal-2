@@ -17,6 +17,7 @@ Optional:
 from __future__ import annotations
 
 import hmac
+import logging
 import math
 import os
 import re
@@ -4394,6 +4395,27 @@ _search_cache: dict[str, tuple[float, dict]] = {}
 _SEARCH_CACHE_TTL = 60.0
 
 
+def _normalize_search_key(q: str) -> str:
+    """Normalize a user query for cache slot identity. Collapses runs of
+    whitespace + lowercases + strips, so "  Knicks  ", "knicks", "KNICKS"
+    all collapse to the same slot. Mode (sql vs live) is appended at the
+    callsite so the cache stays correct across STOREFRONT_SQL_ONLY flips."""
+    return re.sub(r"\s+", " ", (q or "").strip().lower())
+
+
+# PostgREST ILIKE pattern wildcards we need to escape so a user-supplied
+# query like "%" doesn't become a match-everything pattern. Backslash
+# escaped FIRST so we don't double-escape our own escapes.
+_ILIKE_WILDCARDS = ("\\", "%", "_")
+
+
+def _escape_ilike(s: str) -> str:
+    """Escape PostgREST ILIKE wildcards in a user-supplied substring."""
+    for ch in _ILIKE_WILDCARDS:
+        s = s.replace(ch, "\\" + ch)
+    return s
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -4427,7 +4449,10 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
     safe_q = re.sub(r"[,.()\"]", " ", q_norm).strip()
     if not safe_q:
         return {"events": [], "performers": [], "venues": [], "source": "sql"}
-    pattern = f"%{safe_q}%"
+    # Escape ILIKE wildcards (%, _, \) so a user-supplied "%" doesn't
+    # become a match-everything pattern. We wrap with our own %...%
+    # after the escape.
+    pattern = f"%{_escape_ilike(safe_q)}%"
 
     # Events: search by event name, venue name, venue location, primary
     # performer name. Limit to future + active so we don't surface ghosts.
@@ -4543,15 +4568,37 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
     returned event IDs against our SQL to tag we_own + from_price. Used in
     non-SQL-only deployments."""
     today_iso = datetime.now(timezone.utc).date().isoformat()
+    # Lazy-init client so we can serve search even if boot creds were stale.
+    live_client = ensure_tevo_client()
+    if live_client is None:
+        # Creds genuinely missing — fall back to SQL with explicit signal.
+        payload = _search_sql_only(db, q_norm, limit)
+        payload["fallback"] = True
+        payload["fallback_reason"] = "tevo_unconfigured"
+        return payload
     try:
-        resp = client.search_suggestions(
+        resp = live_client.search_suggestions(
             q_norm, entities="events,performers,venues",
             fuzzy=True, limit=20, occurs_at_gte=today_iso,
         )
     except RuntimeError as e:
-        # Don't break the page on TEvo error; fall back to SQL.
-        print(f"search_live TEvo failed, falling back to SQL: {e}")
-        return _search_sql_only(db, q_norm, limit)
+        # Don't break the page on TEvo error; fall back to SQL with a
+        # structured signal so clients can show a "live search degraded"
+        # hint. Status code (parsed out of the sanitized RuntimeError
+        # message — evo_client.py strips URL + body since PR #66/#81) is
+        # the only upstream detail we surface; full error stays in logs.
+        logging.warning(
+            "search_live TEvo failed, falling back to SQL: %s",
+            str(e)[:200],
+        )
+        m = re.search(r"\b(\d{3})\b", str(e))
+        upstream_status = int(m.group(1)) if m else None
+        payload = _search_sql_only(db, q_norm, limit)
+        payload["fallback"] = True
+        payload["fallback_reason"] = "tevo_unavailable"
+        if upstream_status:
+            payload["fallback_detail"] = {"tevo_status": upstream_status}
+        return payload
 
     s = (resp.get("suggestions") or {})
     ev_in = s.get("events", []) or []
@@ -4627,7 +4674,10 @@ def store_search(q: str, limit: int = 8):
 
     # Cap at 50; the upstream cap is 20, so anything past that just trims.
     lim = max(1, min(int(limit), 50))
-    cache_key = f"{q_norm.lower()}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
+    # Normalize so "  Knicks  ", "knicks", "KNICKS" all hit the same slot.
+    # Mode (sql vs live) still differentiates so flipping STOREFRONT_SQL_ONLY
+    # doesn't serve stale-mode cache entries.
+    cache_key = f"{_normalize_search_key(q_norm)}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
     cached = _search_cache_get(cache_key)
     if cached is not None:
         return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
