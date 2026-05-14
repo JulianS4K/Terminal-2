@@ -119,6 +119,12 @@ let LAST_ORDERS_BODY = null;
 let LAST_ORDERS_AT = null;
 let CURRENT_PAGE = 1;
 const PER_PAGE = 50;
+// Cron freshness is fetched separately from /api/d2/orders so a slow cron
+// RPC doesn't pace the orders feed. Cached client-side and re-fetched on
+// a slower poll (60s) than the orders auto-refresh (5min).
+let LAST_CRON_FRESHNESS = {};
+const CRON_FRESHNESS_POLL_MS = 60 * 1000;
+let _CRON_FRESHNESS_TIMER = null;
 // Auto-refresh interval for the Orders tab. The cron runs every 30 min;
 // a 5-min poll picks up status changes (accepted → fulfilled, etc.) well
 // before the next cron tick and well within human attention spans.
@@ -445,12 +451,35 @@ function startOrdersAutoRefresh() {
     if (CURRENT_PAGE !== 1) return;
     loadOrders();
   }, ORDERS_AUTO_REFRESH_MS);
+  // Cron freshness poll — separate from orders. Refresh the chip's "last
+  // cron: Xm ago" line every 60s so the operator sees cron health in
+  // near-real-time without dragging the orders feed.
+  if (!_CRON_FRESHNESS_TIMER) {
+    refreshCronFreshness();   // immediate first hit
+    _CRON_FRESHNESS_TIMER = setInterval(refreshCronFreshness, CRON_FRESHNESS_POLL_MS);
+  }
 }
 
 function stopOrdersAutoRefresh() {
   if (_ORDERS_REFRESH_TIMER) {
     clearInterval(_ORDERS_REFRESH_TIMER);
     _ORDERS_REFRESH_TIMER = null;
+  }
+  if (_CRON_FRESHNESS_TIMER) {
+    clearInterval(_CRON_FRESHNESS_TIMER);
+    _CRON_FRESHNESS_TIMER = null;
+  }
+}
+
+async function refreshCronFreshness() {
+  try {
+    const body = await authedFetch("/api/d2/cron-freshness");
+    LAST_CRON_FRESHNESS = body.sources || {};
+    // Re-render the chips with the new cron data if we have an orders body.
+    if (LAST_ORDERS_BODY) renderOrders();
+  } catch (e) {
+    // Non-fatal — the orders feed itself doesn't depend on this.
+    console.warn("cron freshness poll failed:", e.message);
   }
 }
 
@@ -549,12 +578,17 @@ function renderOrders() {
       // to this source. Lets the operator see at a glance "last fetch ran
       // 12m ago against a 30-min schedule" without leaving the dashboard.
       // .cron-stale class fires when last_run is older than 2× the interval.
+      // Cron freshness is no longer attached to each source by the orders
+      // endpoint — it ships on its own /api/d2/cron-freshness poll. Pull
+      // the cached value if we have one, otherwise the chip is bare for
+      // the first ~60s after page load (the slower poll's first tick).
+      const cronInfo = LAST_CRON_FRESHNESS[s.source];
       let cronLine = "";
-      if (s.cron && s.cron.jobname) {
-        const last = s.cron.last_run ? `last cron: ${formatAgo(s.cron.last_run)}` : "cron: never run";
-        const sched = s.cron.schedule ? ` · ${formatCronSchedule(s.cron.schedule)}` : "";
-        const stale = s.cron.last_run ? cronStaleClass(s.cron.last_run, s.cron.schedule) : "";
-        cronLine = `<span class="cron-meta ${stale}" title="job: ${escapeHtml(s.cron.jobname)}">${escapeHtml(last + sched)}</span>`;
+      if (cronInfo && cronInfo.jobname) {
+        const last = cronInfo.last_run ? `last cron: ${formatAgo(cronInfo.last_run)}` : "cron: never run";
+        const sched = cronInfo.schedule ? ` · ${formatCronSchedule(cronInfo.schedule)}` : "";
+        const stale = cronInfo.last_run ? cronStaleClass(cronInfo.last_run, cronInfo.schedule) : "";
+        cronLine = `<span class="cron-meta ${stale}" title="job: ${escapeHtml(cronInfo.jobname)}">${escapeHtml(last + sched)}</span>`;
       }
       return `<div class="source-cell"><span class="${cls}">${origin}<strong>${escapeHtml(s.source)}</strong> · ${escapeHtml(detail)}</span>${cronLine}</div>`;
     })

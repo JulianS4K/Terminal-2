@@ -237,17 +237,46 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
     assert [r["source"] for r in rows] == ["seatgeek", "evo"]
 
 
-def test_orders_attaches_cron_freshness_per_source(monkeypatch, client):
-    """Each source chip carries a `cron` blob (jobname/schedule/active/
-    last_run/last_status) so the front-end can render 'last cron pull:
-    Xm ago · every 30m'. _fetch_cron_freshness picks the queue-phase row
-    as the canonical 'last fire'."""
+def test_orders_no_longer_carries_cron_blob(monkeypatch, client):
+    """As of the perf split (cron moved to /api/d2/cron-freshness), the
+    orders endpoint no longer carries per-source cron data. This keeps
+    the orders feed paced by unified_orders (3ms) instead of the cron
+    RPC (66ms+)."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
         lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
     )
     monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
     monkeypatch.setattr(d2_main, "_vivid_client",      lambda: None)
+    sources = {s["source"]: s for s in client.get("/api/d2/orders").json()["sources"]}
+    for s in sources.values():
+        assert "cron" not in s
+
+
+def test_orders_response_carries_per_leg_timings(monkeypatch, client):
+    """The orders response surfaces per-leg timings_ms + Server-Timing header
+    so the operator can see exactly which fan-out leg is slow."""
+    monkeypatch.setattr(
+        d2_main, "_fetch_unified_orders_page",
+        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
+    )
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+    monkeypatch.setattr(d2_main, "_vivid_client",      lambda: None)
+    r = client.get("/api/d2/orders")
+    body = r.json()
+    assert "timings_ms" in body
+    assert "sql.unified"      in body["timings_ms"]
+    assert "sql.event_window" in body["timings_ms"]
+    assert "api.vivid"        in body["timings_ms"]
+    assert "total"            in body["timings_ms"]
+    server_timing = r.headers.get("Server-Timing", "")
+    assert "sql_unified;dur=" in server_timing
+    assert "total;dur="       in server_timing
+
+
+def test_cron_freshness_endpoint_returns_per_source(monkeypatch, client):
+    """/api/d2/cron-freshness returns the same per-source blob the orders
+    endpoint used to carry inline. Front-end polls this on a 60s timer."""
     monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {
         "evo": {
             "jobname": "evo_orders_queue_30min",
@@ -256,22 +285,40 @@ def test_orders_attaches_cron_freshness_per_source(monkeypatch, client):
             "last_run": "2026-05-13T22:30:00Z",
             "last_status": "succeeded",
         },
-        "tickpick": {
-            "jobname": "tickpick_orders_queue_30min",
-            "schedule": "*/30 * * * *",
-            "active": True,
-            "last_run": None,
-            "last_status": None,
-        },
     })
-    sources = {s["source"]: s for s in client.get("/api/d2/orders").json()["sources"]}
-    assert sources["evo"]["cron"]["jobname"] == "evo_orders_queue_30min"
-    assert sources["evo"]["cron"]["schedule"] == "*/30 * * * *"
-    assert sources["evo"]["cron"]["last_run"] == "2026-05-13T22:30:00Z"
-    assert sources["tickpick"]["cron"]["jobname"] == "tickpick_orders_queue_30min"
-    assert sources["tickpick"]["cron"]["last_run"] is None
-    # Vivid has no cron job mapped → cron blob is None.
-    assert sources["vivid"]["cron"] is None
+    body = client.get("/api/d2/cron-freshness").json()
+    assert body["sources"]["evo"]["jobname"] == "evo_orders_queue_30min"
+
+
+def test_event_window_cache_short_circuits_repeat_calls(monkeypatch):
+    """The 60s in-process cache lets repeated /api/d2/orders refreshes
+    skip the v_event_base round-trip on every poll tick."""
+    # Reset the cache so this test is deterministic regardless of order.
+    d2_main._EVENT_WINDOW_CACHE.update({"at": 0.0, "rows": []})
+    hits = {"n": 0}
+
+    class FakeQuery:
+        def __init__(self, rows):
+            self._rows = rows
+        def select(self, *_a, **_kw): return self
+        def gte(self, *_a, **_kw):    return self
+        def lte(self, *_a, **_kw):    return self
+        def execute(self):
+            hits["n"] += 1
+            return type("Res", (), {"data": self._rows})()
+
+    class FakeSb:
+        def table(self, name):
+            return FakeQuery([{"tevo_event_id": 1, "event_name": "X",
+                               "event_at_utc": "2026-12-01T00:00:00", "event_at_local": None}])
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    # First call: miss → query → cache
+    d2_main._pull_event_window()
+    assert hits["n"] == 1
+    # Second call (within TTL): cache hit, no extra query
+    d2_main._pull_event_window()
+    assert hits["n"] == 1
 
 
 def test_orders_enriches_vivid_via_event_window(monkeypatch, client):

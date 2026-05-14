@@ -557,18 +557,30 @@ def _fetch_cron_freshness() -> dict[str, dict]:
         return {}
 
 
+# In-process cache for the v_event_base window. Events don't churn fast —
+# a 60s TTL is comfortably within human attention spans and slashes one
+# round-trip per dashboard refresh.
+_EVENT_WINDOW_CACHE: dict = {"at": 0.0, "rows": []}
+_EVENT_WINDOW_TTL_SEC = 60
+
+
 def _pull_event_window(days_back: int = 1, days_forward: int = 120) -> list[dict]:
     """Pull a window of upcoming events from v_event_base for fuzzy-matching
-    tickpick / vivid order responses to canonical tevo_event_ids. Limited
-    window so the in-Python matcher stays cheap. Empty list when Supabase
-    isn't configured."""
+    tickpick / vivid order responses to canonical tevo_event_ids. Cached
+    in-process for 60s so repeated /api/d2/orders refreshes during the
+    auto-poll don't re-query the view. Empty list when Supabase isn't
+    configured."""
+    import time as _time
+    now = _time.time()
+    if (now - _EVENT_WINDOW_CACHE["at"]) < _EVENT_WINDOW_TTL_SEC and _EVENT_WINDOW_CACHE["rows"]:
+        return _EVENT_WINDOW_CACHE["rows"]
     sb = _sb()
     if sb is None:
         return []
     from datetime import datetime, timedelta, timezone
-    now = datetime.now(timezone.utc)
-    lo = (now - timedelta(days=days_back)).isoformat()
-    hi = (now + timedelta(days=days_forward)).isoformat()
+    cur = datetime.now(timezone.utc)
+    lo = (cur - timedelta(days=days_back)).isoformat()
+    hi = (cur + timedelta(days=days_forward)).isoformat()
     try:
         res = (
             sb.table("v_event_base")
@@ -577,7 +589,10 @@ def _pull_event_window(days_back: int = 1, days_forward: int = 120) -> list[dict
             .lte("event_at_utc", hi)
             .execute()
         )
-        return res.data or []
+        rows = res.data or []
+        _EVENT_WINDOW_CACHE["at"] = now
+        _EVENT_WINDOW_CACHE["rows"] = rows
+        return rows
     except Exception as e:
         import sys as _sys
         print(f"[d2_dashboard] event window pull failed: {e!r}", file=_sys.stderr, flush=True)
@@ -1116,30 +1131,32 @@ def config_public():
 @app.get("/api/d2/orders")
 def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
     """Hybrid orders feed:
-      - evo / seatgeek / seatdata: pulled from public.unified_orders (SQL)
-      - tickpick / vivid: pulled from upstream API (no SQL backing yet),
-        then enriched against v_event_base via fuzzy event match so their
-        rows share canonical event_name / event_date / tevo_event_id with
-        the SQL-backed sources.
+      - evo / seatgeek / seatdata / tickpick: pulled from public.unified_orders
+      - vivid: pulled from upstream API + enriched via v_event_base match
+        (no SQL backing yet)
 
-    Three parallel pulls (unified_orders SQL + tickpick API + vivid API)
-    plus a one-shot v_event_base window query for the matcher. Page is
-    1-based; per_page is the global row cap (newest-first across all
-    sources)."""
+    Three parallel pulls + the cached v_event_base window. Cron freshness
+    used to be a 4th parallel future here; moved to its own endpoint
+    (/api/d2/cron-freshness) so a slow cron-detail RPC doesn't pace the
+    orders feed. The dashboard polls it less aggressively.
+
+    Per-leg timings are logged to stderr (Render logs) AND surfaced as a
+    Server-Timing response header so the operator can see exactly which
+    leg is slow from browser dev tools."""
+    import time as _time
     per_page = max(1, min(per_page, 100))
     page = max(1, page)
 
-    # Tickpick now ships from SQL via the new persistence cron; vivid stays
-    # on the upstream-API+v_event_base-match path until XML ingest lands.
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        sql_future       = ex.submit(_fetch_unified_orders_page, per_page, page)
-        events_future    = ex.submit(_pull_event_window)
-        vivid_future     = ex.submit(_fetch_vivid,    per_page, page)
-        cron_future      = ex.submit(_fetch_cron_freshness)
+    timings: dict = {}
+    t0 = _time.perf_counter()
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        sql_future       = ex.submit(_timed, "sql.unified", _fetch_unified_orders_page, per_page, page, _timings=timings)
+        events_future    = ex.submit(_timed, "sql.event_window", _pull_event_window, _timings=timings)
+        vivid_future     = ex.submit(_timed, "api.vivid", _fetch_vivid, per_page, page, _timings=timings)
         bundle           = sql_future.result()
         event_window     = events_future.result()
         vivid_result     = vivid_future.result()
-        cron_by_source   = cron_future.result()
 
     if bundle is None:
         raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
@@ -1149,10 +1166,6 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
     per_source_as_of = dict(bundle.get("per_source_as_of") or {})
     sql_err = bundle.get("error")
 
-    # Stitch in vivid API rows (no SQL backing yet), enriched against
-    # v_event_base via fuzzy match. Tickpick is now SQL-backed via the
-    # tickpick_orders_queue/process cron, so it flows through the
-    # unified_orders pull above.
     api_results = {"vivid": vivid_result}
     for src, result in api_results.items():
         if result.get("ok"):
@@ -1162,14 +1175,6 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
 
     sources_summary = []
     for src in _ALL_SOURCES:
-        cron_info = cron_by_source.get(src) or {}
-        cron_blob = {
-            "jobname":     cron_info.get("jobname"),
-            "schedule":    cron_info.get("schedule"),
-            "active":      cron_info.get("active"),
-            "last_run":    cron_info.get("last_run"),
-            "last_status": cron_info.get("last_status"),
-        } if cron_info else None
         if src in _SQL_BACKED_SOURCES:
             sources_summary.append({
                 "source": src,
@@ -1179,7 +1184,8 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
                 "error": sql_err,
                 "origin": "sql",
                 "as_of": per_source_as_of.get(src),
-                "cron": cron_blob,
+                # cron blob deliberately omitted here — fetched via
+                # /api/d2/cron-freshness on a separate, slower poll
             })
         else:
             api_r = api_results.get(src, {})
@@ -1191,16 +1197,54 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
                 "error": api_r.get("error"),
                 "origin": "api+sql-match",
                 "as_of": None,
-                "cron": cron_blob,   # None for sources without a cron job
             })
 
     rows.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
-    return JSONResponse({
+    total_ms = (_time.perf_counter() - t0) * 1000
+
+    import sys as _sys
+    print(
+        f"[d2_dashboard] /api/d2/orders total={total_ms:.0f}ms "
+        f"sql.unified={timings.get('sql.unified', 0):.0f}ms "
+        f"sql.event_window={timings.get('sql.event_window', 0):.0f}ms "
+        f"api.vivid={timings.get('api.vivid', 0):.0f}ms "
+        f"event_window_cached={'yes' if (timings.get('sql.event_window', 999) < 5) else 'no'}",
+        file=_sys.stderr, flush=True,
+    )
+
+    response = JSONResponse({
         "sources": sources_summary,
         "rows": rows,
         "page": page,
         "per_page": per_page,
+        "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
     })
+    response.headers["Server-Timing"] = ", ".join(
+        f"{k.replace('.','_')};dur={v:.1f}" for k, v in timings.items()
+    ) + f", total;dur={total_ms:.1f}"
+    return response
+
+
+def _timed(label: str, fn, *args, _timings: dict, **kwargs):
+    """Run `fn` and stash its wall-clock duration into `_timings[label]`.
+    Lets the parallel fan-out attribute time per-leg without each fetcher
+    knowing about the timing dict."""
+    import time as _time
+    t = _time.perf_counter()
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _timings[label] = (_time.perf_counter() - t) * 1000
+
+
+@app.get("/api/d2/cron-freshness")
+def cron_freshness(_=Depends(require_auth)):
+    """Per-source cron freshness, served separately from /api/d2/orders so
+    a slow cron RPC (66ms+ vs unified_orders' 3ms) doesn't pace the orders
+    feed. The dashboard polls this on a longer interval (or on Health-tab
+    open) than the 5-min orders auto-refresh."""
+    by_source = _fetch_cron_freshness()
+    return JSONResponse({"sources": by_source})
 
 
 def _deep_order_evo(c, order_id: str) -> dict:
