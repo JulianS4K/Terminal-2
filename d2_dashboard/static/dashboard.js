@@ -246,6 +246,15 @@ function renderDashboard(domain) {
             <label><input type="checkbox" class="flt-source" value="vivid"    checked /> vivid</label>
           </div>
           <div class="filter-group">
+            <span class="toolbar-meta">Status:</span>
+            <label><input type="checkbox" class="flt-status" value="pending"      checked /> pending</label>
+            <label><input type="checkbox" class="flt-status" value="accepted"     checked /> accepted</label>
+            <label><input type="checkbox" class="flt-status" value="fulfilled"    checked /> fulfilled</label>
+            <label><input type="checkbox" class="flt-status" value="rejected"     checked /> rejected</label>
+            <label><input type="checkbox" class="flt-status" value="cancelled"    checked /> cancelled</label>
+            <label><input type="checkbox" class="flt-status" value="substitution" checked /> sub</label>
+          </div>
+          <div class="filter-group">
             <span class="toolbar-meta">Event:</span>
             <input type="date" id="flt-date-from" />
             <span class="toolbar-meta">to</span>
@@ -303,11 +312,13 @@ function renderDashboard(domain) {
   // the cached body — no new API call, no new SQL query.
   document.getElementById("chk-hide-past").addEventListener("change", renderOrders);
   document.querySelectorAll(".flt-source").forEach((el) => el.addEventListener("change", renderOrders));
+  document.querySelectorAll(".flt-status").forEach((el) => el.addEventListener("change", renderOrders));
   ["flt-date-from", "flt-date-to", "flt-amount-min", "flt-amount-max", "flt-order-id"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", renderOrders);
   });
   document.getElementById("btn-clear-filters")?.addEventListener("click", () => {
     document.querySelectorAll(".flt-source").forEach((el) => { el.checked = true; });
+    document.querySelectorAll(".flt-status").forEach((el) => { el.checked = true; });
     ["flt-date-from", "flt-date-to", "flt-amount-min", "flt-amount-max", "flt-order-id"].forEach((id) => {
       const el = document.getElementById(id); if (el) el.value = "";
     });
@@ -438,6 +449,15 @@ function readFilters() {
       .filter((el) => el.checked)
       .map((el) => el.value)
   );
+  // Canonical-status filter — buckets from order_status_xref. Filtering on
+  // canonical_status (not source_status) is the unified path: checking
+  // "fulfilled" matches evo "completed" + sg "fulfilled" + sg "delivered" +
+  // tickpick "fulfilled"/"filled" + vivid "FULFILLED"/"SHIPPED" all at once.
+  const canonicalStatuses = new Set(
+    Array.from(document.querySelectorAll(".flt-status"))
+      .filter((el) => el.checked)
+      .map((el) => el.value)
+  );
   const dateFrom = document.getElementById("flt-date-from")?.value || null;
   const dateTo   = document.getElementById("flt-date-to")?.value   || null;
   const amtMinRaw = document.getElementById("flt-amount-min")?.value;
@@ -448,7 +468,7 @@ function readFilters() {
   const dateFromMs = dateFrom ? Date.parse(`${dateFrom}T00:00:00`) : null;
   const dateToMs   = dateTo   ? Date.parse(`${dateTo}T23:59:59`)   : null;
   const orderIdQuery = (document.getElementById("flt-order-id")?.value || "").trim().toLowerCase();
-  return { sources, dateFromMs, dateToMs, amtMin, amtMax, orderIdQuery };
+  return { sources, canonicalStatuses, dateFromMs, dateToMs, amtMin, amtMax, orderIdQuery };
 }
 
 function renderOrders() {
@@ -496,12 +516,16 @@ function renderOrders() {
 
   const hidePast = document.getElementById("chk-hide-past")?.checked;
   const cutoff = Date.now() - 12 * 60 * 60 * 1000;
-  const { sources: filtSources, dateFromMs, dateToMs, amtMin, amtMax, orderIdQuery } = readFilters();
+  const { sources: filtSources, canonicalStatuses, dateFromMs, dateToMs, amtMin, amtMax, orderIdQuery } = readFilters();
   let rows = body.rows || [];
   const beforeCount = rows.length;
   rows = rows.filter((r) => {
     // Order-ID search: substring match (case-insensitive). Empty string skips.
     if (orderIdQuery && !(String(r.order_id || "").toLowerCase().includes(orderIdQuery))) return false;
+    // Canonical-status filter — rows without a canonical_status (matcher
+    // didn't recognize the source enum) are kept so the operator can spot
+    // unmapped rows. Empty selection = show all (operator unchecked all).
+    if (canonicalStatuses.size > 0 && r.canonical_status && !canonicalStatuses.has(r.canonical_status)) return false;
     // Hide-past-12h cutoff (event_date is the relevant time, not ordered_at).
     if (hidePast && r.event_date) {
       const t = Date.parse(r.event_date);
