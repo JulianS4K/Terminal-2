@@ -1072,17 +1072,76 @@ def config_public():
     return _shell_config_blob()
 
 
+def _fetch_unified_orders_fast(per_page: int) -> dict | None:
+    """First-paint fast path: one global query, upcoming-only, sorted by
+    event_date ASC. No per-source split, no v_event_base join, no API call.
+    Operator can see the soonest events to triage in <200ms while the
+    full orders feed loads in a second phase.
+
+    "Upcoming" = event_date >= now() - 12h, matching the dashboard's
+    default Hide-Past-12h filter. Filter pushed down to SQL so we don't
+    waste bandwidth on rows the client would hide anyway."""
+    sb = _sb()
+    if sb is None:
+        return None
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    try:
+        res = (
+            sb.table("unified_orders")
+            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
+            .gte("event_date", cutoff)
+            .order("event_date", desc=False, nullsfirst=False)
+            .limit(per_page)
+            .execute()
+        )
+        rows_out = []
+        per_source_count: dict[str, int] = {}
+        per_source_as_of: dict[str, str] = {}
+        for r in (res.data or []):
+            src = r.get("source") or ""
+            rows_out.append({
+                "source": src,
+                "order_id": str(r.get("source_order_id") or ""),
+                "event_name": r.get("event_name"),
+                "event_date": r.get("event_date"),
+                "qty": _to_int(r.get("quantity")),
+                "status": r.get("source_status"),
+                "canonical_status": r.get("canonical_status"),
+                "amount": _to_float(r.get("gross_value")),
+                "currency": None,
+                "ordered_at": r.get("created_at"),
+            })
+            per_source_count[src] = per_source_count.get(src, 0) + 1
+            ls = r.get("last_seen_at")
+            if ls and (per_source_as_of.get(src, "") < ls):
+                per_source_as_of[src] = ls
+        return {
+            "rows": rows_out,
+            "per_source_count": per_source_count,
+            "per_source_as_of": per_source_as_of,
+        }
+    except Exception as e:
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "error": _scrub_err("unified_orders.fast", e)}
+
+
 @app.get("/api/d2/orders")
-def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
+def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_auth)):
     """Hybrid orders feed:
       - evo / seatgeek / seatdata / tickpick: pulled from public.unified_orders
       - vivid: pulled from upstream API + enriched via v_event_base match
         (no SQL backing yet)
 
-    Three parallel pulls + the cached v_event_base window. Cron freshness
-    used to be a 4th parallel future here; moved to its own endpoint
-    (/api/d2/cron-freshness) so a slow cron-detail RPC doesn't pace the
-    orders feed. The dashboard polls it less aggressively.
+    ?fast=1 mode (two-phase load): single global SQL query, upcoming-only
+    (event_date >= now()-12h), event_date ASC, NO vivid API, NO event_window.
+    Renders the soonest N upcoming events in <200ms. The client follows up
+    with a full call to merge vivid + older history in the background via
+    the diff-aware DOM update.
+
+    Default mode: three parallel pulls (per-source SQL fan-out + cached
+    v_event_base window + vivid API). Cron freshness moved to /api/d2/
+    cron-freshness on a separate poll so a slow cron RPC doesn't pace
+    this feed.
 
     Per-leg timings are logged to stderr (Render logs) AND surfaced as a
     Server-Timing response header so the operator can see exactly which
@@ -1093,6 +1152,42 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
 
     timings: dict = {}
     t0 = _time.perf_counter()
+
+    if fast:
+        # Single query, single thread, no vivid. Phase 1 of two-phase load.
+        bundle = _timed("sql.unified.fast", _fetch_unified_orders_fast, per_page, _timings=timings)
+        if bundle is None:
+            raise HTTPException(503, "Supabase not configured")
+        rows = bundle["rows"]
+        per_source_count = dict(bundle.get("per_source_count") or {})
+        per_source_as_of = dict(bundle.get("per_source_as_of") or {})
+        sql_err = bundle.get("error")
+        sources_summary = []
+        for src in _ALL_SOURCES:
+            sources_summary.append({
+                "source": src,
+                "ok": True if (src in _SQL_BACKED_SOURCES and not sql_err) else False,
+                "count": per_source_count.get(src, 0),
+                "total_reported": None,
+                "error": sql_err if (src in _SQL_BACKED_SOURCES and sql_err) else (None if src in _SQL_BACKED_SOURCES else "phase 2"),
+                "origin": "sql" if src in _SQL_BACKED_SOURCES else "api+sql-match",
+                "as_of": per_source_as_of.get(src),
+            })
+        total_ms = (_time.perf_counter() - t0) * 1000
+        import sys as _sys
+        print(
+            f"[d2_dashboard] /api/d2/orders fast=1 total={total_ms:.0f}ms "
+            f"sql.unified.fast={timings.get('sql.unified.fast', 0):.0f}ms",
+            file=_sys.stderr, flush=True,
+        )
+        return JSONResponse({
+            "sources": sources_summary,
+            "rows": rows,
+            "page": page,
+            "per_page": per_page,
+            "phase": "fast",
+            "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
+        })
 
     with ThreadPoolExecutor(max_workers=3) as ex:
         sql_future       = ex.submit(_timed, "sql.unified", _fetch_unified_orders_page, per_page, page, _timings=timings)
@@ -1161,6 +1256,7 @@ def orders(per_page: int = 25, page: int = 1, _=Depends(require_auth)):
         "rows": rows,
         "page": page,
         "per_page": per_page,
+        "phase": "full",
         "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
     })
     response.headers["Server-Timing"] = ", ".join(

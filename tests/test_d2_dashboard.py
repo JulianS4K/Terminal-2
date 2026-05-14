@@ -253,6 +253,51 @@ def test_orders_no_longer_carries_cron_blob(monkeypatch, client):
         assert "cron" not in s
 
 
+def test_orders_fast_phase_skips_vivid_and_event_window(monkeypatch, client):
+    """?fast=1 returns phase=fast with only the SQL-side rows; vivid API
+    and the event_window query are NOT fired. Lets the client paint the
+    soonest events in <200ms while the full call loads in the background."""
+    called = {"fast": False, "vivid": False, "event_window": False, "full_page": False}
+
+    def fake_fast(per_page):
+        called["fast"] = True
+        return {
+            "rows": [{"source": "evo", "order_id": "111", "event_name": "Knicks vs Lakers",
+                      "event_date": "2026-06-01T19:30:00", "qty": 2, "status": "accepted",
+                      "canonical_status": "accepted", "amount": 450.0, "currency": None,
+                      "ordered_at": "2026-05-10T12:00:00Z"}],
+            "per_source_count": {"evo": 1},
+            "per_source_as_of": {"evo": "2026-05-13T20:35:00Z"},
+        }
+
+    def fail_event(*a, **kw):
+        called["event_window"] = True
+        return []
+
+    def fail_full(*a, **kw):
+        called["full_page"] = True
+        return None  # would 503 if called
+
+    class FakeVivid:
+        def list_active_orders(self):
+            called["vivid"] = True
+            return []
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_fast", fake_fast)
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fail_full)
+    monkeypatch.setattr(d2_main, "_pull_event_window",         fail_event)
+    monkeypatch.setattr(d2_main, "_vivid_client",              lambda: FakeVivid())
+
+    body = client.get("/api/d2/orders?fast=1").json()
+    assert body["phase"] == "fast"
+    assert called["fast"] is True
+    assert called["vivid"] is False
+    assert called["event_window"] is False
+    assert called["full_page"] is False
+    assert len(body["rows"]) == 1
+    assert body["rows"][0]["source"] == "evo"
+
+
 def test_orders_response_carries_per_leg_timings(monkeypatch, client):
     """The orders response surfaces per-leg timings_ms + Server-Timing header
     so the operator can see exactly which fan-out leg is slow."""

@@ -305,7 +305,7 @@ function renderDashboard(domain) {
   });
   document.getElementById("btn-refresh").addEventListener("click", () => {
     const active = document.querySelector(".tab.active").dataset.tab;
-    if (active === "orders") { CURRENT_PAGE = 1; loadOrders(); }
+    if (active === "orders") { CURRENT_PAGE = 1; loadOrders({ twoPhase: true }); }
     else if (active === "health") loadHealth();
   });
   if (!AUTH_BYPASS) {
@@ -345,7 +345,10 @@ function renderDashboard(domain) {
   // (re-)binds the form's submit handler whenever it renders.
   // Orders is the default landing tab — kick off the auto-refresh poll.
   startOrdersAutoRefresh();
-  loadOrders();
+  // Two-phase initial load: phase 1 (?fast=1) paints the soonest events
+  // in ~150ms; phase 2 (full) follows up to merge vivid + history via
+  // the diff-aware DOM update.
+  loadOrders({ twoPhase: true });
 }
 
 async function loadGoTicketsLookup(orderId) {
@@ -479,7 +482,7 @@ async function authedFetch(path) {
   return r.json();
 }
 
-async function loadOrders({ silent = false } = {}) {
+async function loadOrders({ silent = false, twoPhase = false } = {}) {
   const wrap = document.getElementById("orders-table-wrap");
   const bar = document.getElementById("sources-bar");
   const detailWrap = document.getElementById("order-detail-wrap");
@@ -493,9 +496,26 @@ async function loadOrders({ silent = false } = {}) {
     detailWrap.innerHTML = "";
     _DETAIL_OPEN = false;
   }
+  // Two-phase load: fire ?fast=1 first for a sub-200ms paint of the
+  // soonest upcoming events from SQL, then fire the full call in the
+  // background to merge vivid + history via the diff-aware DOM update.
+  // Only the initial dashboard load and explicit Refresh use twoPhase;
+  // auto-poll / pagination go straight to the full call.
+  const url = (params) => `/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}` + params;
+  if (twoPhase) {
+    try {
+      const fastBody = await authedFetch(url("&fast=1"));
+      LAST_ORDERS_BODY = fastBody;
+      LAST_ORDERS_AT = new Date();
+      renderOrders();
+    } catch (e) {
+      // Phase 1 failure isn't fatal — fall through to the full call below.
+      console.warn("phase 1 (fast) failed:", e.message);
+    }
+  }
   let body;
   try {
-    body = await authedFetch(`/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}`);
+    body = await authedFetch(url(""));
   } catch (e) {
     if (!silent) {
       wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
