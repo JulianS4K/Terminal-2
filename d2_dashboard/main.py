@@ -723,11 +723,16 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
         per_source_count: dict[str, int] = {}
         any_error = None
 
-        # One PostgREST query per source — each gets its own LIMIT slice.
-        # unified_orders carries native event_name + event_date per source
-        # as of 20260514000000 — no JOIN to v_event_base needed except
-        # for sources that don't surface their own event info (seatdata).
-        for src in sorted(_SQL_BACKED_SOURCES):
+        # One PostgREST query per source, fanned out in parallel. unified_orders
+        # carries native event_name + event_date per source as of migration
+        # 20260514000000 — no JOIN to v_event_base needed except for sources
+        # that don't surface their own event info (seatdata).
+        #
+        # 2026-05-14: profiled the previous sequential loop at ~400ms total
+        # for 4 sources (~100ms RTT × 4). The SQL itself is ~3ms per query;
+        # the wall-clock was PostgREST round-trip latency. Parallelizing
+        # drops total to ~max(per-source), ~100ms.
+        def _pull_one(src: str) -> tuple[str, list[dict], str | None]:
             try:
                 res = (
                     sb.table("unified_orders")
@@ -737,14 +742,21 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
                     .range(start, end)
                     .execute()
                 )
-                for r in (res.data or []):
+                return src, (res.data or []), None
+            except Exception as e:
+                return src, [], _scrub_err(f"unified_orders.sql.{src}", e)
+
+        sources_to_pull = sorted(_SQL_BACKED_SOURCES)
+        with ThreadPoolExecutor(max_workers=len(sources_to_pull)) as ex:
+            for src, rows_for_src, err in ex.map(_pull_one, sources_to_pull):
+                if err:
+                    any_error = err
+                for r in rows_for_src:
                     all_uo_rows.append(r)
                     ls = r.get("last_seen_at")
                     if ls and (per_source_as_of.get(src, "") < ls):
                         per_source_as_of[src] = ls
                     per_source_count[src] = per_source_count.get(src, 0) + 1
-            except Exception as e:
-                any_error = _scrub_err(f"unified_orders.sql.{src}", e)
 
         # Fallback: rows whose native event_name is NULL (seatdata, or any
         # source whose ingest left the field blank) get v_event_base via
