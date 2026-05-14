@@ -45,6 +45,12 @@ services:
       # ---- Demo mode (the new flag this PR introduces) ----
       - key: STOREFRONT_SQL_ONLY
         value: "true"
+      # ---- Storefront-as-landing flag ----
+      # Makes / redirect to /store so customers don't see the debug
+      # data-collection JSON. Storefront-test service is the only Render
+      # service that should set this true.
+      - key: STOREFRONT_AS_LANDING
+        value: "true"
       # ---- Storefront constants ----
       - key: ALLOWED_EMAIL_DOMAIN
         value: s4kent.com

@@ -17,6 +17,7 @@ Optional:
 from __future__ import annotations
 
 import hmac
+import logging
 import math
 import os
 import re
@@ -28,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -123,7 +124,15 @@ def require_sb():
 
 
 def resolve_tevo_creds():
-    """Prefer Supabase settings table, fall back to env vars."""
+    """Prefer Supabase settings table, fall back to env vars.
+
+    Env-var fallback accepts either naming convention:
+      - `TEVO_TOKEN`     + `TEVO_SECRET`      (legacy)
+      - `TEVO_API_TOKEN` + `TEVO_API_SECRET`  (what Render's IaC sets)
+
+    Returns (token, secret, source). Source is one of:
+      "supabase.settings" | "env" | "missing"
+    """
     if sb is not None:
         try:
             res = (
@@ -139,7 +148,38 @@ def resolve_tevo_creds():
                 return t, s, "supabase.settings"
         except Exception as e:
             print(f"Could not load TEvo creds from settings: {e}")
-    return os.environ.get("TEVO_TOKEN"), os.environ.get("TEVO_SECRET"), "env"
+    # Env fallback — accept either name convention.
+    env_t = os.environ.get("TEVO_TOKEN") or os.environ.get("TEVO_API_TOKEN")
+    env_s = os.environ.get("TEVO_SECRET") or os.environ.get("TEVO_API_SECRET")
+    if env_t and env_s:
+        return env_t, env_s, "env"
+    return None, None, "missing"
+
+
+def ensure_tevo_client():
+    """Lazy-initialize the EvoClient if the boot-time attempt failed.
+
+    Boot can fail to populate `client` when:
+      - Supabase keys were stale at boot (resolve_tevo_creds raises silently)
+      - Env vars were missing or mis-named
+      - STOREFRONT_SQL_ONLY=true at boot, so we intentionally skipped the
+        client creation, and now the operator wants to flip live
+
+    Called from any request path that needs TEvo. Idempotent — returns
+    the existing client when already populated. Re-resolves creds and
+    builds the client on demand otherwise. Avoids forcing a redeploy
+    every time creds change.
+    """
+    global client, TOKEN, SECRET, CREDS_SOURCE
+    if client is not None:
+        return client
+    t, s, src = resolve_tevo_creds()
+    if not (t and s):
+        return None  # caller decides what to do; usually 502
+    TOKEN, SECRET, CREDS_SOURCE = t, s, src
+    client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
+    print(f"TEvo client lazy-initialized (creds source: {src})")
+    return client
 
 
 SANDBOX = os.environ.get("TEVO_SANDBOX", "false").lower() == "true"
@@ -362,9 +402,21 @@ async def _runtime_error_handler(request, exc: RuntimeError):
 # UI rebuild prep. JSON API endpoints below remain available for whatever
 # UI gets built next.
 
+STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower() == "true"
+
+
 @app.get("/")
 def root_health():
-    """Liveness probe. Phase-1 data-collection mode."""
+    """Liveness probe. Default response is the data-collection JSON used
+    by every prior phase. When STOREFRONT_AS_LANDING=true (set in Render
+    env for the storefront test service), the root path 302-redirects
+    to /store so customers land on the public catalog instead of a
+    debug JSON blob.
+
+    Operators with non-storefront services keep the default behavior.
+    """
+    if STOREFRONT_AS_LANDING:
+        return RedirectResponse(url="/store", status_code=302)
     return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
 
 
@@ -375,9 +427,14 @@ def healthz():
 
     Reports:
       python_version, is_production, storefront_sql_only,
-      supabase_url_set, supabase_service_role_key_length,
-      supabase_anon_key_length, evo_client_configured,
+      supabase_url_set, supabase_service_role_key_set,
+      supabase_anon_key_set, evo_client_configured, evo_creds_source,
+      tevo_env_resolves (set-booleans per env-var name),
       supabase_smoke: pass | fail (with truncated error message)
+
+    Privacy note: key *lengths* used to leak here, exposing which key
+    format was loaded (200+ legacy JWT vs ~40 new sb_*_*). Recon-grade.
+    Replaced with set/unset booleans per b5258f7 item 4.
     """
     import sys as _sys
     out = {
@@ -386,10 +443,17 @@ def healthz():
         "is_production": _is_production(),
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "supabase_url_set": bool(SUPABASE_URL),
-        "supabase_service_role_key_length": len(SUPABASE_SERVICE_ROLE_KEY or ""),
-        "supabase_anon_key_length": len(SUPABASE_ANON_KEY or ""),
+        "supabase_service_role_key_set": bool(SUPABASE_SERVICE_ROLE_KEY),
+        "supabase_anon_key_set": bool(SUPABASE_ANON_KEY),
         "supabase_client_initialized": sb is not None,
         "evo_client_configured": client is not None,
+        "evo_creds_source": CREDS_SOURCE,
+        "tevo_env_resolves": {
+            "TEVO_TOKEN_set": bool(os.environ.get("TEVO_TOKEN")),
+            "TEVO_API_TOKEN_set": bool(os.environ.get("TEVO_API_TOKEN")),
+            "TEVO_SECRET_set": bool(os.environ.get("TEVO_SECRET")),
+            "TEVO_API_SECRET_set": bool(os.environ.get("TEVO_API_SECRET")),
+        },
     }
     # Tiny safe query against a table we know exists.
     if sb is None:
@@ -4111,7 +4175,13 @@ def store_events(
             if not batch:
                 break
             raw_events.extend(batch)
-            if len(raw_events) >= cap:
+            # Stop when we have enough rows to fill the requested window AFTER
+            # slicing off the leading offset_in_first_page rows. Using `>= cap`
+            # alone short-circuits the loop before the second page when offset
+            # is non-aligned (e.g. offset=25, cap=60: page-1 fills 60 rows,
+            # break fires, slice yields only 35). Caught by test_pagination_
+            # offset_non_aligned.
+            if len(raw_events) >= offset_in_first_page + cap:
                 break
             # Stop early if we've hit the total.
             total = int(resp.get("total_entries") or 0)
@@ -4343,6 +4413,27 @@ _search_cache: dict[str, tuple[float, dict]] = {}
 _SEARCH_CACHE_TTL = 60.0
 
 
+def _normalize_search_key(q: str) -> str:
+    """Normalize a user query for cache slot identity. Collapses runs of
+    whitespace + lowercases + strips, so "  Knicks  ", "knicks", "KNICKS"
+    all collapse to the same slot. Mode (sql vs live) is appended at the
+    callsite so the cache stays correct across STOREFRONT_SQL_ONLY flips."""
+    return re.sub(r"\s+", " ", (q or "").strip().lower())
+
+
+# PostgREST ILIKE pattern wildcards we need to escape so a user-supplied
+# query like "%" doesn't become a match-everything pattern. Backslash
+# escaped FIRST so we don't double-escape our own escapes.
+_ILIKE_WILDCARDS = ("\\", "%", "_")
+
+
+def _escape_ilike(s: str) -> str:
+    """Escape PostgREST ILIKE wildcards in a user-supplied substring."""
+    for ch in _ILIKE_WILDCARDS:
+        s = s.replace(ch, "\\" + ch)
+    return s
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -4376,7 +4467,10 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
     safe_q = re.sub(r"[,.()\"]", " ", q_norm).strip()
     if not safe_q:
         return {"events": [], "performers": [], "venues": [], "source": "sql"}
-    pattern = f"%{safe_q}%"
+    # Escape ILIKE wildcards (%, _, \) so a user-supplied "%" doesn't
+    # become a match-everything pattern. We wrap with our own %...%
+    # after the escape.
+    pattern = f"%{_escape_ilike(safe_q)}%"
 
     # Events: search by event name, venue name, venue location, primary
     # performer name. Limit to future + active so we don't surface ghosts.
@@ -4492,15 +4586,37 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
     returned event IDs against our SQL to tag we_own + from_price. Used in
     non-SQL-only deployments."""
     today_iso = datetime.now(timezone.utc).date().isoformat()
+    # Lazy-init client so we can serve search even if boot creds were stale.
+    live_client = ensure_tevo_client()
+    if live_client is None:
+        # Creds genuinely missing — fall back to SQL with explicit signal.
+        payload = _search_sql_only(db, q_norm, limit)
+        payload["fallback"] = True
+        payload["fallback_reason"] = "tevo_unconfigured"
+        return payload
     try:
-        resp = client.search_suggestions(
+        resp = live_client.search_suggestions(
             q_norm, entities="events,performers,venues",
             fuzzy=True, limit=20, occurs_at_gte=today_iso,
         )
     except RuntimeError as e:
-        # Don't break the page on TEvo error; fall back to SQL.
-        print(f"search_live TEvo failed, falling back to SQL: {e}")
-        return _search_sql_only(db, q_norm, limit)
+        # Don't break the page on TEvo error; fall back to SQL with a
+        # structured signal so clients can show a "live search degraded"
+        # hint. Status code (parsed out of the sanitized RuntimeError
+        # message — evo_client.py strips URL + body since PR #66/#81) is
+        # the only upstream detail we surface; full error stays in logs.
+        logging.warning(
+            "search_live TEvo failed, falling back to SQL: %s",
+            str(e)[:200],
+        )
+        m = re.search(r"\b(\d{3})\b", str(e))
+        upstream_status = int(m.group(1)) if m else None
+        payload = _search_sql_only(db, q_norm, limit)
+        payload["fallback"] = True
+        payload["fallback_reason"] = "tevo_unavailable"
+        if upstream_status:
+            payload["fallback_detail"] = {"tevo_status": upstream_status}
+        return payload
 
     s = (resp.get("suggestions") or {})
     ev_in = s.get("events", []) or []
@@ -4576,7 +4692,10 @@ def store_search(q: str, limit: int = 8):
 
     # Cap at 50; the upstream cap is 20, so anything past that just trims.
     lim = max(1, min(int(limit), 50))
-    cache_key = f"{q_norm.lower()}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
+    # Normalize so "  Knicks  ", "knicks", "KNICKS" all hit the same slot.
+    # Mode (sql vs live) still differentiates so flipping STOREFRONT_SQL_ONLY
+    # doesn't serve stale-mode cache entries.
+    cache_key = f"{_normalize_search_key(q_norm)}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
     cached = _search_cache_get(cache_key)
     if cached is not None:
         return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
