@@ -686,29 +686,54 @@ def _enrich_row_with_event(row: dict, event_window: list[dict]) -> dict:
 
 
 def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
-    """Pull a global page of recent rows from unified_orders, joined to
+    """Pull a balanced page of rows from unified_orders, joined to
     v_event_base for event_name + event_date. Returns None when Supabase
     isn't configured.
 
-    Single PostgREST query across all sources — pagination is by global
-    row count (newest-first by created_at), not per-source. Tickpick +
-    Vivid simply don't appear in the row list because they're not in
-    unified_orders yet."""
+    Balanced means: per_page is split across SQL-backed sources rather
+    than taken globally newest-first. Globally-newest skewed to whoever's
+    cron was most active (operator 2026-05-14 saw 100% evo on page 1
+    because SG/seatdata cron had stalled at 2026-05-09; only the live
+    evo cron contributed recent created_at). This way every source with
+    rows gets surface area on every page."""
     sb = _sb()
     if sb is None:
         return None
     try:
-        start = max(0, (page - 1) * per_page)
-        end = start + per_page - 1
-        uo_res = (
-            sb.table("unified_orders")
-            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
-            .order("created_at", desc=True)
-            .range(start, end)
-            .execute()
-        )
-        uo_rows = uo_res.data or []
-        event_ids = list({r["tevo_event_id"] for r in uo_rows if r.get("tevo_event_id")})
+        n_sources = max(1, len(_SQL_BACKED_SOURCES))
+        per_source = max(1, per_page // n_sources)
+        start = max(0, (page - 1) * per_source)
+        end = start + per_source - 1
+
+        all_uo_rows: list[dict] = []
+        per_source_as_of: dict[str, str] = {}
+        per_source_count: dict[str, int] = {}
+        any_error = None
+
+        # One PostgREST query per source — each gets its own LIMIT slice.
+        # Could ThreadPoolExecutor these but 4 sequential sub-100ms queries
+        # is still under 400ms total, and the calling thread is already
+        # parallelized against the event_window + vivid fetchers.
+        for src in sorted(_SQL_BACKED_SOURCES):
+            try:
+                res = (
+                    sb.table("unified_orders")
+                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
+                    .eq("source", src)
+                    .order("created_at", desc=True)
+                    .range(start, end)
+                    .execute()
+                )
+                for r in (res.data or []):
+                    all_uo_rows.append(r)
+                    ls = r.get("last_seen_at")
+                    if ls and (per_source_as_of.get(src, "") < ls):
+                        per_source_as_of[src] = ls
+                    per_source_count[src] = per_source_count.get(src, 0) + 1
+            except Exception as e:
+                any_error = _scrub_err(f"unified_orders.sql.{src}", e)
+
+        event_ids = list({r["tevo_event_id"] for r in all_uo_rows if r.get("tevo_event_id")})
         events_by_id: dict = {}
         if event_ids:
             ev_res = (
@@ -719,13 +744,10 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
             )
             events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
         rows = []
-        per_source_as_of: dict[str, str] = {}
-        per_source_count: dict[str, int] = {}
-        for r in uo_rows:
+        for r in all_uo_rows:
             ev = events_by_id.get(r.get("tevo_event_id")) or {}
-            src = r.get("source") or ""
             rows.append({
-                "source": src,
+                "source": r.get("source") or "",
                 "order_id": str(r.get("source_order_id") or ""),
                 "event_name": ev.get("event_name"),
                 "event_date": ev.get("event_at_local") or ev.get("event_at_utc"),
@@ -736,15 +758,14 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
                 "currency": None,
                 "ordered_at": r.get("created_at"),
             })
-            ls = r.get("last_seen_at")
-            if ls and (per_source_as_of.get(src, "") < ls):
-                per_source_as_of[src] = ls
-            per_source_count[src] = per_source_count.get(src, 0) + 1
-        return {
+        result = {
             "rows": rows,
             "per_source_count": per_source_count,
             "per_source_as_of": per_source_as_of,
         }
+        if any_error:
+            result["error"] = any_error
+        return result
     except Exception as e:
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "error": _scrub_err("unified_orders.sql", e)}
 
