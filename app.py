@@ -123,7 +123,15 @@ def require_sb():
 
 
 def resolve_tevo_creds():
-    """Prefer Supabase settings table, fall back to env vars."""
+    """Prefer Supabase settings table, fall back to env vars.
+
+    Env-var fallback accepts either naming convention:
+      - `TEVO_TOKEN`     + `TEVO_SECRET`      (legacy)
+      - `TEVO_API_TOKEN` + `TEVO_API_SECRET`  (what Render's IaC sets)
+
+    Returns (token, secret, source). Source is one of:
+      "supabase.settings" | "env" | "missing"
+    """
     if sb is not None:
         try:
             res = (
@@ -139,7 +147,38 @@ def resolve_tevo_creds():
                 return t, s, "supabase.settings"
         except Exception as e:
             print(f"Could not load TEvo creds from settings: {e}")
-    return os.environ.get("TEVO_TOKEN"), os.environ.get("TEVO_SECRET"), "env"
+    # Env fallback — accept either name convention.
+    env_t = os.environ.get("TEVO_TOKEN") or os.environ.get("TEVO_API_TOKEN")
+    env_s = os.environ.get("TEVO_SECRET") or os.environ.get("TEVO_API_SECRET")
+    if env_t and env_s:
+        return env_t, env_s, "env"
+    return None, None, "missing"
+
+
+def ensure_tevo_client():
+    """Lazy-initialize the EvoClient if the boot-time attempt failed.
+
+    Boot can fail to populate `client` when:
+      - Supabase keys were stale at boot (resolve_tevo_creds raises silently)
+      - Env vars were missing or mis-named
+      - STOREFRONT_SQL_ONLY=true at boot, so we intentionally skipped the
+        client creation, and now the operator wants to flip live
+
+    Called from any request path that needs TEvo. Idempotent — returns
+    the existing client when already populated. Re-resolves creds and
+    builds the client on demand otherwise. Avoids forcing a redeploy
+    every time creds change.
+    """
+    global client, TOKEN, SECRET, CREDS_SOURCE
+    if client is not None:
+        return client
+    t, s, src = resolve_tevo_creds()
+    if not (t and s):
+        return None  # caller decides what to do; usually 502
+    TOKEN, SECRET, CREDS_SOURCE = t, s, src
+    client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
+    print(f"TEvo client lazy-initialized (creds source: {src})")
+    return client
 
 
 SANDBOX = os.environ.get("TEVO_SANDBOX", "false").lower() == "true"
@@ -375,9 +414,14 @@ def healthz():
 
     Reports:
       python_version, is_production, storefront_sql_only,
-      supabase_url_set, supabase_service_role_key_length,
-      supabase_anon_key_length, evo_client_configured,
+      supabase_url_set, supabase_service_role_key_set,
+      supabase_anon_key_set, evo_client_configured, evo_creds_source,
+      tevo_env_resolves (set-booleans per env-var name),
       supabase_smoke: pass | fail (with truncated error message)
+
+    Privacy note: key *lengths* used to leak here, exposing which key
+    format was loaded (200+ legacy JWT vs ~40 new sb_*_*). Recon-grade.
+    Replaced with set/unset booleans per b5258f7 item 4.
     """
     import sys as _sys
     out = {
@@ -386,10 +430,17 @@ def healthz():
         "is_production": _is_production(),
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "supabase_url_set": bool(SUPABASE_URL),
-        "supabase_service_role_key_length": len(SUPABASE_SERVICE_ROLE_KEY or ""),
-        "supabase_anon_key_length": len(SUPABASE_ANON_KEY or ""),
+        "supabase_service_role_key_set": bool(SUPABASE_SERVICE_ROLE_KEY),
+        "supabase_anon_key_set": bool(SUPABASE_ANON_KEY),
         "supabase_client_initialized": sb is not None,
         "evo_client_configured": client is not None,
+        "evo_creds_source": CREDS_SOURCE,
+        "tevo_env_resolves": {
+            "TEVO_TOKEN_set": bool(os.environ.get("TEVO_TOKEN")),
+            "TEVO_API_TOKEN_set": bool(os.environ.get("TEVO_API_TOKEN")),
+            "TEVO_SECRET_set": bool(os.environ.get("TEVO_SECRET")),
+            "TEVO_API_SECRET_set": bool(os.environ.get("TEVO_API_SECRET")),
+        },
     }
     # Tiny safe query against a table we know exists.
     if sb is None:
