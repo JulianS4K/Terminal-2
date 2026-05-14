@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -402,9 +402,21 @@ async def _runtime_error_handler(request, exc: RuntimeError):
 # UI rebuild prep. JSON API endpoints below remain available for whatever
 # UI gets built next.
 
+STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower() == "true"
+
+
 @app.get("/")
 def root_health():
-    """Liveness probe. Phase-1 data-collection mode."""
+    """Liveness probe. Default response is the data-collection JSON used
+    by every prior phase. When STOREFRONT_AS_LANDING=true (set in Render
+    env for the storefront test service), the root path 302-redirects
+    to /store so customers land on the public catalog instead of a
+    debug JSON blob.
+
+    Operators with non-storefront services keep the default behavior.
+    """
+    if STOREFRONT_AS_LANDING:
+        return RedirectResponse(url="/store", status_code=302)
     return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
 
 
