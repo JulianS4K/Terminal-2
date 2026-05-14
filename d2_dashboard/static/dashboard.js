@@ -798,7 +798,12 @@ async function loadOrderDetail(source, orderId) {
 // Per-source pretty-print, ported from the operator's reference Tkinter app's
 // make_readable(). Read-only — no fulfillment fields, just what's in the data.
 function renderReadableOrder(source, d) {
+  // row(): always renders, "—" for empty (use for core fields the operator
+  // expects to see — Order ID, Event, Status).
+  // opt(): skips entirely when empty (use for the long-tail of fields that
+  // may or may not be populated depending on order shape / ingest stage).
   const row = (k, v) => `<tr><td class="kv-key">${escapeHtml(k)}</td><td>${escapeHtml(v == null || v === "" ? "—" : String(v))}</td></tr>`;
+  const opt = (k, v) => (v == null || v === "") ? "" : row(k, v);
   let rows = "";
   if (source === "tickpick") {
     const seats = Array.isArray(d.seat_numbers) ? d.seat_numbers.join(", ") : (d.seat_numbers || "");
@@ -814,37 +819,80 @@ function renderReadableOrder(source, d) {
       row("Notes",      d.notes),
     ].join("");
   } else if (source === "vivid") {
+    // vivid_client._flatten() dumps every <order> XML child into a flat
+    // dict. The Apps Script reference + ingest schema gives us these keys.
+    // Defensive reads — extras (transferViaURL, orderToken, etc.) auto-
+    // populate when ingest lands and the operator wants to act on them.
+    const buyer = [d.firstName, d.lastName].filter(Boolean).join(" ");
+    const xferUrls = Array.isArray(d.transferURLList)
+      ? d.transferURLList.filter(Boolean).join("\n")
+      : (d.transferUrl || d.transferURL || "");
     rows = [
-      row("Order ID",   d.orderId),
-      row("Event",      d.event),
-      row("Event date", d.eventDate),
-      row("Section",    d.section),
-      row("Row",        d.row),
-      row("Status",     d.status),
-      row("Quantity",   d.quantity),
-      row("Customer",   [d.firstName, d.lastName].filter(Boolean).join(" ")),
-      row("Email",      d.emailAddress),
+      row("Order ID",      d.orderId),
+      row("Event",         d.event || d.eventName),
+      row("Event date",    d.eventDate),
+      row("Status",        d.status),
+      row("Quantity",      d.quantity),
+      opt("Venue",         d.venue || d.venueName),
+      opt("Section / Row", d.section ? `${d.section} / ${d.row || "—"}` : null),
+      opt("Total",         d.total || d.price),
+      opt("Customer",      buyer),
+      opt("Email",         d.emailAddress),
+      opt("Phone",         d.phoneNumber || d.phone),
+      opt("Transfer-via-URL?", d.transferViaURL),
+      opt("Transfer URL(s)",   xferUrls),
+      opt("Order token",   d.orderToken),
+      opt("Ordered at",    d.orderDate),
     ].join("");
   } else if (source === "evo") {
     const o = d || {};
     const item = (Array.isArray(o.items) && o.items[0]) || {};
     const tg = item.ticket_group || {};
     const ev = tg.event || {};
+    // Shipment is the operationally important nested object — carries the
+    // transfer URL (tm_mobile_link), delivery state, and transfer source.
+    // The Apps Script reference picks shipments[0] for active orders.
+    const ship = (Array.isArray(o.shipments) && o.shipments[0]) || {};
+    const payment = (Array.isArray(o.payments) && o.payments[0]) || {};
+    const seats = Array.isArray(tg.seats) ? tg.seats.join(", ") : tg.seats;
+    const autoFlags = [
+      o.was_auto_accepted ? "accepted" : null,
+      o.was_auto_pended   ? "pended"   : null,
+      o.was_auto_canceled ? "canceled" : null,
+    ].filter(Boolean).join(", ");
     rows = [
-      row("Order ID",   o.id),
-      row("Event",      ev.name),
-      row("Event date", formatDate(ev.occurs_at)),
-      row("Section",    tg.section),
-      row("Row",        tg.row),
-      row("Status",     o.state),
-      row("Quantity",   item.quantity),
-      row("Total",      o.total),
-      row("Currency",   o.currency),
-      // No explicit in-hand or fulfill-by field exists in /v9/orders. The
-      // hold_expires_at value is the broker's auction-hold timer — when
-      // the order can be reclaimed by the seller. Surface it because it's
-      // the closest thing to a "deadline" in the upstream response.
-      row("Hold expires", formatDate(o.hold_expires_at)),
+      row("Order ID",        o.id),
+      row("Event",           ev.name),
+      row("Event date",      formatDate(ev.occurs_at)),
+      row("Status",          o.state),
+      row("Quantity",        item.quantity),
+      row("Total",           o.total),
+      opt("Venue",           (ev.venue || {}).name),
+      opt("Section / Row",   tg.section ? `${tg.section} / ${tg.row || "—"}` : null),
+      opt("Seats",           seats),
+      opt("Currency",        o.currency),
+      // Auction-hold timer — closest thing to a deadline in /v9/orders.
+      opt("Hold expires",    formatDate(o.hold_expires_at)),
+      // Shipment / fulfillment block — most operationally relevant for active orders
+      opt("Shipment state",  ship.state),
+      opt("Shipment type",   ship.type),
+      opt("Transfer source", ship.transfer_source),
+      // tm_mobile_link is the actual delivery URL — when present, the
+      // operator may want to copy/forward/verify it. Rendered as a real
+      // clickable anchor below, replacing the row() default escaping.
+      ship.tm_mobile_link
+        ? `<tr><td class="kv-key">TM mobile link</td><td><a href="${escapeHtml(ship.tm_mobile_link)}" target="_blank" rel="noopener">${escapeHtml(ship.tm_mobile_link)}</a></td></tr>`
+        : "",
+      opt("Service type",    ship.service_type),
+      opt("Tracking #",      ship.tracking_number),
+      opt("Tracking URL",    ship.tracking_url),
+      // Operator + workflow signals
+      opt("Broker notes",    tg.external_notes),
+      opt("Order notes",     o.notes),
+      opt("Instructions",    o.instructions),
+      opt("Fraud check",     o.fraud_check_status),
+      opt("Auto-flags",      autoFlags),
+      opt("Payment state",   payment.state ? `${payment.state} (${payment.type || "?"})` : null),
     ].join("");
   } else if (source === "seatgeek") {
     // SG seller_order/{id} payload: event.name + event.date + event.time
