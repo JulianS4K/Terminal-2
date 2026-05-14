@@ -4175,7 +4175,13 @@ def store_events(
             if not batch:
                 break
             raw_events.extend(batch)
-            if len(raw_events) >= cap:
+            # Stop when we have enough rows to fill the requested window AFTER
+            # slicing off the leading offset_in_first_page rows. Using `>= cap`
+            # alone short-circuits the loop before the second page when offset
+            # is non-aligned (e.g. offset=25, cap=60: page-1 fills 60 rows,
+            # break fires, slice yields only 35). Caught by test_pagination_
+            # offset_non_aligned.
+            if len(raw_events) >= offset_in_first_page + cap:
                 break
             # Stop early if we've hit the total.
             total = int(resp.get("total_entries") or 0)
