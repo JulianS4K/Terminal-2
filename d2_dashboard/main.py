@@ -16,10 +16,16 @@ Env vars (set on Render — D1 provisions):
   SUPABASE_URL                  https://xxxx.supabase.co
   SUPABASE_ANON_KEY             public anon key
   ALLOWED_EMAIL_DOMAIN          default "s4kent.com"
+  D2_CANONICAL_ORIGIN           https://d2-orders-dashboard.onrender.com
+                                Used as the OAuth redirectTo origin so Supabase
+                                Auth bounces back to the right host post-Google.
+                                Optional — front-end falls back to window.origin
+                                when unset. Set this on Render to avoid surprises
+                                with custom domains / preview URLs.
   AUTH_DISABLED                 "true" to bypass the Supabase JWT gate entirely.
-                                Works regardless of platform — operator opts in
-                                explicitly. Loud startup stderr warning when on.
-                                TESTING ONLY; unset for production.
+                                Self-disables on prod platforms (RENDER /
+                                FLY_APP_NAME / ENVIRONMENT=production). Loud
+                                startup stderr warning when on. TESTING ONLY.
 
   TEVO_API_TOKEN / TEVO_API_SECRET   Evo broker creds (vault-canonical names;
                                      legacy TEVO_TOKEN / TEVO_SECRET also honored)
@@ -33,6 +39,7 @@ Start: uvicorn d2_dashboard.main:app --host 0.0.0.0 --port $PORT
 """
 from __future__ import annotations
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -40,53 +47,86 @@ from typing import Any
 
 import requests
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 # ---------- Bootstrap ----------
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+# Service-role key — server-side reads against unified_orders / v_event_base.
+# Independent of the Supabase JWT auth gate (which uses ANON_KEY). Required
+# for the SQL-first hybrid in /api/d2/orders.
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
+# Canonical public URL of this service. Used as the OAuth redirectTo origin so
+# Supabase Auth bounces back to the right host post-Google. Set on Render to
+# https://d2-orders-dashboard.onrender.com (or your custom domain). Falls back
+# to the browser's window.location.origin when unset.
+D2_CANONICAL_ORIGIN = (os.environ.get("D2_CANONICAL_ORIGIN") or "").rstrip("/")
+# Lane-status fields surfaced via /healthz/detail (authed). Lets the operator
+# read the current D2 phase / UI state without scrolling KANBAN.md. Defaults
+# match where the lane stands at this commit: data-collection is healthy, the
+# UI rebuild has shipped to PR but operator hasn't accepted it yet. Flip
+# D2_UI_STATUS on the service env (e.g. to "rebuilt") after acceptance.
+D2_PHASE = os.environ.get("D2_PHASE", "data-collection")
+D2_UI_STATUS = os.environ.get("D2_UI_STATUS", "rebuild-pending")
 
+# Auth-on by default (2026-05-13: operator re-enabled Google OAuth after
+# wiring the Supabase Auth redirect URI). Set AUTH_DISABLED=true on the
+# service env for a one-off testing bypass. No production self-disable —
+# the operator opts in explicitly when they want the gate off.
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
 
-
-def _is_production() -> bool:
-    """Production detector mirrored from app.py:54-66. If ANY indicator says
-    production, treat as production and deny the AUTH_DISABLED kill switch."""
-    return bool(
-        (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
-        or (os.environ.get("ENVIRONMENT") or "").lower() == "production"
-        or (os.environ.get("NODE_ENV") or "").lower() == "production"
-        or (os.environ.get("PYTHON_ENV") or "").lower() == "production"
-        or os.environ.get("FLY_APP_NAME")
-        or os.environ.get("RENDER")
-    )
-
-
-_AUTH_DISABLED_REQUESTED = AUTH_DISABLED
-AUTH_DISABLED = AUTH_DISABLED and not _is_production()
-if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+if AUTH_DISABLED:
     import sys as _sys
     print(
-        "WARNING: AUTH_DISABLED=true ignored — production indicator detected "
-        "(RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / "
-        "FLY_APP_NAME / RENDER). The Supabase JWT gate stays on.",
-        file=_sys.stderr,
-        flush=True,
-    )
-elif AUTH_DISABLED:
-    import sys as _sys
-    print(
-        "WARNING: AUTH_DISABLED=true — /api/d2/* endpoints are unauthenticated. "
-        "TESTING ONLY. Unset AUTH_DISABLED to restore the Supabase JWT gate.",
+        "d2_dashboard: AUTH_DISABLED=true — /api/d2/* endpoints serve "
+        "unauthenticated reads of merged broker order data. Set "
+        "AUTH_DISABLED=false (the default) on the service env to restore "
+        "the Supabase JWT gate.",
         file=_sys.stderr,
         flush=True,
     )
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# Boot-time sanity check. Only meaningful when AUTH_DISABLED is *false* — in
+# that mode the JWT gate needs Supabase env vars; surface their absence loudly
+# instead of silently serving a "Server misconfigured" panel after JS boot.
+# With AUTH_DISABLED=true (the new default), Supabase env vars are unused.
+PROD_MISSING_SUPABASE = (
+    (not AUTH_DISABLED)
+    and bool(os.environ.get("RENDER") or os.environ.get("FLY_APP_NAME"))
+    and not (SUPABASE_URL and SUPABASE_ANON_KEY)
+)
+if PROD_MISSING_SUPABASE:
+    import sys as _sys
+    print(
+        "ERROR: d2_dashboard has AUTH_DISABLED=false on a production platform "
+        "but SUPABASE_URL / SUPABASE_ANON_KEY are not set. The Supabase JWT "
+        "gate cannot function. Either set both env vars or set "
+        "AUTH_DISABLED=true. Serving 503 at / until resolved.",
+        file=_sys.stderr,
+        flush=True,
+    )
+
+# Read the dashboard shell once at import time. The template contains a single
+# `__D2_CONFIG_JSON__` placeholder that gets replaced with the per-request JSON
+# config blob on each `/` hit. Cheaper than Jinja and avoids the dep.
+_DASHBOARD_SHELL_PATH = TEMPLATES_DIR / "dashboard.html"
+_DASHBOARD_SHELL = (
+    _DASHBOARD_SHELL_PATH.read_text(encoding="utf-8")
+    if _DASHBOARD_SHELL_PATH.is_file()
+    else None
+)
+_CONFIG_PLACEHOLDER = "__D2_CONFIG_JSON__"
 
 app = FastAPI(title="D2 Orders Dashboard — unified broker view")
+
+if STATIC_DIR.is_dir():
+    app.mount("/static/d2", StaticFiles(directory=str(STATIC_DIR)), name="d2_static")
 
 
 # ---------- Auth (mirrors app.py require_auth) ----------
@@ -136,6 +176,53 @@ def _env_first(*names: str) -> str | None:
     return None
 
 
+def _env_first_named(*names: str) -> tuple[str | None, str | None]:
+    """Like _env_first but also returns the env-var name that resolved.
+    Used by /healthz/detail so the operator can see which token variant was
+    loaded (e.g. when a 401 fires on TickPick — was the right env var read?)."""
+    for n in names:
+        v = os.environ.get(n)
+        if v:
+            return v, n
+    return None, None
+
+
+def _mask_token(t: str | None) -> str | None:
+    """Show only the last 4 chars of a token. Lets the operator confirm a
+    token rotation took effect without exposing the full value in logs or
+    on /healthz/detail."""
+    if not t:
+        return None
+    if len(t) <= 4:
+        return "***"
+    return f"...{t[-4:]}"
+
+
+def _broker_diag(*token_names: str, secret_names: tuple[str, ...] = ()) -> dict:
+    """Build the per-broker diagnostic blob shown on /healthz/detail.
+    Reports which env-var name was actually read and a masked tail of its
+    value — enough for the operator to confirm a token rotation took
+    effect without exposing the secret. Adds duplicate-set detection
+    so when both vault-canonical and legacy names are populated with
+    different values (a common cause of TickPick 401 — wrong key wins),
+    the dashboard surfaces it explicitly."""
+    token_val, token_src = _env_first_named(*token_names)
+    set_variants = [n for n in token_names if os.environ.get(n)]
+    diag: dict = {
+        "token_set": bool(token_val),
+        "token_env_var": token_src,
+        "token_masked": _mask_token(token_val),
+    }
+    if len(set_variants) > 1:
+        diag["token_warning"] = f"multiple env vars set ({', '.join(set_variants)}); using {token_src}"
+    if secret_names:
+        secret_val, secret_src = _env_first_named(*secret_names)
+        diag["secret_set"] = bool(secret_val)
+        diag["secret_env_var"] = secret_src
+        diag["secret_masked"] = _mask_token(secret_val)
+    return diag
+
+
 def _evo_client():
     from evo_client import EvoClient
     token = _env_first("TEVO_API_TOKEN", "TEVO_TOKEN")
@@ -177,6 +264,41 @@ def _seatdata_client():
     return SeatDataClient(api_key=api_key)
 
 
+def _gotickets_client():
+    from gotickets_client import GoTicketsClient
+    access_id = os.environ.get("GOTICKETS_ACCESS_ID")
+    api_secret = os.environ.get("GOTICKETS_API_SECRET")
+    if not (access_id and api_secret):
+        return None
+    return GoTicketsClient(access_id, api_secret)
+
+
+# ---------- Supabase (server-side SQL reads) ----------
+
+_SB_SINGLETON = None
+_SB_INIT_ATTEMPTED = False
+
+
+def _sb():
+    """Lazy-init the Supabase service-role client. Returns None when
+    SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY are unset — the SQL-backed
+    fetchers then short-circuit and the API-backed fan-out runs instead."""
+    global _SB_SINGLETON, _SB_INIT_ATTEMPTED
+    if _SB_INIT_ATTEMPTED:
+        return _SB_SINGLETON
+    _SB_INIT_ATTEMPTED = True
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+        return None
+    try:
+        from supabase import create_client
+        _SB_SINGLETON = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] supabase client init failed: {e!r}", file=_sys.stderr, flush=True)
+        _SB_SINGLETON = None
+    return _SB_SINGLETON
+
+
 # ---------- Normalizer ----------
 #
 # Target shape per row:
@@ -193,16 +315,22 @@ def _seatdata_client():
 #   }
 
 def _norm_evo(o: dict) -> dict:
-    event = o.get("event") or {}
+    # Evo list_orders doesn't return event at the top level — it lives inside
+    # the first item's ticket_group. Pattern verified against the operator's
+    # reference Tkinter app: o.items[0].ticket_group.event.{name,occurs_at}.
     items = o.get("items") or []
+    first_tg = (items[0] or {}).get("ticket_group") or {} if items else {}
+    event = first_tg.get("event") or {}
     qty = sum(int(it.get("quantity") or 0) for it in items) if items else None
+    status = o.get("state")
     return {
         "source": "evo",
         "order_id": str(o.get("id") or ""),
         "event_name": event.get("name"),
         "event_date": event.get("occurs_at"),
         "qty": qty,
-        "status": o.get("state"),
+        "status": status,
+        "canonical_status": _canonical_status("evo", status),
         "amount": _to_float(o.get("total")),
         "currency": o.get("currency"),
         "ordered_at": o.get("created_at"),
@@ -210,28 +338,45 @@ def _norm_evo(o: dict) -> dict:
 
 
 def _norm_sg(o: dict) -> dict:
+    # SeatGeek's seller_order/{id} payload uses:
+    #   event.name    (not event.title)
+    #   event.date    "YYYY-MM-DD"   (separate from event.time "HH:MM:SS")
+    #   listing.quantity (not o.quantity)
+    #   created / updated (not created_at / ordered_at)
+    # Earlier reading of `.title` / `.datetime_local` left event_date + qty
+    # blank on the deep-detail panel. Combine date + time into an ISO string.
     event = o.get("event") or {}
+    listing = o.get("listing") or {}
+    status = o.get("status")
+    ev_date = event.get("date")
+    ev_time = event.get("time") or "00:00:00"
+    event_dt = f"{ev_date}T{ev_time}" if ev_date else (
+        event.get("datetime_local") or event.get("datetime_utc")
+    )
     return {
         "source": "seatgeek",
         "order_id": str(o.get("order_id") or o.get("id") or ""),
-        "event_name": event.get("title") or o.get("event_title"),
-        "event_date": event.get("datetime_local") or event.get("datetime_utc"),
-        "qty": _to_int(o.get("quantity")),
-        "status": o.get("status"),
+        "event_name": event.get("name") or event.get("title") or o.get("event_title"),
+        "event_date": event_dt,
+        "qty": _to_int(o.get("quantity") or listing.get("quantity")),
+        "status": status,
+        "canonical_status": _canonical_status("seatgeek", status),
         "amount": _to_float(o.get("total") or o.get("payout")),
         "currency": o.get("currency"),
-        "ordered_at": o.get("created_at") or o.get("ordered_at"),
+        "ordered_at": o.get("created") or o.get("created_at") or o.get("ordered_at"),
     }
 
 
 def _norm_tickpick(o: dict) -> dict:
+    status = o.get("status")
     return {
         "source": "tickpick",
         "order_id": str(o.get("orderId") or o.get("order_id") or o.get("id") or ""),
         "event_name": o.get("eventName") or o.get("event_name"),
         "event_date": o.get("eventDate") or o.get("event_date"),
         "qty": _to_int(o.get("quantity") or o.get("qty")),
-        "status": o.get("status"),
+        "status": status,
+        "canonical_status": _canonical_status("tickpick", status),
         "amount": _to_float(o.get("total") or o.get("payout")),
         "currency": o.get("currency"),
         "ordered_at": o.get("orderDate") or o.get("createdAt"),
@@ -239,18 +384,134 @@ def _norm_tickpick(o: dict) -> dict:
 
 
 def _norm_vivid(o: dict) -> dict:
-    # Vivid orders come from XML — flat-dict, all string values.
+    # Vivid orders come from XML — flat-dict, all string values. The XML uses
+    # a lowercase <event> tag for the event name (not <eventName>); reading
+    # the wrong key was leaving event_name blank in the dashboard.
+    status = o.get("status")
     return {
         "source": "vivid",
         "order_id": str(o.get("orderId") or ""),
-        "event_name": o.get("eventName"),
+        "event_name": o.get("event") or o.get("eventName"),
         "event_date": o.get("eventDate"),
         "qty": _to_int(o.get("quantity")),
-        "status": o.get("status"),
+        "status": status,
+        "canonical_status": _canonical_status("vivid", status),
         "amount": _to_float(o.get("total") or o.get("price")),
         "currency": o.get("currency"),
         "ordered_at": o.get("orderDate"),
     }
+
+
+def _norm_gotickets(o: dict) -> dict:
+    """GoTickets /rest/sales/:id response. The API doesn't return a single
+    'status' string — the operator's Apps Script derives state from the
+    `fulfilled` bool + `cancelReason` + `sellerStatus`. Mirror that here:
+        cancelReason set → cancelled
+        fulfilled=true   → fulfilled
+        else             → pending
+    """
+    fulfilled = bool(o.get("fulfilled"))
+    cancel = (o.get("cancelReason") or "").strip()
+    if cancel and cancel.lower() not in ("", "null"):
+        canonical = "cancelled"
+        raw_status = f"cancelReason:{cancel}"
+    elif fulfilled:
+        canonical = "fulfilled"
+        raw_status = "fulfilled"
+    else:
+        canonical = "pending"
+        raw_status = o.get("sellerStatus") or "pending"
+    event = o.get("event") or {}
+    return {
+        "source": "gotickets",
+        "order_id": str(o.get("id") or o.get("orderId") or o.get("saleId") or ""),
+        "event_name": event.get("name") or event.get("title"),
+        "event_date": event.get("startsAt") or event.get("date") or event.get("eventDate"),
+        "qty": _to_int(o.get("quantity") or o.get("ticketCount")),
+        "status": raw_status,
+        "canonical_status": canonical,
+        "amount": _to_float(o.get("total") or o.get("salePrice")),
+        "currency": o.get("currency"),
+        "ordered_at": o.get("createdAt") or o.get("saleDate"),
+        "fulfillment_time": o.get("fulfillmentTime"),
+    }
+
+
+# Canonical status mapping — buckets borrowed from public.order_status_xref.
+# Keeps the dashboard's Status column comparable across sources. Evo + SG
+# rows coming from SQL already have unified_orders.canonical_status; this
+# table is the in-Python equivalent for the API-path rows (tickpick, vivid,
+# gotickets, plus the SQL-empty fallback path for evo + sg).
+_CANONICAL_STATUS: dict[str, dict[str, str]] = {
+    "evo": {
+        "pending": "pending",
+        "accepted": "accepted",
+        "completed": "fulfilled",
+        "rejected": "rejected",
+        "pending_substitution": "substitution",
+    },
+    "seatgeek": {
+        "open": "pending",
+        "pending": "pending",
+        "confirmed": "accepted",
+        "fulfilled": "fulfilled",
+        "delivered": "fulfilled",
+        "cancelled": "cancelled",
+        "pending_substitution": "substitution",
+    },
+    # TickPick's broker list is fetched with status=unfulfilled, so the
+    # bare value "unfulfilled" maps to accepted (broker has the order,
+    # awaiting delivery). Other terminal states map per Apps Script semantics.
+    "tickpick": {
+        "unfulfilled": "accepted",
+        "pending":     "pending",
+        "fulfilled":   "fulfilled",
+        "filled":      "fulfilled",
+        "cancelled":   "cancelled",
+        "canceled":    "cancelled",
+        "rejected":    "rejected",
+    },
+    # Vivid's getOrders endpoint surfaces PENDING_SHIPMENT / PENDING_RETRANSFER
+    # for the active-order feed. Both = broker holds, awaiting shipment.
+    "vivid": {
+        "PENDING_SHIPMENT":   "accepted",
+        "PENDING_RETRANSFER": "accepted",
+        "FULFILLED":          "fulfilled",
+        "SHIPPED":            "fulfilled",
+        "CANCELLED":          "cancelled",
+        "CANCELED":           "cancelled",
+        "REJECTED":           "rejected",
+    },
+    # GoTickets: the Apps Script reads fulfilled (bool) + cancelReason + sellerStatus.
+    # Status field varies — we map common values; the read-only fetcher
+    # also derives a canonical via the fulfilled/cancelReason booleans
+    # in _norm_gotickets below.
+    "gotickets": {
+        "fulfilled": "fulfilled",
+        "cancelled": "cancelled",
+        "canceled":  "cancelled",
+        "rejected":  "rejected",
+        "pending":   "pending",
+    },
+}
+
+
+def _canonical_status(source: str, raw: str | None) -> str | None:
+    """Map a source's raw status enum to the canonical bucket
+    (pending / accepted / fulfilled / rejected / cancelled / substitution).
+    Returns None on unrecognized values so the caller can decide whether to
+    surface the raw value untranslated or hide it. Case-insensitive — handles
+    Vivid's UPPERCASE XML enum and TickPick's lowercase JSON enum uniformly."""
+    if not raw:
+        return None
+    table = _CANONICAL_STATUS.get(source, {})
+    if raw in table:
+        return table[raw]
+    raw_low = raw.lower()
+    for k, v in table.items():
+        if k.lower() == raw_low:
+            return v
+    return None
 
 
 def _to_int(v: Any) -> int | None:
@@ -267,63 +528,454 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+# ---------- SQL-backed fetchers ----------
+
+# Sources mirrored to public.unified_orders by an upstream cron. /api/d2/orders
+# pulls these from SQL with no broker-API call. Vivid is still on the API+match
+# path (XML ingest needs an edge function — separate ticket).
+_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata", "tickpick"})
+
+# Sources the dashboard pulls via direct API call, enriched with canonical
+# event info from v_event_base. Stopgap until persistence cron ships.
+_API_BACKED_SOURCES = ("vivid",)
+
+_ALL_SOURCES = ("evo", "seatgeek", "seatdata", "tickpick", "vivid")
+
+
+def _fetch_cron_freshness() -> dict[str, dict]:
+    """Call public.d2_cron_freshness() and reduce to one row per source —
+    preferring the 'queue' phase as the canonical 'when did the upstream
+    pull last fire.' Returns empty dict when Supabase isn't configured.
+
+    Shape per source: {jobname, phase, schedule, active, last_run, last_status}.
+    Front-end uses last_run + schedule to render 'last pull: 12m ago · every 30m'."""
+    sb = _sb()
+    if sb is None:
+        return {}
+    try:
+        res = sb.rpc("d2_cron_freshness").execute()
+        rows = res.data or []
+        by_source: dict[str, dict] = {}
+        for r in rows:
+            src = r.get("source")
+            if not src:
+                continue
+            # Prefer the queue-phase row; fall back to whatever's available.
+            if src not in by_source or r.get("phase") == "queue":
+                by_source[src] = r
+        return by_source
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] cron freshness pull failed: {e!r}", file=_sys.stderr, flush=True)
+        return {}
+
+
+# In-process cache for the v_event_base window. Events don't churn fast —
+# a 60s TTL is comfortably within human attention spans and slashes one
+# round-trip per dashboard refresh.
+_EVENT_WINDOW_CACHE: dict = {"at": 0.0, "rows": []}
+_EVENT_WINDOW_TTL_SEC = 60
+
+
+def _pull_event_window(days_back: int = 1, days_forward: int = 120) -> list[dict]:
+    """Pull a window of upcoming events from v_event_base for fuzzy-matching
+    tickpick / vivid order responses to canonical tevo_event_ids. Cached
+    in-process for 60s so repeated /api/d2/orders refreshes during the
+    auto-poll don't re-query the view. Empty list when Supabase isn't
+    configured."""
+    import time as _time
+    now = _time.time()
+    if (now - _EVENT_WINDOW_CACHE["at"]) < _EVENT_WINDOW_TTL_SEC and _EVENT_WINDOW_CACHE["rows"]:
+        return _EVENT_WINDOW_CACHE["rows"]
+    sb = _sb()
+    if sb is None:
+        return []
+    from datetime import datetime, timedelta, timezone
+    cur = datetime.now(timezone.utc)
+    lo = (cur - timedelta(days=days_back)).isoformat()
+    hi = (cur + timedelta(days=days_forward)).isoformat()
+    try:
+        res = (
+            sb.table("v_event_base")
+            .select("tevo_event_id,event_name,event_at_local,event_at_utc")
+            .gte("event_at_utc", lo)
+            .lte("event_at_utc", hi)
+            .execute()
+        )
+        rows = res.data or []
+        _EVENT_WINDOW_CACHE["at"] = now
+        _EVENT_WINDOW_CACHE["rows"] = rows
+        return rows
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] event window pull failed: {e!r}", file=_sys.stderr, flush=True)
+        return []
+
+
+_TOKEN_STOPWORDS = frozenset({
+    "the", "vs", "at", "and", "of", "a", "an", "in", "on", "to", "for", "with",
+    "tour", "live", "presents", "featuring", "feat", "ft",
+})
+
+
+def _tokenize_event(name: str | None) -> set[str]:
+    """Best-effort tokenization for fuzzy event matching: lowercase, split on
+    non-alphanumeric, drop stopwords + 1–2 char fragments. Same shape used
+    by the existing in-DB matcher (supabase/migrations/...phase11...)."""
+    if not name:
+        return set()
+    import re
+    toks = re.split(r"[^a-z0-9]+", name.lower())
+    return {t for t in toks if len(t) >= 3 and t not in _TOKEN_STOPWORDS}
+
+
+def _match_event(target_name: str | None, target_date: str | None, candidates: list[dict]) -> dict | None:
+    """Pick the best v_event_base candidate for a tickpick/vivid order based
+    on token overlap + date proximity. Returns None when no candidate clears
+    the heuristic floor.
+
+    Match rules (mirror the in-DB matcher's spirit, simpler):
+      - candidate event_at_utc within ±12h of target_date
+      - >=2 shared 3+char tokens, OR Jaccard similarity >= 0.5
+    Ties broken by smallest date delta."""
+    if not target_name or not candidates:
+        return None
+    target_tokens = _tokenize_event(target_name)
+    if not target_tokens:
+        return None
+    target_ts = None
+    if target_date:
+        from datetime import datetime
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
+            try:
+                target_ts = datetime.strptime(target_date.replace("Z", "+0000"), fmt)
+                break
+            except ValueError:
+                continue
+    best = None
+    best_score = (0, float("inf"))  # (-shared_tokens, date_delta_seconds)
+    for c in candidates:
+        c_tokens = _tokenize_event(c.get("event_name"))
+        if not c_tokens:
+            continue
+        shared = len(target_tokens & c_tokens)
+        jaccard = shared / max(1, len(target_tokens | c_tokens))
+        if shared < 2 and jaccard < 0.5:
+            continue
+        date_delta = float("inf")
+        if target_ts and c.get("event_at_utc"):
+            from datetime import datetime
+            try:
+                c_ts = datetime.fromisoformat(c["event_at_utc"].replace("Z", "+00:00"))
+                if c_ts.tzinfo is None:
+                    from datetime import timezone
+                    c_ts = c_ts.replace(tzinfo=timezone.utc)
+                date_delta = abs((target_ts - c_ts).total_seconds())
+                if date_delta > 12 * 3600:
+                    continue
+            except (ValueError, TypeError):
+                continue
+        score = (shared, -date_delta)
+        if score > (-best_score[0], -best_score[1]):
+            best = c
+            best_score = (shared, date_delta)
+    return best
+
+
+def _enrich_row_with_event(row: dict, event_window: list[dict]) -> dict:
+    """Look up a canonical event for a tickpick/vivid order row. When matched,
+    overlay tevo_event_id + canonical event_name/event_date so the row joins
+    cleanly with the SQL-backed sources in the same table."""
+    if not event_window:
+        return row
+    match = _match_event(row.get("event_name"), row.get("event_date"), event_window)
+    if not match:
+        return row
+    row["tevo_event_id"] = match.get("tevo_event_id")
+    row["event_name"] = match.get("event_name") or row.get("event_name")
+    row["event_date"] = match.get("event_at_local") or match.get("event_at_utc") or row.get("event_date")
+    row["event_origin"] = "matched"
+    return row
+
+
+def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
+    """Pull a balanced page of rows from unified_orders, joined to
+    v_event_base for event_name + event_date. Returns None when Supabase
+    isn't configured.
+
+    Balanced means: per_page is split across SQL-backed sources rather
+    than taken globally newest-first. Globally-newest skewed to whoever's
+    cron was most active (operator 2026-05-14 saw 100% evo on page 1
+    because SG/seatdata cron had stalled at 2026-05-09; only the live
+    evo cron contributed recent created_at). This way every source with
+    rows gets surface area on every page."""
+    sb = _sb()
+    if sb is None:
+        return None
+    try:
+        n_sources = max(1, len(_SQL_BACKED_SOURCES))
+        per_source = max(1, per_page // n_sources)
+        start = max(0, (page - 1) * per_source)
+        end = start + per_source - 1
+
+        all_uo_rows: list[dict] = []
+        per_source_as_of: dict[str, str] = {}
+        per_source_count: dict[str, int] = {}
+        any_error = None
+
+        # One PostgREST query per source, fanned out in parallel. unified_orders
+        # carries native event_name + event_date per source as of migration
+        # 20260514000000 — no JOIN to v_event_base needed except for sources
+        # that don't surface their own event info (seatdata).
+        #
+        # 2026-05-14: profiled the previous sequential loop at ~400ms total
+        # for 4 sources (~100ms RTT × 4). The SQL itself is ~3ms per query;
+        # the wall-clock was PostgREST round-trip latency. Parallelizing
+        # drops total to ~max(per-source), ~100ms.
+        def _pull_one(src: str) -> tuple[str, list[dict], str | None]:
+            try:
+                res = (
+                    sb.table("unified_orders")
+                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
+                    .eq("source", src)
+                    .order("created_at", desc=True)
+                    .range(start, end)
+                    .execute()
+                )
+                return src, (res.data or []), None
+            except Exception as e:
+                return src, [], _scrub_err(f"unified_orders.sql.{src}", e)
+
+        sources_to_pull = sorted(_SQL_BACKED_SOURCES)
+        with ThreadPoolExecutor(max_workers=len(sources_to_pull)) as ex:
+            for src, rows_for_src, err in ex.map(_pull_one, sources_to_pull):
+                if err:
+                    any_error = err
+                for r in rows_for_src:
+                    all_uo_rows.append(r)
+                    ls = r.get("last_seen_at")
+                    if ls and (per_source_as_of.get(src, "") < ls):
+                        per_source_as_of[src] = ls
+                    per_source_count[src] = per_source_count.get(src, 0) + 1
+
+        # Fallback: rows whose native event_name is NULL (seatdata, or any
+        # source whose ingest left the field blank) get v_event_base via
+        # tevo_event_id, same as before.
+        missing_event_ids = list({
+            r["tevo_event_id"] for r in all_uo_rows
+            if r.get("tevo_event_id") and not r.get("event_name")
+        })
+        events_by_id: dict = {}
+        if missing_event_ids:
+            ev_res = (
+                sb.table("v_event_base")
+                .select("tevo_event_id,event_name,event_at_local,event_at_utc")
+                .in_("tevo_event_id", missing_event_ids)
+                .execute()
+            )
+            events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
+        rows = []
+        for r in all_uo_rows:
+            event_name = r.get("event_name")
+            event_date = r.get("event_date")
+            if not event_name:
+                ev = events_by_id.get(r.get("tevo_event_id")) or {}
+                event_name = ev.get("event_name")
+                event_date = ev.get("event_at_local") or ev.get("event_at_utc")
+            rows.append({
+                "source": r.get("source") or "",
+                "order_id": str(r.get("source_order_id") or ""),
+                "event_name": event_name,
+                "event_date": event_date,
+                "qty": _to_int(r.get("quantity")),
+                "status": r.get("source_status"),
+                "canonical_status": r.get("canonical_status"),
+                "amount": _to_float(r.get("gross_value")),
+                "currency": None,
+                "ordered_at": r.get("created_at"),
+            })
+        result = {
+            "rows": rows,
+            "per_source_count": per_source_count,
+            "per_source_as_of": per_source_as_of,
+        }
+        if any_error:
+            result["error"] = any_error
+        return result
+    except Exception as e:
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "error": _scrub_err("unified_orders.sql", e)}
+
+
+def _fetch_orders_from_sql(source: str, per_page: int, page: int = 1) -> dict | None:
+    """Pull a source's orders out of unified_orders, joined to v_event_base
+    for event_name + event_date. Returns None when Supabase isn't configured
+    so the caller can fall back to the upstream API.
+
+    Pagination via PostgREST .range() — `page` is 1-based to match the
+    /api/d2/orders ?page= query semantics."""
+    sb = _sb()
+    if sb is None:
+        return None
+    try:
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page - 1
+        uo_res = (
+            sb.table("unified_orders")
+            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
+            .eq("source", source)
+            .order("created_at", desc=True)
+            .range(start, end)
+            .execute()
+        )
+        uo_rows = uo_res.data or []
+        event_ids = list({r["tevo_event_id"] for r in uo_rows if r.get("tevo_event_id")})
+        events_by_id: dict = {}
+        if event_ids:
+            ev_res = (
+                sb.table("v_event_base")
+                .select("tevo_event_id,event_name,event_at_local,event_at_utc")
+                .in_("tevo_event_id", event_ids)
+                .execute()
+            )
+            events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
+        rows = []
+        for r in uo_rows:
+            ev = events_by_id.get(r.get("tevo_event_id")) or {}
+            rows.append({
+                "source": source,
+                "order_id": str(r.get("source_order_id") or ""),
+                "event_name": ev.get("event_name"),
+                "event_date": ev.get("event_at_local") or ev.get("event_at_utc"),
+                "qty": _to_int(r.get("quantity")),
+                "status": r.get("source_status"),
+                "canonical_status": r.get("canonical_status"),
+                "amount": _to_float(r.get("gross_value")),
+                "currency": None,
+                "ordered_at": r.get("created_at"),
+            })
+        as_of = max((r.get("last_seen_at") for r in uo_rows if r.get("last_seen_at")), default=None)
+        return {
+            "source": source,
+            "ok": True,
+            "rows": rows,
+            "total": None,           # avoid the extra count(*) round-trip
+            "origin": "sql",
+            "as_of": as_of,
+        }
+    except Exception as e:
+        return {
+            "source": source,
+            "ok": False,
+            "error": _scrub_err(f"{source}.sql", e),
+            "rows": [],
+            "origin": "sql",
+        }
+
+
 # ---------- Fan-out helpers ----------
+
+_SAFE_CLIENT_ERROR_NAMES = frozenset({
+    "TickPickError", "EvoError", "SeatGeekError", "VividError", "SeatDataError",
+    "GoTicketsError",
+})
+
 
 def _scrub_err(source: str, exc: Exception) -> str:
     """Log full exception server-side (operator sees in Render logs); return a
-    stable, generic message to the client so upstream error text — which can
-    include URLs, partial tokens, internal IDs — never makes it to the wire."""
+    safe message to the client.
+
+    Typed client errors (e.g. TickPickError("HTTP 401")) are constructed by
+    the client modules to carry only an HTTP status code — no URLs, tokens,
+    or response bodies. Those are passed through so the operator sees what's
+    actually wrong (401 vs 404 vs 502) instead of an opaque "upstream error".
+    Anything else is scrubbed to the generic message."""
     import sys as _sys
     print(f"[d2_dashboard] {source} fetch failed: {exc!r}", file=_sys.stderr, flush=True)
+    if type(exc).__name__ in _SAFE_CLIENT_ERROR_NAMES:
+        msg = str(exc).strip()
+        # Belt-and-suspenders: even for typed errors, refuse anything that
+        # looks like it carries a URL or a long token.
+        if msg and "://" not in msg and len(msg) <= 120:
+            return msg
     return "upstream error"
 
 
-def _fetch_evo(per_page: int) -> dict:
+def _fetch_evo(per_page: int, page: int = 1) -> dict:
+    # SQL-first: if Supabase is configured and unified_orders has evo rows,
+    # serve from SQL (cron-fresh, no broker-API quota burn). Fall through
+    # to the upstream API when SQL isn't available or returns empty.
+    sql_row = _fetch_orders_from_sql("evo", per_page, page) if "evo" in _SQL_BACKED_SOURCES else None
+    if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
+        return sql_row
+    # Mirrors the operator's reference Tkinter app: pull orders in both
+    # accepted and pending states, merge + dedupe by id. Evo's list_orders
+    # caps per_page at 10 server-side, so per_page maps to "per state".
     c = _evo_client()
     if c is None:
-        return {"source": "evo", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "evo", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
-        body = c.list_orders(per_page=min(per_page, 10))
-        rows = [_norm_evo(o) for o in (body.get("orders") or [])]
-        return {"source": "evo", "ok": True, "rows": rows, "total": body.get("total_entries")}
+        cap = min(per_page, 10)
+        seen: dict[str, dict] = {}
+        total_any: int | None = None
+        for state in ("accepted", "pending"):
+            body = c.list_orders(per_page=cap, state=state, page=page)
+            if total_any is None:
+                total_any = body.get("total_entries")
+            for o in body.get("orders") or []:
+                row = _norm_evo(o)
+                if row["order_id"]:
+                    seen.setdefault(row["order_id"], row)
+        rows = list(seen.values())
+        return {"source": "evo", "ok": True, "rows": rows, "total": total_any, "origin": "api"}
     except Exception as e:
-        return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": []}
+        return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": [], "origin": "api"}
 
 
-def _fetch_sg(per_page: int) -> dict:
+def _fetch_sg(per_page: int, page: int = 1) -> dict:
+    sql_row = _fetch_orders_from_sql("seatgeek", per_page, page) if "seatgeek" in _SQL_BACKED_SOURCES else None
+    if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
+        return sql_row
     c = _sg_client()
     if c is None:
-        return {"source": "seatgeek", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "seatgeek", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
-        body = c.seller_orders("open", page=1)
+        body = c.seller_orders("open", page=page)
         rows = [_norm_sg(o) for o in (body.get("orders") or [])][:per_page]
-        return {"source": "seatgeek", "ok": True, "rows": rows, "total": (body.get("meta") or {}).get("total")}
+        return {"source": "seatgeek", "ok": True, "rows": rows, "total": (body.get("meta") or {}).get("total"), "origin": "api"}
     except Exception as e:
-        return {"source": "seatgeek", "ok": False, "error": _scrub_err("seatgeek", e), "rows": []}
+        return {"source": "seatgeek", "ok": False, "error": _scrub_err("seatgeek", e), "rows": [], "origin": "api"}
 
 
-def _fetch_tickpick(per_page: int) -> dict:
+def _fetch_tickpick(per_page: int, page: int = 1) -> dict:
+    # No SQL backing and no list-pagination on the upstream — slice the full
+    # response client-side. Will be added to unified_orders in a follow-up
+    # cron PR; until then the chip shows origin="api".
     c = _tickpick_client()
     if c is None:
-        return {"source": "tickpick", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "tickpick", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
-        body = c.list_orders()
-        rows = [_norm_tickpick(o) for o in (body or [])][:per_page]
-        return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body or [])}
+        body = c.list_orders() or []
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page
+        rows = [_norm_tickpick(o) for o in body[start:end]]
+        return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body), "origin": "api"}
     except Exception as e:
-        return {"source": "tickpick", "ok": False, "error": _scrub_err("tickpick", e), "rows": []}
+        return {"source": "tickpick", "ok": False, "error": _scrub_err("tickpick", e), "rows": [], "origin": "api"}
 
 
-def _fetch_vivid(per_page: int) -> dict:
+def _fetch_vivid(per_page: int, page: int = 1) -> dict:
+    # Same as tickpick — slice the full response client-side.
     c = _vivid_client()
     if c is None:
-        return {"source": "vivid", "ok": False, "error": "no creds", "rows": []}
+        return {"source": "vivid", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
     try:
-        body = c.list_active_orders()
-        rows = [_norm_vivid(o) for o in (body or [])][:per_page]
-        return {"source": "vivid", "ok": True, "rows": rows, "total": len(body or [])}
+        body = c.list_active_orders() or []
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page
+        rows = [_norm_vivid(o) for o in body[start:end]]
+        return {"source": "vivid", "ok": True, "rows": rows, "total": len(body), "origin": "api"}
     except Exception as e:
-        return {"source": "vivid", "ok": False, "error": _scrub_err("vivid", e), "rows": []}
+        return {"source": "vivid", "ok": False, "error": _scrub_err("vivid", e), "rows": [], "origin": "api"}
 
 
 # ---------- Endpoints ----------
@@ -345,6 +997,8 @@ def healthz_detail(_=Depends(require_auth)):
     return {
         "ok": True,
         "service": "d2_dashboard",
+        "phase": D2_PHASE,
+        "ui": D2_UI_STATUS,
         "python": _sys.version.split()[0],
         "auth_disabled": AUTH_DISABLED,
         "supabase": {
@@ -353,13 +1007,12 @@ def healthz_detail(_=Depends(require_auth)):
             "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
         },
         "brokers": {
-            "evo":      {"token_set": bool(_env_first("TEVO_API_TOKEN", "TEVO_TOKEN")),
-                         "secret_set": bool(_env_first("TEVO_API_SECRET", "TEVO_SECRET")),
-                         "sandbox": os.environ.get("TEVO_SANDBOX", "false").lower() == "true"},
-            "seatgeek": {"token_set": bool(os.environ.get("SEATGEEK_API_TOKEN"))},
-            "tickpick": {"token_set": bool(_env_first("TICKPICK_API_TOKEN", "TICKPICK_TOKEN"))},
-            "vivid":    {"token_set": bool(os.environ.get("VIVID_API_TOKEN"))},
-            "seatdata": {"key_set":   bool(os.environ.get("SEATDATA_API_KEY"))},
+            "evo":      _broker_diag("TEVO_API_TOKEN", "TEVO_TOKEN", secret_names=("TEVO_API_SECRET", "TEVO_SECRET")) | {"sandbox": os.environ.get("TEVO_SANDBOX", "false").lower() == "true"},
+            "seatgeek": _broker_diag("SEATGEEK_API_TOKEN"),
+            "tickpick": _broker_diag("TICKPICK_API_TOKEN", "TICKPICK_TOKEN"),
+            "vivid":    _broker_diag("VIVID_API_TOKEN"),
+            "seatdata": _broker_diag("SEATDATA_API_KEY"),
+            "gotickets": _broker_diag("GOTICKETS_ACCESS_ID", secret_names=("GOTICKETS_API_SECRET",)),
         },
         "platform": {
             "render": bool(os.environ.get("RENDER")),
@@ -373,12 +1026,31 @@ def healthz_detail(_=Depends(require_auth)):
     }
 
 
+def _shell_config_blob() -> dict:
+    """Per-request bootstrap config injected into the HTML shell. Anon key is
+    safe to expose by design; no secrets here. The canonical_origin lets the
+    front-end build an OAuth redirectTo that matches what's registered in
+    Supabase Auth rather than guessing from window.location."""
+    return {
+        "supabase_url": SUPABASE_URL,
+        "supabase_anon_key": SUPABASE_ANON_KEY,
+        "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
+        "auth_disabled": AUTH_DISABLED,
+        "canonical_origin": D2_CANONICAL_ORIGIN or None,
+    }
+
+
 @app.get("/")
 def root():
-    path = TEMPLATES_DIR / "dashboard.html"
-    if not path.exists():
+    if PROD_MISSING_SUPABASE:
+        raise HTTPException(503, "d2_dashboard misconfigured: SUPABASE_URL / SUPABASE_ANON_KEY not set")
+    if not _DASHBOARD_SHELL:
         raise HTTPException(500, "dashboard.html missing")
-    return FileResponse(str(path), media_type="text/html")
+    # JSON.stringify equivalent — escape `<` to defuse `</script>` injection
+    # from any future config field that ends up reflecting user input.
+    blob = json.dumps(_shell_config_blob()).replace("<", "\\u003c")
+    html = _DASHBOARD_SHELL.replace(_CONFIG_PLACEHOLDER, blob)
+    return HTMLResponse(html)
 
 
 @app.get("/api/d2/config")
@@ -393,44 +1065,412 @@ def config(_=Depends(require_auth)):
 
 @app.get("/api/d2/config-public")
 def config_public():
-    """Pre-auth bootstrap — front-end needs SUPABASE_URL + ANON_KEY to show
-    the login UI. These are public values (anon key is safe to expose;
-    that's its design). `auth_disabled` lets the front-end skip the login
-    screen when the server is in testing mode."""
-    return {
-        "supabase_url": SUPABASE_URL,
-        "supabase_anon_key": SUPABASE_ANON_KEY,
-        "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
-        "auth_disabled": AUTH_DISABLED,
-    }
+    """Pre-auth bootstrap — mirror of the blob server-rendered into the HTML
+    shell. Kept as a JSON endpoint for API consumers and for the front-end's
+    fallback path; the shell normally doesn't fetch this on boot. Anon key is
+    safe to expose (that's its design)."""
+    return _shell_config_blob()
+
+
+def _fetch_unified_orders_fast(per_page: int) -> dict | None:
+    """First-paint fast path: one global query, upcoming-only, sorted by
+    event_date ASC. No per-source split, no v_event_base join, no API call.
+    Operator can see the soonest events to triage in <200ms while the
+    full orders feed loads in a second phase.
+
+    "Upcoming" = event_date >= now() - 12h, matching the dashboard's
+    default Hide-Past-12h filter. Filter pushed down to SQL so we don't
+    waste bandwidth on rows the client would hide anyway."""
+    sb = _sb()
+    if sb is None:
+        return None
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    try:
+        res = (
+            sb.table("unified_orders")
+            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
+            .gte("event_date", cutoff)
+            .order("event_date", desc=False, nullsfirst=False)
+            .limit(per_page)
+            .execute()
+        )
+        rows_out = []
+        per_source_count: dict[str, int] = {}
+        per_source_as_of: dict[str, str] = {}
+        for r in (res.data or []):
+            src = r.get("source") or ""
+            rows_out.append({
+                "source": src,
+                "order_id": str(r.get("source_order_id") or ""),
+                "event_name": r.get("event_name"),
+                "event_date": r.get("event_date"),
+                "qty": _to_int(r.get("quantity")),
+                "status": r.get("source_status"),
+                "canonical_status": r.get("canonical_status"),
+                "amount": _to_float(r.get("gross_value")),
+                "currency": None,
+                "ordered_at": r.get("created_at"),
+            })
+            per_source_count[src] = per_source_count.get(src, 0) + 1
+            ls = r.get("last_seen_at")
+            if ls and (per_source_as_of.get(src, "") < ls):
+                per_source_as_of[src] = ls
+        return {
+            "rows": rows_out,
+            "per_source_count": per_source_count,
+            "per_source_as_of": per_source_as_of,
+        }
+    except Exception as e:
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "error": _scrub_err("unified_orders.fast", e)}
 
 
 @app.get("/api/d2/orders")
-def orders(per_page: int = 25, _=Depends(require_auth)):
-    """Fan out to all 4 broker order surfaces in parallel, return one
-    normalized table. Each source reports ok/error independently so a
-    single dead source doesn't blank the page."""
+def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_auth)):
+    """Hybrid orders feed:
+      - evo / seatgeek / seatdata / tickpick: pulled from public.unified_orders
+      - vivid: pulled from upstream API + enriched via v_event_base match
+        (no SQL backing yet)
+
+    ?fast=1 mode (two-phase load): single global SQL query, upcoming-only
+    (event_date >= now()-12h), event_date ASC, NO vivid API, NO event_window.
+    Renders the soonest N upcoming events in <200ms. The client follows up
+    with a full call to merge vivid + older history in the background via
+    the diff-aware DOM update.
+
+    Default mode: three parallel pulls (per-source SQL fan-out + cached
+    v_event_base window + vivid API). Cron freshness moved to /api/d2/
+    cron-freshness on a separate poll so a slow cron RPC doesn't pace
+    this feed.
+
+    Per-leg timings are logged to stderr (Render logs) AND surfaced as a
+    Server-Timing response header so the operator can see exactly which
+    leg is slow from browser dev tools."""
+    import time as _time
     per_page = max(1, min(per_page, 100))
-    fetchers = (_fetch_evo, _fetch_sg, _fetch_tickpick, _fetch_vivid)
-    results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = [ex.submit(fn, per_page) for fn in fetchers]
-        for f in futures:
-            results.append(f.result())
-    merged: list[dict] = []
-    sources_summary = []
-    for r in results:
-        merged.extend(r.get("rows") or [])
-        sources_summary.append({
-            "source": r["source"],
-            "ok": r.get("ok", False),
-            "count": len(r.get("rows") or []),
-            "total_reported": r.get("total"),
-            "error": r.get("error"),
+    page = max(1, page)
+
+    timings: dict = {}
+    t0 = _time.perf_counter()
+
+    if fast:
+        # Single query, single thread, no vivid. Phase 1 of two-phase load.
+        bundle = _timed("sql.unified.fast", _fetch_unified_orders_fast, per_page, _timings=timings)
+        if bundle is None:
+            raise HTTPException(503, "Supabase not configured")
+        rows = bundle["rows"]
+        per_source_count = dict(bundle.get("per_source_count") or {})
+        per_source_as_of = dict(bundle.get("per_source_as_of") or {})
+        sql_err = bundle.get("error")
+        sources_summary = []
+        for src in _ALL_SOURCES:
+            sources_summary.append({
+                "source": src,
+                "ok": True if (src in _SQL_BACKED_SOURCES and not sql_err) else False,
+                "count": per_source_count.get(src, 0),
+                "total_reported": None,
+                "error": sql_err if (src in _SQL_BACKED_SOURCES and sql_err) else (None if src in _SQL_BACKED_SOURCES else "phase 2"),
+                "origin": "sql" if src in _SQL_BACKED_SOURCES else "api+sql-match",
+                "as_of": per_source_as_of.get(src),
+            })
+        total_ms = (_time.perf_counter() - t0) * 1000
+        import sys as _sys
+        print(
+            f"[d2_dashboard] /api/d2/orders fast=1 total={total_ms:.0f}ms "
+            f"sql.unified.fast={timings.get('sql.unified.fast', 0):.0f}ms",
+            file=_sys.stderr, flush=True,
+        )
+        return JSONResponse({
+            "sources": sources_summary,
+            "rows": rows,
+            "page": page,
+            "per_page": per_page,
+            "phase": "fast",
+            "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
         })
-    # Sort newest first by ordered_at (string ISO compares fine, None last).
-    merged.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
-    return JSONResponse({"sources": sources_summary, "rows": merged})
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        sql_future       = ex.submit(_timed, "sql.unified", _fetch_unified_orders_page, per_page, page, _timings=timings)
+        events_future    = ex.submit(_timed, "sql.event_window", _pull_event_window, _timings=timings)
+        vivid_future     = ex.submit(_timed, "api.vivid", _fetch_vivid, per_page, page, _timings=timings)
+        bundle           = sql_future.result()
+        event_window     = events_future.result()
+        vivid_result     = vivid_future.result()
+
+    if bundle is None:
+        raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+
+    rows = bundle["rows"]
+    per_source_count = dict(bundle.get("per_source_count") or {})
+    per_source_as_of = dict(bundle.get("per_source_as_of") or {})
+    sql_err = bundle.get("error")
+
+    api_results = {"vivid": vivid_result}
+    for src, result in api_results.items():
+        if result.get("ok"):
+            enriched = [_enrich_row_with_event(dict(r), event_window) for r in (result.get("rows") or [])]
+            rows.extend(enriched)
+            per_source_count[src] = len(enriched)
+
+    sources_summary = []
+    for src in _ALL_SOURCES:
+        if src in _SQL_BACKED_SOURCES:
+            sources_summary.append({
+                "source": src,
+                "ok": True if not sql_err else False,
+                "count": per_source_count.get(src, 0),
+                "total_reported": None,
+                "error": sql_err,
+                "origin": "sql",
+                "as_of": per_source_as_of.get(src),
+                # cron blob deliberately omitted here — fetched via
+                # /api/d2/cron-freshness on a separate, slower poll
+            })
+        else:
+            api_r = api_results.get(src, {})
+            sources_summary.append({
+                "source": src,
+                "ok": bool(api_r.get("ok")),
+                "count": per_source_count.get(src, 0),
+                "total_reported": api_r.get("total"),
+                "error": api_r.get("error"),
+                "origin": "api+sql-match",
+                "as_of": None,
+            })
+
+    rows.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
+    total_ms = (_time.perf_counter() - t0) * 1000
+
+    import sys as _sys
+    print(
+        f"[d2_dashboard] /api/d2/orders total={total_ms:.0f}ms "
+        f"sql.unified={timings.get('sql.unified', 0):.0f}ms "
+        f"sql.event_window={timings.get('sql.event_window', 0):.0f}ms "
+        f"api.vivid={timings.get('api.vivid', 0):.0f}ms "
+        f"event_window_cached={'yes' if (timings.get('sql.event_window', 999) < 5) else 'no'}",
+        file=_sys.stderr, flush=True,
+    )
+
+    response = JSONResponse({
+        "sources": sources_summary,
+        "rows": rows,
+        "page": page,
+        "per_page": per_page,
+        "phase": "full",
+        "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
+    })
+    response.headers["Server-Timing"] = ", ".join(
+        f"{k.replace('.','_')};dur={v:.1f}" for k, v in timings.items()
+    ) + f", total;dur={total_ms:.1f}"
+    return response
+
+
+def _timed(label: str, fn, *args, _timings: dict, **kwargs):
+    """Run `fn` and stash its wall-clock duration into `_timings[label]`.
+    Lets the parallel fan-out attribute time per-leg without each fetcher
+    knowing about the timing dict."""
+    import time as _time
+    t = _time.perf_counter()
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _timings[label] = (_time.perf_counter() - t) * 1000
+
+
+@app.get("/api/d2/cron-freshness")
+def cron_freshness(_=Depends(require_auth)):
+    """Per-source cron freshness, served separately from /api/d2/orders so
+    a slow cron RPC (66ms+ vs unified_orders' 3ms) doesn't pace the orders
+    feed. The dashboard polls this on a longer interval (or on Health-tab
+    open) than the 5-min orders auto-refresh."""
+    by_source = _fetch_cron_freshness()
+    return JSONResponse({"sources": by_source})
+
+
+def _deep_order_evo(c, order_id: str) -> dict:
+    return c.get_order(int(order_id))
+
+
+def _deep_order_seatgeek(c, order_id: str) -> dict:
+    return c.seller_order(order_id)
+
+
+def _deep_order_tickpick(c, order_id: str) -> dict:
+    return c.get_order_details(order_id)
+
+
+def _deep_order_vivid(c, order_id: str) -> dict:
+    return c.get_order(int(order_id))
+
+
+def _deep_order_gotickets(c, order_id: str) -> dict:
+    # GoTickets only exposes a by-id GET (no list endpoint). The deep-detail
+    # path is the *only* way to surface a GoTickets order in the dashboard.
+    return c.get_sale(order_id)
+
+
+_DEEP_ORDER = {
+    "evo":       ("_evo_client",       _deep_order_evo),
+    "seatgeek":  ("_sg_client",        _deep_order_seatgeek),
+    "tickpick":  ("_tickpick_client",  _deep_order_tickpick),
+    "vivid":     ("_vivid_client",     _deep_order_vivid),
+    "gotickets": ("_gotickets_client", _deep_order_gotickets),
+}
+
+
+@app.get("/api/d2/health")
+def health(_=Depends(require_auth)):
+    """Refresh-health snapshot — what each cron is doing and whether its
+    pipeline is healthy. Read-only; intended for the dashboard's Health tab.
+
+    Returns:
+      crons: list of one entry per cron job (jobname, schedule, active,
+             last_run, last_status). Sourced from public.d2_cron_freshness().
+      queues: per-source pending-queue depth (unresolved pg_net requests)
+             so the operator can see if process() is keeping up.
+      sql_counts: row counts in unified_orders per source + max(last_seen_at)
+             so the operator can see how stale the canonical view is.
+      fulfillby_fields: per-source whether the upstream surfaces an explicit
+             fulfill-by / in-hand date — currently none do (informational)."""
+    sb = _sb()
+    if sb is None:
+        raise HTTPException(503, "Supabase not configured")
+
+    # 1) Cron freshness — full list (not reduced to queue-only like the
+    #    orders chip uses).
+    cron_rows: list[dict] = []
+    try:
+        cron_rows = (sb.rpc("d2_cron_freshness").execute().data) or []
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] cron freshness pull failed: {e!r}", file=_sys.stderr, flush=True)
+
+    # 2) Per-source unresolved pending-queue depth + SQL row counts.
+    queues: dict[str, int] = {}
+    sql_counts: dict[str, dict] = {}
+    try:
+        for src, table in (("tickpick", "tickpick_orders_pending"), ("vivid", "vivid_orders_pending")):
+            try:
+                res = sb.table(table).select("id", count="exact").is_("resolved_at", "null").execute()
+                queues[src] = res.count or 0
+            except Exception:
+                queues[src] = -1   # sentinel: query failed
+        # Per-source row counts + freshness from unified_orders
+        for src in _ALL_SOURCES:
+            res = (
+                sb.table("unified_orders")
+                .select("last_seen_at", count="exact")
+                .eq("source", src)
+                .order("last_seen_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            sql_counts[src] = {
+                "rows":    res.count or 0,
+                "newest_seen": (res.data[0]["last_seen_at"] if res.data else None),
+            }
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] health counts pull failed: {e!r}", file=_sys.stderr, flush=True)
+
+    # 3) Fulfill-by / in-hand date inventory — what each source surfaces.
+    #    Currently none of our raw tables carry an explicit fulfill-by
+    #    timestamp; documenting that here so the operator sees the gap.
+    fulfillby_fields = {
+        "evo":      {"in_hand": None, "fulfill_by": None, "notes": "hold_expires_at is auction-hold timer, not fulfill deadline; event_date is implicit"},
+        "seatgeek": {"in_hand": None, "fulfill_by": None, "notes": "reservation_duration_minutes is a relative seller-response clock"},
+        "tickpick": {"in_hand": None, "fulfill_by": None, "notes": "by-id detail call may expose more once 401 is resolved"},
+        "vivid":    {"in_hand": None, "fulfill_by": None, "notes": "no ingest yet; XML feed unknown until edge function lands"},
+        "seatdata": {"in_hand": None, "fulfill_by": None, "notes": "completed-sales feed — no fulfillment lifecycle"},
+    }
+
+    return JSONResponse({
+        "crons": cron_rows,
+        "queues": queues,
+        "sql_counts": sql_counts,
+        "fulfillby_fields": fulfillby_fields,
+        "checked_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+    })
+
+
+@app.get("/api/d2/diag/tickpick")
+def diag_tickpick(_=Depends(require_auth)):
+    """One-shot diagnostic probe against the live TickPick API. Surfaces the
+    actual HTTP status, response body, and response headers so the operator
+    can see *why* TickPick is 401-ing instead of getting a scrubbed
+    'upstream error'. Read-only — issues a single GET against the same
+    /1.0/orders endpoint the dashboard uses on every refresh.
+
+    Auth-gated. Token is masked in the response (last 4 chars only).
+    Response body truncated to 500 chars to keep it bounded."""
+    token, env_var = _env_first_named("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
+    set_variants = [n for n in ("TICKPICK_API_TOKEN", "TICKPICK_TOKEN") if os.environ.get(n)]
+    base_diag = {
+        "endpoint":      "https://api.tickpick.com/1.0/orders?status=unfulfilled",
+        "token_env_var": env_var,
+        "token_masked":  _mask_token(token),
+        "token_warning": (
+            f"multiple env vars set ({', '.join(set_variants)}); using {env_var}"
+            if len(set_variants) > 1 else None
+        ),
+    }
+    if not token:
+        return JSONResponse({**base_diag, "ok": False, "error": "no token configured"}, status_code=200)
+    try:
+        r = requests.get(
+            "https://api.tickpick.com/1.0/orders",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            params={"status": "unfulfilled"},
+            timeout=10,
+            allow_redirects=False,  # don't follow 3xx — could leak token
+        )
+    except Exception as e:
+        return JSONResponse(
+            {**base_diag, "ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"},
+            status_code=200,
+        )
+    body_text = (r.text or "")[:500]
+    # Defensive scrub: if the response somehow echoed the token back, mask it.
+    if token in body_text:
+        body_text = body_text.replace(token, _mask_token(token) or "***")
+    return JSONResponse({
+        **base_diag,
+        "ok": r.ok,
+        "status_code": r.status_code,
+        "response_body": body_text,
+        "response_headers": {
+            k: v for k, v in r.headers.items()
+            if k.lower() in {"content-type", "www-authenticate", "x-ratelimit-limit",
+                             "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after",
+                             "server", "date"}
+        },
+    })
+
+
+@app.get("/api/d2/order/{source}/{order_id}")
+def order_detail(source: str, order_id: str, _=Depends(require_auth)):
+    """Single-order deep fetch. Hits the source's by-id read endpoint and
+    returns the raw response so the dashboard can render seats, customer,
+    notes, etc. Read-only — no fulfillment / transfer / write endpoints are
+    wired here per the 2026-05-13 lockdown."""
+    if source not in _DEEP_ORDER:
+        raise HTTPException(404, f"unknown source: {source}")
+    import sys as _sys
+    factory_name, fetcher = _DEEP_ORDER[source]
+    client_factory = getattr(_sys.modules[__name__], factory_name)
+    c = client_factory()
+    if c is None:
+        return JSONResponse({"ok": False, "error": "no creds"}, status_code=200)
+    try:
+        return JSONResponse({"ok": True, "source": source, "order_id": order_id, "data": fetcher(c, order_id)})
+    except Exception as e:
+        return JSONResponse(
+            {"ok": False, "source": source, "order_id": order_id, "error": _scrub_err(f"{source}.order_detail", e)},
+            status_code=200,
+        )
 
 
 @app.get("/api/d2/seatdata")

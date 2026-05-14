@@ -1,0 +1,346 @@
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --err: #f85149;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+h1 {
+  font-size: 16px;
+  margin: 0;
+  font-weight: 600;
+}
+.who {
+  font-size: 12px;
+  color: var(--muted);
+}
+button {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button[disabled] { opacity: 0.5; cursor: default; }
+main { padding: 16px 20px; }
+.login {
+  max-width: 360px;
+  margin: 80px auto;
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+}
+.login h2 { font-size: 18px; margin: 0 0 4px; }
+.login p { font-size: 13px; color: var(--muted); margin: 0 0 20px; }
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.tab {
+  padding: 8px 16px;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  cursor: pointer;
+  color: var(--muted);
+}
+.tab.active {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--panel);
+  margin-bottom: -1px;
+}
+.panel { display: none; }
+.panel.active { display: block; }
+.sources-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+.chip {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.chip.ok { border-color: var(--ok); }
+.chip.err { border-color: var(--err); color: var(--err); }
+.chip-origin {
+  display: inline-block;
+  padding: 1px 5px;
+  margin-right: 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chip-origin-sql { background: rgba(63, 185, 80, 0.18);  color: var(--ok); }
+.chip-origin-api { background: rgba(88, 166, 255, 0.18); color: var(--accent); }
+.source-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.cron-meta {
+  font-size: 10px;
+  color: var(--muted);
+  padding-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.cron-meta.cron-stale {
+  color: var(--warn);
+}
+.cron-meta.cron-stale::before { content: "⚠ "; }
+.orders-filters {
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.filter-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text);
+  cursor: pointer;
+}
+.filter-group input[type="date"],
+.filter-group input[type="number"] {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.filter-group input[type="number"] { width: 80px; }
+.filter-group input[type="date"]   { width: 130px; }
+.filter-group input[type="search"] {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  width: 140px;
+}
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.orders-pager {
+  justify-content: center;
+  margin-top: 8px;
+}
+.orders-pager button[disabled] { opacity: 0.4; }
+.gt-lookup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.gt-lookup input {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  width: 140px;
+}
+.canon-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+th, td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+td.source { font-weight: 600; }
+.sort-key {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  background: rgba(88, 166, 255, 0.18);
+  color: var(--accent);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+td.source.evo { color: #f0883e; }
+td.source.seatgeek { color: #58a6ff; }
+td.source.tickpick { color: #bc8cff; }
+td.source.vivid { color: #56d364; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+pre.json {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 11px;
+  overflow: auto;
+  max-height: 60vh;
+}
+.err-text { color: var(--err); }
+.sample-card {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.sample-head { margin-bottom: 8px; font-size: 12px; }
+.sample-head code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.sample-card pre.json { margin: 0; max-height: 280px; }
+.orders-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.toolbar-meta { color: var(--muted); font-size: 11px; }
+tbody tr.order-row { cursor: pointer; }
+tbody tr.order-row:hover { background: rgba(88, 166, 255, 0.06); }
+tbody tr.order-row.selected { background: rgba(88, 166, 255, 0.14); }
+/* Row was inserted on this refresh — soft fade-in instead of a hard pop. */
+tbody tr.order-row.row-new {
+  animation: row-fade-in 0.6s ease-out;
+}
+@keyframes row-fade-in {
+  from { background: rgba(63, 185, 80, 0.20); }
+  to   { background: transparent; }
+}
+/* Cell value changed across refreshes — brief amber flash so the operator
+   notices what shifted without re-scanning the whole row. */
+td.cell-updated {
+  animation: cell-flash 1.2s ease-out;
+}
+@keyframes cell-flash {
+  0%   { background: rgba(210, 153, 34, 0.32); }
+  100% { background: transparent; }
+}
+.order-detail-wrap { margin-top: 12px; }
+.order-detail-wrap details {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+}
+.order-detail-wrap summary { cursor: pointer; user-select: none; }
+table.kv {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+table.kv td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+table.kv td.kv-key {
+  width: 140px;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

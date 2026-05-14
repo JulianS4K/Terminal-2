@@ -7,8 +7,19 @@ service (`bot_chat` row 57 — INFRA OWNERSHIP RULE).
 
 A standalone FastAPI service that renders a single window across all 4
 broker order surfaces (Evo / SeatGeek / TickPick / Vivid) plus a SeatData
-analytics tab. Read-only — no writes to any external API. Auth gated by
-Supabase JWT + `ALLOWED_EMAIL_DOMAIN`.
+analytics tab. Read-only — no writes to any external API.
+
+**Auth posture (2026-05-13 — Google OAuth re-enabled)**: gated by default.
+`AUTH_DISABLED=false` is the shipped default; the dashboard surfaces the
+Supabase login screen → Google OAuth → @s4kent.com email check. Set
+`AUTH_DISABLED=true` on the service env for a one-off testing bypass
+(loud stderr warning at boot; no production self-disable).
+
+Supabase Auth setup (one-time, operator-side):
+- Supabase Auth → URL Configuration → Redirect URLs: add
+  `https://d2-orders-dashboard.onrender.com/` (or your custom domain)
+- Google Cloud Console → OAuth Credentials → Authorized redirect URIs:
+  add `https://hzrizjeaxlqcxfrtczpq.supabase.co/auth/v1/callback`
 
 Entry point: `uvicorn d2_dashboard.main:app`.
 
@@ -28,13 +39,36 @@ Entry point: `uvicorn d2_dashboard.main:app`.
    match the Supabase Vault canonical keys (uppercase with `_API_`). Legacy
    storefront names (`TEVO_TOKEN`, `TEVO_SECRET`, `TICKPICK_TOKEN`) are also
    accepted by the loader — pick whichever you already have populated.
-   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ALLOWED_EMAIL_DOMAIN`
+
+   **Required (SQL reads for cron-backed sources):**
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY` (server-side reads against
+     `unified_orders` + `v_event_base`. Independent of the Supabase JWT
+     auth gate. Without these, the dashboard falls back to direct upstream
+     API calls for every refresh, burning broker-API quota.)
+
+   **Required (broker creds for sources NOT in unified_orders, i.e. tickpick
+   + vivid + gotickets, and as a fallback when SQL is empty):**
    - `TEVO_API_TOKEN`, `TEVO_API_SECRET`
    - `SEATGEEK_API_TOKEN`
    - `TICKPICK_API_TOKEN`
    - `VIVID_API_TOKEN`
-   - `SEATDATA_API_KEY` (optional)
+   - `SEATDATA_API_KEY` (optional — only the SeatData tab needs it)
+   - `GOTICKETS_ACCESS_ID` + `GOTICKETS_API_SECRET` (GoTickets has no list
+     endpoint — by-id lookup only via the Samples tab's GoTickets form)
+   - `GOTICKETS_SAMPLE_ORDER_ID` (optional — a known-good GoTickets order
+     ID. When set, the Samples tab's gotickets chip exercises `get_sale()`
+     against it on each refresh)
    - `PYTHON_VERSION=3.12.7`
+
+   **Auth-related (only needed when AUTH_DISABLED=false):**
+   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ALLOWED_EMAIL_DOMAIN`
+   - `D2_CANONICAL_ORIGIN=https://d2-orders-dashboard.onrender.com` (must
+     match a Redirect URL registered under Supabase Auth → URL Configuration)
+
+   **Optional toggles:**
+   - `AUTH_DISABLED=false` to enable the Supabase JWT gate (default `true`)
+   - `D2_UI_STATUS=rebuilt` to flip the `/healthz/detail` lane signal
 
    **Not wired yet** (Vault has values, no client module exists in D2):
    `GOTICKETS_ACCESS_ID/GOTICKETS_API_SECRET`, `STUBHUB_API_TOKEN`,
@@ -42,8 +76,10 @@ Entry point: `uvicorn d2_dashboard.main:app`.
    service is harmless — they just won't appear in the merged orders
    table until D2 ships clients for them.
 5. Deploy. First boot ≈ 70–80s on free tier (cold).
-6. Hit `https://<service>.onrender.com/healthz` → `{"ok": true, ...}`.
-7. Hit `https://<service>.onrender.com/` → login screen → Google OAuth.
+6. Hit `https://<service>.onrender.com/healthz` → `{"ok":true,"service":"d2_dashboard"}`.
+7. Hit `https://<service>.onrender.com/` → orders dashboard loads directly
+   (anonymous-by-default). With `AUTH_DISABLED=false` set, you'll hit the
+   Supabase login screen → Google OAuth instead.
 
 Alternative: merge the `services:` block from `render.yaml.example` into the
 root `./render.yaml` (D1 lane — D2 cannot touch that file). On next push to
@@ -52,10 +88,8 @@ the configured branch, Render will provision the second service automatically.
 ## Local dev
 
 ```bash
-export SUPABASE_URL=...
-export SUPABASE_ANON_KEY=...
-export ALLOWED_EMAIL_DOMAIN=s4kent.com
-export AUTH_DISABLED=true   # local only; refuses to apply in prod
+# AUTH_DISABLED=true is now the shipped default — no Supabase / OAuth setup
+# needed for local dev unless you want to test the gate.
 export TEVO_API_TOKEN=... TEVO_API_SECRET=...
 # (optional creds for the other 3 sources)
 
@@ -63,9 +97,14 @@ uvicorn d2_dashboard.main:app --reload --port 8000
 # open http://localhost:8000/
 ```
 
-`AUTH_DISABLED=true` is the same kill-switch app.py uses; it self-disables
-when any production env var is set (`RENDER`, `FLY_APP_NAME`, `NODE_ENV=production`,
-`ENVIRONMENT=production`, etc.).
+To exercise the Supabase JWT gate locally:
+
+```bash
+export AUTH_DISABLED=false
+export SUPABASE_URL=...
+export SUPABASE_ANON_KEY=...
+export ALLOWED_EMAIL_DOMAIN=s4kent.com
+```
 
 ## What happens if a credential is missing
 
