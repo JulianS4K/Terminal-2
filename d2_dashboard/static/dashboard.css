@@ -293,6 +293,23 @@ pre.json {
 tbody tr.order-row { cursor: pointer; }
 tbody tr.order-row:hover { background: rgba(88, 166, 255, 0.06); }
 tbody tr.order-row.selected { background: rgba(88, 166, 255, 0.14); }
+/* Row was inserted on this refresh — soft fade-in instead of a hard pop. */
+tbody tr.order-row.row-new {
+  animation: row-fade-in 0.6s ease-out;
+}
+@keyframes row-fade-in {
+  from { background: rgba(63, 185, 80, 0.20); }
+  to   { background: transparent; }
+}
+/* Cell value changed across refreshes — brief amber flash so the operator
+   notices what shifted without re-scanning the whole row. */
+td.cell-updated {
+  animation: cell-flash 1.2s ease-out;
+}
+@keyframes cell-flash {
+  0%   { background: rgba(210, 153, 34, 0.32); }
+  100% { background: transparent; }
+}
 .order-detail-wrap { margin-top: 12px; }
 .order-detail-wrap details {
   margin-top: 8px;

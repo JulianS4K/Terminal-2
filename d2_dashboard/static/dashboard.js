@@ -449,7 +449,10 @@ function startOrdersAutoRefresh() {
     if (_DETAIL_OPEN) return;
     // Also skip when on a non-first page so we don't disrupt mid-paging.
     if (CURRENT_PAGE !== 1) return;
-    loadOrders();
+    // silent=true means no spinner / no detail-wipe — the table updates
+    // seamlessly underneath the operator. Scroll position + selected row
+    // are preserved by renderOrders's diff-aware path.
+    loadOrders({ silent: true });
   }, ORDERS_AUTO_REFRESH_MS);
   // Cron freshness poll — separate from orders. Refresh the chip's "last
   // cron: Xm ago" line every 60s so the operator sees cron health in
@@ -497,20 +500,28 @@ async function authedFetch(path) {
   return r.json();
 }
 
-async function loadOrders() {
+async function loadOrders({ silent = false } = {}) {
   const wrap = document.getElementById("orders-table-wrap");
   const bar = document.getElementById("sources-bar");
   const detailWrap = document.getElementById("order-detail-wrap");
-  wrap.innerHTML = `<div class="empty"><span class="spinner"></span> fetching orders...</div>`;
-  bar.innerHTML = `<span class="chip">loading...</span>`;
-  detailWrap.innerHTML = "";
-  _DETAIL_OPEN = false;
+  // Silent refresh (auto-poll / cron-driven update): don't blow away the
+  // current table contents. The spinner + "fetching orders..." flash gets
+  // reserved for manual refreshes only. Preserves scroll position +
+  // selected row.
+  if (!silent) {
+    wrap.innerHTML = `<div class="empty"><span class="spinner"></span> fetching orders...</div>`;
+    bar.innerHTML = `<span class="chip">loading...</span>`;
+    detailWrap.innerHTML = "";
+    _DETAIL_OPEN = false;
+  }
   let body;
   try {
     body = await authedFetch(`/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}`);
   } catch (e) {
-    wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
-    bar.innerHTML = "";
+    if (!silent) {
+      wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
+      bar.innerHTML = "";
+    }
     return;
   }
   LAST_ORDERS_BODY = body;
@@ -671,6 +682,26 @@ function renderOrders() {
     return;
   }
 
+  // Preserve scroll + selection across renders. Stable row keys are
+  // "${source}:${order_id}" — when a row already exists with the same
+  // key we diff-update its cells in place (and flash the ones that
+  // changed) instead of nuking the DOM node. Net effect: cron-driven
+  // updates slide in seamlessly underneath the operator.
+  const scrollY = window.scrollY;
+  const selectedKey = wrap.querySelector(".order-row.selected")?.dataset?.rowKey || null;
+
+  // Snapshot the previous DOM keyed by row-key so we can diff against it.
+  const prevRows = new Map();
+  wrap.querySelectorAll("tr.order-row").forEach((tr) => {
+    prevRows.set(tr.dataset.rowKey, tr);
+  });
+
+  const rowsHtml = rows.map((r) => {
+    const key = `${r.source}:${r.order_id}`;
+    const cells = buildRowCells(r);
+    return `<tr class="order-row" data-row-key="${escapeHtml(key)}" data-source="${escapeHtml(r.source)}" data-order-id="${escapeHtml(r.order_id)}">${cells}</tr>`;
+  }).join("");
+
   wrap.innerHTML = `
     <table>
       <thead>
@@ -685,25 +716,40 @@ function renderOrders() {
           <th title="Sort key 3: newest order first">Ordered At <span class="sort-key">↓3</span></th>
         </tr>
       </thead>
-      <tbody>
-        ${rows.map((r) => `
-          <tr class="order-row" data-source="${escapeHtml(r.source)}" data-order-id="${escapeHtml(r.order_id)}">
-            <td class="source ${escapeHtml(r.source)}">${escapeHtml(r.source)}</td>
-            <td>${escapeHtml(r.order_id)}</td>
-            <td>${escapeHtml(r.event_name || "")}</td>
-            <td>${formatDate(r.event_date)}</td>
-            <td class="num">${r.qty != null ? escapeHtml(String(r.qty)) : ""}</td>
-            <td>${escapeHtml(r.status || "")}${r.canonical_status && r.canonical_status !== r.status ? ` <span class="canon-badge" title="canonical status from order_status_xref">${escapeHtml(r.canonical_status)}</span>` : ""}</td>
-            <td class="num">${formatAmount(r.amount, r.currency)}</td>
-            <td>${formatDate(r.ordered_at)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
+      <tbody>${rowsHtml}</tbody>
     </table>
     ${filtered ? `<div class="empty toolbar-meta">${filtered} row${filtered === 1 ? "" : "s"} hidden by past-12h filter</div>` : ""}
   `;
-  // Row click → fetch deep order detail. Listener at table-level so we don't
-  // attach N listeners after every re-render.
+
+  // Diff pass: flash cells that changed, mark rows that are new since
+  // last render. Existing rows whose data is identical pass through
+  // unannotated.
+  wrap.querySelectorAll("tr.order-row").forEach((newTr) => {
+    const key = newTr.dataset.rowKey;
+    const prevTr = prevRows.get(key);
+    if (!prevTr) {
+      newTr.classList.add("row-new");
+      return;
+    }
+    const prevCells = prevTr.querySelectorAll("td");
+    const newCells  = newTr.querySelectorAll("td");
+    for (let i = 0; i < newCells.length; i++) {
+      if (prevCells[i] && prevCells[i].innerHTML !== newCells[i].innerHTML) {
+        newCells[i].classList.add("cell-updated");
+      }
+    }
+  });
+
+  // Restore selection by stable key (not DOM identity — the DOM was rebuilt).
+  if (selectedKey) {
+    const tr = wrap.querySelector(`tr.order-row[data-row-key="${CSS.escape(selectedKey)}"]`);
+    if (tr) tr.classList.add("selected");
+  }
+  // Restore scroll position so silent refreshes don't yank the operator.
+  window.scrollTo({ top: scrollY, behavior: "instant" in window ? "instant" : "auto" });
+
+  // Row click → fetch deep order detail. Listener at table-level so we
+  // don't attach N listeners after every re-render.
   wrap.querySelector("tbody")?.addEventListener("click", (ev) => {
     const tr = ev.target.closest("tr.order-row");
     if (!tr) return;
@@ -711,6 +757,19 @@ function renderOrders() {
     tr.classList.add("selected");
     loadOrderDetail(tr.dataset.source, tr.dataset.orderId);
   });
+}
+
+function buildRowCells(r) {
+  return [
+    `<td class="source ${escapeHtml(r.source)}">${escapeHtml(r.source)}</td>`,
+    `<td>${escapeHtml(r.order_id)}</td>`,
+    `<td>${escapeHtml(r.event_name || "")}</td>`,
+    `<td>${formatDate(r.event_date)}</td>`,
+    `<td class="num">${r.qty != null ? escapeHtml(String(r.qty)) : ""}</td>`,
+    `<td>${escapeHtml(r.status || "")}${r.canonical_status && r.canonical_status !== r.status ? ` <span class="canon-badge" title="canonical status from order_status_xref">${escapeHtml(r.canonical_status)}</span>` : ""}</td>`,
+    `<td class="num">${formatAmount(r.amount, r.currency)}</td>`,
+    `<td>${formatDate(r.ordered_at)}</td>`,
+  ].join("");
 }
 
 async function loadOrderDetail(source, orderId) {
