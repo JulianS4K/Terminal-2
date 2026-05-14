@@ -9,6 +9,7 @@ Operator directive 2026-05-14: "create a cron/data hierarchy so we can maximize 
 ## 1. Resource constraints (hard limits)
 
 - `cron.max_running_jobs = 32` (Supabase default; not raisable without superuser support ticket)
+- Total active jobs (as of 2026-05-14): **74** (was 72 pre-Vivid; +2 for vivid_orders_queue/process)
 - `cron.use_background_workers = off` → each cron job uses a regular Postgres backend; competes with app traffic for `max_connections = 60`
 - Each backend on a long-running job (`>2 min`) blocks one of the 32 slots until it completes
 - pg_cron "job startup timeout" fires when all 32 slots are exhausted at a tick
@@ -87,6 +88,8 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 | 120 | `match_listings_to_sg_30min` | `11,41` |
 | 126 | `tickpick_orders_queue_30min` | `13,43` |
 | 127 | `tickpick_orders_process_30min` | `15,45` |
+| 130 | `vivid_orders_queue_30min` | `16,46` (queue + 10-min gap to process; collides only with hourly sweep_duplicate_listings :16) |
+| 131 | `vivid_orders_process_30min` | `26,56` (collides only with hourly refresh-chat-corpus :26) |
 | 43 | `performer_wiki_queue_searches_5min` | `17,47` |
 | 44 | `performer_wiki_process_searches_5min` | `19,49` |
 | 45 | `performer_wiki_process_summaries_5min` | `21,51` |
