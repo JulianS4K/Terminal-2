@@ -223,6 +223,7 @@ function renderDashboard(domain) {
       <div class="tabs">
         <button class="tab active" data-tab="orders">Orders</button>
         <button class="tab" data-tab="samples">Samples</button>
+        <button class="tab" data-tab="health">Health</button>
         <button class="tab" data-tab="seatdata">SeatData</button>
       </div>
       <section id="panel-orders" class="panel active">
@@ -247,12 +248,14 @@ function renderDashboard(domain) {
           </div>
           <div class="filter-group">
             <span class="toolbar-meta">Status:</span>
+            <!-- Default-on: needs-action / in-flight buckets. Operator flips
+                 fulfilled / rejected / cancelled on when they want history. -->
             <label><input type="checkbox" class="flt-status" value="pending"      checked /> pending</label>
             <label><input type="checkbox" class="flt-status" value="accepted"     checked /> accepted</label>
-            <label><input type="checkbox" class="flt-status" value="fulfilled"    checked /> fulfilled</label>
-            <label><input type="checkbox" class="flt-status" value="rejected"     checked /> rejected</label>
-            <label><input type="checkbox" class="flt-status" value="cancelled"    checked /> cancelled</label>
             <label><input type="checkbox" class="flt-status" value="substitution" checked /> sub</label>
+            <label><input type="checkbox" class="flt-status" value="fulfilled"    /> fulfilled</label>
+            <label><input type="checkbox" class="flt-status" value="rejected"     /> rejected</label>
+            <label><input type="checkbox" class="flt-status" value="cancelled"    /> cancelled</label>
           </div>
           <div class="filter-group">
             <span class="toolbar-meta">Event:</span>
@@ -288,6 +291,9 @@ function renderDashboard(domain) {
         <div id="gt-lookup-result"></div>
         <div id="samples-wrap"><div class="empty">not loaded yet</div></div>
       </section>
+      <section id="panel-health" class="panel">
+        <div id="health-wrap"><div class="empty">not loaded yet</div></div>
+      </section>
       <section id="panel-seatdata" class="panel">
         <div id="seatdata-wrap"><div class="empty">not loaded yet</div></div>
       </section>
@@ -299,7 +305,8 @@ function renderDashboard(domain) {
   document.getElementById("btn-refresh").addEventListener("click", () => {
     const active = document.querySelector(".tab.active").dataset.tab;
     if (active === "orders") { CURRENT_PAGE = 1; loadOrders(); }
-    else if (active === "samples") loadSamples();
+    else if (active === "samples")  loadSamples();
+    else if (active === "health")   loadHealth();
     else if (active === "seatdata") loadSeatData();
   });
   if (!AUTH_BYPASS) {
@@ -318,7 +325,10 @@ function renderDashboard(domain) {
   });
   document.getElementById("btn-clear-filters")?.addEventListener("click", () => {
     document.querySelectorAll(".flt-source").forEach((el) => { el.checked = true; });
-    document.querySelectorAll(".flt-status").forEach((el) => { el.checked = true; });
+    // Status defaults: needs-action / in-flight buckets only.
+    document.querySelectorAll(".flt-status").forEach((el) => {
+      el.checked = ["pending", "accepted", "substitution"].includes(el.value);
+    });
     ["flt-date-from", "flt-date-to", "flt-amount-min", "flt-amount-max", "flt-order-id"].forEach((id) => {
       const el = document.getElementById(id); if (el) el.value = "";
     });
@@ -407,6 +417,7 @@ function activateTab(name) {
   );
   if (name === "seatdata") loadSeatData();
   else if (name === "samples") loadSamples();
+  else if (name === "health")  loadHealth();
 }
 
 async function authedFetch(path) {
@@ -697,6 +708,11 @@ function renderReadableOrder(source, d) {
       row("Quantity",   item.quantity),
       row("Total",      o.total),
       row("Currency",   o.currency),
+      // No explicit in-hand or fulfill-by field exists in /v9/orders. The
+      // hold_expires_at value is the broker's auction-hold timer — when
+      // the order can be reclaimed by the seller. Surface it because it's
+      // the closest thing to a "deadline" in the upstream response.
+      row("Hold expires", formatDate(o.hold_expires_at)),
     ].join("");
   } else if (source === "seatgeek") {
     const ev = d.event || {};
@@ -748,6 +764,102 @@ async function loadSamples() {
       </section>
     `;
   }).join("");
+}
+
+async function loadHealth() {
+  const wrap = document.getElementById("health-wrap");
+  wrap.innerHTML = `<div class="empty"><span class="spinner"></span> checking refresh health...</div>`;
+  let body;
+  try {
+    body = await authedFetch("/api/d2/health");
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+
+  const crons = body.crons || [];
+  const queues = body.queues || {};
+  const sql = body.sql_counts || {};
+  const fb = body.fulfillby_fields || {};
+
+  // Cron table — one row per scheduled job. .cron-stale row when last_run
+  // is older than 2× the schedule interval.
+  const cronRows = crons.map((c) => {
+    const stale = c.last_run ? cronStaleClass(c.last_run, c.schedule) : "cron-stale";
+    const ageCell = c.last_run ? formatAgo(c.last_run) : "never";
+    const statusBadge = c.last_status
+      ? `<span class="chip ${c.last_status === 'succeeded' ? 'ok' : 'err'}">${escapeHtml(c.last_status)}</span>`
+      : `<span class="chip err">no runs</span>`;
+    return `
+      <tr class="${stale}">
+        <td>${escapeHtml(c.source || '')}</td>
+        <td><code>${escapeHtml(c.jobname || '')}</code></td>
+        <td>${escapeHtml(c.phase || '')}</td>
+        <td><code>${escapeHtml(c.schedule || '')}</code> · ${formatCronSchedule(c.schedule || '')}</td>
+        <td>${c.active ? 'yes' : 'no'}</td>
+        <td>${escapeHtml(ageCell)}</td>
+        <td>${statusBadge}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const sqlRows = Object.entries(sql).map(([src, info]) => `
+    <tr>
+      <td>${escapeHtml(src)}</td>
+      <td class="num">${escapeHtml(String(info.rows ?? 0))}</td>
+      <td>${info.newest_seen ? `${formatDate(info.newest_seen)} · ${formatAgo(info.newest_seen)}` : '—'}</td>
+    </tr>
+  `).join("");
+
+  const queueRows = Object.entries(queues).map(([src, depth]) => `
+    <tr class="${depth > 0 ? 'cron-stale' : ''}">
+      <td>${escapeHtml(src)}</td>
+      <td class="num">${depth === -1 ? 'query failed' : escapeHtml(String(depth))}</td>
+    </tr>
+  `).join("");
+
+  const fbRows = Object.entries(fb).map(([src, info]) => `
+    <tr>
+      <td>${escapeHtml(src)}</td>
+      <td>${info.in_hand ? escapeHtml(info.in_hand) : '<span class="toolbar-meta">none</span>'}</td>
+      <td>${info.fulfill_by ? escapeHtml(info.fulfill_by) : '<span class="toolbar-meta">none</span>'}</td>
+      <td class="toolbar-meta">${escapeHtml(info.notes || '')}</td>
+    </tr>
+  `).join("");
+
+  wrap.innerHTML = `
+    <section class="sample-card">
+      <div class="sample-head"><strong>Cron jobs</strong> · <span class="toolbar-meta">checked ${formatAgo(body.checked_at)}</span></div>
+      <table>
+        <thead><tr><th>Source</th><th>Job</th><th>Phase</th><th>Schedule</th><th>Active</th><th>Last run</th><th>Status</th></tr></thead>
+        <tbody>${cronRows || `<tr><td colspan="7" class="empty">no cron rows returned</td></tr>`}</tbody>
+      </table>
+    </section>
+
+    <section class="sample-card">
+      <div class="sample-head"><strong>Unified orders by source</strong></div>
+      <table>
+        <thead><tr><th>Source</th><th class="num">Rows</th><th>Newest seen</th></tr></thead>
+        <tbody>${sqlRows}</tbody>
+      </table>
+    </section>
+
+    <section class="sample-card">
+      <div class="sample-head"><strong>Pending queue depth</strong> · <span class="toolbar-meta">unresolved pg_net requests waiting for process() to drain</span></div>
+      <table>
+        <thead><tr><th>Source</th><th class="num">Unresolved</th></tr></thead>
+        <tbody>${queueRows || `<tr><td colspan="2" class="empty">no pending tables</td></tr>`}</tbody>
+      </table>
+    </section>
+
+    <section class="sample-card">
+      <div class="sample-head"><strong>In-hand / fulfill-by inventory</strong> · <span class="toolbar-meta">what each upstream surfaces</span></div>
+      <table>
+        <thead><tr><th>Source</th><th>In-hand date</th><th>Fulfill-by date</th><th>Notes</th></tr></thead>
+        <tbody>${fbRows}</tbody>
+      </table>
+    </section>
+  `;
 }
 
 async function loadSeatData() {

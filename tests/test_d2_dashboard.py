@@ -704,6 +704,63 @@ def test_samples_gotickets_without_sample_id_surfaces_clear_error(monkeypatch, c
     assert sources["gotickets"]["sample"] is None
 
 
+def test_health_503_when_supabase_unconfigured(monkeypatch, client):
+    """/api/d2/health is SQL-only — surfaces 503 when Supabase isn't wired."""
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
+    r = client.get("/api/d2/health")
+    assert r.status_code == 503
+
+
+def test_health_returns_cron_queue_and_sql_blob(monkeypatch, client):
+    """Happy path: /api/d2/health returns the four sections the Health tab
+    renders — crons, queues, sql_counts, fulfillby_fields."""
+    class FakeQuery:
+        def __init__(self, table, rows, count=None):
+            self.table_name = table
+            self._rows = rows
+            self._count = count if count is not None else len(rows)
+        def select(self, *_a, **_kw):  return self
+        def eq(self, *_a, **_kw):      return self
+        def is_(self, *_a, **_kw):     return self
+        def order(self, *_a, **_kw):   return self
+        def limit(self, *_a, **_kw):   return self
+        def execute(self):
+            return type("Res", (), {"data": self._rows, "count": self._count})()
+
+    class FakeRpcResult:
+        data = [
+            {"source": "evo", "jobname": "evo_orders_queue_30min", "phase": "queue",
+             "schedule": "*/30 * * * *", "active": True,
+             "last_run": "2026-05-13T22:30:00Z", "last_status": "succeeded"},
+            {"source": "tickpick", "jobname": "tickpick_orders_queue_30min", "phase": "queue",
+             "schedule": "*/30 * * * *", "active": True,
+             "last_run": None, "last_status": None},
+        ]
+
+    class FakeSb:
+        def rpc(self, name):
+            assert name == "d2_cron_freshness"
+            return type("RpcCall", (), {"execute": lambda self2: FakeRpcResult()})()
+        def table(self, name):
+            if name.endswith("_pending"):
+                return FakeQuery(name, [], count=0)
+            # unified_orders per-source: return 0 rows with a count
+            return FakeQuery(name, [], count=0)
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    body = client.get("/api/d2/health").json()
+    assert {c["jobname"] for c in body["crons"]} == {"evo_orders_queue_30min", "tickpick_orders_queue_30min"}
+    assert set(body["queues"]) == {"tickpick", "vivid"}
+    assert set(body["sql_counts"]) == {"evo", "seatgeek", "seatdata", "tickpick", "vivid"}
+    # fulfillby_fields documents the gap — none of our sources surface an
+    # explicit in-hand / fulfill-by timestamp today.
+    fb = body["fulfillby_fields"]
+    assert set(fb) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
+    for src in fb:
+        assert fb[src]["in_hand"] is None
+        assert fb[src]["fulfill_by"] is None
+
+
 def test_diag_tickpick_no_token(monkeypatch, client):
     """No token configured → ok=False, error 'no token configured'.
     base_diag fields still present so the operator can see WHY (env_var=None)."""

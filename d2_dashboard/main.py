@@ -1234,6 +1234,81 @@ _DEEP_ORDER = {
 }
 
 
+@app.get("/api/d2/health")
+def health(_=Depends(require_auth)):
+    """Refresh-health snapshot — what each cron is doing and whether its
+    pipeline is healthy. Read-only; intended for the dashboard's Health tab.
+
+    Returns:
+      crons: list of one entry per cron job (jobname, schedule, active,
+             last_run, last_status). Sourced from public.d2_cron_freshness().
+      queues: per-source pending-queue depth (unresolved pg_net requests)
+             so the operator can see if process() is keeping up.
+      sql_counts: row counts in unified_orders per source + max(last_seen_at)
+             so the operator can see how stale the canonical view is.
+      fulfillby_fields: per-source whether the upstream surfaces an explicit
+             fulfill-by / in-hand date — currently none do (informational)."""
+    sb = _sb()
+    if sb is None:
+        raise HTTPException(503, "Supabase not configured")
+
+    # 1) Cron freshness — full list (not reduced to queue-only like the
+    #    orders chip uses).
+    cron_rows: list[dict] = []
+    try:
+        cron_rows = (sb.rpc("d2_cron_freshness").execute().data) or []
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] cron freshness pull failed: {e!r}", file=_sys.stderr, flush=True)
+
+    # 2) Per-source unresolved pending-queue depth + SQL row counts.
+    queues: dict[str, int] = {}
+    sql_counts: dict[str, dict] = {}
+    try:
+        for src, table in (("tickpick", "tickpick_orders_pending"), ("vivid", "vivid_orders_pending")):
+            try:
+                res = sb.table(table).select("id", count="exact").is_("resolved_at", "null").execute()
+                queues[src] = res.count or 0
+            except Exception:
+                queues[src] = -1   # sentinel: query failed
+        # Per-source row counts + freshness from unified_orders
+        for src in _ALL_SOURCES:
+            res = (
+                sb.table("unified_orders")
+                .select("last_seen_at", count="exact")
+                .eq("source", src)
+                .order("last_seen_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            sql_counts[src] = {
+                "rows":    res.count or 0,
+                "newest_seen": (res.data[0]["last_seen_at"] if res.data else None),
+            }
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] health counts pull failed: {e!r}", file=_sys.stderr, flush=True)
+
+    # 3) Fulfill-by / in-hand date inventory — what each source surfaces.
+    #    Currently none of our raw tables carry an explicit fulfill-by
+    #    timestamp; documenting that here so the operator sees the gap.
+    fulfillby_fields = {
+        "evo":      {"in_hand": None, "fulfill_by": None, "notes": "hold_expires_at is auction-hold timer, not fulfill deadline; event_date is implicit"},
+        "seatgeek": {"in_hand": None, "fulfill_by": None, "notes": "reservation_duration_minutes is a relative seller-response clock"},
+        "tickpick": {"in_hand": None, "fulfill_by": None, "notes": "by-id detail call may expose more once 401 is resolved"},
+        "vivid":    {"in_hand": None, "fulfill_by": None, "notes": "no ingest yet; XML feed unknown until edge function lands"},
+        "seatdata": {"in_hand": None, "fulfill_by": None, "notes": "completed-sales feed — no fulfillment lifecycle"},
+    }
+
+    return JSONResponse({
+        "crons": cron_rows,
+        "queues": queues,
+        "sql_counts": sql_counts,
+        "fulfillby_fields": fulfillby_fields,
+        "checked_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+    })
+
+
 @app.get("/api/d2/diag/tickpick")
 def diag_tickpick(_=Depends(require_auth)):
     """One-shot diagnostic probe against the live TickPick API. Surfaces the
