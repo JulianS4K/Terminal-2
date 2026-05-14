@@ -236,9 +236,7 @@ function renderDashboard(domain) {
     <main>
       <div class="tabs">
         <button class="tab active" data-tab="orders">Orders</button>
-        <button class="tab" data-tab="samples">Samples</button>
         <button class="tab" data-tab="health">Health</button>
-        <button class="tab" data-tab="seatdata">SeatData</button>
       </div>
       <section id="panel-orders" class="panel active">
         <div class="orders-toolbar">
@@ -293,23 +291,8 @@ function renderDashboard(domain) {
         </div>
         <div id="order-detail-wrap" class="order-detail-wrap"></div>
       </section>
-      <section id="panel-samples" class="panel">
-        <div class="orders-toolbar">
-          <form id="gt-lookup-form" class="gt-lookup">
-            <label class="toolbar-meta">GoTickets order:</label>
-            <input type="text" id="gt-order-id" placeholder="e.g. 123456" />
-            <button type="submit">Look up</button>
-          </form>
-          <span class="toolbar-meta">Random pulls below re-roll on each refresh.</span>
-        </div>
-        <div id="gt-lookup-result"></div>
-        <div id="samples-wrap"><div class="empty">not loaded yet</div></div>
-      </section>
       <section id="panel-health" class="panel">
         <div id="health-wrap"><div class="empty">not loaded yet</div></div>
-      </section>
-      <section id="panel-seatdata" class="panel">
-        <div id="seatdata-wrap"><div class="empty">not loaded yet</div></div>
       </section>
     </main>
   `);
@@ -319,9 +302,7 @@ function renderDashboard(domain) {
   document.getElementById("btn-refresh").addEventListener("click", () => {
     const active = document.querySelector(".tab.active").dataset.tab;
     if (active === "orders") { CURRENT_PAGE = 1; loadOrders(); }
-    else if (active === "samples")  loadSamples();
-    else if (active === "health")   loadHealth();
-    else if (active === "seatdata") loadSeatData();
+    else if (active === "health") loadHealth();
   });
   if (!AUTH_BYPASS) {
     document.getElementById("btn-signout").addEventListener("click", async () => {
@@ -356,14 +337,8 @@ function renderDashboard(domain) {
   document.getElementById("btn-next")?.addEventListener("click", () => {
     CURRENT_PAGE += 1; loadOrders();
   });
-  // GoTickets lookup form (Samples tab). Wired once on render so the form
-  // works regardless of which tab is currently visible.
-  document.getElementById("gt-lookup-form").addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    const orderId = document.getElementById("gt-order-id").value.trim();
-    if (!orderId) return;
-    loadGoTicketsLookup(orderId);
-  });
+  // GoTickets lookup form lives inside the Health tab now; loadHealth()
+  // (re-)binds the form's submit handler whenever it renders.
   // Orders is the default landing tab — kick off the auto-refresh poll.
   startOrdersAutoRefresh();
   loadOrders();
@@ -436,9 +411,7 @@ function activateTab(name) {
   if (name === "orders") startOrdersAutoRefresh();
   else                   stopOrdersAutoRefresh();
 
-  if (name === "seatdata") loadSeatData();
-  else if (name === "samples") loadSamples();
-  else if (name === "health")  loadHealth();
+  if (name === "health") loadHealth();
 }
 
 function startOrdersAutoRefresh() {
@@ -882,43 +855,6 @@ function renderReadableOrder(source, d) {
   return `<table class="kv">${rows}</table>`;
 }
 
-async function loadSamples() {
-  const wrap = document.getElementById("samples-wrap");
-  wrap.innerHTML = `<div class="empty"><span class="spinner"></span> sampling sources...</div>`;
-  let body;
-  try {
-    body = await authedFetch("/api/d2/samples");
-  } catch (e) {
-    wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
-    return;
-  }
-  const samples = body.samples || [];
-  if (!samples.length) {
-    wrap.innerHTML = `<div class="empty">No samples returned.</div>`;
-    return;
-  }
-  wrap.innerHTML = samples.map((s) => {
-    const headerCls = s.ok ? "chip ok" : "chip err";
-    const totalDetail = s.ok && s.total_available != null
-      ? ` · ${escapeHtml(String(s.total_available))} available`
-      : "";
-    const methodDetail = s.method ? ` · <code>${escapeHtml(s.method)}()</code>` : "";
-    const bodyDetail = s.ok
-      ? (s.sample == null
-          ? `<div class="empty">empty — source has no records right now</div>`
-          : `<pre class="json">${escapeHtml(JSON.stringify(s.sample, null, 2))}</pre>`)
-      : `<div class="empty err-text">${escapeHtml(s.error || "error")}</div>`;
-    return `
-      <section class="sample-card">
-        <div class="sample-head">
-          <span class="${headerCls}"><strong>${escapeHtml(s.source)}</strong>${methodDetail}${totalDetail}</span>
-        </div>
-        ${bodyDetail}
-      </section>
-    `;
-  }).join("");
-}
-
 async function loadHealth() {
   const wrap = document.getElementById("health-wrap");
   wrap.innerHTML = `<div class="empty"><span class="spinner"></span> checking refresh health...</div>`;
@@ -982,6 +918,15 @@ async function loadHealth() {
 
   wrap.innerHTML = `
     <section class="sample-card">
+      <div class="sample-head"><strong>GoTickets lookup</strong> · <span class="toolbar-meta">by sale ID (no list endpoint)</span></div>
+      <form id="gt-lookup-form" class="gt-lookup">
+        <input type="text" id="gt-order-id" placeholder="e.g. 123456" />
+        <button type="submit">Look up</button>
+      </form>
+      <div id="gt-lookup-result"></div>
+    </section>
+
+    <section class="sample-card">
       <div class="sample-head"><strong>Cron jobs</strong> · <span class="toolbar-meta">checked ${formatAgo(body.checked_at)}</span></div>
       <table>
         <thead><tr><th>Source</th><th>Job</th><th>Phase</th><th>Schedule</th><th>Active</th><th>Last run</th><th>Status</th></tr></thead>
@@ -1013,19 +958,16 @@ async function loadHealth() {
       </table>
     </section>
   `;
+  // Re-bind the GoTickets lookup form — the Health tab re-renders on every
+  // open / Refresh click, so the form's DOM node is freshly created each
+  // time and needs a fresh listener.
+  document.getElementById("gt-lookup-form")?.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const orderId = document.getElementById("gt-order-id").value.trim();
+    if (!orderId) return;
+    loadGoTicketsLookup(orderId);
+  });
 }
 
-async function loadSeatData() {
-  const wrap = document.getElementById("seatdata-wrap");
-  wrap.innerHTML = `<div class="empty"><span class="spinner"></span> fetching seatdata...</div>`;
-  let body;
-  try {
-    body = await authedFetch("/api/d2/seatdata");
-  } catch (e) {
-    wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
-    return;
-  }
-  wrap.innerHTML = `<pre class="json">${escapeHtml(JSON.stringify(body, null, 2))}</pre>`;
-}
 
 bootstrap();
