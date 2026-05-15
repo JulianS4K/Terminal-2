@@ -1,4 +1,4 @@
--- Migration 20260515340000 · admin · C1 · writes:public.v_bot_chat_unresolved (replace) · pre:20260515330000
+-- Migration 20260515340050 · admin · C1 · writes:public.v_bot_chat_unresolved (replace) · pre:20260515330000
 -- Cluster D-1 of docs/audit-2026-05-15-consolidation-plan.md; implements A1 Q2 (bot_chat 138).
 --
 -- Auto-excludes rows that have a child row with event_type='status' (canonical closure signal).
