@@ -17,7 +17,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 |---|---|---|---|
 | A1 | Admin / Audit / Push | `mystifying-lederberg-ea407b` | active |
 | B1 | Security Manager | `review-supabase-access-v8Dtl` | active |
-| C1 | Data + Chat Supervisor | this session | active |
+| C1 | Drift Monitor + Daily Checkpoint Merger (was: Data + Chat Supervisor) | this session | active |
 | D0 | Terminal FE (read-only) | `audit-datasets-schemas-auoc3` | reassigned |
 | D1 | Consumer Retail (owns Render service `vibepass-storefront-test`) | `eloquent-chatterjee-aaedf0` | active |
 | D2 | Order Clients | `review-unified-order-suite-FA0qA` | active |
@@ -62,20 +62,43 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Resolves `event_type IN ('p0_security', 'flag')` in bot_chat
 - Owns hand-apply gate for RLS migrations
 
-### C1 — Data + Chat Supervisor
+### C1 — Drift Monitor + Daily Checkpoint Merger
 
-**Writes:**
-- Supervisor-lane migrations (xref governance, queue health views, sweep functions)
-- `bot_chat` custodial maintenance (table schema, helper functions)
-- Audit docs in `docs/*-audit-*.md`, `docs/*-handoff-*.md`
-- Lane discipline + supervisor protocols
+**Refocused 2026-05-14** from "Data + Chat Supervisor" to drift monitoring + daily checkpoint cadence. Previous supervisor-lane responsibilities (xref governance, queue health migrations) shift to A1 (admin) or B1 (audit/security) depending on scope. The supervisor role function still exists — it's now performed primarily through drift detection rather than custodial writes.
+
+**Primary mission:** keep prod state and repo state from diverging. Catch drift early; close it daily before it compounds.
+
+**Daily checkpoint routine** (per `docs/c1_daily_checkpoint_runbook.md`):
+1. Pull latest `main`; run `git fetch --all`
+2. Run `SELECT * FROM public.migration_drift_check();` — joins prod-applied migrations against `supabase/migrations/*.sql` on disk
+3. For any "applied to prod but no file" row → file follow-up issue to A1 + post `flag` to `bot_chat`
+4. For any "file exists but not applied" row → either apply (with operator OK) or revert the file
+5. List stale PRs: any PR open >24h gets a comment asking lane owner for ETA or stale-close
+6. Run `SELECT * FROM public.release_health_check() WHERE status <> 'ok'` — surface any new fails/warns introduced since yesterday's baseline
+7. Merge ready PRs to main per push-protocol (A1 retains final-merge authority on contentious cases)
+8. Post a daily checkpoint summary to `bot_chat` (`event_type='checkpoint'`)
+
+**Writes (in lane):**
+- `docs/c1-checkpoint-*.md` — daily checkpoint reports
+- `docs/c1_daily_checkpoint_runbook.md` — the runbook itself (canonical)
+- `bot_chat` checkpoint + drift-flag entries
+- PR merge commits (within push-protocol)
+- Stale PR comments (cross-lane coordination, allowed for C1)
+
+**Writes NOT in lane** (delegate or escalate):
+- Migrations to fix drift → A1 (admin / push)
+- Security findings → B1 (security manager)
+- Bot-lane code changes → respective lane owner via PR comment
 
 **Reads:** everything.
 
 **Authority:**
-- Supervises D0-D4 + Undelivered FE
-- Routes signals to/from A1, B1
-- Logs change_log / sync rows in bot_chat on each PR landing
+- Merge PRs that pass discipline checks (matches push-protocol)
+- Close stale PRs >7 days with no activity (after warning the lane owner)
+- Flag drift to A1 for resolution
+- Block merges that introduce health-check regressions (post `flag` to `bot_chat`, route to A1)
+
+**Cadence:** daily checkpoint at 09:00 ET (after overnight backdata processing completes; before US trading-hours peak). One scheduled session per day; ad-hoc sessions if drift gets surfaced by automated alerting between checkpoints.
 
 ### D0 — Terminal FE (read-only)
 
