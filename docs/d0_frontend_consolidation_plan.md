@@ -63,14 +63,14 @@ Nice-to-haves, no commitments:
 
 ## Governance going forward
 
-### D0 sign-off on D1/D2 PRs (Slack-channel-driven per `bot_chat` #175)
+### D0 sign-off on D1/D2 PRs (per canonical Slack directive `bot_chat` #187)
 
-Flow (lands when PR #126 merges; paused 7 days from 2026-05-15 per operator row #170):
+Flow (locks when PR #126 merges; paused 7 days from 2026-05-15 per row #170):
 1. D1/D2 author PR
-2. Post sign-off request to `#terminal-2-d0` (private; D0+D1+D2)
-3. D0 approves in-channel
+2. Post sign-off request to `#terminal-2-d0`
+3. D0 approves in-channel ("approved" or "hold — see PR comment")
 4. A1 merges after CI green + visible D0 approval
-5. Merge mirrors to `#terminal-2-alerts` automatically
+5. Auto-mirror to `#terminal-2-alerts` on merge
 
 D0 sign-off template (posted to `#terminal-2-d0`):
 
@@ -82,10 +82,10 @@ CI: pytest / scan / check status
 Notes: <≤2 lines>
 ```
 
-- D0 reviews within 24h of channel post (business hours). After 24h, A1 can merge urgent fixes; D0 re-ups in-channel post-fact.
+- 24h SLA business hours. After 24h, A1 may merge urgent fixes; D0 re-ups in-channel post-fact.
 - Override: B1 can sign-off for security-critical fixes if D0 unavailable.
-- D0 own PRs don't need self-sign-off; A1 reviews per standard pusher protocol.
-- Slack ≠ canonical. Decisions also surface in `bot_chat` (`change_log` event after merge) — the durable audit trail.
+- D0 own PRs don't need self-sign-off; A1 reviews per pusher protocol.
+- Slack ≠ canonical. Decisions also land in `bot_chat` (`change_log` after merge).
 
 ### Friday checkpoint cadence
 
