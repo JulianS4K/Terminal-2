@@ -70,10 +70,55 @@ Two matviews are exposed to `anon`/`authenticated`: `latest_event_metrics` + `v_
 
 Cross-source FKs declared in PR #99 are deliberately `NOT VALID` — they document relationships without locking the table for backfill validation. Should be `VALIDATE`d in a low-traffic window once data is clean. Backlog item for A1, low priority (warn-only).
 
+## Static-analysis attempt — function reference graph
+
+After F-2 returned empty, C1 ran a SQL-only static-reference pass to identify "dead" functions:
+
+```sql
+-- For each public function, check whether its name appears in:
+--  (a) cron.job.command  (b) pg_views.definition  (c) other pg_proc.prosrc
+-- Filter out trigger functions (pg_trigger.tgfoid) + extension functions (pg_depend.deptype='e').
+```
+
+Results: **86 of 295 public functions** "unreferenced" by this pass.
+
+**Spot-check shows high false-positive rate.** A grep of the repo for `.rpc('<name>'` (Python supabase client + edge-function ts) confirms many "unreferenced" candidates are heavily used:
+
+| Function | Static says | Actually called from |
+|---|---|---|
+| `get_event_movers` | unreferenced | `app.py` (mover dashboard) |
+| `get_event_zones_rollup` | unreferenced | `app.py` (event detail) |
+| `get_broker_event_detail` | unreferenced | `app.py` (broker view) |
+| `get_performers_by_league` | unreferenced | `app.py` |
+| `bot_chat_log` / `bot_chat_resolve` | unreferenced | every bot session (this one included) |
+| `mark_event_chat_tracked` / `extract_chat_entities` / `check_chat_rate_limit` | unreferenced | `supabase/functions/chat/index.ts` |
+| `upsert_espn_event_snapshot` / `upsert_espn_injury` / `upsert_espn_team_snapshot` | unreferenced | `supabase/functions/espn-collect/index.ts` |
+| `next_venues_to_crawl` / `classify_performer_categories` / `promote_performer_to_aliases` | unreferenced | `supabase/functions/crawl-venues-and-performers/index.ts` |
+| `record_sg_performer_match` | unreferenced | `supabase/functions/match-sg-performers-to-tevo/index.ts` |
+| `seatdata_check_budget` / `seatdata_increment_budget` | unreferenced | `seatdata_client.py` |
+| `sg_attempt_event_xref` | unreferenced | `seatgeek_client.py` |
+| `migration_drift_check` / `release_health_check` | unreferenced | called manually by C1 daily |
+
+**Conclusion**: SQL-only static analysis is **not sufficient** for the dead-code question. Real-world references live in:
+1. App code (`app.py`, `d2_dashboard/main.py`, `seatdata_client.py`, `seatgeek_client.py`) — Python supabase client `.rpc('name')` pattern
+2. Edge functions (`supabase/functions/*/index.ts`) — Deno supabase client `.rpc('name')` pattern
+3. Operator/agent manual SQL (auditing functions)
+4. Apps Script (TickPick ingest)
+
+**Recommended path** (Cluster F, future session):
+1. Operator authorizes `ALTER SYSTEM SET track_functions = 'pl'; SELECT pg_reload_conf();` on prod
+2. Wait 7 days for representative call data
+3. Re-run analysis: `SELECT funcname, calls FROM pg_stat_user_functions WHERE calls = 0 AND schemaname = 'public'`
+4. Cross-check against app/edge code grep for the residual list
+5. The intersection is the genuine dead-code candidate set
+
+Estimated dead-code count after this rigor: probably 10–20 functions, not 86. Most of the 86 are legitimate RPCs or manual utilities.
+
 ## Out of scope for this doc
 
-- Function call dependency graph (needs `track_functions` or static analysis)
+- Function call dependency graph (needs `track_functions` or filesystem grep over app/edge)
 - View-to-table access stats (needs `pg_stat_user_tables` snapshot over time)
 - Storage-bloat audit (needs `pg_total_relation_size` ranking)
+- Apps Script reference scan (off-platform; needs operator-supplied source)
 
 These are next-week opportunities, not blockers.
