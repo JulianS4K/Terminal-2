@@ -1,10 +1,14 @@
 // D0 Terminal — Event Detail page.
-// Parallel-fetches 5 endpoints, renders hero / KPI / chart / zones / order strip.
+// Path C: ONE call to supabase.rpc('get_broker_event_page', {p_event_id})
+// returns a flattened JSONB with overview / chart_data / zones / orders /
+// cadences. The RPC is SECDEF + email-gated to @s4kent.com (raises 42501
+// for non-matching JWTs). Migration 20260515310000 — see PR #115.
 
 (function () {
   'use strict';
 
   const T = window.Terminal;
+  const CHART_HOURS = 168; // 7d window (RPC clamps to [1, 4320])
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
@@ -13,23 +17,26 @@
       T.setStatus('No event id — pass ?event=<id>', 'err');
       return;
     }
+
+    // Pre-flight email check (cheap defense-in-depth — A1 flagged that the
+    // RPC raises 42501 for non-@s4kent.com instead of returning empty rows
+    // like the RLS policies do).
+    const Auth = window.TerminalAuth;
+    if (Auth && !Auth.isAllowedEmail(Auth.getEmail()) && !isLocalhost()) {
+      T.setStatus(`Not signed in with @s4kent.com — sign in first`, 'err');
+      return;
+    }
+
     T.setStatus(`Loading event ${eventId}…`);
 
-    Promise.all([
-      T.api(`/api/broker/event/${eventId}/overview`).catch(e => ({ __err: e })),
-      T.api(`/api/broker/event/${eventId}/chart-data?range=7d`).catch(e => ({ __err: e })),
-      T.api(`/api/broker/event/${eventId}/zones`).catch(e => ({ __err: e })),
-      T.api(`/api/broker/event/${eventId}/orders`).catch(e => ({ __err: e })),
-      T.api(`/api/broker/event/${eventId}/cadences`).catch(e => ({ __err: e })),
-    ]).then(([overview, chart, zones, orders, cadences]) => {
-      // Surface first hard error if any.
-      const firstErr = [overview, chart, zones, orders, cadences].find(r => r && r.__err);
-      if (firstErr) {
-        T.setStatus(firstErr.__err.message, 'err');
-        // Still try to render whichever sections we got.
-      } else {
-        T.setStatus(`Loaded event ${eventId}`, 'ok');
-      }
+    try {
+      const data = await fetchPayload(eventId);
+      T.setStatus(`Loaded event ${eventId}`, 'ok');
+      const overview = adaptOverview(data.overview);
+      const chart    = adaptChart(data.chart_data);
+      const zones    = data.zones || {};
+      const orders   = adaptOrders(data.orders, eventId);
+      const cadences = adaptCadences(data.cadences);
 
       try { renderHero(overview); } catch (e) { console.error('hero', e); }
       try { renderKPI(chart);      } catch (e) { console.error('kpi', e); }
@@ -37,7 +44,168 @@
       try { renderZones(zones);    } catch (e) { console.error('zones', e); }
       try { renderOrders(orders);  } catch (e) { console.error('orders', e); }
       try { renderCoverage(cadences, overview); } catch (e) { console.error('coverage', e); }
+    } catch (e) {
+      handleRpcError(e);
+    }
+  }
+
+  function isLocalhost() {
+    const h = location.hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '';
+  }
+
+  // ---------- Fetch via Path C (Supabase RPC) with Path A fallback ----------
+
+  async function fetchPayload(eventId) {
+    const Auth = window.TerminalAuth;
+    if (Auth && Auth.client && Auth.getAccessToken()) {
+      const { data, error } = await Auth.client
+        .rpc('get_broker_event_page', { p_event_id: eventId, p_chart_hours: CHART_HOURS });
+      if (error) {
+        const err = new Error(error.message || 'RPC error');
+        err.code = error.code;
+        err.details = error.details;
+        err.hint = error.hint;
+        throw err;
+      }
+      return data;
+    }
+
+    // Path A fallback — localhost dev with AUTH_DISABLED, or pre-OAuth-setup.
+    // Reconstructs the RPC shape from the 5 legacy endpoints.
+    const eventIdStr = String(eventId);
+    const [overview, chartData, zones, orders, cadences] = await Promise.all([
+      T.api(`/api/broker/event/${eventIdStr}/overview`),
+      T.api(`/api/broker/event/${eventIdStr}/chart-data?hours=${CHART_HOURS}`),
+      T.api(`/api/broker/event/${eventIdStr}/zones`),
+      T.api(`/api/broker/event/${eventIdStr}/orders`),
+      T.api(`/api/broker/event/${eventIdStr}/cadences`),
+    ]);
+    return legacyToRpcShape(overview, chartData, zones, orders, cadences);
+  }
+
+  function handleRpcError(e) {
+    if (e && e.code === '42501') {
+      T.setStatus('Access denied — JWT email is not @s4kent.com', 'err');
+    } else if (e && e.code === 'P0002') {
+      T.setStatus(`Event not found in broker data`, 'err');
+    } else if (e && e.code === 'PGRST301') {
+      T.setStatus('Unauthorized — sign in again', 'err');
+    } else {
+      T.setStatus((e && e.message) || 'Failed to load event', 'err');
+    }
+    console.error(e);
+  }
+
+  // ---------- Shape adapters: RPC JSONB → existing renderer expectations ----------
+
+  function adaptOverview(o) {
+    if (!o) return { event: {}, lifecycle: null, cadence_seconds: null };
+    return {
+      event: o.event || {},
+      lifecycle: o.lifecycle || null,
+      cadence_seconds: o.cadence_seconds || null,
+      last_pull_at: o.last_pull_at || null,
+      _metrics_current: o.metrics_current || null,
+      _metrics_prev: o.metrics_prev || null,
+    };
+  }
+
+  // Slice the event_metrics_series rows into the named time-series the chart
+  // + KPI renderers consume. Legacy /chart-data did this on the server.
+  function adaptChart(c) {
+    if (!c) return { prices_owned: [], prices_market: [], prices_nonowned: [], counts_owned: [] };
+    const rows = c.event_metrics_series || [];
+    const slice = (col) => rows.map(r => ({ t: r.captured_at, v: r[col] == null ? null : Number(r[col]) }));
+    return {
+      prices_owned:    slice('owned_median_retail'),
+      prices_market:   slice('retail_median'),
+      prices_nonowned: slice('nonowned_median_retail'),
+      counts_owned:    slice('owned_tickets_count'),
+      counts_market:   slice('tickets_count'),
+      range: c.range || null,
+    };
+  }
+
+  // Compute the order summary client-side (the RPC returns raw items + orders).
+  function adaptOrders(o, eventId) {
+    if (!o) return { event_id: eventId, items: [], orders: [], summary: null };
+    const items = o.items || [];
+    const orders = o.orders || [];
+    if (!items.length) return { event_id: eventId, items, orders, summary: null };
+    const stateById = new Map(orders.map(x => [x.evo_order_id, x.state || 'unknown']));
+    const byState = {};
+    let ticketsSold = 0, grossSold = 0;
+    let lastUpdate = null;
+    items.forEach(it => {
+      const st = stateById.get(it.evo_order_id) || 'unknown';
+      byState[st] = (byState[st] || 0) + 1;
+      if ((st === 'accepted' || st === 'completed') && it.quantity && it.price) {
+        ticketsSold += Number(it.quantity);
+        grossSold += Number(it.price) * Number(it.quantity);
+      }
     });
+    orders.forEach(o => {
+      if (o.evo_updated_at && (!lastUpdate || o.evo_updated_at > lastUpdate)) lastUpdate = o.evo_updated_at;
+    });
+    return {
+      event_id: eventId,
+      items, orders,
+      summary: {
+        total_items: items.length,
+        by_state: byState,
+        tickets_sold: ticketsSold,
+        gross_sold: Math.round(grossSold * 100) / 100,
+        last_update_at: lastUpdate,
+      },
+    };
+  }
+
+  function adaptCadences(c) {
+    if (!c) return { sections: {} };
+    return { sections: c };
+  }
+
+  // Path-A → Path-C shape converter for the fallback path. Best effort —
+  // legacy /overview already has computed `metrics: {key: {v, delta}}` so
+  // we don't have metrics_current/_prev raw; renderers don't actually read
+  // those today, so leaving null is fine.
+  function legacyToRpcShape(overview, chartData, zones, orders, cadences) {
+    return {
+      overview: overview ? {
+        event: overview.event,
+        lifecycle: overview.lifecycle,
+        cadence_seconds: overview.cadence_seconds,
+        last_pull_at: overview.last_pull_at,
+        metrics_current: null,
+        metrics_prev: null,
+        zones: overview.zones,
+      } : null,
+      chart_data: chartData ? {
+        event_metrics_series: buildSeriesFromLegacy(chartData),
+        zone_metrics_series: [],
+        range: null,
+      } : null,
+      zones: zones || null,
+      orders: orders || null,
+      cadences: cadences && cadences.sections ? cadences.sections : (cadences || {}),
+    };
+  }
+
+  // Reverse the slice — turn legacy {prices_owned:[{t,v}], ...} into rows.
+  function buildSeriesFromLegacy(c) {
+    const byT = new Map();
+    const pull = (series, col) => (series || []).forEach(p => {
+      let row = byT.get(p.t);
+      if (!row) { row = { captured_at: p.t }; byT.set(p.t, row); }
+      row[col] = p.v;
+    });
+    pull(c.prices_owned,    'owned_median_retail');
+    pull(c.prices_market,   'retail_median');
+    pull(c.prices_nonowned, 'nonowned_median_retail');
+    pull(c.counts_owned,    'owned_tickets_count');
+    pull(c.counts_market,   'tickets_count');
+    return Array.from(byT.values()).sort((a, b) => a.captured_at.localeCompare(b.captured_at));
   }
 
   // ---------- Hero ----------
