@@ -4,6 +4,8 @@
 **Cadence**: every day at 09:00 ET (preferred); ad-hoc if alerts fire
 **Purpose**: keep prod state and repo state in sync, close drift before it compounds
 
+**Scheduled-task path (2026-05-15)**: A1 provisioned the `c1-daily-checkpoint` scheduled task. The 9-step routine below auto-fires at 09:00 daily; operator must "Run now" once from the Scheduled sidebar to pre-approve Supabase MCP + Slack MCP tools. Slack alerts on `release_health_check` new fail rows, `p0_security` / `severity=high` bot_chat entries, deploy failures (channel C0B3PR8MJ07). bot_chat remains the canonical coordination surface — bots do not post Slack directly. See bot_chat 171.
+
 ---
 
 ## Why this exists
