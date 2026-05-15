@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1200, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>VibePass</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="/static/home/style.css" />
+</head>
+<body data-page="home">
+
+  <header class="topbar">
+    <span class="brand">VIBEPASS</span>
+    <span class="brand-sub">3-surface frontend · transitional unified entry</span>
+    <span id="auth-ctrl"></span>
+  </header>
+
+  <main class="grid">
+    <a class="card terminal" id="cardTerminal" href="/terminal">
+      <div class="card-tag">D0 · BROKER</div>
+      <h2>Terminal</h2>
+      <p>Broker-level event detail, movers, performer rollup. The pricing decisions desk.</p>
+      <div class="card-cta">Open Terminal →</div>
+      <div class="card-gate" hidden>Sign in with <code>@s4kent.com</code> to access</div>
+    </a>
+
+    <a class="card undelivered" id="cardUndelivered" href="/undelivered">
+      <div class="card-tag">CS · FULFILLMENT</div>
+      <h2>Undelivered</h2>
+      <p>Customer service + fulfillment + sales tracking across EVO / SeatGeek / TickPick / Vivid / retail. Time-to-event sort, hold-expiry alerts, bulk-deliver-per-event.</p>
+      <div class="card-cta">Open Undelivered →</div>
+      <div class="card-gate" hidden>Sign in with <code>@s4kent.com</code> to access</div>
+    </a>
+
+    <a class="card store" id="cardStore" href="/store">
+      <div class="card-tag">PUBLIC · STORE</div>
+      <h2>Store</h2>
+      <p>Customer-facing sales front. Browse events, view inventory, share deep-links. Public — no sign-in required.</p>
+      <div class="card-cta">Open Store →</div>
+    </a>
+  </main>
+
+  <footer class="foot">
+    <span class="muted small">Unified entry while we evaluate. Per-surface domains may split back out post-validation.</span>
+    <span class="muted small" id="footStatus"></span>
+  </footer>
+
+  <script src="/static/terminal/lib/supabase.js"></script>
+  <script src="/static/terminal/auth.js"></script>
+  <script src="/static/home/home.js"></script>
+</body>
+</html>
