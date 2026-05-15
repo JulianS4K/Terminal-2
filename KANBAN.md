@@ -257,6 +257,21 @@ Same pattern applies to `seatgeek_client.py` (uses `?token=` query param, cached
 - **[SEC-LOW] Document `get_app_secret` whitelist + rotation runbook** — see `MIGRATION_CONVENTIONS.md` follow-up.
 - **[SEC-HIGH] Full RLS coverage audit on domain tables** — internal/operational covered by `20260511000300`; events/performers/listings/etc. need explicit per-table policy decisions.
 
+### B1-NEXT queue (filed 2026-05-15 by B1 monitoring charter)
+
+Defense-in-depth follow-ups identified during the Phase-2 monitoring sweep. Each tagged `B1-NEXT-<N>` for tracking. Owner: B1 unless cross-lane noted.
+
+- **[B1-NEXT-1] [SEC-MED]** Add `current_user NOT IN ('service_role','postgres','supabase_admin')` body guard to `d2_cron_freshness()` ([supabase/migrations/20260513230300_d2_cron_freshness_function.sql](supabase/migrations/20260513230300_d2_cron_freshness_function.sql)). REVOKE/GRANT already done; this closes the missing third element of BOT_HIERARCHY.md §6. **Cross-lane to D2** — needs PR comment coordination per [LANE_DISCIPLINE.md §B1](LANE_DISCIPLINE.md).
+- **[B1-NEXT-2] [SEC-LOW]** Drop the dead v1 overload of `match_to_aq_event_id` (the 7-arg form, superseded by 8-arg form in [supabase/migrations/20260515230000_matcher_v2_tier_1_5.sql](supabase/migrations/20260515230000_matcher_v2_tier_1_5.sql)). Cleanup, not security.
+- **[B1-NEXT-3] [SEC-MED]** Edge function auth posture inventory (`docs/edge_function_auth_inventory.md`). 16 functions deployed; need per-function record of `x-cron-secret` enforcement vs. open vs. JWT-gated. Heavyweight per-function audit.
+- **[B1-NEXT-4] [SEC-LOW]** Evaluate CodeQL / SAST for FastAPI + edge functions. Decide whether to add as a CI workflow.
+- **[B1-NEXT-5] [SEC-MED]** Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries not actually referenced in any prod fn / cron / edge-fn. Punch-list item from [docs/release-discipline.md](docs/release-discipline.md) §7.
+- **[B1-NEXT-6] [SEC-LOW]** Egress payload review — sample anon-callable RPC responses for accidental wholesale/broker field exposure ([LANE_DISCIPLINE.md §D1](LANE_DISCIPLINE.md) wall rules). Periodically review `*_public` RPCs.
+- **[B1-NEXT-7] [SEC-HIGH]** RLS gap on 3 tables — `cron_pause_state_20260514`, `sg_event_priority_state`, `sg_priority_policy` have `rowsecurity=false`, 0 policies, anon SELECT GRANT. Same pattern as Phase-1 `aq_venue_map`/`aq_performer_map` gap (fixed in PR #110). Author fix migration `<ts>_security_rls_gap_close_3_tables.sql`. Cross-lane: 1st table is C1's (cron pause snapshot), other 2 are A1's (SG pipeline).
+- **[B1-NEXT-8] [SEC-MED]** §6 retrofit on `_health_check_pg_net_errors()` (A1's, added by PR #115). File PR comment to A1 per cross-lane patch protocol. Read-only diagnostic but defense-in-depth retrofit warranted.
+- **[B1-NEXT-9] [SEC-MED]** §6 retrofit on `get_broker_event_page(integer, integer)` (A1's, added by PR #115). Body is already gated by `auth.jwt()->>'email'`; §6 guard is belt-and-suspenders. File PR comment to A1.
+- **[B1-NEXT-10] [SEC-LOW]** Migration slot collision audit — `20260515300000` (3 files), `20260515320000` (2 files) collide. MIGRATION_CONVENTIONS.md §3 bump-by-30-or-50 rule not followed. Not security-class but flags discipline drift; recommend filenames be renamed to next free slots in a future cleanup PR.
+
 ### NEXT (code) — [SEC-CRIT] Rotate the leaked `CRON_SECRET` value, then redact from KANBAN/AGENTS
 
 **What**: The `CRON_SECRET` value was committed in plaintext to `KANBAN.md` (lines 87, 90, 91 below this block) and discussed in `AGENTS.md`. It is in git history (commit `5297739` and prior). Anyone who clones this repo today reads the production cron secret.
