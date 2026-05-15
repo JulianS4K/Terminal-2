@@ -29,13 +29,96 @@ from datetime import datetime, timedelta, timezone
 import requests
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from evo_client import EvoClient
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+# ---------- Storefront asset cache-busting ----------
+#
+# Browsers happily hold the storefront's store.js + style.css forever
+# unless the URL changes. Until Sprint 5 ships content-hashed filenames
+# + Cache-Control headers, we append `?v=<short-sha>` to each asset
+# reference inside the served HTML so every deploy invalidates the
+# browser cache. Without this, frontend changes in a D1 PR can appear
+# "not deployed" from the operator's perspective for hours after the
+# actual merge — see Round 4 of docs/d1-bot-continues-here audit.
+
+def _build_storefront_version() -> str:
+    """Short-SHA tag used in the `?v=<...>` query string on static asset
+    references inside the served HTML shells.
+
+    Resolution order:
+      1. RENDER_GIT_COMMIT — auto-set by Render on every deploy.
+      2. GIT_COMMIT — set by some CI workflows; defensive fallback.
+      3. f"dev{epoch}" — local dev / unset prod; still bumps per-boot
+         so a fresh container always re-fetches.
+    """
+    sha = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
+    if sha:
+        return sha[:7]
+    # Local dev / unset prod env — hard-refresh works locally; in prod the
+    # env var is always set by Render so this branch only fires by accident.
+    return "dev"
+
+
+_STOREFRONT_VERSION = _build_storefront_version()
+_STOREFRONT_HTML_CACHE: dict[str, str] = {}
+
+
+def _read_storefront_html(name: str) -> str:
+    """Read a `static/store/<name>` HTML shell, rewrite the store.js +
+    style.css refs to include `?v=<sha>`, cache the result for the life
+    of the container. The source files don't change mid-process.
+    """
+    cached = _STOREFRONT_HTML_CACHE.get(name)
+    if cached is not None:
+        return cached
+    path = os.path.join(STATIC_DIR, "store", name)
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    v = _STOREFRONT_VERSION
+    # Match the exact strings used in the HTML shells. Closing-quote
+    # specificity prevents accidental matches inside JS strings or
+    # CSS url() refs that might be added later.
+    html = html.replace(
+        '/static/store/store.js"',
+        f'/static/store/store.js?v={v}"',
+    )
+    html = html.replace(
+        '/static/store/style.css"',
+        f'/static/store/style.css?v={v}"',
+    )
+    _STOREFRONT_HTML_CACHE[name] = html
+    return html
+
+
+def _render_storefront_page(name: str) -> HTMLResponse:
+    """Return an HTMLResponse for a static/store/*.html shell with
+    Cache-Control: no-cache, must-revalidate so browsers always
+    revalidate the HTML on every page load.
+
+    The asset URLs inside the HTML are cache-busted via
+    _read_storefront_html()'s `?v=<sha>` rewrite — those keep their
+    long-cache friendliness. Only the HTML shell itself needs the
+    revalidate header so operators (and returning customers) never
+    get trapped on stale HTML pointing at un-versioned asset URLs
+    after a deploy. See Round 5 of docs/d1-bot-continues-here-rustling
+    -sunrise.md for the bootstrap-trap scenario this prevents.
+
+    Cost: every page load adds one conditional GET (304 Not Modified
+    when unchanged — ~1 KB request, ~50 ms latency, no body transfer).
+    Trivial.
+    """
+    return HTMLResponse(
+        content=_read_storefront_html(name),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
 
 # ---------- Bootstrap ----------
 
@@ -4434,6 +4517,49 @@ def _escape_ilike(s: str) -> str:
     return s
 
 
+# Characters that, if present in an .or_() clause VALUE, force PostgREST to
+# treat the value as ending early. Wrapping the value in double quotes tells
+# PostgREST to read the value verbatim. Required for hard-coded patterns
+# like "%, NY%" — the comma would otherwise be parsed as a clause separator.
+_OR_VALUE_RESERVED = (",", "(", ")")
+
+
+def _or_ilike_clause(col: str, pattern: str) -> str:
+    """Build a single `col.ilike.<pattern>` clause for PostgREST `.or_()`.
+    Wraps the pattern in double quotes when it contains characters that
+    conflict with the or-clause parser (commas, parens). Embedded double
+    quotes are doubled per PostgREST's quoting rules.
+    """
+    if any(c in pattern for c in _OR_VALUE_RESERVED) or '"' in pattern:
+        escaped = pattern.replace('"', '""')
+        return f'{col}.ilike."{escaped}"'
+    return f"{col}.ilike.{pattern}"
+
+
+def _is_tbd(name: str | None) -> bool:
+    """Detect whether an event name signals a TBD date/opponent/necessity.
+
+    TEvo doesn't expose a boolean `tbd` column on our `events` SQL table —
+    only on the live API response. For SQL-only paths (e.g. /api/store/home)
+    we detect it from the name string. Patterns observed in prod (verified
+    against latest_event_metrics owned-future sample):
+
+      "(Date TBD)"          — playoff games with unscheduled date
+      "Date and Time TBD"   — concerts / non-sports with unscheduled time
+      "(If Necessary)"      — playoff games not yet locked in
+
+    All checks are case-insensitive.
+    """
+    if not name:
+        return False
+    up = name.upper()
+    return (
+        "(DATE TBD)" in up
+        or "DATE AND TIME TBD" in up
+        or "(IF NECESSARY)" in up
+    )
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -4474,15 +4600,21 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
 
     # Events: search by event name, venue name, venue location, primary
     # performer name. Limit to future + active so we don't surface ghosts.
+    # Uses _or_ilike_clause for defense-in-depth: today the pattern has
+    # been sanitized at line ~4467 so the legacy raw f-string would work,
+    # but if that sanitization ever loosens this site would re-introduce
+    # the PostgREST or-clause-separator bug that broke /api/store/movers.
     try:
         ev_rows = (db.table("events")
                      .select("id,name,occurs_at_local,venue_name,venue_location,"
                              "primary_performer_id,primary_performer_name")
                      .gte("occurs_at_local", today_iso)
-                     .or_(f"name.ilike.{pattern},"
-                          f"venue_name.ilike.{pattern},"
-                          f"venue_location.ilike.{pattern},"
-                          f"primary_performer_name.ilike.{pattern}")
+                     .or_(",".join([
+                         _or_ilike_clause("name", pattern),
+                         _or_ilike_clause("venue_name", pattern),
+                         _or_ilike_clause("venue_location", pattern),
+                         _or_ilike_clause("primary_performer_name", pattern),
+                     ]))
                      .order("occurs_at_local", desc=False)
                      .limit(80)
                      .execute().data) or []
@@ -4554,7 +4686,10 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
         vn_rows = (db.table("events")
                      .select("venue_id,venue_name,venue_location")
                      .gte("occurs_at_local", today_iso)
-                     .or_(f"venue_name.ilike.{pattern},venue_location.ilike.{pattern}")
+                     .or_(",".join([
+                         _or_ilike_clause("venue_name", pattern),
+                         _or_ilike_clause("venue_location", pattern),
+                     ]))
                      .limit(40)
                      .execute().data) or []
         seen: set[int] = set()
@@ -4761,8 +4896,11 @@ def store_movers(
             "primary_performer_id,primary_performer_name"
         ).gte("occurs_at_local", today_iso).lte("occurs_at_local", horizon_iso + "T23:59:59")
         # PostgREST `or_()` with a comma-separated list of `<col>.ilike.<pat>`
-        # supports OR filters across multiple patterns.
-        or_clauses = ",".join(f"venue_location.ilike.{p}" for p in venue_patterns)
+        # supports OR filters across multiple patterns. Use _or_ilike_clause so
+        # patterns containing literal commas (e.g. "%, NY%") are double-quoted
+        # and don't get split by PostgREST's clause parser — that bug silently
+        # returned 0 movers for ~309 owned NYC events until the fix landed.
+        or_clauses = ",".join(_or_ilike_clause("venue_location", p) for p in venue_patterns)
         ev_q = ev_q.or_(or_clauses)
         events_rows = ev_q.limit(800).execute().data or []
     except Exception as e:
@@ -4889,6 +5027,216 @@ def store_movers(
         "days": day_cap,
         "count": len(candidates),
         "events": candidates,
+    }
+
+
+@app.get("/api/store/home")
+def store_home(
+    limit: int = 60,
+    city: str = "",
+):
+    """Homepage "first paint" endpoint — owned + active future events
+    served entirely from SQL (no TEvo round-trip).
+
+    Why this exists: the catalog endpoint (/api/store/events) is TEvo-direct
+    per the PR #84 rewrite, which means ~1.4s response time AND from_price
+    + owned_tickets_count fields land as null (would need a per-event call
+    to enrich, see app.py:~4283 comment). Cards render without prices, which
+    looks half-finished to a visitor.
+
+    This endpoint sidesteps that by joining `latest_event_metrics`
+    (retail_min, owned counts, captured_at) with `events` (metadata),
+    `event_lifecycle` (drop ghost/cancelled), `v_event_velocity_windows`
+    (24h ticket-delta + getin signal), and `performer_metadata` (logos/
+    colors). Response shape mirrors /api/store/events so the client renderer
+    is interchangeable.
+
+    Curation order (premium-first → demand-rising → soon-by-date):
+      1. Premium (retail_min >= $500)            — playoff/hot inventory
+      2. Selling-fast (tevo_tix_d24h <= -50)      — high-velocity events
+      3. Demand-rising (tix dropping + getin firming >=5%)
+      4. Others sorted by occurs_at_local asc
+
+    `city=NYC` (optional) restricts to NYC-area venues (Yankee Stadium,
+    Citi Field, MSG, Barclays, etc.). Empty means national. Single-city
+    enum for v1; future versions resolve from user geo.
+
+    Designed for the home view first paint. After this lands, the client
+    can lazy-load /api/store/events for the long-tail of non-owned events.
+    """
+    db = require_sb()
+    cap = max(1, min(int(limit), 100))
+    city_norm = (city or "").upper().strip()
+
+    # Pull owned-future LEM rows.
+    try:
+        lem_rows = (db.table("latest_event_metrics")
+                      .select("event_id,owned_tickets_count,owned_groups_count,"
+                              "retail_min,retail_median,retail_p25,retail_p75,"
+                              "getin_price,captured_at,tickets_count")
+                      .gt("owned_tickets_count", 0)
+                      .limit(1000)
+                      .execute().data) or []
+    except Exception as e:
+        # Conservative fallback so the homepage never breaks on a transient
+        # matview read error. Empty payload renders the existing "Loading…"
+        # → "No events match" UI path.
+        print(f"[store_home] LEM query failed: {e!r}")
+        return {"count": 0, "events": [], "source": "sql"}
+
+    if not lem_rows:
+        return {"count": 0, "events": [], "limit": cap, "source": "sql"}
+
+    ev_ids = [int(r["event_id"]) for r in lem_rows if r.get("event_id")]
+    lem_by_id = {int(r["event_id"]): r for r in lem_rows if r.get("event_id")}
+
+    # Events (future only). Two-query merge — same pattern as
+    # _attach_owned_metadata and store_movers (PostgREST view-to-table
+    # FK inference has been flaky on rebuilds).
+    #
+    # NOTE: events.tbd column doesn't exist in our schema — tbd is a TEvo
+    # API response field, not a SQL column. We detect TBD from the event
+    # name string via _is_tbd() in the card-build loop below.
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    try:
+        ev_rows = (db.table("events")
+                     .select("id,name,occurs_at_local,venue_id,venue_name,"
+                             "venue_location,primary_performer_id,"
+                             "primary_performer_name")
+                     .in_("id", ev_ids)
+                     .gte("occurs_at_local", today_iso)
+                     .limit(1000)
+                     .execute().data) or []
+    except Exception as e:
+        print(f"[store_home] events query failed: {e!r}")
+        return {"count": 0, "events": [], "source": "sql"}
+
+    events_by_id = {int(e["id"]): e for e in ev_rows if e.get("id")}
+
+    # Drop CANCELLED-name rows (rare, but cheap to filter — TEvo bakes the
+    # marker into the event name).
+    events_by_id = {
+        k: v for k, v in events_by_id.items()
+        if "CANCELLED" not in (v.get("name") or "").upper()
+    }
+
+    # Active-only via event_lifecycle.
+    if events_by_id:
+        try:
+            lc = (db.table("event_lifecycle")
+                    .select("event_id,is_active")
+                    .in_("event_id", list(events_by_id.keys()))
+                    .execute().data) or []
+            inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+        except Exception:
+            inactive = set()
+        events_by_id = {k: v for k, v in events_by_id.items() if k not in inactive}
+
+    # Optional city filter. NYC-area substring match. Future cities can be
+    # added behind the same enum gate.
+    if city_norm in ("NYC", "NEW YORK", "NEW YORK CITY"):
+        nyc_substrings = ("new york", "brooklyn", "bronx", "queens",
+                          "manhattan", "flushing")
+        events_by_id = {
+            k: v for k, v in events_by_id.items()
+            if any(s in (v.get("venue_location") or "").lower() for s in nyc_substrings)
+            or ", NY" in (v.get("venue_location") or "")
+        }
+
+    if not events_by_id:
+        return {"count": 0, "events": [], "limit": cap, "source": "sql"}
+
+    # NOTE on velocity: an earlier iteration of this endpoint joined
+    # v_event_velocity_windows to surface selling_fast / demand_rising
+    # signals. EXPLAIN ANALYZE against prod showed that join was the
+    # dominant cost (~702ms of ~738ms total — 95% of latency) because the
+    # view scans 38k+ event_metrics rows + per-event SubPlans for the 24h
+    # delta. We've split that off: the homepage now serves the SQL grid
+    # in <50ms, and the existing /api/store/movers endpoint (separately
+    # wired to <section id="moversStrip"> in index.html) provides the
+    # velocity-based "moving fast" strip below the grid. Net UX is the
+    # same — just two parallel calls instead of one slow one.
+
+    # Bulk performer assets for card branding (logo + brand color).
+    perf_ids = list({int(e.get("primary_performer_id"))
+                     for e in events_by_id.values()
+                     if e.get("primary_performer_id")})
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+
+    # Build cards. Schema mirrors /api/store/events for renderer reuse, plus
+    # `from_price` + `owned_tickets_count` + `signal` actually populated
+    # (when the event clears the premium gate).
+    cards: list[dict] = []
+    for eid, ev in events_by_id.items():
+        lem = lem_by_id.get(eid, {})
+        perf_id = ev.get("primary_performer_id")
+        assets = perf_assets.get(int(perf_id)) if perf_id else None
+
+        try:
+            rm = float(lem.get("retail_min")) if lem.get("retail_min") is not None else None
+        except (TypeError, ValueError):
+            rm = None
+
+        # Signal classification — premium only (price >= $500). The
+        # selling_fast / demand_rising signals require velocity data and
+        # live on /api/store/movers instead (see NOTE above).
+        signal: str | None = "premium" if (rm is not None and rm >= 500.0) else None
+
+        cards.append({
+            "id": eid,
+            "name": ev.get("name"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue_name": ev.get("venue_name"),
+            "venue_location": ev.get("venue_location"),
+            "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_id": perf_id,
+            "primary_performer_logo": (assets or {}).get("logo_default_url"),
+            "primary_performer_color": (assets or {}).get("color_primary"),
+            "primary_performer_league": (assets or {}).get("espn_league"),
+            # Available_count is filled from TEvo's per-event count on the
+            # detail page; the matview's tickets_count is the storefront-
+            # wide listing count which is the better cards-level signal.
+            "available_count": lem.get("tickets_count"),
+            "we_own": True,
+            # tbd derived from event-name string (no SQL column for this).
+            "tbd": _is_tbd(ev.get("name")),
+            # Enrichment that catalog endpoint leaves null — the whole point.
+            "from_price": rm,
+            "retail_median": lem.get("retail_median"),
+            "owned_tickets_count": lem.get("owned_tickets_count"),
+            "owned_groups_count": lem.get("owned_groups_count"),
+            "captured_at": lem.get("captured_at"),
+            # Velocity fields kept in the schema for renderer compatibility
+            # but always null here — populated by /api/store/movers on the
+            # separate strip. Avoids a JS-side schema break.
+            "tix_d24h": None,
+            "getin_d24h_pct": None,
+            "signal": signal,
+            # Other badge enrichments (rivalry/series/weather/holiday/playoff)
+            # stay null here — re-layer in a follow-up PR if/when we want them
+            # on the home grid. The detail page already renders all of these.
+            "rivalry": None,
+            "mlb_series": None,
+            "tournament": None,
+            "weather": None,
+            "holiday": None,
+            "playoff": None,
+        })
+
+    # Curation sort: premium first, then by date asc.
+    def _home_sort_key(c):
+        rank = 0 if c.get("signal") == "premium" else 1
+        return (rank, c.get("occurs_at_local") or "9999")
+
+    cards.sort(key=_home_sort_key)
+    cards = cards[:cap]
+
+    return {
+        "count": len(cards),
+        "events": cards,
+        "limit": cap,
+        "city": city_norm or None,
+        "source": "sql",
     }
 
 
@@ -5421,7 +5769,12 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
         try:
             ev = client.get_event(event_id)
         except RuntimeError as e:
-            raise HTTPException(502, f"TEvo event lookup failed: {e}")
+            # Log full upstream error server-side; return a stable generic
+            # string so TEvo's response text + upstream status codes never
+            # reach the public detail page. Mirrors the /api/store/events
+            # 502 scrub at line ~4194.
+            print(f"[store_event_detail] TEvo event lookup failed for {event_id}: {e!r}")
+            raise HTTPException(502, "event lookup failed")
 
         # Storefront freshness contract: 10s. Tighter than broker's 90s because
         # this is the buy-decision page — stale availability => bad UX.
@@ -5931,12 +6284,12 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
 
 @app.get("/store")
 def store_index_page():
-    return FileResponse(os.path.join(STATIC_DIR, "store", "index.html"))
+    return _render_storefront_page("index.html")
 
 
 @app.get("/store/event/{event_id}")
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
-    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+    return _render_storefront_page("event.html")
 
 
 # ---------- Share links (revocable, trackable) ----------
@@ -6183,12 +6536,12 @@ def store_share_list(
 def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
     """Serves the same event detail page; JS detects /s/ prefix and resolves
     the share via /api/store/share/{id} instead of using URL filter params."""
-    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+    return _render_storefront_page("event.html")
 
 
 @app.get("/store/shares")
 def store_shares_page():
-    return FileResponse(os.path.join(STATIC_DIR, "store", "shares.html"))
+    return _render_storefront_page("shares.html")
 
 
 def _require_non_prod():

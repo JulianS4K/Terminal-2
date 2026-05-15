@@ -1,0 +1,34 @@
+# .gitleaksignore — known-public values that should not trigger secret-scan
+#
+# Format: each line is `<gitleaks-fingerprint>` OR a comment.
+# Gitleaks fingerprint format: <file>:<rule-id>:<line>
+#
+# Add entries here when:
+#  1. The flagged value is intentionally public (e.g. Supabase anon JWT, public URL)
+#  2. The flagged value is a placeholder / example in docs / migrations
+#  3. The flagged value is a test fixture
+#
+# Each entry MUST have a comment line above explaining why.
+# Never silence a real secret leak by adding it here — rotate first.
+#
+# Owner: B1 (Security Manager). Audit cadence: per-session sweep step 8.
+
+# === Supabase anon JWT (semi-public per Supabase model) ===
+# This is the anon role's JWT, exposed to web clients via /api/public/config
+# by design. Treated as a routable identifier, not a credential.
+# Rotation requires updating every web client AND the legacy reference in chat.
+# (No fingerprint yet — populate once first scan flags it.)
+
+# === Public Supabase URL ===
+# hzrizjeaxlqcxfrtczpq.supabase.co is the public project URL. Not a secret.
+
+# === Migration placeholder strings ===
+# `CHANGE_ME_BEFORE_HANDOFF` in 20260509460000_coworker_readonly_role.sql:24
+# was a documented placeholder. The role's actual password was rotated
+# out-of-band on 2026-05-11 (PR #57 SECURITY BACKLOG).
+
+# === Test fixtures ===
+# tests/fixtures/* — synthetic data, no real credentials
+
+# (Real fingerprints get appended below as the first scan run flags
+# allowlist candidates.)

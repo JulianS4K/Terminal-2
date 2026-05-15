@@ -392,18 +392,52 @@
     if (performerId) qs.set("performer_id", performerId);
     if (venueId) qs.set("venue_id", venueId);
 
-    // Catalog fetch with retryable error UI. On failure (502 cold-start,
-     // statement timeout, etc) the user sees the error + an inline Retry
-     // button instead of stuck red text. Per D1 UX audit 2026-05-12 fix #1.
+    // Catalog fetch with retryable error UI. On failure the user sees the
+    // error + an inline Retry button instead of stuck red text. Per D1 UX
+    // audit 2026-05-12 fix #1.
+    //
+    // Endpoint switch by view:
+    //   Home view (unfiltered) → /api/store/home — SQL-only, ~50ms, returns
+    //     owned events with from_price + owned_tickets_count populated.
+    //   Filtered view (?performer_id= or ?venue_id=) → /api/store/events —
+    //     TEvo-direct so the catalog reflects fresh inventory for that
+    //     filter. /api/store/home doesn't accept those filters today; a
+    //     future PR adds a SQL-only filtered variant (see D1-NEXT in
+    //     docs/d1_retail_finish_punchlist.md §G — "store_home filter
+    //     variants" — closes the last TEvo dependency on the storefront).
+    //
+    // PR #111 originally chained both calls (home first, then events as a
+    // "freshness" refresh). That overwrote the populated home grid with
+    // /api/store/events's null-from_price response ~1.5s later, producing
+    // a "prices flash then disappear" UX bug. Single-endpoint switch
+    // resolves that: home view keeps its prices forever (until next
+    // page-load refresh).
+    //
+    // TRADEOFF: dropping the lazy /events refresh makes latest_event_metrics
+    // (the SQL matview behind /api/store/home) the SINGLE SOURCE OF TRUTH
+    // for what appears on the home grid. TEvo-only events that haven't
+    // been ingested into the matview yet won't show up here — that's
+    // intentional per the owned-only homepage strategy
+    // (docs/d1-bot-continues-here-rustling-sunrise.md §7d). If a future
+    // contributor sees the home grid stale and is tempted to "fix" it by
+    // adding /events back, please instead investigate the LEM refresh
+    // cron upstream (bot_chat 130 class — listings_snapshots silent-
+    // success → no LEM rows ingested → home grid goes stale).
+    const isHomeView = !performerId && !venueId;
+    const catalogEndpoint = isHomeView
+      ? "/api/store/home?limit=60"
+      : `/api/store/events?${qs.toString()}`;
+
     function loadCatalog() {
       status.textContent = "Loading available events…";
       status.style.color = "";
       status.hidden = false;
-      api(`/api/store/events?${qs.toString()}`)
+      api(catalogEndpoint)
         .then((res) => {
           allEvents = res.events || [];
           renderCatalogFilterBanner(performerId, venueId, allEvents);
           render(allEvents, "all");
+          status.hidden = true;
         })
         .catch((err) => {
           status.replaceChildren();

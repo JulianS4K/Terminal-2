@@ -182,19 +182,19 @@ def test_config_public_includes_canonical_origin(client, monkeypatch):
 def test_orders_503_when_supabase_unconfigured(monkeypatch, client):
     """Dashboard is SQL-only — when Supabase isn't configured the orders
     endpoint surfaces 503 explicitly instead of silently serving empty."""
-    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", lambda n, p=1: None)
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", lambda n, p=1, include_terminal=False: None)
     r = client.get("/api/d2/orders")
     assert r.status_code == 503
 
 
 def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client):
-    """SQL-backed sources (evo / seatgeek / seatdata) get origin=sql chips
-    with per-source row counts + cron freshness. Tickpick + Vivid hit
-    their upstream API and surface origin=api+sql-match — when API has
-    no creds, the chip shows the actual broker-side reason."""
+    """All 5 sources (evo / seatgeek / seatdata / tickpick / vivid) get
+    origin=sql chips with per-source row counts and `as_of` freshness from
+    `unified_orders.last_seen_at`. No upstream-API leg — the dashboard is
+    SQL-only as of the 2026-05-14 cutover."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
-        lambda n, p=1: {
+        lambda n, p=1, include_terminal=False: {
             "rows": [
                 {"source": "seatgeek", "order_id": "SG-9", "event_name": "Hamilton",
                  "event_date": "2026-07-01T20:00:00Z", "qty": 4, "status": "open",
@@ -209,29 +209,26 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
             "per_source_as_of": {"evo": "2026-05-13T20:35:00Z", "seatgeek": "2026-05-09T02:57:00Z"},
         },
     )
-    # Stub the event-window pull (no v_event_base candidates → vivid rows
-    # go through without enrichment), the cron freshness call, + vivid client.
+    # Stub the event-window pull (no v_event_base candidates → rows
+    # go through without enrichment) and the cron freshness call.
     monkeypatch.setattr(d2_main, "_pull_event_window",   lambda *a, **kw: [])
     monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
-    monkeypatch.setattr(d2_main, "_vivid_client",        lambda: None)
     body = client.get("/api/d2/orders").json()
     sources = {s["source"]: s for s in body["sources"]}
     assert set(sources) == {"evo", "seatgeek", "seatdata", "tickpick", "vivid"}
-    # SQL-backed: ok=True with origin sql + as_of from cron's last_seen_at.
-    # tickpick is now SQL-backed too (persistence cron added 2026-05-13).
+    # Every source is SQL-backed now (vivid joined the unified_orders view
+    # 2026-05-13; the dashboard was updated 2026-05-14 to stop using the
+    # legacy API+match path for it).
+    for src in ("evo", "seatgeek", "seatdata", "tickpick", "vivid"):
+        assert sources[src]["origin"] == "sql"
     assert sources["evo"]["ok"] is True
-    assert sources["evo"]["origin"] == "sql"
     assert sources["evo"]["as_of"] == "2026-05-13T20:35:00Z"
     assert sources["evo"]["count"] == 1
     assert sources["seatgeek"]["count"] == 1
-    assert sources["seatdata"]["count"] == 0   # backed but no rows on this page
+    assert sources["seatdata"]["count"] == 0
     assert sources["seatdata"]["ok"] is True
-    assert sources["tickpick"]["origin"] == "sql"
-    assert sources["tickpick"]["count"] == 0   # backed but no rows on this page
-    # Vivid stays on the API+match path until XML ingest lands.
-    assert sources["vivid"]["ok"] is False
-    assert sources["vivid"]["origin"] == "api+sql-match"
-    assert sources["vivid"]["error"] == "no creds"
+    assert sources["tickpick"]["count"] == 0
+    assert sources["vivid"]["count"] == 0
     # SQL rows: 2 returned, sorted newest-first by ordered_at.
     rows = body["rows"]
     assert [r["source"] for r in rows] == ["seatgeek", "evo"]
@@ -244,22 +241,21 @@ def test_orders_no_longer_carries_cron_blob(monkeypatch, client):
     RPC (66ms+)."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
-        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
+        lambda n, p=1, include_terminal=False: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
     )
     monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
-    monkeypatch.setattr(d2_main, "_vivid_client",      lambda: None)
     sources = {s["source"]: s for s in client.get("/api/d2/orders").json()["sources"]}
     for s in sources.values():
         assert "cron" not in s
 
 
-def test_orders_fast_phase_skips_vivid_and_event_window(monkeypatch, client):
-    """?fast=1 returns phase=fast with only the SQL-side rows; vivid API
-    and the event_window query are NOT fired. Lets the client paint the
-    soonest events in <200ms while the full call loads in the background."""
-    called = {"fast": False, "vivid": False, "event_window": False, "full_page": False}
+def test_orders_fast_phase_skips_event_window(monkeypatch, client):
+    """?fast=1 returns phase=fast with only the SQL-side rows; the
+    event_window query is NOT fired. Lets the client paint the soonest
+    events in <200ms while the full call loads in the background."""
+    called = {"fast": False, "event_window": False, "full_page": False}
 
-    def fake_fast(per_page):
+    def fake_fast(per_page, include_terminal=False):
         called["fast"] = True
         return {
             "rows": [{"source": "evo", "order_id": "111", "event_name": "Knicks vs Lakers",
@@ -276,22 +272,15 @@ def test_orders_fast_phase_skips_vivid_and_event_window(monkeypatch, client):
 
     def fail_full(*a, **kw):
         called["full_page"] = True
-        return None  # would 503 if called
-
-    class FakeVivid:
-        def list_active_orders(self):
-            called["vivid"] = True
-            return []
+        return None
 
     monkeypatch.setattr(d2_main, "_fetch_unified_orders_fast", fake_fast)
     monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fail_full)
     monkeypatch.setattr(d2_main, "_pull_event_window",         fail_event)
-    monkeypatch.setattr(d2_main, "_vivid_client",              lambda: FakeVivid())
 
     body = client.get("/api/d2/orders?fast=1").json()
     assert body["phase"] == "fast"
     assert called["fast"] is True
-    assert called["vivid"] is False
     assert called["event_window"] is False
     assert called["full_page"] is False
     assert len(body["rows"]) == 1
@@ -303,17 +292,17 @@ def test_orders_response_carries_per_leg_timings(monkeypatch, client):
     so the operator can see exactly which fan-out leg is slow."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
-        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
+        lambda n, p=1, include_terminal=False: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
     )
     monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
-    monkeypatch.setattr(d2_main, "_vivid_client",      lambda: None)
     r = client.get("/api/d2/orders")
     body = r.json()
     assert "timings_ms" in body
     assert "sql.unified"      in body["timings_ms"]
     assert "sql.event_window" in body["timings_ms"]
-    assert "api.vivid"        in body["timings_ms"]
     assert "total"            in body["timings_ms"]
+    # The "api.vivid" leg was removed when vivid moved to SQL backing.
+    assert "api.vivid" not in body["timings_ms"]
     server_timing = r.headers.get("Server-Timing", "")
     assert "sql_unified;dur=" in server_timing
     assert "total;dur="       in server_timing
@@ -366,50 +355,12 @@ def test_event_window_cache_short_circuits_repeat_calls(monkeypatch):
     assert hits["n"] == 1
 
 
-def test_orders_enriches_vivid_via_event_window(monkeypatch, client):
-    """When a vivid API row matches a v_event_base candidate (>=2 shared
-    tokens + date within 12h), the row gets the canonical event_name +
-    tevo_event_id stitched in, so it joins cleanly with SQL rows in the
-    table. Vivid is the only source still on the API+match path after
-    tickpick joined unified_orders (2026-05-13)."""
-    monkeypatch.setattr(
-        d2_main, "_fetch_unified_orders_page",
-        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
-    )
-    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [
-        {"tevo_event_id": 9001, "event_name": "Knicks vs Lakers — Madison Square Garden",
-         "event_at_utc": "2026-12-15T23:30:00", "event_at_local": "2026-12-15T18:30:00-05:00"},
-        {"tevo_event_id": 9002, "event_name": "Some Other Concert",
-         "event_at_utc": "2026-12-16T23:00:00", "event_at_local": "2026-12-16T18:00:00-05:00"},
-    ])
-    monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
-
-    class FakeVivid:
-        def list_active_orders(self):
-            return [{
-                "orderId": "V-77", "event": "Knicks at Lakers",
-                "eventDate": "2026-12-15T23:30:00Z",
-                "status": "PENDING_SHIPMENT", "quantity": "2",
-            }]
-
-    monkeypatch.setattr(d2_main, "_vivid_client", lambda: FakeVivid())
-
-    body = client.get("/api/d2/orders").json()
-    v_rows = [r for r in body["rows"] if r["source"] == "vivid"]
-    assert len(v_rows) == 1
-    row = v_rows[0]
-    # Canonical event info from v_event_base overlaid on the vivid row.
-    assert row["event_name"].startswith("Knicks vs Lakers")
-    assert row["tevo_event_id"] == 9001
-    assert row.get("event_origin") == "matched"
-
-
 def test_orders_per_page_bounds_503_passthrough_when_unconfigured(monkeypatch, client):
     """per_page clamping still applies; verifies the clamp fires before the
     SQL call so a malformed query string can't blow up downstream."""
     seen = {}
 
-    def fake_page(per_page, page=1):
+    def fake_page(per_page, page=1, include_terminal=False):
         seen["per_page"] = per_page
         seen["page"] = page
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
@@ -423,30 +374,285 @@ def test_orders_per_page_bounds_503_passthrough_when_unconfigured(monkeypatch, c
     assert seen["per_page"] == 1
 
 
-def test_seatdata_no_creds(monkeypatch, client):
-    """When SEATDATA_API_KEY is missing, endpoint returns ok=False gracefully."""
-    monkeypatch.setattr(d2_main, "_seatdata_client", lambda: None)
-    r = client.get("/api/d2/seatdata")
+def test_orders_default_filters_to_active_only(monkeypatch, client):
+    """Without `?include_terminal=`, the orders endpoint requests the SQL
+    fan-out with include_terminal=False so only non-terminal canonical_status
+    rows come back. Primary-tab default per operator 2026-05-15 directive."""
+    seen = {}
+
+    def fake_page(per_page, page=1, include_terminal=False):
+        seen["include_terminal"] = include_terminal
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+    r = client.get("/api/d2/orders")
+    assert r.status_code == 200
+    assert seen["include_terminal"] is False
+    assert r.json()["include_terminal"] is False
+
+
+def test_orders_include_terminal_param_threads_to_sql(monkeypatch, client):
+    """`?include_terminal=1` flips the filter to show every row regardless
+    of canonical_status. The 'All' view-mode pill on the frontend toggles
+    this query param."""
+    seen = {}
+
+    def fake_page(per_page, page=1, include_terminal=False):
+        seen["include_terminal"] = include_terminal
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+    r = client.get("/api/d2/orders?include_terminal=1")
+    assert r.status_code == 200
+    assert seen["include_terminal"] is True
+    assert r.json()["include_terminal"] is True
+
+
+def test_orders_fast_include_terminal_param_threads_to_fast_sql(monkeypatch, client):
+    """The include_terminal param also propagates to the fast path."""
+    seen = {}
+
+    def fake_fast(per_page, include_terminal=False):
+        seen["include_terminal"] = include_terminal
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_fast", fake_fast)
+    r = client.get("/api/d2/orders?fast=1&include_terminal=1")
+    assert r.status_code == 200
+    assert seen["include_terminal"] is True
+    body = r.json()
+    assert body["phase"] == "fast"
+    assert body["include_terminal"] is True
+
+
+def test_active_terminal_status_constants_are_disjoint():
+    """Sanity check: every canonical_status from order_status_xref appears
+    in exactly one of _ACTIVE_STATUSES or _TERMINAL_STATUSES. Prevents a
+    future status from accidentally landing in neither (and being invisible
+    to both filter modes) or both."""
+    active = set(d2_main._ACTIVE_STATUSES)
+    terminal = set(d2_main._TERMINAL_STATUSES)
+    assert active.isdisjoint(terminal)
+    # The 6 canonical states from order_status_xref:
+    expected = {"pending", "accepted", "substitution", "fulfilled", "rejected", "cancelled"}
+    assert (active | terminal) == expected
+
+
+# ---------- Metrics tab endpoints (CEO view) ----------
+
+def test_metrics_503_when_supabase_unconfigured(monkeypatch, client):
+    """The metrics bundle endpoint is SQL-only — surfaces 503 when
+    Supabase isn't wired, same shape as /api/d2/orders + /api/d2/health."""
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
+    r = client.get("/api/d2/metrics")
+    assert r.status_code == 503
+
+
+def test_metrics_today_start_anchors_on_et():
+    """The "today" window for the Metrics tab anchors on America/New_York
+    so the Today card matches the operator's clock. Without this, the
+    Today card would reset at 8 PM ET (= midnight UTC) and read as a bug.
+
+    Asserts the returned datetime is at an hour boundary in UTC AND falls
+    within the expected ET-midnight band (00:00 ET = 04:00 UTC EDT / 05:00
+    UTC EST). Tolerant of DST."""
+    from datetime import datetime, timezone
+    ts = d2_main._today_start_utc()
+    assert ts.tzinfo is not None
+    assert ts.minute == 0 and ts.second == 0 and ts.microsecond == 0
+    # ET midnight maps to either 04:00 UTC (EDT) or 05:00 UTC (EST).
+    assert ts.hour in (4, 5), f"Expected UTC hour 4 (EDT) or 5 (EST), got {ts.hour}"
+    # The returned ts should never be in the future relative to now_utc.
+    assert ts <= datetime.now(timezone.utc)
+
+
+def test_metrics_bundles_all_windows_buckets_and_top(monkeypatch, client):
+    """Happy path: the metrics endpoint fans out to d2_metrics_window for
+    each of the 4 windows × {current, prior}, plus d2_metrics_hourly_buckets
+    and d2_metrics_top_events. Response carries each result keyed by window
+    name + sub-bundle keys."""
+    calls = {"window": [], "hourly": 0, "top": 0}
+
+    class FakeRpcCall:
+        def __init__(self, fn, args): self._fn = fn; self._args = args
+        def execute(self):
+            data = self._fn(self._args)
+            return type("Res", (), {"data": data})()
+
+    def _window_data(args):
+        calls["window"].append(args)
+        return [
+            {"source": "evo",      "orders_count": 3, "fulfilled_count": 2,
+             "gross_total": 450.0, "fulfilled_gross": 300.0,
+             "qty_total": 6, "fulfilled_qty": 4},
+            {"source": "seatgeek", "orders_count": 1, "fulfilled_count": 0,
+             "gross_total": 1200.0, "fulfilled_gross": 0.0,
+             "qty_total": 4, "fulfilled_qty": 0},
+        ]
+
+    def _hourly_data(args):
+        calls["hourly"] += 1
+        return [{"hour_bucket": "2026-05-15T03:00:00Z", "source": "evo",
+                 "orders_count": 1, "gross": 150.0, "fulfilled_gross": 150.0}]
+
+    def _top_data(args):
+        calls["top"] += 1
+        return [{"tevo_event_id": 9001, "event_name": "Knicks vs Lakers",
+                 "event_date": "2026-06-01T19:30:00Z",
+                 "total_gross": 4500.0, "total_count": 12, "fulfilled_count": 10}]
+
+    def _hot_data(args):
+        return [{"tevo_event_id": 9001, "event_name": "Hot show",
+                 "event_date": "2026-06-01T00:00:00Z",
+                 "recent_count": 4, "recent_gross": 800.0,
+                 "fulfilled_count": 3, "last_order_at": "2026-05-15T14:55:00Z"}]
+    def _biggest_data(args):
+        return [{"source": "evo", "source_order_id": "B-1", "tevo_event_id": 9001,
+                 "event_name": "Hot show", "event_date": "2026-06-01T00:00:00Z",
+                 "gross_value": 5000.0, "quantity": 10, "canonical_status": "fulfilled",
+                 "created_at": "2026-05-15T14:58:00Z"}]
+    def _gaps_data(args):
+        return [{"source": "vivid", "gap_start": "2026-05-15T10:00:00Z",
+                 "gap_end": "2026-05-15T12:30:00Z", "gap_minutes": 150.0}]
+
+    class FakeSb:
+        def rpc(self, name, args):
+            if name == "d2_metrics_window":         return FakeRpcCall(_window_data,  args)
+            if name == "d2_metrics_hourly_buckets": return FakeRpcCall(_hourly_data,  args)
+            if name == "d2_metrics_top_events":     return FakeRpcCall(_top_data,     args)
+            if name == "d2_metrics_hot_events":     return FakeRpcCall(_hot_data,     args)
+            if name == "d2_metrics_biggest_sales":  return FakeRpcCall(_biggest_data, args)
+            if name == "d2_metrics_sales_gaps":     return FakeRpcCall(_gaps_data,    args)
+            raise AssertionError(f"unexpected RPC: {name}")
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    r = client.get("/api/d2/metrics")
     assert r.status_code == 200
     body = r.json()
-    assert body == {"ok": False, "error": "no creds"}
+    # 4 windows × {current, prior}
+    assert set(body["windows"].keys()) == {"hour", "today", "24h", "7d"}
+    for name, twin in body["windows"].items():
+        assert set(twin.keys()) == {"current", "prior"}
+        # Each twin has the per-source rollup rows from our fake RPC.
+        assert len(twin["current"]) == 2
+        assert len(twin["prior"]) == 2
+    assert len(calls["window"]) == 8  # 4 windows × 2 (current + prior)
+    assert calls["hourly"] == 1
+    assert calls["top"] == 1
+    assert len(body["hourly_buckets"]) == 1
+    assert len(body["top_events"]) == 1
+    assert body["top_events"][0]["tevo_event_id"] == 9001
+    # New legs from operator 2026-05-15 directive.
+    assert len(body["hot_events"]) == 1
+    assert body["hot_events"][0]["recent_count"] == 4
+    assert len(body["biggest_sales"]) == 1
+    assert body["biggest_sales"][0]["gross_value"] == 5000.0
+    assert len(body["sales_gaps"]) == 1
+    assert body["sales_gaps"][0]["gap_minutes"] == 150.0
+    assert "timings_ms" in body
+    assert "checked_at" in body
 
 
-def test_seatdata_with_stub(monkeypatch, client):
-    class StubSD:
-        def account(self):
-            return {"balance": 100, "plan": "test"}
+def test_metrics_partial_failure_surfaces_in_errors_array(monkeypatch, client):
+    """If one of the 10 parallel SQL calls fails, the bundle still returns
+    200 with the other 9 legs' data + the failing leg recorded in errors[].
+    Single-leg failures should not cascade to 503."""
+    class FakeFailingCall:
+        def execute(self): raise RuntimeError("simulated SQL hiccup")
+    class FakeOkCall:
+        def __init__(self, payload): self._payload = payload
+        def execute(self): return type("Res", (), {"data": self._payload})()
 
-        def usage(self):
-            return {"calls_today": 7, "limit": 1000}
+    class FakeSb:
+        def rpc(self, name, args):
+            # Break only the top_events leg.
+            if name == "d2_metrics_top_events":
+                return FakeFailingCall()
+            return FakeOkCall([])
 
-    monkeypatch.setattr(d2_main, "_seatdata_client", lambda: StubSD())
-    r = client.get("/api/d2/seatdata")
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    r = client.get("/api/d2/metrics")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["top_events"] == []
+    assert any(e["leg"] == "top_events" for e in body["errors"])
+
+
+def test_sales_feed_503_when_supabase_unconfigured(monkeypatch, client):
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
+    r = client.get("/api/d2/sales-feed")
+    assert r.status_code == 503
+
+
+def test_sales_feed_returns_newest_first(monkeypatch, client):
+    """The sales feed sources newest-first from unified_orders. Mock the
+    PostgREST chain and assert the response shape + ordering call."""
+    captured = {}
+
+    class FakeQuery:
+        def select(self, *_a, **_kw):  return self
+        def in_(self, col, vals):
+            captured["in"] = (col, list(vals))
+            return self
+        def order(self, col, desc=False, nullsfirst=False):
+            captured["order"] = (col, desc); return self
+        def limit(self, n):
+            captured["limit"] = n; return self
+        def execute(self):
+            return type("Res", (), {"data": [
+                {"source": "evo",      "source_order_id": "1", "gross_value": 100.0,
+                 "quantity": 2, "event_name": "A", "event_date": "2026-06-01T00:00:00Z",
+                 "created_at": "2026-05-15T12:00:00Z", "canonical_status": "accepted",
+                 "is_sale_succeeded": False},
+                {"source": "tickpick", "source_order_id": "T-9", "gross_value": 200.0,
+                 "quantity": 1, "event_name": "B", "event_date": "2026-06-02T00:00:00Z",
+                 "created_at": "2026-05-15T11:00:00Z", "canonical_status": "fulfilled",
+                 "is_sale_succeeded": True},
+            ]})()
+
+    class FakeSb:
+        def table(self, name):
+            captured["table"] = name
+            return FakeQuery()
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    r = client.get("/api/d2/sales-feed?limit=5")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert body["account"] == {"balance": 100, "plan": "test"}
-    assert body["usage"] == {"calls_today": 7, "limit": 1000}
+    assert captured["table"] == "unified_orders"
+    assert captured["order"] == ("created_at", True)  # desc=True
+    assert captured["limit"] == 5
+    assert captured["in"][0] == "source"
+    assert set(captured["in"][1]) == set(d2_main._ALL_SOURCES)
+    assert len(body["rows"]) == 2
+    assert body["rows"][0]["source"] == "evo"   # mock returns newest-first
+    assert body["limit"] == 5
+
+
+def test_sales_feed_limit_clamped(monkeypatch, client):
+    """`?limit=999` clamps to 100; `?limit=0` clamps to 1. Prevents the
+    operator from accidentally fetching the whole table."""
+    captured_limits = []
+
+    class FakeQuery:
+        def select(self, *_a, **_kw):  return self
+        def in_(self, *_a, **_kw):     return self
+        def order(self, *_a, **_kw):   return self
+        def limit(self, n):
+            captured_limits.append(n); return self
+        def execute(self):
+            return type("Res", (), {"data": []})()
+    class FakeSb:
+        def table(self, _name): return FakeQuery()
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    client.get("/api/d2/sales-feed?limit=999")
+    client.get("/api/d2/sales-feed?limit=0")
+    client.get("/api/d2/sales-feed")  # default = 20
+    assert captured_limits == [100, 1, 20]
 
 
 # ---------- Normalizer unit tests ----------
@@ -603,72 +809,43 @@ def test_fetch_orders_from_sql_joins_unified_orders_and_v_event_base(monkeypatch
     assert ("tevo_event_id", [42]) in captured["in"]
 
 
-def test_fetch_evo_uses_sql_when_rows_present(monkeypatch):
-    """_fetch_evo prefers the SQL row when it's ok and non-empty; the
-    upstream API client is never called."""
+def test_fetch_evo_returns_sql_result(monkeypatch):
+    """_fetch_evo is a thin SQL-only wrapper around _fetch_orders_from_sql.
+    No upstream-API path exists after the 2026-05-14 strict-SQL cutover."""
     monkeypatch.setattr(
         d2_main, "_fetch_orders_from_sql",
         lambda src, n, p=1: {"source": "evo", "ok": True, "rows": [{"source": "evo", "order_id": "X"}], "origin": "sql"},
     )
-    called = {}
-    def fail_evo_client():
-        called["api"] = True
-        raise AssertionError("API should not be called when SQL has rows")
-    monkeypatch.setattr(d2_main, "_evo_client", fail_evo_client)
-
     out = d2_main._fetch_evo(per_page=10)
     assert out["origin"] == "sql"
-    assert "api" not in called
+    assert out["rows"] == [{"source": "evo", "order_id": "X"}]
 
 
-def test_fetch_evo_falls_back_to_api_when_sql_empty(monkeypatch):
-    """When the SQL row is ok but rows is empty, the API path runs."""
-    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n, p=1: {"source": "evo", "ok": True, "rows": [], "origin": "sql"})
-
-    class FakeEvo:
-        def list_orders(self, **kw):
-            return {"orders": [{"id": 99, "items": [{"quantity": 1, "ticket_group": {"event": {"name": "API event"}}}]}], "total_entries": 1}
-
-    monkeypatch.setattr(d2_main, "_evo_client", lambda: FakeEvo())
+def test_fetch_evo_empty_sql_returns_empty_rows_no_api(monkeypatch):
+    """When SQL returns ok with empty rows (cron stalled / view drained),
+    _fetch_evo returns ok=True with rows=[]. There is NO fallback to the
+    upstream API — the operator sees stale-data signal via /api/d2/cron-freshness
+    rather than silent quota-burning rescue."""
+    monkeypatch.setattr(
+        d2_main, "_fetch_orders_from_sql",
+        lambda src, n, p=1: {"source": "evo", "ok": True, "rows": [], "origin": "sql", "as_of": None},
+    )
     out = d2_main._fetch_evo(per_page=10)
-    assert out["origin"] == "api"
-    assert out["rows"][0]["event_name"] == "API event"
+    assert out["origin"] == "sql"
+    assert out["rows"] == []
+    assert out["ok"] is True
 
 
-def test_fetch_evo_dedupes_accepted_and_pending(monkeypatch):
+def test_fetch_evo_supabase_unconfigured_returns_503_shape(monkeypatch):
+    """When _fetch_orders_from_sql returns None (Supabase not configured),
+    _fetch_evo surfaces a 503-shaped error dict — caller can decide whether
+    to propagate as an HTTP 503 or absorb."""
     monkeypatch.setattr(d2_main, "_fetch_orders_from_sql", lambda src, n, p=1: None)
-    """_fetch_evo fans out across state=accepted + state=pending and dedupes
-    by order_id. Mirrors the operator's reference Tkinter app's pattern."""
-    calls: list[str] = []
-
-    class FakeEvo:
-        def list_orders(self, *, state=None, **kw):
-            calls.append(state)
-            if state == "accepted":
-                return {
-                    "orders": [
-                        {"id": 1, "state": "accepted", "items": [{"quantity": 2, "ticket_group": {"event": {"name": "A"}}}]},
-                        {"id": 2, "state": "accepted", "items": [{"quantity": 1, "ticket_group": {"event": {"name": "B"}}}]},
-                    ],
-                    "total_entries": 50,
-                }
-            if state == "pending":
-                # Order 2 appears in both lists — must dedupe.
-                return {
-                    "orders": [
-                        {"id": 2, "state": "pending",  "items": [{"quantity": 1, "ticket_group": {"event": {"name": "B"}}}]},
-                        {"id": 3, "state": "pending",  "items": [{"quantity": 4, "ticket_group": {"event": {"name": "C"}}}]},
-                    ],
-                    "total_entries": 50,
-                }
-            return {"orders": []}
-
-    monkeypatch.setattr(d2_main, "_evo_client", lambda: FakeEvo())
-    result = d2_main._fetch_evo(per_page=10)
-    assert calls == ["accepted", "pending"]
-    assert result["ok"] is True
-    ids = sorted(r["order_id"] for r in result["rows"])
-    assert ids == ["1", "2", "3"]
+    out = d2_main._fetch_evo(per_page=10)
+    assert out["ok"] is False
+    assert out["origin"] == "sql"
+    assert "Supabase not configured" in (out.get("error") or "")
+    assert out["rows"] == []
 
 
 def test_canonical_status_maps_per_source():
@@ -785,105 +962,11 @@ def test_health_returns_cron_queue_and_sql_blob(monkeypatch, client):
         assert fb[src]["fulfill_by"] is None
 
 
-def test_diag_tickpick_no_token(monkeypatch, client):
-    """No token configured → ok=False, error 'no token configured'.
-    base_diag fields still present so the operator can see WHY (env_var=None)."""
-    monkeypatch.delenv("TICKPICK_API_TOKEN", raising=False)
-    monkeypatch.delenv("TICKPICK_TOKEN",     raising=False)
-    r = client.get("/api/d2/diag/tickpick")
-    body = r.json()
-    assert body["ok"] is False
-    assert body["error"] == "no token configured"
-    assert body["token_env_var"] is None
-    assert body["token_masked"] is None
-
-
-def test_diag_tickpick_surfaces_upstream_status_and_body(monkeypatch, client):
-    """The probe captures the upstream HTTP status + response body so the
-    operator can see exactly why a 401 is firing (invalid_token vs
-    expired_token vs whatever the upstream returns)."""
-    captured = {}
-
-    class FakeResp:
-        def __init__(self):
-            self.status_code = 401
-            self.ok = False
-            self.text = '{"error":"invalid_token","error_description":"The access token expired"}'
-            self.headers = {
-                "Content-Type": "application/json",
-                "WWW-Authenticate": 'Bearer error="invalid_token"',
-                "X-RateLimit-Remaining": "499",
-            }
-
-    def fake_get(url, **kw):
-        captured["url"] = url
-        captured["headers"] = kw.get("headers", {})
-        captured["params"] = kw.get("params", {})
-        captured["allow_redirects"] = kw.get("allow_redirects")
-        return FakeResp()
-
-    monkeypatch.setenv("TICKPICK_API_TOKEN", "tok-secret-WXYZ")
-    monkeypatch.delenv("TICKPICK_TOKEN", raising=False)
-    monkeypatch.setattr(d2_main.requests, "get", fake_get)
-    r = client.get("/api/d2/diag/tickpick")
-    body = r.json()
-    assert body["ok"] is False
-    assert body["status_code"] == 401
-    assert "invalid_token" in body["response_body"]
-    assert body["response_headers"]["WWW-Authenticate"] == 'Bearer error="invalid_token"'
-    assert body["response_headers"]["X-RateLimit-Remaining"] == "499"
-    assert body["token_env_var"] == "TICKPICK_API_TOKEN"
-    assert body["token_masked"] == "...WXYZ"
-    # We sent the actual token in the Authorization header, but never echoed
-    # it back in the response body or in any returned header.
-    assert "tok-secret-WXYZ" not in r.text
-    # Probe must not follow redirects (could leak token to a 3xx Location host).
-    assert captured["allow_redirects"] is False
-
-
-def test_diag_tickpick_warns_on_duplicate_env_vars(monkeypatch, client):
-    """Both vault-canonical AND legacy keys set with different values is a
-    common cause of 401 — surface it explicitly in the probe response."""
-    monkeypatch.setenv("TICKPICK_API_TOKEN", "new-AAAA")
-    monkeypatch.setenv("TICKPICK_TOKEN",     "old-BBBB")
-
-    class FakeResp:
-        status_code = 200
-        ok = True
-        text = "[]"
-        headers = {"Content-Type": "application/json"}
-
-    monkeypatch.setattr(d2_main.requests, "get", lambda *a, **kw: FakeResp())
-    body = client.get("/api/d2/diag/tickpick").json()
-    assert body["token_env_var"] == "TICKPICK_API_TOKEN"
-    assert body["token_warning"] is not None
-    assert "TICKPICK_API_TOKEN" in body["token_warning"]
-    assert "TICKPICK_TOKEN" in body["token_warning"]
-
-
-def test_diag_tickpick_scrubs_token_if_echoed_in_body(monkeypatch, client):
-    """Belt-and-suspenders: if the upstream somehow echoes the token back in
-    the response body, mask it before returning to the client."""
-    monkeypatch.setenv("TICKPICK_API_TOKEN", "echo-me-XYZW")
-    monkeypatch.delenv("TICKPICK_TOKEN", raising=False)
-
-    class FakeResp:
-        status_code = 200
-        ok = True
-        text = '{"orders":[],"debug_token":"echo-me-XYZW"}'
-        headers = {"Content-Type": "application/json"}
-
-    monkeypatch.setattr(d2_main.requests, "get", lambda *a, **kw: FakeResp())
-    body = client.get("/api/d2/diag/tickpick").json()
-    assert "echo-me-XYZW" not in body["response_body"]
-    assert "...XYZW" in body["response_body"]
-
-
 def test_orders_returns_pagination_metadata(monkeypatch, client):
     """`/api/d2/orders` echoes the requested page + per_page so the front-end
     can size the Prev/Next buttons without a separate count query."""
     monkeypatch.setattr(d2_main, "_fetch_unified_orders_page",
-                        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}})
+                        lambda n, p=1, include_terminal=False: {"rows": [], "per_source_count": {}, "per_source_as_of": {}})
     body = client.get("/api/d2/orders?per_page=25&page=3").json()
     assert body["page"] == 3
     assert body["per_page"] == 25
@@ -894,7 +977,7 @@ def test_orders_page_param_threads_to_sql(monkeypatch, client):
     .range() lines up with the operator's Next/Prev clicks."""
     seen = {}
 
-    def fake_page(per_page, page=1):
+    def fake_page(per_page, page=1, include_terminal=False):
         seen["per_page"] = per_page
         seen["page"] = page
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
@@ -909,7 +992,7 @@ def test_orders_page_clamped_to_minimum_one(monkeypatch, client):
     doesn't blow up the SQL fetcher (PostgREST .range() would 416)."""
     seen = {}
 
-    def fake_page(per_page, page=1):
+    def fake_page(per_page, page=1, include_terminal=False):
         seen["page"] = page
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
 
@@ -949,14 +1032,26 @@ def test_order_detail_unknown_source(client):
     assert r.status_code == 404
 
 
-def test_order_detail_no_creds(monkeypatch, client):
-    """When the client factory returns None, the endpoint returns 200 with
-    ok=False instead of 500 — front-end can render a clear error card."""
-    monkeypatch.setattr(d2_main, "_tickpick_client", lambda: None)
+def test_order_detail_no_supabase(monkeypatch, client):
+    """When Supabase isn't configured, the SQL deep-detail path returns 200
+    with ok=False so the front-end can render a clear error card."""
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
     r = client.get("/api/d2/order/tickpick/42")
     assert r.status_code == 200
     body = r.json()
-    assert body == {"ok": False, "error": "no creds"}
+    assert body["ok"] is False
+    assert "Supabase not configured" in body["error"]
+
+
+def test_order_detail_no_creds_gotickets(monkeypatch, client):
+    """Gotickets keeps the API-by-id flow until SQL backing exists; missing
+    creds surface as 200 ok=False (same UX as the SQL sources' 503-soft)."""
+    monkeypatch.setattr(d2_main, "_gotickets_client", lambda: None)
+    r = client.get("/api/d2/order/gotickets/S-42")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"] == "no creds"
 
 
 def test_scrub_err_passes_typed_client_errors(monkeypatch):
@@ -979,22 +1074,63 @@ def test_scrub_err_passes_typed_client_errors(monkeypatch):
     assert out == "upstream error"
 
 
-def test_order_detail_dispatches_to_client(monkeypatch, client):
-    """Happy path: the endpoint dispatches to the source's by-id fetcher and
-    wraps the response. The /v9/orders/:id call hits get_order on evo_client."""
-    class FakeEvo:
-        def get_order(self, order_id):
-            assert order_id == 42
-            return {"id": 42, "state": "accepted", "items": []}
+def test_order_detail_dispatches_to_sql(monkeypatch, client):
+    """Happy path: the endpoint queries the source's raw `*_orders` table by
+    its primary key and wraps the row. Replaces the prior live-API call —
+    the dashboard is SQL-only as of the 2026-05-14 cutover."""
+    captured = {}
 
-    monkeypatch.setattr(d2_main, "_evo_client", lambda: FakeEvo())
+    class FakeQuery:
+        def select(self, *_a, **_kw):  return self
+        def eq(self, col, val):
+            captured["col"] = col
+            captured["val"] = val
+            return self
+        def limit(self, *_a, **_kw):   return self
+        def execute(self):
+            return type("Res", (), {"data": [{"evo_order_id": "42", "state": "accepted", "buyer_name": "Acme"}]})()
+
+    class FakeSb:
+        def table(self, name):
+            captured["table"] = name
+            return FakeQuery()
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
     r = client.get("/api/d2/order/evo/42")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
     assert body["source"] == "evo"
     assert body["order_id"] == "42"
-    assert body["data"]["id"] == 42
+    assert body["data"]["evo_order_id"] == "42"
+    assert body["data"]["buyer_name"] == "Acme"
+    # Verify the dispatch routes to the right table + column for evo.
+    assert captured["table"] == "evo_orders"
+    assert captured["col"] == "evo_order_id"
+    assert captured["val"] == "42"
+
+
+def test_order_detail_not_found_returns_ok_false(monkeypatch, client):
+    """When the SQL query finds no row for the given order_id, the endpoint
+    returns 200 ok=False with error='not found' so the front-end can render
+    a "no such order" card rather than an opaque 404."""
+    class EmptyQuery:
+        def select(self, *_a, **_kw):  return self
+        def eq(self, *_a, **_kw):      return self
+        def limit(self, *_a, **_kw):   return self
+        def execute(self):
+            return type("Res", (), {"data": []})()
+
+    class FakeSb:
+        def table(self, _name):
+            return EmptyQuery()
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    r = client.get("/api/d2/order/tickpick/no-such-id")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"] == "not found"
 
 
 def test_to_int_to_float_handle_garbage():
