@@ -47,6 +47,7 @@ from typing import Any
 
 import requests
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -124,6 +125,26 @@ _DASHBOARD_SHELL = (
 _CONFIG_PLACEHOLDER = "__D2_CONFIG_JSON__"
 
 app = FastAPI(title="Undelivered — D2 fulfillment + sales tracking")
+
+# ---------- CORS ----------
+# D0's unified-shell /undelivered scaffold on vibepass-storefront-test.onrender.com
+# fetches D2's /api/d2/* cross-origin. Without CORS the browser blocks the XHR
+# at preflight. Whitelist explicit origins (not '*') because the API is
+# auth-gated and credentialed requests are incompatible with wildcard.
+# Localhost in dev: any port (8000, 8080, 5173, etc.); regex covers them.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://vibepass-storefront-test.onrender.com",
+        "https://vibepass-terminal-test.onrender.com",  # if D0 terminal also fetches /api/d2/*
+        "https://d2-orders-dashboard.onrender.com",      # same-origin is fine without CORS, but listing keeps the matrix explicit
+    ],
+    allow_origin_regex=r"https?://localhost(:\d+)?",
+    allow_credentials=True,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=600,
+)
 
 if STATIC_DIR.is_dir():
     app.mount("/static/d2", StaticFiles(directory=str(STATIC_DIR)), name="d2_static")
