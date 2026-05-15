@@ -123,7 +123,7 @@ _DASHBOARD_SHELL = (
 )
 _CONFIG_PLACEHOLDER = "__D2_CONFIG_JSON__"
 
-app = FastAPI(title="D2 Orders Dashboard — unified broker view")
+app = FastAPI(title="Undelivered — D2 fulfillment + sales tracking")
 
 if STATIC_DIR.is_dir():
     app.mount("/static/d2", StaticFiles(directory=str(STATIC_DIR)), name="d2_static")

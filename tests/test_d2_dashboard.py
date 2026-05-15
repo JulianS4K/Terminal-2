@@ -113,10 +113,13 @@ def test_healthz_detail_under_auth_disabled(client):
 
 
 def test_root_serves_html(client):
+    """Root serves the Undelivered shell (rebranded from prior "D2 Orders
+    Dashboard" per D0 architecture decision 2026-05-15, bot_chat 194 Option C).
+    Same FastAPI app, customer-service framing."""
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "D2 Orders Dashboard" in r.text
+    assert "Undelivered" in r.text
 
 
 def test_root_injects_config_blob(client):
