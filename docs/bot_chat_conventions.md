@@ -78,9 +78,16 @@ Daily at the end of the checkpoint:
 
 Open `flag` / `question` / `collision` / `p0_security` are **never** bulk-resolved by C1 — they need their owners to confirm closure.
 
+## Cross-lane file-claim protocol (2026-05-15, D0-shipped)
+
+When editing a file outside your direct write surface, post a `sync` event with `meta` payload `{action:'claim', path:'<file>', expires_at:'<iso>', intent:'<short>'}` *before* the edit. After commit, post a follow-up `sync` with `meta.action='release'` + `in_reply_to=<claim_id>`. Conflict rule: lower `id` wins; later claimer releases + waits. Stale claims auto-expire (default 30 min). A1/B1 may `revoke`.
+
+Canonical doc: [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md) (PR #113, pending merge). C1 adopts the pattern for any future cross-lane writes; in-lane writes (own docs, own conventions) need no claim.
+
 ## Related docs
 
 - [CLAUDE.md](CLAUDE.md) §1 — standing permissions on `bot_chat` writes
 - [LANE_DISCIPLINE.md](LANE_DISCIPLINE.md) — who owns which lane
 - [BOT_HIERARCHY.md](BOT_HIERARCHY.md) — push restrictions matrix
 - [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md) — C1's runbook (Step 8 is the bot_chat sweep + summary post)
+- [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md) — file-claim protocol for cross-lane writes
