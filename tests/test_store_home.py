@@ -1,11 +1,16 @@
 """Tests for /api/store/home and the /api/store/movers PostgREST comma-pattern fix.
 
 /api/store/home is the SQL-only first-paint endpoint that joins
-latest_event_metrics + events + event_lifecycle + v_event_velocity_windows +
-performer_metadata, returning enriched cards (from_price, owned counts,
-signal) in <500ms. Catalog endpoint (/api/store/events) leaves these fields
-null on the TEvo-direct path, so /api/store/home is what gives the home grid
-prices on first paint.
+latest_event_metrics + events + event_lifecycle + performer_metadata,
+returning enriched cards (from_price, owned counts, premium signal) in
+<50ms. Catalog endpoint (/api/store/events) leaves from_price and
+owned_tickets_count null on the TEvo-direct path, so /api/store/home is
+what gives the home grid prices on first paint.
+
+Velocity signals (selling_fast / demand_rising) intentionally NOT served
+by this endpoint — joining v_event_velocity_windows was 702ms of the 738ms
+total in the original design (95% of latency). They live on
+/api/store/movers instead, surfaced in a separate strip below the grid.
 
 /api/store/movers was returning count:0 in prod despite 17/18 NYC owned
 events qualifying — the literal comma in the hardcoded "%, NY%" pattern was
@@ -194,17 +199,6 @@ def _lc(eid: int, active: bool = True) -> dict:
     return {"event_id": eid, "is_active": active}
 
 
-def _vw(eid: int, tix_d24h: int = 0, getin: float = 50.0,
-        getin_pct: float = 0.0) -> dict:
-    return {
-        "tevo_event_id": eid,
-        "tevo_tix_now": 1000,
-        "tevo_tix_d24h": tix_d24h,
-        "tevo_getin_now": getin,
-        "tevo_getin_d24h_pct": getin_pct,
-    }
-
-
 @pytest.fixture
 def store_home_client(monkeypatch):
     """TestClient with require_sb stubbed to return a programmable FakeDB.
@@ -247,7 +241,6 @@ def test_home_returns_owned_with_enrichment(store_home_client):
         "latest_event_metrics": [_lem(1, owned=100, retail_min=25.0)],
         "events": [_event(1)],
         "event_lifecycle": [_lc(1, active=True)],
-        "v_event_velocity_windows": [_vw(1, tix_d24h=-10)],
     }
     r = store_home_client.get("/api/store/home")
     assert r.status_code == 200, r.text
@@ -272,7 +265,6 @@ def test_home_drops_inactive_events(store_home_client):
         ],
         "events": [_event(1), _event(2)],
         "event_lifecycle": [_lc(1, active=True), _lc(2, active=False)],
-        "v_event_velocity_windows": [],
     }
     r = store_home_client.get("/api/store/home")
     assert r.status_code == 200
@@ -281,42 +273,92 @@ def test_home_drops_inactive_events(store_home_client):
 
 
 def test_home_signal_classification(store_home_client):
-    """Signals: premium (retail_min >= $500), selling_fast (d24h <= -50),
-    demand_rising (d24h < 0 AND pct >= 5%). Each must be assigned correctly
-    AND the ordering puts premium first, then selling_fast, then the rest."""
+    """After dropping the v_event_velocity_windows join (perf optimization —
+    EXPLAIN ANALYZE showed 702ms / 95% of latency was that view), the home
+    grid only classifies `premium` (retail_min >= $500). selling_fast +
+    demand_rising live on /api/store/movers, a separate endpoint surfaced
+    in <section id="moversStrip"> below the grid.
+
+    Order: premium → others, with date asc as the tiebreaker.
+    """
     store_home_client.fakedb.tables = {
         "latest_event_metrics": [
-            # event 1: just selling fast (cheap)
-            _lem(1, owned=50, retail_min=20.0),
-            # event 2: premium (expensive, no d24h drop)
-            _lem(2, owned=10, retail_min=1500.0),
-            # event 3: demand_rising
-            _lem(3, owned=30, retail_min=30.0),
-            # event 4: nothing special
-            _lem(4, owned=5, retail_min=15.0),
+            # event 1: premium (expensive)
+            _lem(1, owned=10, retail_min=1500.0),
+            # event 2: cheap, NOT premium even with big d24h drop — no
+            # velocity join means we can't see d24h, so signal is null.
+            _lem(2, owned=50, retail_min=20.0),
+            # event 3: cheap, NOT premium
+            _lem(3, owned=5, retail_min=15.0),
         ],
-        "events": [_event(i) for i in [1, 2, 3, 4]],
-        "event_lifecycle": [_lc(i) for i in [1, 2, 3, 4]],
-        "v_event_velocity_windows": [
-            _vw(1, tix_d24h=-100),                    # selling_fast
-            _vw(2, tix_d24h=0),                        # signal from retail_min
-            _vw(3, tix_d24h=-10, getin_pct=7.5),       # demand_rising
-            _vw(4, tix_d24h=-1),                        # no signal
+        "events": [
+            _event(1, occurs="2026-06-15T19:00:00-04:00"),
+            _event(2, occurs="2026-05-20T19:00:00-04:00"),
+            _event(3, occurs="2026-05-25T19:00:00-04:00"),
         ],
+        "event_lifecycle": [_lc(i) for i in [1, 2, 3]],
     }
     r = store_home_client.get("/api/store/home")
     assert r.status_code == 200
     body = r.json()
     by_id = {e["id"]: e for e in body["events"]}
-    assert by_id[1]["signal"] == "selling_fast"
-    assert by_id[2]["signal"] == "premium"
-    assert by_id[3]["signal"] == "demand_rising"
-    assert by_id[4]["signal"] is None
-    # Order: premium first, then selling_fast, then demand_rising, then null
+    assert by_id[1]["signal"] == "premium"
+    assert by_id[2]["signal"] is None, "cheap event must not get a signal"
+    assert by_id[3]["signal"] is None, "cheap event must not get a signal"
+    # Order: premium first, then by date asc (event 2 before event 3).
     order = [e["id"] for e in body["events"]]
-    assert order == [2, 1, 3, 4], (
-        f"sort must be premium → selling_fast → demand_rising → none, got {order}"
+    assert order == [1, 2, 3], (
+        f"sort must be premium first, then date asc; got {order}"
     )
+
+
+def test_home_velocity_fields_always_null(store_home_client):
+    """Renderer-compatibility: tix_d24h + getin_d24h_pct stay in the response
+    schema (so store.js's card renderer doesn't break) but are always null
+    on this endpoint. The values live on /api/store/movers instead."""
+    store_home_client.fakedb.tables = {
+        "latest_event_metrics": [_lem(1, owned=100, retail_min=1500.0)],
+        "events": [_event(1)],
+        "event_lifecycle": [_lc(1)],
+    }
+    r = store_home_client.get("/api/store/home")
+    ev = r.json()["events"][0]
+    assert "tix_d24h" in ev and ev["tix_d24h"] is None
+    assert "getin_d24h_pct" in ev and ev["getin_d24h_pct"] is None
+
+
+def test_home_tbd_detected_from_name(store_home_client):
+    """events.tbd column doesn't exist in our SQL schema — TBD is detected
+    from the event name string via _is_tbd(). Patterns observed in prod:
+    "(Date TBD)", "Date and Time TBD", "(If Necessary)".
+    """
+    store_home_client.fakedb.tables = {
+        "latest_event_metrics": [_lem(i, retail_min=1000.0) for i in [1, 2, 3, 4]],
+        "events": [
+            _event(1, name="TBD at New York Knicks (Round 3 - Home Game 1) (Date TBD)"),
+            _event(2, name="TBD at New York Knicks (NBA Finals - Home Game 1) (If Necessary)"),
+            _event(3, name="Some Concert (Date and Time TBD)"),
+            _event(4, name="Real Scheduled Game"),
+        ],
+        "event_lifecycle": [_lc(i) for i in [1, 2, 3, 4]],
+    }
+    r = store_home_client.get("/api/store/home")
+    by_id = {e["id"]: e for e in r.json()["events"]}
+    assert by_id[1]["tbd"] is True, "(Date TBD) must be detected"
+    assert by_id[2]["tbd"] is True, "(If Necessary) must be detected"
+    assert by_id[3]["tbd"] is True, "Date and Time TBD must be detected"
+    assert by_id[4]["tbd"] is False, "ordinary scheduled event must not be flagged tbd"
+
+
+def test_is_tbd_helper_unit():
+    """Unit test for the helper directly — case-insensitive + handles None."""
+    assert app_module._is_tbd("TBD at Knicks (Date TBD)") is True
+    assert app_module._is_tbd("Real Game (If Necessary)") is True
+    assert app_module._is_tbd("Concert · Date and Time TBD") is True
+    assert app_module._is_tbd("(date tbd)") is True  # case-insensitive
+    assert app_module._is_tbd("Yankees vs Red Sox") is False
+    assert app_module._is_tbd("") is False
+    assert app_module._is_tbd(None) is False
 
 
 def test_home_city_nyc_filters_correctly(store_home_client):
@@ -332,7 +374,6 @@ def test_home_city_nyc_filters_correctly(store_home_client):
             _event(5, venue_location="Chicago, IL"),     # not NYC
         ],
         "event_lifecycle": [_lc(i) for i in [1, 2, 3, 4, 5]],
-        "v_event_velocity_windows": [],
     }
     r = store_home_client.get("/api/store/home?city=NYC")
     out_ids = sorted([e["id"] for e in r.json()["events"]])
@@ -346,7 +387,6 @@ def test_home_respects_limit_param(store_home_client):
         "latest_event_metrics": [_lem(i) for i in range(1, 11)],
         "events": [_event(i) for i in range(1, 11)],
         "event_lifecycle": [_lc(i) for i in range(1, 11)],
-        "v_event_velocity_windows": [],
     }
     r = store_home_client.get("/api/store/home?limit=3")
     body = r.json()
@@ -364,7 +404,6 @@ def test_home_drops_cancelled_name_rows(store_home_client):
             _event(2, name="CANCELLED — Postponed Show"),
         ],
         "event_lifecycle": [_lc(1), _lc(2)],
-        "v_event_velocity_windows": [],
     }
     r = store_home_client.get("/api/store/home")
     out_ids = [e["id"] for e in r.json()["events"]]
@@ -388,7 +427,6 @@ def test_home_no_tevo_call(store_home_client, monkeypatch):
         "latest_event_metrics": [_lem(1)],
         "events": [_event(1)],
         "event_lifecycle": [_lc(1)],
-        "v_event_velocity_windows": [],
     }
     r = store_home_client.get("/api/store/home")
     assert r.status_code == 200

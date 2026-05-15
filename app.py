@@ -4453,6 +4453,30 @@ def _or_ilike_clause(col: str, pattern: str) -> str:
     return f"{col}.ilike.{pattern}"
 
 
+def _is_tbd(name: str | None) -> bool:
+    """Detect whether an event name signals a TBD date/opponent/necessity.
+
+    TEvo doesn't expose a boolean `tbd` column on our `events` SQL table —
+    only on the live API response. For SQL-only paths (e.g. /api/store/home)
+    we detect it from the name string. Patterns observed in prod (verified
+    against latest_event_metrics owned-future sample):
+
+      "(Date TBD)"          — playoff games with unscheduled date
+      "Date and Time TBD"   — concerts / non-sports with unscheduled time
+      "(If Necessary)"      — playoff games not yet locked in
+
+    All checks are case-insensitive.
+    """
+    if not name:
+        return False
+    up = name.upper()
+    return (
+        "(DATE TBD)" in up
+        or "DATE AND TIME TBD" in up
+        or "(IF NECESSARY)" in up
+    )
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -4493,15 +4517,21 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
 
     # Events: search by event name, venue name, venue location, primary
     # performer name. Limit to future + active so we don't surface ghosts.
+    # Uses _or_ilike_clause for defense-in-depth: today the pattern has
+    # been sanitized at line ~4467 so the legacy raw f-string would work,
+    # but if that sanitization ever loosens this site would re-introduce
+    # the PostgREST or-clause-separator bug that broke /api/store/movers.
     try:
         ev_rows = (db.table("events")
                      .select("id,name,occurs_at_local,venue_name,venue_location,"
                              "primary_performer_id,primary_performer_name")
                      .gte("occurs_at_local", today_iso)
-                     .or_(f"name.ilike.{pattern},"
-                          f"venue_name.ilike.{pattern},"
-                          f"venue_location.ilike.{pattern},"
-                          f"primary_performer_name.ilike.{pattern}")
+                     .or_(",".join([
+                         _or_ilike_clause("name", pattern),
+                         _or_ilike_clause("venue_name", pattern),
+                         _or_ilike_clause("venue_location", pattern),
+                         _or_ilike_clause("primary_performer_name", pattern),
+                     ]))
                      .order("occurs_at_local", desc=False)
                      .limit(80)
                      .execute().data) or []
@@ -4573,7 +4603,10 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
         vn_rows = (db.table("events")
                      .select("venue_id,venue_name,venue_location")
                      .gte("occurs_at_local", today_iso)
-                     .or_(f"venue_name.ilike.{pattern},venue_location.ilike.{pattern}")
+                     .or_(",".join([
+                         _or_ilike_clause("venue_name", pattern),
+                         _or_ilike_clause("venue_location", pattern),
+                     ]))
                      .limit(40)
                      .execute().data) or []
         seen: set[int] = set()
@@ -4977,12 +5010,16 @@ def store_home(
     # Events (future only). Two-query merge — same pattern as
     # _attach_owned_metadata and store_movers (PostgREST view-to-table
     # FK inference has been flaky on rebuilds).
+    #
+    # NOTE: events.tbd column doesn't exist in our schema — tbd is a TEvo
+    # API response field, not a SQL column. We detect TBD from the event
+    # name string via _is_tbd() in the card-build loop below.
     today_iso = datetime.now(timezone.utc).date().isoformat()
     try:
         ev_rows = (db.table("events")
                      .select("id,name,occurs_at_local,venue_id,venue_name,"
                              "venue_location,primary_performer_id,"
-                             "primary_performer_name,tbd")
+                             "primary_performer_name")
                      .in_("id", ev_ids)
                      .gte("occurs_at_local", today_iso)
                      .limit(1000)
@@ -5026,18 +5063,16 @@ def store_home(
     if not events_by_id:
         return {"count": 0, "events": [], "limit": cap, "source": "sql"}
 
-    # Velocity windows for the 24h ticket-drop + getin signal. Best-effort —
-    # the home view still renders if velocity is unavailable, signals just
-    # come back as null.
-    try:
-        vw = (db.table("v_event_velocity_windows")
-                .select("tevo_event_id,tevo_tix_now,tevo_tix_d24h,"
-                        "tevo_getin_now,tevo_getin_d24h_pct")
-                .in_("tevo_event_id", list(events_by_id.keys()))
-                .execute().data) or []
-    except Exception:
-        vw = []
-    velocity_by_id = {int(v["tevo_event_id"]): v for v in vw if v.get("tevo_event_id") is not None}
+    # NOTE on velocity: an earlier iteration of this endpoint joined
+    # v_event_velocity_windows to surface selling_fast / demand_rising
+    # signals. EXPLAIN ANALYZE against prod showed that join was the
+    # dominant cost (~702ms of ~738ms total — 95% of latency) because the
+    # view scans 38k+ event_metrics rows + per-event SubPlans for the 24h
+    # delta. We've split that off: the homepage now serves the SQL grid
+    # in <50ms, and the existing /api/store/movers endpoint (separately
+    # wired to <section id="moversStrip"> in index.html) provides the
+    # velocity-based "moving fast" strip below the grid. Net UX is the
+    # same — just two parallel calls instead of one slow one.
 
     # Bulk performer assets for card branding (logo + brand color).
     perf_ids = list({int(e.get("primary_performer_id"))
@@ -5046,11 +5081,11 @@ def store_home(
     perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
 
     # Build cards. Schema mirrors /api/store/events for renderer reuse, plus
-    # `from_price` + `owned_tickets_count` + `signal` actually populated.
+    # `from_price` + `owned_tickets_count` + `signal` actually populated
+    # (when the event clears the premium gate).
     cards: list[dict] = []
     for eid, ev in events_by_id.items():
         lem = lem_by_id.get(eid, {})
-        v = velocity_by_id.get(eid, {})
         perf_id = ev.get("primary_performer_id")
         assets = perf_assets.get(int(perf_id)) if perf_id else None
 
@@ -5058,24 +5093,11 @@ def store_home(
             rm = float(lem.get("retail_min")) if lem.get("retail_min") is not None else None
         except (TypeError, ValueError):
             rm = None
-        try:
-            d24h_int = int(v.get("tevo_tix_d24h")) if v.get("tevo_tix_d24h") is not None else None
-        except (TypeError, ValueError):
-            d24h_int = None
-        try:
-            pct = float(v.get("tevo_getin_d24h_pct")) if v.get("tevo_getin_d24h_pct") is not None else None
-        except (TypeError, ValueError):
-            pct = None
 
-        # Signal classification — same gates as /api/store/movers for
-        # consistency. Priority: premium > selling_fast > demand_rising.
-        signal: str | None = None
-        if rm is not None and rm >= 500.0:
-            signal = "premium"
-        elif d24h_int is not None and d24h_int <= -50:
-            signal = "selling_fast"
-        elif d24h_int is not None and d24h_int < 0 and pct is not None and pct >= 5.0:
-            signal = "demand_rising"
+        # Signal classification — premium only (price >= $500). The
+        # selling_fast / demand_rising signals require velocity data and
+        # live on /api/store/movers instead (see NOTE above).
+        signal: str | None = "premium" if (rm is not None and rm >= 500.0) else None
 
         cards.append({
             "id": eid,
@@ -5093,16 +5115,19 @@ def store_home(
             # wide listing count which is the better cards-level signal.
             "available_count": lem.get("tickets_count"),
             "we_own": True,
-            "tbd": bool(ev.get("tbd")),
+            # tbd derived from event-name string (no SQL column for this).
+            "tbd": _is_tbd(ev.get("name")),
             # Enrichment that catalog endpoint leaves null — the whole point.
             "from_price": rm,
             "retail_median": lem.get("retail_median"),
             "owned_tickets_count": lem.get("owned_tickets_count"),
             "owned_groups_count": lem.get("owned_groups_count"),
             "captured_at": lem.get("captured_at"),
-            # Velocity signal for the card "moving fast" badge.
-            "tix_d24h": d24h_int,
-            "getin_d24h_pct": pct,
+            # Velocity fields kept in the schema for renderer compatibility
+            # but always null here — populated by /api/store/movers on the
+            # separate strip. Avoids a JS-side schema break.
+            "tix_d24h": None,
+            "getin_d24h_pct": None,
             "signal": signal,
             # Other badge enrichments (rivalry/series/weather/holiday/playoff)
             # stay null here — re-layer in a follow-up PR if/when we want them
@@ -5115,11 +5140,9 @@ def store_home(
             "playoff": None,
         })
 
-    # Curation sort. Signal bucket first, then by date asc within bucket.
-    _signal_rank = {"premium": 0, "selling_fast": 1, "demand_rising": 2}
-
+    # Curation sort: premium first, then by date asc.
     def _home_sort_key(c):
-        rank = _signal_rank.get(c.get("signal"), 3)
+        rank = 0 if c.get("signal") == "premium" else 1
         return (rank, c.get("occurs_at_local") or "9999")
 
     cards.sort(key=_home_sort_key)
