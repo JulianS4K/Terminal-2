@@ -694,7 +694,16 @@ def _enrich_row_with_event(row: dict, event_window: list[dict]) -> dict:
     return row
 
 
-def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
+# Terminal canonical_status values from public.order_status_xref. Used by
+# the active-only default filter on /api/d2/orders. Rows with NULL
+# canonical_status (sources whose source_status didn't match an xref row)
+# are also surfaced in the active view — they're "unknown" and probably
+# need operator attention more than the known-terminal rows.
+_TERMINAL_STATUSES = ("fulfilled", "rejected", "cancelled")
+_ACTIVE_STATUSES = ("pending", "accepted", "substitution")
+
+
+def _fetch_unified_orders_page(per_page: int, page: int = 1, include_terminal: bool = False) -> dict | None:
     """Pull a balanced page of rows from unified_orders, joined to
     v_event_base for event_name + event_date. Returns None when Supabase
     isn't configured.
@@ -730,14 +739,18 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
         # drops total to ~max(per-source), ~100ms.
         def _pull_one(src: str) -> tuple[str, list[dict], str | None]:
             try:
-                res = (
+                q = (
                     sb.table("unified_orders")
-                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
+                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,is_terminal,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
                     .eq("source", src)
-                    .order("created_at", desc=True)
-                    .range(start, end)
-                    .execute()
                 )
+                if not include_terminal:
+                    # Active-only default: hide rows in known-terminal states
+                    # (fulfilled/rejected/cancelled). NULL canonical_status
+                    # (xref miss on an unknown source_status) is treated as
+                    # active — those usually warrant operator attention.
+                    q = q.or_(f"canonical_status.is.null,canonical_status.in.({','.join(_ACTIVE_STATUSES)})")
+                res = q.order("created_at", desc=True).range(start, end).execute()
                 return src, (res.data or []), None
             except Exception as e:
                 return src, [], _scrub_err(f"unified_orders.sql.{src}", e)
@@ -1018,7 +1031,7 @@ def config_public():
     return _shell_config_blob()
 
 
-def _fetch_unified_orders_fast(per_page: int) -> dict | None:
+def _fetch_unified_orders_fast(per_page: int, include_terminal: bool = False) -> dict | None:
     """First-paint fast path: one global query, upcoming-only, sorted by
     event_date ASC. No per-source split, no v_event_base join, no API call.
     Operator can see the soonest events to triage in <200ms while the
@@ -1026,21 +1039,24 @@ def _fetch_unified_orders_fast(per_page: int) -> dict | None:
 
     "Upcoming" = event_date >= now() - 12h, matching the dashboard's
     default Hide-Past-12h filter. Filter pushed down to SQL so we don't
-    waste bandwidth on rows the client would hide anyway."""
+    waste bandwidth on rows the client would hide anyway.
+
+    `include_terminal=False` (default) further filters to non-terminal
+    canonical_status (the primary tab's active-only view)."""
     sb = _sb()
     if sb is None:
         return None
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     try:
-        res = (
+        q = (
             sb.table("unified_orders")
-            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
+            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,is_terminal,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
             .gte("event_date", cutoff)
-            .order("event_date", desc=False, nullsfirst=False)
-            .limit(per_page)
-            .execute()
         )
+        if not include_terminal:
+            q = q.or_(f"canonical_status.is.null,canonical_status.in.({','.join(_ACTIVE_STATUSES)})")
+        res = q.order("event_date", desc=False, nullsfirst=False).limit(per_page).execute()
         rows_out = []
         per_source_count: dict[str, int] = {}
         per_source_as_of: dict[str, str] = {}
@@ -1072,7 +1088,13 @@ def _fetch_unified_orders_fast(per_page: int) -> dict | None:
 
 
 @app.get("/api/d2/orders")
-def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_auth)):
+def orders(
+    per_page: int = 25,
+    page: int = 1,
+    fast: int = 0,
+    include_terminal: int = 0,
+    _=Depends(require_auth),
+):
     """SQL-only orders feed. All 5 sources (evo / seatgeek / seatdata /
     tickpick / vivid) are pulled from public.unified_orders, which the
     upstream ingest crons keep populated. No broker-API calls in the data
@@ -1080,6 +1102,15 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
     staleness signal; if a cron stalls, the affected source surfaces empty
     rows + an aged `as_of` chip rather than silently falling back to live
     API (which would burn broker quota and hide ingest problems).
+
+    `?include_terminal=0` (default): active-only — hides rows in known
+    terminal canonical_status (fulfilled/rejected/cancelled). Rows with
+    NULL canonical_status (unknown source_status) are still surfaced —
+    they probably need operator attention. This is the primary tab's
+    default view.
+
+    `?include_terminal=1`: show all — no canonical_status filter. The
+    primary tab's "All" pill flips this.
 
     ?fast=1 mode (two-phase load): single global SQL query, upcoming-only
     (event_date >= now()-12h), event_date ASC, NO event_window join.
@@ -1098,13 +1129,14 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
     import time as _time
     per_page = max(1, min(per_page, 100))
     page = max(1, page)
+    include_terminal_flag = bool(include_terminal)
 
     timings: dict = {}
     t0 = _time.perf_counter()
 
     if fast:
         # Single query, single thread, upcoming-only. Phase 1 of two-phase load.
-        bundle = _timed("sql.unified.fast", _fetch_unified_orders_fast, per_page, _timings=timings)
+        bundle = _timed("sql.unified.fast", _fetch_unified_orders_fast, per_page, include_terminal_flag, _timings=timings)
         if bundle is None:
             raise HTTPException(503, "Supabase not configured")
         rows = bundle["rows"]
@@ -1136,11 +1168,12 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
             "page": page,
             "per_page": per_page,
             "phase": "fast",
+            "include_terminal": include_terminal_flag,
             "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
         })
 
     with ThreadPoolExecutor(max_workers=2) as ex:
-        sql_future       = ex.submit(_timed, "sql.unified", _fetch_unified_orders_page, per_page, page, _timings=timings)
+        sql_future       = ex.submit(_timed, "sql.unified", _fetch_unified_orders_page, per_page, page, include_terminal_flag, _timings=timings)
         events_future    = ex.submit(_timed, "sql.event_window", _pull_event_window, _timings=timings)
         bundle           = sql_future.result()
         event_window     = events_future.result()
@@ -1192,6 +1225,7 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
         "page": page,
         "per_page": per_page,
         "phase": "full",
+        "include_terminal": include_terminal_flag,
         "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
     })
     response.headers["Server-Timing"] = ", ".join(

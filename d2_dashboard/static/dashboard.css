@@ -138,6 +138,35 @@ main { padding: 16px 20px; }
   color: var(--warn);
 }
 .cron-meta.cron-stale::before { content: "⚠ "; }
+/* Active/All view-mode pill — segmented control next to the auto-refresh
+   toggle. .pill-active is the currently-selected mode. include_terminal=0
+   is the default, hiding fulfilled/rejected/cancelled at the SQL level. */
+.view-mode-pill {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.view-mode-pill .pill-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background-color 80ms, color 80ms;
+}
+.view-mode-pill .pill-btn:hover {
+  color: var(--text);
+}
+.view-mode-pill .pill-btn.pill-active {
+  background: var(--accent);
+  color: var(--bg);
+  cursor: default;
+}
+
 .orders-filters {
   flex-wrap: wrap;
   gap: 16px;

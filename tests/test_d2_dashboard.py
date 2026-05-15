@@ -182,7 +182,7 @@ def test_config_public_includes_canonical_origin(client, monkeypatch):
 def test_orders_503_when_supabase_unconfigured(monkeypatch, client):
     """Dashboard is SQL-only — when Supabase isn't configured the orders
     endpoint surfaces 503 explicitly instead of silently serving empty."""
-    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", lambda n, p=1: None)
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", lambda n, p=1, include_terminal=False: None)
     r = client.get("/api/d2/orders")
     assert r.status_code == 503
 
@@ -194,7 +194,7 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
     SQL-only as of the 2026-05-14 cutover."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
-        lambda n, p=1: {
+        lambda n, p=1, include_terminal=False: {
             "rows": [
                 {"source": "seatgeek", "order_id": "SG-9", "event_name": "Hamilton",
                  "event_date": "2026-07-01T20:00:00Z", "qty": 4, "status": "open",
@@ -241,7 +241,7 @@ def test_orders_no_longer_carries_cron_blob(monkeypatch, client):
     RPC (66ms+)."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
-        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
+        lambda n, p=1, include_terminal=False: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
     )
     monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
     sources = {s["source"]: s for s in client.get("/api/d2/orders").json()["sources"]}
@@ -255,7 +255,7 @@ def test_orders_fast_phase_skips_event_window(monkeypatch, client):
     events in <200ms while the full call loads in the background."""
     called = {"fast": False, "event_window": False, "full_page": False}
 
-    def fake_fast(per_page):
+    def fake_fast(per_page, include_terminal=False):
         called["fast"] = True
         return {
             "rows": [{"source": "evo", "order_id": "111", "event_name": "Knicks vs Lakers",
@@ -292,7 +292,7 @@ def test_orders_response_carries_per_leg_timings(monkeypatch, client):
     so the operator can see exactly which fan-out leg is slow."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
-        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
+        lambda n, p=1, include_terminal=False: {"rows": [], "per_source_count": {}, "per_source_as_of": {}},
     )
     monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
     r = client.get("/api/d2/orders")
@@ -360,7 +360,7 @@ def test_orders_per_page_bounds_503_passthrough_when_unconfigured(monkeypatch, c
     SQL call so a malformed query string can't blow up downstream."""
     seen = {}
 
-    def fake_page(per_page, page=1):
+    def fake_page(per_page, page=1, include_terminal=False):
         seen["per_page"] = per_page
         seen["page"] = page
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
@@ -372,6 +372,72 @@ def test_orders_per_page_bounds_503_passthrough_when_unconfigured(monkeypatch, c
     r = client.get("/api/d2/orders?per_page=0")
     assert r.status_code == 200
     assert seen["per_page"] == 1
+
+
+def test_orders_default_filters_to_active_only(monkeypatch, client):
+    """Without `?include_terminal=`, the orders endpoint requests the SQL
+    fan-out with include_terminal=False so only non-terminal canonical_status
+    rows come back. Primary-tab default per operator 2026-05-15 directive."""
+    seen = {}
+
+    def fake_page(per_page, page=1, include_terminal=False):
+        seen["include_terminal"] = include_terminal
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+    r = client.get("/api/d2/orders")
+    assert r.status_code == 200
+    assert seen["include_terminal"] is False
+    assert r.json()["include_terminal"] is False
+
+
+def test_orders_include_terminal_param_threads_to_sql(monkeypatch, client):
+    """`?include_terminal=1` flips the filter to show every row regardless
+    of canonical_status. The 'All' view-mode pill on the frontend toggles
+    this query param."""
+    seen = {}
+
+    def fake_page(per_page, page=1, include_terminal=False):
+        seen["include_terminal"] = include_terminal
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+    r = client.get("/api/d2/orders?include_terminal=1")
+    assert r.status_code == 200
+    assert seen["include_terminal"] is True
+    assert r.json()["include_terminal"] is True
+
+
+def test_orders_fast_include_terminal_param_threads_to_fast_sql(monkeypatch, client):
+    """The include_terminal param also propagates to the fast path."""
+    seen = {}
+
+    def fake_fast(per_page, include_terminal=False):
+        seen["include_terminal"] = include_terminal
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
+
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_fast", fake_fast)
+    r = client.get("/api/d2/orders?fast=1&include_terminal=1")
+    assert r.status_code == 200
+    assert seen["include_terminal"] is True
+    body = r.json()
+    assert body["phase"] == "fast"
+    assert body["include_terminal"] is True
+
+
+def test_active_terminal_status_constants_are_disjoint():
+    """Sanity check: every canonical_status from order_status_xref appears
+    in exactly one of _ACTIVE_STATUSES or _TERMINAL_STATUSES. Prevents a
+    future status from accidentally landing in neither (and being invisible
+    to both filter modes) or both."""
+    active = set(d2_main._ACTIVE_STATUSES)
+    terminal = set(d2_main._TERMINAL_STATUSES)
+    assert active.isdisjoint(terminal)
+    # The 6 canonical states from order_status_xref:
+    expected = {"pending", "accepted", "substitution", "fulfilled", "rejected", "cancelled"}
+    assert (active | terminal) == expected
 
 
 # ---------- Normalizer unit tests ----------
@@ -685,7 +751,7 @@ def test_orders_returns_pagination_metadata(monkeypatch, client):
     """`/api/d2/orders` echoes the requested page + per_page so the front-end
     can size the Prev/Next buttons without a separate count query."""
     monkeypatch.setattr(d2_main, "_fetch_unified_orders_page",
-                        lambda n, p=1: {"rows": [], "per_source_count": {}, "per_source_as_of": {}})
+                        lambda n, p=1, include_terminal=False: {"rows": [], "per_source_count": {}, "per_source_as_of": {}})
     body = client.get("/api/d2/orders?per_page=25&page=3").json()
     assert body["page"] == 3
     assert body["per_page"] == 25
@@ -696,7 +762,7 @@ def test_orders_page_param_threads_to_sql(monkeypatch, client):
     .range() lines up with the operator's Next/Prev clicks."""
     seen = {}
 
-    def fake_page(per_page, page=1):
+    def fake_page(per_page, page=1, include_terminal=False):
         seen["per_page"] = per_page
         seen["page"] = page
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
@@ -711,7 +777,7 @@ def test_orders_page_clamped_to_minimum_one(monkeypatch, client):
     doesn't blow up the SQL fetcher (PostgREST .range() would 416)."""
     seen = {}
 
-    def fake_page(per_page, page=1):
+    def fake_page(per_page, page=1, include_terminal=False):
         seen["page"] = page
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}}
 

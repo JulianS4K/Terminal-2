@@ -134,6 +134,23 @@ const ORDERS_AUTO_REFRESH_MS = 5 * 60 * 1000;
 let _ORDERS_REFRESH_TIMER = null;
 let _DETAIL_OPEN = false;
 
+// Primary-tab view mode — "active" (default, hides terminal canonical_status)
+// or "all" (no canonical_status filter). Persisted to localStorage so the
+// operator's preference sticks across sessions. Flips `?include_terminal=0|1`
+// on the /api/d2/orders endpoint so SQL pre-filters; lighter wire than
+// client-side filtering.
+const ORDERS_VIEW_MODE_KEY = "d2.orders.viewMode";
+const _ACTIVE_STATUSES = ["pending", "accepted", "substitution"];
+const _TERMINAL_STATUSES = ["fulfilled", "rejected", "cancelled"];
+
+function getOrdersViewMode() {
+  const m = localStorage.getItem(ORDERS_VIEW_MODE_KEY);
+  return m === "all" ? "all" : "active";
+}
+function setOrdersViewMode(m) {
+  try { localStorage.setItem(ORDERS_VIEW_MODE_KEY, m === "all" ? "all" : "active"); } catch (_) {}
+}
+
 // Stale-data threshold for the per-source freshness chips on the Orders tab.
 // Aligned with cron_policy.work_check_sql floor (mig 20260515250002 set sales
 // ingest interval to 60 min). Uniform across sources for MVP — per-source
@@ -258,6 +275,10 @@ function renderDashboard(domain) {
       </div>
       <section id="panel-orders" class="panel active">
         <div class="orders-toolbar">
+          <div class="view-mode-pill" role="radiogroup" aria-label="Order view mode">
+            <button type="button" class="pill-btn pill-active" data-mode="active" role="radio" aria-checked="true" title="Hide fulfilled / rejected / cancelled orders">Active only</button>
+            <button type="button" class="pill-btn" data-mode="all" role="radio" aria-checked="false" title="Show every order regardless of canonical status">All</button>
+          </div>
           <label class="toolbar-toggle">
             <input type="checkbox" id="chk-hide-past" checked />
             <span>Hide past (&minus;12h)</span>
@@ -331,6 +352,31 @@ function renderDashboard(domain) {
       await SB.auth.signOut();
     });
   }
+  // Active/All view-mode pill — flips ?include_terminal=0|1 on the API so
+  // SQL pre-filters. Restored from localStorage on load. Clicking syncs the
+  // status checkboxes to match the mode then re-fetches.
+  function _applyViewModeUI(mode) {
+    document.querySelectorAll(".view-mode-pill .pill-btn").forEach((btn) => {
+      const isActive = btn.dataset.mode === mode;
+      btn.classList.toggle("pill-active", isActive);
+      btn.setAttribute("aria-checked", isActive ? "true" : "false");
+    });
+    document.querySelectorAll(".flt-status").forEach((el) => {
+      el.checked = mode === "all" ? true : _ACTIVE_STATUSES.includes(el.value);
+    });
+  }
+  _applyViewModeUI(getOrdersViewMode());
+  document.querySelectorAll(".view-mode-pill .pill-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode === "all" ? "all" : "active";
+      if (mode === getOrdersViewMode()) return;
+      setOrdersViewMode(mode);
+      _applyViewModeUI(mode);
+      CURRENT_PAGE = 1;
+      loadOrders();
+    });
+  });
+
   // Re-render (not re-fetch) when the user toggles Hide-Past-12h or any of
   // the in-memory filters. Source / date / amount filters all just re-slice
   // the cached body — no new API call, no new SQL query.
@@ -519,7 +565,8 @@ async function loadOrders({ silent = false, twoPhase = false } = {}) {
   // background to merge vivid + history via the diff-aware DOM update.
   // Only the initial dashboard load and explicit Refresh use twoPhase;
   // auto-poll / pagination go straight to the full call.
-  const url = (params) => `/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}` + params;
+  const includeTerminal = getOrdersViewMode() === "all" ? 1 : 0;
+  const url = (params) => `/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}&include_terminal=${includeTerminal}` + params;
   if (twoPhase) {
     try {
       const fastBody = await authedFetch(url("&fast=1"));
