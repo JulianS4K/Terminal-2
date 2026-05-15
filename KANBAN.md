@@ -272,6 +272,21 @@ Defense-in-depth follow-ups identified during the Phase-2 monitoring sweep. Each
 - **[B1-NEXT-9] [SEC-MED]** §6 retrofit on `get_broker_event_page(integer, integer)` (A1's, added by PR #115). Body is already gated by `auth.jwt()->>'email'`; §6 guard is belt-and-suspenders. File PR comment to A1.
 - **[B1-NEXT-10] [SEC-LOW]** Migration slot collision audit — `20260515300000` (3 files), `20260515320000` (2 files) collide. MIGRATION_CONVENTIONS.md §3 bump-by-30-or-50 rule not followed. Not security-class but flags discipline drift; recommend filenames be renamed to next free slots in a future cleanup PR.
 
+### B1-NEXT — git + render monitoring expansion (filed 2026-05-15 by B1 charter §git+render)
+
+Operator-extended mandate covers git settings + Render workspace. Initial sweep landed [`docs/git_repo_security_posture.md`](docs/git_repo_security_posture.md) + [`docs/render_security_posture.md`](docs/render_security_posture.md). Findings filed below.
+
+- **[B1-NEXT-11] [SEC-HIGH]** Reassess history-rewrite priority on leaked `CRON_SECRET` in commit `5297739`. Original SECURITY BACKLOG item scoped assuming private repo; current `visibility: public` means rotated value is internet-readable. Operator decides: `git filter-repo` + force-push window, OR accept (value rotated, blast radius is whoever scraped between leak + rotation). Documented as G-1 in git posture inventory.
+- **[B1-NEXT-12] [SEC-MED]** Enable `dependabot_security_updates` on the repo (currently `disabled`). After 2026-05-11 `requirements.txt` unpinning incident (SW-3 above), Dependabot is the right tool. Operator-only — Settings → Code security. Documented as G-2.
+- **[B1-NEXT-13] [SEC-MED]** Enable `secret_scanning_non_provider_patterns` (currently `disabled`). Catches project-shape secrets like `CRON_SECRET`, `APPSCRIPT_INGEST_SECRET`. Operator-only. Documented as G-3.
+- **[B1-NEXT-14] [SEC-MED]** Enable `secret_scanning_validity_checks` (currently `disabled`). Confirms whether leaked tokens are still active. Operator-only. Documented as G-4.
+- **[B1-NEXT-15] [SEC-LOW]** Consider enabling branch-protection `enforce_admins` for `main` (currently `false`). Admin (`JulianS4K`) can bypass protections. Acceptable single-operator risk profile but documented for transparency. Operator-only. G-6.
+- **[B1-NEXT-16] [SEC-LOW]** Consider enabling `required_signatures` for `main`. Currently `false`. GitHub-server-side commits (PR merges) make impersonation low-risk, but signing would harden against compromised local dev environment. G-7.
+- **[B1-NEXT-17] [SEC-LOW]** Consider enabling Actions `sha_pinning_required`. Currently `false`. Workflows reference Actions by mutable tags (`@v4`, `@v7`). Tighten to immutable SHA pins for supply-chain hardening. G-8.
+- **[B1-NEXT-18] [SEC-MED]** Verify Actions secrets are populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optional `SUPABASE_PAT`). `gh api .../actions/secrets` returned empty at sweep — could be permission-filtered, could be unset. If unset, sync-check fails silently. Operator confirms next session.
+- **[B1-NEXT-19] [SEC-LOW]** Render `ipAllowList: 0.0.0.0/0` on `d2-orders-dashboard` and `vibepass-terminal-test` — both supposed to be `@s4kent.com` authenticated at app layer. Optional secondary defense: tighten allowlist to known operator IPs. PR comment to D1 (Render-write authority). Documented as R-1.
+- **[B1-NEXT-20] [SEC-LOW]** Render services `autoDeploy: yes` from `main` on every commit. Standard CD; consider manual approval gate for `vibepass-storefront-test` (public retail). PR comment to D1. R-2.
+
 ### NEXT (code) — [SEC-CRIT] Rotate the leaked `CRON_SECRET` value, then redact from KANBAN/AGENTS
 
 **What**: The `CRON_SECRET` value was committed in plaintext to `KANBAN.md` (lines 87, 90, 91 below this block) and discussed in `AGENTS.md`. It is in git history (commit `5297739` and prior). Anyone who clones this repo today reads the production cron secret.
