@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1440, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Orders</title>
@@ -13,74 +13,94 @@
 
   <header class="topbar">
     <span class="brand">TERMINAL · D0</span>
-    <span id="status" class="status">Loading…</span>
+    <span id="status" class="status">—</span>
   </header>
 
   <main class="wrap orders">
-    <section id="orders-intro">
-      <div class="panel-title">ORDER BOOK / SALES PIPELINE</div>
-      <div class="muted small">
-        S4K's own actual sales activity. Currently per-event only via <code>/api/broker/event/{id}/orders</code>.
-        Global view needs a new SECDEF RPC (admin-only RLS on <code>evo_orders</code> / <code>evo_order_items</code> intentional — customer PII).
-        Skeleton below shows the planned layout per <a href="https://github.com/JulianS4K/Terminal-2/blob/main/docs/terminal-redesign-2026-05-09.md">terminal-redesign-2026-05-09.md §6</a>.
+    <section id="orders-doorway">
+      <div class="doorway">
+        <div class="doorway-tag">D0 · D2 MERGE POINT</div>
+        <h1>Orders Dashboard</h1>
+        <p>
+          The orders surface is owned by <strong>D2</strong> (Order Clients lane).
+          A unified Evo + SeatGeek + TickPick + Vivid view, plus a SeatData analytics tab,
+          lives at <strong>d2-orders-dashboard.onrender.com</strong>.
+          D0's terminal nav routes you there — both lanes converge at this page.
+        </p>
+        <div class="doorway-cta">
+          <a id="d2Open" class="btn-primary" href="https://d2-orders-dashboard.onrender.com" target="_blank" rel="noopener">
+            Open Orders Dashboard ↗
+          </a>
+          <span id="d2HealthBadge" class="health-badge dim">checking…</span>
+        </div>
+        <p class="muted small">
+          The dashboard has its own Supabase login (Google OAuth → @s4kent.com).
+          Sign in once; the session persists in <code>localStorage</code> on the d2 origin.
+        </p>
       </div>
     </section>
 
-    <section id="orders-pending">
-      <div class="panel-title">PENDING TEVO ORDERS</div>
-      <div class="empty">
-        Queued for: <code>get_broker_orders_pending()</code> SECDEF RPC.
-        Will surface state ∈ {pending, accepted, pending_sub} sorted by created_at desc,
-        with event link · qty · price · ticket_group / row / seats · evo_created_at.
+    <section id="orders-merge-contract">
+      <div class="panel-title">MERGE CONTRACT (D0 ↔ D2)</div>
+      <div class="merge-grid">
+        <div class="mg-cell">
+          <span class="mg-lbl">D0 owns</span>
+          <ul>
+            <li>Terminal top-nav including the <code>Orders</code> entry</li>
+            <li>This doorway page (route, branding, link target)</li>
+            <li><code>vibepass-terminal-test.onrender.com</code> service</li>
+          </ul>
+        </div>
+        <div class="mg-cell">
+          <span class="mg-lbl">D2 owns</span>
+          <ul>
+            <li>The full orders dashboard implementation</li>
+            <li>All 4 order sources (Evo, SeatGeek, TickPick, Vivid) + SeatData tab</li>
+            <li><code>d2-orders-dashboard.onrender.com</code> service</li>
+            <li>Auth: Supabase JWT + <code>@s4kent.com</code> allowlist (mirrors <code>app.py</code>)</li>
+          </ul>
+        </div>
+        <div class="mg-cell">
+          <span class="mg-lbl">Shared</span>
+          <ul>
+            <li>Supabase project <code>hzrizjeaxlqcxfrtczpq</code> + auth users</li>
+            <li>Data tables: <code>evo_orders</code>, <code>evo_order_items</code>, <code>seatgeek_orders</code>, <code>tickpick_orders</code>, <code>vivid_orders</code> (D2 writes; D0 read-only)</li>
+            <li>Render branch: <code>main</code> auto-deploys both services</li>
+          </ul>
+        </div>
+        <div class="mg-cell">
+          <span class="mg-lbl">Future</span>
+          <ul>
+            <li>If D0 wants inline summary stats in the terminal: D2 adds CORS allowlist for <code>vibepass-terminal-test.onrender.com</code> on <code>/api/d2/*</code></li>
+            <li>Per-event order strip on the Event Detail page stays on <code>/api/broker/event/{id}/orders</code> (D1's API, already shipped)</li>
+            <li>Path C: an <code>get_broker_orders_*</code> SECDEF RPC suite would let either lane render orders directly from Supabase</li>
+          </ul>
+        </div>
       </div>
     </section>
 
-    <section id="orders-eticket">
-      <div class="panel-title">E-TICKET FULFILLMENT ALERTS</div>
-      <div class="empty">
-        Queued for: <code>get_broker_orders_eticket_pending()</code> SECDEF RPC.
-        Will surface items where <code>eticket_available=true AND eticket_downloaded_at IS NULL</code>
-        for an event within 48h. Sorted by occurs_at asc (most-urgent first).
-      </div>
-    </section>
-
-    <section id="orders-hold-expiry">
-      <div class="panel-title">HOLD-EXPIRY URGENCY</div>
-      <div class="empty">
-        Queued for: <code>get_broker_orders_hold_expiry()</code> SECDEF RPC.
-        Will surface orders where <code>hold_expires_at &lt; NOW() + 1h</code>.
-        Sorted by hold_expires_at asc.
-      </div>
-    </section>
-
-    <section id="orders-recent-sold">
-      <div class="panel-title">RECENT SOLD · LAST 30D</div>
-      <div class="empty">
-        Queued for: <code>get_broker_orders_recent_sold(p_days)</code> SECDEF RPC.
-        Will union TEvo (<code>evo_orders</code> state ∈ {accepted, completed})
-        + SG seller-orders (<code>seatgeek_orders</code>).
-        Sorted by sold_at desc; aggregate tickets / gross.
-      </div>
-    </section>
-
-    <section id="orders-realized">
-      <div class="panel-title">REALIZED vs ASK</div>
-      <div class="empty">
-        Queued for: <code>get_broker_orders_realized_vs_ask(p_days)</code> SECDEF RPC.
-        Will join sold rows to <code>listings_snapshots</code> at sale time;
-        compute (sold_price - retail_price) / retail_price per item;
-        bucketed: at-ask / under-ask 5-15% / under-ask &gt;15% / over-ask.
-      </div>
-    </section>
-
-    <section id="orders-per-event">
+    <section id="orders-feature-list">
       <div class="panel-title row">
-        <span>PER-EVENT ORDERS · AVAILABLE TODAY</span>
-        <span class="muted small">via /api/broker/event/{id}/orders</span>
+        <span>WHAT'S OVER THERE</span>
+        <a class="more-link" href="https://github.com/JulianS4K/Terminal-2/blob/main/d2_dashboard/main.py" target="_blank" rel="noopener">source ↗</a>
       </div>
-      <div id="perEventBody" class="muted small">
-        Open an event from <a href="/static/terminal/movers.html">Movers</a> or <a href="/static/terminal/">Home</a>
-        to see its order strip on the Event Detail page (5-segment state mix + summary).
+      <div class="feature-grid">
+        <div class="ft-cell">
+          <span class="ft-lbl">Orders tab</span>
+          <p>Single window: Evo <code>list_orders</code> + SG <code>seller_orders(open)</code> + TickPick <code>list_orders(unfulfilled)</code> + Vivid <code>list_active_orders</code>. Active/All filter pill.</p>
+        </div>
+        <div class="ft-cell">
+          <span class="ft-lbl">Metrics tab</span>
+          <p>KPI grid + sparkline + hot/top events + biggest sales + gaps + live feed. Backed by <code>d2_metrics_*</code> RPCs (PR #116).</p>
+        </div>
+        <div class="ft-cell">
+          <span class="ft-lbl">SeatData tab</span>
+          <p>Account + usage analytics (read-only — paid-pull budget protected).</p>
+        </div>
+        <div class="ft-cell">
+          <span class="ft-lbl">Diagnostics</span>
+          <p><code>/api/d2/cron-freshness</code> · <code>/api/d2/health</code> · per-source latency · auth posture.</p>
+        </div>
       </div>
     </section>
   </main>
