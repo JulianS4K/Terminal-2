@@ -24,6 +24,12 @@ Read freely: `SELECT`, `information_schema`, `pg_*` views, log inspection, MCP `
 - Supabase **branch** creation (`create_branch` produces a copy-on-write fork — no prod-data mutation)
 - Author migrations as files in `supabase/migrations/` — application to prod is gated separately
 
+**Resolve-protocol semantics (2026-05-15 — C1 / A1 convention):**
+A `bot_chat` reply with `event_type='status'` and `p_in_reply_to` set is the **canonical closure signal** for its parent thread. The `v_bot_chat_unresolved` view (C1-owned, see PR #114 Cluster D-1) auto-excludes any row that has a `status` reply pointing at it via `in_reply_to`. Implications for bot authors:
+- If you are CLOSING a thread (work shipped, question answered), use `event_type='status'`. This will mark the parent as resolved automatically.
+- If you are still working on a thread (acknowledging without fixing), use `event_type='flag'` or `'question'`. These do NOT close the parent — the unresolved view still surfaces it.
+- Premature `status` replies that conflate "I saw this" with "I fixed this" defeat the resolve hygiene. When in doubt, use `flag`.
+
 ### 2. Upstream third-party APIs are read-only
 
 Applies to **every** external API the project integrates with — TEvo, SeatGeek, SeatData, TickPick, Vivid, and any future client (`*_client.py`).

@@ -82,6 +82,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - `docs/c1-checkpoint-*.md` — daily checkpoint reports
 - `docs/c1_daily_checkpoint_runbook.md` — the runbook itself (canonical)
 - `bot_chat` checkpoint + drift-flag entries
+- `v_bot_chat_unresolved` view migration (resolve-protocol owner, see CLAUDE.md §1 / PR #114 Cluster D-1)
 - PR merge commits (within push-protocol)
 - Stale PR comments (cross-lane coordination, allowed for C1)
 
