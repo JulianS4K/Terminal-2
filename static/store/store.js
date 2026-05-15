@@ -48,6 +48,12 @@
       const body = await r.text();
       let msg = body;
       try { msg = JSON.parse(body).detail || JSON.parse(body).error || body; } catch {}
+      // Strip HTML tags + collapse whitespace + clip to 80 chars before
+      // throwing — some servers (Render cold-start 503, FastAPI default 5xx
+      // HTML pages, raw nginx 404) return full HTML bodies and the raw
+      // markup shouldn't splatter into the status pill downstream. Mirrors
+      // D0's app.js fix from PR #113 commit 34232a1.
+      msg = String(msg).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
       throw new Error(`${r.status} ${msg}`);
     }
     return r.json();
