@@ -170,4 +170,47 @@ Track in next session's kanban.
 
 ---
 
+## 11. Anti-drift checklist (added 2026-05-14)
+
+Operator directive: "plan to decrease code drift and push all to main".
+
+### Per-migration discipline (every time you apply a change)
+
+1. **Before**: `SELECT * FROM public.release_health_check() WHERE status <> 'ok';` — note the rows so you know your baseline.
+2. **Apply via MCP**: `apply_migration` with the same SQL you're about to write to `supabase/migrations/<name>.sql`.
+3. **Codify in the SAME conversation turn**: write the migration file to disk. The filename must match the MCP migration name. Header comment must include `Already applied to prod via MCP <timestamp>`.
+4. **After**: `release_health_check()` again. Any new `fail`/`warn` row that wasn't in step 1 = your migration introduced a regression. Roll back or follow up with a targeted fix.
+5. **Commit + push within the same session.** Never end a session with prod ahead of repo.
+
+### Per-session discipline (always)
+
+- **Branch must merge to main within 24h** of last commit OR explicit deferral note in `bot_chat`.
+- **A1 is sole pusher to main.** Subordinates open PRs against supervisor branch.
+- **No "ghost" migrations.** Every `apply_migration` MCP call must have a corresponding `.sql` file with matching content within the same turn.
+
+### Drift detection (runtime)
+
+`SELECT * FROM public.migration_drift_check();` returns last 100 prod-applied migrations. CI workflow (P1 above, still pending) joins this against `ls supabase/migrations/*.sql` to detect:
+- Applied to prod but no file → "ghost" migration; codify retroactively
+- File exists but not applied → either pending or stale; reconcile
+
+Until P1 ships, run drift check manually at session end.
+
+### Push-to-main cadence (added 2026-05-14)
+
+| Condition | Action |
+|---|---|
+| Single migration, low risk, smoke tested | A1 commits to feature branch + fast-forward merge to main same session |
+| Multi-migration session (like 2026-05-14: 9+ migrations) | A1 commits to feature branch + opens PR against main + merges after read-through. Fast-forward preferred over merge-commit |
+| Migration touches `vault.*` / `cron.*` / `auth.*` | Always PR + operator review before merge |
+| Migration deprecates or renames a function/view used by other lanes | PR + flag to other lane owners via `bot_chat` first |
+| Session ends with unmerged work | `bot_chat` flag stating reason + ETA for merge |
+
+**This session (2026-05-14) merge plan**:
+- Branch `claude/aq-event-map-cross-source-pk` has 11+ migrations spanning matcher / venue+performer maps / listings linkage / cron policy gate / tiered polling / Pattern A deltas / weather+ESPN backfill ops.
+- All applied to prod, all codified, all health-checked.
+- Merge to main via fast-forward after final commit.
+
+---
+
 Owner: A1.
