@@ -15,7 +15,8 @@
     sortDir: 'desc',
   };
 
-  function init() {
+  async function init() {
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireControls();
     load();
   }

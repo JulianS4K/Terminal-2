@@ -6,7 +6,8 @@
 
   const T = window.Terminal;
 
-  function init() {
+  async function init() {
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const eventId = T.getEventId();
     if (!eventId) {
       T.setStatus('No event id — pass ?event=<id>', 'err');

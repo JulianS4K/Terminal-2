@@ -28,8 +28,16 @@
   }
 
   function getAuthHeader() {
-    const tok = (typeof localStorage !== 'undefined') && localStorage.getItem('terminalToken');
-    return tok ? { Authorization: 'Bearer ' + tok } : {};
+    // Primary: live Supabase session via TerminalAuth (same auth backend as
+    // D2's dashboard — Google OAuth → @s4kent.com gate; see auth.js).
+    if (window.TerminalAuth) {
+      const tok = window.TerminalAuth.getAccessToken();
+      if (tok) return { Authorization: 'Bearer ' + tok };
+    }
+    // Fallback: legacy manual paste-in. Still useful pre-OAuth-setup or for
+    // ad-hoc curl-derived JWTs during debugging.
+    const legacy = (typeof localStorage !== 'undefined') && localStorage.getItem('terminalToken');
+    return legacy ? { Authorization: 'Bearer ' + legacy } : {};
   }
 
   async function api(path) {

@@ -32,6 +32,35 @@
     const status = topbar.querySelector('#status');
     if (status) topbar.insertBefore(nav, status);
     else topbar.appendChild(nav);
+
+    injectAuthControl(topbar);
+  }
+
+  function injectAuthControl(topbar) {
+    if (!window.TerminalAuth) return;
+    const status = topbar.querySelector('#status');
+    const wrap = document.createElement('span');
+    wrap.className = 'auth-ctrl';
+    wrap.innerHTML = '<span class="auth-email muted small"></span> <a href="#" class="auth-signout">sign out</a>';
+    if (status) topbar.insertBefore(wrap, status);
+    else topbar.appendChild(wrap);
+
+    const emailEl = wrap.querySelector('.auth-email');
+    const signoutEl = wrap.querySelector('.auth-signout');
+    signoutEl.addEventListener('click', e => {
+      e.preventDefault();
+      window.TerminalAuth.signOut();
+    });
+
+    window.TerminalAuth.ready.then(() => {
+      const email = window.TerminalAuth.getEmail();
+      if (email) {
+        emailEl.textContent = email;
+      } else {
+        emailEl.textContent = 'not signed in';
+        signoutEl.style.display = 'none';
+      }
+    });
   }
 
   if (document.readyState === 'loading') {

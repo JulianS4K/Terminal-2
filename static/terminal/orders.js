@@ -8,7 +8,8 @@
   const T = window.Terminal;
   const D2_BASE = 'https://d2-orders-dashboard.onrender.com';
 
-  function init() {
+  async function init() {
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     if (T && T.setStatus) T.setStatus('D2 doorway', 'ok');
     pingD2Health();
   }

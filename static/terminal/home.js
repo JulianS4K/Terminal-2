@@ -7,7 +7,8 @@
   'use strict';
   const T = window.Terminal;
 
-  function init() {
+  async function init() {
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     T.setStatus('Loading home…');
     T.api('/api/broker/movers?window_hours=24')
       .then(data => {

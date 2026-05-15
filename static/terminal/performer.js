@@ -14,7 +14,8 @@
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
-  function init() {
+  async function init() {
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const performerId = getPerformerId();
     if (!performerId) {
       T.setStatus('No performer id — pass ?performer=<id>', 'err');
