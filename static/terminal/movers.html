@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Movers</title>
+  <link rel="stylesheet" href="/static/terminal/style.css" />
+</head>
+<body data-page="movers">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap movers">
+    <section id="movers-controls">
+      <div class="panel-title">MOVERS REPORT</div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">WINDOW</span>
+          <button class="ctrl-btn" data-window="1">1h</button>
+          <button class="ctrl-btn" data-window="6">6h</button>
+          <button class="ctrl-btn is-active" data-window="24">24h</button>
+          <button class="ctrl-btn" data-window="168">7d</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SEGMENT</span>
+          <button class="ctrl-btn is-active" data-segment="all">All</button>
+          <button class="ctrl-btn" data-segment="owned">Owned only</button>
+        </div>
+        <span class="muted small" id="moversCount"></span>
+      </div>
+    </section>
+
+    <section id="movers-table">
+      <div id="moversBody"><div class="empty">loading…</div></div>
+    </section>
+
+    <section id="movers-note">
+      <div class="muted small">5-bucket classifier (SUPPLY_FLOOD / RE_PRICING / GHOST_RESOLVE / DEMAND_SPIKE / DUMP) is a Phase 2 enhancement — pending classifier RPC.</div>
+    </section>
+  </main>
+
+  <script src="/static/terminal/lib/supabase.js"></script>
+  <script src="/static/terminal/auth.js"></script>
+  <script src="/static/terminal/app.js"></script>
+  <script src="/static/terminal/nav.js"></script>
+  <script src="/static/terminal/movers.js"></script>
+</body>
+</html>
