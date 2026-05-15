@@ -1,0 +1,28 @@
+# Render.com Infrastructure-as-Code blueprint for D0's broker terminal frontend.
+#
+# OWNER: D0 (Terminal FE) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6.
+# Service: vibepass-terminal-test (provisioned 2026-05-15 via A1 + Render MCP)
+# Companion blueprints:
+#   - render.yaml             (D1's vibepass-storefront-test)
+#   - render-d2-dashboard.yaml (D2's d2-orders-dashboard)
+#
+# This is a static-site deploy (pre-built HTML/JS/CSS, served via Render's
+# CDN — no Python runtime). The terminal frontend code lives at
+# static/terminal/*. Currently a placeholder index.html until D0 builds
+# the operational terminal UI.
+
+services:
+  - type: static
+    name: vibepass-terminal-test
+    branch: main
+    autoDeploy: true
+    # No build step — assets are pre-built HTML/CSS/JS committed to the repo.
+    # When D0 introduces a JS framework with a build pipeline, change to
+    # something like `cd static/terminal && npm install && npm run build`
+    # and adjust publishPath accordingly.
+    buildCommand: 'echo "static assets — no build step"'
+    publishPath: static/terminal
+
+    # No env vars needed for static frontend. If D0 wires up
+    # client-side config (Supabase anon key for read-only data fetch),
+    # add them here with `sync: false` so they prompt on provisioning.

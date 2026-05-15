@@ -222,15 +222,17 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
    | Render service | ID | Owner bot | Source code | Branch | IaC file |
    |---|---|---|---|---|---|
    | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D1** | `app.py`, `static/store/*` | `main` | `render.yaml` |
-   | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D2** | `d2_dashboard/*` | `main` | `render-d2-dashboard.yaml` (to be authored) |
+   | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D2** | `d2_dashboard/*` | `main` | `render-d2-dashboard.yaml` |
+   | `vibepass-terminal-test` | _(provisioned 2026-05-15)_ | **D0** | `static/terminal/*` | `main` | `render-d0-terminal.yaml` |
    | `hi-events` (separate repo) | `srv-d7g0cev7f7vs73blkc70` | n/a (not Terminal-2) | — | `develop` | — |
 
    - Each owner-bot manages **env vars, deploy config, log monitoring, and IaC blueprint** for their specific service. They do NOT touch the other bot's service.
    - Per-bot Render access scope (per CLAUDE.md §4, 2026-05-14):
      - **A1** — exclusive workspace-wide access: all read + write ops on any service, plus `create_*` / `select_workspace` (only bot authorized to provision or delete services)
-     - **D1** — scoped to `vibepass-storefront-test`: read + write OK on this service (env vars, redeploy, update_web_service); forbidden on `d2-orders-dashboard` and workspace-level ops
-     - **D2** — scoped to `d2-orders-dashboard`: read + write OK on this service; forbidden on `vibepass-storefront-test` and workspace-level ops
-     - **B1 / C1 / D0 / D3 / D4** — read-only across all services; writes require operator approval
+     - **D1** — scoped to `vibepass-storefront-test`: read + write OK on this service (env vars, redeploy, update_web_service); forbidden on other services and workspace-level ops
+     - **D2** — scoped to `d2-orders-dashboard`: read + write OK on this service; forbidden on other services and workspace-level ops
+     - **D0** — scoped to `vibepass-terminal-test`: read + write OK on this service; forbidden on other services and workspace-level ops
+     - **B1 / C1 / D3 / D4** — read-only across all services; writes require operator approval
    - Both services auto-deploy from `main`. A1 (sole pusher to main) merges PRs; each push triggers auto-deploys on both services since both watch `main`. If a PR only touches one service's surface, the other service still redeploys (no-op for it but burns build minutes — acceptable for free tier).
    - **Future split** option if build-time waste becomes painful: each service moves to a bot-specific deploy branch (e.g. `d1/release`, `d2/release`), and A1 fast-forwards each one when their respective code paths change. Deferred until volume justifies the merge-coordination cost.
 
