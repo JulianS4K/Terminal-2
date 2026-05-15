@@ -17,14 +17,19 @@
 # listings_snapshots, no live TEvo). Flip to "false" in the Render
 # dashboard env vars to toggle live mode without redeploying.
 #
-# Free plan limits: 750 hours/mo (plenty for one service), sleeps after
-# 15 min idle (cold start ~1-2s), 512MB RAM. Fine for a test env.
+# Plan: Starter ($7/mo) — always-warm dyno, 512MB RAM, no 15-min idle
+# sleep. Upgraded from `free` 2026-05-15 because the cold-start TTI was
+# ~14s on first visit (free-tier dyno sleeps after 15 min idle; first
+# request times out at 30s, second is ~12s wait while uvicorn boots,
+# third lands warm at ~250ms). Starter eliminates that — first-visit TTI
+# drops to ~2s warm. Companion observability matrix in
+# docs/d1-render-perf-2026-05-15.md (front-screen latency baseline).
 
 services:
   - type: web
     name: vibepass-storefront-test
     runtime: python
-    plan: free
+    plan: starter
     region: oregon          # closest to Supabase us-east-2; tradeoff vs us-east-ohio (~50ms)
     # If your Supabase project is us-east-2 specifically, prefer 'ohio' region instead.
     branch: main
