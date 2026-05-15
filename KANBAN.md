@@ -286,6 +286,7 @@ Operator-extended mandate covers git settings + Render workspace. Initial sweep 
 - **[B1-NEXT-18] [SEC-MED]** Verify Actions secrets are populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optional `SUPABASE_PAT`). `gh api .../actions/secrets` returned empty at sweep — could be permission-filtered, could be unset. If unset, sync-check fails silently. Operator confirms next session.
 - **[B1-NEXT-19] [SEC-LOW]** Render `ipAllowList: 0.0.0.0/0` on `d2-orders-dashboard` and `vibepass-terminal-test` — both supposed to be `@s4kent.com` authenticated at app layer. Optional secondary defense: tighten allowlist to known operator IPs. PR comment to D1 (Render-write authority). Documented as R-1.
 - **[B1-NEXT-20] [SEC-LOW]** Render services `autoDeploy: yes` from `main` on every commit. Standard CD; consider manual approval gate for `vibepass-storefront-test` (public retail). PR comment to D1. R-2.
+- **[B1-NEXT-21] [SEC-LOW]** Slack surface monitoring — operator decision on installing a Slack MCP. Currently no active Slack integration in the repo (gitleaks catches `xoxb-*`/`xoxp-*` tokens via push-protection; no Slack-posting workflows; no webhooks). Future state: with Slack MCP, B1 monitors workspace admins, 2FA enforcement, recent-message search for incident leaks. Without MCP, B1's Slack coverage is grep + gitleaks only. See `docs/b1_operating_constraints.md` "Slack posture monitoring" section.
 
 ### NEXT (code) — [SEC-CRIT] Rotate the leaked `CRON_SECRET` value, then redact from KANBAN/AGENTS
 

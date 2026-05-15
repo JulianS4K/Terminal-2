@@ -112,6 +112,21 @@ Per `gh api repos/JulianS4K/Terminal-2/actions/secrets`: query returned empty li
 
 ---
 
+## Section 4b — Slack integration surface
+
+No active Slack integration in the repo or repo-level GitHub Apps. Slack references are incidental (`docs/security-runbook-2026-05-11.md` mentions Slack DM as an out-of-band password-delivery channel; `COWORKER_ONBOARDING.md` directs coworkers to GitHub issues over Slack).
+
+### Probes (per-session)
+
+| Area | Command | Current state |
+|---|---|---|
+| Slack tokens / webhooks in repo | `gitleaks` via `.github/workflows/secret-scan.yml` (catches `xoxb-*`, `xoxp-*`, etc.) + grep for `hooks.slack.com/services/`, `SLACK_*` env names | 0 findings |
+| Slack-posting workflows | `grep -liE 'slack' .github/workflows/*.yml` | None |
+| Slack GitHub App | `gh api repos/JulianS4K/Terminal-2/installation` (requires admin scope; returned 401 with current token) | Unable to verify without operator-scope token; track [B1-NEXT-21] |
+| Webhooks pointing to Slack | `gh api repos/JulianS4K/Terminal-2/hooks` | Empty list |
+
+No findings. Future Slack workspace monitoring requires operator to install a Slack MCP — filed as [B1-NEXT-21].
+
 ## Section 5 — Security alerts (open, 2026-05-15)
 
 | Surface | Open count | Notes |

@@ -12,7 +12,7 @@ Operator directive 2026-05-15:
 
 > Monitor for security, issues, entry points and data leaks. Monitor outgoing data and bot notes and code for exposed secrets, and fix. Monitor for attacks from outside. Monitor for bot hallucinations.
 
-Operationalized as continuous monitoring across **eight surfaces** (operator extended 2026-05-15 to add git + render):
+Operationalized as continuous monitoring across **nine surfaces** (operator extended 2026-05-15 to add git + render + slack):
 
 | Surface | Coverage |
 |---|---|
@@ -24,6 +24,7 @@ Operationalized as continuous monitoring across **eight surfaces** (operator ext
 | Bot hallucinations | Other-bot claims about file paths, function names, migration timestamps, PR numbers, `bot_chat` row IDs — verify before they propagate |
 | **Git / repo posture** | Branch protection rules, required status checks, collaborator perms, GitHub Actions secrets/vars, repo visibility, webhooks, deploy keys, secret-scanning + Dependabot config, push-protection state, workflow permissions, SHA pinning |
 | **Render workspace posture** | Workspace access, service list, IP allowlists, autoDeploy triggers, env-var inventory (names only, not values), preview-deploys posture, suspended state, deploy notification config |
+| **Slack posture** | Slack webhooks pointing into / out of the repo, Slack tokens / signing secrets / bot tokens leaked in code or git history, Slack GitHub App installations, Slack-shaped URLs (`hooks.slack.com/services/*`) appearing in commits, Slack messages (when an operator-installed Slack MCP becomes available) for incident leaks and external-attack chatter |
 
 ## Read surface
 
@@ -107,7 +108,7 @@ Run at session start. Total runtime ~5 min. All read-only.
 | 5 | New SECDEF §6 check | `SELECT proname, has_function_privilege('public', oid::regprocedure::text, 'EXECUTE') AS public_exec FROM pg_proc WHERE prosecdef AND NOT pg_get_functiondef(oid) ~ 'current_user NOT IN';` | None missing — else file `flag` or retrofit |
 | 6 | New tables RLS check | `SELECT tablename FROM pg_tables WHERE schemaname='public' AND NOT rowsecurity;` | None new since last sweep — else file fix |
 | 7 | New views `security_invoker` check | `SELECT viewname, reloptions FROM pg_views v JOIN pg_class c ON c.relname=v.viewname WHERE v.schemaname='public' AND (c.reloptions IS NULL OR NOT 'security_invoker=true' = ANY(c.reloptions));` | All new views have `security_invoker=true` |
-| 8 | Secret-scan | Check `.github/workflows/secret-scan.yml` latest run status; if local uncommitted changes, run `gitleaks detect --no-git` against worktree | Clean — else rotate + redact + file `p0_security` |
+| 8 | Secret-scan | Check `.github/workflows/secret-scan.yml` latest run status; if local uncommitted changes, run `gitleaks detect --no-git` against worktree. Default ruleset covers Slack tokens (`xoxb-*`, `xoxp-*`, etc.), AWS, GitHub, Stripe, generic high-entropy strings. | Clean — else rotate + redact + file `p0_security` |
 | 9 | Hallucination spot-check | Pick 3 most recent merged PRs; verify each cited file path / function name / migration timestamp / cron job name / bot_chat row ID exists | All citations real |
 | 10 | RULE 2 static check | `python scripts/check_readonly.py` | Pass |
 | 11 | `bot_chat` aging report | `SELECT * FROM public.release_health_check() WHERE check_name='bot_chat_aging_7d';` (once 20260515* migration applied) OR direct SQL until then | 0 items aged >7d, or all triaged this session |
@@ -215,6 +216,39 @@ D1 owns Render writes exclusively per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.
 - **`pullRequestPreviewsEnabled` flipped on** → SEC-MED. Unexpected previews of PR code on public URL.
 - **Service moved to `develop` or non-`main` branch** → SEC-MED. Branch protection only covers `main`.
 - **Anomalous log pattern (auth-failure spike, 5xx flood, OOM crashes)** → triage per severity; file in `bot_chat`.
+
+## Slack posture monitoring
+
+**Current state (2026-05-15)**: no Slack MCP tool available, no active Slack integration in the repo. Existing Slack references are incidental:
+- `docs/security-runbook-2026-05-11.md` mentions Slack DM as an out-of-band delivery channel for rotated passwords
+- `COWORKER_ONBOARDING.md` directs coworkers to GitHub issues over Slack
+
+Until/unless operator installs a Slack MCP, B1's Slack monitoring is **grep-based**, focused on detecting accidental leakage of Slack credentials into the repo.
+
+### What B1 checks (per-session, read-only)
+
+| Area | Probe | Pass condition |
+|---|---|---|
+| Slack tokens leaked in code | `gitleaks` ruleset (already running via `.github/workflows/secret-scan.yml`) — built-in rules cover `xoxb-*`, `xoxp-*`, `xoxa-*`, `xoxs-*`, `xoxr-*` bot/user/app tokens | 0 findings |
+| Slack signing secrets / webhook URLs | grep repo for `hooks.slack.com/services/`, `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_WEBHOOK_URL` | None present (or all in `.gitleaksignore` with documented justification) |
+| Slack GitHub App on the repo | `gh api repos/JulianS4K/Terminal-2/installation` (when scope allows) — track Slack App installation status | Track changes between sweeps |
+| Slack workflow steps in Actions | grep `.github/workflows/*.yml` for `slack` — track any workflow that posts to Slack | No unexpected Slack-posting workflows |
+
+### What B1 does on findings
+
+- **Slack token (`xox*`) in any commit** → SEC-CRIT. Token must be revoked in Slack workspace immediately (operator-coordinated). History rewrite + force-push window per the same protocol as the `CRON_SECRET` incident.
+- **Webhook URL leaked** → SEC-MED. Slack webhook URLs are abusable (anyone can post to the channel) but limited blast radius. Rotate webhook + redact.
+- **New Slack GitHub App installed unexpectedly** → SEC-HIGH. Could be operator-installed integration OR account-takeover signal. `flag` to operator for confirmation.
+- **New Slack-posting workflow appears** → SEC-MED. Could leak PR contents / repo metadata to a Slack workspace. Review the workflow before next sweep.
+
+### Future state (when Slack MCP becomes available)
+
+Add to per-session sweep:
+- List Slack workspace members; flag new admins
+- Search recent messages for incident-shape patterns (leaked tokens shared in DMs, external pen-test chatter, social-engineering attempts)
+- Verify Slack workspace 2FA enforcement, SSO config, retention policy
+
+Filed as [B1-NEXT-21] for operator decision on Slack MCP install.
 
 ## Escalation paths
 
