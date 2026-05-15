@@ -97,6 +97,29 @@ def _read_storefront_html(name: str) -> str:
     return html
 
 
+def _render_storefront_page(name: str) -> HTMLResponse:
+    """Return an HTMLResponse for a static/store/*.html shell with
+    Cache-Control: no-cache, must-revalidate so browsers always
+    revalidate the HTML on every page load.
+
+    The asset URLs inside the HTML are cache-busted via
+    _read_storefront_html()'s `?v=<sha>` rewrite — those keep their
+    long-cache friendliness. Only the HTML shell itself needs the
+    revalidate header so operators (and returning customers) never
+    get trapped on stale HTML pointing at un-versioned asset URLs
+    after a deploy. See Round 5 of docs/d1-bot-continues-here-rustling
+    -sunrise.md for the bootstrap-trap scenario this prevents.
+
+    Cost: every page load adds one conditional GET (304 Not Modified
+    when unchanged — ~1 KB request, ~50 ms latency, no body transfer).
+    Trivial.
+    """
+    return HTMLResponse(
+        content=_read_storefront_html(name),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
 # ---------- Bootstrap ----------
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -6261,12 +6284,12 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
 
 @app.get("/store")
 def store_index_page():
-    return HTMLResponse(_read_storefront_html("index.html"))
+    return _render_storefront_page("index.html")
 
 
 @app.get("/store/event/{event_id}")
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
-    return HTMLResponse(_read_storefront_html("event.html"))
+    return _render_storefront_page("event.html")
 
 
 # ---------- Share links (revocable, trackable) ----------
@@ -6513,12 +6536,12 @@ def store_share_list(
 def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
     """Serves the same event detail page; JS detects /s/ prefix and resolves
     the share via /api/store/share/{id} instead of using URL filter params."""
-    return HTMLResponse(_read_storefront_html("event.html"))
+    return _render_storefront_page("event.html")
 
 
 @app.get("/store/shares")
 def store_shares_page():
-    return HTMLResponse(_read_storefront_html("shares.html"))
+    return _render_storefront_page("shares.html")
 
 
 def _require_non_prod():
