@@ -1403,3 +1403,238 @@ def order_detail(source: str, order_id: str, _=Depends(require_auth)):
         )
 
 
+# ---------- Metrics tab (CEO view) ----------
+
+def _today_start_utc() -> "datetime":
+    """Midnight ET (America/New_York) expressed in UTC. Used by the
+    `today` window on /api/d2/metrics so the Today card doesn't reset
+    at 8 PM ET (which would read as a bug to the operator)."""
+    from datetime import datetime, timezone
+    try:
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+    except Exception:
+        # Python without tzdata; fall back to UTC midnight (acceptable
+        # degradation — operator notices the wrong day boundary).
+        from datetime import timezone as _tz
+        et = _tz.utc
+    now_et = datetime.now(et)
+    start_et = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_et.astimezone(timezone.utc)
+
+
+def _metrics_window_rows(sb, p_start, p_end) -> list[dict]:
+    res = sb.rpc("d2_metrics_window", {"p_start": p_start.isoformat(), "p_end": p_end.isoformat()}).execute()
+    return res.data or []
+
+
+def _metrics_hourly_buckets(sb, p_start, p_end) -> list[dict]:
+    res = sb.rpc("d2_metrics_hourly_buckets", {"p_start": p_start.isoformat(), "p_end": p_end.isoformat()}).execute()
+    return res.data or []
+
+
+def _metrics_top_events(sb, p_start, p_end, p_limit: int = 10) -> list[dict]:
+    res = sb.rpc(
+        "d2_metrics_top_events",
+        {"p_start": p_start.isoformat(), "p_end": p_end.isoformat(), "p_limit": p_limit},
+    ).execute()
+    return res.data or []
+
+
+def _metrics_hot_events(sb, p_start, p_end, p_limit: int = 10) -> list[dict]:
+    res = sb.rpc(
+        "d2_metrics_hot_events",
+        {"p_start": p_start.isoformat(), "p_end": p_end.isoformat(), "p_limit": p_limit},
+    ).execute()
+    return res.data or []
+
+
+def _metrics_biggest_sales(sb, p_since, p_limit: int = 10) -> list[dict]:
+    args = {"p_limit": p_limit}
+    if p_since is not None:
+        args["p_since"] = p_since.isoformat() if hasattr(p_since, "isoformat") else p_since
+    res = sb.rpc("d2_metrics_biggest_sales", args).execute()
+    return res.data or []
+
+
+def _metrics_sales_gaps(sb, p_lookback_hours: int = 24, p_min_gap_minutes: int = 30) -> list[dict]:
+    res = sb.rpc(
+        "d2_metrics_sales_gaps",
+        {"p_lookback_hours": p_lookback_hours, "p_min_gap_minutes": p_min_gap_minutes},
+    ).execute()
+    return res.data or []
+
+
+@app.get("/api/d2/metrics")
+def metrics(_=Depends(require_auth)):
+    """CEO-view metrics bundle. One round-trip; backend fans out 13 SQL
+    calls in parallel:
+      - 4 windows × current + 4 × prior   : d2_metrics_window (KPI grid)
+      - hourly buckets (last 24h)         : d2_metrics_hourly_buckets (sparkline)
+      - top events (last 7d, by closed $) : d2_metrics_top_events
+      - hot events (last 1h, by velocity) : d2_metrics_hot_events
+      - biggest sales (last 5 min)        : d2_metrics_biggest_sales
+      - sales gaps (last 24h, >30min)     : d2_metrics_sales_gaps
+
+    Windows anchor on America/New_York for "today" so the day boundary
+    matches the operator's clock. Filtered to evo/seatgeek/seatdata/
+    tickpick/vivid; seatgeek_sales (broker market data) excluded."""
+    from datetime import datetime, timedelta, timezone
+    import time as _time
+    sb = _sb()
+    if sb is None:
+        raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+
+    timings: dict = {}
+    t0 = _time.perf_counter()
+    now_utc = datetime.now(timezone.utc)
+    today_start = _today_start_utc()
+    yesterday_start = today_start - timedelta(days=1)
+
+    current_windows = {
+        "hour":  (now_utc - timedelta(hours=1),  now_utc),
+        "today": (today_start,                    now_utc),
+        "24h":   (now_utc - timedelta(hours=24), now_utc),
+        "7d":    (now_utc - timedelta(days=7),   now_utc),
+    }
+    prior_windows = {
+        "hour":  (now_utc - timedelta(hours=2),  now_utc - timedelta(hours=1)),
+        "today": (yesterday_start,                today_start),
+        "24h":   (now_utc - timedelta(hours=48), now_utc - timedelta(hours=24)),
+        "7d":    (now_utc - timedelta(days=14),  now_utc - timedelta(days=7)),
+    }
+    hourly_start = now_utc - timedelta(hours=24)
+    top_start    = now_utc - timedelta(days=7)
+    # Hot events = velocity in the last hour (orders_count ordered desc).
+    hot_start    = now_utc - timedelta(hours=1)
+    # Biggest sales = anything that cleared in the last 5 min by default.
+    biggest_since = now_utc - timedelta(minutes=5)
+
+    # Parallel fan-out: 10 calls in worst case. Each is a single PostgREST
+    # round-trip to a STABLE SQL function — typical RTT ~50-100ms, so the
+    # total bundle should land in ~max(per-call) with the pool sized to
+    # the work.
+    results: dict = {"windows": {}, "hourly_buckets": [], "top_events": [], "errors": []}
+
+    def _safe_window(label: str, kind: str, p_start, p_end):
+        try:
+            data = _timed(f"sql.window.{label}.{kind}", _metrics_window_rows, sb, p_start, p_end, _timings=timings)
+            return label, kind, data, None
+        except Exception as e:
+            return label, kind, [], _scrub_err(f"d2_metrics_window.{label}.{kind}", e)
+
+    def _safe_hourly():
+        try:
+            data = _timed("sql.hourly_buckets", _metrics_hourly_buckets, sb, hourly_start, now_utc, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_hourly_buckets", e)
+
+    def _safe_top():
+        try:
+            data = _timed("sql.top_events", _metrics_top_events, sb, top_start, now_utc, 10, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_top_events", e)
+
+    def _safe_hot():
+        try:
+            data = _timed("sql.hot_events", _metrics_hot_events, sb, hot_start, now_utc, 10, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_hot_events", e)
+
+    def _safe_biggest():
+        try:
+            data = _timed("sql.biggest_sales", _metrics_biggest_sales, sb, biggest_since, 10, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_biggest_sales", e)
+
+    def _safe_gaps():
+        try:
+            data = _timed("sql.sales_gaps", _metrics_sales_gaps, sb, 24, 30, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_sales_gaps", e)
+
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futures = []
+        for label in current_windows:
+            cs, ce = current_windows[label]
+            ps, pe = prior_windows[label]
+            futures.append(ex.submit(_safe_window, label, "current", cs, ce))
+            futures.append(ex.submit(_safe_window, label, "prior",   ps, pe))
+        hourly_future  = ex.submit(_safe_hourly)
+        top_future     = ex.submit(_safe_top)
+        hot_future     = ex.submit(_safe_hot)
+        biggest_future = ex.submit(_safe_biggest)
+        gaps_future    = ex.submit(_safe_gaps)
+
+        for fut in futures:
+            label, kind, data, err = fut.result()
+            results["windows"].setdefault(label, {"current": [], "prior": []})
+            results["windows"][label][kind] = data
+            if err:
+                results["errors"].append({"leg": f"window.{label}.{kind}", "error": err})
+
+        for leg_name, fut in (
+            ("hourly_buckets", hourly_future),
+            ("top_events",     top_future),
+            ("hot_events",     hot_future),
+            ("biggest_sales",  biggest_future),
+            ("sales_gaps",     gaps_future),
+        ):
+            data, err = fut.result()
+            results[leg_name] = data
+            if err:
+                results["errors"].append({"leg": leg_name, "error": err})
+
+    total_ms = (_time.perf_counter() - t0) * 1000
+    results["checked_at"] = now_utc.isoformat()
+    results["timings_ms"] = {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)}
+
+    import sys as _sys
+    print(f"[d2_dashboard] /api/d2/metrics total={total_ms:.0f}ms legs={len(timings)}", file=_sys.stderr, flush=True)
+    return JSONResponse(results)
+
+
+@app.get("/api/d2/sales-feed")
+def sales_feed(limit: int = 20, _=Depends(require_auth)):
+    """Newest N rows across all 5 sources from public.unified_orders.
+    Polled every 30s by the Metrics tab for the live sales-feed surface.
+    Plain PostgREST query (no RPC) — single round-trip.
+
+    `?limit=N` clamped to [1, 100]; default 20."""
+    from datetime import datetime, timezone
+    import time as _time
+    sb = _sb()
+    if sb is None:
+        raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+    limit = max(1, min(int(limit), 100))
+    t0 = _time.perf_counter()
+    try:
+        res = (
+            sb.table("unified_orders")
+            .select("source,source_order_id,gross_value,quantity,event_name,event_date,created_at,canonical_status,is_sale_succeeded")
+            .in_("source", list(_ALL_SOURCES))
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        return JSONResponse(
+            {"ok": False, "error": _scrub_err("sales_feed", e), "rows": [], "checked_at": datetime.now(timezone.utc).isoformat()},
+            status_code=200,
+        )
+    total_ms = (_time.perf_counter() - t0) * 1000
+    return JSONResponse({
+        "ok": True,
+        "rows": rows,
+        "limit": limit,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "timings_ms": {"sql.sales_feed": round(total_ms, 1)},
+    })
+
+

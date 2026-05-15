@@ -440,6 +440,221 @@ def test_active_terminal_status_constants_are_disjoint():
     assert (active | terminal) == expected
 
 
+# ---------- Metrics tab endpoints (CEO view) ----------
+
+def test_metrics_503_when_supabase_unconfigured(monkeypatch, client):
+    """The metrics bundle endpoint is SQL-only — surfaces 503 when
+    Supabase isn't wired, same shape as /api/d2/orders + /api/d2/health."""
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
+    r = client.get("/api/d2/metrics")
+    assert r.status_code == 503
+
+
+def test_metrics_today_start_anchors_on_et():
+    """The "today" window for the Metrics tab anchors on America/New_York
+    so the Today card matches the operator's clock. Without this, the
+    Today card would reset at 8 PM ET (= midnight UTC) and read as a bug.
+
+    Asserts the returned datetime is at an hour boundary in UTC AND falls
+    within the expected ET-midnight band (00:00 ET = 04:00 UTC EDT / 05:00
+    UTC EST). Tolerant of DST."""
+    from datetime import datetime, timezone
+    ts = d2_main._today_start_utc()
+    assert ts.tzinfo is not None
+    assert ts.minute == 0 and ts.second == 0 and ts.microsecond == 0
+    # ET midnight maps to either 04:00 UTC (EDT) or 05:00 UTC (EST).
+    assert ts.hour in (4, 5), f"Expected UTC hour 4 (EDT) or 5 (EST), got {ts.hour}"
+    # The returned ts should never be in the future relative to now_utc.
+    assert ts <= datetime.now(timezone.utc)
+
+
+def test_metrics_bundles_all_windows_buckets_and_top(monkeypatch, client):
+    """Happy path: the metrics endpoint fans out to d2_metrics_window for
+    each of the 4 windows × {current, prior}, plus d2_metrics_hourly_buckets
+    and d2_metrics_top_events. Response carries each result keyed by window
+    name + sub-bundle keys."""
+    calls = {"window": [], "hourly": 0, "top": 0}
+
+    class FakeRpcCall:
+        def __init__(self, fn, args): self._fn = fn; self._args = args
+        def execute(self):
+            data = self._fn(self._args)
+            return type("Res", (), {"data": data})()
+
+    def _window_data(args):
+        calls["window"].append(args)
+        return [
+            {"source": "evo",      "orders_count": 3, "fulfilled_count": 2,
+             "gross_total": 450.0, "fulfilled_gross": 300.0,
+             "qty_total": 6, "fulfilled_qty": 4},
+            {"source": "seatgeek", "orders_count": 1, "fulfilled_count": 0,
+             "gross_total": 1200.0, "fulfilled_gross": 0.0,
+             "qty_total": 4, "fulfilled_qty": 0},
+        ]
+
+    def _hourly_data(args):
+        calls["hourly"] += 1
+        return [{"hour_bucket": "2026-05-15T03:00:00Z", "source": "evo",
+                 "orders_count": 1, "gross": 150.0, "fulfilled_gross": 150.0}]
+
+    def _top_data(args):
+        calls["top"] += 1
+        return [{"tevo_event_id": 9001, "event_name": "Knicks vs Lakers",
+                 "event_date": "2026-06-01T19:30:00Z",
+                 "total_gross": 4500.0, "total_count": 12, "fulfilled_count": 10}]
+
+    def _hot_data(args):
+        return [{"tevo_event_id": 9001, "event_name": "Hot show",
+                 "event_date": "2026-06-01T00:00:00Z",
+                 "recent_count": 4, "recent_gross": 800.0,
+                 "fulfilled_count": 3, "last_order_at": "2026-05-15T14:55:00Z"}]
+    def _biggest_data(args):
+        return [{"source": "evo", "source_order_id": "B-1", "tevo_event_id": 9001,
+                 "event_name": "Hot show", "event_date": "2026-06-01T00:00:00Z",
+                 "gross_value": 5000.0, "quantity": 10, "canonical_status": "fulfilled",
+                 "created_at": "2026-05-15T14:58:00Z"}]
+    def _gaps_data(args):
+        return [{"source": "vivid", "gap_start": "2026-05-15T10:00:00Z",
+                 "gap_end": "2026-05-15T12:30:00Z", "gap_minutes": 150.0}]
+
+    class FakeSb:
+        def rpc(self, name, args):
+            if name == "d2_metrics_window":         return FakeRpcCall(_window_data,  args)
+            if name == "d2_metrics_hourly_buckets": return FakeRpcCall(_hourly_data,  args)
+            if name == "d2_metrics_top_events":     return FakeRpcCall(_top_data,     args)
+            if name == "d2_metrics_hot_events":     return FakeRpcCall(_hot_data,     args)
+            if name == "d2_metrics_biggest_sales":  return FakeRpcCall(_biggest_data, args)
+            if name == "d2_metrics_sales_gaps":     return FakeRpcCall(_gaps_data,    args)
+            raise AssertionError(f"unexpected RPC: {name}")
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    r = client.get("/api/d2/metrics")
+    assert r.status_code == 200
+    body = r.json()
+    # 4 windows × {current, prior}
+    assert set(body["windows"].keys()) == {"hour", "today", "24h", "7d"}
+    for name, twin in body["windows"].items():
+        assert set(twin.keys()) == {"current", "prior"}
+        # Each twin has the per-source rollup rows from our fake RPC.
+        assert len(twin["current"]) == 2
+        assert len(twin["prior"]) == 2
+    assert len(calls["window"]) == 8  # 4 windows × 2 (current + prior)
+    assert calls["hourly"] == 1
+    assert calls["top"] == 1
+    assert len(body["hourly_buckets"]) == 1
+    assert len(body["top_events"]) == 1
+    assert body["top_events"][0]["tevo_event_id"] == 9001
+    # New legs from operator 2026-05-15 directive.
+    assert len(body["hot_events"]) == 1
+    assert body["hot_events"][0]["recent_count"] == 4
+    assert len(body["biggest_sales"]) == 1
+    assert body["biggest_sales"][0]["gross_value"] == 5000.0
+    assert len(body["sales_gaps"]) == 1
+    assert body["sales_gaps"][0]["gap_minutes"] == 150.0
+    assert "timings_ms" in body
+    assert "checked_at" in body
+
+
+def test_metrics_partial_failure_surfaces_in_errors_array(monkeypatch, client):
+    """If one of the 10 parallel SQL calls fails, the bundle still returns
+    200 with the other 9 legs' data + the failing leg recorded in errors[].
+    Single-leg failures should not cascade to 503."""
+    class FakeFailingCall:
+        def execute(self): raise RuntimeError("simulated SQL hiccup")
+    class FakeOkCall:
+        def __init__(self, payload): self._payload = payload
+        def execute(self): return type("Res", (), {"data": self._payload})()
+
+    class FakeSb:
+        def rpc(self, name, args):
+            # Break only the top_events leg.
+            if name == "d2_metrics_top_events":
+                return FakeFailingCall()
+            return FakeOkCall([])
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    r = client.get("/api/d2/metrics")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["top_events"] == []
+    assert any(e["leg"] == "top_events" for e in body["errors"])
+
+
+def test_sales_feed_503_when_supabase_unconfigured(monkeypatch, client):
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
+    r = client.get("/api/d2/sales-feed")
+    assert r.status_code == 503
+
+
+def test_sales_feed_returns_newest_first(monkeypatch, client):
+    """The sales feed sources newest-first from unified_orders. Mock the
+    PostgREST chain and assert the response shape + ordering call."""
+    captured = {}
+
+    class FakeQuery:
+        def select(self, *_a, **_kw):  return self
+        def in_(self, col, vals):
+            captured["in"] = (col, list(vals))
+            return self
+        def order(self, col, desc=False, nullsfirst=False):
+            captured["order"] = (col, desc); return self
+        def limit(self, n):
+            captured["limit"] = n; return self
+        def execute(self):
+            return type("Res", (), {"data": [
+                {"source": "evo",      "source_order_id": "1", "gross_value": 100.0,
+                 "quantity": 2, "event_name": "A", "event_date": "2026-06-01T00:00:00Z",
+                 "created_at": "2026-05-15T12:00:00Z", "canonical_status": "accepted",
+                 "is_sale_succeeded": False},
+                {"source": "tickpick", "source_order_id": "T-9", "gross_value": 200.0,
+                 "quantity": 1, "event_name": "B", "event_date": "2026-06-02T00:00:00Z",
+                 "created_at": "2026-05-15T11:00:00Z", "canonical_status": "fulfilled",
+                 "is_sale_succeeded": True},
+            ]})()
+
+    class FakeSb:
+        def table(self, name):
+            captured["table"] = name
+            return FakeQuery()
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    r = client.get("/api/d2/sales-feed?limit=5")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert captured["table"] == "unified_orders"
+    assert captured["order"] == ("created_at", True)  # desc=True
+    assert captured["limit"] == 5
+    assert captured["in"][0] == "source"
+    assert set(captured["in"][1]) == set(d2_main._ALL_SOURCES)
+    assert len(body["rows"]) == 2
+    assert body["rows"][0]["source"] == "evo"   # mock returns newest-first
+    assert body["limit"] == 5
+
+
+def test_sales_feed_limit_clamped(monkeypatch, client):
+    """`?limit=999` clamps to 100; `?limit=0` clamps to 1. Prevents the
+    operator from accidentally fetching the whole table."""
+    captured_limits = []
+
+    class FakeQuery:
+        def select(self, *_a, **_kw):  return self
+        def in_(self, *_a, **_kw):     return self
+        def order(self, *_a, **_kw):   return self
+        def limit(self, n):
+            captured_limits.append(n); return self
+        def execute(self):
+            return type("Res", (), {"data": []})()
+    class FakeSb:
+        def table(self, _name): return FakeQuery()
+
+    monkeypatch.setattr(d2_main, "_sb", lambda: FakeSb())
+    client.get("/api/d2/sales-feed?limit=999")
+    client.get("/api/d2/sales-feed?limit=0")
+    client.get("/api/d2/sales-feed")  # default = 20
+    assert captured_limits == [100, 1, 20]
+
+
 # ---------- Normalizer unit tests ----------
 
 def test_norm_evo_handles_missing_event():
