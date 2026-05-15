@@ -100,7 +100,13 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **Cadence:** daily checkpoint at 09:00 ET (after overnight backdata processing completes; before US trading-hours peak). One scheduled session per day; ad-hoc sessions if drift gets surfaced by automated alerting between checkpoints.
 
-### D0 — Terminal FE (read-only)
+### D0 — Consolidated Frontend Lane (2026-05-15 reorg)
+
+**Role**: lane owner for all customer + operator frontend surfaces. Reviews + signs off on subordinate (D1, D2) PRs before A1 merges. Owns Render write authority on all three frontend services. Authors `static/terminal/*` directly.
+
+**Subordinates**: D1 (storefront implementer), D2 (dashboard implementer). They write code; D0 reviews; A1 merges after green CI.
+
+### D0 — Terminal FE direct surface
 
 **Writes:**
 - Future `static/terminal/*` UI files (when built)
@@ -117,7 +123,9 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **Reads:** entire data plane (charts, predictive models, possibly Grok integration)
 
-### D1 — Consumer Retail
+### D1 — Consumer Retail (subordinate to D0 as of 2026-05-15)
+
+**Reports to D0.** Authors storefront code; D0 reviews + approves PRs; A1 merges after green CI.
 
 **Writes (source files):**
 - `app.py` `/api/store/*` + `/store/*` routes (coordinate with A1)
@@ -159,7 +167,9 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - **Render MCP write authority on this service** (no per-call operator ask): `update_environment_variables`, `update_web_service`, redeploy triggers, restart. Cross-service ops (anything touching `d2-orders-dashboard` or workspace-level) remain forbidden without operator approval.
 - D1 does **NOT** own `d2-orders-dashboard` — that surface is D2's (see below).
 
-### D2 — Order Clients
+### D2 — Order Clients (subordinate to D0 as of 2026-05-15)
+
+**Reports to D0.** Authors order-client code + dashboard code; D0 reviews + approves PRs; A1 merges after green CI.
 
 **Writes:**
 - `seatdata_client.py`, `seatgeek_client.py`, `evo_client.py` (order paths only)
@@ -240,22 +250,23 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
    - Explicit `GRANT EXECUTE ... TO service_role`
    - `IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN RAISE EXCEPTION` at body start
 
-6. **Deploy infrastructure ownership** — per-service exclusivity within Render workspace (updated 2026-05-14):
+6. **Deploy infrastructure ownership** — D0 consolidates all frontend services (2026-05-15 reorg):
 
-   | Render service | ID | Owner bot | Source code | Branch | IaC file |
+   | Render service | ID | Lane owner (D0) | Subordinate implementer | Source code | IaC file |
    |---|---|---|---|---|---|
-   | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D1** | `app.py`, `static/store/*` | `main` | `render.yaml` |
-   | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D2** | `d2_dashboard/*` | `main` | `render-d2-dashboard.yaml` |
-   | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | `static/terminal/*` | `main` | `render-d0-terminal.yaml` |
-   | `hi-events` (separate repo) | `srv-d7g0cev7f7vs73blkc70` | n/a (not Terminal-2) | — | `develop` | — |
+   | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
+   | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 (subord) | `app.py`, `static/store/*` | `render.yaml` |
+   | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D2 (subord) | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
+   | `hi-events` (separate repo) | `srv-d7g0cev7f7vs73blkc70` | n/a (not Terminal-2) | — | — | — |
 
-   - Each owner-bot manages **env vars, deploy config, log monitoring, and IaC blueprint** for their specific service. They do NOT touch the other bot's service.
-   - Per-bot Render access scope (per CLAUDE.md §4, 2026-05-14):
+   - **D0 is the lane owner** across all three frontend services as of 2026-05-15. D0 manages env vars, deploy config, log monitoring, and IaC for every frontend service.
+   - **D1 and D2 are subordinate coding arms.** They still author code in their respective directories (D1 → storefront, D2 → dashboard) but their PRs require **D0 sign-off** in a PR comment before A1 merges. D1/D2 have Render MCP **read-only** access; writes route through D0 + A1.
+   - Per-bot Render access scope (per CLAUDE.md §4, updated 2026-05-15):
      - **A1** — exclusive workspace-wide access: all read + write ops on any service, plus `create_*` / `select_workspace` (only bot authorized to provision or delete services)
-     - **D1** — scoped to `vibepass-storefront-test`: read + write OK on this service (env vars, redeploy, update_web_service); forbidden on other services and workspace-level ops
-     - **D2** — scoped to `d2-orders-dashboard`: read + write OK on this service; forbidden on other services and workspace-level ops
-     - **D0** — scoped to `vibepass-terminal-test`: read + write OK on this service; forbidden on other services and workspace-level ops
+     - **D0** — write authority on all three frontend services; forbidden workspace-level ops (A1-only)
+     - **D1, D2** — read-only on all Render surfaces; writes route through D0 review + A1 merge
      - **B1 / C1 / D3 / D4** — read-only across all services; writes require operator approval
+   - **Deploy gating (2026-05-15)**: backend test workflow (`.github/workflows/tests.yml`) must pass on a PR before A1 merges to `main`. Auto-deploy fires only after green CI lands on `main`. No exceptions.
    - Both services auto-deploy from `main`. A1 (sole pusher to main) merges PRs; each push triggers auto-deploys on both services since both watch `main`. If a PR only touches one service's surface, the other service still redeploys (no-op for it but burns build minutes — acceptable for free tier).
    - **Future split** option if build-time waste becomes painful: each service moves to a bot-specific deploy branch (e.g. `d1/release`, `d2/release`), and A1 fast-forwards each one when their respective code paths change. Deferred until volume justifies the merge-coordination cost.
 

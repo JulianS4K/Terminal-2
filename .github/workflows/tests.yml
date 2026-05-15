@@ -1,0 +1,41 @@
+name: tests
+
+# Backend test gate (added 2026-05-15 per operator directive).
+# Runs pytest on every PR + push to main. A1 must NOT merge to main
+# until this workflow is green. Render auto-deploy fires on push to main,
+# so a green CI is the implicit gate on deploys.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio
+          # Tolerate missing requirements.txt early in repo lifecycle.
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run pytest
+        env:
+          AUTH_DISABLED: "true"
+          SUPABASE_URL: "https://example.invalid"
+          SUPABASE_SERVICE_ROLE_KEY: "test-key"
+        # `--maxfail=1` short-circuits on first failure to keep CI fast.
+        # `-q` keeps the log lean. Add `tests/` explicit path so a stray
+        # conftest in repo root doesn't surprise us.
+        run: pytest tests/ -q --maxfail=1
