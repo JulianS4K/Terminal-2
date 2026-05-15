@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Sign in</title>
+  <link rel="stylesheet" href="/static/terminal/style.css" />
+</head>
+<body data-page="login">
+
+  <main class="login-wrap">
+    <div class="login-card">
+      <div class="login-tag">TERMINAL · D0</div>
+      <h1>Sign in</h1>
+      <p class="login-sub">Restricted to <code>@s4kent.com</code> · same Supabase auth backend as D2's Orders Dashboard.</p>
+
+      <button id="googleBtn" class="login-btn" type="button">
+        Continue with Google
+      </button>
+
+      <div id="loginErr" class="login-err" hidden></div>
+      <div id="loginInfo" class="login-info">
+        After sign-in you'll bounce back to where you started.
+        Session persists in <code>localStorage</code> on this origin until you sign out.
+      </div>
+
+      <div class="login-foot">
+        <a href="https://d2-orders-dashboard.onrender.com" target="_blank" rel="noopener">D2 Orders Dashboard ↗</a>
+        <span class="dot">·</span>
+        <span class="muted small">vibepass-terminal-test</span>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/terminal/lib/supabase.js"></script>
+  <script src="/static/terminal/auth.js"></script>
+  <script src="/static/terminal/login.js"></script>
+</body>
+</html>

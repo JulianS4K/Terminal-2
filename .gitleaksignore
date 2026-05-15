@@ -17,7 +17,12 @@
 # This is the anon role's JWT, exposed to web clients via /api/public/config
 # by design. Treated as a routable identifier, not a credential.
 # Rotation requires updating every web client AND the legacy reference in chat.
-# (No fingerprint yet — populate once first scan flags it.)
+
+# D0 terminal static-site embed (CDN — no Python runtime to resolve env vars).
+# Same publishable key D2's dashboard hands clients via /api/d2/config-public.
+# RLS + per-table policies are the actual security boundary.
+# Filed by D0 under edit_coordination_protocol claim row 166 (released 167).
+static/terminal/auth.js:generic-api-key:19
 
 # === Public Supabase URL ===
 # hzrizjeaxlqcxfrtczpq.supabase.co is the public project URL. Not a secret.
