@@ -6,68 +6,63 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — Event</title>
-  <link rel="stylesheet" href="/static/terminal/lib/uplot.min.css" />
+  <title>Terminal — Home</title>
   <link rel="stylesheet" href="/static/terminal/style.css" />
 </head>
-<body data-page="event">
+<body data-page="home">
 
   <header class="topbar">
     <span class="brand">TERMINAL · D0</span>
     <span id="status" class="status">Loading…</span>
   </header>
 
-  <main class="wrap">
-    <section id="hero">
-      <div>
-        <h1 class="title" id="evTitle">—</h1>
-        <p class="meta">
-          <span id="evVenue">—</span>
-          <span class="dot">·</span>
-          <span id="evDate">—</span>
-        </p>
-        <div class="badges" id="evBadges"></div>
-        <div class="coverage" id="coverage">
-          <span class="lbl">COVERAGE</span>
-          <span class="light" data-src="tevo"     title="TEvo"></span>
-          <span class="light" data-src="seatgeek" title="SeatGeek"></span>
-          <span class="light" data-src="seatdata" title="SeatData"></span>
-          <span class="light" data-src="espn"     title="ESPN"></span>
-        </div>
+  <main class="wrap home">
+    <section id="coverage-band">
+      <div class="panel-title">COVERAGE — ACTIVE FUTURE SPORTS</div>
+      <div class="coverage-grid">
+        <div class="cv-cell"><span class="cv-num" id="cvTotal">—</span><span class="cv-lbl">tracked</span></div>
+        <div class="cv-cell"><span class="cv-num" id="cv30d">—</span><span class="cv-lbl">≤ 30d</span></div>
+        <div class="cv-cell"><span class="cv-num" id="cv7d">—</span><span class="cv-lbl">≤ 7d</span></div>
+        <div class="cv-cell"><span class="cv-num" id="cvToday">—</span><span class="cv-lbl">today</span></div>
       </div>
     </section>
 
-    <section id="kpi">
-      <div class="kpi-label">OWNED PREMIUM PCT</div>
-      <div class="kpi-value" id="kpiVal">—</div>
-      <div class="kpi-sub"   id="kpiSub">our asks vs market not us</div>
-    </section>
-
-    <section id="chart">
-      <div class="chart-title">
-        <span>PRICE &amp; INVENTORY · 7D</span>
-        <span class="legend">
-          <span><i style="background:var(--accent)"></i> Owned median</span>
-          <span><i style="background:var(--muted)"></i> Market median</span>
-          <span><i style="background:var(--info)"></i> Owned qty</span>
-        </span>
+    <section id="book-card">
+      <div class="panel-title">BOOK SUMMARY</div>
+      <div class="book-grid">
+        <div class="bk-row"><span class="bk-lbl">Total owned tickets</span><span class="bk-val" id="bkOwnedTix">—</span></div>
+        <div class="bk-row"><span class="bk-lbl">Owned notional (mark)</span><span class="bk-val" id="bkOwnedNotional">—</span></div>
+        <div class="bk-row"><span class="bk-lbl">Events with owned position</span><span class="bk-val" id="bkOwnedEvents">—</span></div>
+        <div class="bk-row"><span class="bk-lbl">Market tickets tracked</span><span class="bk-val" id="bkMarketTix">—</span></div>
       </div>
-      <div id="chartHost"></div>
     </section>
 
-    <section id="zones">
-      <div class="panel-title">ZONES — LATEST SNAPSHOT</div>
-      <div id="zonesBody"></div>
+    <section id="movers-strip">
+      <div class="panel-title row">
+        <span>TOP MOVERS · 24H · OUR BOOK MARK-TO-MARKET</span>
+        <a href="/static/terminal/movers.html" class="more-link">all movers →</a>
+      </div>
+      <div class="movers-grid" id="moversGrid">
+        <div class="empty">loading…</div>
+      </div>
     </section>
 
-    <section id="order-strip">
-      <div class="panel-title">ORDERS — STATE MIX</div>
-      <div id="ordersBody"></div>
+    <section id="owned-events">
+      <div class="panel-title row">
+        <span>S4K-OWNED EVENTS — NEXT 30 DAYS</span>
+        <span class="muted small" id="ownedEventCount"></span>
+      </div>
+      <div id="ownedEventsBody"></div>
+    </section>
+
+    <section id="risk-alerts">
+      <div class="panel-title">RISK ALERTS</div>
+      <div id="riskBody" class="empty">order-book RPC pending — alerts unlock when hold_expires_at + owned_premium_pct surfaces land</div>
     </section>
   </main>
 
-  <script src="/static/terminal/lib/uplot.iife.min.js"></script>
   <script src="/static/terminal/app.js"></script>
-  <script src="/static/terminal/event.js"></script>
+  <script src="/static/terminal/nav.js"></script>
+  <script src="/static/terminal/home.js"></script>
 </body>
 </html>

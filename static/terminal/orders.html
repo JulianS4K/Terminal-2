@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Orders</title>
+  <link rel="stylesheet" href="/static/terminal/style.css" />
+</head>
+<body data-page="orders">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap orders">
+    <section id="orders-intro">
+      <div class="panel-title">ORDER BOOK / SALES PIPELINE</div>
+      <div class="muted small">
+        S4K's own actual sales activity. Currently per-event only via <code>/api/broker/event/{id}/orders</code>.
+        Global view needs a new SECDEF RPC (admin-only RLS on <code>evo_orders</code> / <code>evo_order_items</code> intentional — customer PII).
+        Skeleton below shows the planned layout per <a href="https://github.com/JulianS4K/Terminal-2/blob/main/docs/terminal-redesign-2026-05-09.md">terminal-redesign-2026-05-09.md §6</a>.
+      </div>
+    </section>
+
+    <section id="orders-pending">
+      <div class="panel-title">PENDING TEVO ORDERS</div>
+      <div class="empty">
+        Queued for: <code>get_broker_orders_pending()</code> SECDEF RPC.
+        Will surface state ∈ {pending, accepted, pending_sub} sorted by created_at desc,
+        with event link · qty · price · ticket_group / row / seats · evo_created_at.
+      </div>
+    </section>
+
+    <section id="orders-eticket">
+      <div class="panel-title">E-TICKET FULFILLMENT ALERTS</div>
+      <div class="empty">
+        Queued for: <code>get_broker_orders_eticket_pending()</code> SECDEF RPC.
+        Will surface items where <code>eticket_available=true AND eticket_downloaded_at IS NULL</code>
+        for an event within 48h. Sorted by occurs_at asc (most-urgent first).
+      </div>
+    </section>
+
+    <section id="orders-hold-expiry">
+      <div class="panel-title">HOLD-EXPIRY URGENCY</div>
+      <div class="empty">
+        Queued for: <code>get_broker_orders_hold_expiry()</code> SECDEF RPC.
+        Will surface orders where <code>hold_expires_at &lt; NOW() + 1h</code>.
+        Sorted by hold_expires_at asc.
+      </div>
+    </section>
+
+    <section id="orders-recent-sold">
+      <div class="panel-title">RECENT SOLD · LAST 30D</div>
+      <div class="empty">
+        Queued for: <code>get_broker_orders_recent_sold(p_days)</code> SECDEF RPC.
+        Will union TEvo (<code>evo_orders</code> state ∈ {accepted, completed})
+        + SG seller-orders (<code>seatgeek_orders</code>).
+        Sorted by sold_at desc; aggregate tickets / gross.
+      </div>
+    </section>
+
+    <section id="orders-realized">
+      <div class="panel-title">REALIZED vs ASK</div>
+      <div class="empty">
+        Queued for: <code>get_broker_orders_realized_vs_ask(p_days)</code> SECDEF RPC.
+        Will join sold rows to <code>listings_snapshots</code> at sale time;
+        compute (sold_price - retail_price) / retail_price per item;
+        bucketed: at-ask / under-ask 5-15% / under-ask &gt;15% / over-ask.
+      </div>
+    </section>
+
+    <section id="orders-per-event">
+      <div class="panel-title row">
+        <span>PER-EVENT ORDERS · AVAILABLE TODAY</span>
+        <span class="muted small">via /api/broker/event/{id}/orders</span>
+      </div>
+      <div id="perEventBody" class="muted small">
+        Open an event from <a href="/static/terminal/movers.html">Movers</a> or <a href="/static/terminal/">Home</a>
+        to see its order strip on the Event Detail page (5-segment state mix + summary).
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/terminal/app.js"></script>
+  <script src="/static/terminal/nav.js"></script>
+  <script src="/static/terminal/orders.js"></script>
+</body>
+</html>
