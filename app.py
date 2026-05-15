@@ -489,18 +489,29 @@ STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower()
 
 
 @app.get("/")
-def root_health():
-    """Liveness probe. Default response is the data-collection JSON used
-    by every prior phase. When STOREFRONT_AS_LANDING=true (set in Render
-    env for the storefront test service), the root path 302-redirects
-    to /store so customers land on the public catalog instead of a
-    debug JSON blob.
-
-    Operators with non-storefront services keep the default behavior.
+def root_landing():
+    """Unified frontend homescreen (D0, operator directive 2026-05-15 bot_chat #157).
+    3 cards: Terminal (broker) / Undelivered (CS+fulfillment) / Store (public).
+    STOREFRONT_AS_LANDING=true keeps the old customer-only redirect to /store.
+    Liveness moved to /healthz (always was the real Render check path).
     """
     if STOREFRONT_AS_LANDING:
         return RedirectResponse(url="/store", status_code=302)
-    return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
+    return FileResponse(os.path.join(STATIC_DIR, "home", "index.html"))
+
+
+@app.get("/terminal")
+def terminal_landing():
+    """Broker terminal entry (D0 lane). Page-internal nav handles sub-routes
+    (event/movers/performer/orders) via .html files served from /static/terminal/."""
+    return FileResponse(os.path.join(STATIC_DIR, "terminal", "index.html"))
+
+
+@app.get("/undelivered")
+def undelivered_landing():
+    """CS fulfillment + sales tracking entry (scaffold — D2 to fill, bot_chat #179).
+    Spec: design/undelivered-window-2026-05-08.md."""
+    return FileResponse(os.path.join(STATIC_DIR, "undelivered", "index.html"))
 
 
 @app.get("/healthz")

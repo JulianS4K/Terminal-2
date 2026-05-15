@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Undelivered · VibePass</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="/static/undelivered/style.css" />
+</head>
+<body data-page="undelivered">
+
+  <header class="topbar">
+    <span class="brand">VIBEPASS · UNDELIVERED</span>
+    <nav class="pagenav">
+      <a href="/">HOME</a>
+      <a href="/terminal/">TERMINAL</a>
+      <a class="active" href="/undelivered/">UNDELIVERED</a>
+      <a href="/store">STORE</a>
+    </nav>
+    <span id="status" class="status">scaffold</span>
+  </header>
+
+  <main class="wrap">
+    <section class="scaffold-banner">
+      <div class="scaffold-tag">SCAFFOLD · AWAITING D2</div>
+      <h1>Undelivered — Fulfillment + Sales Tracking</h1>
+      <p>One board across every channel (EVO / SeatGeek / TickPick / Vivid / retail / wholesale). Sorted by time-to-event. Hold-expiry alerts. Bulk action per event ("deliver all 76 for Knicks G5"). Spec: <code>design/undelivered-window-2026-05-08.md</code>.</p>
+      <p class="muted">Data wiring pending D2's scope decision on the consolidation question (<code>bot_chat</code> row 179 — options A/B/C). This page is the static entry point; the dense table lands once D2 confirms.</p>
+    </section>
+
+    <section id="kpi-strip">
+      <div class="panel-title">KPI STRIP — PROPOSED</div>
+      <div class="kpi-row">
+        <div class="kpi-cell"><span class="kpi-num">—</span><span class="kpi-lbl">$ undelivered</span></div>
+        <div class="kpi-cell"><span class="kpi-num">—</span><span class="kpi-lbl">orders open</span></div>
+        <div class="kpi-cell"><span class="kpi-num warn">—</span><span class="kpi-lbl">within T-24h</span></div>
+        <div class="kpi-cell"><span class="kpi-num neg">—</span><span class="kpi-lbl">holds &lt; 1h</span></div>
+      </div>
+      <div class="muted small">By channel: EVO — · SG — · Vivid — · TP — · Retail —</div>
+    </section>
+
+    <section id="filters">
+      <div class="panel-title">FILTERS — PROPOSED</div>
+      <div class="filter-row">
+        <span class="muted small">Window: &lt;24h · &lt;72h · &lt;7d · &lt;30d · all</span>
+        <span class="muted small">Channel: all · EVO · SG · Vivid · TP · Retail</span>
+        <span class="muted small">State: pending · held · pushing · failed</span>
+      </div>
+    </section>
+
+    <section id="hold-expiry-lane">
+      <div class="panel-title">HOLD EXPIRY · NEXT 4H</div>
+      <div class="empty">scaffold — data wires to <code>evo_orders.hold_expires_at</code> + equivalents on SG / Vivid / TP</div>
+    </section>
+
+    <section id="orders-table">
+      <div class="panel-title row">
+        <span>ORDERS · TIME-TO-EVENT ASCENDING</span>
+        <span class="muted small">red T-0/T-24h · amber T-72h · neutral T-7d · dim &gt;T-7d</span>
+      </div>
+      <div class="empty">scaffold — D2 fills via <code>/api/d2/orders</code> or evolved view</div>
+    </section>
+
+    <section id="bulk-action">
+      <div class="panel-title">BULK ACTION — PROPOSED</div>
+      <div class="empty">"Deliver all 76 for Knicks G5" pattern — needs RPC + per-channel push handlers</div>
+    </section>
+  </main>
+
+  <script src="/static/terminal/lib/supabase.js"></script>
+  <script src="/static/terminal/auth.js"></script>
+  <script src="/static/undelivered/undelivered.js"></script>
+</body>
+</html>
