@@ -4434,6 +4434,25 @@ def _escape_ilike(s: str) -> str:
     return s
 
 
+# Characters that, if present in an .or_() clause VALUE, force PostgREST to
+# treat the value as ending early. Wrapping the value in double quotes tells
+# PostgREST to read the value verbatim. Required for hard-coded patterns
+# like "%, NY%" — the comma would otherwise be parsed as a clause separator.
+_OR_VALUE_RESERVED = (",", "(", ")")
+
+
+def _or_ilike_clause(col: str, pattern: str) -> str:
+    """Build a single `col.ilike.<pattern>` clause for PostgREST `.or_()`.
+    Wraps the pattern in double quotes when it contains characters that
+    conflict with the or-clause parser (commas, parens). Embedded double
+    quotes are doubled per PostgREST's quoting rules.
+    """
+    if any(c in pattern for c in _OR_VALUE_RESERVED) or '"' in pattern:
+        escaped = pattern.replace('"', '""')
+        return f'{col}.ilike."{escaped}"'
+    return f"{col}.ilike.{pattern}"
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -4761,8 +4780,11 @@ def store_movers(
             "primary_performer_id,primary_performer_name"
         ).gte("occurs_at_local", today_iso).lte("occurs_at_local", horizon_iso + "T23:59:59")
         # PostgREST `or_()` with a comma-separated list of `<col>.ilike.<pat>`
-        # supports OR filters across multiple patterns.
-        or_clauses = ",".join(f"venue_location.ilike.{p}" for p in venue_patterns)
+        # supports OR filters across multiple patterns. Use _or_ilike_clause so
+        # patterns containing literal commas (e.g. "%, NY%") are double-quoted
+        # and don't get split by PostgREST's clause parser — that bug silently
+        # returned 0 movers for ~309 owned NYC events until the fix landed.
+        or_clauses = ",".join(_or_ilike_clause("venue_location", p) for p in venue_patterns)
         ev_q = ev_q.or_(or_clauses)
         events_rows = ev_q.limit(800).execute().data or []
     except Exception as e:
@@ -4889,6 +4911,226 @@ def store_movers(
         "days": day_cap,
         "count": len(candidates),
         "events": candidates,
+    }
+
+
+@app.get("/api/store/home")
+def store_home(
+    limit: int = 60,
+    city: str = "",
+):
+    """Homepage "first paint" endpoint — owned + active future events
+    served entirely from SQL (no TEvo round-trip).
+
+    Why this exists: the catalog endpoint (/api/store/events) is TEvo-direct
+    per the PR #84 rewrite, which means ~1.4s response time AND from_price
+    + owned_tickets_count fields land as null (would need a per-event call
+    to enrich, see app.py:~4283 comment). Cards render without prices, which
+    looks half-finished to a visitor.
+
+    This endpoint sidesteps that by joining `latest_event_metrics`
+    (retail_min, owned counts, captured_at) with `events` (metadata),
+    `event_lifecycle` (drop ghost/cancelled), `v_event_velocity_windows`
+    (24h ticket-delta + getin signal), and `performer_metadata` (logos/
+    colors). Response shape mirrors /api/store/events so the client renderer
+    is interchangeable.
+
+    Curation order (premium-first → demand-rising → soon-by-date):
+      1. Premium (retail_min >= $500)            — playoff/hot inventory
+      2. Selling-fast (tevo_tix_d24h <= -50)      — high-velocity events
+      3. Demand-rising (tix dropping + getin firming >=5%)
+      4. Others sorted by occurs_at_local asc
+
+    `city=NYC` (optional) restricts to NYC-area venues (Yankee Stadium,
+    Citi Field, MSG, Barclays, etc.). Empty means national. Single-city
+    enum for v1; future versions resolve from user geo.
+
+    Designed for the home view first paint. After this lands, the client
+    can lazy-load /api/store/events for the long-tail of non-owned events.
+    """
+    db = require_sb()
+    cap = max(1, min(int(limit), 100))
+    city_norm = (city or "").upper().strip()
+
+    # Pull owned-future LEM rows.
+    try:
+        lem_rows = (db.table("latest_event_metrics")
+                      .select("event_id,owned_tickets_count,owned_groups_count,"
+                              "retail_min,retail_median,retail_p25,retail_p75,"
+                              "getin_price,captured_at,tickets_count")
+                      .gt("owned_tickets_count", 0)
+                      .limit(1000)
+                      .execute().data) or []
+    except Exception as e:
+        # Conservative fallback so the homepage never breaks on a transient
+        # matview read error. Empty payload renders the existing "Loading…"
+        # → "No events match" UI path.
+        print(f"[store_home] LEM query failed: {e!r}")
+        return {"count": 0, "events": [], "source": "sql"}
+
+    if not lem_rows:
+        return {"count": 0, "events": [], "limit": cap, "source": "sql"}
+
+    ev_ids = [int(r["event_id"]) for r in lem_rows if r.get("event_id")]
+    lem_by_id = {int(r["event_id"]): r for r in lem_rows if r.get("event_id")}
+
+    # Events (future only). Two-query merge — same pattern as
+    # _attach_owned_metadata and store_movers (PostgREST view-to-table
+    # FK inference has been flaky on rebuilds).
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    try:
+        ev_rows = (db.table("events")
+                     .select("id,name,occurs_at_local,venue_id,venue_name,"
+                             "venue_location,primary_performer_id,"
+                             "primary_performer_name,tbd")
+                     .in_("id", ev_ids)
+                     .gte("occurs_at_local", today_iso)
+                     .limit(1000)
+                     .execute().data) or []
+    except Exception as e:
+        print(f"[store_home] events query failed: {e!r}")
+        return {"count": 0, "events": [], "source": "sql"}
+
+    events_by_id = {int(e["id"]): e for e in ev_rows if e.get("id")}
+
+    # Drop CANCELLED-name rows (rare, but cheap to filter — TEvo bakes the
+    # marker into the event name).
+    events_by_id = {
+        k: v for k, v in events_by_id.items()
+        if "CANCELLED" not in (v.get("name") or "").upper()
+    }
+
+    # Active-only via event_lifecycle.
+    if events_by_id:
+        try:
+            lc = (db.table("event_lifecycle")
+                    .select("event_id,is_active")
+                    .in_("event_id", list(events_by_id.keys()))
+                    .execute().data) or []
+            inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+        except Exception:
+            inactive = set()
+        events_by_id = {k: v for k, v in events_by_id.items() if k not in inactive}
+
+    # Optional city filter. NYC-area substring match. Future cities can be
+    # added behind the same enum gate.
+    if city_norm in ("NYC", "NEW YORK", "NEW YORK CITY"):
+        nyc_substrings = ("new york", "brooklyn", "bronx", "queens",
+                          "manhattan", "flushing")
+        events_by_id = {
+            k: v for k, v in events_by_id.items()
+            if any(s in (v.get("venue_location") or "").lower() for s in nyc_substrings)
+            or ", NY" in (v.get("venue_location") or "")
+        }
+
+    if not events_by_id:
+        return {"count": 0, "events": [], "limit": cap, "source": "sql"}
+
+    # Velocity windows for the 24h ticket-drop + getin signal. Best-effort —
+    # the home view still renders if velocity is unavailable, signals just
+    # come back as null.
+    try:
+        vw = (db.table("v_event_velocity_windows")
+                .select("tevo_event_id,tevo_tix_now,tevo_tix_d24h,"
+                        "tevo_getin_now,tevo_getin_d24h_pct")
+                .in_("tevo_event_id", list(events_by_id.keys()))
+                .execute().data) or []
+    except Exception:
+        vw = []
+    velocity_by_id = {int(v["tevo_event_id"]): v for v in vw if v.get("tevo_event_id") is not None}
+
+    # Bulk performer assets for card branding (logo + brand color).
+    perf_ids = list({int(e.get("primary_performer_id"))
+                     for e in events_by_id.values()
+                     if e.get("primary_performer_id")})
+    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+
+    # Build cards. Schema mirrors /api/store/events for renderer reuse, plus
+    # `from_price` + `owned_tickets_count` + `signal` actually populated.
+    cards: list[dict] = []
+    for eid, ev in events_by_id.items():
+        lem = lem_by_id.get(eid, {})
+        v = velocity_by_id.get(eid, {})
+        perf_id = ev.get("primary_performer_id")
+        assets = perf_assets.get(int(perf_id)) if perf_id else None
+
+        try:
+            rm = float(lem.get("retail_min")) if lem.get("retail_min") is not None else None
+        except (TypeError, ValueError):
+            rm = None
+        try:
+            d24h_int = int(v.get("tevo_tix_d24h")) if v.get("tevo_tix_d24h") is not None else None
+        except (TypeError, ValueError):
+            d24h_int = None
+        try:
+            pct = float(v.get("tevo_getin_d24h_pct")) if v.get("tevo_getin_d24h_pct") is not None else None
+        except (TypeError, ValueError):
+            pct = None
+
+        # Signal classification — same gates as /api/store/movers for
+        # consistency. Priority: premium > selling_fast > demand_rising.
+        signal: str | None = None
+        if rm is not None and rm >= 500.0:
+            signal = "premium"
+        elif d24h_int is not None and d24h_int <= -50:
+            signal = "selling_fast"
+        elif d24h_int is not None and d24h_int < 0 and pct is not None and pct >= 5.0:
+            signal = "demand_rising"
+
+        cards.append({
+            "id": eid,
+            "name": ev.get("name"),
+            "occurs_at_local": ev.get("occurs_at_local"),
+            "venue_name": ev.get("venue_name"),
+            "venue_location": ev.get("venue_location"),
+            "primary_performer_name": ev.get("primary_performer_name"),
+            "primary_performer_id": perf_id,
+            "primary_performer_logo": (assets or {}).get("logo_default_url"),
+            "primary_performer_color": (assets or {}).get("color_primary"),
+            "primary_performer_league": (assets or {}).get("espn_league"),
+            # Available_count is filled from TEvo's per-event count on the
+            # detail page; the matview's tickets_count is the storefront-
+            # wide listing count which is the better cards-level signal.
+            "available_count": lem.get("tickets_count"),
+            "we_own": True,
+            "tbd": bool(ev.get("tbd")),
+            # Enrichment that catalog endpoint leaves null — the whole point.
+            "from_price": rm,
+            "retail_median": lem.get("retail_median"),
+            "owned_tickets_count": lem.get("owned_tickets_count"),
+            "owned_groups_count": lem.get("owned_groups_count"),
+            "captured_at": lem.get("captured_at"),
+            # Velocity signal for the card "moving fast" badge.
+            "tix_d24h": d24h_int,
+            "getin_d24h_pct": pct,
+            "signal": signal,
+            # Other badge enrichments (rivalry/series/weather/holiday/playoff)
+            # stay null here — re-layer in a follow-up PR if/when we want them
+            # on the home grid. The detail page already renders all of these.
+            "rivalry": None,
+            "mlb_series": None,
+            "tournament": None,
+            "weather": None,
+            "holiday": None,
+            "playoff": None,
+        })
+
+    # Curation sort. Signal bucket first, then by date asc within bucket.
+    _signal_rank = {"premium": 0, "selling_fast": 1, "demand_rising": 2}
+
+    def _home_sort_key(c):
+        rank = _signal_rank.get(c.get("signal"), 3)
+        return (rank, c.get("occurs_at_local") or "9999")
+
+    cards.sort(key=_home_sort_key)
+    cards = cards[:cap]
+
+    return {
+        "count": len(cards),
+        "events": cards,
+        "limit": cap,
+        "city": city_norm or None,
+        "source": "sql",
     }
 
 
@@ -5421,7 +5663,12 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
         try:
             ev = client.get_event(event_id)
         except RuntimeError as e:
-            raise HTTPException(502, f"TEvo event lookup failed: {e}")
+            # Log full upstream error server-side; return a stable generic
+            # string so TEvo's response text + upstream status codes never
+            # reach the public detail page. Mirrors the /api/store/events
+            # 502 scrub at line ~4194.
+            print(f"[store_event_detail] TEvo event lookup failed for {event_id}: {e!r}")
+            raise HTTPException(502, "event lookup failed")
 
         # Storefront freshness contract: 10s. Tighter than broker's 90s because
         # this is the buy-decision page — stale availability => bad UX.

@@ -393,32 +393,75 @@
     if (venueId) qs.set("venue_id", venueId);
 
     // Catalog fetch with retryable error UI. On failure (502 cold-start,
-     // statement timeout, etc) the user sees the error + an inline Retry
-     // button instead of stuck red text. Per D1 UX audit 2026-05-12 fix #1.
+    // statement timeout, etc) the user sees the error + an inline Retry
+    // button instead of stuck red text. Per D1 UX audit 2026-05-12 fix #1.
+    //
+    // Two-phase load on the unfiltered home view:
+    //   1. /api/store/home — SQL-only, <500ms, returns owned events with
+    //      from_price + owned_tickets_count populated (premium/selling-fast
+    //      first). First paint shows prices on cards.
+    //   2. /api/store/events — TEvo round-trip, ~1.5s, replaces the grid
+    //      with the broader catalog (currently 60 owned-future events with
+    //      null prices on the cards; same set, refreshed inventory).
+    // When a performer_id or venue_id filter is set, skip the home phase
+    // and go straight to /api/store/events because /api/store/home doesn't
+    // accept those filters (its job is the unfiltered first paint).
+    const isHomeView = !performerId && !venueId;
+
     function loadCatalog() {
       status.textContent = "Loading available events…";
       status.style.color = "";
       status.hidden = false;
-      api(`/api/store/events?${qs.toString()}`)
-        .then((res) => {
-          allEvents = res.events || [];
-          renderCatalogFilterBanner(performerId, venueId, allEvents);
-          render(allEvents, "all");
-        })
-        .catch((err) => {
-          status.replaceChildren();
-          status.style.color = "var(--bad)";
-          status.hidden = false;
-          const msg = document.createElement("div");
-          msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
-          const retry = document.createElement("button");
-          retry.type = "button";
-          retry.className = "btn ghost";
-          retry.style.marginTop = "12px";
-          retry.textContent = "Retry";
-          retry.addEventListener("click", loadCatalog);
-          status.append(msg, retry);
-        });
+
+      const homeFirst = isHomeView
+        ? api("/api/store/home?limit=60")
+            .then((res) => {
+              allEvents = res.events || [];
+              if (allEvents.length) {
+                renderCatalogFilterBanner(performerId, venueId, allEvents);
+                render(allEvents, "all");
+                // Hide status — the grid is up. The TEvo fetch below will
+                // either confirm or quietly replace the list; no flash of
+                // "Loading" between the two.
+                status.hidden = true;
+              }
+            })
+            .catch((err) => {
+              // Home-phase failure isn't fatal — TEvo phase below still runs
+              // and will populate the grid (with null prices, but renders).
+              console.warn("home-phase fetch failed", err);
+            })
+        : Promise.resolve();
+
+      homeFirst.then(() =>
+        api(`/api/store/events?${qs.toString()}`)
+          .then((res) => {
+            allEvents = res.events || [];
+            renderCatalogFilterBanner(performerId, venueId, allEvents);
+            render(allEvents, "all");
+          })
+          .catch((err) => {
+            // If the SQL home phase already painted the grid, suppress the
+            // error UI — the user has cards, they just don't have the latest
+            // TEvo refresh. Only show error if the grid is still empty.
+            if (allEvents && allEvents.length) {
+              console.warn("catalog refresh failed (home grid still shown)", err);
+              return;
+            }
+            status.replaceChildren();
+            status.style.color = "var(--bad)";
+            status.hidden = false;
+            const msg = document.createElement("div");
+            msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
+            const retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "btn ghost";
+            retry.style.marginTop = "12px";
+            retry.textContent = "Retry";
+            retry.addEventListener("click", loadCatalog);
+            status.append(msg, retry);
+          })
+      );
     }
     loadCatalog();
 
