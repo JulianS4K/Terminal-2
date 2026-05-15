@@ -529,3 +529,41 @@ def test_build_storefront_version_dev_when_unset(monkeypatch):
     monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
     monkeypatch.delenv("GIT_COMMIT", raising=False)
     assert app_module._build_storefront_version() == "dev"
+
+
+def test_store_html_response_has_no_cache_header(store_home_client):
+    """Bootstrap-safety: /store HTML must include Cache-Control: no-cache
+    so browsers revalidate on every page load and never get trapped on
+    stale HTML pointing at un-versioned asset URLs.
+
+    Without this header, a browser that cached /store before a cache-bust
+    shipped would keep loading the old JS via the un-versioned URL until
+    its heuristic cache expires (could be hours/days). The `?v=<sha>`
+    query string on the asset URLs in PR #121 only helps once the BROWSER
+    re-fetches /store and sees the new HTML — this header forces that
+    re-fetch on every request.
+    """
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    cc = r.headers.get("cache-control", "")
+    assert "no-cache" in cc.lower(), (
+        f"Cache-Control must include no-cache; got: {cc!r}"
+    )
+
+
+def test_all_storefront_html_routes_revalidate(store_home_client):
+    """Every served /store/* HTML shell — index, event, share, shares —
+    must carry the no-cache header. Catches a regression where someone
+    swaps one route back to FileResponse or raw HTMLResponse without
+    realizing the helper enforces revalidate.
+    """
+    # /store/event/{id} works without DB because the route only reads the
+    # static HTML shell — the event_id is consumed by JS at runtime.
+    paths = ["/store", "/store/event/3346000", "/s/test-id", "/store/shares"]
+    for path in paths:
+        r = store_home_client.get(path)
+        assert r.status_code == 200, f"{path} → {r.status_code}"
+        cc = r.headers.get("cache-control", "")
+        assert "no-cache" in cc.lower(), (
+            f"{path}: Cache-Control missing no-cache; got: {cc!r}"
+        )
