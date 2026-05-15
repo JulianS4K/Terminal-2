@@ -1,7 +1,8 @@
 # Render.com Infrastructure-as-Code blueprint for D0's broker terminal frontend.
 #
 # OWNER: D0 (Terminal FE) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6.
-# Service: vibepass-terminal-test (provisioned 2026-05-15 via A1 + Render MCP)
+# Service: vibepass-terminal-test (srv-d839339kh4rs73ac3s20, provisioned 2026-05-15)
+# URL:     https://vibepass-terminal-test.onrender.com
 # Companion blueprints:
 #   - render.yaml             (D1's vibepass-storefront-test)
 #   - render-d2-dashboard.yaml (D2's d2-orders-dashboard)

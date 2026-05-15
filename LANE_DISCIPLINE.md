@@ -223,7 +223,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
    |---|---|---|---|---|---|
    | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D1** | `app.py`, `static/store/*` | `main` | `render.yaml` |
    | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D2** | `d2_dashboard/*` | `main` | `render-d2-dashboard.yaml` |
-   | `vibepass-terminal-test` | _(provisioned 2026-05-15)_ | **D0** | `static/terminal/*` | `main` | `render-d0-terminal.yaml` |
+   | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | `static/terminal/*` | `main` | `render-d0-terminal.yaml` |
    | `hi-events` (separate repo) | `srv-d7g0cev7f7vs73blkc70` | n/a (not Terminal-2) | — | `develop` | — |
 
    - Each owner-bot manages **env vars, deploy config, log monitoring, and IaC blueprint** for their specific service. They do NOT touch the other bot's service.
