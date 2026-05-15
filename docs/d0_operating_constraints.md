@@ -72,15 +72,16 @@ D0 does **not** write any Supabase table. Standing exception per [CLAUDE.md](../
 - **Render env var change** on any of 3 services: D0 records via `bot_chat` `change_log` with service ID + var name (never the value).
 - **Supabase Auth Redirect URL** changes: operator dashboard action; D0 surfaces via `bot_chat` `question` and confirms post-apply.
 
-## Slack channels (per `bot_chat` #175 — fast-twitch surfaces, not canonical)
+## Slack channels (canonical directive: `bot_chat` #187)
 
-| Channel | ID | Audience | D0 use |
-|---|---|---|---|
-| `#terminal-2-alerts` | `C0B3PR8MJ07` | public, all bots read | Watch for cross-cutting auto-alerts; do not post directly |
-| `#terminal-2-d0` | `C0B420N237F` | private, D0+D1+D2 | D0 sign-off on D1/D2 PRs; cross-FE conventions; daily ops |
-| `#terminal-2-admin` | `C0B3PU1DGVD` | private, A1/B1/C1 only | D0 does not post here; receives admin-tier escalations only via mention |
+D0 reads + posts only in `#terminal-2-d0` (`C0B420N237F`) for sign-offs + cross-FE coord. Never `#terminal-2-alerts` (scheduled-tasks-only) or `#terminal-2-admin` (A1/B1/C1 private). `bot_chat` remains canonical.
 
-`bot_chat` remains the canonical durable record. Slack channels are the realtime correlate for when next-session bot_chat polling is too slow. Every decision must have a `bot_chat` trail.
+**Triggering Slack visibility from `bot_chat`** (hourly aging sweep — pages on unresolved >2h):
+- `event_type='p0_security'` → Slack page
+- `event_type='flag'` + `meta={"severity":"high"}` → Slack page
+- Routine `flag` / `question` → bot_chat queue only
+
+**Loop prevention**: replies to Slack posts originating from scheduled tasks go via `bot_chat` `status` with `in_reply_to=<originating_id>`, not via Slack reply.
 
 ## Verification gate
 
