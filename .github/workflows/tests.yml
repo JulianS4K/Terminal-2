@@ -35,7 +35,8 @@ jobs:
           AUTH_DISABLED: "true"
           SUPABASE_URL: "https://example.invalid"
           SUPABASE_SERVICE_ROLE_KEY: "test-key"
-        # `--maxfail=1` short-circuits on first failure to keep CI fast.
-        # `-q` keeps the log lean. Add `tests/` explicit path so a stray
-        # conftest in repo root doesn't surprise us.
+          # Repo modules (app.py, broadway_client.py, evo_client.py, etc.) live at
+          # repo root, not a package. Pytest's rootdir auto-discovery doesn't add
+          # them to sys.path; PYTHONPATH=. is the canonical fix.
+          PYTHONPATH: "."
         run: pytest tests/ -q --maxfail=1
