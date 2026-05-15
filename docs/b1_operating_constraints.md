@@ -12,7 +12,7 @@ Operator directive 2026-05-15:
 
 > Monitor for security, issues, entry points and data leaks. Monitor outgoing data and bot notes and code for exposed secrets, and fix. Monitor for attacks from outside. Monitor for bot hallucinations.
 
-Operationalized as continuous monitoring across **six surfaces**:
+Operationalized as continuous monitoring across **nine surfaces** (operator extended 2026-05-15 to add git + render + slack):
 
 | Surface | Coverage |
 |---|---|
@@ -22,6 +22,9 @@ Operationalized as continuous monitoring across **six surfaces**:
 | Outgoing data | Payloads returned by anon-callable RPCs, edge function responses, `/api/*` responses — must filter wholesale/broker fields per `LANE_DISCIPLINE.md §D1` wall rules |
 | External attacks | Anomalous query patterns, high-frequency anon traffic, failed-auth spikes, unusual edge-function invocations |
 | Bot hallucinations | Other-bot claims about file paths, function names, migration timestamps, PR numbers, `bot_chat` row IDs — verify before they propagate |
+| **Git / repo posture** | Branch protection rules, required status checks, collaborator perms, GitHub Actions secrets/vars, repo visibility, webhooks, deploy keys, secret-scanning + Dependabot config, push-protection state, workflow permissions, SHA pinning |
+| **Render workspace posture** | Workspace access, service list, IP allowlists, autoDeploy triggers, env-var inventory (names only, not values), preview-deploys posture, suspended state, deploy notification config |
+| **Slack posture** | Slack webhooks pointing into / out of the repo, Slack tokens / signing secrets / bot tokens leaked in code or git history, Slack GitHub App installations, Slack-shaped URLs (`hooks.slack.com/services/*`) appearing in commits, Slack messages (when an operator-installed Slack MCP becomes available) for incident leaks and external-attack chatter |
 
 ## Read surface
 
@@ -35,6 +38,8 @@ Active read targets:
 - All Render service metadata via Render MCP (read-only)
 - Git history (`git log`, `git show`, `git diff`)
 - All `docs/` content, all `supabase/migrations/*.sql`, all `supabase/functions/*`, all `scripts/`, all `bin/`
+- **GitHub repo settings**: `gh api repos/.../branches/main/protection`, `gh api repos/.../hooks`, `gh api repos/.../keys`, `gh api repos/.../collaborators`, `gh api repos/.../actions/permissions`, `gh api repos/.../actions/secrets` (names only), `gh api repos/.../actions/variables`, `gh api repos/.../code-scanning/alerts`, `gh api repos/.../secret-scanning/alerts`, `gh api repos/.../dependabot/alerts`
+- **Render workspace** (read-only): `mcp__render__list_workspaces`, `list_services`, `get_service`, `get_metrics`, `list_logs`, `list_deploys`, `list_log_label_values`. **Forbidden writes** stay forbidden: `update_environment_variables`, `update_web_service`, `update_static_site`, `create_*`, `update_cron_job`. D1 owns Render writes per `LANE_DISCIPLINE.md` Cross-cutting Rule #6.
 
 ## Write surface (authored files)
 
@@ -103,10 +108,13 @@ Run at session start. Total runtime ~5 min. All read-only.
 | 5 | New SECDEF §6 check | `SELECT proname, has_function_privilege('public', oid::regprocedure::text, 'EXECUTE') AS public_exec FROM pg_proc WHERE prosecdef AND NOT pg_get_functiondef(oid) ~ 'current_user NOT IN';` | None missing — else file `flag` or retrofit |
 | 6 | New tables RLS check | `SELECT tablename FROM pg_tables WHERE schemaname='public' AND NOT rowsecurity;` | None new since last sweep — else file fix |
 | 7 | New views `security_invoker` check | `SELECT viewname, reloptions FROM pg_views v JOIN pg_class c ON c.relname=v.viewname WHERE v.schemaname='public' AND (c.reloptions IS NULL OR NOT 'security_invoker=true' = ANY(c.reloptions));` | All new views have `security_invoker=true` |
-| 8 | Secret-scan | Check `.github/workflows/secret-scan.yml` latest run status; if local uncommitted changes, run `gitleaks detect --no-git` against worktree | Clean — else rotate + redact + file `p0_security` |
+| 8 | Secret-scan | Check `.github/workflows/secret-scan.yml` latest run status; if local uncommitted changes, run `gitleaks detect --no-git` against worktree. Default ruleset covers Slack tokens (`xoxb-*`, `xoxp-*`, etc.), AWS, GitHub, Stripe, generic high-entropy strings. | Clean — else rotate + redact + file `p0_security` |
 | 9 | Hallucination spot-check | Pick 3 most recent merged PRs; verify each cited file path / function name / migration timestamp / cron job name / bot_chat row ID exists | All citations real |
 | 10 | RULE 2 static check | `python scripts/check_readonly.py` | Pass |
 | 11 | `bot_chat` aging report | `SELECT * FROM public.release_health_check() WHERE check_name='bot_chat_aging_7d';` (once 20260515* migration applied) OR direct SQL until then | 0 items aged >7d, or all triaged this session |
+| 12 | Git posture diff | Compare current `gh api repos/.../branches/main/protection` + `repos/<>` settings against `docs/git_repo_security_posture.md` snapshot | No regression vs. last sweep |
+| 13 | Render posture diff | Compare current `mcp__render__list_services` output against `docs/render_security_posture.md` snapshot. Check for new services, `ipAllowList` widening, `autoDeploy` flips, suspended-state changes | No unexpected changes |
+| 14 | Code-scanning / secret-scanning alerts | `gh api repos/JulianS4K/Terminal-2/code-scanning/alerts?state=open` + `gh api .../secret-scanning/alerts?state=open` + `gh api .../dependabot/alerts?state=open` | All triaged this session (resolved or filed as B1-NEXT) |
 
 Output:
 - **Clean sweep** → `bot_chat_log('change_log', 'security', 'B1', 'B1 sweep <date> — clean. Baseline: <release_health_check rows hash>.')`
@@ -156,6 +164,91 @@ When a hallucination is found:
 | `bot_chat` `p0_security` | When a finding is SEC-CRIT or SEC-HIGH | Same shape as `flag` but with explicit `p0_security` event_type |
 | `docs/security-audit-<date>-*.md` | When findings warrant a structured write-up (multi-finding audit, post-PR-cluster pass) | TL;DR + inventory + per-finding sections + retrofit migration spec + verification + open items by lane |
 | `KANBAN.md` SECURITY BACKLOG | For SEC-MED/LOW that won't be patched this session | One row per item, `B1-NEXT-N` tagged, severity-classified, lane-attributed |
+
+## Git / repo posture monitoring
+
+Living inventory at [`docs/git_repo_security_posture.md`](git_repo_security_posture.md). B1 diffs against it during per-session sweep step 12.
+
+### What B1 checks (per-session, read-only)
+
+| Area | Probe |
+|---|---|
+| Branch protection on `main` | `gh api repos/JulianS4K/Terminal-2/branches/main/protection` — verify required status checks (`pytest`, `check`, `scan`), force-push/deletion blocks, admin enforcement state, signing requirement |
+| Repo settings | `gh api repos/JulianS4K/Terminal-2` — verify visibility, default branch, security_and_analysis (secret_scanning, push_protection, dependabot_security_updates) |
+| Webhooks | `gh api repos/JulianS4K/Terminal-2/hooks` — expect empty list; any new hook gets flagged |
+| Deploy keys | `gh api repos/JulianS4K/Terminal-2/keys` — expect empty list |
+| Collaborators | `gh api repos/JulianS4K/Terminal-2/collaborators` — expect only `JulianS4K` admin |
+| Actions permissions | `gh api repos/JulianS4K/Terminal-2/actions/permissions` and `.../actions/permissions/workflow` — verify `default_workflow_permissions=read`, `can_approve_pull_request_reviews=false` |
+| Actions secrets (names) | `gh api repos/JulianS4K/Terminal-2/actions/secrets` — track names + rotation timestamps; never log values |
+| Code-scanning alerts | `gh api .../code-scanning/alerts?state=open` |
+| Secret-scanning alerts | `gh api .../secret-scanning/alerts?state=open` |
+| Dependabot alerts | `gh api .../dependabot/alerts?state=open` |
+
+### What B1 does on findings
+
+- **Branch protection weakened** (e.g. force-push enabled, required checks removed) → SEC-CRIT. File `p0_security` in `bot_chat` immediately. Operator-only to fix.
+- **New webhook / deploy key / collaborator added unexpectedly** → SEC-CRIT. `p0_security`. Possibly an account takeover signal.
+- **Security_and_analysis flag flipped off** → SEC-HIGH. File flag + propose re-enable PR.
+- **New code-scanning / secret-scanning / dependabot alert** → triage by alert's own severity; SEC-CRIT/HIGH gets within-session patch attempt; SEC-MED/LOW filed in KANBAN.
+- **Actions secret rotated unexpectedly** → flag (could be legit operator rotation, but worth confirming).
+
+## Render workspace monitoring
+
+Living inventory at [`docs/render_security_posture.md`](render_security_posture.md). B1 diffs against it during per-session sweep step 13.
+
+D1 owns Render writes exclusively per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.md) Cross-cutting Rule #6. B1 reads only — any finding that requires a write becomes a PR comment to D1.
+
+### What B1 checks (per-session, read-only)
+
+| Area | Probe |
+|---|---|
+| Workspace access | `mcp__render__list_workspaces` — verify only the S4K workspace + correct owner email |
+| Service list | `mcp__render__list_services` — track service names, ids, types (web_service / static_site / cron_job), branches |
+| Per-service config | `mcp__render__get_service` — verify `autoDeploy` trigger, `branch`, `ipAllowList`, `pullRequestPreviewsEnabled`, suspended state |
+| Service logs | `mcp__render__list_logs` filtered for auth failures, 5xx spikes, anomalous error patterns |
+| Deploys | `mcp__render__list_deploys` — track recency, status; flag failed deploys that auto-rollback |
+
+### What B1 does on findings
+
+- **New unexpected service in workspace** → SEC-HIGH. Likely D1 work but not coordinated — flag in `bot_chat` + PR comment to D1.
+- **`ipAllowList` flipped from restricted to `0.0.0.0/0`** → SEC-MED. Could be intentional; PR comment to D1 to confirm.
+- **`autoDeploy` flipped on for an unprotected branch** → SEC-MED. CD on unreviewed branch is a supply-chain vector.
+- **`pullRequestPreviewsEnabled` flipped on** → SEC-MED. Unexpected previews of PR code on public URL.
+- **Service moved to `develop` or non-`main` branch** → SEC-MED. Branch protection only covers `main`.
+- **Anomalous log pattern (auth-failure spike, 5xx flood, OOM crashes)** → triage per severity; file in `bot_chat`.
+
+## Slack posture monitoring
+
+**Current state (2026-05-15)**: no Slack MCP tool available, no active Slack integration in the repo. Existing Slack references are incidental:
+- `docs/security-runbook-2026-05-11.md` mentions Slack DM as an out-of-band delivery channel for rotated passwords
+- `COWORKER_ONBOARDING.md` directs coworkers to GitHub issues over Slack
+
+Until/unless operator installs a Slack MCP, B1's Slack monitoring is **grep-based**, focused on detecting accidental leakage of Slack credentials into the repo.
+
+### What B1 checks (per-session, read-only)
+
+| Area | Probe | Pass condition |
+|---|---|---|
+| Slack tokens leaked in code | `gitleaks` ruleset (already running via `.github/workflows/secret-scan.yml`) — built-in rules cover `xoxb-*`, `xoxp-*`, `xoxa-*`, `xoxs-*`, `xoxr-*` bot/user/app tokens | 0 findings |
+| Slack signing secrets / webhook URLs | grep repo for `hooks.slack.com/services/`, `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_WEBHOOK_URL` | None present (or all in `.gitleaksignore` with documented justification) |
+| Slack GitHub App on the repo | `gh api repos/JulianS4K/Terminal-2/installation` (when scope allows) — track Slack App installation status | Track changes between sweeps |
+| Slack workflow steps in Actions | grep `.github/workflows/*.yml` for `slack` — track any workflow that posts to Slack | No unexpected Slack-posting workflows |
+
+### What B1 does on findings
+
+- **Slack token (`xox*`) in any commit** → SEC-CRIT. Token must be revoked in Slack workspace immediately (operator-coordinated). History rewrite + force-push window per the same protocol as the `CRON_SECRET` incident.
+- **Webhook URL leaked** → SEC-MED. Slack webhook URLs are abusable (anyone can post to the channel) but limited blast radius. Rotate webhook + redact.
+- **New Slack GitHub App installed unexpectedly** → SEC-HIGH. Could be operator-installed integration OR account-takeover signal. `flag` to operator for confirmation.
+- **New Slack-posting workflow appears** → SEC-MED. Could leak PR contents / repo metadata to a Slack workspace. Review the workflow before next sweep.
+
+### Future state (when Slack MCP becomes available)
+
+Add to per-session sweep:
+- List Slack workspace members; flag new admins
+- Search recent messages for incident-shape patterns (leaked tokens shared in DMs, external pen-test chatter, social-engineering attempts)
+- Verify Slack workspace 2FA enforcement, SSO config, retention policy
+
+Filed as [B1-NEXT-21] for operator decision on Slack MCP install.
 
 ## Escalation paths
 
