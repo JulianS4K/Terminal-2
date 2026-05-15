@@ -40,6 +40,8 @@ Author: C1 (Cluster F of the [audit + consolidation plan](docs/audit-2026-05-15-
 
 **Recommendation (Cluster A follow-up, A1 lane)**: enable `track_functions='pl'` on the prod project. Cheap to turn on; gives the next sprawl pass real data.
 
+**Update 2026-05-15 17:49 UTC** (bot_chat 159): A1 attempted `ALTER SYSTEM SET track_functions='pl'` (and `ALTER DATABASE`) via MCP — both blocked at the Supabase managed-instance permission layer (`ERROR: 42501 permission denied to set parameter "track_functions"`). Needs operator-side action via the Supabase dashboard. 2026-05-22 rerun target dependent on operator step. Static-analysis fallback (below) remains the interim approach.
+
 Alternative without changing the setting: build a static-analysis map by scanning:
 - `cron.job.command` for function name references
 - `pg_views.definition` (and `pg_matviews`) for function references
