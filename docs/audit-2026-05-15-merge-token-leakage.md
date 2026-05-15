@@ -81,3 +81,33 @@ Per PR rough estimate: 50-100 lines of pure prose/comment savings. Across a 7-PR
 ## Pattern catalog → rulebook
 
 These 5 patterns are now codified in [docs/token-discipline-rules.md](docs/token-discipline-rules.md) §"Pre-merge code audit". Future merges run the audit at PR-merge time; findings ride to lane owners as bot_chat flags.
+
+## Round 2 deeper-audit findings (post-#117/#118 merge)
+
+### Consolidation status on Cluster C RLS-ERROR backlog
+
+The 7 ERROR `rls_disabled_in_public` lints from this morning's `get_advisors` resolve as:
+
+| Table | Status |
+|---|---|
+| `aq_venue_map` | **fixed** in PR #110 (codified `20260515300000_…`, apply pending) |
+| `aq_performer_map` | **fixed** in PR #110 |
+| `cron_pause_state_20260514` | **tracked** B1-NEXT-7 (KANBAN.md) |
+| `sg_event_priority_state` | **tracked** B1-NEXT-7 |
+| `sg_priority_policy` | **tracked** B1-NEXT-7 |
+| `cron_policy` | **not in B1-NEXT-7** — likely admin-only (no anon GRANT); lint noise vs real exposure |
+| `cron_gate_decisions` | **not in B1-NEXT-7** — same |
+
+The 2 not in B1-NEXT-7 are flagged by `get_advisors` (lint-level: all public tables checked) but not by B1's anon-callable inventory (operational-level: filters by effective anon access). Disposition: either enable RLS with `admin_only` policy (closes the lint, zero behavior change — Cluster A drift infra item) or accept the lint with a documented exception. **C1 recommendation**: enable RLS + admin_only policy in B1's next migration; the 2 tables join F-1/2/3 in `B1-NEXT-7` scope.
+
+### B1 PR #118 doc audit (no leakage findings)
+
+- `docs/b1_operating_constraints.md` (182 lines) — appropriate for a self-contract; matches the C1 + D1 pattern.
+- `docs/anon_callable_surface_inventory.md` (168 lines) — a model living-inventory format. Table-based, clear criteria, F-N numbering scheme that scales. Recommend other lanes adopt this pattern when they need a structured "active findings" view.
+- `docs/security-audit-2026-05-14-post-pr101.md` (238 lines) — well-organized audit. TL;DR up top, structured findings table, separate verification protocols. Matches the bar set by `audit-2026-05-14-data-stability.md`.
+
+These are *not* token-bloated for their type; they're the right length for what they document.
+
+### Convergent observation on migration collisions
+
+B1's `KANBAN.md` `B1-NEXT-10` independently flagged the same migration slot collisions C1 flagged in bot_chat 144/146. Two independent observers reaching the same finding strengthens the case for the rename pass — both C1 and B1 will track it; A1 picks the resolution window.
