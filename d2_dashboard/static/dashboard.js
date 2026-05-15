@@ -134,6 +134,41 @@ const ORDERS_AUTO_REFRESH_MS = 5 * 60 * 1000;
 let _ORDERS_REFRESH_TIMER = null;
 let _DETAIL_OPEN = false;
 
+// Primary-tab view mode — "active" (default, hides terminal canonical_status)
+// or "all" (no canonical_status filter). Persisted to localStorage so the
+// operator's preference sticks across sessions. Flips `?include_terminal=0|1`
+// on the /api/d2/orders endpoint so SQL pre-filters; lighter wire than
+// client-side filtering.
+const ORDERS_VIEW_MODE_KEY = "d2.orders.viewMode";
+const _ACTIVE_STATUSES = ["pending", "accepted", "substitution"];
+const _TERMINAL_STATUSES = ["fulfilled", "rejected", "cancelled"];
+
+function getOrdersViewMode() {
+  const m = localStorage.getItem(ORDERS_VIEW_MODE_KEY);
+  return m === "all" ? "all" : "active";
+}
+function setOrdersViewMode(m) {
+  try { localStorage.setItem(ORDERS_VIEW_MODE_KEY, m === "all" ? "all" : "active"); } catch (_) {}
+}
+
+// Stale-data threshold for the per-source freshness chips on the Orders tab.
+// Aligned with cron_policy.work_check_sql floor (mig 20260515250002 set sales
+// ingest interval to 60 min). Uniform across sources for MVP — per-source
+// thresholds matching each cron's policy off-peak windows (SG broker /sales
+// is bursty, peak 11 PM ET / off-peak 4–5 AM ET; a flat 60-min check at 5 AM
+// could flash amber during normal quiet windows) is a follow-up.
+const STALE_THRESHOLD_MIN = 60;
+const STALE_CRITICAL_MIN = 4 * 60;
+
+function _staleClass(asOfIso) {
+  if (!asOfIso) return "chip-stale";
+  const ageMin = (Date.now() - Date.parse(asOfIso)) / 60_000;
+  if (!Number.isFinite(ageMin) || ageMin < 0) return "chip-fresh";
+  if (ageMin > STALE_CRITICAL_MIN) return "chip-stale-critical";
+  if (ageMin > STALE_THRESHOLD_MIN) return "chip-stale";
+  return "chip-fresh";
+}
+
 async function importWithTimeout(url, ms) {
   // Race the dynamic import against a timeout so we don't hang on a blocked CDN.
   let timer;
@@ -236,10 +271,15 @@ function renderDashboard(domain) {
     <main>
       <div class="tabs">
         <button class="tab active" data-tab="orders">Orders</button>
+        <button class="tab" data-tab="metrics">Metrics</button>
         <button class="tab" data-tab="health">Health</button>
       </div>
       <section id="panel-orders" class="panel active">
         <div class="orders-toolbar">
+          <div class="view-mode-pill" role="radiogroup" aria-label="Order view mode">
+            <button type="button" class="pill-btn pill-active" data-mode="active" role="radio" aria-checked="true" title="Hide fulfilled / rejected / cancelled orders">Active only</button>
+            <button type="button" class="pill-btn" data-mode="all" role="radio" aria-checked="false" title="Show every order regardless of canonical status">All</button>
+          </div>
           <label class="toolbar-toggle">
             <input type="checkbox" id="chk-hide-past" checked />
             <span>Hide past (&minus;12h)</span>
@@ -295,6 +335,41 @@ function renderDashboard(domain) {
         </div>
         <div id="order-detail-wrap" class="order-detail-wrap"></div>
       </section>
+      <section id="panel-metrics" class="panel">
+        <div class="metrics-toolbar">
+          <span class="toolbar-meta" id="metrics-last-refreshed">metrics: not loaded yet</span>
+        </div>
+        <div class="metrics-grid" id="metrics-windows">
+          <!-- 4 window cards populated by renderMetrics() -->
+        </div>
+        <div class="metrics-sparkline-wrap">
+          <h3 class="metrics-section-header">Last 24h velocity (gross $)</h3>
+          <svg id="metrics-sparkline-svg" viewBox="0 0 480 80" preserveAspectRatio="none" class="metrics-sparkline-svg"></svg>
+          <div class="toolbar-meta metrics-sparkline-meta" id="metrics-sparkline-meta"></div>
+        </div>
+        <div class="metrics-tables">
+          <div class="metrics-table-block">
+            <h3 class="metrics-section-header">Hot events (last hour by velocity)</h3>
+            <div id="metrics-hot-events"><div class="empty">no data</div></div>
+          </div>
+          <div class="metrics-table-block">
+            <h3 class="metrics-section-header">Biggest sales since last poll</h3>
+            <div id="metrics-biggest-sales"><div class="empty">no data</div></div>
+          </div>
+          <div class="metrics-table-block">
+            <h3 class="metrics-section-header">Top events (last 7d, fulfilled $)</h3>
+            <div id="metrics-top-events"><div class="empty">no data</div></div>
+          </div>
+          <div class="metrics-table-block">
+            <h3 class="metrics-section-header">Sales gaps (last 24h, &gt;30min)</h3>
+            <div id="metrics-sales-gaps"><div class="empty">no data</div></div>
+          </div>
+        </div>
+        <div class="metrics-feed-block">
+          <h3 class="metrics-section-header">Live sales feed (newest 20, auto every 30s)</h3>
+          <div id="metrics-sales-feed"><div class="empty">no data</div></div>
+        </div>
+      </section>
       <section id="panel-health" class="panel">
         <div id="health-wrap"><div class="empty">not loaded yet</div></div>
       </section>
@@ -313,6 +388,31 @@ function renderDashboard(domain) {
       await SB.auth.signOut();
     });
   }
+  // Active/All view-mode pill — flips ?include_terminal=0|1 on the API so
+  // SQL pre-filters. Restored from localStorage on load. Clicking syncs the
+  // status checkboxes to match the mode then re-fetches.
+  function _applyViewModeUI(mode) {
+    document.querySelectorAll(".view-mode-pill .pill-btn").forEach((btn) => {
+      const isActive = btn.dataset.mode === mode;
+      btn.classList.toggle("pill-active", isActive);
+      btn.setAttribute("aria-checked", isActive ? "true" : "false");
+    });
+    document.querySelectorAll(".flt-status").forEach((el) => {
+      el.checked = mode === "all" ? true : _ACTIVE_STATUSES.includes(el.value);
+    });
+  }
+  _applyViewModeUI(getOrdersViewMode());
+  document.querySelectorAll(".view-mode-pill .pill-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode === "all" ? "all" : "active";
+      if (mode === getOrdersViewMode()) return;
+      setOrdersViewMode(mode);
+      _applyViewModeUI(mode);
+      CURRENT_PAGE = 1;
+      loadOrders();
+    });
+  });
+
   // Re-render (not re-fetch) when the user toggles Hide-Past-12h or any of
   // the in-memory filters. Source / date / amount filters all just re-slice
   // the cached body — no new API call, no new SQL query.
@@ -413,10 +513,18 @@ function activateTab(name) {
   document.querySelectorAll(".panel").forEach((el) =>
     el.classList.toggle("active", el.id === `panel-${name}`)
   );
-  // Auto-refresh runs only while the Orders tab is the active one — leaving
-  // it clears the timer, returning starts it again.
+  // Auto-refresh runs only while its tab is the active one — leaving
+  // a tab clears its timer, returning starts it again.
   if (name === "orders") startOrdersAutoRefresh();
   else                   stopOrdersAutoRefresh();
+
+  if (name === "metrics") {
+    loadMetrics();
+    loadSalesFeed();
+    startMetricsAutoRefresh();
+  } else {
+    stopMetricsAutoRefresh();
+  }
 
   if (name === "health") loadHealth();
 }
@@ -454,6 +562,300 @@ function stopOrdersAutoRefresh() {
     clearInterval(_CRON_FRESHNESS_TIMER);
     _CRON_FRESHNESS_TIMER = null;
   }
+}
+
+// ---------- Metrics tab (CEO view) ----------
+
+const METRICS_AUTO_REFRESH_MS = 60_000;     // bundle poll, 1 min
+const SALES_FEED_REFRESH_MS = 30_000;       // live feed, 30s
+const SALES_FEED_LIMIT = 20;
+let _METRICS_REFRESH_TIMER = null;
+let _SALES_FEED_REFRESH_TIMER = null;
+let _LAST_SALES_FEED_IDS = new Set();        // for flash-on-new highlighting
+
+function startMetricsAutoRefresh() {
+  if (!_METRICS_REFRESH_TIMER) {
+    _METRICS_REFRESH_TIMER = setInterval(loadMetrics, METRICS_AUTO_REFRESH_MS);
+  }
+  if (!_SALES_FEED_REFRESH_TIMER) {
+    _SALES_FEED_REFRESH_TIMER = setInterval(loadSalesFeed, SALES_FEED_REFRESH_MS);
+  }
+}
+
+function stopMetricsAutoRefresh() {
+  if (_METRICS_REFRESH_TIMER)    { clearInterval(_METRICS_REFRESH_TIMER);    _METRICS_REFRESH_TIMER = null; }
+  if (_SALES_FEED_REFRESH_TIMER) { clearInterval(_SALES_FEED_REFRESH_TIMER); _SALES_FEED_REFRESH_TIMER = null; }
+}
+
+async function loadMetrics() {
+  const refreshedEl = document.getElementById("metrics-last-refreshed");
+  let body;
+  try {
+    body = await authedFetch("/api/d2/metrics");
+  } catch (e) {
+    if (refreshedEl) refreshedEl.textContent = `metrics error: ${e.message}`;
+    return;
+  }
+  if (refreshedEl) {
+    refreshedEl.textContent = `metrics: ${new Date().toLocaleTimeString()}`
+      + (body.timings_ms?.total != null ? ` · ${Math.round(body.timings_ms.total)}ms` : "");
+  }
+  renderKpiGrid(body.windows || {});
+  renderSparkline(body.hourly_buckets || []);
+  renderHotEvents(body.hot_events || []);
+  renderBiggestSales(body.biggest_sales || []);
+  renderTopEvents(body.top_events || []);
+  renderSalesGaps(body.sales_gaps || []);
+}
+
+async function loadSalesFeed() {
+  let body;
+  try {
+    body = await authedFetch(`/api/d2/sales-feed?limit=${SALES_FEED_LIMIT}`);
+  } catch (e) {
+    const wrap = document.getElementById("metrics-sales-feed");
+    if (wrap) wrap.innerHTML = `<div class="empty err-text">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  renderSalesFeed(body.rows || []);
+}
+
+const _METRICS_SOURCES = ["evo", "seatgeek", "seatdata", "tickpick", "vivid"];
+const _METRICS_WINDOW_LABELS = [
+  ["hour",  "Last hour"],
+  ["today", "Today (ET)"],
+  ["24h",   "Last 24h"],
+  ["7d",    "Last 7d"],
+];
+
+function _fmtUsd(n) {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  const v = Number(n);
+  if (Math.abs(v) >= 1000) return `$${Math.round(v).toLocaleString()}`;
+  return `$${v.toFixed(2)}`;
+}
+
+function _sumGross(rows, key) {
+  return (rows || []).reduce((s, r) => s + Number(r[key] || 0), 0);
+}
+
+function _deltaPct(current, prior) {
+  if (prior == null || prior === 0) return current > 0 ? null : 0; // null = N/A baseline
+  return ((current - prior) / Math.abs(prior)) * 100;
+}
+
+function _renderDeltaChip(current, prior) {
+  const pct = _deltaPct(current, prior);
+  if (pct == null) return `<span class="delta delta-na" title="no prior-period baseline">—</span>`;
+  if (Math.abs(pct) < 0.5) return `<span class="delta delta-flat" title="flat vs prior period">→ 0%</span>`;
+  const cls = pct > 0 ? "delta-up" : "delta-down";
+  const arrow = pct > 0 ? "↑" : "↓";
+  const txt = `${arrow} ${Math.abs(pct).toFixed(pct > 100 ? 0 : 1)}%`;
+  return `<span class="delta ${cls}" title="vs prior ${current.toFixed ? current.toFixed(2) : current} → ${prior.toFixed ? prior.toFixed(2) : prior}">${txt}</span>`;
+}
+
+function renderKpiGrid(windows) {
+  const wrap = document.getElementById("metrics-windows");
+  if (!wrap) return;
+  const parts = [];
+  for (const [key, label] of _METRICS_WINDOW_LABELS) {
+    const cur = (windows[key]?.current) || [];
+    const pri = (windows[key]?.prior) || [];
+    const curFulfilled = _sumGross(cur, "fulfilled_gross");
+    const priFulfilled = _sumGross(pri, "fulfilled_gross");
+    const curTotal     = _sumGross(cur, "gross_total");
+    const priTotal     = _sumGross(pri, "gross_total");
+    const curCount     = (cur || []).reduce((s, r) => s + Number(r.orders_count || 0), 0);
+    const perSourceRows = _METRICS_SOURCES.map((src) => {
+      const row = (cur || []).find((r) => r.source === src) || {};
+      const orders = Number(row.orders_count || 0);
+      const fulfilled = Number(row.fulfilled_count || 0);
+      const gross = Number(row.fulfilled_gross || 0);
+      return `<tr>
+        <td class="kpi-src">${escapeHtml(src)}</td>
+        <td class="kpi-num">${_fmtUsd(gross)}</td>
+        <td class="kpi-num">${fulfilled}/${orders}</td>
+      </tr>`;
+    }).join("");
+    parts.push(`
+      <div class="kpi-card">
+        <div class="kpi-card-header">
+          <span class="kpi-label">${escapeHtml(label)}</span>
+          ${_renderDeltaChip(curFulfilled, priFulfilled)}
+        </div>
+        <div class="kpi-totals">
+          <div><span class="kpi-mini-label">fulfilled</span><span class="kpi-mini-val">${_fmtUsd(curFulfilled)}</span></div>
+          <div><span class="kpi-mini-label">all orders</span><span class="kpi-mini-val">${_fmtUsd(curTotal)}</span></div>
+          <div><span class="kpi-mini-label">count</span><span class="kpi-mini-val">${curCount}</span></div>
+        </div>
+        <table class="kpi-source-table">
+          <thead><tr><th>source</th><th>fulfilled $</th><th>filled/total</th></tr></thead>
+          <tbody>${perSourceRows}</tbody>
+        </table>
+      </div>
+    `);
+  }
+  wrap.innerHTML = parts.join("");
+}
+
+function renderSparkline(buckets) {
+  const svg = document.getElementById("metrics-sparkline-svg");
+  const meta = document.getElementById("metrics-sparkline-meta");
+  if (!svg) return;
+  // Aggregate buckets to total fulfilled_gross per hour across all sources.
+  const byHour = new Map();
+  for (const b of buckets) {
+    const k = b.hour_bucket || b.hour;
+    if (!k) continue;
+    byHour.set(k, (byHour.get(k) || 0) + Number(b.fulfilled_gross || 0));
+  }
+  // Fill missing hours (last 24h) with zeros so the sparkline reflects gaps.
+  const now = new Date();
+  const hours = [];
+  for (let i = 23; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 3600_000);
+    d.setMinutes(0, 0, 0);
+    hours.push(d);
+  }
+  const series = hours.map((d) => {
+    const iso = d.toISOString();
+    // Round to exact hour ISO format matching SQL output (drop "Z" vs +00:00 variations).
+    const isoNoMs = iso.split(".")[0] + "+00:00";
+    const isoZ    = iso;
+    return byHour.get(isoNoMs) ?? byHour.get(isoZ) ?? byHour.get(iso.replace("Z", "+00:00")) ?? 0;
+  });
+  const max = series.reduce((m, v) => v > m ? v : m, 0);
+  const total = series.reduce((s, v) => s + v, 0);
+  const w = 480; const h = 80; const pad = 2;
+  const barW = (w - pad * 2) / series.length;
+  const bars = series.map((v, i) => {
+    const bh = max > 0 ? (v / max) * (h - pad * 2) : 0;
+    const x = pad + i * barW;
+    const y = h - pad - bh;
+    return `<rect class="sparkline-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${bh.toFixed(1)}"><title>${hours[i].toLocaleString()} · ${_fmtUsd(v)}</title></rect>`;
+  }).join("");
+  svg.innerHTML = bars;
+  if (meta) meta.textContent = `total ${_fmtUsd(total)} · peak ${_fmtUsd(max)}`;
+}
+
+function renderTopEvents(events) {
+  const wrap = document.getElementById("metrics-top-events");
+  if (!wrap) return;
+  if (!events.length) { wrap.innerHTML = `<div class="empty">no fulfilled events in window</div>`; return; }
+  const rows = events.map((e) => {
+    const evDate = e.event_date ? new Date(e.event_date).toLocaleString() : "—";
+    return `<tr>
+      <td class="te-name">${escapeHtml(e.event_name || `event ${e.tevo_event_id}`)}</td>
+      <td class="te-date">${escapeHtml(evDate)}</td>
+      <td class="te-num">${_fmtUsd(e.total_gross)}</td>
+      <td class="te-num">${e.fulfilled_count}/${e.total_count}</td>
+    </tr>`;
+  }).join("");
+  wrap.innerHTML = `<table class="metrics-table">
+    <thead><tr><th>event</th><th>when</th><th>fulfilled $</th><th>filled/total</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderHotEvents(events) {
+  const wrap = document.getElementById("metrics-hot-events");
+  if (!wrap) return;
+  if (!events.length) { wrap.innerHTML = `<div class="empty">no activity in the last hour</div>`; return; }
+  const rows = events.map((e) => {
+    const evDate = e.event_date ? new Date(e.event_date).toLocaleDateString() : "—";
+    const lastOrder = e.last_order_at ? formatAgo(e.last_order_at) : "—";
+    return `<tr>
+      <td class="te-name">${escapeHtml(e.event_name || `event ${e.tevo_event_id}`)}</td>
+      <td class="te-date">${escapeHtml(evDate)}</td>
+      <td class="te-num">${e.recent_count}</td>
+      <td class="te-num">${_fmtUsd(e.recent_gross)}</td>
+      <td class="te-date">${escapeHtml(lastOrder)}</td>
+    </tr>`;
+  }).join("");
+  wrap.innerHTML = `<table class="metrics-table">
+    <thead><tr><th>event</th><th>date</th><th>orders</th><th>gross</th><th>last seen</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderBiggestSales(rows) {
+  const wrap = document.getElementById("metrics-biggest-sales");
+  if (!wrap) return;
+  if (!rows.length) { wrap.innerHTML = `<div class="empty">no fulfilled sales in the last 5 min</div>`; return; }
+  const trs = rows.map((r) => {
+    const evDate = r.event_date ? new Date(r.event_date).toLocaleDateString() : "—";
+    const seen = r.created_at ? formatAgo(r.created_at) : "—";
+    return `<tr>
+      <td>${escapeHtml(r.source || "")}</td>
+      <td class="te-name">${escapeHtml(r.event_name || (r.tevo_event_id ? `event ${r.tevo_event_id}` : "—"))}</td>
+      <td class="te-date">${escapeHtml(evDate)}</td>
+      <td class="te-num">${_fmtUsd(r.gross_value)}</td>
+      <td class="te-num">${r.quantity ?? "—"}</td>
+      <td class="te-date">${escapeHtml(seen)}</td>
+    </tr>`;
+  }).join("");
+  wrap.innerHTML = `<table class="metrics-table">
+    <thead><tr><th>src</th><th>event</th><th>date</th><th>$</th><th>qty</th><th>when</th></tr></thead>
+    <tbody>${trs}</tbody>
+  </table>`;
+}
+
+function renderSalesGaps(gaps) {
+  const wrap = document.getElementById("metrics-sales-gaps");
+  if (!wrap) return;
+  if (!gaps.length) {
+    wrap.innerHTML = `<div class="empty"><span class="status-pill status-fulfilled">healthy</span> no gaps &gt;30min in the last 24h</div>`;
+    return;
+  }
+  const rows = gaps.map((g) => {
+    const start = g.gap_start ? new Date(g.gap_start).toLocaleString() : "—";
+    const end   = g.gap_end   ? new Date(g.gap_end).toLocaleString()   : "—";
+    const mins = Number(g.gap_minutes || 0);
+    const cls = mins > 240 ? "delta-down" : mins > 90 ? "delta-flat" : "";
+    return `<tr>
+      <td>${escapeHtml(g.source || "")}</td>
+      <td class="te-num"><span class="delta ${cls}">${mins.toFixed(1)}m</span></td>
+      <td class="te-date">${escapeHtml(start)}</td>
+      <td class="te-date">${escapeHtml(end)}</td>
+    </tr>`;
+  }).join("");
+  wrap.innerHTML = `<table class="metrics-table">
+    <thead><tr><th>source</th><th>gap</th><th>quiet from</th><th>resumed</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderSalesFeed(rows) {
+  const wrap = document.getElementById("metrics-sales-feed");
+  if (!wrap) return;
+  if (!rows.length) { wrap.innerHTML = `<div class="empty">no sales in feed</div>`; return; }
+  const newIds = new Set();
+  const trs = rows.map((r) => {
+    const id = `${r.source}:${r.source_order_id}`;
+    newIds.add(id);
+    const isNew = _LAST_SALES_FEED_IDS.size > 0 && !_LAST_SALES_FEED_IDS.has(id);
+    const cls = isNew ? "row-new" : "";
+    const created = r.created_at ? new Date(r.created_at).toLocaleString() : "—";
+    const evDate = r.event_date ? new Date(r.event_date).toLocaleDateString() : "—";
+    const okBadge = r.is_sale_succeeded
+      ? `<span class="status-pill status-fulfilled">fulfilled</span>`
+      : `<span class="status-pill">${escapeHtml(r.canonical_status || "—")}</span>`;
+    return `<tr class="${cls}">
+      <td>${escapeHtml(r.source || "")}</td>
+      <td>${escapeHtml(r.source_order_id || "")}</td>
+      <td>${escapeHtml(r.event_name || "—")}</td>
+      <td>${escapeHtml(evDate)}</td>
+      <td class="sf-num">${_fmtUsd(r.gross_value)}</td>
+      <td class="sf-num">${r.quantity ?? "—"}</td>
+      <td>${okBadge}</td>
+      <td class="sf-when">${escapeHtml(created)}</td>
+    </tr>`;
+  }).join("");
+  wrap.innerHTML = `<table class="metrics-table">
+    <thead><tr><th>source</th><th>order id</th><th>event</th><th>date</th><th>gross</th><th>qty</th><th>status</th><th>seen</th></tr></thead>
+    <tbody>${trs}</tbody>
+  </table>`;
+  _LAST_SALES_FEED_IDS = newIds;
 }
 
 async function refreshCronFreshness() {
@@ -501,7 +903,8 @@ async function loadOrders({ silent = false, twoPhase = false } = {}) {
   // background to merge vivid + history via the diff-aware DOM update.
   // Only the initial dashboard load and explicit Refresh use twoPhase;
   // auto-poll / pagination go straight to the full call.
-  const url = (params) => `/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}` + params;
+  const includeTerminal = getOrdersViewMode() === "all" ? 1 : 0;
+  const url = (params) => `/api/d2/orders?per_page=${PER_PAGE}&page=${CURRENT_PAGE}&include_terminal=${includeTerminal}` + params;
   if (twoPhase) {
     try {
       const fastBody = await authedFetch(url("&fast=1"));
@@ -569,7 +972,15 @@ function renderOrders() {
 
   bar.innerHTML = (body.sources || [])
     .map((s) => {
-      const cls = s.ok ? "chip ok" : "chip err";
+      // Stale class on the chip when SQL has no rows OR when as_of is older
+      // than the cron policy floor. Lets the operator distinguish "no sales
+      // this period" from "ingest hasn't run in a while" at a glance.
+      let staleCls = "chip-fresh";
+      if (s.ok && s.origin === "sql") {
+        if (s.as_of) staleCls = _staleClass(s.as_of);
+        else if ((s.count ?? 0) === 0) staleCls = "chip-stale"; // SQL ok but zero rows + no as_of = no recent ingest
+      }
+      const cls = (s.ok ? "chip ok" : "chip err") + " " + staleCls;
       const origin = s.origin === "sql"
         ? `<span class="chip-origin chip-origin-sql" title="from unified_orders (cron-fresh)">SQL</span>`
         : s.origin === "api+sql-match"
@@ -581,6 +992,8 @@ function renderOrders() {
       if (s.ok) {
         detail = `${s.count} row${s.count === 1 ? "" : "s"}` + (s.total_reported != null ? ` / ${s.total_reported} total` : "");
         if (s.origin === "sql" && s.as_of) detail += ` · row ${formatAgo(s.as_of)}`;
+        if (staleCls === "chip-stale-critical") detail += " · STALE";
+        else if (staleCls === "chip-stale") detail += " · stale";
       } else {
         detail = s.error || "error";
       }

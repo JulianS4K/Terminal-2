@@ -1,6 +1,8 @@
 # Render.com Infrastructure-as-Code blueprint for D2's orders dashboard.
 #
-# OWNER: D2 (Order Clients) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6.
+# OWNER: D2 (Order Clients) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6
+# (PRs #104 + #105, 2026-05-14). D2 has standing read + write authority
+# on the d2-orders-dashboard service.
 # Service: d2-orders-dashboard (srv-d82b4kl7vvec73b4r3r0)
 # Companion blueprint for D1's storefront: render.yaml
 #
@@ -15,6 +17,14 @@
 #     blueprint requires one-time operator action in the dashboard)
 #
 # Until the blueprint is wired in, this file is documentation-only.
+#
+# Env shape rationale: the dashboard is SQL-only (no broker-API calls in
+# the data path). Supabase reads are the data path; everything else is
+# either auth-related or optional. Broker tokens (TEVO/SG/TickPick/Vivid/
+# SeatData) are NOT listed here — the dashboard doesn't read from them
+# during /api/d2/orders. They can be left in the Render dashboard if
+# desired (the `_broker_diag` env introspection in /healthz/detail will
+# report them as set/unset, but no order endpoint consumes them).
 
 services:
   - type: web
@@ -33,15 +43,29 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
-      # Supabase secrets — set via `sync: false` so they prompt on first
-      # provisioning and never live in version control. Names must match
-      # what d2_dashboard/main.py expects.
+
+      # Hard-required: SQL reads against unified_orders + raw *_orders
+      # tables + v_event_base. Without these, /api/d2/orders returns 503.
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+
+      # Auth gate (only consulted when AUTH_DISABLED=false, which is the
+      # shipped prod default per d2_dashboard/DEPLOY.md).
       - key: SUPABASE_ANON_KEY
         sync: false
-      # D2-specific cron auth (if/when scheduled jobs hit dashboard endpoints).
-      - key: CRON_SECRET
+      - key: ALLOWED_EMAIL_DOMAIN
+        value: s4kent.com
+      - key: D2_CANONICAL_ORIGIN
+        value: https://d2-orders-dashboard.onrender.com
+
+      # GoTickets — the one source without SQL backing (no list endpoint
+      # upstream, no ingest cron yet). Required only if the operator uses
+      # the by-id form on the Samples tab; safe to omit.
+      - key: GOTICKETS_ACCESS_ID
+        sync: false
+      - key: GOTICKETS_API_SECRET
+        sync: false
+      - key: GOTICKETS_SAMPLE_ORDER_ID
         sync: false

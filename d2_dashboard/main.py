@@ -530,14 +530,10 @@ def _to_float(v: Any) -> float | None:
 
 # ---------- SQL-backed fetchers ----------
 
-# Sources mirrored to public.unified_orders by an upstream cron. /api/d2/orders
-# pulls these from SQL with no broker-API call. Vivid is still on the API+match
-# path (XML ingest needs an edge function — separate ticket).
-_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata", "tickpick"})
-
-# Sources the dashboard pulls via direct API call, enriched with canonical
-# event info from v_event_base. Stopgap until persistence cron ships.
-_API_BACKED_SOURCES = ("vivid",)
+# All 5 sources are mirrored to public.unified_orders by upstream crons (see
+# migration 20260513230100_unified_orders_with_tickpick_vivid). /api/d2/orders
+# is SQL-only — no broker-API calls in the data path.
+_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata", "tickpick", "vivid"})
 
 _ALL_SOURCES = ("evo", "seatgeek", "seatdata", "tickpick", "vivid")
 
@@ -698,7 +694,16 @@ def _enrich_row_with_event(row: dict, event_window: list[dict]) -> dict:
     return row
 
 
-def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
+# Terminal canonical_status values from public.order_status_xref. Used by
+# the active-only default filter on /api/d2/orders. Rows with NULL
+# canonical_status (sources whose source_status didn't match an xref row)
+# are also surfaced in the active view — they're "unknown" and probably
+# need operator attention more than the known-terminal rows.
+_TERMINAL_STATUSES = ("fulfilled", "rejected", "cancelled")
+_ACTIVE_STATUSES = ("pending", "accepted", "substitution")
+
+
+def _fetch_unified_orders_page(per_page: int, page: int = 1, include_terminal: bool = False) -> dict | None:
     """Pull a balanced page of rows from unified_orders, joined to
     v_event_base for event_name + event_date. Returns None when Supabase
     isn't configured.
@@ -734,14 +739,18 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1) -> dict | None:
         # drops total to ~max(per-source), ~100ms.
         def _pull_one(src: str) -> tuple[str, list[dict], str | None]:
             try:
-                res = (
+                q = (
                     sb.table("unified_orders")
-                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
+                    .select("source,source_order_id,tevo_event_id,source_status,canonical_status,is_terminal,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
                     .eq("source", src)
-                    .order("created_at", desc=True)
-                    .range(start, end)
-                    .execute()
                 )
+                if not include_terminal:
+                    # Active-only default: hide rows in known-terminal states
+                    # (fulfilled/rejected/cancelled). NULL canonical_status
+                    # (xref miss on an unknown source_status) is treated as
+                    # active — those usually warrant operator attention.
+                    q = q.or_(f"canonical_status.is.null,canonical_status.in.({','.join(_ACTIVE_STATUSES)})")
+                res = q.order("created_at", desc=True).range(start, end).execute()
                 return src, (res.data or []), None
             except Exception as e:
                 return src, [], _scrub_err(f"unified_orders.sql.{src}", e)
@@ -901,81 +910,31 @@ def _scrub_err(source: str, exc: Exception) -> str:
 
 
 def _fetch_evo(per_page: int, page: int = 1) -> dict:
-    # SQL-first: if Supabase is configured and unified_orders has evo rows,
-    # serve from SQL (cron-fresh, no broker-API quota burn). Fall through
-    # to the upstream API when SQL isn't available or returns empty.
-    sql_row = _fetch_orders_from_sql("evo", per_page, page) if "evo" in _SQL_BACKED_SOURCES else None
-    if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
-        return sql_row
-    # Mirrors the operator's reference Tkinter app: pull orders in both
-    # accepted and pending states, merge + dedupe by id. Evo's list_orders
-    # caps per_page at 10 server-side, so per_page maps to "per state".
-    c = _evo_client()
-    if c is None:
-        return {"source": "evo", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
-    try:
-        cap = min(per_page, 10)
-        seen: dict[str, dict] = {}
-        total_any: int | None = None
-        for state in ("accepted", "pending"):
-            body = c.list_orders(per_page=cap, state=state, page=page)
-            if total_any is None:
-                total_any = body.get("total_entries")
-            for o in body.get("orders") or []:
-                row = _norm_evo(o)
-                if row["order_id"]:
-                    seen.setdefault(row["order_id"], row)
-        rows = list(seen.values())
-        return {"source": "evo", "ok": True, "rows": rows, "total": total_any, "origin": "api"}
-    except Exception as e:
-        return {"source": "evo", "ok": False, "error": _scrub_err("evo", e), "rows": [], "origin": "api"}
+    return _fetch_one_source("evo", per_page, page)
 
 
 def _fetch_sg(per_page: int, page: int = 1) -> dict:
-    sql_row = _fetch_orders_from_sql("seatgeek", per_page, page) if "seatgeek" in _SQL_BACKED_SOURCES else None
-    if sql_row is not None and sql_row.get("ok") and sql_row.get("rows"):
-        return sql_row
-    c = _sg_client()
-    if c is None:
-        return {"source": "seatgeek", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
-    try:
-        body = c.seller_orders("open", page=page)
-        rows = [_norm_sg(o) for o in (body.get("orders") or [])][:per_page]
-        return {"source": "seatgeek", "ok": True, "rows": rows, "total": (body.get("meta") or {}).get("total"), "origin": "api"}
-    except Exception as e:
-        return {"source": "seatgeek", "ok": False, "error": _scrub_err("seatgeek", e), "rows": [], "origin": "api"}
+    return _fetch_one_source("seatgeek", per_page, page)
 
 
 def _fetch_tickpick(per_page: int, page: int = 1) -> dict:
-    # No SQL backing and no list-pagination on the upstream — slice the full
-    # response client-side. Will be added to unified_orders in a follow-up
-    # cron PR; until then the chip shows origin="api".
-    c = _tickpick_client()
-    if c is None:
-        return {"source": "tickpick", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
-    try:
-        body = c.list_orders() or []
-        start = max(0, (page - 1) * per_page)
-        end = start + per_page
-        rows = [_norm_tickpick(o) for o in body[start:end]]
-        return {"source": "tickpick", "ok": True, "rows": rows, "total": len(body), "origin": "api"}
-    except Exception as e:
-        return {"source": "tickpick", "ok": False, "error": _scrub_err("tickpick", e), "rows": [], "origin": "api"}
+    return _fetch_one_source("tickpick", per_page, page)
 
 
 def _fetch_vivid(per_page: int, page: int = 1) -> dict:
-    # Same as tickpick — slice the full response client-side.
-    c = _vivid_client()
-    if c is None:
-        return {"source": "vivid", "ok": False, "error": "no creds", "rows": [], "origin": "api"}
-    try:
-        body = c.list_active_orders() or []
-        start = max(0, (page - 1) * per_page)
-        end = start + per_page
-        rows = [_norm_vivid(o) for o in body[start:end]]
-        return {"source": "vivid", "ok": True, "rows": rows, "total": len(body), "origin": "api"}
-    except Exception as e:
-        return {"source": "vivid", "ok": False, "error": _scrub_err("vivid", e), "rows": [], "origin": "api"}
+    return _fetch_one_source("vivid", per_page, page)
+
+
+def _fetch_one_source(source: str, per_page: int, page: int = 1) -> dict:
+    """SQL-only single-source fetch. Returns the unified_orders fan-out for
+    one source — empty rows + ok=True when the cron-fed view has nothing,
+    503-shaped error when Supabase isn't configured. No upstream-API path:
+    per 2026-05-14 directive the dashboard reads only from SQL; cron
+    freshness (`/api/d2/cron-freshness`) is the operator's staleness signal."""
+    sql_row = _fetch_orders_from_sql(source, per_page, page)
+    if sql_row is None:
+        return {"source": source, "ok": False, "error": "Supabase not configured", "rows": [], "origin": "sql"}
+    return sql_row
 
 
 # ---------- Endpoints ----------
@@ -1072,7 +1031,7 @@ def config_public():
     return _shell_config_blob()
 
 
-def _fetch_unified_orders_fast(per_page: int) -> dict | None:
+def _fetch_unified_orders_fast(per_page: int, include_terminal: bool = False) -> dict | None:
     """First-paint fast path: one global query, upcoming-only, sorted by
     event_date ASC. No per-source split, no v_event_base join, no API call.
     Operator can see the soonest events to triage in <200ms while the
@@ -1080,21 +1039,24 @@ def _fetch_unified_orders_fast(per_page: int) -> dict | None:
 
     "Upcoming" = event_date >= now() - 12h, matching the dashboard's
     default Hide-Past-12h filter. Filter pushed down to SQL so we don't
-    waste bandwidth on rows the client would hide anyway."""
+    waste bandwidth on rows the client would hide anyway.
+
+    `include_terminal=False` (default) further filters to non-terminal
+    canonical_status (the primary tab's active-only view)."""
     sb = _sb()
     if sb is None:
         return None
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     try:
-        res = (
+        q = (
             sb.table("unified_orders")
-            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
+            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,is_terminal,quantity,gross_value,created_at,last_seen_at,event_name,event_date")
             .gte("event_date", cutoff)
-            .order("event_date", desc=False, nullsfirst=False)
-            .limit(per_page)
-            .execute()
         )
+        if not include_terminal:
+            q = q.or_(f"canonical_status.is.null,canonical_status.in.({','.join(_ACTIVE_STATUSES)})")
+        res = q.order("event_date", desc=False, nullsfirst=False).limit(per_page).execute()
         rows_out = []
         per_source_count: dict[str, int] = {}
         per_source_as_of: dict[str, str] = {}
@@ -1126,22 +1088,40 @@ def _fetch_unified_orders_fast(per_page: int) -> dict | None:
 
 
 @app.get("/api/d2/orders")
-def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_auth)):
-    """Hybrid orders feed:
-      - evo / seatgeek / seatdata / tickpick: pulled from public.unified_orders
-      - vivid: pulled from upstream API + enriched via v_event_base match
-        (no SQL backing yet)
+def orders(
+    per_page: int = 25,
+    page: int = 1,
+    fast: int = 0,
+    include_terminal: int = 0,
+    _=Depends(require_auth),
+):
+    """SQL-only orders feed. All 5 sources (evo / seatgeek / seatdata /
+    tickpick / vivid) are pulled from public.unified_orders, which the
+    upstream ingest crons keep populated. No broker-API calls in the data
+    path — cron freshness (`/api/d2/cron-freshness`) is the operator's
+    staleness signal; if a cron stalls, the affected source surfaces empty
+    rows + an aged `as_of` chip rather than silently falling back to live
+    API (which would burn broker quota and hide ingest problems).
+
+    `?include_terminal=0` (default): active-only — hides rows in known
+    terminal canonical_status (fulfilled/rejected/cancelled). Rows with
+    NULL canonical_status (unknown source_status) are still surfaced —
+    they probably need operator attention. This is the primary tab's
+    default view.
+
+    `?include_terminal=1`: show all — no canonical_status filter. The
+    primary tab's "All" pill flips this.
 
     ?fast=1 mode (two-phase load): single global SQL query, upcoming-only
-    (event_date >= now()-12h), event_date ASC, NO vivid API, NO event_window.
-    Renders the soonest N upcoming events in <200ms. The client follows up
-    with a full call to merge vivid + older history in the background via
-    the diff-aware DOM update.
+    (event_date >= now()-12h), event_date ASC, NO event_window join.
+    Renders the soonest N upcoming events in <200ms. The client follows
+    up with the full call (with v_event_base join for unresolved events)
+    in the background via the diff-aware DOM update.
 
-    Default mode: three parallel pulls (per-source SQL fan-out + cached
-    v_event_base window + vivid API). Cron freshness moved to /api/d2/
-    cron-freshness on a separate poll so a slow cron RPC doesn't pace
-    this feed.
+    Default mode: two parallel SQL pulls — per-source fan-out across
+    unified_orders + cached v_event_base window. Cron freshness moved to
+    /api/d2/cron-freshness on a separate poll so a slow cron RPC doesn't
+    pace this feed.
 
     Per-leg timings are logged to stderr (Render logs) AND surfaced as a
     Server-Timing response header so the operator can see exactly which
@@ -1149,30 +1129,32 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
     import time as _time
     per_page = max(1, min(per_page, 100))
     page = max(1, page)
+    include_terminal_flag = bool(include_terminal)
 
     timings: dict = {}
     t0 = _time.perf_counter()
 
     if fast:
-        # Single query, single thread, no vivid. Phase 1 of two-phase load.
-        bundle = _timed("sql.unified.fast", _fetch_unified_orders_fast, per_page, _timings=timings)
+        # Single query, single thread, upcoming-only. Phase 1 of two-phase load.
+        bundle = _timed("sql.unified.fast", _fetch_unified_orders_fast, per_page, include_terminal_flag, _timings=timings)
         if bundle is None:
             raise HTTPException(503, "Supabase not configured")
         rows = bundle["rows"]
         per_source_count = dict(bundle.get("per_source_count") or {})
         per_source_as_of = dict(bundle.get("per_source_as_of") or {})
         sql_err = bundle.get("error")
-        sources_summary = []
-        for src in _ALL_SOURCES:
-            sources_summary.append({
+        sources_summary = [
+            {
                 "source": src,
-                "ok": True if (src in _SQL_BACKED_SOURCES and not sql_err) else False,
+                "ok": not bool(sql_err),
                 "count": per_source_count.get(src, 0),
                 "total_reported": None,
-                "error": sql_err if (src in _SQL_BACKED_SOURCES and sql_err) else (None if src in _SQL_BACKED_SOURCES else "phase 2"),
-                "origin": "sql" if src in _SQL_BACKED_SOURCES else "api+sql-match",
+                "error": sql_err,
+                "origin": "sql",
                 "as_of": per_source_as_of.get(src),
-            })
+            }
+            for src in _ALL_SOURCES
+        ]
         total_ms = (_time.perf_counter() - t0) * 1000
         import sys as _sys
         print(
@@ -1186,57 +1168,44 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
             "page": page,
             "per_page": per_page,
             "phase": "fast",
+            "include_terminal": include_terminal_flag,
             "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
         })
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        sql_future       = ex.submit(_timed, "sql.unified", _fetch_unified_orders_page, per_page, page, _timings=timings)
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        sql_future       = ex.submit(_timed, "sql.unified", _fetch_unified_orders_page, per_page, page, include_terminal_flag, _timings=timings)
         events_future    = ex.submit(_timed, "sql.event_window", _pull_event_window, _timings=timings)
-        vivid_future     = ex.submit(_timed, "api.vivid", _fetch_vivid, per_page, page, _timings=timings)
         bundle           = sql_future.result()
         event_window     = events_future.result()
-        vivid_result     = vivid_future.result()
 
     if bundle is None:
         raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+
+    # event_window is fetched in parallel for future enrichment / UI use, but
+    # the SQL fan-out already surfaces native event_name + event_date per source
+    # (mig 20260514000000) and back-fills from v_event_base inside the bundler
+    # for any source whose ingest left those fields blank.
+    _ = event_window
 
     rows = bundle["rows"]
     per_source_count = dict(bundle.get("per_source_count") or {})
     per_source_as_of = dict(bundle.get("per_source_as_of") or {})
     sql_err = bundle.get("error")
 
-    api_results = {"vivid": vivid_result}
-    for src, result in api_results.items():
-        if result.get("ok"):
-            enriched = [_enrich_row_with_event(dict(r), event_window) for r in (result.get("rows") or [])]
-            rows.extend(enriched)
-            per_source_count[src] = len(enriched)
-
-    sources_summary = []
-    for src in _ALL_SOURCES:
-        if src in _SQL_BACKED_SOURCES:
-            sources_summary.append({
-                "source": src,
-                "ok": True if not sql_err else False,
-                "count": per_source_count.get(src, 0),
-                "total_reported": None,
-                "error": sql_err,
-                "origin": "sql",
-                "as_of": per_source_as_of.get(src),
-                # cron blob deliberately omitted here — fetched via
-                # /api/d2/cron-freshness on a separate, slower poll
-            })
-        else:
-            api_r = api_results.get(src, {})
-            sources_summary.append({
-                "source": src,
-                "ok": bool(api_r.get("ok")),
-                "count": per_source_count.get(src, 0),
-                "total_reported": api_r.get("total"),
-                "error": api_r.get("error"),
-                "origin": "api+sql-match",
-                "as_of": None,
-            })
+    sources_summary = [
+        {
+            "source": src,
+            "ok": not bool(sql_err),
+            "count": per_source_count.get(src, 0),
+            "total_reported": None,
+            "error": sql_err,
+            "origin": "sql",
+            "as_of": per_source_as_of.get(src),
+            # cron blob deliberately omitted here — fetched via
+            # /api/d2/cron-freshness on a separate, slower poll
+        }
+        for src in _ALL_SOURCES
+    ]
 
     rows.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
     total_ms = (_time.perf_counter() - t0) * 1000
@@ -1246,7 +1215,6 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
         f"[d2_dashboard] /api/d2/orders total={total_ms:.0f}ms "
         f"sql.unified={timings.get('sql.unified', 0):.0f}ms "
         f"sql.event_window={timings.get('sql.event_window', 0):.0f}ms "
-        f"api.vivid={timings.get('api.vivid', 0):.0f}ms "
         f"event_window_cached={'yes' if (timings.get('sql.event_window', 999) < 5) else 'no'}",
         file=_sys.stderr, flush=True,
     )
@@ -1257,6 +1225,7 @@ def orders(per_page: int = 25, page: int = 1, fast: int = 0, _=Depends(require_a
         "page": page,
         "per_page": per_page,
         "phase": "full",
+        "include_terminal": include_terminal_flag,
         "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
     })
     response.headers["Server-Timing"] = ", ".join(
@@ -1287,33 +1256,41 @@ def cron_freshness(_=Depends(require_auth)):
     return JSONResponse({"sources": by_source})
 
 
-def _deep_order_evo(c, order_id: str) -> dict:
-    return c.get_order(int(order_id))
+def _deep_order_evo_sql(sb, order_id: str) -> dict:
+    res = sb.table("evo_orders").select("*").eq("evo_order_id", order_id).limit(1).execute()
+    return (res.data or [None])[0] or {}
 
 
-def _deep_order_seatgeek(c, order_id: str) -> dict:
-    return c.seller_order(order_id)
+def _deep_order_seatgeek_sql(sb, order_id: str) -> dict:
+    res = sb.table("seatgeek_orders").select("*").eq("sg_order_id", order_id).limit(1).execute()
+    return (res.data or [None])[0] or {}
 
 
-def _deep_order_tickpick(c, order_id: str) -> dict:
-    return c.get_order_details(order_id)
+def _deep_order_tickpick_sql(sb, order_id: str) -> dict:
+    res = sb.table("tickpick_orders").select("*").eq("tp_order_id", order_id).limit(1).execute()
+    return (res.data or [None])[0] or {}
 
 
-def _deep_order_vivid(c, order_id: str) -> dict:
-    return c.get_order(int(order_id))
+def _deep_order_vivid_sql(sb, order_id: str) -> dict:
+    res = sb.table("vivid_orders").select("*").eq("vivid_order_id", order_id).limit(1).execute()
+    return (res.data or [None])[0] or {}
 
 
 def _deep_order_gotickets(c, order_id: str) -> dict:
-    # GoTickets only exposes a by-id GET (no list endpoint). The deep-detail
-    # path is the *only* way to surface a GoTickets order in the dashboard.
+    # GoTickets has no SQL backing (no list endpoint upstream, no ingest
+    # cron yet). The by-id API call is the only way to surface a GoTickets
+    # order in the dashboard. Tracked for future SQL conversion when the
+    # canonical lane ships a `gotickets_orders` table + unified_orders UNION.
     return c.get_sale(order_id)
 
 
+# Dispatch: SQL sources use the "_sb" sentinel (the Supabase client);
+# gotickets keeps the upstream client factory until SQL backing exists.
 _DEEP_ORDER = {
-    "evo":       ("_evo_client",       _deep_order_evo),
-    "seatgeek":  ("_sg_client",        _deep_order_seatgeek),
-    "tickpick":  ("_tickpick_client",  _deep_order_tickpick),
-    "vivid":     ("_vivid_client",     _deep_order_vivid),
+    "evo":       ("_sb",               _deep_order_evo_sql),
+    "seatgeek":  ("_sb",               _deep_order_seatgeek_sql),
+    "tickpick":  ("_sb",               _deep_order_tickpick_sql),
+    "vivid":     ("_sb",               _deep_order_vivid_sql),
     "gotickets": ("_gotickets_client", _deep_order_gotickets),
 }
 
@@ -1379,8 +1356,8 @@ def health(_=Depends(require_auth)):
     fulfillby_fields = {
         "evo":      {"in_hand": None, "fulfill_by": None, "notes": "hold_expires_at is auction-hold timer, not fulfill deadline; event_date is implicit"},
         "seatgeek": {"in_hand": None, "fulfill_by": None, "notes": "reservation_duration_minutes is a relative seller-response clock"},
-        "tickpick": {"in_hand": None, "fulfill_by": None, "notes": "by-id detail call may expose more once 401 is resolved"},
-        "vivid":    {"in_hand": None, "fulfill_by": None, "notes": "no ingest yet; XML feed unknown until edge function lands"},
+        "tickpick": {"in_hand": None, "fulfill_by": None, "notes": "tickpick_orders.raw jsonb may carry more; not surfaced yet"},
+        "vivid":    {"in_hand": None, "fulfill_by": None, "notes": "vivid_orders.raw_xml + raw jsonb; no explicit fulfill-by field in feed"},
         "seatdata": {"in_hand": None, "fulfill_by": None, "notes": "completed-sales feed — no fulfillment lifecycle"},
     }
 
@@ -1393,69 +1370,18 @@ def health(_=Depends(require_auth)):
     })
 
 
-@app.get("/api/d2/diag/tickpick")
-def diag_tickpick(_=Depends(require_auth)):
-    """One-shot diagnostic probe against the live TickPick API. Surfaces the
-    actual HTTP status, response body, and response headers so the operator
-    can see *why* TickPick is 401-ing instead of getting a scrubbed
-    'upstream error'. Read-only — issues a single GET against the same
-    /1.0/orders endpoint the dashboard uses on every refresh.
-
-    Auth-gated. Token is masked in the response (last 4 chars only).
-    Response body truncated to 500 chars to keep it bounded."""
-    token, env_var = _env_first_named("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
-    set_variants = [n for n in ("TICKPICK_API_TOKEN", "TICKPICK_TOKEN") if os.environ.get(n)]
-    base_diag = {
-        "endpoint":      "https://api.tickpick.com/1.0/orders?status=unfulfilled",
-        "token_env_var": env_var,
-        "token_masked":  _mask_token(token),
-        "token_warning": (
-            f"multiple env vars set ({', '.join(set_variants)}); using {env_var}"
-            if len(set_variants) > 1 else None
-        ),
-    }
-    if not token:
-        return JSONResponse({**base_diag, "ok": False, "error": "no token configured"}, status_code=200)
-    try:
-        r = requests.get(
-            "https://api.tickpick.com/1.0/orders",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-            },
-            params={"status": "unfulfilled"},
-            timeout=10,
-            allow_redirects=False,  # don't follow 3xx — could leak token
-        )
-    except Exception as e:
-        return JSONResponse(
-            {**base_diag, "ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"},
-            status_code=200,
-        )
-    body_text = (r.text or "")[:500]
-    # Defensive scrub: if the response somehow echoed the token back, mask it.
-    if token in body_text:
-        body_text = body_text.replace(token, _mask_token(token) or "***")
-    return JSONResponse({
-        **base_diag,
-        "ok": r.ok,
-        "status_code": r.status_code,
-        "response_body": body_text,
-        "response_headers": {
-            k: v for k, v in r.headers.items()
-            if k.lower() in {"content-type", "www-authenticate", "x-ratelimit-limit",
-                             "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after",
-                             "server", "date"}
-        },
-    })
-
-
 @app.get("/api/d2/order/{source}/{order_id}")
 def order_detail(source: str, order_id: str, _=Depends(require_auth)):
-    """Single-order deep fetch. Hits the source's by-id read endpoint and
-    returns the raw response so the dashboard can render seats, customer,
-    notes, etc. Read-only — no fulfillment / transfer / write endpoints are
-    wired here per the 2026-05-13 lockdown."""
+    """Single-order deep fetch.
+
+    For evo / seatgeek / tickpick / vivid: reads the matching row from the
+    raw `{source}_orders` table in Supabase. No upstream-API call.
+
+    For gotickets: by-id API call — no SQL backing yet (tracked for future
+    ingest cron in the canonical lane).
+
+    Read-only — no fulfillment / transfer / write endpoints are wired here
+    per the 2026-05-13 lockdown."""
     if source not in _DEEP_ORDER:
         raise HTTPException(404, f"unknown source: {source}")
     import sys as _sys
@@ -1463,9 +1389,13 @@ def order_detail(source: str, order_id: str, _=Depends(require_auth)):
     client_factory = getattr(_sys.modules[__name__], factory_name)
     c = client_factory()
     if c is None:
-        return JSONResponse({"ok": False, "error": "no creds"}, status_code=200)
+        err = "Supabase not configured" if factory_name == "_sb" else "no creds"
+        return JSONResponse({"ok": False, "source": source, "order_id": order_id, "error": err}, status_code=200)
     try:
-        return JSONResponse({"ok": True, "source": source, "order_id": order_id, "data": fetcher(c, order_id)})
+        data = fetcher(c, order_id)
+        if not data:
+            return JSONResponse({"ok": False, "source": source, "order_id": order_id, "error": "not found"}, status_code=200)
+        return JSONResponse({"ok": True, "source": source, "order_id": order_id, "data": data})
     except Exception as e:
         return JSONResponse(
             {"ok": False, "source": source, "order_id": order_id, "error": _scrub_err(f"{source}.order_detail", e)},
@@ -1473,20 +1403,238 @@ def order_detail(source: str, order_id: str, _=Depends(require_auth)):
         )
 
 
-@app.get("/api/d2/seatdata")
-def seatdata(_=Depends(require_auth)):
-    """SeatData analytics tab — account info + budget usage. Not an order
-    surface; reads the same SeatData client D2 owns."""
-    c = _seatdata_client()
-    if c is None:
-        return JSONResponse({"ok": False, "error": "no creds"}, status_code=200)
-    payload: dict[str, Any] = {"ok": True}
+# ---------- Metrics tab (CEO view) ----------
+
+def _today_start_utc() -> "datetime":
+    """Midnight ET (America/New_York) expressed in UTC. Used by the
+    `today` window on /api/d2/metrics so the Today card doesn't reset
+    at 8 PM ET (which would read as a bug to the operator)."""
+    from datetime import datetime, timezone
     try:
-        payload["account"] = c.account()
-    except Exception as e:
-        payload["account_error"] = _scrub_err("seatdata.account", e)
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+    except Exception:
+        # Python without tzdata; fall back to UTC midnight (acceptable
+        # degradation — operator notices the wrong day boundary).
+        from datetime import timezone as _tz
+        et = _tz.utc
+    now_et = datetime.now(et)
+    start_et = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_et.astimezone(timezone.utc)
+
+
+def _metrics_window_rows(sb, p_start, p_end) -> list[dict]:
+    res = sb.rpc("d2_metrics_window", {"p_start": p_start.isoformat(), "p_end": p_end.isoformat()}).execute()
+    return res.data or []
+
+
+def _metrics_hourly_buckets(sb, p_start, p_end) -> list[dict]:
+    res = sb.rpc("d2_metrics_hourly_buckets", {"p_start": p_start.isoformat(), "p_end": p_end.isoformat()}).execute()
+    return res.data or []
+
+
+def _metrics_top_events(sb, p_start, p_end, p_limit: int = 10) -> list[dict]:
+    res = sb.rpc(
+        "d2_metrics_top_events",
+        {"p_start": p_start.isoformat(), "p_end": p_end.isoformat(), "p_limit": p_limit},
+    ).execute()
+    return res.data or []
+
+
+def _metrics_hot_events(sb, p_start, p_end, p_limit: int = 10) -> list[dict]:
+    res = sb.rpc(
+        "d2_metrics_hot_events",
+        {"p_start": p_start.isoformat(), "p_end": p_end.isoformat(), "p_limit": p_limit},
+    ).execute()
+    return res.data or []
+
+
+def _metrics_biggest_sales(sb, p_since, p_limit: int = 10) -> list[dict]:
+    args = {"p_limit": p_limit}
+    if p_since is not None:
+        args["p_since"] = p_since.isoformat() if hasattr(p_since, "isoformat") else p_since
+    res = sb.rpc("d2_metrics_biggest_sales", args).execute()
+    return res.data or []
+
+
+def _metrics_sales_gaps(sb, p_lookback_hours: int = 24, p_min_gap_minutes: int = 30) -> list[dict]:
+    res = sb.rpc(
+        "d2_metrics_sales_gaps",
+        {"p_lookback_hours": p_lookback_hours, "p_min_gap_minutes": p_min_gap_minutes},
+    ).execute()
+    return res.data or []
+
+
+@app.get("/api/d2/metrics")
+def metrics(_=Depends(require_auth)):
+    """CEO-view metrics bundle. One round-trip; backend fans out 13 SQL
+    calls in parallel:
+      - 4 windows × current + 4 × prior   : d2_metrics_window (KPI grid)
+      - hourly buckets (last 24h)         : d2_metrics_hourly_buckets (sparkline)
+      - top events (last 7d, by closed $) : d2_metrics_top_events
+      - hot events (last 1h, by velocity) : d2_metrics_hot_events
+      - biggest sales (last 5 min)        : d2_metrics_biggest_sales
+      - sales gaps (last 24h, >30min)     : d2_metrics_sales_gaps
+
+    Windows anchor on America/New_York for "today" so the day boundary
+    matches the operator's clock. Filtered to evo/seatgeek/seatdata/
+    tickpick/vivid; seatgeek_sales (broker market data) excluded."""
+    from datetime import datetime, timedelta, timezone
+    import time as _time
+    sb = _sb()
+    if sb is None:
+        raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+
+    timings: dict = {}
+    t0 = _time.perf_counter()
+    now_utc = datetime.now(timezone.utc)
+    today_start = _today_start_utc()
+    yesterday_start = today_start - timedelta(days=1)
+
+    current_windows = {
+        "hour":  (now_utc - timedelta(hours=1),  now_utc),
+        "today": (today_start,                    now_utc),
+        "24h":   (now_utc - timedelta(hours=24), now_utc),
+        "7d":    (now_utc - timedelta(days=7),   now_utc),
+    }
+    prior_windows = {
+        "hour":  (now_utc - timedelta(hours=2),  now_utc - timedelta(hours=1)),
+        "today": (yesterday_start,                today_start),
+        "24h":   (now_utc - timedelta(hours=48), now_utc - timedelta(hours=24)),
+        "7d":    (now_utc - timedelta(days=14),  now_utc - timedelta(days=7)),
+    }
+    hourly_start = now_utc - timedelta(hours=24)
+    top_start    = now_utc - timedelta(days=7)
+    # Hot events = velocity in the last hour (orders_count ordered desc).
+    hot_start    = now_utc - timedelta(hours=1)
+    # Biggest sales = anything that cleared in the last 5 min by default.
+    biggest_since = now_utc - timedelta(minutes=5)
+
+    # Parallel fan-out: 10 calls in worst case. Each is a single PostgREST
+    # round-trip to a STABLE SQL function — typical RTT ~50-100ms, so the
+    # total bundle should land in ~max(per-call) with the pool sized to
+    # the work.
+    results: dict = {"windows": {}, "hourly_buckets": [], "top_events": [], "errors": []}
+
+    def _safe_window(label: str, kind: str, p_start, p_end):
+        try:
+            data = _timed(f"sql.window.{label}.{kind}", _metrics_window_rows, sb, p_start, p_end, _timings=timings)
+            return label, kind, data, None
+        except Exception as e:
+            return label, kind, [], _scrub_err(f"d2_metrics_window.{label}.{kind}", e)
+
+    def _safe_hourly():
+        try:
+            data = _timed("sql.hourly_buckets", _metrics_hourly_buckets, sb, hourly_start, now_utc, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_hourly_buckets", e)
+
+    def _safe_top():
+        try:
+            data = _timed("sql.top_events", _metrics_top_events, sb, top_start, now_utc, 10, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_top_events", e)
+
+    def _safe_hot():
+        try:
+            data = _timed("sql.hot_events", _metrics_hot_events, sb, hot_start, now_utc, 10, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_hot_events", e)
+
+    def _safe_biggest():
+        try:
+            data = _timed("sql.biggest_sales", _metrics_biggest_sales, sb, biggest_since, 10, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_biggest_sales", e)
+
+    def _safe_gaps():
+        try:
+            data = _timed("sql.sales_gaps", _metrics_sales_gaps, sb, 24, 30, _timings=timings)
+            return data, None
+        except Exception as e:
+            return [], _scrub_err("d2_metrics_sales_gaps", e)
+
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futures = []
+        for label in current_windows:
+            cs, ce = current_windows[label]
+            ps, pe = prior_windows[label]
+            futures.append(ex.submit(_safe_window, label, "current", cs, ce))
+            futures.append(ex.submit(_safe_window, label, "prior",   ps, pe))
+        hourly_future  = ex.submit(_safe_hourly)
+        top_future     = ex.submit(_safe_top)
+        hot_future     = ex.submit(_safe_hot)
+        biggest_future = ex.submit(_safe_biggest)
+        gaps_future    = ex.submit(_safe_gaps)
+
+        for fut in futures:
+            label, kind, data, err = fut.result()
+            results["windows"].setdefault(label, {"current": [], "prior": []})
+            results["windows"][label][kind] = data
+            if err:
+                results["errors"].append({"leg": f"window.{label}.{kind}", "error": err})
+
+        for leg_name, fut in (
+            ("hourly_buckets", hourly_future),
+            ("top_events",     top_future),
+            ("hot_events",     hot_future),
+            ("biggest_sales",  biggest_future),
+            ("sales_gaps",     gaps_future),
+        ):
+            data, err = fut.result()
+            results[leg_name] = data
+            if err:
+                results["errors"].append({"leg": leg_name, "error": err})
+
+    total_ms = (_time.perf_counter() - t0) * 1000
+    results["checked_at"] = now_utc.isoformat()
+    results["timings_ms"] = {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)}
+
+    import sys as _sys
+    print(f"[d2_dashboard] /api/d2/metrics total={total_ms:.0f}ms legs={len(timings)}", file=_sys.stderr, flush=True)
+    return JSONResponse(results)
+
+
+@app.get("/api/d2/sales-feed")
+def sales_feed(limit: int = 20, _=Depends(require_auth)):
+    """Newest N rows across all 5 sources from public.unified_orders.
+    Polled every 30s by the Metrics tab for the live sales-feed surface.
+    Plain PostgREST query (no RPC) — single round-trip.
+
+    `?limit=N` clamped to [1, 100]; default 20."""
+    from datetime import datetime, timezone
+    import time as _time
+    sb = _sb()
+    if sb is None:
+        raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+    limit = max(1, min(int(limit), 100))
+    t0 = _time.perf_counter()
     try:
-        payload["usage"] = c.usage()
+        res = (
+            sb.table("unified_orders")
+            .select("source,source_order_id,gross_value,quantity,event_name,event_date,created_at,canonical_status,is_sale_succeeded")
+            .in_("source", list(_ALL_SOURCES))
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        rows = res.data or []
     except Exception as e:
-        payload["usage_error"] = _scrub_err("seatdata.usage", e)
-    return JSONResponse(payload)
+        return JSONResponse(
+            {"ok": False, "error": _scrub_err("sales_feed", e), "rows": [], "checked_at": datetime.now(timezone.utc).isoformat()},
+            status_code=200,
+        )
+    total_ms = (_time.perf_counter() - t0) * 1000
+    return JSONResponse({
+        "ok": True,
+        "rows": rows,
+        "limit": limit,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "timings_ms": {"sql.sales_feed": round(total_ms, 1)},
+    })
+
+
