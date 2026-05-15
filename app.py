@@ -29,13 +29,96 @@ from datetime import datetime, timedelta, timezone
 import requests
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from evo_client import EvoClient
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+# ---------- Storefront asset cache-busting ----------
+#
+# Browsers happily hold the storefront's store.js + style.css forever
+# unless the URL changes. Until Sprint 5 ships content-hashed filenames
+# + Cache-Control headers, we append `?v=<short-sha>` to each asset
+# reference inside the served HTML so every deploy invalidates the
+# browser cache. Without this, frontend changes in a D1 PR can appear
+# "not deployed" from the operator's perspective for hours after the
+# actual merge — see Round 4 of docs/d1-bot-continues-here audit.
+
+def _build_storefront_version() -> str:
+    """Short-SHA tag used in the `?v=<...>` query string on static asset
+    references inside the served HTML shells.
+
+    Resolution order:
+      1. RENDER_GIT_COMMIT — auto-set by Render on every deploy.
+      2. GIT_COMMIT — set by some CI workflows; defensive fallback.
+      3. f"dev{epoch}" — local dev / unset prod; still bumps per-boot
+         so a fresh container always re-fetches.
+    """
+    sha = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
+    if sha:
+        return sha[:7]
+    # Local dev / unset prod env — hard-refresh works locally; in prod the
+    # env var is always set by Render so this branch only fires by accident.
+    return "dev"
+
+
+_STOREFRONT_VERSION = _build_storefront_version()
+_STOREFRONT_HTML_CACHE: dict[str, str] = {}
+
+
+def _read_storefront_html(name: str) -> str:
+    """Read a `static/store/<name>` HTML shell, rewrite the store.js +
+    style.css refs to include `?v=<sha>`, cache the result for the life
+    of the container. The source files don't change mid-process.
+    """
+    cached = _STOREFRONT_HTML_CACHE.get(name)
+    if cached is not None:
+        return cached
+    path = os.path.join(STATIC_DIR, "store", name)
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    v = _STOREFRONT_VERSION
+    # Match the exact strings used in the HTML shells. Closing-quote
+    # specificity prevents accidental matches inside JS strings or
+    # CSS url() refs that might be added later.
+    html = html.replace(
+        '/static/store/store.js"',
+        f'/static/store/store.js?v={v}"',
+    )
+    html = html.replace(
+        '/static/store/style.css"',
+        f'/static/store/style.css?v={v}"',
+    )
+    _STOREFRONT_HTML_CACHE[name] = html
+    return html
+
+
+def _render_storefront_page(name: str) -> HTMLResponse:
+    """Return an HTMLResponse for a static/store/*.html shell with
+    Cache-Control: no-cache, must-revalidate so browsers always
+    revalidate the HTML on every page load.
+
+    The asset URLs inside the HTML are cache-busted via
+    _read_storefront_html()'s `?v=<sha>` rewrite — those keep their
+    long-cache friendliness. Only the HTML shell itself needs the
+    revalidate header so operators (and returning customers) never
+    get trapped on stale HTML pointing at un-versioned asset URLs
+    after a deploy. See Round 5 of docs/d1-bot-continues-here-rustling
+    -sunrise.md for the bootstrap-trap scenario this prevents.
+
+    Cost: every page load adds one conditional GET (304 Not Modified
+    when unchanged — ~1 KB request, ~50 ms latency, no body transfer).
+    Trivial.
+    """
+    return HTMLResponse(
+        content=_read_storefront_html(name),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
 
 # ---------- Bootstrap ----------
 
@@ -6201,12 +6284,12 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
 
 @app.get("/store")
 def store_index_page():
-    return FileResponse(os.path.join(STATIC_DIR, "store", "index.html"))
+    return _render_storefront_page("index.html")
 
 
 @app.get("/store/event/{event_id}")
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
-    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+    return _render_storefront_page("event.html")
 
 
 # ---------- Share links (revocable, trackable) ----------
@@ -6453,12 +6536,12 @@ def store_share_list(
 def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
     """Serves the same event detail page; JS detects /s/ prefix and resolves
     the share via /api/store/share/{id} instead of using URL filter params."""
-    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+    return _render_storefront_page("event.html")
 
 
 @app.get("/store/shares")
 def store_shares_page():
-    return FileResponse(os.path.join(STATIC_DIR, "store", "shares.html"))
+    return _render_storefront_page("shares.html")
 
 
 def _require_non_prod():

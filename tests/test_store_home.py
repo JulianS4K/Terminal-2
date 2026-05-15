@@ -480,3 +480,90 @@ def test_or_ilike_clause_escapes_embedded_double_quote():
     # The pattern contains both a comma and a double quote — both get
     # quoting treatment. The embedded " is doubled to "".
     assert out == 'name.ilike."%He said ""yes"",%"'
+
+
+# ---------- Storefront cache-bust helper ----------
+
+def test_store_home_html_includes_version_query_string(store_home_client, monkeypatch):
+    """The /store HTML must rewrite static asset URLs to include `?v=<sha>`
+    so browser caches invalidate on every deploy. Without this, frontend
+    fixes appear undeployed for hours from the operator's perspective."""
+    # Force a deterministic version for the test by clearing the in-memory
+    # cache and stubbing the version constant.
+    monkeypatch.setattr(app_module, "_STOREFRONT_VERSION", "abc1234")
+    monkeypatch.setattr(app_module, "_STOREFRONT_HTML_CACHE", {})
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    body = r.text
+    assert '/static/store/store.js?v=abc1234"' in body, (
+        "store.js URL must include ?v=<sha> query string"
+    )
+    assert '/static/store/style.css?v=abc1234"' in body, (
+        "style.css URL must include ?v=<sha> query string"
+    )
+    # Negative: the un-versioned URL should not appear anywhere in the
+    # served HTML (we don't want a half-rewritten shell).
+    assert '/static/store/store.js"' not in body
+    assert '/static/store/style.css"' not in body
+
+
+def test_build_storefront_version_prefers_render_git_commit(monkeypatch):
+    """Render auto-sets RENDER_GIT_COMMIT to the full SHA on every deploy;
+    we use the first 7 chars."""
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "deadbeefcafe0123456789abcdef")
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    assert app_module._build_storefront_version() == "deadbee"
+
+
+def test_build_storefront_version_falls_back_to_git_commit(monkeypatch):
+    """Defensive fallback for CI/workflows that set GIT_COMMIT instead."""
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.setenv("GIT_COMMIT", "1234567890abcdef")
+    assert app_module._build_storefront_version() == "1234567"
+
+
+def test_build_storefront_version_dev_when_unset(monkeypatch):
+    """Both env vars unset → 'dev' literal. Local-dev behavior; in prod
+    Render always sets RENDER_GIT_COMMIT so this branch only fires by
+    accident."""
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    assert app_module._build_storefront_version() == "dev"
+
+
+def test_store_html_response_has_no_cache_header(store_home_client):
+    """Bootstrap-safety: /store HTML must include Cache-Control: no-cache
+    so browsers revalidate on every page load and never get trapped on
+    stale HTML pointing at un-versioned asset URLs.
+
+    Without this header, a browser that cached /store before a cache-bust
+    shipped would keep loading the old JS via the un-versioned URL until
+    its heuristic cache expires (could be hours/days). The `?v=<sha>`
+    query string on the asset URLs in PR #121 only helps once the BROWSER
+    re-fetches /store and sees the new HTML — this header forces that
+    re-fetch on every request.
+    """
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    cc = r.headers.get("cache-control", "")
+    assert "no-cache" in cc.lower(), (
+        f"Cache-Control must include no-cache; got: {cc!r}"
+    )
+
+
+def test_all_storefront_html_routes_revalidate(store_home_client):
+    """Every served /store/* HTML shell — index, event, share, shares —
+    must carry the no-cache header. Catches a regression where someone
+    swaps one route back to FileResponse or raw HTMLResponse without
+    realizing the helper enforces revalidate.
+    """
+    # /store/event/{id} works without DB because the route only reads the
+    # static HTML shell — the event_id is consumed by JS at runtime.
+    paths = ["/store", "/store/event/3346000", "/s/test-id", "/store/shares"]
+    for path in paths:
+        r = store_home_client.get(path)
+        assert r.status_code == 200, f"{path} → {r.status_code}"
+        cc = r.headers.get("cache-control", "")
+        assert "no-cache" in cc.lower(), (
+            f"{path}: Cache-Control missing no-cache; got: {cc!r}"
+        )
