@@ -66,11 +66,21 @@ D0 does **not** write any Supabase table. Standing exception per [CLAUDE.md](../
 
 ## Coordination triggers
 
-- **D1/D2 PR opens → D0 review**: leave a sign-off comment on the PR before A1 merges. Block if: lane scope violation, missing tests, breaks an existing terminal page's expectations.
-- **Cross-frontend regression** spotted: `bot_chat` `flag` event with both lane refs; D0 coordinates the fix or routes to A1.
-- **New backend endpoint** the terminal will consume: D0 → A1 `question` event with the desired RPC signature + JSON shape spec (Path C convention).
-- **Render env var change** on any of the 3 services: D0 records via `bot_chat` `change_log` with service ID + var name (never the value).
-- **Supabase Auth Redirect URL** changes: operator dashboard action; D0 surfaces the ask via `bot_chat` `question` and confirms post-apply.
+- **D1/D2 PR opens → D0 review**: D1/D2 posts request to `#terminal-2-d0`; D0 approves in-channel; A1 merges. Block if lane-scope violation, missing tests, or cross-FE expectation break. Currently paused 7 days (resume 2026-05-22) per `bot_chat` #170.
+- **Cross-frontend regression** spotted: `bot_chat` `flag` event with both lane refs; D0 coordinates or routes to A1.
+- **New backend endpoint** the terminal will consume: D0 → A1 `question` event with desired RPC signature + JSON shape (Path C convention).
+- **Render env var change** on any of 3 services: D0 records via `bot_chat` `change_log` with service ID + var name (never the value).
+- **Supabase Auth Redirect URL** changes: operator dashboard action; D0 surfaces via `bot_chat` `question` and confirms post-apply.
+
+## Slack channels (per `bot_chat` #175 — fast-twitch surfaces, not canonical)
+
+| Channel | ID | Audience | D0 use |
+|---|---|---|---|
+| `#terminal-2-alerts` | `C0B3PR8MJ07` | public, all bots read | Watch for cross-cutting auto-alerts; do not post directly |
+| `#terminal-2-d0` | `C0B420N237F` | private, D0+D1+D2 | D0 sign-off on D1/D2 PRs; cross-FE conventions; daily ops |
+| `#terminal-2-admin` | `C0B3PU1DGVD` | private, A1/B1/C1 only | D0 does not post here; receives admin-tier escalations only via mention |
+
+`bot_chat` remains the canonical durable record. Slack channels are the realtime correlate for when next-session bot_chat polling is too slow. Every decision must have a `bot_chat` trail.
 
 ## Verification gate
 
