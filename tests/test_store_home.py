@@ -480,3 +480,52 @@ def test_or_ilike_clause_escapes_embedded_double_quote():
     # The pattern contains both a comma and a double quote — both get
     # quoting treatment. The embedded " is doubled to "".
     assert out == 'name.ilike."%He said ""yes"",%"'
+
+
+# ---------- Storefront cache-bust helper ----------
+
+def test_store_home_html_includes_version_query_string(store_home_client, monkeypatch):
+    """The /store HTML must rewrite static asset URLs to include `?v=<sha>`
+    so browser caches invalidate on every deploy. Without this, frontend
+    fixes appear undeployed for hours from the operator's perspective."""
+    # Force a deterministic version for the test by clearing the in-memory
+    # cache and stubbing the version constant.
+    monkeypatch.setattr(app_module, "_STOREFRONT_VERSION", "abc1234")
+    monkeypatch.setattr(app_module, "_STOREFRONT_HTML_CACHE", {})
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    body = r.text
+    assert '/static/store/store.js?v=abc1234"' in body, (
+        "store.js URL must include ?v=<sha> query string"
+    )
+    assert '/static/store/style.css?v=abc1234"' in body, (
+        "style.css URL must include ?v=<sha> query string"
+    )
+    # Negative: the un-versioned URL should not appear anywhere in the
+    # served HTML (we don't want a half-rewritten shell).
+    assert '/static/store/store.js"' not in body
+    assert '/static/store/style.css"' not in body
+
+
+def test_build_storefront_version_prefers_render_git_commit(monkeypatch):
+    """Render auto-sets RENDER_GIT_COMMIT to the full SHA on every deploy;
+    we use the first 7 chars."""
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "deadbeefcafe0123456789abcdef")
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    assert app_module._build_storefront_version() == "deadbee"
+
+
+def test_build_storefront_version_falls_back_to_git_commit(monkeypatch):
+    """Defensive fallback for CI/workflows that set GIT_COMMIT instead."""
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.setenv("GIT_COMMIT", "1234567890abcdef")
+    assert app_module._build_storefront_version() == "1234567"
+
+
+def test_build_storefront_version_dev_when_unset(monkeypatch):
+    """Both env vars unset → 'dev' literal. Local-dev behavior; in prod
+    Render always sets RENDER_GIT_COMMIT so this branch only fires by
+    accident."""
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    assert app_module._build_storefront_version() == "dev"

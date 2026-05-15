@@ -116,11 +116,12 @@ The whole site has zero social-share metadata:
 | ⬜ | Item | Tag | Notes |
 |---|---|---|---|
 | ⬜ | Minify `store.js` (1862 lines unminified ships as-is to clients) | 🟧 | Add a build step or use Render's static asset pipeline. ~50-60% size cut typical. |
-| ⬜ | Cache-Control headers on static assets | 🟧 | `style.css` and `store.js` should be `max-age=31536000, immutable` with content-hashed filenames |
+| ⬜ | Cache-Control headers on static assets | 🟧 | `style.css` and `store.js` should be `max-age=31536000, immutable` with content-hashed filenames. (Interim: `?v=<sha>` query-string cache-bust shipped in PR-fixing-the-2-phase-loader-2026-05-15 — see `app.py:_read_storefront_html`.) |
 | ⬜ | TEvo API response cache (Redis or in-process) for catalog queries | 🟧 | `/api/store/events` doesn't need fresh-every-request data; 60s cache acceptable |
 | ⬜ | gzip / brotli compression | 🟨 | Render does this automatically — verify it's on |
 | ⬜ | CDN for static assets | 🟨 | Render auto-edges everything; only matters if traffic grows |
 | ⬜ | Mobile/responsive QA — test on iPhone SE, iPhone 14 Pro, mid-range Android | 🟧 | `style.css` has some `@media` queries — needs a pass |
+| ⬜ | **`/api/store/home` filter variants — closes the last TEvo dependency** | 🟧 | Today the filtered home view (`?performer_id=...` or `?venue_id=...`) falls back to `/api/store/events` (TEvo-direct, ~1.5s, returns `from_price=null` cards). Extending `/api/store/home` to accept `performer_id` + `venue_id` filters lets us serve **every** storefront view from SQL in ~50ms with prices populated. Same join shape as the no-filter case + a final `IN (...)` on `events.primary_performer_id` or `events.venue_id`. Per A1 bot_chat 2026-05-15 feedback after Fix A landed: "closes the last TEvo dependency on the storefront." |
 
 ---
 
