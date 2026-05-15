@@ -91,6 +91,8 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Security findings → B1 (security manager)
 - Bot-lane code changes → respective lane owner via PR comment
 
+**Cross-cutting onboarding requirement (2026-05-15)**: every active bot must create a lane-scoped aging-sweep scheduled task on first activation. Spec in `CLAUDE.md §5`. Minute slot registry maintained there.
+
 **Reads:** everything.
 
 **Authority:**
