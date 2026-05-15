@@ -73,6 +73,20 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ## NEXT
 
+### NEXT (D0) — Consolidated frontend lane post row 157 reorg
+
+Plan: [docs/d0_frontend_consolidation_plan.md](docs/d0_frontend_consolidation_plan.md). Self-contract: [docs/d0_operating_constraints.md](docs/d0_operating_constraints.md). Coordination: [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md). 5 D0-tracked rows:
+
+- **D0 → operator** — Supabase Auth Redirect URLs whitelist (2 URLs, dashboard action). Per `bot_chat` row 145. Unblocks PR #113 deployed login flow.
+- **D0 → operator** — Render plan flip `vibepass-storefront-test` free → starter ($14/mo). Per D1 row 169 outstanding item 1. MCP `update_web_service` doesn't support plan changes — dashboard or Render REST API only.
+- **D0** — Phase 2 design tokens: author `static/_shared/design-tokens.css`, refactor terminal CSS to reference it. Weeks 1-4.
+- **D0** — `docs/d0_roadmap.md` (rolling Now/Next/Later/Backlog). First version covers D1+D2 outstanding items routed through D0.
+- **D0 sign-off requirement on D1/D2 PRs PAUSED 7 days** (active 2026-05-22). Per operator directive `bot_chat` 170. Claim protocol + token discipline + CI gate still active.
+
+### NEXT (D0 — checkpoint) — Phase 4 service-merge decision · review 2026-08-15
+
+Recommend at decision time: collapse `vibepass-terminal-test` + `d2-orders-dashboard` into one operator-facing service; keep `vibepass-storefront-test` separate. Decision gates: ops MAU >50, deploy frequency stable. Cost-saver ~$14/mo at 3-service starter baseline.
+
 ### NEXT (P1 → A1) — Audit + sync storefront branch; gate live-TEvo flip behind your green light
 
 **What**: Storefront branch `claude/store-sql-only-demo-mode` (HEAD `0901efd` as of 2026-05-12) is feature-complete for the MVP and ready for an audit pass. Asking A1 to review + sync to prod, after which we'd flip Render env `STOREFRONT_SQL_ONLY=false` to exercise the live-TEvo paths in production.

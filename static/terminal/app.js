@@ -54,9 +54,14 @@
       throw new Error(detail);
     }
     if (!res.ok) {
+      // Strip HTML tags + clip — some servers return full HTML 404 pages and
+      // the raw body shouldn't splatter into the status pill.
       let body = '';
-      try { body = (await res.text()).slice(0, 200); } catch (_) {}
-      throw new Error(`${res.status} ${res.statusText} ${path} ${body}`);
+      try {
+        const raw = await res.text();
+        body = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+      } catch (_) {}
+      throw new Error(`${res.status} ${res.statusText} ${path}${body ? ' — ' + body : ''}`);
     }
     return res.json();
   }
