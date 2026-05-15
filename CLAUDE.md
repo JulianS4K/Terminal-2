@@ -47,6 +47,34 @@ Lane assignments per `LANE_DISCIPLINE.md`:
 - **C1** — supervisor docs + audit harnesses + lane discipline
 - Operator may explicitly route HTML work to a bot outside its default lane (this is the override path)
 
+### 4. Render workspace — per-service scoped access (2026-05-14)
+
+Render MCP tools (`mcp__render__*`) are gated per-bot to their assigned service. Cross-service writes are forbidden without operator approval.
+
+**A1 (Admin) — exclusive workspace-wide access:**
+- All `mcp__render__*` tools on any service
+- Workspace-level operations: `create_web_service`, `create_postgres`, `create_static_site`, `create_cron_job`, `select_workspace`
+- A1 is the only bot authorized to provision, delete, or change ownership of services
+
+**D1 — scoped to `vibepass-storefront-test` (`srv-d8140bnaqgkc73al4asg`):**
+- Read freely: `list_services`, `get_service`, `list_deploys`, `get_deploy`, `list_logs`, `get_metrics`
+- **Write OK on this service** (no per-call ask): `update_environment_variables`, `update_web_service` (config / branch / build / start commands), restart, redeploy triggers
+- Forbidden: any operation on `d2-orders-dashboard` or `hi-events` or workspace-level resources
+
+**D2 — scoped to `d2-orders-dashboard` (`srv-d82b4kl7vvec73b4r3r0`):**
+- Same as D1 but for its assigned service
+- Write OK on `d2-orders-dashboard` only
+- Forbidden: any operation on `vibepass-storefront-test`, `hi-events`, or workspace-level resources
+
+**All other bots (B1, C1, D0, D3, D4):**
+- Read-only across all services (monitoring is universal)
+- All writes require explicit operator approval
+
+**Standing rules across all bots:**
+- Read ops always OK (no per-call ask)
+- Service Tokens are the preferred mechanism for enforcement when feasible (Render's Member-role token can't perform writes by API constraint, providing hard isolation beyond policy). Until tokens are scoped per-bot, the scoping is policy-level and audited via Render's audit log.
+- Cross-service writes (D1 touching D2's service or vice versa) = lane violation, surfaces as `flag` in `bot_chat` per existing cross-lane rules
+
 ## Cross-lane writes
 
 If your work needs to touch another lane's surface:
