@@ -286,7 +286,7 @@ function renderDashboard(domain) {
           </label>
           <label class="toolbar-toggle">
             <input type="checkbox" id="chk-auto-refresh" checked />
-            <span title="Pauses the 5-min poll while you're working with the table">Auto-refresh</span>
+            <span title="Master pause for ALL auto-polling (orders 5min, cron-freshness 60s, metrics 60s, live sales feed 30s). Manual Refresh + tab-switch first-load still work.">Auto-refresh</span>
           </label>
           <span class="toolbar-meta" id="last-refreshed">last refresh: never</span>
         </div>
@@ -413,6 +413,24 @@ function renderDashboard(domain) {
     });
   });
 
+  // Auto-refresh checkbox is the master pause for all 4 polling timers
+  // (orders 5min, cron-freshness 60s, metrics 60s, sales-feed 30s).
+  // Each timer's setInterval body checks _isAutoRefreshOn() and early-
+  // returns when unchecked. When the operator flips it back ON, fire one
+  // immediate fetch on the active tab so they see fresh data without
+  // waiting up to 5 min for the next orders tick.
+  document.getElementById("chk-auto-refresh")?.addEventListener("change", (e) => {
+    if (!e.target.checked) return;
+    const active = document.querySelector(".tab.active")?.dataset.tab;
+    if (active === "orders") {
+      if (CURRENT_PAGE === 1 && !_DETAIL_OPEN) loadOrders({ silent: true });
+      refreshCronFreshness();
+    } else if (active === "metrics") {
+      loadMetrics();
+      loadSalesFeed();
+    }
+  });
+
   // Re-render (not re-fetch) when the user toggles Hide-Past-12h or any of
   // the in-memory filters. Source / date / amount filters all just re-slice
   // the cached body — no new API call, no new SQL query.
@@ -529,11 +547,17 @@ function activateTab(name) {
   if (name === "health") loadHealth();
 }
 
+// Master pause gate for ALL polling timers (orders 5min, cron-freshness 60s,
+// metrics 60s, sales-feed 30s). Defaults to ON if the checkbox hasn't
+// rendered yet so the boot-time first ticks still fire.
+function _isAutoRefreshOn() {
+  return document.getElementById("chk-auto-refresh")?.checked !== false;
+}
+
 function startOrdersAutoRefresh() {
   if (_ORDERS_REFRESH_TIMER) return;
   _ORDERS_REFRESH_TIMER = setInterval(() => {
-    // Operator paused auto-refresh via the toolbar toggle? Skip silently.
-    if (!document.getElementById("chk-auto-refresh")?.checked) return;
+    if (!_isAutoRefreshOn()) return;
     // Skip a tick while the row-detail panel is open — silently yanking
     // a card the operator is reading would be hostile UX.
     if (_DETAIL_OPEN) return;
@@ -546,10 +570,13 @@ function startOrdersAutoRefresh() {
   }, ORDERS_AUTO_REFRESH_MS);
   // Cron freshness poll — separate from orders. Refresh the chip's "last
   // cron: Xm ago" line every 60s so the operator sees cron health in
-  // near-real-time without dragging the orders feed.
+  // near-real-time without dragging the orders feed. Gated by the same
+  // master pause as the orders bulk poll.
   if (!_CRON_FRESHNESS_TIMER) {
-    refreshCronFreshness();   // immediate first hit
-    _CRON_FRESHNESS_TIMER = setInterval(refreshCronFreshness, CRON_FRESHNESS_POLL_MS);
+    if (_isAutoRefreshOn()) refreshCronFreshness();   // immediate first hit
+    _CRON_FRESHNESS_TIMER = setInterval(() => {
+      if (_isAutoRefreshOn()) refreshCronFreshness();
+    }, CRON_FRESHNESS_POLL_MS);
   }
 }
 
@@ -574,11 +601,18 @@ let _SALES_FEED_REFRESH_TIMER = null;
 let _LAST_SALES_FEED_IDS = new Set();        // for flash-on-new highlighting
 
 function startMetricsAutoRefresh() {
+  // Both metrics timers obey the same master pause (_isAutoRefreshOn) as
+  // the orders bulk poll. When the checkbox is unchecked, ticks fire on
+  // schedule but skip the fetch.
   if (!_METRICS_REFRESH_TIMER) {
-    _METRICS_REFRESH_TIMER = setInterval(loadMetrics, METRICS_AUTO_REFRESH_MS);
+    _METRICS_REFRESH_TIMER = setInterval(() => {
+      if (_isAutoRefreshOn()) loadMetrics();
+    }, METRICS_AUTO_REFRESH_MS);
   }
   if (!_SALES_FEED_REFRESH_TIMER) {
-    _SALES_FEED_REFRESH_TIMER = setInterval(loadSalesFeed, SALES_FEED_REFRESH_MS);
+    _SALES_FEED_REFRESH_TIMER = setInterval(() => {
+      if (_isAutoRefreshOn()) loadSalesFeed();
+    }, SALES_FEED_REFRESH_MS);
   }
 }
 
