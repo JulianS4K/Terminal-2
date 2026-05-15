@@ -90,7 +90,7 @@ Every active bot MUST create its own lane-scoped aging-sweep scheduled task on f
 **Spec — each bot's task must:**
 - Cadence: **hourly** at a unique minute offset (avoid collisions, see slot registry below)
 - Query: `public.bot_chat` for entries addressed to this bot (via `bot_lane = '<this-bot>'` OR `@<this-bot>` substring match) AND `resolved_at IS NULL` AND `event_type IN ('p0_security','flag','question')` AND `created_at < now() - interval '2 hours'` AND `created_at > now() - interval '7 days'`
-- Silent if zero rows (no Slack noise on healthy state — the absence of pings is the signal)
+- **Always post (HEARTBEAT pattern, 2026-05-15 operator directive)** — even on zero findings, fire a short "all clear" line. Silent posts mean we can't distinguish "healthy" from "task dead." Vary content based on findings (full table if hits, one-line OK if not).
 - Post to the bot's primary Slack channel (`#terminal-2-d0` for D-tier subordinates, `#terminal-2-admin` for A1/B1/C1, `#terminal-2-alerts` for cross-cutting global sweep)
 - Tools required: Supabase MCP `execute_sql` + Slack MCP `slack_send_message` (operator must "Run now" once per task to pre-approve)
 - Token discipline: tight payload, table format, no preamble
