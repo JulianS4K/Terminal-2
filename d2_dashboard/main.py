@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -127,6 +127,19 @@ app = FastAPI(title="D2 Orders Dashboard — unified broker view")
 
 if STATIC_DIR.is_dir():
     app.mount("/static/d2", StaticFiles(directory=str(STATIC_DIR)), name="d2_static")
+
+# ---------- Router for unified-shell mount (D0 consolidated frontend) ----------
+#
+# `router` exposes the same routes as `app` but as an importable APIRouter.
+# Standalone deploy still works (we app.include_router(router) at the end);
+# the unified shell can also do `unified_app.include_router(router, prefix="/undelivered")`
+# to host this dashboard under /undelivered/* on the consolidated service.
+#
+# Per operator directive 2026-05-15 + bot_chat 180: D0 owns the unified shell;
+# D2 supplies this router. Sub-app mount via FastAPI(app).mount() is the
+# alternative — APIRouter is the lower-friction path because middleware
+# composes cleanly (FastAPI mount() warns about middleware isolation).
+router = APIRouter()
 
 
 # ---------- Auth (mirrors app.py require_auth) ----------
@@ -999,8 +1012,14 @@ def _shell_config_blob() -> dict:
     }
 
 
-@app.get("/")
+@router.get("/")
 def root():
+    """Dashboard HTML entry point.
+
+    Standalone deploy: visible at /. Unified shell (mount prefix=/undelivered):
+    visible at /undelivered/. Either way the in-page asset links resolve via
+    the static mount on `app` (or the shell's static handling).
+    """
     if PROD_MISSING_SUPABASE:
         raise HTTPException(503, "d2_dashboard misconfigured: SUPABASE_URL / SUPABASE_ANON_KEY not set")
     if not _DASHBOARD_SHELL:
@@ -1012,7 +1031,7 @@ def root():
     return HTMLResponse(html)
 
 
-@app.get("/api/d2/config")
+@router.get("/api/d2/config")
 def config(_=Depends(require_auth)):
     """Front-end bootstrap config (no secrets)."""
     return {
@@ -1022,7 +1041,7 @@ def config(_=Depends(require_auth)):
     }
 
 
-@app.get("/api/d2/config-public")
+@router.get("/api/d2/config-public")
 def config_public():
     """Pre-auth bootstrap — mirror of the blob server-rendered into the HTML
     shell. Kept as a JSON endpoint for API consumers and for the front-end's
@@ -1087,7 +1106,7 @@ def _fetch_unified_orders_fast(per_page: int, include_terminal: bool = False) ->
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "error": _scrub_err("unified_orders.fast", e)}
 
 
-@app.get("/api/d2/orders")
+@router.get("/api/d2/orders")
 def orders(
     per_page: int = 25,
     page: int = 1,
@@ -1246,7 +1265,7 @@ def _timed(label: str, fn, *args, _timings: dict, **kwargs):
         _timings[label] = (_time.perf_counter() - t) * 1000
 
 
-@app.get("/api/d2/cron-freshness")
+@router.get("/api/d2/cron-freshness")
 def cron_freshness(_=Depends(require_auth)):
     """Per-source cron freshness, served separately from /api/d2/orders so
     a slow cron RPC (66ms+ vs unified_orders' 3ms) doesn't pace the orders
@@ -1295,7 +1314,7 @@ _DEEP_ORDER = {
 }
 
 
-@app.get("/api/d2/health")
+@router.get("/api/d2/health")
 def health(_=Depends(require_auth)):
     """Refresh-health snapshot — what each cron is doing and whether its
     pipeline is healthy. Read-only; intended for the dashboard's Health tab.
@@ -1370,7 +1389,7 @@ def health(_=Depends(require_auth)):
     })
 
 
-@app.get("/api/d2/order/{source}/{order_id}")
+@router.get("/api/d2/order/{source}/{order_id}")
 def order_detail(source: str, order_id: str, _=Depends(require_auth)):
     """Single-order deep fetch.
 
@@ -1465,7 +1484,7 @@ def _metrics_sales_gaps(sb, p_lookback_hours: int = 24, p_min_gap_minutes: int =
     return res.data or []
 
 
-@app.get("/api/d2/metrics")
+@router.get("/api/d2/metrics")
 def metrics(_=Depends(require_auth)):
     """CEO-view metrics bundle. One round-trip; backend fans out 13 SQL
     calls in parallel:
@@ -1599,7 +1618,7 @@ def metrics(_=Depends(require_auth)):
     return JSONResponse(results)
 
 
-@app.get("/api/d2/sales-feed")
+@router.get("/api/d2/sales-feed")
 def sales_feed(limit: int = 20, _=Depends(require_auth)):
     """Newest N rows across all 5 sources from public.unified_orders.
     Polled every 30s by the Metrics tab for the live sales-feed surface.
@@ -1637,4 +1656,11 @@ def sales_feed(limit: int = 20, _=Depends(require_auth)):
         "timings_ms": {"sql.sales_feed": round(total_ms, 1)},
     })
 
+
+# ---------- Include router into standalone app ----------
+#
+# Standalone Render deploy serves everything from `app` (which now includes the
+# router routes). The unified D0 shell imports `router` directly and mounts it
+# under a prefix (e.g. "/undelivered") — bypassing this include.
+app.include_router(router)
 
