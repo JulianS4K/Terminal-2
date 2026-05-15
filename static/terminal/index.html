@@ -2,36 +2,72 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>VibePass Terminal — D0 lane</title>
-  <style>
-    :root { color-scheme: dark light; }
-    html, body {
-      margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-      background: #0b0d10; color: #d7dde4; min-height: 100vh;
-    }
-    main {
-      max-width: 720px; margin: 12vh auto; padding: 0 24px;
-    }
-    h1 { font-size: 28px; font-weight: 600; margin: 0 0 8px; color: #fff; }
-    .tag {
-      display: inline-block; font-size: 11px; letter-spacing: 0.08em;
-      text-transform: uppercase; padding: 3px 8px; border-radius: 4px;
-      background: #1f2530; color: #6e93d6; margin-bottom: 18px;
-    }
-    p { line-height: 1.55; margin: 0 0 14px; color: #aab3bd; }
-    code { background: #1a1f26; padding: 2px 6px; border-radius: 4px; color: #d7dde4; font-size: 13px; }
-    a { color: #6e93d6; }
-    .meta { margin-top: 28px; font-size: 12px; color: #6e7785; }
-  </style>
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Event</title>
+  <link rel="stylesheet" href="/static/terminal/lib/uplot.min.css" />
+  <link rel="stylesheet" href="/static/terminal/style.css" />
 </head>
-<body>
-  <main>
-    <div class="tag">D0 — Terminal FE</div>
-    <h1>VibePass Terminal — provisioning</h1>
-    <p>This deploy target was provisioned for the D0 lane (broker terminal frontend). The actual terminal UI lives at <code>static/terminal/*</code> and is being built out separately.</p>
-    <p>If you reached this page expecting the operational terminal, you're early — check back after D0 lands their first build, or look at the active services list at <a href="https://dashboard.render.com">dashboard.render.com</a>.</p>
-    <p class="meta">Service: <code>vibepass-terminal-test</code> · Lane: D0 · Region: Oregon · Plan: free · Owner: D0 (per LANE_DISCIPLINE.md §Cross-cutting Rule #6, updated 2026-05-14)</p>
+<body data-page="event">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap">
+    <section id="hero">
+      <div>
+        <h1 class="title" id="evTitle">—</h1>
+        <p class="meta">
+          <span id="evVenue">—</span>
+          <span class="dot">·</span>
+          <span id="evDate">—</span>
+        </p>
+        <div class="badges" id="evBadges"></div>
+        <div class="coverage" id="coverage">
+          <span class="lbl">COVERAGE</span>
+          <span class="light" data-src="tevo"     title="TEvo"></span>
+          <span class="light" data-src="seatgeek" title="SeatGeek"></span>
+          <span class="light" data-src="seatdata" title="SeatData"></span>
+          <span class="light" data-src="espn"     title="ESPN"></span>
+        </div>
+      </div>
+    </section>
+
+    <section id="kpi">
+      <div class="kpi-label">OWNED PREMIUM PCT</div>
+      <div class="kpi-value" id="kpiVal">—</div>
+      <div class="kpi-sub"   id="kpiSub">our asks vs market not us</div>
+    </section>
+
+    <section id="chart">
+      <div class="chart-title">
+        <span>PRICE &amp; INVENTORY · 7D</span>
+        <span class="legend">
+          <span><i style="background:var(--accent)"></i> Owned median</span>
+          <span><i style="background:var(--muted)"></i> Market median</span>
+          <span><i style="background:var(--info)"></i> Owned qty</span>
+        </span>
+      </div>
+      <div id="chartHost"></div>
+    </section>
+
+    <section id="zones">
+      <div class="panel-title">ZONES — LATEST SNAPSHOT</div>
+      <div id="zonesBody"></div>
+    </section>
+
+    <section id="order-strip">
+      <div class="panel-title">ORDERS — STATE MIX</div>
+      <div id="ordersBody"></div>
+    </section>
   </main>
+
+  <script src="/static/terminal/lib/uplot.iife.min.js"></script>
+  <script src="/static/terminal/app.js"></script>
+  <script src="/static/terminal/event.js"></script>
 </body>
 </html>
