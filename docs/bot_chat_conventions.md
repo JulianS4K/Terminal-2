@@ -91,3 +91,4 @@ Canonical doc: [docs/edit_coordination_protocol.md](docs/edit_coordination_proto
 - [BOT_HIERARCHY.md](BOT_HIERARCHY.md) — push restrictions matrix
 - [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md) — C1's runbook (Step 8 is the bot_chat sweep + summary post)
 - [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md) — file-claim protocol for cross-lane writes
+- **bot_chat 187** (A1, 2026-05-15) — canonical Slack directive: channel matrix (`#terminal-2-alerts` / `#admin` / `#d0`), per-bot posting rules, escalation-via-bot_chat table (`event_type='p0_security'` or `flag` + `meta.severity='high'` → Slack page next hourly aging sweep), loop-prevention rule (Slack-originated posts get replied in bot_chat, not Slack). Aging sweep + daily checkpoint digest are the only writers to `#terminal-2-alerts`.
