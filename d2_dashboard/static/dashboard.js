@@ -134,6 +134,24 @@ const ORDERS_AUTO_REFRESH_MS = 5 * 60 * 1000;
 let _ORDERS_REFRESH_TIMER = null;
 let _DETAIL_OPEN = false;
 
+// Stale-data threshold for the per-source freshness chips on the Orders tab.
+// Aligned with cron_policy.work_check_sql floor (mig 20260515250002 set sales
+// ingest interval to 60 min). Uniform across sources for MVP — per-source
+// thresholds matching each cron's policy off-peak windows (SG broker /sales
+// is bursty, peak 11 PM ET / off-peak 4–5 AM ET; a flat 60-min check at 5 AM
+// could flash amber during normal quiet windows) is a follow-up.
+const STALE_THRESHOLD_MIN = 60;
+const STALE_CRITICAL_MIN = 4 * 60;
+
+function _staleClass(asOfIso) {
+  if (!asOfIso) return "chip-stale";
+  const ageMin = (Date.now() - Date.parse(asOfIso)) / 60_000;
+  if (!Number.isFinite(ageMin) || ageMin < 0) return "chip-fresh";
+  if (ageMin > STALE_CRITICAL_MIN) return "chip-stale-critical";
+  if (ageMin > STALE_THRESHOLD_MIN) return "chip-stale";
+  return "chip-fresh";
+}
+
 async function importWithTimeout(url, ms) {
   // Race the dynamic import against a timeout so we don't hang on a blocked CDN.
   let timer;
@@ -569,7 +587,15 @@ function renderOrders() {
 
   bar.innerHTML = (body.sources || [])
     .map((s) => {
-      const cls = s.ok ? "chip ok" : "chip err";
+      // Stale class on the chip when SQL has no rows OR when as_of is older
+      // than the cron policy floor. Lets the operator distinguish "no sales
+      // this period" from "ingest hasn't run in a while" at a glance.
+      let staleCls = "chip-fresh";
+      if (s.ok && s.origin === "sql") {
+        if (s.as_of) staleCls = _staleClass(s.as_of);
+        else if ((s.count ?? 0) === 0) staleCls = "chip-stale"; // SQL ok but zero rows + no as_of = no recent ingest
+      }
+      const cls = (s.ok ? "chip ok" : "chip err") + " " + staleCls;
       const origin = s.origin === "sql"
         ? `<span class="chip-origin chip-origin-sql" title="from unified_orders (cron-fresh)">SQL</span>`
         : s.origin === "api+sql-match"
@@ -581,6 +607,8 @@ function renderOrders() {
       if (s.ok) {
         detail = `${s.count} row${s.count === 1 ? "" : "s"}` + (s.total_reported != null ? ` / ${s.total_reported} total` : "");
         if (s.origin === "sql" && s.as_of) detail += ` · row ${formatAgo(s.as_of)}`;
+        if (staleCls === "chip-stale-critical") detail += " · STALE";
+        else if (staleCls === "chip-stale") detail += " · stale";
       } else {
         detail = s.error || "error";
       }

@@ -95,6 +95,21 @@ main { padding: 16px 20px; }
 }
 .chip.ok { border-color: var(--ok); }
 .chip.err { border-color: var(--err); color: var(--err); }
+/* Stale-data modifiers — overlay on .chip.ok to flag when a SQL source has
+   gone past the cron freshness floor (60min uniform; per-source thresholds
+   are a follow-up). chip-fresh is the default neutral; chip-stale amber
+   warns the operator that ingest hasn't ticked recently; chip-stale-critical
+   red flags >4h staleness that almost certainly means a broken cron. */
+.chip.chip-fresh { /* no override — keeps the .chip.ok green border */ }
+.chip.chip-stale {
+  border-color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.chip.chip-stale-critical {
+  border-color: var(--err);
+  box-shadow: inset 0 0 0 1px var(--err);
+  color: var(--err);
+}
 .chip-origin {
   display: inline-block;
   padding: 1px 5px;
