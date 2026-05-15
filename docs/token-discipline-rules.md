@@ -40,6 +40,23 @@ These apply to every bot's prose output, not just bot_chat:
 - **Glob before Read** when fishing for a file; saves a Read on a wrong path.
 - **Use Grep `output_mode='count'` or `files_with_matches`** before reaching for `'content'`.
 
+## Pre-merge code audit (added 2026-05-15)
+
+C1 runs this audit on every PR being merged as part of consolidation. Findings flagged in `bot_chat` (or PR comments); blocking is reserved for genuine waste, not edge cases.
+
+**Scan the diff for:**
+
+1. **File-header docstrings >15 lines** (Python, SQL, JS). Same budget as migration headers. The header should state purpose + auth/security gate + key invariants. Bug history, PR rationale, audit refs → PR description or commit message.
+2. **`pre:` dependency list mega-strings in migrations.** If a migration lists 10+ prerequisites in one line, only the truly load-bearing ones (functions/tables the migration touches) belong. The chronological "everything since X" is noise.
+3. **Inline comments that restate the code in English.** If a 2-line `if` is preceded by a 3-line comment describing what the `if` does, the comment is waste. Comments should explain *why*, not *what*.
+4. **Near-duplicate functions** (e.g., `fetch_evo()`, `fetch_seatgeek()`, `fetch_tickpick()` all calling `fetch_one("name")`). Collapse into the parametric form.
+5. **Commented-out code.** Delete it; git remembers.
+6. **Unused imports / dead variables** flagged by linting.
+7. **Audit refs / "see doc §X" cross-references in code.** Useful in PRs and bot_chat, redundant in code that lives forever. The code IS the audit ref once merged.
+8. **Verbose error messages** that include "consult bot X" or "see runbook §Y" — those don't reach the next bot anyway; throw cleanly with the structural error.
+
+**Disposition:** if findings exist, file a `flag` in `bot_chat` addressed to the lane owner; merge proceeds unless the finding is structural (e.g., genuine dead code or near-duplicate functions). Lane owner re-compresses on next PR.
+
 ## C1 daily Step 9 — token discipline audit
 
 Added to [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md). Each checkpoint:

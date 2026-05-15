@@ -104,11 +104,19 @@ Per push-protocol: A1 has final-merge authority on contentious cases. C1 merges 
 4. Not in B1's security queue without B1 sign-off
 
 For each eligible PR:
+
 ```bash
-gh pr merge <num> --merge  # or --squash per repo convention
+# Pre-merge token-leakage audit (operator directive 2026-05-15, bot_chat 139 + 141):
+gh pr view <num> --json files --template '{{range .files}}{{.path}}{{"\n"}}{{end}}'
+# Scan diff for the 8 patterns in docs/token-discipline-rules.md §"Pre-merge code audit"
+# (file-header bloat, pre: mega-lists, restate-code comments, near-duplicates, dead code, etc.)
+# Findings → bot_chat flag to lane owner. Merge proceeds unless structural waste.
+
+# Then merge:
+gh pr merge <num> --squash  # or --merge per repo convention
 ```
 
-Document each merge in the daily checkpoint summary.
+Document each merge + any leakage findings in the daily checkpoint summary.
 
 ### Step 6 — Stale branch sweep (2 min)
 
