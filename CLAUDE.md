@@ -64,9 +64,14 @@ Render MCP tools (`mcp__render__*`) are gated per-bot to their assigned service.
 **D2 — scoped to `d2-orders-dashboard` (`srv-d82b4kl7vvec73b4r3r0`):**
 - Same as D1 but for its assigned service
 - Write OK on `d2-orders-dashboard` only
-- Forbidden: any operation on `vibepass-storefront-test`, `hi-events`, or workspace-level resources
+- Forbidden: any operation on `vibepass-storefront-test`, `vibepass-terminal-test`, `hi-events`, or workspace-level resources
 
-**All other bots (B1, C1, D0, D3, D4):**
+**D0 — scoped to `vibepass-terminal-test` (provisioned 2026-05-15):**
+- Same as D1/D2 but for its assigned service (static-site type, serves `static/terminal/*`)
+- Write OK on `vibepass-terminal-test` only
+- Forbidden: any operation on other services or workspace-level resources
+
+**All other bots (B1, C1, D3, D4):**
 - Read-only across all services (monitoring is universal)
 - All writes require explicit operator approval
 
