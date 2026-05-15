@@ -1,5 +1,9 @@
 # Render.com Infrastructure-as-Code blueprint for the storefront test env.
 #
+# OWNER: D1 (Consumer Retail) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6.
+# Service: vibepass-storefront-test (srv-d8140bnaqgkc73al4asg)
+# Companion blueprint for D2's service: render-d2-dashboard.yaml
+#
 # Usage:
 #   1. Connect this repo to Render (https://dashboard.render.com → New → Blueprint).
 #   2. Point at this branch (claude/store-sql-only-demo-mode) or any branch

@@ -1,0 +1,47 @@
+# Render.com Infrastructure-as-Code blueprint for D2's orders dashboard.
+#
+# OWNER: D2 (Order Clients) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6.
+# Service: d2-orders-dashboard (srv-d82b4kl7vvec73b4r3r0)
+# Companion blueprint for D1's storefront: render.yaml
+#
+# This file mirrors the existing service config that was created manually
+# via dashboard on 2026-05-13. It exists so D2's bot can manage IaC for
+# this service in version control rather than dashboard-only edits.
+#
+# To apply changes from this blueprint to the live service:
+#   - Edit this file in a PR
+#   - On merge to main, Render reconciles changes if the blueprint is
+#     connected (currently service was dashboard-created; connecting the
+#     blueprint requires one-time operator action in the dashboard)
+#
+# Until the blueprint is wired in, this file is documentation-only.
+
+services:
+  - type: web
+    name: d2-orders-dashboard
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn d2_dashboard.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /healthz
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      # Supabase secrets — set via `sync: false` so they prompt on first
+      # provisioning and never live in version control. Names must match
+      # what d2_dashboard/main.py expects.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # D2-specific cron auth (if/when scheduled jobs hit dashboard endpoints).
+      - key: CRON_SECRET
+        sync: false

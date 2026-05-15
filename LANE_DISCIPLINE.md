@@ -19,7 +19,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 | B1 | Security Manager | `review-supabase-access-v8Dtl` | active |
 | C1 | Data + Chat Supervisor | this session | active |
 | D0 | Terminal FE (read-only) | `audit-datasets-schemas-auoc3` | reassigned |
-| D1 | Consumer Retail + Render workspace owner | `eloquent-chatterjee-aaedf0` | active |
+| D1 | Consumer Retail (owns Render service `vibepass-storefront-test`) | `eloquent-chatterjee-aaedf0` | active |
 | D2 | Order Clients | `review-unified-order-suite-FA0qA` | active |
 | (sub D2) | Undelivered FE | same as D2 (or split when scope activates) | deferred |
 | D3 | Broadway (sub of D2) | `broadway-scraper-eChQ6` | active |
@@ -132,7 +132,8 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 **Reads:** events, listings_snapshots, event_metrics, performer / venue context, share_links
 
 **Owns deploy infra:**
-- **Render workspace** (sole owner — see Cross-cutting Rule #6). D1 may provision services, modify env vars, configure crons, and manage all Render-side infrastructure for the storefront / `app.py` stack. Other subordinates are explicitly barred from Render writes.
+- **Render service: `vibepass-storefront-test`** (`srv-d8140bnaqgkc73al4asg`). D1 manages env vars, deploy config, log monitoring, and `render.yaml` IaC for this service exclusively. Auto-deploys from `main` branch.
+- D1 does **NOT** own `d2-orders-dashboard` — that surface is D2's (see below).
 
 ### D2 — Order Clients
 
@@ -151,9 +152,13 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Broker terminal files
 - Broadway code
 - `SCHEMA.md` (propose updates via PR comment to A1)
-- **Render workspace** (D1 owns)
+- D1's Render service (`vibepass-storefront-test`) — D1 owns
 
 **Reads:** events, performer / venue context for join purposes, A1's listings tables for cross-validation
+
+**Owns deploy infra:**
+- **Render service: `d2-orders-dashboard`** (`srv-d82b4kl7vvec73b4r3r0`). D2 manages env vars, deploy config, log monitoring, and (when created) `render-d2-dashboard.yaml` IaC for this service exclusively. Auto-deploys from `main` branch; D2's order-related PRs that affect `d2_dashboard/` trigger auto-redeploys on merge.
+- D2 does **NOT** own `vibepass-storefront-test` — that surface is D1's.
 
 ### Undelivered FE (sub of D2)
 
@@ -178,7 +183,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Storefront
 - Other ingest clients
 - Edge functions outside `broadway_collect/`
-- **Render workspace** (D1 owns)
+- D1's Render service (`vibepass-storefront-test`) — D1 owns; touch only D1's surface
 
 **Reads:** `canonical_external_ids` for xref propagation (write into own `broadway_event_xref`, propagation handled by drift triggers in A1 / canonical lane)
 
@@ -188,7 +193,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **NEVER writes:**
 - Anything outside its own future namespace
-- **Render workspace** (D1 owns) — D4 gets its own deploy target when scoped, not Render
+- D1's Render service (`vibepass-storefront-test`) — D1 owns; touch only D1's surface — D4 gets its own deploy target when scoped, not Render
 
 ## Cross-cutting rules
 
@@ -210,8 +215,19 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
    - Explicit `GRANT EXECUTE ... TO service_role`
    - `IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN RAISE EXCEPTION` at body start
 
-6. **Deploy infrastructure ownership** — per-lane infra exclusivity:
-   - **Render workspace** — owned by **D1 (Consumer Retail)** exclusively. Storefront / app.py / static assets deploy targets. No other subordinate (D0, D2, D3, D4, or future) may provision services, push deploys, or modify environment variables in the Render workspace without explicit operator approval. Render MCP tools (`mcp__render__*`) are gated to D1's lane.
+6. **Deploy infrastructure ownership** — per-service exclusivity within Render workspace (updated 2026-05-14):
+
+   | Render service | ID | Owner bot | Source code | Branch | IaC file |
+   |---|---|---|---|---|---|
+   | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D1** | `app.py`, `static/store/*` | `main` | `render.yaml` |
+   | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D2** | `d2_dashboard/*` | `main` | `render-d2-dashboard.yaml` (to be authored) |
+   | `hi-events` (separate repo) | `srv-d7g0cev7f7vs73blkc70` | n/a (not Terminal-2) | — | `develop` | — |
+
+   - Each owner-bot manages **env vars, deploy config, log monitoring, and IaC blueprint** for their specific service. They do NOT touch the other bot's service.
+   - Render MCP tools (`mcp__render__*`) — **read** ops (`list_services`, `get_service`, `list_deploys`, `list_logs`, `get_metrics`) are available to both D1 and D2 (scoped by service-id in arguments). **Write** ops (`update_environment_variables`, `update_web_service`, `create_*`) require operator approval per the standard "Render is read-only by default" rule in `CLAUDE.md §4`.
+   - Both services auto-deploy from `main`. A1 (sole pusher to main) merges PRs; each push triggers auto-deploys on both services since both watch `main`. If a PR only touches one service's surface, the other service still redeploys (no-op for it but burns build minutes — acceptable for free tier).
+   - **Future split** option if build-time waste becomes painful: each service moves to a bot-specific deploy branch (e.g. `d1/release`, `d2/release`), and A1 fast-forwards each one when their respective code paths change. Deferred until volume justifies the merge-coordination cost.
+
    - **Railway** — current legacy deploy home for the broker terminal + backend. A1 governs migration off Railway → Render as scope warrants. Subordinates do not touch Railway configuration.
    - **Supabase** — shared platform; per-table ownership via `MIGRATION_CONVENTIONS §4`. RLS coverage maintained by B1.
    - **Future D4 infra** — when scope activates, D4 gets its own deploy target. Choice (Render workspace, Cloudflare Workers, custom) deferred until then.
