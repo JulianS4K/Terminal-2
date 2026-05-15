@@ -101,6 +101,8 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **Cadence:** daily checkpoint at 09:00 ET (after overnight backdata processing completes; before US trading-hours peak). One scheduled session per day; ad-hoc sessions if drift gets surfaced by automated alerting between checkpoints.
 
+**Charter expansion 2026-05-15** (operator directive, bot_chat 139): C1 owns **token monitor + minimization** alongside drift monitoring. Scope: migration header audit (≤15 lines), bot_chat length audit (≤1500 chars), token-discipline rulebook (`docs/token-discipline-rules.md`), quarterly efficiency report. Runbook Step 9 added.
+
 ### D0 — Consolidated Frontend Lane (2026-05-15 reorg)
 
 **Role**: lane owner for all customer + operator frontend surfaces. Reviews + signs off on subordinate (D1, D2) PRs before A1 merges. Owns Render write authority on all three frontend services. Authors `static/terminal/*` directly.

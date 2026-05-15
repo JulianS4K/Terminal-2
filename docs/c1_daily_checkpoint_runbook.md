@@ -166,10 +166,35 @@ gh pr merge --merge --auto
 SELECT public.bot_chat_log(
   p_level := 'admin',
   p_lane := 'C1',
-  p_event_type := 'checkpoint',
+  p_event_type := 'status',
   p_message := 'Daily checkpoint 2026-MM-DD complete. <summary>. See docs/c1-checkpoint-<date>.md'
 );
 ```
+
+> Note (2026-05-15): runbook originally specified `event_type='checkpoint'` but that value is not in the `bot_chat_event_type_check` constraint allowlist. Using `'status'` until either the constraint is widened or this runbook is patched (open follow-up #11 in [docs/c1-checkpoint-2026-05-15.md](docs/c1-checkpoint-2026-05-15.md)).
+
+### Step 9 — Token discipline audit (2 min)
+
+Added 2026-05-15 per operator directive (bot_chat 139). Charter: C1 owns token monitor + minimization alongside drift monitoring.
+
+```sql
+-- Oversized bot_chat posts in the last 24h (rule: <=1500 chars; see docs/token-discipline-rules.md)
+SELECT id, bot_lane, event_type, length(message) AS chars, left(message, 80) AS preview
+FROM public.bot_chat
+WHERE created_at > now() - interval '24 hours'
+  AND length(message) > 1500
+ORDER BY chars DESC;
+```
+
+```bash
+# Bloated migration headers in the last 24h (rule: <=15 lines)
+for f in $(git log --since="24 hours ago" --name-only --pretty="" -- supabase/migrations/ | sort -u); do
+  hdr=$(awk '/^[^-]/{exit} {print}' "$f" 2>/dev/null | wc -l)
+  [ "$hdr" -gt 15 ] && echo "$hdr  $f"
+done
+```
+
+Flag findings in `bot_chat` as `event_type='flag'`. Original author re-compresses on next post; old entries are tracked but not retroactively edited.
 
 ---
 
