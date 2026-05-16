@@ -131,7 +131,7 @@
       const ownedShare = e.owned_share != null ? T.fmtPct(e.owned_share * 100, 0) : '—';
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="/static/terminal/event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a></td>
+        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a></td>
         <td>${escapeHtml(e.venue_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${T.fmtNum(e.tickets_count || 0)}</td>

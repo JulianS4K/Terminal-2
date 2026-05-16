@@ -7,8 +7,8 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Event</title>
-  <link rel="stylesheet" href="/static/terminal/lib/uplot.min.css" />
-  <link rel="stylesheet" href="/static/terminal/style.css" />
+  <link rel="stylesheet" href="lib/uplot.min.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body data-page="event">
 
@@ -17,9 +17,9 @@
     <span id="status" class="status">Loading…</span>
   </header>
 
-  <main class="wrap">
+  <main class="wrap event">
     <section id="hero">
-      <div>
+      <div class="hero-main">
         <h1 class="title" id="evTitle">—</h1>
         <p class="meta">
           <span id="evVenue">—</span>
@@ -27,6 +27,8 @@
           <span id="evDate">—</span>
         </p>
         <div class="badges" id="evBadges"></div>
+      </div>
+      <div class="hero-side">
         <div class="coverage" id="coverage">
           <span class="lbl">COVERAGE</span>
           <span class="light" data-src="tevo"     title="TEvo"></span>
@@ -34,25 +36,81 @@
           <span class="light" data-src="seatdata" title="SeatData"></span>
           <span class="light" data-src="espn"     title="ESPN"></span>
         </div>
+        <div class="freshness" id="freshness">
+          <span class="fr-chip" data-src="tevo">TEvo —</span>
+          <span class="fr-chip" data-src="sg-lst">SG L —</span>
+          <span class="fr-chip" data-src="sg-sales">SG S —</span>
+          <span class="fr-chip" data-src="weather">Wx —</span>
+          <span class="fr-chip" data-src="espn">ESPN —</span>
+        </div>
+        <div class="event-mode" id="eventMode"></div>
       </div>
     </section>
 
-    <section id="kpi">
-      <div class="kpi-label">OWNED PREMIUM PCT</div>
-      <div class="kpi-value" id="kpiVal">—</div>
-      <div class="kpi-sub"   id="kpiSub">our asks vs market not us</div>
+    <section id="kpi-grid">
+      <div class="kpi-cell" id="kpiOwnedPremium">
+        <span class="kpi-lbl">OWNED PREMIUM %</span>
+        <span class="kpi-val" id="kpiOwnedPremiumVal">—</span>
+        <span class="kpi-sub" id="kpiOwnedPremiumSub">our asks vs market</span>
+      </div>
+      <div class="kpi-cell" id="kpiRetailMedian">
+        <span class="kpi-lbl">RETAIL MEDIAN</span>
+        <span class="kpi-val" id="kpiRetailMedianVal">—</span>
+        <span class="kpi-sg"  id="kpiRetailMedianSG"></span>
+      </div>
+      <div class="kpi-cell" id="kpiQtyAvailable">
+        <span class="kpi-lbl">QTY AVAILABLE</span>
+        <span class="kpi-val" id="kpiQtyAvailableVal">—</span>
+        <span class="kpi-sg"  id="kpiQtyAvailableSG"></span>
+      </div>
+      <div class="kpi-cell" id="kpiQtyOwned">
+        <span class="kpi-lbl">QTY OWNED</span>
+        <span class="kpi-val" id="kpiQtyOwnedVal">—</span>
+        <span class="kpi-sub" id="kpiQtyOwnedSub"></span>
+      </div>
+      <div class="kpi-cell" id="kpiGetin">
+        <span class="kpi-lbl">GET-IN</span>
+        <span class="kpi-val" id="kpiGetinVal">—</span>
+        <span class="kpi-sg"  id="kpiGetinSG"></span>
+      </div>
+      <div class="kpi-cell" id="kpiOwnedMedian">
+        <span class="kpi-lbl">OWNED MEDIAN</span>
+        <span class="kpi-val" id="kpiOwnedMedianVal">—</span>
+        <span class="kpi-sub">our retail</span>
+      </div>
+      <div class="kpi-cell" id="kpiNonownedMedian">
+        <span class="kpi-lbl">NON-OWNED MEDIAN</span>
+        <span class="kpi-val" id="kpiNonownedMedianVal">—</span>
+        <span class="kpi-sub">market without us</span>
+      </div>
+      <div class="kpi-cell" id="kpiOwnedShare">
+        <span class="kpi-lbl">OWNED SHARE</span>
+        <span class="kpi-val" id="kpiOwnedShareVal">—</span>
+        <span class="kpi-sub" id="kpiOwnedShareSub"></span>
+      </div>
     </section>
 
     <section id="chart">
       <div class="chart-title">
-        <span>PRICE &amp; INVENTORY · 7D</span>
-        <span class="legend">
-          <span><i style="background:var(--accent)"></i> Owned median</span>
-          <span><i style="background:var(--muted)"></i> Market median</span>
-          <span><i style="background:var(--info)"></i> Owned qty</span>
-        </span>
+        <span>PRICE &amp; INVENTORY · <span id="chartRangeLabel">7d</span></span>
+        <div class="chart-controls">
+          <span class="legend" id="chartLegend"></span>
+          <select id="chartRange" class="range-select">
+            <option value="6">6h</option>
+            <option value="24">24h</option>
+            <option value="72">3d</option>
+            <option value="168" selected>7d</option>
+            <option value="720">30d</option>
+            <option value="4320">ALL</option>
+          </select>
+        </div>
       </div>
       <div id="chartHost"></div>
+    </section>
+
+    <section id="splits">
+      <div class="panel-title">SPLITS — DENSITY · LAST 24H</div>
+      <div id="splitsBody"></div>
     </section>
 
     <section id="zones">
@@ -60,17 +118,46 @@
       <div id="zonesBody"></div>
     </section>
 
+    <section id="sales-tape">
+      <div class="panel-title">SALES TAPE — SEATGEEK · LAST 20</div>
+      <div id="salesTapeBody"></div>
+    </section>
+
+    <section id="espn">
+      <div class="panel-title row">
+        <span>ESPN — STANDINGS · INJURIES · RECENT</span>
+        <span class="muted small" id="espnSubtitle"></span>
+      </div>
+      <div id="espnBody"></div>
+    </section>
+
+    <section id="weather">
+      <div class="panel-title row">
+        <span>WEATHER — VENUE + FORECAST</span>
+        <span class="muted small" id="weatherSubtitle"></span>
+      </div>
+      <div id="weatherBody"></div>
+    </section>
+
     <section id="order-strip">
       <div class="panel-title">ORDERS — STATE MIX</div>
       <div id="ordersBody"></div>
     </section>
+
+    <section id="alerts">
+      <div class="panel-title row">
+        <span>EVENT ALERTS — LAST <span id="alertsWindow">7d</span></span>
+        <span class="muted small" id="alertsCount"></span>
+      </div>
+      <div id="alertsBody"></div>
+    </section>
   </main>
 
-  <script src="/static/terminal/lib/supabase.js"></script>
-  <script src="/static/terminal/lib/uplot.iife.min.js"></script>
-  <script src="/static/terminal/auth.js"></script>
-  <script src="/static/terminal/app.js"></script>
-  <script src="/static/terminal/nav.js"></script>
-  <script src="/static/terminal/event.js"></script>
+  <script src="lib/supabase.js"></script>
+  <script src="lib/uplot.iife.min.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+  <script src="nav.js"></script>
+  <script src="event.js"></script>
 </body>
 </html>
