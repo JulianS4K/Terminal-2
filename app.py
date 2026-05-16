@@ -6322,6 +6322,13 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
         raise HTTPException(400, "event_id, ticket_group_id and quantity must be integers")
     if not (event_id and ticket_group_id and quantity > 0):
         raise HTTPException(400, "event_id, ticket_group_id and quantity > 0 required")
+    # Upper-bound the requested quantity before we touch inventory. TEvo
+    # ticket groups in practice cap around 8-12 per seat block; 50 is a
+    # generous ceiling that still bounds the request shape so a malformed
+    # client (quantity=999999) gets rejected fast without consulting the
+    # upstream API or the snapshot table.
+    if quantity > 50:
+        raise HTTPException(400, "quantity exceeds maximum allowed per reservation")
 
     if STOREFRONT_SQL_ONLY:
         # SQL-only mode: validate against listings_snapshots' latest capture
