@@ -27,7 +27,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import requests
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -4511,6 +4511,31 @@ _search_cache: dict[str, tuple[float, dict]] = {}
 _SEARCH_CACHE_TTL = 60.0
 
 
+# Movers stale-while-revalidate cache. /api/store/movers does a 4-table
+# join (events + latest_event_metrics + event_lifecycle + v_event_velocity
+# _windows + performer_metadata) per call and consistently times at ~1s
+# warm. Underlying velocity data only refreshes hourly (driven by the
+# listings_snapshots ingest cadence), so a 5-min server cache is well
+# within the data's natural refresh window AND eliminates ~1s on every
+# homescreen load past the first.
+#
+# Pattern: fresh hits return instantly; stale hits return cached payload
+# AND schedule a background recompute via FastAPI BackgroundTasks; cold
+# (never-seen-key) hits compute synchronously. Refresh-in-flight tracking
+# prevents duplicate fans for the same key under concurrent requests.
+_movers_cache: dict[str, tuple[float, dict]] = {}
+_MOVERS_CACHE_TTL = 300.0  # 5 min — conservative vs. hourly velocity refresh
+_MOVERS_CACHE_REFRESHING: set[str] = set()
+
+
+def _movers_cache_key(city: str, days: int, limit: int) -> str:
+    """Canonical cache key — case-folds city so 'nyc'/'NYC'/'New York' map
+    to a single slot. The endpoint already maps 'NEW YORK' + 'NEW YORK CITY'
+    aliases through the same venue_patterns, so the cache key uppercase
+    matches that intent."""
+    return f"{(city or '').upper()}|{int(days)}|{int(limit)}"
+
+
 def _normalize_search_key(q: str) -> str:
     """Normalize a user query for cache slot identity. Collapses runs of
     whitespace + lowercases + strips, so "  Knicks  ", "knicks", "KNICKS"
@@ -4821,7 +4846,10 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
 
 
 @app.get("/api/store/search")
-def store_search(q: str, limit: int = 8):
+def store_search(
+    q: str = Query(..., max_length=200, description="Search term; max 200 chars to prevent multi-MB DoS payloads"),
+    limit: int = 8,
+):
     """Live storefront search. Hits TEvo /v9/searches/suggestions in live
     mode (and cross-joins our SQL for we_own/from_price tagging), or
     ILIKE-searches our tables when STOREFRONT_SQL_ONLY=true.
@@ -4866,6 +4894,7 @@ def store_search(q: str, limit: int = 8):
 
 @app.get("/api/store/movers")
 def store_movers(
+    background_tasks: BackgroundTasks,
     city: str = "NYC",
     days: int = 21,
     limit: int = 8,
@@ -4884,11 +4913,60 @@ def store_movers(
 
     Hidden when nothing matches. Driven by v_event_velocity_windows joined
     against latest_event_metrics + events + event_lifecycle.
+
+    PERFORMANCE: stale-while-revalidate cached. The bare compute hits ~1s
+    warm (audit-2026-05-16 measurement). Underlying velocity data refreshes
+    only hourly, so a 5-min cache is well within the refresh cadence and
+    collapses the homescreen response to a dict lookup (~5ms) on every
+    request past the first per (city, days, limit) tuple.
     """
-    db = require_sb()
     cap = max(1, min(int(limit), 24))
     day_cap = max(1, min(int(days), 90))
+    key = _movers_cache_key(city, day_cap, cap)
+    now = time.time()
+    cached = _movers_cache.get(key)
 
+    if cached:
+        age = now - cached[0]
+        if age < _MOVERS_CACHE_TTL:
+            # FRESH: serve immediately, no compute.
+            return cached[1]
+        # STALE: serve old payload + schedule a background recompute so
+        # the NEXT request gets fresh data. Customer never waits.
+        # Guard against duplicate fans for the same key under concurrent
+        # requests — only one refresh in flight at a time per key.
+        if key not in _MOVERS_CACHE_REFRESHING:
+            _MOVERS_CACHE_REFRESHING.add(key)
+            background_tasks.add_task(_refresh_movers, city, day_cap, cap, key)
+        return cached[1]
+
+    # COLD: never-seen key. Compute synchronously, cache, return.
+    fresh = _compute_movers(require_sb(), city, day_cap, cap)
+    _movers_cache[key] = (now, fresh)
+    return fresh
+
+
+def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
+    """Background refresh fired by BackgroundTasks AFTER the stale response
+    is sent. Failures log and clear the in-flight flag so a future request
+    can retry; the stale cached payload stays in place (better than
+    eviction — a slightly old payload beats no payload).
+    """
+    try:
+        fresh = _compute_movers(require_sb(), city, days, limit)
+        _movers_cache[key] = (time.time(), fresh)
+    except Exception as e:
+        print(f"[movers refresh] failed for {key}: {e!r}")
+    finally:
+        _MOVERS_CACHE_REFRESHING.discard(key)
+
+
+def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
+    """Pure compute path for the movers endpoint. Extracted from the route
+    handler so both the cold-cache code path AND the background-refresh
+    task call the same implementation. Returns the exact response dict
+    the route emits (`city`, `days`, `count`, `events`).
+    """
     # City filter — hardcoded NYC venue patterns for v1. Matches everywhere
     # the storefront would consider "New York metro" inventory.
     city_norm = (city or "").upper()
@@ -6344,7 +6422,7 @@ def _share_to_dict(row: dict) -> dict:
 
 
 @app.post("/api/store/share")
-def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
+def store_share_create(payload: dict = Body(...), user=Depends(require_auth)):
     """Create a revocable share link for one event with saved filters.
 
     Body:
@@ -6431,6 +6509,13 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
     if chosen:
         expires_at = chosen.astimezone(timezone.utc).isoformat()
 
+    # Populate created_by so DELETE + LIST routes can enforce ownership
+    # (closed 2026-05-16 audit S1/S2 — any authed user used to be able to
+    # revoke/enumerate ANY share link by id). When AUTH_DISABLED=true (dev),
+    # require_auth returns None — store NULL and the ownership filters in
+    # those routes correctly skip in that mode.
+    created_by = user["id"] if user else None
+
     # ~12 chars (9 random bytes → 12 url-safe chars) ≈ 72 bits of entropy.
     # Retry once on the astronomically unlikely collision.
     share_id = secrets.token_urlsafe(9)
@@ -6440,6 +6525,7 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
         "filters": persisted,
         "note": note,
         "expires_at": expires_at,
+        "created_by": created_by,
     }
     try:
         ins = db.table("share_links").insert(row).execute()
@@ -6450,7 +6536,12 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
         try:
             ins = db.table("share_links").insert(row).execute()
         except Exception as e2:
-            raise HTTPException(500, f"could not create share link: {e2}") from e
+            # Sanitized: log full upstream error server-side, return a stable
+            # generic string so Supabase exception text (table/constraint
+            # names, internal validation) doesn't leak to public callers.
+            # Audit S4 2026-05-16.
+            print(f"[store_share_create] share insert failed twice for {share_id}: {e2!r}")
+            raise HTTPException(500, "could not create share link") from e
 
     saved = (ins.data or [None])[0] or row
     return _share_to_dict(saved)
@@ -6498,21 +6589,31 @@ def store_share_resolve(share_id: str):
 
 
 @app.delete("/api/store/share/{share_id}")
-def store_share_revoke(share_id: str, _=Depends(require_auth)):
+def store_share_revoke(share_id: str, user=Depends(require_auth)):
     """Soft-delete: stamps revoked_at. The row stays so view history survives.
     Idempotent — revoking an already-revoked link is fine.
 
     Auth: require_auth. Closed on 2026-05-11 (security chat) — any unauth
     user used to be able to revoke any share link by id.
+
+    Ownership: closed 2026-05-16 (audit S1) — auth was checked but not
+    ownership, so any authed user could revoke ANY share link by id. Now
+    the update is filtered by created_by = current_user.id. When
+    AUTH_DISABLED=true (dev), require_auth returns None and we skip the
+    ownership filter (matches the rest of the auth-disabled pattern).
     """
     db = require_sb()
-    res = (
+    q = (
         db.table("share_links")
         .update({"revoked_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", share_id)
-        .execute()
     )
+    if user is not None:
+        q = q.eq("created_by", user["id"])
+    res = q.execute()
     if not (res.data or []):
+        # Could be: row doesn't exist, OR row exists but user doesn't own it.
+        # Either way, surface as 404 (don't leak existence to non-owner).
         raise HTTPException(404, "share link not found")
     return {"ok": True, "id": share_id, "revoked_at": (res.data[0] or {}).get("revoked_at")}
 
@@ -6522,17 +6623,26 @@ def store_share_list(
     event_id: int | None = None,
     include_inactive: bool = False,
     limit: int = 50,
-    _=Depends(require_auth),
+    user=Depends(require_auth),
 ):
     """List share links, newest first. Filter by event_id when present.
 
     Auth: require_auth. Closed on 2026-05-11 (security chat) — used to
     leak every share row (event_id, filters, notes, view counts) to anon.
+
+    Ownership: closed 2026-05-16 (audit S2) — auth was checked but the
+    list wasn't filtered by creator, so authed users saw EVERY share
+    (multi-tenant data leak: filters, notes, view metrics from other
+    creators). Now filtered by created_by = current_user.id when auth
+    is enabled. AUTH_DISABLED=true (dev) skips the filter — admins/dev
+    see everything, matching existing auth-disabled semantics.
     """
     db = require_sb()
     q = db.table("share_links").select(
         "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"
     ).order("created_at", desc=True).limit(min(max(limit, 1), 200))
+    if user is not None:
+        q = q.eq("created_by", user["id"])
     if event_id:
         q = q.eq("event_id", event_id)
     if not include_inactive:
