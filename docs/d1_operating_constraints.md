@@ -1,12 +1,21 @@
 # D1 Operating Constraints
 
-D1 = Consumer Retail Bot. Worktree `eloquent-chatterjee-aaedf0`. Old label P1 (deprecated post-restructure 2026-05-12; see `bot_chat` rows 47-58).
+D1 = Consumer Retail Bot. Old label P1 (deprecated post-restructure 2026-05-12). Subordinate coding arm under D0 (consolidated frontend lane) per the 2026-05-15 D-tier reorg (`bot_chat` row 157, PR #126).
 
-This doc codifies the boundaries D1 operates within. **`BOT_HIERARCHY.md` is the canonical lane chart and push matrix** — read it first. This file fills in D1-specific operational detail that doesn't belong in the global chart.
+This doc codifies the boundaries D1 operates within. **`CLAUDE.md §4` is the canonical Render-scope chart** + **`LANE_DISCIPLINE.md §6` is the deploy-ownership table** + **`BOT_HIERARCHY.md` is the global push matrix** — read those first. This file fills in D1-specific operational detail that doesn't belong in the global chart.
+
+## Post-reorg posture (2026-05-15)
+
+D1's **code-authoring scope is unchanged**: `static/store/*`, `app.py /api/store/*`, `render.yaml` (D1 still authors the file), tests, share_links table. What changed:
+
+- **Render MCP is READ-ONLY for D1** across all services. Writes (env vars, redeploy, update_web_service) route through D0.
+- **D1 PRs require D0 sign-off comment** before A1 merges. (Sign-off paused through 2026-05-22 per `bot_chat` row 170 — under the pause, D1 PRs ship via CI gate alone.)
+- **Cross-frontend coordination** (CSS tokens, shared patterns, auth handshake) **routes through D0**. Use `bot_chat` flag or `#terminal-2-d0` Slack channel.
+- **`/`, `/terminal`, `/undelivered` routes** in `app.py` are now D0-authored (claim protocol per `docs/edit_coordination_protocol.md`). D1 stays out of those unless filing a claim back.
 
 ## Scope
 
-D1 owns the public storefront end-to-end: catalog, search, event detail, share links, sharing UX, retail account flows (future). One worktree, one push surface, single-writer to `share_links`.
+D1 owns the public storefront end-to-end: catalog, search, event detail, share links, sharing UX, retail account flows (future). Single-writer to `share_links` (now with `created_by` ownership filter per audit 2026-05-16, PR #148).
 
 ## Read surface (allowed sources)
 
@@ -55,10 +64,10 @@ If D1 needs a new read, ack the owner lane in `bot_chat` first.
 - `app.py` — **storefront routes only**: `/api/store/*`, `/store`, `/store/event/{id}`, `/s/{share_id}`, `/healthz` (D1-style boot/credential diagnostics). Cross-lane routes (`/api/broker/*`, `/api/portfolio`, `/api/seatdata/*`, `/api/seatgeek/*`, `/api/admin/*`) are read-only to D1.
 - `evo_client.py` — **read-only** to D1. Adding a method like `search_suggestions()` is allowed when it's a GET wrapper (PR #63 precedent). Modifying the RULE 2 guard at lines 47-67 is **forbidden** — see Sprint 2 carve-out below.
 - `static/store/*` — full ownership: `index.html`, `event.html`, `shares.html`, `store.js`, `style.css`, future `legal.html`, `favicon.*`, sitemap, OG image, etc.
-- `render.yaml` — D1 owns (sole Render workspace owner).
+- `render.yaml` — D1 still authors the IaC file. Runtime configuration (env vars, plan, instance count) is D0 territory post-reorg.
 - `.env` (gitignored) — local secrets cache. Never committed.
 - `docs/d1_*.md`, `docs/evo_store_*.md` — D1 may author/edit.
-- `KANBAN.md` — append-only, D1 may add rows in `(P1 → A1)` style (legacy label still works in row titles).
+- `KANBAN.md` — append-only, D1 may add rows in `(D1 → A1)` style.
 
 ### Supabase tables (D1 single-writer)
 
@@ -69,15 +78,15 @@ If D1 needs a new read, ack the owner lane in `bot_chat` first.
 
 Future tables (Sprint 2 unfreeze): `store_orders`, `store_payments`. Single-writer pattern, same as share_links.
 
-### Render workspace (D1 exclusive — sole owner per BOT_HIERARCHY §3)
+### Render workspace (D1 READ-ONLY post-2026-05-15 reorg)
 
-- Service config (build/start commands, plan, region, branch)
-- Env vars (read, set, delete via Render REST API)
-- Deploys (trigger, restart, deactivate)
-- Runtime logs (read)
-- Health check path
+D0 is the consolidated frontend lane and has write authority on all three frontend services (`vibepass-terminal-test`, `vibepass-storefront-test`, `d2-orders-dashboard`) per CLAUDE.md §4. D1 can READ via Render MCP — `get_service`, `list_deploys`, `list_logs` etc. — but **cannot WRITE** (`update_environment_variables`, `update_web_service`, redeploy triggers).
 
-API key lives in gitignored `.env` as `RENDER_API_KEY`. Future Render MCP via PR #70 (still open).
+To request a service config / env var / deploy change on `vibepass-storefront-test`, D1:
+1. Files a `bot_chat` flag tagging `@D0` with the proposed change + rationale, OR
+2. Posts to `#terminal-2-d0` Slack channel for fast-twitch coord (subject to D1's Slack-MCP gap — see `reference_slack_channels.md` in memory).
+
+Render MCP read access uses the credentials operator wired at workspace level. No local `.env` `RENDER_API_KEY` write-token in D1's session anymore.
 
 ## Forbidden actions
 
@@ -87,7 +96,7 @@ D1 **must not**:
 2. **Push to `main`.** Only A1 (and B1 for CRIT security) merges to `main`. D1 ships via PR.
 3. **Modify the RULE 2 guard in `evo_client.py:47–67`.** Future write capability lives in a sibling module (`evo_orders_client.py`, see below).
 4. **Edit cross-lane files**: `seatgeek_client.py`, `seatdata_client.py`, `tickpick_client.py`, `vivid_client.py`, `broadway_client.py`, `supabase/migrations/*` (anything not `share_links` or its successors), `supabase/functions/*`, `SCHEMA.md` outside D1's referenced sections.
-5. **Modify Render env vars on services other than `vibepass-storefront-test`** (D1 is sole owner of that service only; future D1-owned services follow same rule).
+5. **Modify Render env vars on ANY service.** Post-2026-05-15 reorg: D1's Render MCP is READ-ONLY across all services (CLAUDE.md §4). Writes route through D0.
 6. **Submit to bot_chat with another lane's `bot_lane=` value.** Always `bot_lane='D1'`.
 7. **Use the legacy P1 label in new bot_chat rows.** P1 is deprecated. D1 going forward.
 8. **Echo secrets in chat or commits.** TEvo creds, Render API key, Supabase Service Role Key all live in gitignored `.env` or `supabase.settings`. Reference via env-var indirection.
@@ -143,12 +152,21 @@ Post `bot_chat` status (`bot_lane='D1'`, `event_type='change_log'`) referencing 
 
 ## References
 
-- `BOT_HIERARCHY.md` — canonical lane chart + push matrix
+- `CLAUDE.md` §4 — Render workspace per-service scoped access (canonical post-reorg)
+- `LANE_DISCIPLINE.md` §6 — deploy-ownership table (D-tier sections annotated)
+- `BOT_HIERARCHY.md` — global push matrix
 - `MIGRATION_CONVENTIONS.md` — repo migration discipline (D1 follows §2, §3, §6 even for share_links)
 - `SCHEMA.md` — RULE 2 (read-only TEvo wall)
-- `docs/evo_store_next_steps.md` — A1's PR #74 Sprint 1 unblocks
-- `docs/d1_retail_finish_punchlist.md` — A1's PR #75 MVP→prod sprint plan
-- `docs/bot-hierarchy.mermaid` — visual chart (mirrors BOT_HIERARCHY.md)
+- `docs/edit_coordination_protocol.md` — claim/release protocol for cross-lane edits (D0-authored, all D-tier bots follow)
+- `docs/d1_retail_finish_punchlist.md` — MVP→prod sprint plan (sections A-J)
+- `docs/d1-render-perf-2026-05-15.md` — Render plan-bump notes + perf baseline
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-05-13 | Initial post-restructure draft (D1 = solo storefront owner with Render write authority) |
+| 2026-05-16 | Audit drift fix: post-2026-05-15 reorg posture documented — D0 has Render write, D1 read-only; PR sign-off pause through 2026-05-22; cross-frontend coord routes through D0. Updated render.yaml ownership clarification + `share_links.created_by` ownership filter reference (PR #148). |
 
 ## Revision history
 
