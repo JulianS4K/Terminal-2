@@ -23,6 +23,7 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 4. **Render workspace is per-service scoped** (§2 ownership matrix). Cross-service writes = lane violation.
 5. **A1 is sole pusher to `main`** (see `MIGRATION_CONVENTIONS.md §9`).
 6. **Cross-lane file edits require coordination** via `bot_chat` `question` or PR comment to the lane owner.
+7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
 
 When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 

@@ -18,6 +18,7 @@
 //   -> { ok, processed, accepted, skipped, by_confidence, samples }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.7";
+import { requireCronSecret } from "../_shared/cron-auth.ts";
 
 const HOST = "api.ticketevolution.com";
 const BASE = `https://${HOST}`;
@@ -124,6 +125,12 @@ function pickBest(candidate: string, hits: Hit[]): {
 }
 
 Deno.serve(async (req) => {
+  // SEC-CRIT fix 2026-05-16 (B1 audit PR #172): platform verify_jwt=true accepts
+  // ANY valid Supabase JWT including the public anon key. Body-level cron-secret
+  // gate prevents abuse of the paid TEvo API by anon callers.
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const tevoToken   = Deno.env.get("TEVO_TOKEN")  ?? Deno.env.get("TEVO_API_TOKEN")  ?? "";
