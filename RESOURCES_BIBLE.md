@@ -7,7 +7,23 @@ Companion to `BOT_HIERARCHY.md` (which is *who* can push) and `MIGRATION_CONVENT
 Conventions:
 - **Lane** = current owner per `BOT_HIERARCHY.md` (A1/B1/C1/D0/D1/D2/D3)
 - **PR** = where the resource was created or last meaningfully changed. "pre-history" = predates the current PR numbering (migration timestamp in repo).
-- Sizes in this doc are as of 2026-05-13; track real-time via Supabase dashboard.
+- Sizes in this doc are point-in-time snapshots; track real-time via Supabase dashboard.
+
+## Latest deltas (2026-05-16 session)
+
+| Resource | Delta | PR |
+|---|---|---|
+| Migration `20260516030000` | New view `_v_d0_event_index` + column `sg_event_priority_state.tevo_event_id` + `sg_classify_events` cancelled-filter | #146 |
+| Migration `20260516040000` | Cron `listings_aq_backfill_overnight` activated | #146 |
+| Migration `20260516050000` | New RPC `get_broker_event_page_v2` (7 new payload keys; 185ms typical) | #150 |
+| Migration `20260516060000` | New indexes `idx_sg_sales_sg_event_id_time`, `idx_sg_listings_sg_event_id_time`, `idx_sg_event_metrics_sg_event_id_time` | #150 |
+| Migration `20260516070000` | ESPN→TEvo→AQ→SG NFL bridge backfill (292 ESPN xrefs + 292 AQ rows + 3 SG xrefs) + v2 RPC fallback fix | #154 |
+| Migration `20260516080000` | Multi-sport ESPN bridge (MLB 654 / MLS 42 / WNBA 12 / NBA 6 / NHL 1 ESPN xrefs; 365 SG xrefs after auto-matcher) | #154 |
+| Migration `20260516090000` | `espn_scoreboard_queue` default 90d → 270d (captures full NFL season auto) | #157 |
+| Doc `PROJECT_BIBLE.md` | NEW — operating playbook (rules + macros + landmines) | #155 |
+| Migration `20260516100000` | `evo_orders` schema fix: ADD `tevo_event_id` + `aq_short_event_id` columns + backfill from `evo_order_items` (99.5% tevo / 88% aq populated post-apply) | #161 |
+| Migration `20260516110000` | NEW RPC `refresh_sg_broker_sales_event_metrics(p_max_events)` — populates `seatgeek_event_metrics.sold_*` from `seatgeek_sales_snapshots` (DISTINCT ON sg_sale_id; 11× dedup). Hourly cron `sg_broker_sales_metrics_refresh_hourly` @ :17 with policy gate. | #161 |
+| Migration `20260516120000` | NEW views: `v_event_sales_velocity` (sales/hour time series), `v_event_sales_metrics_filtered` (p99 outlier filter), `v_event_price_arbitrage` (TEvo retail vs SG cost vs SG sales realized per upcoming event) | #161 |
 
 ---
 
