@@ -54,7 +54,12 @@
       // markup shouldn't splatter into the status pill downstream. Mirrors
       // D0's app.js fix from PR #113 commit 34232a1.
       msg = String(msg).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
-      throw new Error(`${r.status} ${msg}`);
+      // Tag the error with the failing endpoint so the downstream catch
+      // (status pill / alert) tells you *which* call died. Strips the
+      // /api/store/ prefix to keep the message tight — full path stays
+      // available on the network tab when debugging.
+      const tag = String(path).split("?")[0].replace(/^\/api\/store\//, "");
+      throw new Error(`${r.status} ${tag}: ${msg}`);
     }
     return r.json();
   }

@@ -207,6 +207,50 @@ def test_we_own_always_true_with_office_filter(client, monkeypatch):
     assert all(e["we_own"] is True for e in r.json()["events"])
 
 
+# ---------- /api/store/reserve cap ----------
+
+def test_reserve_rejects_quantity_over_cap(client):
+    """quantity > 50 is rejected at the input-validation gate before any
+    inventory lookup. A malformed/malicious client requesting 999999 must
+    short-circuit with 400; we never want to hit TEvo or the snapshot
+    table with that shape."""
+    r = client.post("/api/store/reserve", json={
+        "event_id": 3346000,
+        "ticket_group_id": 12345,
+        "quantity": 999999,
+    })
+    assert r.status_code == 400, r.text
+    assert "maximum" in r.json()["detail"].lower()
+
+
+def test_reserve_rejects_quantity_just_over_cap(client):
+    """Boundary: quantity == 51 (one over the cap of 50) is rejected."""
+    r = client.post("/api/store/reserve", json={
+        "event_id": 3346000,
+        "ticket_group_id": 12345,
+        "quantity": 51,
+    })
+    assert r.status_code == 400
+
+
+def test_reserve_accepts_quantity_at_cap(client, monkeypatch):
+    """quantity == 50 passes the cap check (and continues to inventory
+    lookup, where our fake returns no match → 404 is expected).
+    Asserting NOT 400-with-cap-message proves the cap check let it
+    through."""
+    class _EmptyTGFake:
+        def get_ticket_groups(self, *_, **__):
+            return {"ticket_groups": []}
+    monkeypatch.setattr(app_module, "client", _EmptyTGFake())
+    r = client.post("/api/store/reserve", json={
+        "event_id": 3346000,
+        "ticket_group_id": 12345,
+        "quantity": 50,
+    })
+    # quantity=50 passes the cap; downstream fails for "no such group" → 404
+    assert r.status_code == 404, r.text
+
+
 def test_503_when_client_unconfigured(client, monkeypatch):
     """When `client` is None at request time, we return 503 — not 500."""
     monkeypatch.setattr(app_module, "client", None)
