@@ -20,19 +20,34 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // ---------------------------------------------------------------------------
-// CORS — frontend on Railway calls this from a different origin
+// CORS — frontend origins allow-list (SEC-MED fix 2026-05-16, B1 audit PR #172)
 // ---------------------------------------------------------------------------
+// Previously `access-control-allow-origin: *`, which allows any site to call
+// this from a browser. Tightened to a known-origins allow-list. Non-browser
+// callers (server-side, curl) are unaffected by CORS.
+const ALLOWED_ORIGINS = new Set([
+  "https://vibepass-terminal-test.onrender.com",
+  "https://vibepass-storefront-test.onrender.com",
+  "https://d2-orders-dashboard.onrender.com",
+  "http://localhost:8000",      // local FastAPI uvicorn
+  "http://localhost:5173",      // local Vite dev (if used)
+  "http://127.0.0.1:8000",
+]);
 
-const CORS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type, apikey, x-client-info",
-};
+function corsHeaders(origin: string | null): Record<string, string> {
+  const allow = origin && ALLOWED_ORIGINS.has(origin) ? origin : "null";
+  return {
+    "access-control-allow-origin": allow,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type, apikey, x-client-info",
+    "vary": "Origin",
+  };
+}
 
-function json(obj: unknown, status = 200) {
+function json(obj: unknown, status = 200, origin: string | null = null) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "content-type": "application/json", ...CORS },
+    headers: { "content-type": "application/json", ...corsHeaders(origin) },
   });
 }
 
@@ -411,7 +426,8 @@ async function rawProxy(targetPath: string) {
 // ---------------------------------------------------------------------------
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+  const origin = req.headers.get("origin");
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders(origin) });
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const url = new URL(req.url);
@@ -421,35 +437,35 @@ Deno.serve(async (req) => {
 
   try {
     if (sub === "/" || sub === "/health") {
-      return json({ ok: true, function: "espn", version: 2 });
+      return json({ ok: true, function: "espn", version: 2 }, 200, origin);
     }
 
     if (sub === "/applicable") {
       const eid = url.searchParams.get("event_id");
       const pid = url.searchParams.get("performer_id");
       const result = await applicable(db, eid ? Number(eid) : null, pid ? Number(pid) : null);
-      return json(result);
+      return json(result, 200, origin);
     }
 
     let mm: RegExpMatchArray | null;
     if ((mm = sub.match(/^\/event\/(\d+)$/))) {
       const result = await aggregateEvent(db, Number(mm[1]));
-      return json(result);
+      return json(result, 200, origin);
     }
     if ((mm = sub.match(/^\/performer\/(\d+)$/))) {
       const result = await aggregatePerformer(db, Number(mm[1]));
-      return json(result);
+      return json(result, 200, origin);
     }
 
     if (sub === "/raw") {
       const path = url.searchParams.get("path");
-      if (!path) return json({ error: "?path=apis/site/v2/... required" }, 400);
+      if (!path) return json({ error: "?path=apis/site/v2/... required" }, 400, origin);
       const result = await rawProxy(path);
-      return json(result);
+      return json(result, 200, origin);
     }
 
-    return json({ error: "unknown route", path: sub, valid_routes: ["/applicable", "/event/{tevo_event_id}", "/performer/{tevo_performer_id}", "/raw?path=..."] }, 404);
+    return json({ error: "unknown route", path: sub, valid_routes: ["/applicable", "/event/{tevo_event_id}", "/performer/{tevo_performer_id}", "/raw?path=..."] }, 404, origin);
   } catch (e) {
-    return json({ error: String((e as Error).message) }, 500);
+    return json({ error: String((e as Error).message) }, 500, origin);
   }
 });
