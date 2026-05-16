@@ -551,6 +551,45 @@ def test_store_html_response_has_no_cache_header(store_home_client):
     )
 
 
+def test_legal_pages_render(monkeypatch):
+    """Sprint 3 trust + legal pages — /store/about, /store/privacy,
+    /store/terms — all 200 on GET, no JS dependency. Smoke that the
+    HTML files exist on disk and the routes are wired."""
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = client.get(path)
+        assert r.status_code == 200, f"GET {path} expected 200, got {r.status_code}"
+        body = r.text.lower()
+        # Must include the page-specific h1 (about / privacy / terms).
+        h1_word = path.rsplit("/", 1)[1]
+        assert f"<h1>{h1_word.title()}" in r.text or h1_word in body, (
+            f"{path} body should reference '{h1_word}'"
+        )
+
+
+def test_legal_pages_have_no_cache_revalidate_header(store_home_client):
+    """Legal pages route through _render_storefront_page so they inherit
+    the same Cache-Control: no-cache, must-revalidate header. Guards
+    against future regressions where a separate handler bypasses the
+    cache-control helper."""
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = store_home_client.get(path)
+        cc = r.headers.get("cache-control", "").lower()
+        assert "no-cache" in cc, (
+            f"{path} Cache-Control must include no-cache; got: {cc!r}"
+        )
+
+
+def test_legal_pages_respond_to_head(monkeypatch):
+    """HEAD on the new legal routes returns 200 (same uptime-monitor
+    reason as the other storefront pages — HEAD probes shouldn't 405)."""
+    monkeypatch.setattr(app_module, "_read_storefront_html", lambda name: "<html>ok</html>")
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = client.head(path)
+        assert r.status_code == 200, f"HEAD {path} expected 200, got {r.status_code}"
+
+
 def test_all_storefront_html_routes_revalidate(store_home_client):
     """Every served /store/* HTML shell — index, event, share, shares —
     must carry the no-cache header. Catches a regression where someone

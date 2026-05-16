@@ -6414,6 +6414,26 @@ def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
     return _render_storefront_page("event.html")
 
 
+# ---------- Static informational pages (Sprint 3 trust + legal) ----------
+# Plain HTML shells with no JS. Same Cache-Control: no-cache pattern as
+# the rest of the storefront so future edits propagate without browser
+# cache hangups. Footer links from every storefront page point here.
+
+@app.api_route("/store/about", methods=["GET", "HEAD"])
+def store_about_page():
+    return _render_storefront_page("about.html")
+
+
+@app.api_route("/store/privacy", methods=["GET", "HEAD"])
+def store_privacy_page():
+    return _render_storefront_page("privacy.html")
+
+
+@app.api_route("/store/terms", methods=["GET", "HEAD"])
+def store_terms_page():
+    return _render_storefront_page("terms.html")
+
+
 # ---------- Share links (revocable, trackable) ----------
 # Server-mediated share links backed by the share_links table. Coexists with
 # the stateless filter-in-URL form — recipients see the same event detail UI
