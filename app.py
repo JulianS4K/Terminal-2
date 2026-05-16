@@ -4825,8 +4825,22 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
     else:
         metrics = {}
 
+    # Bias toward owned inventory: when a query like "aces" matches multiple
+    # teams (Reno Aces minor-league + Las Vegas Aces WNBA), the soonest event
+    # wins under the default occurs_at_local ASC sort even when we don't own
+    # any inventory for that team. Audit 2026-05-16 found "aces" returning
+    # Reno Aces first; we own Las Vegas Aces 5/17. Re-sort so events with
+    # owned inventory come first, soonest among them next.
+    ev_rows_sorted = sorted(
+        ev_rows,
+        key=lambda e: (
+            0 if (metrics.get(int(e.get("id") or 0)) or {}).get("owned_tickets_count") else 1,
+            e.get("occurs_at_local") or "9999-12-31",
+        ),
+    )
+
     events_out = []
-    for e in ev_rows[:limit]:
+    for e in ev_rows_sorted[:limit]:
         eid = int(e.get("id") or 0)
         m = metrics.get(eid) or {}
         events_out.append({
