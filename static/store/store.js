@@ -274,6 +274,12 @@
     const empty = $("#empty");
 
     let allEvents = [];
+    // loadComplete gates filter() so the user can't trigger a misleading
+    // "No events match" empty state by typing in the search box while the
+    // initial /api/store/home call is still in flight (common on free-tier
+    // cold-start where the round-trip is ~12s). When load resolves below,
+    // any pending user query is re-applied at that point.
+    let loadComplete = false;
 
     function render(events, mode) {
       // mode: "all" (initial load) or "search" (after a query)
@@ -364,6 +370,13 @@
     }
 
     function filter(query) {
+      // Guard against the cold-start race: user typed in the search box
+      // before loadCatalog's /api/store/home round-trip completed. Bailing
+      // out here keeps the "Loading available events…" status pill visible
+      // instead of showing a misleading "No events match" empty state.
+      // The pending query (input.value) is re-applied by loadCatalog when
+      // it resolves — see the .then() handler below.
+      if (!loadComplete) return;
       const q = (query || "").trim().toLowerCase();
       if (!q) return render(allEvents, "all");
       const filtered = allEvents.filter((e) => {
@@ -438,14 +451,28 @@
       status.textContent = "Loading available events…";
       status.style.color = "";
       status.hidden = false;
+      // Reset gate — Retry re-fires this and we want the same race
+      // protection on the second attempt.
+      loadComplete = false;
       api(catalogEndpoint)
         .then((res) => {
           allEvents = res.events || [];
+          loadComplete = true;
           renderCatalogFilterBanner(performerId, venueId, allEvents);
-          render(allEvents, "all");
+          // If user typed during the load window, honor that query now.
+          // Otherwise render the full grid as before.
+          const pendingQuery = (input.value || "").trim();
+          if (pendingQuery) {
+            filter(input.value);
+          } else {
+            render(allEvents, "all");
+          }
           status.hidden = true;
         })
         .catch((err) => {
+          // loadComplete stays false — filter() correctly bails out so a
+          // user typing during error state doesn't see "No events match"
+          // on top of the Retry-button error UI.
           status.replaceChildren();
           status.style.color = "var(--bad)";
           status.hidden = false;
