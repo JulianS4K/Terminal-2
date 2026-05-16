@@ -61,12 +61,17 @@ def _stub_evo(per_page, page=1):
 
 
 def _stub_sg(per_page, page=1):
+    # Post-2026-05-16 rewire: SG source on the orders feed is the broker
+    # firehose (seatgeek_sales_snapshots). Rows are terminal/fulfilled
+    # observations — the dashboard's Active pill filters them out by
+    # construction; the All pill surfaces them.
     return {
-        "source": "seatgeek",
+        "source": "seatgeek_sales",
         "ok": True,
         "rows": [{
-            "source": "seatgeek", "order_id": "SG-9", "event_name": "Hamilton",
-            "event_date": "2026-07-01T20:00:00Z", "qty": 4, "status": "open",
+            "source": "seatgeek_sales", "order_id": "SG-SALE-9", "event_name": "Hamilton",
+            "event_date": "2026-07-01T20:00:00Z", "qty": 4, "status": "sold",
+            "canonical_status": "fulfilled",
             "amount": 1200.5, "currency": "USD", "ordered_at": "2026-05-12T09:00:00Z",
         }],
         "total": 1,
@@ -188,25 +193,27 @@ def test_orders_503_when_supabase_unconfigured(monkeypatch, client):
 
 
 def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client):
-    """All 5 sources (evo / seatgeek / seatdata / tickpick / vivid) get
-    origin=sql chips with per-source row counts and `as_of` freshness from
-    `unified_orders.last_seen_at`. No upstream-API leg — the dashboard is
-    SQL-only as of the 2026-05-14 cutover."""
+    """All 5 sources (evo / seatgeek_sales / seatdata / tickpick / vivid)
+    get origin=sql chips with per-source row counts and `as_of` freshness
+    from `unified_orders.last_seen_at`. No upstream-API leg — the dashboard
+    is SQL-only as of the 2026-05-14 cutover. Post-2026-05-16 the SG source
+    is the broker firehose (seatgeek_sales_snapshots), not the dormant
+    seatgeek_orders seller table."""
     monkeypatch.setattr(
         d2_main, "_fetch_unified_orders_page",
         lambda n, p=1, include_terminal=False: {
             "rows": [
-                {"source": "seatgeek", "order_id": "SG-9", "event_name": "Hamilton",
-                 "event_date": "2026-07-01T20:00:00Z", "qty": 4, "status": "open",
-                 "canonical_status": "pending", "amount": 1200.5, "currency": None,
+                {"source": "seatgeek_sales", "order_id": "SG-SALE-9", "event_name": "Hamilton",
+                 "event_date": "2026-07-01T20:00:00Z", "qty": 4, "status": "sold",
+                 "canonical_status": "fulfilled", "amount": 1200.5, "currency": None,
                  "ordered_at": "2026-05-12T09:00:00Z"},
                 {"source": "evo", "order_id": "111", "event_name": "Knicks vs Lakers",
                  "event_date": "2026-06-01T19:30:00Z", "qty": 2, "status": "accepted",
                  "canonical_status": "accepted", "amount": 450.0, "currency": None,
                  "ordered_at": "2026-05-10T12:00:00Z"},
             ],
-            "per_source_count": {"evo": 1, "seatgeek": 1},
-            "per_source_as_of": {"evo": "2026-05-13T20:35:00Z", "seatgeek": "2026-05-09T02:57:00Z"},
+            "per_source_count": {"evo": 1, "seatgeek_sales": 1},
+            "per_source_as_of": {"evo": "2026-05-13T20:35:00Z", "seatgeek_sales": "2026-05-16T16:16:00Z"},
         },
     )
     # Stub the event-window pull (no v_event_base candidates → rows
@@ -215,23 +222,23 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
     monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
     body = client.get("/api/d2/orders").json()
     sources = {s["source"]: s for s in body["sources"]}
-    assert set(sources) == {"evo", "seatgeek", "seatdata", "tickpick", "vivid"}
+    assert set(sources) == {"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid"}
     # Every source is SQL-backed now (vivid joined the unified_orders view
     # 2026-05-13; the dashboard was updated 2026-05-14 to stop using the
     # legacy API+match path for it).
-    for src in ("evo", "seatgeek", "seatdata", "tickpick", "vivid"):
+    for src in ("evo", "seatgeek_sales", "seatdata", "tickpick", "vivid"):
         assert sources[src]["origin"] == "sql"
     assert sources["evo"]["ok"] is True
     assert sources["evo"]["as_of"] == "2026-05-13T20:35:00Z"
     assert sources["evo"]["count"] == 1
-    assert sources["seatgeek"]["count"] == 1
+    assert sources["seatgeek_sales"]["count"] == 1
     assert sources["seatdata"]["count"] == 0
     assert sources["seatdata"]["ok"] is True
     assert sources["tickpick"]["count"] == 0
     assert sources["vivid"]["count"] == 0
     # SQL rows: 2 returned, sorted newest-first by ordered_at.
     rows = body["rows"]
-    assert [r["source"] for r in rows] == ["seatgeek", "evo"]
+    assert [r["source"] for r in rows] == ["seatgeek_sales", "evo"]
 
 
 def test_orders_no_longer_carries_cron_blob(monkeypatch, client):
@@ -487,9 +494,9 @@ def test_metrics_bundles_all_windows_buckets_and_top(monkeypatch, client):
             {"source": "evo",      "orders_count": 3, "fulfilled_count": 2,
              "gross_total": 450.0, "fulfilled_gross": 300.0,
              "qty_total": 6, "fulfilled_qty": 4},
-            {"source": "seatgeek", "orders_count": 1, "fulfilled_count": 0,
-             "gross_total": 1200.0, "fulfilled_gross": 0.0,
-             "qty_total": 4, "fulfilled_qty": 0},
+            {"source": "seatgeek_sales", "orders_count": 1, "fulfilled_count": 1,
+             "gross_total": 1200.0, "fulfilled_gross": 1200.0,
+             "qty_total": 4, "fulfilled_qty": 4},
         ]
 
     def _hourly_data(args):
@@ -952,12 +959,15 @@ def test_health_returns_cron_queue_and_sql_blob(monkeypatch, client):
     body = client.get("/api/d2/health").json()
     assert {c["jobname"] for c in body["crons"]} == {"evo_orders_queue_30min", "tickpick_orders_queue_30min"}
     assert set(body["queues"]) == {"tickpick", "vivid"}
-    assert set(body["sql_counts"]) == {"evo", "seatgeek", "seatdata", "tickpick", "vivid"}
-    # fulfillby_fields documents the gap — none of our sources surface an
-    # explicit in-hand / fulfill-by timestamp today.
+    assert set(body["sql_counts"]) == {"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid"}
+    # fulfillby_fields: post-2026-05-16 rewire, seatgeek_sales (broker firehose)
+    # exposes in_hand_date from the listing snapshot. The other four sources
+    # still surface no explicit in-hand / fulfill-by timestamp.
     fb = body["fulfillby_fields"]
-    assert set(fb) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata"}
-    for src in fb:
+    assert set(fb) == {"evo", "seatgeek_sales", "tickpick", "vivid", "seatdata"}
+    assert fb["seatgeek_sales"]["in_hand"] == "in_hand_date"
+    assert fb["seatgeek_sales"]["fulfill_by"] is None
+    for src in ("evo", "tickpick", "vivid", "seatdata"):
         assert fb[src]["in_hand"] is None
         assert fb[src]["fulfill_by"] is None
 
