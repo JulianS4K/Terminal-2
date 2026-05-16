@@ -19,13 +19,15 @@
     <section class="hero">
       <h1>Find tickets to anything we have.</h1>
       <p class="sub">Direct inventory, transparent pricing.</p>
-      <form id="searchForm" class="search">
+      <form id="searchForm" class="search" role="search">
+        <label for="q" class="sr-only">Search events, performers, or venues</label>
         <input
           id="q"
           type="search"
           placeholder="artist · team · venue · city"
           autocomplete="off"
           autofocus
+          aria-label="Search events, performers, or venues"
           aria-autocomplete="list"
           aria-controls="searchSuggest"
         />
