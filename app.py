@@ -27,7 +27,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import requests
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -4511,6 +4511,31 @@ _search_cache: dict[str, tuple[float, dict]] = {}
 _SEARCH_CACHE_TTL = 60.0
 
 
+# Movers stale-while-revalidate cache. /api/store/movers does a 4-table
+# join (events + latest_event_metrics + event_lifecycle + v_event_velocity
+# _windows + performer_metadata) per call and consistently times at ~1s
+# warm. Underlying velocity data only refreshes hourly (driven by the
+# listings_snapshots ingest cadence), so a 5-min server cache is well
+# within the data's natural refresh window AND eliminates ~1s on every
+# homescreen load past the first.
+#
+# Pattern: fresh hits return instantly; stale hits return cached payload
+# AND schedule a background recompute via FastAPI BackgroundTasks; cold
+# (never-seen-key) hits compute synchronously. Refresh-in-flight tracking
+# prevents duplicate fans for the same key under concurrent requests.
+_movers_cache: dict[str, tuple[float, dict]] = {}
+_MOVERS_CACHE_TTL = 300.0  # 5 min — conservative vs. hourly velocity refresh
+_MOVERS_CACHE_REFRESHING: set[str] = set()
+
+
+def _movers_cache_key(city: str, days: int, limit: int) -> str:
+    """Canonical cache key — case-folds city so 'nyc'/'NYC'/'New York' map
+    to a single slot. The endpoint already maps 'NEW YORK' + 'NEW YORK CITY'
+    aliases through the same venue_patterns, so the cache key uppercase
+    matches that intent."""
+    return f"{(city or '').upper()}|{int(days)}|{int(limit)}"
+
+
 def _normalize_search_key(q: str) -> str:
     """Normalize a user query for cache slot identity. Collapses runs of
     whitespace + lowercases + strips, so "  Knicks  ", "knicks", "KNICKS"
@@ -4866,6 +4891,7 @@ def store_search(q: str, limit: int = 8):
 
 @app.get("/api/store/movers")
 def store_movers(
+    background_tasks: BackgroundTasks,
     city: str = "NYC",
     days: int = 21,
     limit: int = 8,
@@ -4884,11 +4910,60 @@ def store_movers(
 
     Hidden when nothing matches. Driven by v_event_velocity_windows joined
     against latest_event_metrics + events + event_lifecycle.
+
+    PERFORMANCE: stale-while-revalidate cached. The bare compute hits ~1s
+    warm (audit-2026-05-16 measurement). Underlying velocity data refreshes
+    only hourly, so a 5-min cache is well within the refresh cadence and
+    collapses the homescreen response to a dict lookup (~5ms) on every
+    request past the first per (city, days, limit) tuple.
     """
-    db = require_sb()
     cap = max(1, min(int(limit), 24))
     day_cap = max(1, min(int(days), 90))
+    key = _movers_cache_key(city, day_cap, cap)
+    now = time.time()
+    cached = _movers_cache.get(key)
 
+    if cached:
+        age = now - cached[0]
+        if age < _MOVERS_CACHE_TTL:
+            # FRESH: serve immediately, no compute.
+            return cached[1]
+        # STALE: serve old payload + schedule a background recompute so
+        # the NEXT request gets fresh data. Customer never waits.
+        # Guard against duplicate fans for the same key under concurrent
+        # requests — only one refresh in flight at a time per key.
+        if key not in _MOVERS_CACHE_REFRESHING:
+            _MOVERS_CACHE_REFRESHING.add(key)
+            background_tasks.add_task(_refresh_movers, city, day_cap, cap, key)
+        return cached[1]
+
+    # COLD: never-seen key. Compute synchronously, cache, return.
+    fresh = _compute_movers(require_sb(), city, day_cap, cap)
+    _movers_cache[key] = (now, fresh)
+    return fresh
+
+
+def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
+    """Background refresh fired by BackgroundTasks AFTER the stale response
+    is sent. Failures log and clear the in-flight flag so a future request
+    can retry; the stale cached payload stays in place (better than
+    eviction — a slightly old payload beats no payload).
+    """
+    try:
+        fresh = _compute_movers(require_sb(), city, days, limit)
+        _movers_cache[key] = (time.time(), fresh)
+    except Exception as e:
+        print(f"[movers refresh] failed for {key}: {e!r}")
+    finally:
+        _MOVERS_CACHE_REFRESHING.discard(key)
+
+
+def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
+    """Pure compute path for the movers endpoint. Extracted from the route
+    handler so both the cold-cache code path AND the background-refresh
+    task call the same implementation. Returns the exact response dict
+    the route emits (`city`, `days`, `count`, `events`).
+    """
     # City filter — hardcoded NYC venue patterns for v1. Matches everywhere
     # the storefront would consider "New York metro" inventory.
     city_norm = (city or "").upper()
