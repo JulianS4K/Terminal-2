@@ -1,14 +1,28 @@
-# Evening Checkpoint — 2026-05-16 (~20:15 UTC)
+# Evening Checkpoint — 2026-05-16 (~20:30 UTC, cross-project consolidated)
 
-**Author**: A1. Heavy single-session run. 10 migrations applied to prod + 2 governance doc consolidations + 6 PRs opened. All applied-and-codified via MCP-then-PR pattern.
+**Author**: A1. Heavy whole-project session — 28 PRs merged across A1 + B1 + D0 + D1 + D2 lanes, 10 migrations applied to prod, governance docs reconciled. A1 view (own work) plus consolidated lane-by-lane summary below.
 
 C1 may formalize into the canonical `c1-checkpoint-2026-05-16.md` at the next 09:00 ET cycle.
 
 ---
 
+## Cross-project state (all lanes, end of session)
+
+| Lane | PRs merged today | PRs open EOD | Headline |
+|---|---|---|---|
+| **A1** (admin) | **5** (#146 #150 #154 #155 #157) + 7 earlier-session admin fixes (#134/#135/#137/#138/#139/#142/#159) | **2** (#161 SG sales metrics, #162 this checkpoint) | D0 Phase 2a infra + multi-sport bridge + governance bible |
+| **D0** (Terminal FE) | **2** (#136 doorway, #160 Phase 2a Event Detail — 6 new panels consuming v2 RPC, merged 19:51 UTC) | 0 | Phase 2a UI live same-day as A1 ships the RPC |
+| **D1** (Consumer Retail) | **9** (#141 search race · #143 polish · #144 movers cache · #148 security bundle · #151 audit drift · #152 delegated handlers · #153 a11y · #156 reserve cap) + 1 earlier (#140) | 0 | Massive UX + security + perf shipping day |
+| **D2** (Order Clients) | **3** (#147 Undelivered SG rewire · #149 SG SellerDirect webhook WS2 · #158 SG broker sales views) | **1** (#129 APIRouter refactor DRAFT — awaiting bot_chat 180) | SG SellerDirect webhook + broker firehose rewire |
+| **B1** (Security) | **2** charter docs (#140 #159 — expanded role: librarian/archivist + bible curator) | 0 | Charter expansion + triage cleanup of bot_chat 226-229 |
+| **C1** (Canonical) | 0 | **2** (#114 daily checkpoint, #145 PR governance proposal) | Drift-monitor only since PR #109; surfaced view-vs-doc drift via #233 |
+| **D3 / D4 / E1** | 0 | 0 | Stub / observe only |
+
+**Total merged today**: ~28 PRs. **Open EOD**: 5 (2 A1 mine, 1 D2 draft, 2 C1).
+
 ## Headline
 
-Four big things this session:
+Four big things from A1's seat this session:
 
 1. **D0 Phase 2a fully unblocked**: shipped `get_broker_event_page_v2` RPC (7 new payload keys, 185ms typical), `_v_d0_event_index` canonical view, SG sg_event_id performance indexes, plus the `tevo_event_id` column on `sg_event_priority_state` + cancelled-event tier filter. D0 can now wire the Event Detail page against a single RPC call with full sales tape + weather + ESPN + splits + freshness chips.
 
@@ -122,6 +136,30 @@ These cost real session time when discovered:
 
 ---
 
+## Cross-lane handoff chain (the day's biggest story)
+
+The A1 work this session was direct input to D0's same-day Phase 2a UI ship. Sequence:
+
+1. **A1 12:00 UTC ish**: ships `_v_d0_event_index` view + `get_broker_event_page_v2` RPC + SG sg_event_id indexes (PRs #146, #150)
+2. **A1 ~14:00**: ships ESPN→TEvo→AQ→SG bridge across NFL + 5 other sports (PRs #154, #157)
+3. **D0 ~16:00 → 19:51**: consumes the v2 RPC + bridges, ships `event.js` with 6 new panels (sales tape / weather strip / ESPN panel / event_alerts / sg_side_by_side / splits / freshness). Merged as PR #160.
+4. **A1 ~19:00**: ships SG broker sales metrics (PR #161) so D0's sales-tape panel + arbitrage view have populated `sold_*` data.
+5. **D1 + D2 in parallel**: 9 D1 + 3 D2 PRs landing throughout — storefront UX bundles, SG SellerDirect webhook, Undelivered SG rewire.
+6. **B1 in parallel**: triage cleanup (4 status closures), SEC-MED follow-up flag on PR #115 (bot_chat 235), governance drift catch on `v_bot_chat_unresolved` (bot_chat 233 → C1 ack 237), charter expansion to librarian/archivist + bible curator (PR #159).
+
+Net effect: a same-day A1→D0 handoff cycle (RPC ships → UI consumes → both in main) plus parallel D1/D2 lane shipping with zero cross-lane conflicts.
+
+## Outstanding cross-lane items at EOD
+
+| Item | Owner | Notes |
+|---|---|---|
+| PR #129 D2 APIRouter refactor (DRAFT) | D2 | Awaiting bot_chat 180 architecture decision |
+| PR #145 C1 PR governance proposal | C1 → A1 | Single doc proposing PR-flow standards. A1 review pending. |
+| PR #114 C1 daily checkpoint (2026-05-15) | C1 | Stale; may be superseded by today's #162. |
+| B1 SEC-MED follow-up on PR #115 (bot_chat 235) | A1 | Defense-in-depth on D0 RPC + Tier-1 RLS grants — operator to review |
+| B1 governance/view drift (bot_chat 233 → 237) | C1 | C1 ack'd; root cause = migration 20260515340050 view definition vs CLAUDE.md §1 doc |
+| `match_listings_to_sg_30min` 92% timeout (bot_chat 225) | A1 | D2 flagged; A1 acknowledged in 231 — next-session combo fix (24h window narrow + index) |
+
 ## Carry-forward (next session)
 
 | Item | Owner | Status |
@@ -154,18 +192,17 @@ Fix forward: PROJECT_BIBLE.md exists now — bots reading the playbook + RESOURC
 
 ---
 
-## Open PRs ready for merge (6)
+## Open PRs at EOD (5)
 
 ```
-#146  a1/d0-phase2a-prep
-#150  a1/d0-phase2a-event-page-v2
-#154  a1/espn-nfl-bridge-backfill
-#155  a1/project-bible
-#157  a1/espn-lookahead-270d
-#161  a1/sg-sales-metrics-and-arbitrage
+#114  c1/daily-checkpoint-2026-05-15        (stale; may be superseded by #162)
+#129  d2/api-router-refactor (DRAFT)         (awaiting bot_chat 180 architecture)
+#145  c1/pr-governance-proposal              (A1 review pending)
+#161  a1/sg-sales-metrics-and-arbitrage      (this session — applied, awaiting merge)
+#162  a1/checkpoint-2026-05-16-evening       (this doc)
 ```
 
-All 6 are A1-authored; all migrations already applied to prod via MCP; codification + PR is the merge formality. Each PR body has its own verification + carry-forward section.
+A1's other 5 PRs from this session (#146 #150 #154 #155 #157) all merged in operator-driven sequence during the session — that's why D0 PR #160 could ship Phase 2a Event Detail same-day.
 
 ---
 
