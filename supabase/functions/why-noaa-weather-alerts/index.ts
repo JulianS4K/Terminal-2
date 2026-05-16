@@ -3,6 +3,7 @@
 // every distinct US state where we have upcoming events. Maps to per-event
 // signals with scope='event', signal_kind='weather_alert'.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCronSecret } from "../_shared/cron-auth.ts";
 
 async function noaaActiveByState(state: string): Promise<any[]> {
   const r = await fetch(`https://api.weather.gov/alerts/active?area=${state}`, {
@@ -29,6 +30,12 @@ function severityToSignal(severity: string, eventType: string): { value: number;
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('POST only', { status: 405 });
+  // SEC-HIGH fix 2026-05-16 (B1 audit PR #172): platform verify_jwt=true accepts
+  // ANY valid Supabase JWT. Body-level cron-secret gate prevents anon callers
+  // from triggering unbounded why_signals INSERTs.
+  const authErr = requireCronSecret(req);
+  if (authErr) return authErr;
+
   const t0 = Date.now();
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
