@@ -94,6 +94,59 @@ def test_healthz_public_minimal(client):
     assert body == {"ok": True, "service": "d2_dashboard"}
 
 
+def test_cors_storefront_origin_allowed(client):
+    """D0's /undelivered scaffold on vibepass-storefront-test.onrender.com
+    must be able to fetch /api/d2/* cross-origin per the unified architecture
+    (bot_chat 194 Option C + row 216 CORS gap flag).
+
+    Preflight request from the storefront origin should be allowed with
+    credentialed methods + Authorization header echo.
+    """
+    r = client.options(
+        "/api/d2/orders",
+        headers={
+            "Origin": "https://vibepass-storefront-test.onrender.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert r.status_code in (200, 204)
+    assert r.headers.get("access-control-allow-origin") == "https://vibepass-storefront-test.onrender.com"
+    assert "GET" in r.headers.get("access-control-allow-methods", "")
+    assert r.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_cors_unknown_origin_not_echoed(client):
+    """Random origin not in the whitelist should NOT be echoed back —
+    prevents accidental opening of the API to arbitrary sites if the
+    operator forgets to update the allowlist."""
+    r = client.options(
+        "/api/d2/orders",
+        headers={
+            "Origin": "https://evil.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    # FastAPI/Starlette CORSMiddleware returns 400 OR omits the allow-origin
+    # header on a non-whitelisted origin — either is acceptable. Key is the
+    # browser will block the request.
+    assert r.headers.get("access-control-allow-origin") != "https://evil.example.com"
+
+
+def test_cors_localhost_dev_allowed(client):
+    """Local dev (uvicorn at any port) must work — operator runs the dashboard
+    on localhost:8000 typically; D0 may run their shell on a different port."""
+    r = client.options(
+        "/api/d2/orders",
+        headers={
+            "Origin": "http://localhost:8000",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert r.status_code in (200, 204)
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:8000"
+
+
 def test_healthz_detail_under_auth_disabled(client):
     """Full diagnostic moved to /healthz/detail behind require_auth. With
     AUTH_DISABLED=true (test env), the route returns the rich shape."""
@@ -118,10 +171,13 @@ def test_healthz_detail_under_auth_disabled(client):
 
 
 def test_root_serves_html(client):
+    """Root serves the Undelivered shell (rebranded from prior "D2 Orders
+    Dashboard" per D0 architecture decision 2026-05-15, bot_chat 194 Option C).
+    Same FastAPI app, customer-service framing."""
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "D2 Orders Dashboard" in r.text
+    assert "Undelivered" in r.text
 
 
 def test_root_injects_config_blob(client):

@@ -1,4 +1,7 @@
-// D2 Orders Dashboard — front-end controller.
+// Undelivered (D2 lane) — front-end controller.
+// Customer-service surface for order fulfillment + sales tracking. Same
+// app as the prior "D2 Orders Dashboard"; rebranded per operator directive
+// 2026-05-15 + D0 architecture decision (bot_chat 194, Option C).
 //
 // Reads server-rendered config from `window.__D2_CONFIG__` (injected by
 // d2_dashboard/main.py at request time). No /api/d2/config-public round-trip
@@ -234,7 +237,8 @@ async function bootstrap() {
 function renderLogin(domain) {
   render(`
     <div class="login">
-      <h2>D2 Orders Dashboard</h2>
+      <h2>Undelivered</h2>
+      <p class="login-sub">fulfillment + sales tracking · D2 lane</p>
       <p>Sign in with your @${escapeHtml(domain)} Google account.</p>
       <button id="btn-google">Sign in with Google</button>
     </div>
@@ -261,7 +265,10 @@ function renderDashboard(domain) {
     : `<button id="btn-signout">Sign out</button>`;
   render(`
     <header>
-      <h1>D2 Orders Dashboard</h1>
+      <div class="header-title">
+        <h1>Undelivered</h1>
+        <span class="header-sub">fulfillment + sales tracking · D2</span>
+      </div>
       <div>
         <span class="who">${escapeHtml(email)}</span>
         <button id="btn-refresh" style="margin-left:8px;">Refresh</button>
@@ -277,7 +284,7 @@ function renderDashboard(domain) {
       <section id="panel-orders" class="panel active">
         <div class="orders-toolbar">
           <div class="view-mode-pill" role="radiogroup" aria-label="Order view mode">
-            <button type="button" class="pill-btn pill-active" data-mode="active" role="radio" aria-checked="true" title="Hide fulfilled / rejected / cancelled orders">Active only</button>
+            <button type="button" class="pill-btn pill-active" data-mode="active" role="radio" aria-checked="true" title="Hide fulfilled / rejected / cancelled — show only orders still awaiting fulfillment">Undelivered</button>
             <button type="button" class="pill-btn" data-mode="all" role="radio" aria-checked="false" title="Show every order regardless of canonical status">All</button>
           </div>
           <label class="toolbar-toggle">

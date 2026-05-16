@@ -1,19 +1,29 @@
-# D2 Orders Dashboard — Deploy Guide
+# Undelivered (D2) — Deploy Guide
 
-**Owner**: D2 — code, env vars, deploy config, and IaC for the
-`d2-orders-dashboard` Render service. Per `LANE_DISCIPLINE.md` §Cross-cutting
-Rule #6 (PRs #104 + #105, 2026-05-14): D2 has standing read + write authority
-on this one service; cross-service and workspace-level ops remain forbidden.
+**Owner**: D2 — code + Supabase reads. Per the 2026-05-15 D-tier reorg,
+D0 holds Render write authority on the `d2-orders-dashboard` service;
+D2 has read-only Render MCP access (deploys, logs, metrics) for
+diagnostics. Cross-frontend coordination flows through D0.
+
+**Branding** (per D0 architecture decision, bot_chat 194 — Option C):
+Service is the **customer-service surface for fulfillment + sales tracking**.
+Same FastAPI app as the prior "D2 Orders Dashboard"; UX rebranded to
+"Undelivered" to match the operator use case. URL stays
+`https://d2-orders-dashboard.onrender.com` (service rename is a future
+operator decision).
 
 ## What this is
 
-A standalone FastAPI service that renders a single window across all 4
-broker order surfaces (Evo / SeatGeek / TickPick / Vivid) plus seatdata
+A standalone FastAPI service tracking orders awaiting fulfillment across
+all 4 broker surfaces (Evo / SeatGeek / TickPick / Vivid) plus seatdata
 fulfilled-sales rows, **reading exclusively from Supabase SQL**. All 5
 sources are kept fresh by the upstream ingest crons and surfaced through
 the `public.unified_orders` view (mig
-`20260513230100_unified_orders_with_tickpick_vivid.sql`). The dashboard
-makes zero broker-API calls in the data path. Read-only on the DB.
+`20260513230100_unified_orders_with_tickpick_vivid.sql`). The Undelivered
+pill (default landing view, formerly "Active only") filters to non-terminal
+canonical_status — the orders that still need operator attention. The "All"
+toggle exposes the full historical set. Zero broker-API calls in the data
+path. Read-only on the DB.
 
 **Auth posture (2026-05-13 — Google OAuth re-enabled)**: gated by default.
 `AUTH_DISABLED=false` is the shipped default; the dashboard surfaces the
