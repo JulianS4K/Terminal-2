@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Undelivered · VibePass</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="/static/undelivered/style.css" />
+</head>
+<body data-page="undelivered">
+
+  <header class="topbar">
+    <span class="brand">VIBEPASS · UNDELIVERED</span>
+    <nav class="pagenav">
+      <a href="/">HOME</a>
+      <a href="/terminal">TERMINAL</a>
+      <a class="active" href="/undelivered">UNDELIVERED</a>
+      <a href="/store">STORE</a>
+    </nav>
+    <span id="status" class="status">—</span>
+  </header>
+
+  <main class="wrap">
+    <section class="doorway">
+      <div class="doorway-tag">D0 · D2 MERGE POINT · OPTION C</div>
+      <h1>Undelivered — Fulfillment + Sales Tracking</h1>
+      <p>
+        Customer service workflow across <strong>Evo · SeatGeek · TickPick · Vivid · SeatData</strong>.
+        Per D2's scope decision (<code>bot_chat</code> #199): the unified orders view IS the undelivered surface —
+        D2's <code>/orders</code> tab on <strong>d2-orders-dashboard.onrender.com</strong> evolves into the
+        fulfillment-ops workflow described in <code>design/undelivered-window-2026-05-08.md</code>.
+        Time-to-event sort · hold-expiry lane · bulk-deliver-per-event · channel logos.
+      </p>
+      <div class="doorway-cta">
+        <a id="d2Open" class="btn-primary" href="https://d2-orders-dashboard.onrender.com" target="_blank" rel="noopener">
+          Open Orders Dashboard ↗
+        </a>
+        <span id="d2HealthBadge" class="health-badge dim">checking…</span>
+      </div>
+      <p class="muted small">
+        Sign in via Google OAuth (<code>@s4kent.com</code> only). Same Supabase project as the broker terminal —
+        if you're signed into one, you're signed into both (sessions are per-origin in localStorage).
+      </p>
+    </section>
+
+    <section class="merge-grid">
+      <div class="mg-cell">
+        <span class="mg-lbl">What's there now</span>
+        <ul>
+          <li>Unified <strong>Orders</strong> tab (Evo + SG + TickPick + Vivid in one table)</li>
+          <li>Active/All filter pill</li>
+          <li><strong>Metrics</strong> tab — KPI grid, sparkline, hot/top events, live sales feed</li>
+          <li><strong>SeatData</strong> tab — account + usage analytics</li>
+          <li>Cron-freshness chip per source</li>
+        </ul>
+      </div>
+      <div class="mg-cell">
+        <span class="mg-lbl">Coming under Option C (D2 lane)</span>
+        <ul>
+          <li>Time-to-event sort default on Orders tab (red T-0/T-24h first)</li>
+          <li>Hold-expiry lane as a separate visual band on the Orders tab</li>
+          <li>Bulk-deliver-per-event action ("deliver all 76 for Knicks G5")</li>
+          <li>Per-row state machine pending/held/pushing/delivered/failed</li>
+          <li>SG/TEvo/Vivid/TickPick channel logos in rows</li>
+        </ul>
+      </div>
+      <div class="mg-cell">
+        <span class="mg-lbl">Per-event drill (already on terminal)</span>
+        <ul>
+          <li><a href="/terminal">Broker Terminal</a> → event detail page</li>
+          <li>Per-event order strip: 5-segment state mix on the broker page</li>
+          <li>Hits <code>/api/broker/event/{id}/orders</code> — scope-bounded</li>
+          <li>Independent of D2's global undelivered view</li>
+        </ul>
+      </div>
+      <div class="mg-cell">
+        <span class="mg-lbl">Lane contract</span>
+        <ul>
+          <li>D0 owns the terminal nav + this doorway page + the <code>vibepass-terminal-test</code> service</li>
+          <li>D2 owns the dashboard implementation + the <code>d2-orders-dashboard</code> service + Option C buildout</li>
+          <li>D2 PR #129 (APIRouter refactor) → currently draft pending Option C work</li>
+          <li>D0 sign-off on D2 PRs paused through 2026-05-22 (<code>bot_chat</code> #170)</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="reference">
+      <div class="panel-title">REFERENCE</div>
+      <ul class="ref-list">
+        <li><a href="https://github.com/JulianS4K/Terminal-2/blob/main/d2_dashboard/main.py" target="_blank" rel="noopener">d2_dashboard/main.py</a> — D2 service source</li>
+        <li><a href="https://github.com/JulianS4K/Terminal-2/blob/main/design/undelivered-window-2026-05-08.md" target="_blank" rel="noopener">design/undelivered-window-2026-05-08.md</a> — original spec</li>
+        <li><code>bot_chat</code> #199 — D2 scope decision (Option C)</li>
+        <li><code>bot_chat</code> #143 — initial merge-point sync</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="/static/terminal/lib/supabase.js"></script>
+  <script src="/static/terminal/auth.js"></script>
+  <script src="/static/undelivered/undelivered.js"></script>
+</body>
+</html>

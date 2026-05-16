@@ -27,15 +27,98 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import requests
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from evo_client import EvoClient
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+# ---------- Storefront asset cache-busting ----------
+#
+# Browsers happily hold the storefront's store.js + style.css forever
+# unless the URL changes. Until Sprint 5 ships content-hashed filenames
+# + Cache-Control headers, we append `?v=<short-sha>` to each asset
+# reference inside the served HTML so every deploy invalidates the
+# browser cache. Without this, frontend changes in a D1 PR can appear
+# "not deployed" from the operator's perspective for hours after the
+# actual merge — see Round 4 of docs/d1-bot-continues-here audit.
+
+def _build_storefront_version() -> str:
+    """Short-SHA tag used in the `?v=<...>` query string on static asset
+    references inside the served HTML shells.
+
+    Resolution order:
+      1. RENDER_GIT_COMMIT — auto-set by Render on every deploy.
+      2. GIT_COMMIT — set by some CI workflows; defensive fallback.
+      3. f"dev{epoch}" — local dev / unset prod; still bumps per-boot
+         so a fresh container always re-fetches.
+    """
+    sha = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
+    if sha:
+        return sha[:7]
+    # Local dev / unset prod env — hard-refresh works locally; in prod the
+    # env var is always set by Render so this branch only fires by accident.
+    return "dev"
+
+
+_STOREFRONT_VERSION = _build_storefront_version()
+_STOREFRONT_HTML_CACHE: dict[str, str] = {}
+
+
+def _read_storefront_html(name: str) -> str:
+    """Read a `static/store/<name>` HTML shell, rewrite the store.js +
+    style.css refs to include `?v=<sha>`, cache the result for the life
+    of the container. The source files don't change mid-process.
+    """
+    cached = _STOREFRONT_HTML_CACHE.get(name)
+    if cached is not None:
+        return cached
+    path = os.path.join(STATIC_DIR, "store", name)
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    v = _STOREFRONT_VERSION
+    # Match the exact strings used in the HTML shells. Closing-quote
+    # specificity prevents accidental matches inside JS strings or
+    # CSS url() refs that might be added later.
+    html = html.replace(
+        '/static/store/store.js"',
+        f'/static/store/store.js?v={v}"',
+    )
+    html = html.replace(
+        '/static/store/style.css"',
+        f'/static/store/style.css?v={v}"',
+    )
+    _STOREFRONT_HTML_CACHE[name] = html
+    return html
+
+
+def _render_storefront_page(name: str) -> HTMLResponse:
+    """Return an HTMLResponse for a static/store/*.html shell with
+    Cache-Control: no-cache, must-revalidate so browsers always
+    revalidate the HTML on every page load.
+
+    The asset URLs inside the HTML are cache-busted via
+    _read_storefront_html()'s `?v=<sha>` rewrite — those keep their
+    long-cache friendliness. Only the HTML shell itself needs the
+    revalidate header so operators (and returning customers) never
+    get trapped on stale HTML pointing at un-versioned asset URLs
+    after a deploy. See Round 5 of docs/d1-bot-continues-here-rustling
+    -sunrise.md for the bootstrap-trap scenario this prevents.
+
+    Cost: every page load adds one conditional GET (304 Not Modified
+    when unchanged — ~1 KB request, ~50 ms latency, no body transfer).
+    Trivial.
+    """
+    return HTMLResponse(
+        content=_read_storefront_html(name),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
 
 # ---------- Bootstrap ----------
 
@@ -406,18 +489,29 @@ STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower()
 
 
 @app.get("/")
-def root_health():
-    """Liveness probe. Default response is the data-collection JSON used
-    by every prior phase. When STOREFRONT_AS_LANDING=true (set in Render
-    env for the storefront test service), the root path 302-redirects
-    to /store so customers land on the public catalog instead of a
-    debug JSON blob.
-
-    Operators with non-storefront services keep the default behavior.
+def root_landing():
+    """Unified frontend homescreen (D0, operator directive 2026-05-15 bot_chat #157).
+    3 cards: Terminal (broker) / Undelivered (CS+fulfillment) / Store (public).
+    STOREFRONT_AS_LANDING=true keeps the old customer-only redirect to /store.
+    Liveness moved to /healthz (always was the real Render check path).
     """
     if STOREFRONT_AS_LANDING:
         return RedirectResponse(url="/store", status_code=302)
-    return {"ok": True, "phase": "data-collection", "ui": "rebuild-pending"}
+    return FileResponse(os.path.join(STATIC_DIR, "home", "index.html"))
+
+
+@app.get("/terminal")
+def terminal_landing():
+    """Broker terminal entry (D0 lane). Page-internal nav handles sub-routes
+    (event/movers/performer/orders) via .html files served from /static/terminal/."""
+    return FileResponse(os.path.join(STATIC_DIR, "terminal", "index.html"))
+
+
+@app.get("/undelivered")
+def undelivered_landing():
+    """CS fulfillment + sales tracking entry (scaffold — D2 to fill, bot_chat #179).
+    Spec: design/undelivered-window-2026-05-08.md."""
+    return FileResponse(os.path.join(STATIC_DIR, "undelivered", "index.html"))
 
 
 @app.get("/healthz")
@@ -4143,7 +4237,11 @@ def store_events(
     cap = min(max(limit, 1), 500)
     # offset → TEvo page index. TEvo paginates 1-based.
     per_page = min(cap, 100)
-    offset = max(offset, 0)
+    # Cap offset to prevent absurd values from triggering a 502 on impossible
+    # page lookups (TEvo doesn't paginate beyond what its catalog holds —
+    # office-filtered catalog is ~3-4k events at peak, so 5000 is a safe
+    # upper bound that catches malicious/bug values like ?offset=999999).
+    offset = min(max(offset, 0), 5000)
     start_page = (offset // per_page) + 1
     # When offset is NOT a multiple of per_page, we land mid-page and have to
     # slice the leading rows off the first fetched page. Account for that in
@@ -4411,6 +4509,31 @@ def _attach_owned_metadata(
 # typist won't burn quota on common queries.
 _search_cache: dict[str, tuple[float, dict]] = {}
 _SEARCH_CACHE_TTL = 60.0
+
+
+# Movers stale-while-revalidate cache. /api/store/movers does a 4-table
+# join (events + latest_event_metrics + event_lifecycle + v_event_velocity
+# _windows + performer_metadata) per call and consistently times at ~1s
+# warm. Underlying velocity data only refreshes hourly (driven by the
+# listings_snapshots ingest cadence), so a 5-min server cache is well
+# within the data's natural refresh window AND eliminates ~1s on every
+# homescreen load past the first.
+#
+# Pattern: fresh hits return instantly; stale hits return cached payload
+# AND schedule a background recompute via FastAPI BackgroundTasks; cold
+# (never-seen-key) hits compute synchronously. Refresh-in-flight tracking
+# prevents duplicate fans for the same key under concurrent requests.
+_movers_cache: dict[str, tuple[float, dict]] = {}
+_MOVERS_CACHE_TTL = 300.0  # 5 min — conservative vs. hourly velocity refresh
+_MOVERS_CACHE_REFRESHING: set[str] = set()
+
+
+def _movers_cache_key(city: str, days: int, limit: int) -> str:
+    """Canonical cache key — case-folds city so 'nyc'/'NYC'/'New York' map
+    to a single slot. The endpoint already maps 'NEW YORK' + 'NEW YORK CITY'
+    aliases through the same venue_patterns, so the cache key uppercase
+    matches that intent."""
+    return f"{(city or '').upper()}|{int(days)}|{int(limit)}"
 
 
 def _normalize_search_key(q: str) -> str:
@@ -4723,7 +4846,10 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
 
 
 @app.get("/api/store/search")
-def store_search(q: str, limit: int = 8):
+def store_search(
+    q: str = Query(..., max_length=200, description="Search term; max 200 chars to prevent multi-MB DoS payloads"),
+    limit: int = 8,
+):
     """Live storefront search. Hits TEvo /v9/searches/suggestions in live
     mode (and cross-joins our SQL for we_own/from_price tagging), or
     ILIKE-searches our tables when STOREFRONT_SQL_ONLY=true.
@@ -4768,6 +4894,7 @@ def store_search(q: str, limit: int = 8):
 
 @app.get("/api/store/movers")
 def store_movers(
+    background_tasks: BackgroundTasks,
     city: str = "NYC",
     days: int = 21,
     limit: int = 8,
@@ -4786,11 +4913,60 @@ def store_movers(
 
     Hidden when nothing matches. Driven by v_event_velocity_windows joined
     against latest_event_metrics + events + event_lifecycle.
+
+    PERFORMANCE: stale-while-revalidate cached. The bare compute hits ~1s
+    warm (audit-2026-05-16 measurement). Underlying velocity data refreshes
+    only hourly, so a 5-min cache is well within the refresh cadence and
+    collapses the homescreen response to a dict lookup (~5ms) on every
+    request past the first per (city, days, limit) tuple.
     """
-    db = require_sb()
     cap = max(1, min(int(limit), 24))
     day_cap = max(1, min(int(days), 90))
+    key = _movers_cache_key(city, day_cap, cap)
+    now = time.time()
+    cached = _movers_cache.get(key)
 
+    if cached:
+        age = now - cached[0]
+        if age < _MOVERS_CACHE_TTL:
+            # FRESH: serve immediately, no compute.
+            return cached[1]
+        # STALE: serve old payload + schedule a background recompute so
+        # the NEXT request gets fresh data. Customer never waits.
+        # Guard against duplicate fans for the same key under concurrent
+        # requests — only one refresh in flight at a time per key.
+        if key not in _MOVERS_CACHE_REFRESHING:
+            _MOVERS_CACHE_REFRESHING.add(key)
+            background_tasks.add_task(_refresh_movers, city, day_cap, cap, key)
+        return cached[1]
+
+    # COLD: never-seen key. Compute synchronously, cache, return.
+    fresh = _compute_movers(require_sb(), city, day_cap, cap)
+    _movers_cache[key] = (now, fresh)
+    return fresh
+
+
+def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
+    """Background refresh fired by BackgroundTasks AFTER the stale response
+    is sent. Failures log and clear the in-flight flag so a future request
+    can retry; the stale cached payload stays in place (better than
+    eviction — a slightly old payload beats no payload).
+    """
+    try:
+        fresh = _compute_movers(require_sb(), city, days, limit)
+        _movers_cache[key] = (time.time(), fresh)
+    except Exception as e:
+        print(f"[movers refresh] failed for {key}: {e!r}")
+    finally:
+        _MOVERS_CACHE_REFRESHING.discard(key)
+
+
+def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
+    """Pure compute path for the movers endpoint. Extracted from the route
+    handler so both the cold-cache code path AND the background-refresh
+    task call the same implementation. Returns the exact response dict
+    the route emits (`city`, `days`, `count`, `events`).
+    """
     # City filter — hardcoded NYC venue patterns for v1. Matches everywhere
     # the storefront would consider "New York metro" inventory.
     city_norm = (city or "").upper()
@@ -6201,12 +6377,12 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
 
 @app.get("/store")
 def store_index_page():
-    return FileResponse(os.path.join(STATIC_DIR, "store", "index.html"))
+    return _render_storefront_page("index.html")
 
 
 @app.get("/store/event/{event_id}")
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
-    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+    return _render_storefront_page("event.html")
 
 
 # ---------- Share links (revocable, trackable) ----------
@@ -6246,7 +6422,7 @@ def _share_to_dict(row: dict) -> dict:
 
 
 @app.post("/api/store/share")
-def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
+def store_share_create(payload: dict = Body(...), user=Depends(require_auth)):
     """Create a revocable share link for one event with saved filters.
 
     Body:
@@ -6333,6 +6509,13 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
     if chosen:
         expires_at = chosen.astimezone(timezone.utc).isoformat()
 
+    # Populate created_by so DELETE + LIST routes can enforce ownership
+    # (closed 2026-05-16 audit S1/S2 — any authed user used to be able to
+    # revoke/enumerate ANY share link by id). When AUTH_DISABLED=true (dev),
+    # require_auth returns None — store NULL and the ownership filters in
+    # those routes correctly skip in that mode.
+    created_by = user["id"] if user else None
+
     # ~12 chars (9 random bytes → 12 url-safe chars) ≈ 72 bits of entropy.
     # Retry once on the astronomically unlikely collision.
     share_id = secrets.token_urlsafe(9)
@@ -6342,6 +6525,7 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
         "filters": persisted,
         "note": note,
         "expires_at": expires_at,
+        "created_by": created_by,
     }
     try:
         ins = db.table("share_links").insert(row).execute()
@@ -6352,7 +6536,12 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
         try:
             ins = db.table("share_links").insert(row).execute()
         except Exception as e2:
-            raise HTTPException(500, f"could not create share link: {e2}") from e
+            # Sanitized: log full upstream error server-side, return a stable
+            # generic string so Supabase exception text (table/constraint
+            # names, internal validation) doesn't leak to public callers.
+            # Audit S4 2026-05-16.
+            print(f"[store_share_create] share insert failed twice for {share_id}: {e2!r}")
+            raise HTTPException(500, "could not create share link") from e
 
     saved = (ins.data or [None])[0] or row
     return _share_to_dict(saved)
@@ -6400,21 +6589,31 @@ def store_share_resolve(share_id: str):
 
 
 @app.delete("/api/store/share/{share_id}")
-def store_share_revoke(share_id: str, _=Depends(require_auth)):
+def store_share_revoke(share_id: str, user=Depends(require_auth)):
     """Soft-delete: stamps revoked_at. The row stays so view history survives.
     Idempotent — revoking an already-revoked link is fine.
 
     Auth: require_auth. Closed on 2026-05-11 (security chat) — any unauth
     user used to be able to revoke any share link by id.
+
+    Ownership: closed 2026-05-16 (audit S1) — auth was checked but not
+    ownership, so any authed user could revoke ANY share link by id. Now
+    the update is filtered by created_by = current_user.id. When
+    AUTH_DISABLED=true (dev), require_auth returns None and we skip the
+    ownership filter (matches the rest of the auth-disabled pattern).
     """
     db = require_sb()
-    res = (
+    q = (
         db.table("share_links")
         .update({"revoked_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", share_id)
-        .execute()
     )
+    if user is not None:
+        q = q.eq("created_by", user["id"])
+    res = q.execute()
     if not (res.data or []):
+        # Could be: row doesn't exist, OR row exists but user doesn't own it.
+        # Either way, surface as 404 (don't leak existence to non-owner).
         raise HTTPException(404, "share link not found")
     return {"ok": True, "id": share_id, "revoked_at": (res.data[0] or {}).get("revoked_at")}
 
@@ -6424,17 +6623,26 @@ def store_share_list(
     event_id: int | None = None,
     include_inactive: bool = False,
     limit: int = 50,
-    _=Depends(require_auth),
+    user=Depends(require_auth),
 ):
     """List share links, newest first. Filter by event_id when present.
 
     Auth: require_auth. Closed on 2026-05-11 (security chat) — used to
     leak every share row (event_id, filters, notes, view counts) to anon.
+
+    Ownership: closed 2026-05-16 (audit S2) — auth was checked but the
+    list wasn't filtered by creator, so authed users saw EVERY share
+    (multi-tenant data leak: filters, notes, view metrics from other
+    creators). Now filtered by created_by = current_user.id when auth
+    is enabled. AUTH_DISABLED=true (dev) skips the filter — admins/dev
+    see everything, matching existing auth-disabled semantics.
     """
     db = require_sb()
     q = db.table("share_links").select(
         "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"
     ).order("created_at", desc=True).limit(min(max(limit, 1), 200))
+    if user is not None:
+        q = q.eq("created_by", user["id"])
     if event_id:
         q = q.eq("event_id", event_id)
     if not include_inactive:
@@ -6453,12 +6661,12 @@ def store_share_list(
 def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
     """Serves the same event detail page; JS detects /s/ prefix and resolves
     the share via /api/store/share/{id} instead of using URL filter params."""
-    return FileResponse(os.path.join(STATIC_DIR, "store", "event.html"))
+    return _render_storefront_page("event.html")
 
 
 @app.get("/store/shares")
 def store_shares_page():
-    return FileResponse(os.path.join(STATIC_DIR, "store", "shares.html"))
+    return _render_storefront_page("shares.html")
 
 
 def _require_non_prod():

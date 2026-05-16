@@ -48,6 +48,12 @@
       const body = await r.text();
       let msg = body;
       try { msg = JSON.parse(body).detail || JSON.parse(body).error || body; } catch {}
+      // Strip HTML tags + collapse whitespace + clip to 80 chars before
+      // throwing — some servers (Render cold-start 503, FastAPI default 5xx
+      // HTML pages, raw nginx 404) return full HTML bodies and the raw
+      // markup shouldn't splatter into the status pill downstream. Mirrors
+      // D0's app.js fix from PR #113 commit 34232a1.
+      msg = String(msg).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
       throw new Error(`${r.status} ${msg}`);
     }
     return r.json();
@@ -268,6 +274,12 @@
     const empty = $("#empty");
 
     let allEvents = [];
+    // loadComplete gates filter() so the user can't trigger a misleading
+    // "No events match" empty state by typing in the search box while the
+    // initial /api/store/home call is still in flight (common on free-tier
+    // cold-start where the round-trip is ~12s). When load resolves below,
+    // any pending user query is re-applied at that point.
+    let loadComplete = false;
 
     function render(events, mode) {
       // mode: "all" (initial load) or "search" (after a query)
@@ -358,6 +370,13 @@
     }
 
     function filter(query) {
+      // Guard against the cold-start race: user typed in the search box
+      // before loadCatalog's /api/store/home round-trip completed. Bailing
+      // out here keeps the "Loading available events…" status pill visible
+      // instead of showing a misleading "No events match" empty state.
+      // The pending query (input.value) is re-applied by loadCatalog when
+      // it resolves — see the .then() handler below.
+      if (!loadComplete) return;
       const q = (query || "").trim().toLowerCase();
       if (!q) return render(allEvents, "all");
       const filtered = allEvents.filter((e) => {
@@ -392,76 +411,81 @@
     if (performerId) qs.set("performer_id", performerId);
     if (venueId) qs.set("venue_id", venueId);
 
-    // Catalog fetch with retryable error UI. On failure (502 cold-start,
-    // statement timeout, etc) the user sees the error + an inline Retry
-    // button instead of stuck red text. Per D1 UX audit 2026-05-12 fix #1.
+    // Catalog fetch with retryable error UI. On failure the user sees the
+    // error + an inline Retry button instead of stuck red text. Per D1 UX
+    // audit 2026-05-12 fix #1.
     //
-    // Two-phase load on the unfiltered home view:
-    //   1. /api/store/home — SQL-only, <500ms, returns owned events with
-    //      from_price + owned_tickets_count populated (premium/selling-fast
-    //      first). First paint shows prices on cards.
-    //   2. /api/store/events — TEvo round-trip, ~1.5s, replaces the grid
-    //      with the broader catalog (currently 60 owned-future events with
-    //      null prices on the cards; same set, refreshed inventory).
-    // When a performer_id or venue_id filter is set, skip the home phase
-    // and go straight to /api/store/events because /api/store/home doesn't
-    // accept those filters (its job is the unfiltered first paint).
+    // Endpoint switch by view:
+    //   Home view (unfiltered) → /api/store/home — SQL-only, ~50ms, returns
+    //     owned events with from_price + owned_tickets_count populated.
+    //   Filtered view (?performer_id= or ?venue_id=) → /api/store/events —
+    //     TEvo-direct so the catalog reflects fresh inventory for that
+    //     filter. /api/store/home doesn't accept those filters today; a
+    //     future PR adds a SQL-only filtered variant (see D1-NEXT in
+    //     docs/d1_retail_finish_punchlist.md §G — "store_home filter
+    //     variants" — closes the last TEvo dependency on the storefront).
+    //
+    // PR #111 originally chained both calls (home first, then events as a
+    // "freshness" refresh). That overwrote the populated home grid with
+    // /api/store/events's null-from_price response ~1.5s later, producing
+    // a "prices flash then disappear" UX bug. Single-endpoint switch
+    // resolves that: home view keeps its prices forever (until next
+    // page-load refresh).
+    //
+    // TRADEOFF: dropping the lazy /events refresh makes latest_event_metrics
+    // (the SQL matview behind /api/store/home) the SINGLE SOURCE OF TRUTH
+    // for what appears on the home grid. TEvo-only events that haven't
+    // been ingested into the matview yet won't show up here — that's
+    // intentional per the owned-only homepage strategy
+    // (docs/d1-bot-continues-here-rustling-sunrise.md §7d). If a future
+    // contributor sees the home grid stale and is tempted to "fix" it by
+    // adding /events back, please instead investigate the LEM refresh
+    // cron upstream (bot_chat 130 class — listings_snapshots silent-
+    // success → no LEM rows ingested → home grid goes stale).
     const isHomeView = !performerId && !venueId;
+    const catalogEndpoint = isHomeView
+      ? "/api/store/home?limit=60"
+      : `/api/store/events?${qs.toString()}`;
 
     function loadCatalog() {
       status.textContent = "Loading available events…";
       status.style.color = "";
       status.hidden = false;
-
-      const homeFirst = isHomeView
-        ? api("/api/store/home?limit=60")
-            .then((res) => {
-              allEvents = res.events || [];
-              if (allEvents.length) {
-                renderCatalogFilterBanner(performerId, venueId, allEvents);
-                render(allEvents, "all");
-                // Hide status — the grid is up. The TEvo fetch below will
-                // either confirm or quietly replace the list; no flash of
-                // "Loading" between the two.
-                status.hidden = true;
-              }
-            })
-            .catch((err) => {
-              // Home-phase failure isn't fatal — TEvo phase below still runs
-              // and will populate the grid (with null prices, but renders).
-              console.warn("home-phase fetch failed", err);
-            })
-        : Promise.resolve();
-
-      homeFirst.then(() =>
-        api(`/api/store/events?${qs.toString()}`)
-          .then((res) => {
-            allEvents = res.events || [];
-            renderCatalogFilterBanner(performerId, venueId, allEvents);
+      // Reset gate — Retry re-fires this and we want the same race
+      // protection on the second attempt.
+      loadComplete = false;
+      api(catalogEndpoint)
+        .then((res) => {
+          allEvents = res.events || [];
+          loadComplete = true;
+          renderCatalogFilterBanner(performerId, venueId, allEvents);
+          // If user typed during the load window, honor that query now.
+          // Otherwise render the full grid as before.
+          const pendingQuery = (input.value || "").trim();
+          if (pendingQuery) {
+            filter(input.value);
+          } else {
             render(allEvents, "all");
-          })
-          .catch((err) => {
-            // If the SQL home phase already painted the grid, suppress the
-            // error UI — the user has cards, they just don't have the latest
-            // TEvo refresh. Only show error if the grid is still empty.
-            if (allEvents && allEvents.length) {
-              console.warn("catalog refresh failed (home grid still shown)", err);
-              return;
-            }
-            status.replaceChildren();
-            status.style.color = "var(--bad)";
-            status.hidden = false;
-            const msg = document.createElement("div");
-            msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
-            const retry = document.createElement("button");
-            retry.type = "button";
-            retry.className = "btn ghost";
-            retry.style.marginTop = "12px";
-            retry.textContent = "Retry";
-            retry.addEventListener("click", loadCatalog);
-            status.append(msg, retry);
-          })
-      );
+          }
+          status.hidden = true;
+        })
+        .catch((err) => {
+          // loadComplete stays false — filter() correctly bails out so a
+          // user typing during error state doesn't see "No events match"
+          // on top of the Retry-button error UI.
+          status.replaceChildren();
+          status.style.color = "var(--bad)";
+          status.hidden = false;
+          const msg = document.createElement("div");
+          msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.className = "btn ghost";
+          retry.style.marginTop = "12px";
+          retry.textContent = "Retry";
+          retry.addEventListener("click", loadCatalog);
+          status.append(msg, retry);
+        });
     }
     loadCatalog();
 
@@ -805,6 +829,12 @@
     const resetBtn = $("#resetFilters");
 
     let allListings = [];
+    // Shared listing lookup — keyed by string(listing.id). renderListings()
+    // and renderParkingTab() write into this; the single delegated Reserve
+    // click handler reads from it. Replaces the prior per-row
+    // `btn.addEventListener` pattern, which accumulated handlers on every
+    // re-render (filter change, refetch) without ever removing them.
+    const listingsByIdMap = new Map();
     // Section universe — server tells us every section present in the
     // unfiltered owned set (`sections_available`). We cache it so the
     // section chip group keeps showing every section even after the user
@@ -884,10 +914,24 @@
       }
     }
 
+    // One-time delegated click handler for Reserve buttons. Resolves the
+    // listing via `data-listing-id` against `listingsByIdMap`. Prevents
+    // the previous leak where every re-render attached fresh per-row
+    // listeners with no cleanup.
+    function onReserveDelegatedClick(e) {
+      const btn = e.target.closest("button[data-action='reserve']");
+      if (!btn) return;
+      const id = btn.dataset.listingId;
+      if (!id) return;
+      const listing = listingsByIdMap.get(id);
+      if (listing) openModal(listing);
+    }
+    listEl.addEventListener("click", onReserveDelegatedClick);
+
     // ---- Listings rendering (server already filtered) ----
     function renderListings() {
       listCount.textContent = `${allListings.length}`;
-      listEl.innerHTML = "";
+      listEl.replaceChildren();
       if (!allListings.length) {
         noListings.hidden = false;
         return;
@@ -936,7 +980,12 @@
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = "Reserve";
-        btn.addEventListener("click", () => openModal(l));
+        btn.dataset.action = "reserve";
+        if (l.id != null) {
+          const key = String(l.id);
+          btn.dataset.listingId = key;
+          listingsByIdMap.set(key, l);
+        }
 
         li.append(seat, qbox, pbox, btn);
 
@@ -1023,7 +1072,12 @@
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = "Reserve";
-        btn.addEventListener("click", () => openModal(l));
+        btn.dataset.action = "reserve";
+        if (l.id != null) {
+          const key = String(l.id);
+          btn.dataset.listingId = key;
+          listingsByIdMap.set(key, l);
+        }
 
         li.append(seat, qbox, pbox, btn);
         if (l.public_notes) {
@@ -1033,6 +1087,15 @@
           li.append(notes);
         }
         parkUl.append(li);
+      }
+
+      // One-time delegated click handler on parkUl. Shares the same
+      // resolution path as the seats list — looks up the listing via
+      // `data-listing-id` in `listingsByIdMap`. Gated by `dataset.wired`
+      // so we don't stack handlers across renderParkingTab() calls.
+      if (!parkUl.dataset.wired) {
+        parkUl.dataset.wired = "1";
+        parkUl.addEventListener("click", onReserveDelegatedClick);
       }
 
       // Wire tab toggle once; idempotent — first click handler win.

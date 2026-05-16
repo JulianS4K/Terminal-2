@@ -24,6 +24,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 | (sub D2) | Undelivered FE | same as D2 (or split when scope activates) | deferred |
 | D3 | Broadway (sub of D2) | `broadway-scraper-eChQ6` | active |
 | D4 | Our Ticketing Infra | unassigned | future |
+| E1 | External Markets (Kalshi, prediction markets, exchanges) | unassigned | future — stub created 2026-05-15 |
 
 ## Per-lane restrictions
 
@@ -82,6 +83,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - `docs/c1-checkpoint-*.md` — daily checkpoint reports
 - `docs/c1_daily_checkpoint_runbook.md` — the runbook itself (canonical)
 - `bot_chat` checkpoint + drift-flag entries
+- `v_bot_chat_unresolved` view migration (resolve-protocol owner, see CLAUDE.md §1 / PR #114 Cluster D-1)
 - PR merge commits (within push-protocol)
 - Stale PR comments (cross-lane coordination, allowed for C1)
 
@@ -89,6 +91,8 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Migrations to fix drift → A1 (admin / push)
 - Security findings → B1 (security manager)
 - Bot-lane code changes → respective lane owner via PR comment
+
+**Cross-cutting onboarding requirement (2026-05-15)**: every active bot must create a lane-scoped aging-sweep scheduled task on first activation. Spec in `CLAUDE.md §5`. Minute slot registry maintained there.
 
 **Reads:** everything.
 
@@ -100,7 +104,13 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **Cadence:** daily checkpoint at 09:00 ET (after overnight backdata processing completes; before US trading-hours peak). One scheduled session per day; ad-hoc sessions if drift gets surfaced by automated alerting between checkpoints.
 
-### D0 — Terminal FE (read-only)
+### D0 — Consolidated Frontend Lane (2026-05-15 reorg)
+
+**Role**: lane owner for all customer + operator frontend surfaces. Reviews + signs off on subordinate (D1, D2) PRs before A1 merges. Owns Render write authority on all three frontend services. Authors `static/terminal/*` directly.
+
+**Subordinates**: D1 (storefront implementer), D2 (dashboard implementer). They write code; D0 reviews; A1 merges after green CI.
+
+### D0 — Terminal FE direct surface
 
 **Writes:**
 - Future `static/terminal/*` UI files (when built)
@@ -117,7 +127,9 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **Reads:** entire data plane (charts, predictive models, possibly Grok integration)
 
-### D1 — Consumer Retail
+### D1 — Consumer Retail (subordinate to D0 as of 2026-05-15)
+
+**Reports to D0.** Authors storefront code; D0 reviews + approves PRs; A1 merges after green CI.
 
 **Writes (source files):**
 - `app.py` `/api/store/*` + `/store/*` routes (coordinate with A1)
@@ -159,7 +171,9 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - **Render MCP write authority on this service** (no per-call operator ask): `update_environment_variables`, `update_web_service`, redeploy triggers, restart. Cross-service ops (anything touching `d2-orders-dashboard` or workspace-level) remain forbidden without operator approval.
 - D1 does **NOT** own `d2-orders-dashboard` — that surface is D2's (see below).
 
-### D2 — Order Clients
+### D2 — Order Clients (subordinate to D0 as of 2026-05-15)
+
+**Reports to D0.** Authors order-client code + dashboard code; D0 reviews + approves PRs; A1 merges after green CI.
 
 **Writes:**
 - `seatdata_client.py`, `seatgeek_client.py`, `evo_client.py` (order paths only)
@@ -220,6 +234,33 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Anything outside its own future namespace
 - D1's Render service (`vibepass-storefront-test`) — D1 owns; touch only D1's surface — D4 gets its own deploy target when scoped, not Render
 
+### E1 — External Markets (lane stub, 2026-05-15)
+
+**Status**: lane stub. No active bot session yet. Activates when operator assigns + Kalshi work begins (per bot_chat 221 / 223).
+
+**Mission**: integrate external prediction markets and exchanges. First target: Kalshi (sports + macro event contracts). Future: Polymarket, sportsbooks, and — if direction (B) of bot_chat 221 activates — building Kalshi-styled ticket-price prediction markets ourselves.
+
+**Writes (when active)**:
+- `kalshi_client.py` (initial) + future `<exchange>_client.py` files
+- Edge functions for market data ingest (`supabase/functions/kalshi-*`)
+- Migration files matching `*_markets_*.sql` pattern (e.g. `<ts>_markets_kalshi_xref.sql`)
+- `markets_*` tables (e.g. `kalshi_event_xref`, `kalshi_market_snapshots`)
+- `docs/markets-*.md` design notes
+
+**Reads**: entire data plane (especially `listings_snapshots`, `aq_event_map`, `v_market_listings_by_event`, `events`). Cross-event correlation with our owned inventory is the operating premise.
+
+**NEVER writes**:
+- Ticket-ingest pipelines (A1 / D2 territory)
+- Frontend code (D-tier)
+- Order tables (D2 territory)
+- Other lanes' Render services
+
+**Render**: no service provisioned yet. Will spawn `vibepass-markets-*` when MVP needs deploy target. A1 owns provisioning.
+
+**Sign-off model**: A1 reviews + merges per push-protocol. No subordinate lane underneath E1 yet.
+
+**Why E-tier (not extension of D-tier)**: D = ticket data + storefronts. E = external markets + financial integration. Different category and risk profile (esp. if direction B activates — CFTC regulatory considerations on prediction markets); keeps D-tier focused.
+
 ## Cross-cutting rules
 
 1. **Shared files** — propose changes via PR comment to the owner before editing:
@@ -240,22 +281,23 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
    - Explicit `GRANT EXECUTE ... TO service_role`
    - `IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN RAISE EXCEPTION` at body start
 
-6. **Deploy infrastructure ownership** — per-service exclusivity within Render workspace (updated 2026-05-14):
+6. **Deploy infrastructure ownership** — D0 consolidates all frontend services (2026-05-15 reorg):
 
-   | Render service | ID | Owner bot | Source code | Branch | IaC file |
+   | Render service | ID | Lane owner (D0) | Subordinate implementer | Source code | IaC file |
    |---|---|---|---|---|---|
-   | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D1** | `app.py`, `static/store/*` | `main` | `render.yaml` |
-   | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D2** | `d2_dashboard/*` | `main` | `render-d2-dashboard.yaml` |
-   | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | `static/terminal/*` | `main` | `render-d0-terminal.yaml` |
-   | `hi-events` (separate repo) | `srv-d7g0cev7f7vs73blkc70` | n/a (not Terminal-2) | — | `develop` | — |
+   | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
+   | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 (subord) | `app.py`, `static/store/*` | `render.yaml` |
+   | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D2 (subord) | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
+   | `hi-events` (separate repo) | `srv-d7g0cev7f7vs73blkc70` | n/a (not Terminal-2) | — | — | — |
 
-   - Each owner-bot manages **env vars, deploy config, log monitoring, and IaC blueprint** for their specific service. They do NOT touch the other bot's service.
-   - Per-bot Render access scope (per CLAUDE.md §4, 2026-05-14):
+   - **D0 is the lane owner** across all three frontend services as of 2026-05-15. D0 manages env vars, deploy config, log monitoring, and IaC for every frontend service.
+   - **D1 and D2 are subordinate coding arms.** They still author code in their respective directories (D1 → storefront, D2 → dashboard) but their PRs require **D0 sign-off** in a PR comment before A1 merges. D1/D2 have Render MCP **read-only** access; writes route through D0 + A1.
+   - Per-bot Render access scope (per CLAUDE.md §4, updated 2026-05-15):
      - **A1** — exclusive workspace-wide access: all read + write ops on any service, plus `create_*` / `select_workspace` (only bot authorized to provision or delete services)
-     - **D1** — scoped to `vibepass-storefront-test`: read + write OK on this service (env vars, redeploy, update_web_service); forbidden on other services and workspace-level ops
-     - **D2** — scoped to `d2-orders-dashboard`: read + write OK on this service; forbidden on other services and workspace-level ops
-     - **D0** — scoped to `vibepass-terminal-test`: read + write OK on this service; forbidden on other services and workspace-level ops
+     - **D0** — write authority on all three frontend services; forbidden workspace-level ops (A1-only)
+     - **D1, D2** — read-only on all Render surfaces; writes route through D0 review + A1 merge
      - **B1 / C1 / D3 / D4** — read-only across all services; writes require operator approval
+   - **Deploy gating (2026-05-15)**: backend test workflow (`.github/workflows/tests.yml`) must pass on a PR before A1 merges to `main`. Auto-deploy fires only after green CI lands on `main`. No exceptions.
    - Both services auto-deploy from `main`. A1 (sole pusher to main) merges PRs; each push triggers auto-deploys on both services since both watch `main`. If a PR only touches one service's surface, the other service still redeploys (no-op for it but burns build minutes — acceptable for free tier).
    - **Future split** option if build-time waste becomes painful: each service moves to a bot-specific deploy branch (e.g. `d1/release`, `d2/release`), and A1 fast-forwards each one when their respective code paths change. Deferred until volume justifies the merge-coordination cost.
 

@@ -19,13 +19,15 @@
     <section class="hero">
       <h1>Find tickets to anything we have.</h1>
       <p class="sub">Direct inventory, transparent pricing.</p>
-      <form id="searchForm" class="search">
+      <form id="searchForm" class="search" role="search">
+        <label for="q" class="sr-only">Search events, performers, or venues</label>
         <input
           id="q"
           type="search"
           placeholder="artist · team · venue · city"
           autocomplete="off"
           autofocus
+          aria-label="Search events, performers, or venues"
           aria-autocomplete="list"
           aria-controls="searchSuggest"
         />
@@ -50,7 +52,7 @@
         <h2 class="movers-title">Moving fast in NYC · next 3 weeks</h2>
         <div id="moversRow" class="movers-row"></div>
       </section>
-      <div id="status" class="status">Loading available events…</div>
+      <div id="status" class="status" aria-live="polite">Loading available events…</div>
       <div id="grid" class="grid" hidden></div>
       <div id="empty" class="empty" hidden>
         No events match. Try a broader search, or clear the box to see all.

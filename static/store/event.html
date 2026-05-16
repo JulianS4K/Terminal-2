@@ -18,7 +18,7 @@
   <main class="wrap">
     <a class="back" href="/store">← back to events</a>
 
-    <div id="status" class="status">Loading event…</div>
+    <div id="status" class="status" aria-live="polite">Loading event…</div>
 
     <section id="header" class="event-head" hidden>
       <!-- Venue hero image — subtle background banner, populated when
@@ -59,7 +59,12 @@
 
     <section id="body" class="event-body" hidden>
       <aside class="map">
-        <img id="seatMap" alt="seating chart" />
+        <!-- 1x1 transparent placeholder so the browser doesn't flash a
+             broken-image icon between page-load and JS setting img.src
+             from the configurations API. JS replaces the src attribute
+             once the seat-map URL is known. -->
+        <img id="seatMap" alt="seating chart"
+             src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" />
       </aside>
 
       <div class="listings">
@@ -84,19 +89,19 @@
              curated zones in performer_zones. Filters apply only to Seats. -->
         <div id="filterBar" class="filter-bar">
           <div id="zoneRow" class="filter-row" hidden>
-            <span class="filter-label">Zone</span>
-            <div class="chip-group" id="zoneChips"></div>
+            <span id="zoneLabel" class="filter-label">Zone</span>
+            <div class="chip-group" id="zoneChips" role="group" aria-labelledby="zoneLabel"></div>
           </div>
           <div id="sectionRow" class="filter-row" hidden>
-            <span class="filter-label">Section</span>
-            <div class="chip-group" id="sectionChips"></div>
+            <span id="sectionLabel" class="filter-label">Section</span>
+            <div class="chip-group" id="sectionChips" role="group" aria-labelledby="sectionLabel"></div>
           </div>
           <div class="filter-row inline">
-            <span class="filter-label">Price</span>
-            <input id="minPrice" type="number" min="0" step="10" placeholder="min $" />
-            <input id="maxPrice" type="number" min="0" step="10" placeholder="max $" />
-            <span class="filter-label" style="margin-left:16px">Min qty</span>
-            <select id="minQty">
+            <label for="minPrice" class="filter-label">Price</label>
+            <input id="minPrice" type="number" min="0" step="10" placeholder="min $" aria-label="Minimum price" />
+            <input id="maxPrice" type="number" min="0" step="10" placeholder="max $" aria-label="Maximum price" />
+            <label for="minQty" class="filter-label" style="margin-left:16px">Min qty</label>
+            <select id="minQty" aria-label="Minimum ticket quantity">
               <option value="">any</option>
               <option value="2">2+</option>
               <option value="3">3+</option>
