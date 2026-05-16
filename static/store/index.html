@@ -6,7 +6,26 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>VibePass — tickets</title>
+  <title>VibePass — direct-inventory tickets for sports + live events</title>
+  <meta name="description" content="Browse sports and live-event tickets we hold directly. Transparent pricing, no daisy chains. New York metro + premium playoffs nationally." />
+
+  <!-- Open Graph / share-card rendering. iMessage/Slack/WhatsApp/Discord
+       use these tags to build link previews. The image URL must be
+       absolute (preview bots don't resolve relative paths). -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="VibePass" />
+  <meta property="og:title" content="VibePass — direct-inventory tickets" />
+  <meta property="og:description" content="Sports + live-event tickets we hold directly. Transparent pricing." />
+  <meta property="og:url" content="https://vibepass-storefront-test.onrender.com/store" />
+  <meta property="og:image" content="https://vibepass-storefront-test.onrender.com/static/store/og-default.svg" />
+
+  <!-- Twitter Card — falls back to og:* tags when not specified, but
+       summary_large_image renders a wider preview on Twitter / X. -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="VibePass — direct-inventory tickets" />
+  <meta name="twitter:description" content="Sports + live-event tickets we hold directly. Transparent pricing." />
+
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
 <body data-page="catalog">
@@ -19,13 +38,15 @@
     <section class="hero">
       <h1>Find tickets to anything we have.</h1>
       <p class="sub">Direct inventory, transparent pricing.</p>
-      <form id="searchForm" class="search">
+      <form id="searchForm" class="search" role="search">
+        <label for="q" class="sr-only">Search events, performers, or venues</label>
         <input
           id="q"
           type="search"
           placeholder="artist · team · venue · city"
           autocomplete="off"
           autofocus
+          aria-label="Search events, performers, or venues"
           aria-autocomplete="list"
           aria-controls="searchSuggest"
         />
@@ -50,7 +71,7 @@
         <h2 class="movers-title">Moving fast in NYC · next 3 weeks</h2>
         <div id="moversRow" class="movers-row"></div>
       </section>
-      <div id="status" class="status">Loading available events…</div>
+      <div id="status" class="status" aria-live="polite">Loading available events…</div>
       <div id="grid" class="grid" hidden></div>
       <div id="empty" class="empty" hidden>
         No events match. Try a broader search, or clear the box to see all.
@@ -59,7 +80,12 @@
   </main>
 
   <footer class="foot">
-    <span>VibePass &middot; MVP preview</span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="/store/about">About</a>
+      <a href="/store/privacy">Privacy</a>
+      <a href="/store/terms">Terms</a>
+    </nav>
+    <span class="foot-meta">&copy; 2026 VibePass &middot; MVP preview</span>
   </footer>
 
   <script src="/static/store/store.js" defer></script>

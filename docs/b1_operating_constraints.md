@@ -12,7 +12,7 @@ Operator directive 2026-05-15:
 
 > Monitor for security, issues, entry points and data leaks. Monitor outgoing data and bot notes and code for exposed secrets, and fix. Monitor for attacks from outside. Monitor for bot hallucinations.
 
-Operationalized as continuous monitoring across **nine surfaces** (operator extended 2026-05-15 to add git + render + slack):
+Operationalized as continuous monitoring across **ten surfaces** (operator extended 2026-05-15 to add git/render/slack; 2026-05-16 to add librarian/archivist):
 
 | Surface | Coverage |
 |---|---|
@@ -25,6 +25,7 @@ Operationalized as continuous monitoring across **nine surfaces** (operator exte
 | **Git / repo posture** | Branch protection rules, required status checks, collaborator perms, GitHub Actions secrets/vars, repo visibility, webhooks, deploy keys, secret-scanning + Dependabot config, push-protection state, workflow permissions, SHA pinning |
 | **Render workspace posture** | Workspace access, service list, IP allowlists, autoDeploy triggers, env-var inventory (names only, not values), preview-deploys posture, suspended state, deploy notification config |
 | **Slack posture** | Slack webhooks pointing into / out of the repo, Slack tokens / signing secrets / bot tokens leaked in code or git history, Slack GitHub App installations, Slack-shaped URLs (`hooks.slack.com/services/*`) appearing in commits, Slack messages (when an operator-installed Slack MCP becomes available) for incident leaks and external-attack chatter |
+| **Librarian / archivist** (added 2026-05-16 per operator directive) | Drift between canonical reference docs (`PROJECT_BIBLE.md`, `RESOURCES_BIBLE.md`, `CLAUDE.md`, `BOT_HIERARCHY.md`, `LANE_DISCIPLINE.md`, `MIGRATION_CONVENTIONS.md`, `SYNC_PROTOCOL.md`) and live state; cross-bible consistency (e.g., a fact in PROJECT_BIBLE.md §3 RPC table that contradicts what's in pg_proc); communication-channel health (Slack channels, `bot_chat` thread closure rates, scheduled-task signal-to-noise) |
 
 ## Read surface
 
@@ -50,7 +51,7 @@ Per `LANE_DISCIPLINE.md §B1`:
 - `supabase/functions/_shared/cron-auth.ts`
 - `KANBAN.md` SECURITY BACKLOG section
 - This file (`docs/b1_operating_constraints.md`)
-- `docs/anon_callable_surface_inventory.md`, `docs/edge_function_auth_inventory.md` (B1's living inventories)
+- `docs/anon_callable_surface_inventory.md`, `docs/edge_function_auth_inventory.md`, `docs/markdown_inventory.md` (B1's living inventories — anon surface, edge-fn auth posture, repo `.md` catalogue)
 - `.github/workflows/secret-scan.yml`, `.github/workflows/secdef-lint.yml` (B1-authored CI workflows)
 - Per-lane patches for security CRIT/HIGH (cross-lane allowed; see §"Cross-lane patch protocol" below)
 
@@ -115,6 +116,9 @@ Run at session start. Total runtime ~5 min. All read-only.
 | 12 | Git posture diff | Compare current `gh api repos/.../branches/main/protection` + `repos/<>` settings against `docs/git_repo_security_posture.md` snapshot | No regression vs. last sweep |
 | 13 | Render posture diff | Compare current `mcp__render__list_services` output against `docs/render_security_posture.md` snapshot. Check for new services, `ipAllowList` widening, `autoDeploy` flips, suspended-state changes | No unexpected changes |
 | 14 | Code-scanning / secret-scanning alerts | `gh api repos/JulianS4K/Terminal-2/code-scanning/alerts?state=open` + `gh api .../secret-scanning/alerts?state=open` + `gh api .../dependabot/alerts?state=open` | All triaged this session (resolved or filed as B1-NEXT) |
+| 15 | **Bible-drift spot-check** (added 2026-05-16) | Pick 1 canonical doc (`PROJECT_BIBLE.md` / `RESOURCES_BIBLE.md` / `CLAUDE.md` / `BOT_HIERARCHY.md` / `LANE_DISCIPLINE.md` / `MIGRATION_CONVENTIONS.md` / `SYNC_PROTOCOL.md`); pick 3 concrete claims from it (a referenced function, table, RPC, service ID, channel ID, function-call signature, or migration timestamp); verify each against live state via `pg_proc` / `pg_tables` / `gh api` / `mcp__render__*` / `cron.job`. Bibles rotate; over time every section gets touched. | 3 of 3 verified. Else: open drift PR or file `flag` to bible owner (A1 for current bibles). |
+| 16 | **Communication-channel health** (added 2026-05-16) | (a) bot_chat thread closure rate — count `resolved_at IS NOT NULL` rows from last 7d vs `event_type IN ('flag','question')` from same window; flag if closure rate drops below 50%. (b) Slack alert volume sanity — Slack MCP per-channel message-count if available; flag dormant or spammy channels. (c) Scheduled-task signal-to-noise — review last 24h of scheduled-task posts; flag tasks that post on every run (should be silent on clean state). | Closure rate > 50%, no dormant/spammy channels, scheduled tasks silent on clean state. |
+| 17 | **New `.md` file detection** (added 2026-05-16) | `git log --since='<last sweep>' --diff-filter=A --name-only --pretty=format: -- '*.md' \| sort -u` → if any results, classify each new file into one of the 9 sections in `docs/markdown_inventory.md` and append. | All new `.md` files catalogued; no orphans. |
 
 Output:
 - **Clean sweep** → `bot_chat_log('change_log', 'security', 'B1', 'B1 sweep <date> — clean. Baseline: <release_health_check rows hash>.')`
@@ -217,38 +221,108 @@ D1 owns Render writes exclusively per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.
 - **Service moved to `develop` or non-`main` branch** → SEC-MED. Branch protection only covers `main`.
 - **Anomalous log pattern (auth-failure spike, 5xx flood, OOM crashes)** → triage per severity; file in `bot_chat`.
 
-## Slack posture monitoring
+## Librarian / archivist role
 
-**Current state (2026-05-15)**: no Slack MCP tool available, no active Slack integration in the repo. Existing Slack references are incidental:
-- `docs/security-runbook-2026-05-11.md` mentions Slack DM as an out-of-band delivery channel for rotated passwords
-- `COWORKER_ONBOARDING.md` directs coworkers to GitHub issues over Slack
+Added 2026-05-16 per operator directive: "communication channel, Librarians and archivists and maintaining bible(s) so communication between bots is seamless and up to date." B1's role expands from purely-defensive security monitor to also include knowledge-base curation. The CLAUDE.md §1 vs `v_bot_chat_unresolved` view drift I caught in PR #140's post-merge correction is the originating example — a documented behavior that didn't match live state, and a missing process for catching it before it propagated.
 
-Until/unless operator installs a Slack MCP, B1's Slack monitoring is **grep-based**, focused on detecting accidental leakage of Slack credentials into the repo.
+### Canonical reference inventory ("the bibles")
+
+| Bible | Owner of edits | B1's curator role | Refresh cadence |
+|---|---|---|---|
+| [`PROJECT_BIBLE.md`](../PROJECT_BIBLE.md) | A1 | Co-curator: detect drift, file drift PRs against §9 watchlist | When canonical RPC ships, hard rule changes, column-landmine discovered, landmark migration lands |
+| [`RESOURCES_BIBLE.md`](../RESOURCES_BIBLE.md) | A1 | Co-curator: detect drift in service IDs / table sizes / lane ownership rows | When a service is added/removed; when a resource changes lane ownership |
+| [`CLAUDE.md`](../CLAUDE.md) | A1 / operator | Co-curator: detect doc-vs-live drift (e.g., §1 view-def mismatch caught in PR #140) | When global rules change |
+| [`BOT_HIERARCHY.md`](../BOT_HIERARCHY.md) | A1 | Co-curator: detect when a lane is reassigned or a bot activates | When a lane changes ownership / status |
+| [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.md) | A1 + lane-specific | Co-curator: detect when per-lane write surfaces drift from actual lane behavior | When lane scope expands/contracts |
+| [`MIGRATION_CONVENTIONS.md`](../MIGRATION_CONVENTIONS.md) | A1 | Co-curator: detect convention violations in shipped migrations (already part of §6 SECDEF sweep) | When migration protocol changes |
+| [`SYNC_PROTOCOL.md`](../SYNC_PROTOCOL.md) | A1 | Co-curator: detect track-discipline drift | When PR-flow protocol changes |
+| `KANBAN.md` | All lanes | Self-curator: B1 maintains SECURITY BACKLOG section, watches for B1-NEXT drift | Continuous |
+
+**Edit authority**: B1 authors drift PRs against any of these bibles. A1 merges per standard PR protocol (preserves the merge gate). B1 does NOT bypass A1 on bible edits. Standard cross-lane patch protocol applies (PR comment to A1 first if non-trivial; small drift fixes go straight to PR).
 
 ### What B1 checks (per-session, read-only)
 
 | Area | Probe | Pass condition |
 |---|---|---|
-| Slack tokens leaked in code | `gitleaks` ruleset (already running via `.github/workflows/secret-scan.yml`) — built-in rules cover `xoxb-*`, `xoxp-*`, `xoxa-*`, `xoxs-*`, `xoxr-*` bot/user/app tokens | 0 findings |
-| Slack signing secrets / webhook URLs | grep repo for `hooks.slack.com/services/`, `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_WEBHOOK_URL` | None present (or all in `.gitleaksignore` with documented justification) |
-| Slack GitHub App on the repo | `gh api repos/JulianS4K/Terminal-2/installation` (when scope allows) — track Slack App installation status | Track changes between sweeps |
-| Slack workflow steps in Actions | grep `.github/workflows/*.yml` for `slack` — track any workflow that posts to Slack | No unexpected Slack-posting workflows |
+| Bible-vs-live drift | per-session sweep step 15 (rotating spot-check) | 3 of 3 verified claims match live state |
+| Bible-vs-bible consistency | When a fact appears in 2+ bibles, verify they agree. E.g., a lane ownership row in PROJECT_BIBLE.md §2 matches LANE_DISCIPLINE.md and BOT_HIERARCHY.md | All copies agree |
+| `bot_chat` thread closure rate | per-session sweep step 16 | >50% close rate over last 7d |
+| Slack channel signal quality | scheduled-task post patterns + (when interactive Slack MCP loads) per-channel message review | No dormant/spammy/loop-posting tasks |
+| New PR governance impact | Every merged PR that touches `docs/*.md` or repo-root `*.md` — check whether other bibles need parallel updates | Cross-bible coherence after merge |
 
 ### What B1 does on findings
 
-- **Slack token (`xox*`) in any commit** → SEC-CRIT. Token must be revoked in Slack workspace immediately (operator-coordinated). History rewrite + force-push window per the same protocol as the `CRON_SECRET` incident.
-- **Webhook URL leaked** → SEC-MED. Slack webhook URLs are abusable (anyone can post to the channel) but limited blast radius. Rotate webhook + redact.
-- **New Slack GitHub App installed unexpectedly** → SEC-HIGH. Could be operator-installed integration OR account-takeover signal. `flag` to operator for confirmation.
-- **New Slack-posting workflow appears** → SEC-MED. Could leak PR contents / repo metadata to a Slack workspace. Review the workflow before next sweep.
+- **Single-doc drift** (one bible says X, live state says Y) → file a tight drift PR with the correction. SEC-LOW unless the drift causes other bots to act on stale info. Reference the originating discovery in the PR description.
+- **Cross-bible inconsistency** (PROJECT_BIBLE.md says X, LANE_DISCIPLINE.md says Y for the same fact) → file `flag` to A1 with both quotes + recommended reconciliation. Do not unilaterally pick a winner.
+- **bot_chat closure-rate dropping** → file `flag` to all active lanes; closing stale threads is a per-lane duty. B1 can spot-triage flagrant cases (>7d aged + obvious moot context) per the PR #140 pattern.
+- **Scheduled task posts on every run** (signal-to-noise breach) → file `flag` to the task owner; the contract is "silent on clean state".
+- **Slack channel dormant > 14 days** → not necessarily a problem; flag for operator review of channel purpose.
 
-### Future state (when Slack MCP becomes available)
+### What B1 does NOT do
 
-Add to per-session sweep:
-- List Slack workspace members; flag new admins
-- Search recent messages for incident-shape patterns (leaked tokens shared in DMs, external pen-test chatter, social-engineering attempts)
-- Verify Slack workspace 2FA enforcement, SSO config, retention policy
+- Edit bibles unilaterally (PR + A1 merge pattern preserved).
+- Audit content for technical correctness (that's lane-owner duty).
+- Maintain operational lane-specific docs (e.g., `docs/d1_operating_constraints.md` is D1's).
+- Post to `#terminal-2-alerts` outside the scheduled-task auto-pipe.
 
-Filed as [B1-NEXT-21] for operator decision on Slack MCP install.
+## Slack posture monitoring
+
+**Current state (2026-05-16, canonical per bot_chat 207 standing rule)**: Slack MCP is installed at workspace `s4kent-bots`. Three channels mirror the lane hierarchy:
+
+| Channel | ID | Audience | B1 posting authority |
+|---|---|---|---|
+| `#terminal-2-alerts` | `C0B3PR8MJ07` | public, all bots read | **No manual posts.** Scheduled-task + auto-pipe surface only. |
+| `#terminal-2-admin` | `C0B3PU1DGVD` | private, A1 / B1 / C1 | **B1 lane-primary** per bot_chat 207. B1's lane-scoped scheduled task (`b1-security-autocheck`) posts here on findings. B1 may also post directly for fast-twitch security CRIT/HIGH escalations to A1. Routine info stays in `bot_chat`. |
+| `#terminal-2-d0` | `C0B420N237F` | private, D0 / D1 / D2 | B1 does not post here (frontend-lane channel). |
+
+**Principle (per bot_chat 187 + 207)**: `bot_chat` is the canonical durable record. Slack is the fast-twitch surface where waiting on next-session `bot_chat` polling is too slow. NEVER coordinate exclusively in Slack — every decision needs a `bot_chat` trail for audit.
+
+### Scheduled-task surface
+
+| Task | Cadence | Slack target | Scope |
+|---|---|---|---|
+| `bot-chat-aging-sweep` (A1) | hourly `:00` | `#terminal-2-alerts` | Polls `bot_chat` for unresolved `p0_security`/`flag`/`question` >2h; pages if any |
+| `b1-security-autocheck` (B1) | half-hourly `:15`+`:50` per operator directive | **`#terminal-2-admin`** per bot_chat 207 | release_health_check fails + new SECDEF anon-callable + tables without RLS + B1-tagged bot_chat + CI failures + branch-protection drift. Silent on clean state. |
+| `c1-daily-checkpoint` (C1) | daily 09:00 ET | `#terminal-2-alerts` | C1 runbook + checkpoint digest |
+| `d1-bot-chat-monitor` (D1) | hourly `:30` | (read-only summary; no Slack post) | D1-relevant bot_chat scan |
+| `d2-bot-chat-monitor` (D2) | hourly `:45` | varies | D2 monitor |
+| `d0-frontend-autocheck` (D0) | hourly `:25` | varies | D0 lane sweep |
+
+B1's `b1-security-autocheck` SKILL.md lives at `C:\Users\julia\.claude\scheduled-tasks\b1-security-autocheck\SKILL.md`. Cron tweaks via `mcp__scheduled-tasks__update_scheduled_task`.
+
+### Hard rules
+
+1. **`bot_chat` is the canonical durable record.** Every decision must have a `bot_chat` trail.
+2. **Per-channel posting**:
+   - `#terminal-2-alerts`: no manual posts from any bot
+   - `#terminal-2-admin`: A1/B1/C1 may post directly; B1's `b1-security-autocheck` posts here on findings (per bot_chat 207 lane-primary rule)
+   - `#terminal-2-d0`: frontend lane only — B1 does not post here
+3. **To escalate fast** (bot_chat → Slack auto-pipe): post `bot_chat` with `event_type='p0_security'` OR `meta.severity='high'`. The hourly aging-sweep mirrors to `#terminal-2-alerts` within the hour.
+4. **Loop-prevention rule** (per bot_chat 171): if you read a Slack post originating from a scheduled task, do NOT reply via Slack. Post a `bot_chat` reply with `event_type='status'` + `p_in_reply_to=<originating bot_chat id>` (per CLAUDE.md §1 resolve protocol — auto-resolves the parent via `v_bot_chat_unresolved` view).
+
+### B1's repo-side Slack monitoring (per-session, grep-based)
+
+Interactive B1 sessions do NOT invoke Slack MCP directly — the surface is reserved for scheduled tasks. B1 monitors Slack-leakage risk in the repo:
+
+| Area | Probe | Pass condition |
+|---|---|---|
+| Slack tokens leaked in code | `gitleaks` ruleset via `.github/workflows/secret-scan.yml` — covers `xoxb-*`, `xoxp-*`, `xoxa-*`, `xoxs-*`, `xoxr-*` | 0 findings |
+| Slack webhooks leaked in code | grep `hooks.slack.com/services/` across repo + git history | 0 findings |
+| Slack-shaped env names | grep `SLACK_*` env var references | Only scheduled-task config; no leaks in regular code |
+| Slack-posting workflows | `grep -liE 'slack' .github/workflows/*.yml` | No regular-CI Slack posts (only scheduled-task wrappers) |
+| Slack GitHub App | `gh api repos/JulianS4K/Terminal-2/installation` (when scope allows) | Track installation status |
+
+### Severity routing for Slack-related findings
+
+- **Slack token (`xox*`) in any commit** → SEC-CRIT. Token revoke in workspace immediately (operator-coordinated). History rewrite + force-push window.
+- **Webhook URL leaked** → SEC-MED. Rotate webhook + redact.
+- **New Slack GitHub App installed unexpectedly** → SEC-HIGH. Operator confirmation required (could be account-takeover).
+- **New Slack-posting workflow appears (outside scheduled-task wrappers)** → SEC-MED. Could violate the "no direct posting" rule + leak metadata.
+- **Bot caught posting to Slack from interactive session** → SEC-MED governance violation. `flag` in `bot_chat` against the offending lane.
+
+### Future scope (additional scheduled tasks if needed)
+
+Slack workspace-admin diff, 2FA enforcement check, recent-message search for incident-shape patterns — file as new scheduled tasks rather than invoking Slack MCP from interactive B1 sessions. Tracked as [B1-NEXT-21].
 
 ## Escalation paths
 
@@ -267,7 +341,9 @@ The operator may direct B1 to work on surfaces outside the default scope for a s
 4. Default scope reverts when the task completes
 
 **Active operator routings**:
-- 2026-05-15: "FULL KGB LEVEL MONITORING AND REPORTING" — establishes the broad monitoring mandate operationalized in this doc.
+- 2026-05-15: "FULL GUESTAPO LEVEL MONITORING AND REPORTING" (rebranded from earlier "KGB-level" later that day) — establishes the broad monitoring mandate operationalized in this doc.
+- 2026-05-15 (bot_chat 207): standing rule — every active bot must create a lane-scoped aging-sweep scheduled task posting to its lane-primary channel. B1's slot is `:15` (`b1-security-autocheck`); operator-directed second slot at `:50` for cross-channel chatter coverage.
+- 2026-05-16 (operator directive): librarian/archivist role + bible curation + Slack channel maintenance. Operationalized as the new "Librarian / archivist role" section above + new per-session sweep steps 15-16.
 
 ## Historical drift acknowledged
 

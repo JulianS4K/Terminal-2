@@ -567,9 +567,15 @@ def _to_float(v: Any) -> float | None:
 # All 5 sources are mirrored to public.unified_orders by upstream crons (see
 # migration 20260513230100_unified_orders_with_tickpick_vivid). /api/d2/orders
 # is SQL-only — no broker-API calls in the data path.
-_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek", "seatdata", "tickpick", "vivid"})
+# 2026-05-16 rewire: SG source is now the broker firehose (seatgeek_sales_snapshots)
+# instead of the dormant seller-side (seatgeek_orders, no new rows in 11 months).
+# Live SG signal is the third-party market: ~67k sales/hr captured. The
+# unified_orders view already exposes this as source='seatgeek_sales' with
+# canonical_status hardcoded to 'fulfilled' (terminal) — so Active-pill SG rows
+# will be 0 by construction; All-pill shows the firehose.
+_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid"})
 
-_ALL_SOURCES = ("evo", "seatgeek", "seatdata", "tickpick", "vivid")
+_ALL_SOURCES = ("evo", "seatgeek_sales", "seatdata", "tickpick", "vivid")
 
 
 def _fetch_cron_freshness() -> dict[str, dict]:
@@ -948,7 +954,11 @@ def _fetch_evo(per_page: int, page: int = 1) -> dict:
 
 
 def _fetch_sg(per_page: int, page: int = 1) -> dict:
-    return _fetch_one_source("seatgeek", per_page, page)
+    # SG source on the orders feed is the broker firehose post-2026-05-16
+    # rewire — see _SQL_BACKED_SOURCES comment. Helper is currently
+    # unreferenced; kept for symmetry with the other per-source fetchers in
+    # case the bundled orders feed is ever decomposed.
+    return _fetch_one_source("seatgeek_sales", per_page, page)
 
 
 def _fetch_tickpick(per_page: int, page: int = 1) -> dict:
@@ -1135,7 +1145,7 @@ def orders(
     include_terminal: int = 0,
     _=Depends(require_auth),
 ):
-    """SQL-only orders feed. All 5 sources (evo / seatgeek / seatdata /
+    """SQL-only orders feed. All 5 sources (evo / seatgeek_sales / seatdata /
     tickpick / vivid) are pulled from public.unified_orders, which the
     upstream ingest crons keep populated. No broker-API calls in the data
     path — cron freshness (`/api/d2/cron-freshness`) is the operator's
@@ -1301,8 +1311,12 @@ def _deep_order_evo_sql(sb, order_id: str) -> dict:
     return (res.data or [None])[0] or {}
 
 
-def _deep_order_seatgeek_sql(sb, order_id: str) -> dict:
-    res = sb.table("seatgeek_orders").select("*").eq("sg_order_id", order_id).limit(1).execute()
+def _deep_order_seatgeek_sales_sql(sb, order_id: str) -> dict:
+    # Broker firehose row keyed by sg_sale_id (text). Schema:
+    # sg_sale_id, sg_event_id, broadcast_price, quantity, section, row,
+    # stock_type, delivery_method, in_hand_date, is_instant, seller_notes,
+    # sale_at_utc, aq_short_event_id, venue_short_id, pulled_at, raw.
+    res = sb.table("seatgeek_sales_snapshots").select("*").eq("sg_sale_id", order_id).limit(1).execute()
     return (res.data or [None])[0] or {}
 
 
@@ -1327,11 +1341,11 @@ def _deep_order_gotickets(c, order_id: str) -> dict:
 # Dispatch: SQL sources use the "_sb" sentinel (the Supabase client);
 # gotickets keeps the upstream client factory until SQL backing exists.
 _DEEP_ORDER = {
-    "evo":       ("_sb",               _deep_order_evo_sql),
-    "seatgeek":  ("_sb",               _deep_order_seatgeek_sql),
-    "tickpick":  ("_sb",               _deep_order_tickpick_sql),
-    "vivid":     ("_sb",               _deep_order_vivid_sql),
-    "gotickets": ("_gotickets_client", _deep_order_gotickets),
+    "evo":            ("_sb",               _deep_order_evo_sql),
+    "seatgeek_sales": ("_sb",               _deep_order_seatgeek_sales_sql),
+    "tickpick":       ("_sb",               _deep_order_tickpick_sql),
+    "vivid":          ("_sb",               _deep_order_vivid_sql),
+    "gotickets":      ("_gotickets_client", _deep_order_gotickets),
 }
 
 
@@ -1394,11 +1408,11 @@ def health(_=Depends(require_auth)):
     #    Currently none of our raw tables carry an explicit fulfill-by
     #    timestamp; documenting that here so the operator sees the gap.
     fulfillby_fields = {
-        "evo":      {"in_hand": None, "fulfill_by": None, "notes": "hold_expires_at is auction-hold timer, not fulfill deadline; event_date is implicit"},
-        "seatgeek": {"in_hand": None, "fulfill_by": None, "notes": "reservation_duration_minutes is a relative seller-response clock"},
-        "tickpick": {"in_hand": None, "fulfill_by": None, "notes": "tickpick_orders.raw jsonb may carry more; not surfaced yet"},
-        "vivid":    {"in_hand": None, "fulfill_by": None, "notes": "vivid_orders.raw_xml + raw jsonb; no explicit fulfill-by field in feed"},
-        "seatdata": {"in_hand": None, "fulfill_by": None, "notes": "completed-sales feed — no fulfillment lifecycle"},
+        "evo":            {"in_hand": None, "fulfill_by": None, "notes": "hold_expires_at is auction-hold timer, not fulfill deadline; event_date is implicit"},
+        "seatgeek_sales": {"in_hand": "in_hand_date", "fulfill_by": None, "notes": "broker firehose observation — in_hand_date is the listing's promised drop date; no fulfill-by lifecycle (sales are terminal at observation time)"},
+        "tickpick":       {"in_hand": None, "fulfill_by": None, "notes": "tickpick_orders.raw jsonb may carry more; not surfaced yet"},
+        "vivid":          {"in_hand": None, "fulfill_by": None, "notes": "vivid_orders.raw_xml + raw jsonb; no explicit fulfill-by field in feed"},
+        "seatdata":       {"in_hand": None, "fulfill_by": None, "notes": "completed-sales feed — no fulfillment lifecycle"},
     }
 
     return JSONResponse({
@@ -1414,8 +1428,10 @@ def health(_=Depends(require_auth)):
 def order_detail(source: str, order_id: str, _=Depends(require_auth)):
     """Single-order deep fetch.
 
-    For evo / seatgeek / tickpick / vivid: reads the matching row from the
-    raw `{source}_orders` table in Supabase. No upstream-API call.
+    For evo / tickpick / vivid: reads the matching row from the raw
+    `{source}_orders` table in Supabase. For seatgeek_sales: reads from
+    `seatgeek_sales_snapshots` (broker firehose) keyed by `sg_sale_id`.
+    No upstream-API call.
 
     For gotickets: by-id API call — no SQL backing yet (tracked for future
     ingest cron in the canonical lane).
@@ -1517,8 +1533,9 @@ def metrics(_=Depends(require_auth)):
       - sales gaps (last 24h, >30min)     : d2_metrics_sales_gaps
 
     Windows anchor on America/New_York for "today" so the day boundary
-    matches the operator's clock. Filtered to evo/seatgeek/seatdata/
-    tickpick/vivid; seatgeek_sales (broker market data) excluded."""
+    matches the operator's clock. Post-2026-05-16 rewire: SG source is
+    seatgeek_sales (broker firehose); the dormant seatgeek seller source
+    is excluded from metrics."""
     from datetime import datetime, timedelta, timezone
     import time as _time
     sb = _sb()

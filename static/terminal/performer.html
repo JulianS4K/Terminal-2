@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Performer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="performer">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap performer">
+    <section id="perf-hero">
+      <div class="ph-left">
+        <img id="phLogo" alt="" />
+      </div>
+      <div class="ph-right">
+        <h1 class="title" id="phName">—</h1>
+        <p class="meta">
+          <span id="phLeague">—</span>
+          <span class="dot">·</span>
+          <span id="phEventType">—</span>
+          <span class="dot">·</span>
+          <span id="phEspnBadge" class="badge">ESPN</span>
+        </p>
+      </div>
+    </section>
+
+    <section id="perf-rollup">
+      <div class="panel-title">PORTFOLIO ROLLUP</div>
+      <div class="rollup-grid">
+        <div class="ru-cell"><span class="ru-num" id="ruEvents">—</span><span class="ru-lbl">active events</span></div>
+        <div class="ru-cell"><span class="ru-num" id="ruOwnedTix">—</span><span class="ru-lbl">owned tix</span></div>
+        <div class="ru-cell"><span class="ru-num" id="ruOwnedNotional">—</span><span class="ru-lbl">owned notional</span></div>
+        <div class="ru-cell"><span class="ru-num" id="ruOwnedShare">—</span><span class="ru-lbl">owned share (wt)</span></div>
+        <div class="ru-cell"><span class="ru-num" id="ruRetailMedAvg">—</span><span class="ru-lbl">retail median (wt)</span></div>
+        <div class="ru-cell"><span class="ru-num" id="ruEventsWithOwned">—</span><span class="ru-lbl">events with position</span></div>
+      </div>
+    </section>
+
+    <section id="perf-events">
+      <div class="panel-title row">
+        <span>UPCOMING EVENTS</span>
+        <span class="muted small" id="phEventCount"></span>
+      </div>
+      <div id="phEventsBody"></div>
+    </section>
+
+    <section id="perf-context">
+      <div class="panel-title">CONTEXT</div>
+      <div class="muted small">ESPN injuries / roster / news / cross-source xref — pending the cross-source explorer page</div>
+    </section>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+  <script src="nav.js"></script>
+  <script src="performer.js"></script>
+</body>
+</html>

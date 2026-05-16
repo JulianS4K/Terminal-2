@@ -6,7 +6,10 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>VibePass — share links</title>
+  <meta name="robots" content="noindex" />
+  <title>Share links — VibePass admin</title>
+  <meta name="description" content="VibePass admin: manage revocable share links." />
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
 <body data-page="shares">
@@ -57,7 +60,12 @@
   </main>
 
   <footer class="foot">
-    <span>VibePass &middot; admin</span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="/store/about">About</a>
+      <a href="/store/privacy">Privacy</a>
+      <a href="/store/terms">Terms</a>
+    </nav>
+    <span class="foot-meta">&copy; 2026 VibePass &middot; admin</span>
   </footer>
 
   <script src="/static/store/store.js" defer></script>

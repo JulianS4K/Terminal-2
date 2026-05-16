@@ -551,6 +551,45 @@ def test_store_html_response_has_no_cache_header(store_home_client):
     )
 
 
+def test_legal_pages_render(monkeypatch):
+    """Sprint 3 trust + legal pages — /store/about, /store/privacy,
+    /store/terms — all 200 on GET, no JS dependency. Smoke that the
+    HTML files exist on disk and the routes are wired."""
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = client.get(path)
+        assert r.status_code == 200, f"GET {path} expected 200, got {r.status_code}"
+        body = r.text.lower()
+        # Must include the page-specific h1 (about / privacy / terms).
+        h1_word = path.rsplit("/", 1)[1]
+        assert f"<h1>{h1_word.title()}" in r.text or h1_word in body, (
+            f"{path} body should reference '{h1_word}'"
+        )
+
+
+def test_legal_pages_have_no_cache_revalidate_header(store_home_client):
+    """Legal pages route through _render_storefront_page so they inherit
+    the same Cache-Control: no-cache, must-revalidate header. Guards
+    against future regressions where a separate handler bypasses the
+    cache-control helper."""
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = store_home_client.get(path)
+        cc = r.headers.get("cache-control", "").lower()
+        assert "no-cache" in cc, (
+            f"{path} Cache-Control must include no-cache; got: {cc!r}"
+        )
+
+
+def test_legal_pages_respond_to_head(monkeypatch):
+    """HEAD on the new legal routes returns 200 (same uptime-monitor
+    reason as the other storefront pages — HEAD probes shouldn't 405)."""
+    monkeypatch.setattr(app_module, "_read_storefront_html", lambda name: "<html>ok</html>")
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = client.head(path)
+        assert r.status_code == 200, f"HEAD {path} expected 200, got {r.status_code}"
+
+
 def test_all_storefront_html_routes_revalidate(store_home_client):
     """Every served /store/* HTML shell — index, event, share, shares —
     must carry the no-cache header. Catches a regression where someone
@@ -566,4 +605,310 @@ def test_all_storefront_html_routes_revalidate(store_home_client):
         cc = r.headers.get("cache-control", "")
         assert "no-cache" in cc.lower(), (
             f"{path}: Cache-Control missing no-cache; got: {cc!r}"
+        )
+
+
+# ---------- /api/store/movers stale-while-revalidate cache ----------
+#
+# The movers route refactor in PR #144 wraps the ~1s compute path in a
+# 5-min SWR cache so the homescreen only pays the compute cost once per
+# (city, days, limit) tuple per TTL. These tests mock `_compute_movers`
+# directly (the heavy SQL+joins path) so we can assert the cache wrapper
+# semantics independent of the compute implementation.
+
+def _setup_movers_cache_test(monkeypatch, ttl=300.0):
+    """Reset cache state + provide a counting fake compute. Returns the
+    counter dict so the caller can assert call counts."""
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_TTL", ttl)
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    counter = {"n": 0}
+
+    def _fake_compute(db, city, day_cap, cap):
+        counter["n"] += 1
+        return {
+            "city": city,
+            "days": day_cap,
+            "count": counter["n"],  # encode call number so we can detect fresh vs stale
+            "events": [{"id": counter["n"], "name": f"call {counter['n']}"}],
+        }
+    monkeypatch.setattr(app_module, "_compute_movers", _fake_compute)
+    return counter
+
+
+def test_movers_cache_cold_miss_computes(monkeypatch):
+    """First-ever request for a (city, days, limit) tuple computes
+    synchronously, populates the cache, returns fresh payload."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    r = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    assert r.status_code == 200
+    assert counter["n"] == 1, "cold miss must call _compute_movers exactly once"
+    body = r.json()
+    assert body["count"] == 1  # first call's encoded counter
+    assert body["city"] == "NYC"
+
+    # Cache populated under the expected key.
+    assert app_module._movers_cache, "cache must be non-empty after cold-miss compute"
+
+
+def test_movers_cache_fresh_hit_skips_compute(monkeypatch):
+    """Second request within TTL returns cached payload without invoking
+    _compute_movers again. This is the whole point — eliminate the ~1s
+    compute on every homescreen load past the first."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    r2 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+
+    assert counter["n"] == 1, (
+        f"second call within TTL must NOT recompute; saw {counter['n']} calls"
+    )
+    # Both responses must be byte-identical (same cached object).
+    assert r1.json() == r2.json()
+    assert r2.json()["count"] == 1  # still the first call's payload
+
+
+def test_movers_cache_separate_keys_compute_independently(monkeypatch):
+    """Cache key includes (city, days, limit) — different tuples must
+    each get their own compute on cold-miss."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    r2 = client.get("/api/store/movers?city=NYC&days=14&limit=8")  # different days
+    r3 = client.get("/api/store/movers?city=NYC&days=21&limit=4")  # different limit
+
+    assert counter["n"] == 3, (
+        f"three distinct keys must trigger three computes; saw {counter['n']}"
+    )
+    # r1 and a hypothetical r4 with the same params would share — confirm:
+    r4 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    assert counter["n"] == 3, "r4 hits the r1 cache slot, no new compute"
+    assert r4.json() == r1.json()
+
+
+def test_movers_cache_key_folds_city_case(monkeypatch):
+    """'nyc' / 'NYC' / 'New York' map to the same cache slot via the
+    canonical key (uppercased). Prevents per-casing duplicate cache entries."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    client.get("/api/store/movers?city=nyc&days=21&limit=8")
+    client.get("/api/store/movers?city=Nyc&days=21&limit=8")
+    # All three collapse to key "NYC|21|8". Note: the route maps NEW YORK
+    # + NEW YORK CITY through the same venue_patterns, so they ALSO
+    # cache-key to NYC. But that mapping happens inside _compute_movers,
+    # NOT the cache key — so 'NEW YORK' would key as 'NEW YORK|21|8'
+    # separately. This test only proves case-insensitive folding on a
+    # single token; alias-folding would be a separate cache-key change.
+    assert counter["n"] == 1, (
+        f"case-insensitive city should share one cache slot; saw {counter['n']} computes"
+    )
+
+
+def test_movers_cache_failed_compute_doesnt_poison(monkeypatch):
+    """If _compute_movers raises on cold-miss, the exception propagates
+    (no cached payload to fall back to) AND no stale entry is written
+    to the cache. Next call retries cleanly."""
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+
+    counter = {"n": 0}
+    def _flaky_compute(db, city, day_cap, cap):
+        counter["n"] += 1
+        if counter["n"] == 1:
+            raise RuntimeError("simulated compute failure")
+        return {"city": city, "days": day_cap, "count": counter["n"], "events": []}
+    monkeypatch.setattr(app_module, "_compute_movers", _flaky_compute)
+
+    client = TestClient(app_module.app)
+
+    # First call: compute raises — endpoint should 5xx (any server-error
+    # status; FastAPI returns 502 in this configuration, 500 in others —
+    # we don't care which, only that the cache wasn't poisoned).
+    try:
+        r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+        assert 500 <= r1.status_code < 600, (
+            f"compute failure must surface as 5xx; got {r1.status_code}"
+        )
+    except RuntimeError:
+        pass  # acceptable — TestClient sometimes re-raises sync handler exceptions
+
+    assert not app_module._movers_cache, (
+        "failed cold-miss compute must NOT write a poisoned entry into the cache"
+    )
+
+    # Second call: succeeds and caches.
+    r2 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    assert r2.status_code == 200
+    assert r2.json()["count"] == 2
+    assert app_module._movers_cache, "successful compute writes to cache"
+
+
+# ---------- /api/store/movers velocity-freshness gate ----------
+
+def test_movers_drops_tix_d24h_when_velocity_stale(monkeypatch):
+    """When v_event_velocity_windows.tevo_now_at is older than the
+    freshness threshold (3h), tix_d24h is dropped from the candidate
+    row. This guards against the collector-cadence gap where d1h and
+    d24h subqueries both fall back to the same ancient sample and
+    surface a misleading 'N sold today' badge."""
+    from datetime import datetime, timezone, timedelta
+
+    stale_ts = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    fresh_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+
+    # Two events: one with stale velocity, one with fresh velocity.
+    # Both should NOT be classified premium (price < $500) so the only
+    # path to a "selling_fast" signal is via fresh velocity.
+    fake_metrics = [
+        {"event_id": 1001, "owned_tickets_count": 100, "owned_groups_count": 10, "retail_min": 25.0},
+        {"event_id": 1002, "owned_tickets_count": 100, "owned_groups_count": 10, "retail_min": 25.0},
+    ]
+    fake_events = [
+        {"id": 1001, "name": "Stale event", "occurs_at_local": "2026-06-01T19:00:00-04:00",
+         "venue_name": "MSG", "venue_location": "New York, NY",
+         "primary_performer_id": 16303, "primary_performer_name": "Yankees"},
+        {"id": 1002, "name": "Fresh event", "occurs_at_local": "2026-06-02T19:00:00-04:00",
+         "venue_name": "MSG", "venue_location": "New York, NY",
+         "primary_performer_id": 16303, "primary_performer_name": "Yankees"},
+    ]
+    fake_velocity = [
+        {"tevo_event_id": 1001, "tevo_tix_now": 100, "tevo_tix_d24h": -500,
+         "tevo_getin_now": 10.0, "tevo_getin_d24h_pct": -20.0, "tevo_now_at": stale_ts},
+        {"tevo_event_id": 1002, "tevo_tix_now": 100, "tevo_tix_d24h": -500,
+         "tevo_getin_now": 10.0, "tevo_getin_d24h_pct": -20.0, "tevo_now_at": fresh_ts},
+    ]
+    fake_lifecycle = [
+        {"event_id": 1001, "is_active": True},
+        {"event_id": 1002, "is_active": True},
+    ]
+
+    table_map = {
+        "latest_event_metrics": fake_metrics,
+        "events": fake_events,
+        "event_lifecycle": fake_lifecycle,
+        "v_event_velocity_windows": fake_velocity,
+    }
+
+    # Reuse the FakeSupabase pattern from test_store_home — minimal table stub.
+    class _T:
+        def __init__(self, rows): self._rows = rows
+        def select(self, *_, **__): return self
+        def in_(self, _col, _vals): return self
+        def execute(self):
+            class R:
+                def __init__(s, data): s.data = data
+            return R(self._rows)
+        def gt(self, *_, **__): return self
+        def gte(self, *_, **__): return self
+        def lt(self, *_, **__): return self
+        def lte(self, *_, **__): return self
+        def eq(self, *_, **__): return self
+        def is_(self, *_, **__): return self
+        def not_(self, *_, **__): return self
+        def or_(self, *_, **__): return self
+        def order(self, *_, **__): return self
+        def limit(self, *_, **__): return self
+        def neq(self, *_, **__): return self
+
+    class _DB:
+        def table(self, name): return _T(table_map.get(name, []))
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _DB())
+    monkeypatch.setattr(app_module, "_bulk_performer_assets", lambda *a, **k: {})
+    # Bypass the cache so we hit _compute_movers directly.
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+
+    client = TestClient(app_module.app)
+    r = client.get("/api/store/movers?city=NYC&days=30&limit=10")
+    assert r.status_code == 200, r.text
+
+    by_id = {e["id"]: e for e in r.json()["events"]}
+
+    # Stale event (1001): velocity-suspect, so tix_d24h must be None and
+    # signal must NOT be selling_fast (no velocity-derived signal allowed).
+    # It also shouldn't make the cut as a candidate (no signal, no
+    # meaningful d24h activity since d24h was dropped).
+    assert 1001 not in by_id, (
+        "stale-velocity event must NOT surface — tix_d24h suppressed and no signal"
+    )
+
+    # Fresh event (1002): velocity trusted; -500 ticket drop fires selling_fast.
+    assert 1002 in by_id, "fresh-velocity event should make the strip"
+    assert by_id[1002]["signal"] == "selling_fast"
+    assert by_id[1002]["tix_d24h"] == -500
+
+
+def test_movers_response_no_longer_includes_tix_d1h(monkeypatch):
+    """tix_d1h was removed from the response (was equal to tix_d24h
+    when collector cadence is the only available sample, misleading).
+    Renderer never read it. Guard against accidental re-introduction."""
+    from datetime import datetime, timezone, timedelta
+    fresh_ts = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+
+    fake_metrics = [{"event_id": 2001, "owned_tickets_count": 50, "owned_groups_count": 5, "retail_min": 30.0}]
+    fake_events = [{"id": 2001, "name": "Test", "occurs_at_local": "2026-06-01T19:00:00-04:00",
+                    "venue_name": "MSG", "venue_location": "New York, NY",
+                    "primary_performer_id": 16303, "primary_performer_name": "Yankees"}]
+    fake_velocity = [{"tevo_event_id": 2001, "tevo_tix_now": 50, "tevo_tix_d24h": -80,
+                      "tevo_getin_now": 12.0, "tevo_getin_d24h_pct": -5.0, "tevo_now_at": fresh_ts}]
+    fake_lifecycle = [{"event_id": 2001, "is_active": True}]
+    table_map = {"latest_event_metrics": fake_metrics, "events": fake_events,
+                 "event_lifecycle": fake_lifecycle, "v_event_velocity_windows": fake_velocity}
+
+    class _T:
+        def __init__(self, rows): self._rows = rows
+        def select(self, *_, **__): return self
+        def in_(self, _col, _vals): return self
+        def execute(self):
+            class R:
+                def __init__(s, data): s.data = data
+            return R(self._rows)
+        def gt(self, *_, **__): return self
+        def gte(self, *_, **__): return self
+        def lt(self, *_, **__): return self
+        def lte(self, *_, **__): return self
+        def eq(self, *_, **__): return self
+        def is_(self, *_, **__): return self
+        def not_(self, *_, **__): return self
+        def or_(self, *_, **__): return self
+        def order(self, *_, **__): return self
+        def limit(self, *_, **__): return self
+        def neq(self, *_, **__): return self
+
+    class _DB:
+        def table(self, name): return _T(table_map.get(name, []))
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _DB())
+    monkeypatch.setattr(app_module, "_bulk_performer_assets", lambda *a, **k: {})
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+
+    client = TestClient(app_module.app)
+    r = client.get("/api/store/movers?city=NYC&days=30&limit=10")
+    assert r.status_code == 200
+    for ev in r.json()["events"]:
+        assert "tix_d1h" not in ev, (
+            f"tix_d1h must not appear in mover response; got keys: {list(ev.keys())}"
+        )
+
+
+def test_store_html_routes_respond_to_head(monkeypatch):
+    """HEAD requests on the 4 production storefront HTML routes return
+    200 (not 405). Uptime monitors that default to HEAD probes were
+    alerting; PR adds HEAD support via @app.api_route(..., methods=...)."""
+    monkeypatch.setattr(app_module, "_read_storefront_html", lambda name: "<html>ok</html>")
+    client = TestClient(app_module.app)
+    for path in ("/store", "/store/event/123", "/s/test-id", "/store/shares"):
+        r = client.head(path)
+        assert r.status_code == 200, (
+            f"HEAD {path} expected 200, got {r.status_code}"
         )

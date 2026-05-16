@@ -6,7 +6,27 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>VibePass — event</title>
+  <!-- Title + description are overridden per-event by store.js once the
+       /api/store/events/:id payload lands. These defaults are what crawlers
+       that don't run JS see, and what shows briefly before JS settles. -->
+  <title>VibePass — event tickets</title>
+  <meta name="description" content="Direct-inventory tickets for this event on VibePass. Transparent pricing, no daisy chains." />
+
+  <!-- Open Graph / share-card rendering. JS updates og:title, og:description,
+       og:url with per-event values when the event payload resolves so share
+       links render with the event name + venue + date. -->
+  <meta property="og:type" content="event" />
+  <meta property="og:site_name" content="VibePass" />
+  <meta property="og:title" content="VibePass — event tickets" />
+  <meta property="og:description" content="Direct-inventory tickets for this event." />
+  <meta property="og:url" content="" />
+  <meta property="og:image" content="https://vibepass-storefront-test.onrender.com/static/store/og-default.svg" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="VibePass — event tickets" />
+  <meta name="twitter:description" content="Direct-inventory tickets for this event." />
+
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
 <body data-page="event">
@@ -18,7 +38,7 @@
   <main class="wrap">
     <a class="back" href="/store">← back to events</a>
 
-    <div id="status" class="status">Loading event…</div>
+    <div id="status" class="status" aria-live="polite">Loading event…</div>
 
     <section id="header" class="event-head" hidden>
       <!-- Venue hero image — subtle background banner, populated when
@@ -59,7 +79,12 @@
 
     <section id="body" class="event-body" hidden>
       <aside class="map">
-        <img id="seatMap" alt="seating chart" />
+        <!-- 1x1 transparent placeholder so the browser doesn't flash a
+             broken-image icon between page-load and JS setting img.src
+             from the configurations API. JS replaces the src attribute
+             once the seat-map URL is known. -->
+        <img id="seatMap" alt="seating chart"
+             src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" />
       </aside>
 
       <div class="listings">
@@ -84,19 +109,19 @@
              curated zones in performer_zones. Filters apply only to Seats. -->
         <div id="filterBar" class="filter-bar">
           <div id="zoneRow" class="filter-row" hidden>
-            <span class="filter-label">Zone</span>
-            <div class="chip-group" id="zoneChips"></div>
+            <span id="zoneLabel" class="filter-label">Zone</span>
+            <div class="chip-group" id="zoneChips" role="group" aria-labelledby="zoneLabel"></div>
           </div>
           <div id="sectionRow" class="filter-row" hidden>
-            <span class="filter-label">Section</span>
-            <div class="chip-group" id="sectionChips"></div>
+            <span id="sectionLabel" class="filter-label">Section</span>
+            <div class="chip-group" id="sectionChips" role="group" aria-labelledby="sectionLabel"></div>
           </div>
           <div class="filter-row inline">
-            <span class="filter-label">Price</span>
-            <input id="minPrice" type="number" min="0" step="10" placeholder="min $" />
-            <input id="maxPrice" type="number" min="0" step="10" placeholder="max $" />
-            <span class="filter-label" style="margin-left:16px">Min qty</span>
-            <select id="minQty">
+            <label for="minPrice" class="filter-label">Price</label>
+            <input id="minPrice" type="number" min="0" step="10" placeholder="min $" aria-label="Minimum price" />
+            <input id="maxPrice" type="number" min="0" step="10" placeholder="max $" aria-label="Maximum price" />
+            <label for="minQty" class="filter-label" style="margin-left:16px">Min qty</label>
+            <select id="minQty" aria-label="Minimum ticket quantity">
               <option value="">any</option>
               <option value="2">2+</option>
               <option value="3">3+</option>
@@ -128,7 +153,12 @@
   </div>
 
   <footer class="foot">
-    <span>VibePass &middot; MVP preview</span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="/store/about">About</a>
+      <a href="/store/privacy">Privacy</a>
+      <a href="/store/terms">Terms</a>
+    </nav>
+    <span class="foot-meta">&copy; 2026 VibePass &middot; MVP preview</span>
   </footer>
 
   <script src="/static/store/store.js" defer></script>

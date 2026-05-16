@@ -2,36 +2,69 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>VibePass Terminal — D0 lane</title>
-  <style>
-    :root { color-scheme: dark light; }
-    html, body {
-      margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-      background: #0b0d10; color: #d7dde4; min-height: 100vh;
-    }
-    main {
-      max-width: 720px; margin: 12vh auto; padding: 0 24px;
-    }
-    h1 { font-size: 28px; font-weight: 600; margin: 0 0 8px; color: #fff; }
-    .tag {
-      display: inline-block; font-size: 11px; letter-spacing: 0.08em;
-      text-transform: uppercase; padding: 3px 8px; border-radius: 4px;
-      background: #1f2530; color: #6e93d6; margin-bottom: 18px;
-    }
-    p { line-height: 1.55; margin: 0 0 14px; color: #aab3bd; }
-    code { background: #1a1f26; padding: 2px 6px; border-radius: 4px; color: #d7dde4; font-size: 13px; }
-    a { color: #6e93d6; }
-    .meta { margin-top: 28px; font-size: 12px; color: #6e7785; }
-  </style>
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Home</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <main>
-    <div class="tag">D0 — Terminal FE</div>
-    <h1>VibePass Terminal — provisioning</h1>
-    <p>This deploy target was provisioned for the D0 lane (broker terminal frontend). The actual terminal UI lives at <code>static/terminal/*</code> and is being built out separately.</p>
-    <p>If you reached this page expecting the operational terminal, you're early — check back after D0 lands their first build, or look at the active services list at <a href="https://dashboard.render.com">dashboard.render.com</a>.</p>
-    <p class="meta">Service: <code>vibepass-terminal-test</code> · Lane: D0 · Region: Oregon · Plan: free · Owner: D0 (per LANE_DISCIPLINE.md §Cross-cutting Rule #6, updated 2026-05-14)</p>
+<body data-page="home">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap home">
+    <section id="coverage-band">
+      <div class="panel-title">COVERAGE — ACTIVE FUTURE SPORTS</div>
+      <div class="coverage-grid">
+        <div class="cv-cell"><span class="cv-num" id="cvTotal">—</span><span class="cv-lbl">tracked</span></div>
+        <div class="cv-cell"><span class="cv-num" id="cv30d">—</span><span class="cv-lbl">≤ 30d</span></div>
+        <div class="cv-cell"><span class="cv-num" id="cv7d">—</span><span class="cv-lbl">≤ 7d</span></div>
+        <div class="cv-cell"><span class="cv-num" id="cvToday">—</span><span class="cv-lbl">today</span></div>
+      </div>
+    </section>
+
+    <section id="book-card">
+      <div class="panel-title">BOOK SUMMARY</div>
+      <div class="book-grid">
+        <div class="bk-row"><span class="bk-lbl">Total owned tickets</span><span class="bk-val" id="bkOwnedTix">—</span></div>
+        <div class="bk-row"><span class="bk-lbl">Owned notional (mark)</span><span class="bk-val" id="bkOwnedNotional">—</span></div>
+        <div class="bk-row"><span class="bk-lbl">Events with owned position</span><span class="bk-val" id="bkOwnedEvents">—</span></div>
+        <div class="bk-row"><span class="bk-lbl">Market tickets tracked</span><span class="bk-val" id="bkMarketTix">—</span></div>
+      </div>
+    </section>
+
+    <section id="movers-strip">
+      <div class="panel-title row">
+        <span>TOP MOVERS · 24H · OUR BOOK MARK-TO-MARKET</span>
+        <a href="movers.html" class="more-link">all movers →</a>
+      </div>
+      <div class="movers-grid" id="moversGrid">
+        <div class="empty">loading…</div>
+      </div>
+    </section>
+
+    <section id="owned-events">
+      <div class="panel-title row">
+        <span>S4K-OWNED EVENTS — NEXT 30 DAYS</span>
+        <span class="muted small" id="ownedEventCount"></span>
+      </div>
+      <div id="ownedEventsBody"></div>
+    </section>
+
+    <section id="risk-alerts">
+      <div class="panel-title">RISK ALERTS</div>
+      <div id="riskBody" class="empty">order-book RPC pending — alerts unlock when hold_expires_at + owned_premium_pct surfaces land</div>
+    </section>
   </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+  <script src="nav.js"></script>
+  <script src="home.js"></script>
 </body>
 </html>

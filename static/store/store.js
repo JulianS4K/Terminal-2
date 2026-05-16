@@ -48,7 +48,18 @@
       const body = await r.text();
       let msg = body;
       try { msg = JSON.parse(body).detail || JSON.parse(body).error || body; } catch {}
-      throw new Error(`${r.status} ${msg}`);
+      // Strip HTML tags + collapse whitespace + clip to 80 chars before
+      // throwing — some servers (Render cold-start 503, FastAPI default 5xx
+      // HTML pages, raw nginx 404) return full HTML bodies and the raw
+      // markup shouldn't splatter into the status pill downstream. Mirrors
+      // D0's app.js fix from PR #113 commit 34232a1.
+      msg = String(msg).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+      // Tag the error with the failing endpoint so the downstream catch
+      // (status pill / alert) tells you *which* call died. Strips the
+      // /api/store/ prefix to keep the message tight — full path stays
+      // available on the network tab when debugging.
+      const tag = String(path).split("?")[0].replace(/^\/api\/store\//, "");
+      throw new Error(`${r.status} ${tag}: ${msg}`);
     }
     return r.json();
   }
@@ -268,6 +279,12 @@
     const empty = $("#empty");
 
     let allEvents = [];
+    // loadComplete gates filter() so the user can't trigger a misleading
+    // "No events match" empty state by typing in the search box while the
+    // initial /api/store/home call is still in flight (common on free-tier
+    // cold-start where the round-trip is ~12s). When load resolves below,
+    // any pending user query is re-applied at that point.
+    let loadComplete = false;
 
     function render(events, mode) {
       // mode: "all" (initial load) or "search" (after a query)
@@ -358,6 +375,13 @@
     }
 
     function filter(query) {
+      // Guard against the cold-start race: user typed in the search box
+      // before loadCatalog's /api/store/home round-trip completed. Bailing
+      // out here keeps the "Loading available events…" status pill visible
+      // instead of showing a misleading "No events match" empty state.
+      // The pending query (input.value) is re-applied by loadCatalog when
+      // it resolves — see the .then() handler below.
+      if (!loadComplete) return;
       const q = (query || "").trim().toLowerCase();
       if (!q) return render(allEvents, "all");
       const filtered = allEvents.filter((e) => {
@@ -432,14 +456,28 @@
       status.textContent = "Loading available events…";
       status.style.color = "";
       status.hidden = false;
+      // Reset gate — Retry re-fires this and we want the same race
+      // protection on the second attempt.
+      loadComplete = false;
       api(catalogEndpoint)
         .then((res) => {
           allEvents = res.events || [];
+          loadComplete = true;
           renderCatalogFilterBanner(performerId, venueId, allEvents);
-          render(allEvents, "all");
+          // If user typed during the load window, honor that query now.
+          // Otherwise render the full grid as before.
+          const pendingQuery = (input.value || "").trim();
+          if (pendingQuery) {
+            filter(input.value);
+          } else {
+            render(allEvents, "all");
+          }
           status.hidden = true;
         })
         .catch((err) => {
+          // loadComplete stays false — filter() correctly bails out so a
+          // user typing during error state doesn't see "No events match"
+          // on top of the Retry-button error UI.
           status.replaceChildren();
           status.style.color = "var(--bad)";
           status.hidden = false;
@@ -732,6 +770,37 @@
   }
 
   // ---------- Event detail page ----------
+  // SEO + share-card metadata updater. Runs after /api/store/events/:id
+  // resolves so document.title + OG tags reflect the event name + venue.
+  // Pure DOM mutation; no fetches. Crawlers/preview-bots that run JS pick
+  // these up; static fallbacks in <head> cover the no-JS path.
+  function updateEventMeta(event) {
+    if (!event) return;
+    const name = String(event.name || "").trim();
+    const venue = event.venue || {};
+    const venueLabel = [venue.name, venue.location].filter(Boolean).join(", ");
+    const titleText = name
+      ? `${name} — VibePass`
+      : "Event tickets — VibePass";
+    const descText = name && venueLabel
+      ? `Direct-inventory tickets for ${name} at ${venueLabel}. Transparent pricing on VibePass.`
+      : (name
+          ? `Direct-inventory tickets for ${name}. Transparent pricing on VibePass.`
+          : "Direct-inventory event tickets. Transparent pricing on VibePass.");
+
+    document.title = titleText;
+    const setMeta = (selector, value) => {
+      const el = document.querySelector(selector);
+      if (el && value != null) el.setAttribute("content", String(value));
+    };
+    setMeta('meta[name="description"]', descText);
+    setMeta('meta[property="og:title"]', titleText);
+    setMeta('meta[property="og:description"]', descText);
+    setMeta('meta[property="og:url"]', location.href);
+    setMeta('meta[name="twitter:title"]', titleText);
+    setMeta('meta[name="twitter:description"]', descText);
+  }
+
   function mountEvent() {
     // The event/listings page is also the share-link surface — the URL is
     // the source of truth for the filter set. Two URL shapes can land here:
@@ -796,6 +865,12 @@
     const resetBtn = $("#resetFilters");
 
     let allListings = [];
+    // Shared listing lookup — keyed by string(listing.id). renderListings()
+    // and renderParkingTab() write into this; the single delegated Reserve
+    // click handler reads from it. Replaces the prior per-row
+    // `btn.addEventListener` pattern, which accumulated handlers on every
+    // re-render (filter change, refetch) without ever removing them.
+    const listingsByIdMap = new Map();
     // Section universe — server tells us every section present in the
     // unfiltered owned set (`sections_available`). We cache it so the
     // section chip group keeps showing every section even after the user
@@ -875,10 +950,24 @@
       }
     }
 
+    // One-time delegated click handler for Reserve buttons. Resolves the
+    // listing via `data-listing-id` against `listingsByIdMap`. Prevents
+    // the previous leak where every re-render attached fresh per-row
+    // listeners with no cleanup.
+    function onReserveDelegatedClick(e) {
+      const btn = e.target.closest("button[data-action='reserve']");
+      if (!btn) return;
+      const id = btn.dataset.listingId;
+      if (!id) return;
+      const listing = listingsByIdMap.get(id);
+      if (listing) openModal(listing);
+    }
+    listEl.addEventListener("click", onReserveDelegatedClick);
+
     // ---- Listings rendering (server already filtered) ----
     function renderListings() {
       listCount.textContent = `${allListings.length}`;
-      listEl.innerHTML = "";
+      listEl.replaceChildren();
       if (!allListings.length) {
         noListings.hidden = false;
         return;
@@ -927,7 +1016,12 @@
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = "Reserve";
-        btn.addEventListener("click", () => openModal(l));
+        btn.dataset.action = "reserve";
+        if (l.id != null) {
+          const key = String(l.id);
+          btn.dataset.listingId = key;
+          listingsByIdMap.set(key, l);
+        }
 
         li.append(seat, qbox, pbox, btn);
 
@@ -1014,7 +1108,12 @@
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = "Reserve";
-        btn.addEventListener("click", () => openModal(l));
+        btn.dataset.action = "reserve";
+        if (l.id != null) {
+          const key = String(l.id);
+          btn.dataset.listingId = key;
+          listingsByIdMap.set(key, l);
+        }
 
         li.append(seat, qbox, pbox, btn);
         if (l.public_notes) {
@@ -1024,6 +1123,15 @@
           li.append(notes);
         }
         parkUl.append(li);
+      }
+
+      // One-time delegated click handler on parkUl. Shares the same
+      // resolution path as the seats list — looks up the listing via
+      // `data-listing-id` in `listingsByIdMap`. Gated by `dataset.wired`
+      // so we don't stack handlers across renderParkingTab() calls.
+      if (!parkUl.dataset.wired) {
+        parkUl.dataset.wired = "1";
+        parkUl.addEventListener("click", onReserveDelegatedClick);
       }
 
       // Wire tab toggle once; idempotent — first click handler win.
@@ -1409,6 +1517,12 @@
       const filters = res.filters || readFiltersFromUI();
 
       $("#evName").textContent = event.name || "Untitled event";
+
+      // Update SEO/share-card metadata from the resolved event payload.
+      // Crawlers that DO run JS (Googlebot, modern social previewers) pick
+      // up these mutations; static fallback values in <head> cover the
+      // no-JS / static-snapshot path.
+      updateEventMeta(event);
 
       // Venue hero image (audit-lane venue_assets.hero_image_url). Subtle
       // backdrop, dimmed by CSS so the heading stays legible.

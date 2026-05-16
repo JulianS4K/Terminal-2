@@ -73,6 +73,20 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ## NEXT
 
+### NEXT (D0) — Consolidated frontend lane post row 157 reorg
+
+Plan: [docs/d0_frontend_consolidation_plan.md](docs/d0_frontend_consolidation_plan.md). Self-contract: [docs/d0_operating_constraints.md](docs/d0_operating_constraints.md). Coordination: [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md). 5 D0-tracked rows:
+
+- **D0 → operator** — Supabase Auth Redirect URLs whitelist (2 URLs, dashboard action). Per `bot_chat` row 145. Unblocks PR #113 deployed login flow.
+- **D0 → operator** — Render plan flip `vibepass-storefront-test` free → starter ($14/mo). Per D1 row 169 outstanding item 1. MCP `update_web_service` doesn't support plan changes — dashboard or Render REST API only.
+- **D0** — Phase 2 design tokens: author `static/_shared/design-tokens.css`, refactor terminal CSS to reference it. Weeks 1-4.
+- **D0** — `docs/d0_roadmap.md` (rolling Now/Next/Later/Backlog). First version covers D1+D2 outstanding items routed through D0.
+- **D0 sign-off requirement on D1/D2 PRs PAUSED 7 days** (active 2026-05-22). Per operator directive `bot_chat` 170. Claim protocol + token discipline + CI gate still active.
+
+### NEXT (D0 — checkpoint) — Phase 4 service-merge decision · review 2026-08-15
+
+Recommend at decision time: collapse `vibepass-terminal-test` + `d2-orders-dashboard` into one operator-facing service; keep `vibepass-storefront-test` separate. Decision gates: ops MAU >50, deploy frequency stable. Cost-saver ~$14/mo at 3-service starter baseline.
+
 ### NEXT (P1 → A1) — Audit + sync storefront branch; gate live-TEvo flip behind your green light
 
 **What**: Storefront branch `claude/store-sql-only-demo-mode` (HEAD `0901efd` as of 2026-05-12) is feature-complete for the MVP and ready for an audit pass. Asking A1 to review + sync to prod, after which we'd flip Render env `STOREFRONT_SQL_ONLY=false` to exercise the live-TEvo paths in production.
@@ -287,6 +301,16 @@ Operator-extended mandate covers git settings + Render workspace. Initial sweep 
 - **[B1-NEXT-19] [SEC-LOW]** Render `ipAllowList: 0.0.0.0/0` on `d2-orders-dashboard` and `vibepass-terminal-test` — both supposed to be `@s4kent.com` authenticated at app layer. Optional secondary defense: tighten allowlist to known operator IPs. PR comment to D1 (Render-write authority). Documented as R-1.
 - **[B1-NEXT-20] [SEC-LOW]** Render services `autoDeploy: yes` from `main` on every commit. Standard CD; consider manual approval gate for `vibepass-storefront-test` (public retail). PR comment to D1. R-2.
 - **[B1-NEXT-21] [SEC-LOW]** Slack surface monitoring — operator decision on installing a Slack MCP. Currently no active Slack integration in the repo (gitleaks catches `xoxb-*`/`xoxp-*` tokens via push-protection; no Slack-posting workflows; no webhooks). Future state: with Slack MCP, B1 monitors workspace admins, 2FA enforcement, recent-message search for incident leaks. Without MCP, B1's Slack coverage is grep + gitleaks only. See `docs/b1_operating_constraints.md` "Slack posture monitoring" section.
+
+### B1-NEXT — Librarian / archivist role (filed 2026-05-16 per operator directive)
+
+Operator extended B1's mandate 2026-05-16: "communication channel, Librarians and archivists and maintaining bible(s) so communication between bots is seamless and up to date." Operationalized in `docs/b1_operating_constraints.md` "Librarian / archivist role" + per-session sweep steps 15-16.
+
+- **[B1-NEXT-24] [SEC-LOW]** Periodic full-pass drift audit of `PROJECT_BIBLE.md` §3 (canonical RPC table) — verify all 32 listed RPCs exist in `pg_proc` with the signatures stated. Rotating quarterly cadence; first pass at session start. Tracked here separately from per-session sweep step 15 (which is per-session rotating spot-check).
+- **[B1-NEXT-25] [SEC-LOW]** Periodic full-pass drift audit of `RESOURCES_BIBLE.md` §1 (external services) — verify Render service IDs match `mcp__render__list_services`, vault secret names match `get_app_secret` allowlist, lane ownership rows match `BOT_HIERARCHY.md`. Rotating quarterly.
+- **[B1-NEXT-26] [SEC-LOW]** `bot_chat` thread-closure rate dashboard — query for `(count(resolved) + count(status-closed)) / count(total flag+question)` by lane over rolling 7d. File flag if any lane closure rate < 50%. Could be added as a row in `release_health_check()` (`coordination.thread_closure_rate_7d`).
+- **[B1-NEXT-27] [SEC-LOW]** Cross-bible consistency check (PROJECT_BIBLE.md vs LANE_DISCIPLINE.md vs BOT_HIERARCHY.md). Lane ownership rows, push restrictions, write-surface declarations should align across the three. Periodic full diff.
+- **[B1-NEXT-28] [SEC-LOW]** Slack channel signal-quality metric — once interactive Slack MCP loads in B1 sessions, per-channel message rate + dormancy + scheduled-task vs human post ratio. Threshold-based alerts on signal degradation.
 
 ### NEXT (code) — [SEC-CRIT] Rotate the leaked `CRON_SECRET` value, then redact from KANBAN/AGENTS
 
