@@ -44,10 +44,10 @@ A1 (admin · sole prod pusher · Render workspace owner)
 
 | Bot | Render service | Service ID | Scope |
 |---|---|---|---|
-| A1 | workspace-wide | — | exclusive provisioning + deletes |
-| D0 | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | write OK (CDN only during testing) |
-| D1 | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | write OK · **TESTING UNIFIED RUNTIME** |
-| D2 | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | write OK (idle placeholder during testing) |
+| A1 | workspace-wide | — | full (read + write + provisioning + delete) |
+| **D0** | **workspace-wide** | — | **full Render parity with A1 (2026-05-16)** — read + write + provisioning + delete across all services |
+| D1 | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | code author only; Render MCP read-only (writes route through D0 + A1) |
+| D2 | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | code author only; Render MCP read-only (writes route through D0 + A1) |
 | B1, C1, D3, D4, E1 | (all services) | — | read only |
 
 **Testing-unified architecture (2026-05-16, PR #168)**: All runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold starts). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts. `vibepass-terminal-test` continues to serve as a CDN for D0 static files; `d2-orders-dashboard` stays alive as a beta-time placeholder but has no live traffic. At beta, each surface migrates back to its own service via dedicated DNS + un-mounting from `app.py`.

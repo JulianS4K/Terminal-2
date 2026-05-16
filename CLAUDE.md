@@ -77,16 +77,17 @@ Lane assignments per `LANE_DISCIPLINE.md`:
 
 Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are forbidden without operator approval.
 
-**A1 (Admin) — exclusive workspace-wide access:**
+**A1 (Admin) — workspace-wide access:**
 - All `mcp__render__*` tools on any service
 - Workspace-level operations: `create_web_service`, `create_postgres`, `create_static_site`, `create_cron_job`, `select_workspace`
-- A1 is the only bot authorized to provision, delete, or change ownership of services
+- Provisioning, deletion, ownership changes
 
-**D0 — consolidated frontend lane (2026-05-15 reorg):**
-- **Write authority on all three frontend services**: `vibepass-terminal-test` (`srv-d839339kh4rs73ac3s20`), `vibepass-storefront-test` (`srv-d8140bnaqgkc73al4asg`), `d2-orders-dashboard` (`srv-d82b4kl7vvec73b4r3r0`)
-- Permitted writes (no per-call ask): `update_environment_variables`, `update_web_service`, restart, redeploy triggers
+**D0 — workspace-wide access (2026-05-16, operator directive — "full Render permissions"):**
+- **Parity with A1 on Render**: all `mcp__render__*` tools on any service in the workspace, plus workspace-level operations (`create_*`, `select_workspace`, deletion, ownership changes)
+- Standing write authority on all three frontend services (`vibepass-terminal-test`, `vibepass-storefront-test`, `d2-orders-dashboard`) + any future services D0 provisions
 - D0 is sign-off authority on D1/D2 subordinate PRs touching their respective surfaces
-- Forbidden: workspace-level operations (A1-only)
+- No restrictions — full Render parity with A1
+- Coordination expectation: provisioning/deletion of customer-facing services is high-impact; D0 posts a `bot_chat` `flag` event for transparency, but no per-call operator approval required
 
 **D1, D2 — subordinate coding arm under D0 (2026-05-15 reorg):**
 - D1 still authors `static/store/*`, `app.py /api/store/*`, `render.yaml` (storefront IaC)

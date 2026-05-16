@@ -125,7 +125,9 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Any cron schedule
 - Any edge function that mutates data
 - Any other lane's files
-- **Render workspace** (D1 owns; D0 has no deploy infra of its own yet)
+
+**Render workspace authority (2026-05-16 operator directive — "full Render permissions"):**
+D0 has full workspace-wide Render permissions, parity with A1. All `mcp__render__*` tools available on every service + workspace-level operations (`create_*`, `select_workspace`, deletion, ownership changes). Standing write on `vibepass-terminal-test`, `vibepass-storefront-test`, `d2-orders-dashboard`, and any future services D0 provisions. Coordination expectation: bot_chat `flag` event when provisioning/deleting customer-facing services for transparency, but no per-call operator approval required.
 
 **Reads:** entire data plane (charts, predictive models, possibly Grok integration)
 
@@ -294,9 +296,9 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
    - **D0 is the lane owner** across all three frontend services as of 2026-05-15. D0 manages env vars, deploy config, log monitoring, and IaC for every frontend service.
    - **D1 and D2 are subordinate coding arms.** They still author code in their respective directories (D1 → storefront, D2 → dashboard) but their PRs require **D0 sign-off** in a PR comment before A1 merges. D1/D2 have Render MCP **read-only** access; writes route through D0 + A1.
-   - Per-bot Render access scope (per CLAUDE.md §4, updated 2026-05-15):
-     - **A1** — exclusive workspace-wide access: all read + write ops on any service, plus `create_*` / `select_workspace` (only bot authorized to provision or delete services)
-     - **D0** — write authority on all three frontend services; forbidden workspace-level ops (A1-only)
+   - Per-bot Render access scope (per CLAUDE.md §4, updated 2026-05-16 with D0 full-permissions directive):
+     - **A1** — workspace-wide access: all read + write ops on any service, plus `create_*` / `select_workspace`, provisioning, deletion, ownership changes
+     - **D0** — **workspace-wide parity with A1** (2026-05-16): all read + write ops on any service, plus `create_*`, deletion, ownership changes, future-service provisioning. No restrictions.
      - **D1, D2** — read-only on all Render surfaces; writes route through D0 review + A1 merge
      - **B1 / C1 / D3 / D4** — read-only across all services; writes require operator approval
    - **Deploy gating (2026-05-15)**: backend test workflow (`.github/workflows/tests.yml`) must pass on a PR before A1 merges to `main`. Auto-deploy fires only after green CI lands on `main`. No exceptions.
