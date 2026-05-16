@@ -133,7 +133,7 @@
       const tr = document.createElement('tr');
       tr.classList.add('clickable');
       tr.addEventListener('click', () => {
-        window.location.href = '/static/terminal/event.html?event=' + r.event_id;
+        window.location.href = 'event.html?event=' + r.event_id;
       });
       const d = T.daysUntil(r.occurs_at_local || r.occurs_at);
       const mDPct = +r.delta_market_pct;
@@ -141,7 +141,7 @@
       const mDVal = +r.delta_market_val;
       const oDVal = +r.delta_owned_val;
       tr.innerHTML = `
-        <td><a href="/static/terminal/event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a></td>
+        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a></td>
         <td>${escapeHtml(r.performer_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${T.fmtNum(+r.cur_market_tix || 0)}</td>

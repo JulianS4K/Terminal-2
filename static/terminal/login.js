@@ -15,7 +15,10 @@
   }
 
   const params = new URLSearchParams(location.search);
-  const returnUrl = params.get('return') || '/static/terminal/';
+  // Default return: the directory containing login.html — yields
+  // /static/terminal/ on localhost uvicorn and / on Render static-site CDN.
+  const defaultReturn = location.pathname.replace(/login\.html.*$/, '');
+  const returnUrl = params.get('return') || defaultReturn;
   const errParam = params.get('error');
 
   const errEl = document.getElementById('loginErr');
@@ -58,7 +61,7 @@
     }
     // Valid session — bounce to where we came from.
     // Defensive: only bounce to same-origin URLs to avoid open-redirect.
-    const safe = isSafeReturn(returnUrl) ? returnUrl : '/static/terminal/';
+    const safe = isSafeReturn(returnUrl) ? returnUrl : defaultReturn;
     window.location.replace(safe);
   });
 

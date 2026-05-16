@@ -103,7 +103,7 @@
       const dpct = +r.delta_owned_pct;
       const card = document.createElement('a');
       card.className = 'mover-card ' + c.sign;
-      card.href = '/static/terminal/event.html?event=' + r.event_id;
+      card.href = 'event.html?event=' + r.event_id;
       card.innerHTML = `
         <div class="mc-name">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</div>
         <div class="mc-meta">${escapeHtml(r.performer_name || '')}${r.venue_name ? ' · ' + escapeHtml(r.venue_name) : ''}</div>
@@ -169,7 +169,7 @@
       const dvalTxt = !Number.isFinite(dval) ? '—' : (dval >= 0 ? '+' : '−') + '$' + T.fmtNum(Math.round(Math.abs(dval)));
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="/static/terminal/event.html?event=${r.event_id}">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a></td>
+        <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a></td>
         <td>${escapeHtml(r.performer_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${T.fmtNum(ot)}</td>

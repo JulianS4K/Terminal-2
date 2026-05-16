@@ -4,12 +4,16 @@
 (function () {
   'use strict';
 
+  // Relative hrefs so the same nav works under both deploy targets:
+  // (a) localhost uvicorn at /static/terminal/, (b) Render static-site CDN
+  // at root (publishPath strips static/terminal/). Each link is resolved
+  // relative to the current page URL by the browser.
   const PAGES = [
-    { id: 'home',      label: 'HOME',      href: '/static/terminal/' },
-    { id: 'event',     label: 'EVENT',     href: '/static/terminal/event.html' },
-    { id: 'movers',    label: 'MOVERS',    href: '/static/terminal/movers.html' },
-    { id: 'performer', label: 'PERFORMER', href: '/static/terminal/performer.html' },
-    { id: 'orders',    label: 'ORDERS',    href: '/static/terminal/orders.html' },
+    { id: 'home',      label: 'HOME',      href: './' },
+    { id: 'event',     label: 'EVENT',     href: 'event.html' },
+    { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
+    { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
   ];
 
   function inject() {
