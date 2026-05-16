@@ -78,6 +78,8 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `events` | `is_classified`, `tbd` | (neither exists — use `EXISTS(event_xref...)` for sports; parse `(Date TBD)` from name) |
 | `listings_snapshots` (TEvo firehose 8M rows) | filter by `aq_short_event_id` | **0% populated** — query by `event_id` only. Filter ours: `is_owned=true AND brokerage_id=1768` |
 | `seatgeek_sales/listings_snapshots.tevo_event_id` | use as join key | **0% populated** — always query by `sg_event_id` (indexes added 2026-05-16) |
+| `sg_events_canonical` Parking pseudo-events | match against TEvo | **TEvo merges parking into main listing** — skip `sg_category IN ('Parking','parking')` and `*venue_name ILIKE '%parking%'` rows. Matcher v3 enforces this. |
+| TEvo `/v9/events` date filter | `occurs_at_gte` (underscore) | **`"occurs_at.gte"` (dotted)** — underscore returns 422 Invalid Parameters |
 
 ---
 
@@ -100,6 +102,11 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `espn_scoreboard_queue(lookahead_days)` | int (default **270**) | ESPN scoreboard ingest. Bumped 2026-05-16 to capture full NFL season. |
 | `espn_scoreboard_process()` | — | Process ESPN responses → date_lookup |
 | `refresh_sg_broker_sales_event_metrics(max_events)` | int (default 200) | Populate `seatgeek_event_metrics.sold_*` from deduped (DISTINCT ON sg_sale_id) sales snapshots. Hourly cron @ :17. |
+| `sg_canonical_refresh_v2_pull(window_minutes)` | int (default 15; NULL = full) | Reconciles `sg_events_canonical.last_v2_pull_at` + `last_v2_listings_count` + `last_v2_status` + `has_v2_listings_pulled` from `seatgeek_listings_snapshots`. Cron @ :12,:42. Backfill ran 2026-05-16: 574 rows brought to 100% coverage. |
+| `sg_attempt_event_xref_v3(...)` | bigint, text, date, timestamptz, text, [text], [text], [text] | **Matcher v3**: ±24h date tolerance + parking skip + `cross_source_venue_resolve` lookup. Replaces v2 in `cross_source_match_tick`. |
+| `auto_match_sg_canonical_v3()` | — | Sweeps all unlinked SG canonical rows through matcher v3. Returns `(attempted, newly_matched, parking_skipped, still_unmatched, needs_tevo_search)`. |
+| `cross_source_venue_resolve(name, city, state)` | text, [text], [text] | Returns `tevo_venue_id` from any-source venue name via 3-tier match (canonical / aliases array / prefix). Driven by `cross_source_venue_map` (391 TEvo rows + 129 SG / 94 TickPick / 85 Vivid aliases as of 2026-05-16). |
+| `refresh_cross_source_venue_map()` | — | Rebuilds `cross_source_venue_map` from events/sg_events_canonical/tickpick_orders.raw/vivid_orders.raw. Idempotent. |
 | `release_health_check()` | — | All-checks rollup |
 
 For the full RPC list + arg detail + composition relationships → `RESOURCES_BIBLE.md §3` and the migration headers.
@@ -211,6 +218,37 @@ END IF;
 v_aq := 'SYS-' || substring(md5(name || '|' || venue || '|' ||
             to_char(date::timestamptz, 'YYYY-MM-DD"T"HH24:MI')) from 1 for 10);
 ```
+
+### TEvo `/v9/events` search procedure (autotrack cold bridge)
+For events we have in SG/TickPick/Vivid but missing from local `events` table — use the active search bridge instead of waiting for broker-listed events.
+
+**Endpoint**: `GET /v9/events` (signed HMAC-SHA256, see `tevo_sign_get()`)
+
+**Filter params (verified 2026-05-16)**:
+- `venue_id` (int) — TEvo venue id; resolve from `cross_source_venue_map` via `cross_source_venue_resolve(name, city, state)`
+- `name` (text, partial match) — fallback when venue_id unknown
+- `performer_id` (int)
+- `category_id` (int)
+- `"occurs_at.gte"` / `"occurs_at.lte"` (text dates, **dotted notation required** — `occurs_at_gte` returns 422)
+- `per_page` (int, max 100), `page` (int)
+- `only_with_available_tickets` (bool) — set FALSE for full event lookup, TRUE for crawl-ready listings
+
+**Two-tier search strategy** (matches edge fn `sg-to-tevo-search-bridge`):
+1. Tier 1: `venue_id` + date range — most precise
+2. Tier 2: `name` (team name) + date range — fallback if no venue_id resolved or empty result
+
+**Result scoring**: `+50` venue_id match, `+40` slug venue match, `+25` prefix venue match, `+10/token` team-name overlap, `+24-hoursAway` date proximity. Accept at `score >= 50` (= venue OK + at least 1 team hit).
+
+**Attempt tracking**: every search writes to `sg_tevo_search_attempts` (PK `sg_event_id`) with result `matched | no_results | low_score`. Don't retry within 24h.
+
+**Live invocation pattern**:
+```sql
+SELECT public._cron_invoke_edge_fn(
+  'https://hzrizjeaxlqcxfrtczpq.supabase.co/functions/v1/sg-to-tevo-search-bridge?limit=40&min_score=50',
+  '{}'::jsonb);
+```
+
+**Observed hit rate (2026-05-16)**: 75% on first live batch (30/40), with venue-map-resolved candidates scoring 64–214.
 
 ---
 
