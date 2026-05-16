@@ -6771,6 +6771,27 @@ def store_test_media_test_page(_=Depends(_require_non_prod)):
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "media_test.html"))
 
 
+# ============================================================
+# D2 dashboard mount (unified-for-testing architecture, 2026-05-16)
+# ============================================================
+# Operator directive: keep 3 services alive (terminal-test, storefront-test,
+# d2-orders-dashboard) but route warm runtime traffic to storefront-test during
+# dev/test to avoid cold-start drag. At beta, each surface migrates back to its
+# own service. PR #129 exposed d2_dashboard.main.router for this purpose.
+#
+# Mount strategy: prefix-less include_router (resolves bot_chat 180 question A).
+# D2's `/api/d2/*` routes land at same paths. D2's standalone `@router.get("/")`
+# is shadowed by the earlier `@app.get("/")` homescreen (FastAPI: first-registered
+# wins for matching). Auth (question B): D2 routes reuse their own dependency
+# injection; the shell's `require_auth` applies on app.py's own routes.
+try:
+    from d2_dashboard.main import router as d2_router  # type: ignore
+    app.include_router(d2_router)
+    logging.getLogger(__name__).info("d2_dashboard router mounted at unified shell (%d routes)", len(d2_router.routes))
+except Exception as _d2_import_err:  # pragma: no cover — d2 module optional in dev
+    logging.getLogger(__name__).warning("d2_dashboard router NOT mounted: %s", _d2_import_err)
+
+
 # Static assets (CSS / JS / images) served from /static.
 # Keep this LAST so explicit routes above win.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
