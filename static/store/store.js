@@ -834,6 +834,12 @@
     const resetBtn = $("#resetFilters");
 
     let allListings = [];
+    // Shared listing lookup — keyed by string(listing.id). renderListings()
+    // and renderParkingTab() write into this; the single delegated Reserve
+    // click handler reads from it. Replaces the prior per-row
+    // `btn.addEventListener` pattern, which accumulated handlers on every
+    // re-render (filter change, refetch) without ever removing them.
+    const listingsByIdMap = new Map();
     // Section universe — server tells us every section present in the
     // unfiltered owned set (`sections_available`). We cache it so the
     // section chip group keeps showing every section even after the user
@@ -913,10 +919,24 @@
       }
     }
 
+    // One-time delegated click handler for Reserve buttons. Resolves the
+    // listing via `data-listing-id` against `listingsByIdMap`. Prevents
+    // the previous leak where every re-render attached fresh per-row
+    // listeners with no cleanup.
+    function onReserveDelegatedClick(e) {
+      const btn = e.target.closest("button[data-action='reserve']");
+      if (!btn) return;
+      const id = btn.dataset.listingId;
+      if (!id) return;
+      const listing = listingsByIdMap.get(id);
+      if (listing) openModal(listing);
+    }
+    listEl.addEventListener("click", onReserveDelegatedClick);
+
     // ---- Listings rendering (server already filtered) ----
     function renderListings() {
       listCount.textContent = `${allListings.length}`;
-      listEl.innerHTML = "";
+      listEl.replaceChildren();
       if (!allListings.length) {
         noListings.hidden = false;
         return;
@@ -965,7 +985,12 @@
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = "Reserve";
-        btn.addEventListener("click", () => openModal(l));
+        btn.dataset.action = "reserve";
+        if (l.id != null) {
+          const key = String(l.id);
+          btn.dataset.listingId = key;
+          listingsByIdMap.set(key, l);
+        }
 
         li.append(seat, qbox, pbox, btn);
 
@@ -1052,7 +1077,12 @@
         const btn = document.createElement("button");
         btn.className = "btn";
         btn.textContent = "Reserve";
-        btn.addEventListener("click", () => openModal(l));
+        btn.dataset.action = "reserve";
+        if (l.id != null) {
+          const key = String(l.id);
+          btn.dataset.listingId = key;
+          listingsByIdMap.set(key, l);
+        }
 
         li.append(seat, qbox, pbox, btn);
         if (l.public_notes) {
@@ -1062,6 +1092,15 @@
           li.append(notes);
         }
         parkUl.append(li);
+      }
+
+      // One-time delegated click handler on parkUl. Shares the same
+      // resolution path as the seats list — looks up the listing via
+      // `data-listing-id` in `listingsByIdMap`. Gated by `dataset.wired`
+      // so we don't stack handlers across renderParkingTab() calls.
+      if (!parkUl.dataset.wired) {
+        parkUl.dataset.wired = "1";
+        parkUl.addEventListener("click", onReserveDelegatedClick);
       }
 
       // Wire tab toggle once; idempotent — first click handler win.
