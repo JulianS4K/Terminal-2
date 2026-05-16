@@ -32,7 +32,7 @@ Conventions:
 | Service | Purpose | Lane that owns the integration | Where it lives | Secret in vault |
 |---|---|---|---|---|
 | **Supabase** (Postgres + Edge Functions + Vault + Storage + Auth) | Primary DB and runtime | A1 (DB) + D1 (storefront uses anon key) | `hzrizjeaxlqcxfrtczpq` | (anon + service_role keys, exposed via `/api/public/config`) |
-| **Render** | Hosts `vibepass-storefront-test` (`app.py` + `static/store/*`) | **D1 (sole owner)** | service `srv-d8140bnaqgkc73al4asg` | env-side, not vault |
+| **Render** | Hosts `vibepass-storefront-test` (`app.py` + `static/store/*`). **Testing-unified runtime host (2026-05-16, PR #168)** — also mounts D2 dashboard `/api/d2/*` via `app.include_router`; D0 terminal static served from CDN (`vibepass-terminal-test`). See PROJECT_BIBLE.md §2 + CLAUDE.md §4 for the unified architecture + beta migration path. | **D1 (sole owner)** | service `srv-d8140bnaqgkc73al4asg` | env-side, not vault |
 | **TEvo** (TicketEvolution v9 API) | Live ticket inventory + (eventually) order placement | D2 (orders), D1 (storefront reads) | `evo_client.py` + `EvoClient` Python | `TEVO_API_TOKEN`, `TEVO_SECRET` |
 | **SeatGeek** | Marketplace data (orders, listings, performers) | D2 | `seatgeek_*` tables + edge fn `collect` | `SEATGEEK_API_TOKEN` |
 | **SeatData** | Wholesale-channel sales feed | D2 | `seatdata_*` tables | `SEATDATA_API_KEY` |
