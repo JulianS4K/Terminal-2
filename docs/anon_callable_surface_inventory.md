@@ -1,6 +1,6 @@
 # Anon-Callable Surface Inventory
 
-**Owner**: B1 (Security Manager) · **Last full sweep**: 2026-05-15 · **Update cadence**: per-session sweep step 4 (see [docs/b1_operating_constraints.md](b1_operating_constraints.md))
+**Owner**: B1 (Security Manager) · **Last full sweep**: 2026-05-16 (afternoon delta sweep, +3 SECDEF fns) · **Update cadence**: per-session sweep step 4 (see [docs/b1_operating_constraints.md](b1_operating_constraints.md))
 
 Living inventory of every Postgres object reachable via the Supabase `anon` role. The per-session diff catches new exposures before they ship as data leaks.
 
@@ -49,6 +49,9 @@ These are the real privilege-escalation surface — SECDEF bypasses RLS for the 
 | 12 | `_health_check_pg_net_errors` | `()` | §6 missing — F-5 above | Read-only diagnostic. Body queries `net._http_response`. PR #115. |
 | 13 | `get_broker_event_page` | `(p_event_id integer, p_chart_hours integer)` | **Body-gated by `auth.jwt()->>'email'`** | D0 broker terminal RPC. PR #115. §6 guard still recommended (F-6). |
 | 14 | `tickpick_orders_ingest_from_apps_script` | `(p_orders jsonb, p_shared_secret text)` | **Body-gated by shared-secret** (`APPSCRIPT_INGEST_SECRET` via `get_app_secret()`) | Apps Script ingest path. Intentional exception. |
+| 15 | `refresh_sg_broker_sales_event_metrics` | `(p_max_events integer)` | SECDEF, anon EXECUTE, no guard yet | Hourly `:17` cron; populates `seatgeek_event_metrics.sold_*` from `seatgeek_sales_snapshots` (DISTINCT ON sg_sale_id). Caller is service_role cron. Filed as [B1-NEXT-29] for §6 retrofit. |
+| 16 | `sg_seller_orders_queue` | `(p_pages integer, p_statuses text)` | SECDEF, anon EXECUTE, no guard yet | SG seller-side ingest queue. Caller is service_role cron. Filed as [B1-NEXT-30] for §6 retrofit. |
+| 17 | `get_broker_event_page_v2` | `(p_event_id integer, p_chart_hours integer)` | SECDEF, anon EXECUTE, **body-gated by `auth.jwt()->>'email'`** (D0 Phase 2a primary RPC) | D0 broker terminal v2 (replaces v1 #13). Email gate is primary; §6 guard is second belt. Filed as [B1-NEXT-31] for §6 retrofit. |
 
 **Intentional anon-callable, no body gate**: `release_health_check`, `migration_drift_check`, `audit_cross_source_health` are all SECINVOKER (not DEFINER) — they execute with caller's privileges, so anon-call yields anon-level data. Read-only diagnostics, no privilege-escalation surface. Listed under Section 4.
 
