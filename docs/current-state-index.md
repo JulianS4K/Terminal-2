@@ -12,6 +12,9 @@ Single entry-point to the authoritative docs describing prod state today. Prior 
 | [LANE_DISCIPLINE.md](LANE_DISCIPLINE.md) | Per-bot scope; C1 section refactored 2026-05-14 (PR #109) | 2026-05-14 |
 | [BOT_HIERARCHY.md](BOT_HIERARCHY.md) | Push restrictions matrix | — |
 | [MIGRATION_CONVENTIONS.md](MIGRATION_CONVENTIONS.md) | Filename, header, lane rules; PR #55 (2026-05-10) | 2026-05-10 |
+| [PROJECT_BIBLE.md](PROJECT_BIBLE.md) | Operating playbook (rules + hierarchy + RPCs + column landmines + macros + recipes). Read FIRST every session. | 2026-05-16 |
+| [RESOURCES_BIBLE.md](RESOURCES_BIBLE.md) | Living inventory (services, tables, matviews, views, crons, edge fns, vault, extensions, HTTP surface). | 2026-05-16 |
+| [docs/pr_governance.md](docs/pr_governance.md) | PR governance principles: one-concern-per-PR, size targets, squash-merge, branch-update protocol, lane sign-off. **A1-ratified 2026-05-16** (PR #145). | 2026-05-16 |
 | [docs/release-discipline.md](docs/release-discipline.md) | "Apply-then-codify" discipline; PR #94 anti-drift example | — |
 | [docs/bot_chat_conventions.md](docs/bot_chat_conventions.md) | `bot_chat` event types, resolve protocol | 2026-05-15 (NEW) |
 | [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md) | C1's daily 8-step routine | 2026-05-14 |
