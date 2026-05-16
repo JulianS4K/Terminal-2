@@ -4846,7 +4846,10 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
 
 
 @app.get("/api/store/search")
-def store_search(q: str, limit: int = 8):
+def store_search(
+    q: str = Query(..., max_length=200, description="Search term; max 200 chars to prevent multi-MB DoS payloads"),
+    limit: int = 8,
+):
     """Live storefront search. Hits TEvo /v9/searches/suggestions in live
     mode (and cross-joins our SQL for we_own/from_price tagging), or
     ILIKE-searches our tables when STOREFRONT_SQL_ONLY=true.
@@ -6419,7 +6422,7 @@ def _share_to_dict(row: dict) -> dict:
 
 
 @app.post("/api/store/share")
-def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
+def store_share_create(payload: dict = Body(...), user=Depends(require_auth)):
     """Create a revocable share link for one event with saved filters.
 
     Body:
@@ -6506,6 +6509,13 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
     if chosen:
         expires_at = chosen.astimezone(timezone.utc).isoformat()
 
+    # Populate created_by so DELETE + LIST routes can enforce ownership
+    # (closed 2026-05-16 audit S1/S2 — any authed user used to be able to
+    # revoke/enumerate ANY share link by id). When AUTH_DISABLED=true (dev),
+    # require_auth returns None — store NULL and the ownership filters in
+    # those routes correctly skip in that mode.
+    created_by = user["id"] if user else None
+
     # ~12 chars (9 random bytes → 12 url-safe chars) ≈ 72 bits of entropy.
     # Retry once on the astronomically unlikely collision.
     share_id = secrets.token_urlsafe(9)
@@ -6515,6 +6525,7 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
         "filters": persisted,
         "note": note,
         "expires_at": expires_at,
+        "created_by": created_by,
     }
     try:
         ins = db.table("share_links").insert(row).execute()
@@ -6525,7 +6536,12 @@ def store_share_create(payload: dict = Body(...), _=Depends(require_auth)):
         try:
             ins = db.table("share_links").insert(row).execute()
         except Exception as e2:
-            raise HTTPException(500, f"could not create share link: {e2}") from e
+            # Sanitized: log full upstream error server-side, return a stable
+            # generic string so Supabase exception text (table/constraint
+            # names, internal validation) doesn't leak to public callers.
+            # Audit S4 2026-05-16.
+            print(f"[store_share_create] share insert failed twice for {share_id}: {e2!r}")
+            raise HTTPException(500, "could not create share link") from e
 
     saved = (ins.data or [None])[0] or row
     return _share_to_dict(saved)
@@ -6573,21 +6589,31 @@ def store_share_resolve(share_id: str):
 
 
 @app.delete("/api/store/share/{share_id}")
-def store_share_revoke(share_id: str, _=Depends(require_auth)):
+def store_share_revoke(share_id: str, user=Depends(require_auth)):
     """Soft-delete: stamps revoked_at. The row stays so view history survives.
     Idempotent — revoking an already-revoked link is fine.
 
     Auth: require_auth. Closed on 2026-05-11 (security chat) — any unauth
     user used to be able to revoke any share link by id.
+
+    Ownership: closed 2026-05-16 (audit S1) — auth was checked but not
+    ownership, so any authed user could revoke ANY share link by id. Now
+    the update is filtered by created_by = current_user.id. When
+    AUTH_DISABLED=true (dev), require_auth returns None and we skip the
+    ownership filter (matches the rest of the auth-disabled pattern).
     """
     db = require_sb()
-    res = (
+    q = (
         db.table("share_links")
         .update({"revoked_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", share_id)
-        .execute()
     )
+    if user is not None:
+        q = q.eq("created_by", user["id"])
+    res = q.execute()
     if not (res.data or []):
+        # Could be: row doesn't exist, OR row exists but user doesn't own it.
+        # Either way, surface as 404 (don't leak existence to non-owner).
         raise HTTPException(404, "share link not found")
     return {"ok": True, "id": share_id, "revoked_at": (res.data[0] or {}).get("revoked_at")}
 
@@ -6597,17 +6623,26 @@ def store_share_list(
     event_id: int | None = None,
     include_inactive: bool = False,
     limit: int = 50,
-    _=Depends(require_auth),
+    user=Depends(require_auth),
 ):
     """List share links, newest first. Filter by event_id when present.
 
     Auth: require_auth. Closed on 2026-05-11 (security chat) — used to
     leak every share row (event_id, filters, notes, view counts) to anon.
+
+    Ownership: closed 2026-05-16 (audit S2) — auth was checked but the
+    list wasn't filtered by creator, so authed users saw EVERY share
+    (multi-tenant data leak: filters, notes, view metrics from other
+    creators). Now filtered by created_by = current_user.id when auth
+    is enabled. AUTH_DISABLED=true (dev) skips the filter — admins/dev
+    see everything, matching existing auth-disabled semantics.
     """
     db = require_sb()
     q = db.table("share_links").select(
         "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"
     ).order("created_at", desc=True).limit(min(max(limit, 1), 200))
+    if user is not None:
+        q = q.eq("created_by", user["id"])
     if event_id:
         q = q.eq("event_id", event_id)
     if not include_inactive:
