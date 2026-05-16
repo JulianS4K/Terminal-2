@@ -2,6 +2,24 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
+## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
+
+**Before doing anything, read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).** It consolidates the 80% you need from this file + LANE_DISCIPLINE.md + BOT_HIERARCHY.md + MIGRATION_CONVENTIONS.md + data-source docs into a single 400-line reference. Saves ~5× the tokens vs reading every governance file at session start.
+
+The bible has:
+- Hard rules (no-mutation, read-only-upstream, lane scope)
+- Bot hierarchy + Render service ownership per lane
+- Canonical SECDEF RPCs (`get_broker_event_page_v2`, matchers, bot_chat_log, etc.)
+- Key tables + freshness expectations + **column-name landmines** (catch schema bugs before authoring)
+- MCP tool scope per lane
+- SQL macros / common patterns (cancel filter, SG dedupe, sports gate, outdoor gate, email gate, cron wrapper)
+- Workflow recipes ("I want to author a migration", "I want to wire a UI panel", etc.)
+- Recent landmark migrations (don't re-do work already shipped)
+- Drift watchlist (known gaps — don't waste cycles rediscovering)
+- Self-check (9-item pre-task checklist)
+
+This file (CLAUDE.md) remains the canonical source for security rules + lockdown invariants. The bible is the operational handbook bots read once per session.
+
 Per-lane detail in `LANE_DISCIPLINE.md` (per-bot scope) + `BOT_HIERARCHY.md` (push restrictions matrix). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md` (referenced in the top matter of `LANE_DISCIPLINE.md`).
 
 ## Global operator rules (2026-05-13 lockdown)
