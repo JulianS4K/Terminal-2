@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Privacy — VibePass</title>
+  <link rel="stylesheet" href="/static/store/style.css" />
+</head>
+<body data-page="privacy">
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <div class="badge mvp">MVP · browse only · no real purchases</div>
+  </header>
+
+  <main class="wrap legal-wrap">
+    <a class="back" href="/store">← back to events</a>
+    <h1>Privacy</h1>
+    <p class="legal-lede">
+      This is placeholder copy for the MVP. Replace with your organization's
+      finalized privacy notice — reviewed by counsel — before any real
+      transactions are processed.
+    </p>
+
+    <h2>What we collect</h2>
+    <p>
+      Today the storefront is a browse-only MVP and does not collect personal
+      information beyond standard request logs (IP address, user-agent,
+      timestamp). Share-link creation and revocation requires an
+      authenticated session and stores the creating user's identifier on the
+      share row. No payment information is collected.
+    </p>
+
+    <h2>How we use it</h2>
+    <p>
+      Request logs are used to operate and secure the service. Share-link
+      ownership is used to scope what a given account can revoke or view.
+    </p>
+
+    <h2>Third parties</h2>
+    <p>
+      The storefront fetches event metadata and listings from Ticket
+      Evolution (TEvo) for catalog and detail views. The storefront's own
+      database is hosted on Supabase. Operational analytics, error
+      reporting, and any future payment processor will be disclosed here
+      before they ship.
+    </p>
+
+    <h2>Your rights</h2>
+    <p>
+      For data access, correction, or deletion requests, contact
+      <a href="mailto:privacy@vibepass.example">privacy@vibepass.example</a>
+      (replace with real address before launch).
+    </p>
+
+    <p class="muted legal-meta">Last updated: 2026-05-16. This page is a placeholder.</p>
+  </main>
+
+  <footer class="foot">
+    <nav class="foot-nav">
+      <a href="/store/about">About</a>
+      <a href="/store/privacy">Privacy</a>
+      <a href="/store/terms">Terms</a>
+    </nav>
+    <span class="foot-meta">&copy; 2026 VibePass &middot; MVP preview</span>
+  </footer>
+</body>
+</html>

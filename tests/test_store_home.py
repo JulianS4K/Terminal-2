@@ -551,6 +551,45 @@ def test_store_html_response_has_no_cache_header(store_home_client):
     )
 
 
+def test_legal_pages_render(monkeypatch):
+    """Sprint 3 trust + legal pages — /store/about, /store/privacy,
+    /store/terms — all 200 on GET, no JS dependency. Smoke that the
+    HTML files exist on disk and the routes are wired."""
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = client.get(path)
+        assert r.status_code == 200, f"GET {path} expected 200, got {r.status_code}"
+        body = r.text.lower()
+        # Must include the page-specific h1 (about / privacy / terms).
+        h1_word = path.rsplit("/", 1)[1]
+        assert f"<h1>{h1_word.title()}" in r.text or h1_word in body, (
+            f"{path} body should reference '{h1_word}'"
+        )
+
+
+def test_legal_pages_have_no_cache_revalidate_header(store_home_client):
+    """Legal pages route through _render_storefront_page so they inherit
+    the same Cache-Control: no-cache, must-revalidate header. Guards
+    against future regressions where a separate handler bypasses the
+    cache-control helper."""
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = store_home_client.get(path)
+        cc = r.headers.get("cache-control", "").lower()
+        assert "no-cache" in cc, (
+            f"{path} Cache-Control must include no-cache; got: {cc!r}"
+        )
+
+
+def test_legal_pages_respond_to_head(monkeypatch):
+    """HEAD on the new legal routes returns 200 (same uptime-monitor
+    reason as the other storefront pages — HEAD probes shouldn't 405)."""
+    monkeypatch.setattr(app_module, "_read_storefront_html", lambda name: "<html>ok</html>")
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        r = client.head(path)
+        assert r.status_code == 200, f"HEAD {path} expected 200, got {r.status_code}"
+
+
 def test_all_storefront_html_routes_revalidate(store_home_client):
     """Every served /store/* HTML shell — index, event, share, shares —
     must carry the no-cache header. Catches a regression where someone
@@ -710,3 +749,166 @@ def test_movers_cache_failed_compute_doesnt_poison(monkeypatch):
     assert r2.status_code == 200
     assert r2.json()["count"] == 2
     assert app_module._movers_cache, "successful compute writes to cache"
+
+
+# ---------- /api/store/movers velocity-freshness gate ----------
+
+def test_movers_drops_tix_d24h_when_velocity_stale(monkeypatch):
+    """When v_event_velocity_windows.tevo_now_at is older than the
+    freshness threshold (3h), tix_d24h is dropped from the candidate
+    row. This guards against the collector-cadence gap where d1h and
+    d24h subqueries both fall back to the same ancient sample and
+    surface a misleading 'N sold today' badge."""
+    from datetime import datetime, timezone, timedelta
+
+    stale_ts = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    fresh_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+
+    # Two events: one with stale velocity, one with fresh velocity.
+    # Both should NOT be classified premium (price < $500) so the only
+    # path to a "selling_fast" signal is via fresh velocity.
+    fake_metrics = [
+        {"event_id": 1001, "owned_tickets_count": 100, "owned_groups_count": 10, "retail_min": 25.0},
+        {"event_id": 1002, "owned_tickets_count": 100, "owned_groups_count": 10, "retail_min": 25.0},
+    ]
+    fake_events = [
+        {"id": 1001, "name": "Stale event", "occurs_at_local": "2026-06-01T19:00:00-04:00",
+         "venue_name": "MSG", "venue_location": "New York, NY",
+         "primary_performer_id": 16303, "primary_performer_name": "Yankees"},
+        {"id": 1002, "name": "Fresh event", "occurs_at_local": "2026-06-02T19:00:00-04:00",
+         "venue_name": "MSG", "venue_location": "New York, NY",
+         "primary_performer_id": 16303, "primary_performer_name": "Yankees"},
+    ]
+    fake_velocity = [
+        {"tevo_event_id": 1001, "tevo_tix_now": 100, "tevo_tix_d24h": -500,
+         "tevo_getin_now": 10.0, "tevo_getin_d24h_pct": -20.0, "tevo_now_at": stale_ts},
+        {"tevo_event_id": 1002, "tevo_tix_now": 100, "tevo_tix_d24h": -500,
+         "tevo_getin_now": 10.0, "tevo_getin_d24h_pct": -20.0, "tevo_now_at": fresh_ts},
+    ]
+    fake_lifecycle = [
+        {"event_id": 1001, "is_active": True},
+        {"event_id": 1002, "is_active": True},
+    ]
+
+    table_map = {
+        "latest_event_metrics": fake_metrics,
+        "events": fake_events,
+        "event_lifecycle": fake_lifecycle,
+        "v_event_velocity_windows": fake_velocity,
+    }
+
+    # Reuse the FakeSupabase pattern from test_store_home — minimal table stub.
+    class _T:
+        def __init__(self, rows): self._rows = rows
+        def select(self, *_, **__): return self
+        def in_(self, _col, _vals): return self
+        def execute(self):
+            class R:
+                def __init__(s, data): s.data = data
+            return R(self._rows)
+        def gt(self, *_, **__): return self
+        def gte(self, *_, **__): return self
+        def lt(self, *_, **__): return self
+        def lte(self, *_, **__): return self
+        def eq(self, *_, **__): return self
+        def is_(self, *_, **__): return self
+        def not_(self, *_, **__): return self
+        def or_(self, *_, **__): return self
+        def order(self, *_, **__): return self
+        def limit(self, *_, **__): return self
+        def neq(self, *_, **__): return self
+
+    class _DB:
+        def table(self, name): return _T(table_map.get(name, []))
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _DB())
+    monkeypatch.setattr(app_module, "_bulk_performer_assets", lambda *a, **k: {})
+    # Bypass the cache so we hit _compute_movers directly.
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+
+    client = TestClient(app_module.app)
+    r = client.get("/api/store/movers?city=NYC&days=30&limit=10")
+    assert r.status_code == 200, r.text
+
+    by_id = {e["id"]: e for e in r.json()["events"]}
+
+    # Stale event (1001): velocity-suspect, so tix_d24h must be None and
+    # signal must NOT be selling_fast (no velocity-derived signal allowed).
+    # It also shouldn't make the cut as a candidate (no signal, no
+    # meaningful d24h activity since d24h was dropped).
+    assert 1001 not in by_id, (
+        "stale-velocity event must NOT surface — tix_d24h suppressed and no signal"
+    )
+
+    # Fresh event (1002): velocity trusted; -500 ticket drop fires selling_fast.
+    assert 1002 in by_id, "fresh-velocity event should make the strip"
+    assert by_id[1002]["signal"] == "selling_fast"
+    assert by_id[1002]["tix_d24h"] == -500
+
+
+def test_movers_response_no_longer_includes_tix_d1h(monkeypatch):
+    """tix_d1h was removed from the response (was equal to tix_d24h
+    when collector cadence is the only available sample, misleading).
+    Renderer never read it. Guard against accidental re-introduction."""
+    from datetime import datetime, timezone, timedelta
+    fresh_ts = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+
+    fake_metrics = [{"event_id": 2001, "owned_tickets_count": 50, "owned_groups_count": 5, "retail_min": 30.0}]
+    fake_events = [{"id": 2001, "name": "Test", "occurs_at_local": "2026-06-01T19:00:00-04:00",
+                    "venue_name": "MSG", "venue_location": "New York, NY",
+                    "primary_performer_id": 16303, "primary_performer_name": "Yankees"}]
+    fake_velocity = [{"tevo_event_id": 2001, "tevo_tix_now": 50, "tevo_tix_d24h": -80,
+                      "tevo_getin_now": 12.0, "tevo_getin_d24h_pct": -5.0, "tevo_now_at": fresh_ts}]
+    fake_lifecycle = [{"event_id": 2001, "is_active": True}]
+    table_map = {"latest_event_metrics": fake_metrics, "events": fake_events,
+                 "event_lifecycle": fake_lifecycle, "v_event_velocity_windows": fake_velocity}
+
+    class _T:
+        def __init__(self, rows): self._rows = rows
+        def select(self, *_, **__): return self
+        def in_(self, _col, _vals): return self
+        def execute(self):
+            class R:
+                def __init__(s, data): s.data = data
+            return R(self._rows)
+        def gt(self, *_, **__): return self
+        def gte(self, *_, **__): return self
+        def lt(self, *_, **__): return self
+        def lte(self, *_, **__): return self
+        def eq(self, *_, **__): return self
+        def is_(self, *_, **__): return self
+        def not_(self, *_, **__): return self
+        def or_(self, *_, **__): return self
+        def order(self, *_, **__): return self
+        def limit(self, *_, **__): return self
+        def neq(self, *_, **__): return self
+
+    class _DB:
+        def table(self, name): return _T(table_map.get(name, []))
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _DB())
+    monkeypatch.setattr(app_module, "_bulk_performer_assets", lambda *a, **k: {})
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+
+    client = TestClient(app_module.app)
+    r = client.get("/api/store/movers?city=NYC&days=30&limit=10")
+    assert r.status_code == 200
+    for ev in r.json()["events"]:
+        assert "tix_d1h" not in ev, (
+            f"tix_d1h must not appear in mover response; got keys: {list(ev.keys())}"
+        )
+
+
+def test_store_html_routes_respond_to_head(monkeypatch):
+    """HEAD requests on the 4 production storefront HTML routes return
+    200 (not 405). Uptime monitors that default to HEAD probes were
+    alerting; PR adds HEAD support via @app.api_route(..., methods=...)."""
+    monkeypatch.setattr(app_module, "_read_storefront_html", lambda name: "<html>ok</html>")
+    client = TestClient(app_module.app)
+    for path in ("/store", "/store/event/123", "/s/test-id", "/store/shares"):
+        r = client.head(path)
+        assert r.status_code == 200, (
+            f"HEAD {path} expected 200, got {r.status_code}"
+        )

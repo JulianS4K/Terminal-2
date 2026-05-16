@@ -976,12 +976,65 @@ a.perf-chip:hover {
 
 /* ----- Footer ----- */
 .foot {
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   padding: 24px;
   color: var(--muted);
   font-size: 12px;
   border-top: 1px solid var(--line);
   margin-top: 60px;
+}
+.foot-nav {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.foot-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
+  transition: color .12s;
+}
+.foot-nav a:hover { color: var(--text); }
+.foot-meta { font-size: 11px; opacity: 0.7; }
+
+/* ----- Legal / static-content pages (about, privacy, terms) ----- */
+.legal-wrap {
+  max-width: 720px;
+}
+.legal-wrap h1 {
+  margin: 16px 0 4px;
+  font-size: 28px;
+  font-weight: 700;
+}
+.legal-wrap h2 {
+  margin: 28px 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+.legal-wrap p {
+  margin: 10px 0;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.legal-wrap .legal-lede {
+  color: var(--muted);
+  font-size: 15px;
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.legal-wrap .legal-meta {
+  margin-top: 32px;
+  font-size: 12px;
+}
+.legal-wrap a {
+  color: var(--accent-2);
+  text-decoration: underline;
 }
 
 /* ----- Movers strip (homepage NYC widget) -----

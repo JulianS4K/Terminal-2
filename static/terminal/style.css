@@ -542,7 +542,13 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   gap: 24px;
   align-items: start;
 }
-.hero-main .title { font-size: 22px; font-weight: 600; margin: 0 0 4px; color: var(--text); }
+.hero-main { min-width: 0; }  /* allow long titles to wrap instead of pushing hero-side off-grid */
+.hero-main .title {
+  font-size: 22px; font-weight: 600; margin: 0 0 4px; color: var(--text);
+  line-height: 1.15;
+  /* Wrap on any whitespace; never overflow the grid column. */
+  overflow-wrap: anywhere;
+}
 .hero-main .meta  { color: var(--muted); font-family: var(--mono); font-size: 12px; margin: 0 0 8px; }
 .hero-main .meta .dot { margin: 0 8px; color: var(--dim); }
 .hero-main .badges { display: flex; gap: 6px; flex-wrap: wrap; }

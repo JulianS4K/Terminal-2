@@ -295,6 +295,8 @@ Examples:
 
 ## 9. Review checklist (audit lane uses this)
 
+> **See also**: [`docs/pr_governance.md`](docs/pr_governance.md) — A1-ratified 2026-05-16. Codifies one-concern-per-PR, size targets, squash-merge convention, branch-update protocol, lane sign-off requirements, and self-merge anti-pattern. Read the governance doc for principles; this checklist is the mechanical pre-merge audit.
+
 Before merging any non-audit-lane PR, the audit lane verifies:
 
 ### File hygiene
