@@ -18,7 +18,7 @@
   <main class="wrap">
     <a class="back" href="/store">← back to events</a>
 
-    <div id="status" class="status">Loading event…</div>
+    <div id="status" class="status" aria-live="polite">Loading event…</div>
 
     <section id="header" class="event-head" hidden>
       <!-- Venue hero image — subtle background banner, populated when
@@ -59,7 +59,12 @@
 
     <section id="body" class="event-body" hidden>
       <aside class="map">
-        <img id="seatMap" alt="seating chart" />
+        <!-- 1x1 transparent placeholder so the browser doesn't flash a
+             broken-image icon between page-load and JS setting img.src
+             from the configurations API. JS replaces the src attribute
+             once the seat-map URL is known. -->
+        <img id="seatMap" alt="seating chart"
+             src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" />
       </aside>
 
       <div class="listings">

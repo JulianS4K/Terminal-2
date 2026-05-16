@@ -286,7 +286,7 @@ function renderDashboard(domain) {
           </label>
           <label class="toolbar-toggle">
             <input type="checkbox" id="chk-auto-refresh" checked />
-            <span title="Pauses the 5-min poll while you're working with the table">Auto-refresh</span>
+            <span title="Master pause for ALL auto-polling (orders 5min, cron-freshness 60s, metrics 60s, live sales feed 30s). Manual Refresh + tab-switch first-load still work.">Auto-refresh</span>
           </label>
           <span class="toolbar-meta" id="last-refreshed">last refresh: never</span>
         </div>
@@ -298,7 +298,7 @@ function renderDashboard(domain) {
           <div class="filter-group">
             <span class="toolbar-meta">Source:</span>
             <label><input type="checkbox" class="flt-source" value="evo"      checked /> evo</label>
-            <label><input type="checkbox" class="flt-source" value="seatgeek" checked /> sg</label>
+            <label><input type="checkbox" class="flt-source" value="seatgeek_sales" checked /> sg market</label>
             <label><input type="checkbox" class="flt-source" value="tickpick" checked /> tickpick</label>
             <label><input type="checkbox" class="flt-source" value="vivid"    checked /> vivid</label>
           </div>
@@ -411,6 +411,24 @@ function renderDashboard(domain) {
       CURRENT_PAGE = 1;
       loadOrders();
     });
+  });
+
+  // Auto-refresh checkbox is the master pause for all 4 polling timers
+  // (orders 5min, cron-freshness 60s, metrics 60s, sales-feed 30s).
+  // Each timer's setInterval body checks _isAutoRefreshOn() and early-
+  // returns when unchecked. When the operator flips it back ON, fire one
+  // immediate fetch on the active tab so they see fresh data without
+  // waiting up to 5 min for the next orders tick.
+  document.getElementById("chk-auto-refresh")?.addEventListener("change", (e) => {
+    if (!e.target.checked) return;
+    const active = document.querySelector(".tab.active")?.dataset.tab;
+    if (active === "orders") {
+      if (CURRENT_PAGE === 1 && !_DETAIL_OPEN) loadOrders({ silent: true });
+      refreshCronFreshness();
+    } else if (active === "metrics") {
+      loadMetrics();
+      loadSalesFeed();
+    }
   });
 
   // Re-render (not re-fetch) when the user toggles Hide-Past-12h or any of
@@ -529,11 +547,17 @@ function activateTab(name) {
   if (name === "health") loadHealth();
 }
 
+// Master pause gate for ALL polling timers (orders 5min, cron-freshness 60s,
+// metrics 60s, sales-feed 30s). Defaults to ON if the checkbox hasn't
+// rendered yet so the boot-time first ticks still fire.
+function _isAutoRefreshOn() {
+  return document.getElementById("chk-auto-refresh")?.checked !== false;
+}
+
 function startOrdersAutoRefresh() {
   if (_ORDERS_REFRESH_TIMER) return;
   _ORDERS_REFRESH_TIMER = setInterval(() => {
-    // Operator paused auto-refresh via the toolbar toggle? Skip silently.
-    if (!document.getElementById("chk-auto-refresh")?.checked) return;
+    if (!_isAutoRefreshOn()) return;
     // Skip a tick while the row-detail panel is open — silently yanking
     // a card the operator is reading would be hostile UX.
     if (_DETAIL_OPEN) return;
@@ -546,10 +570,13 @@ function startOrdersAutoRefresh() {
   }, ORDERS_AUTO_REFRESH_MS);
   // Cron freshness poll — separate from orders. Refresh the chip's "last
   // cron: Xm ago" line every 60s so the operator sees cron health in
-  // near-real-time without dragging the orders feed.
+  // near-real-time without dragging the orders feed. Gated by the same
+  // master pause as the orders bulk poll.
   if (!_CRON_FRESHNESS_TIMER) {
-    refreshCronFreshness();   // immediate first hit
-    _CRON_FRESHNESS_TIMER = setInterval(refreshCronFreshness, CRON_FRESHNESS_POLL_MS);
+    if (_isAutoRefreshOn()) refreshCronFreshness();   // immediate first hit
+    _CRON_FRESHNESS_TIMER = setInterval(() => {
+      if (_isAutoRefreshOn()) refreshCronFreshness();
+    }, CRON_FRESHNESS_POLL_MS);
   }
 }
 
@@ -574,11 +601,18 @@ let _SALES_FEED_REFRESH_TIMER = null;
 let _LAST_SALES_FEED_IDS = new Set();        // for flash-on-new highlighting
 
 function startMetricsAutoRefresh() {
+  // Both metrics timers obey the same master pause (_isAutoRefreshOn) as
+  // the orders bulk poll. When the checkbox is unchecked, ticks fire on
+  // schedule but skip the fetch.
   if (!_METRICS_REFRESH_TIMER) {
-    _METRICS_REFRESH_TIMER = setInterval(loadMetrics, METRICS_AUTO_REFRESH_MS);
+    _METRICS_REFRESH_TIMER = setInterval(() => {
+      if (_isAutoRefreshOn()) loadMetrics();
+    }, METRICS_AUTO_REFRESH_MS);
   }
   if (!_SALES_FEED_REFRESH_TIMER) {
-    _SALES_FEED_REFRESH_TIMER = setInterval(loadSalesFeed, SALES_FEED_REFRESH_MS);
+    _SALES_FEED_REFRESH_TIMER = setInterval(() => {
+      if (_isAutoRefreshOn()) loadSalesFeed();
+    }, SALES_FEED_REFRESH_MS);
   }
 }
 
@@ -1327,24 +1361,29 @@ function renderReadableOrder(source, d) {
       opt("Auto-flags",      autoFlags),
       opt("Payment state",   payment.state ? `${payment.state} (${payment.type || "?"})` : null),
     ].join("");
-  } else if (source === "seatgeek") {
-    // SG seller_order/{id} payload: event.name + event.date + event.time
-    // (not event.title / event.datetime_local). Quantity lives under
-    // listing, not at the top level. Combine date+time into ISO for the
-    // formatDate helper.
-    const ev = d.event || {};
-    const listing = d.listing || {};
-    const evDate = ev.date ? `${ev.date}T${ev.time || "00:00:00"}` : (ev.datetime_local || ev.datetime_utc);
+  } else if (source === "seatgeek_sales") {
+    // Broker firehose row (flat shape, read direct from
+    // public.seatgeek_sales_snapshots). Event name/venue are not joined
+    // in the deep fetch; they're already visible in the parent row from
+    // unified_orders. Focus the detail panel on sale-specific fields.
+    const total = (d.broadcast_price != null && d.quantity)
+      ? Number(d.broadcast_price) * Number(d.quantity || 1)
+      : null;
     rows = [
-      row("Order ID",      d.order_id || d.id),
-      row("Event",         ev.name || ev.title || d.event_title),
-      row("Event date",    formatDate(evDate)),
-      row("Venue",         ev.venue),
-      row("Section / Row", listing.section ? `${listing.section} / ${listing.row || "—"}` : null),
-      row("Status",        d.status),
-      row("Quantity",      listing.quantity || d.quantity),
-      row("Total",         d.total),
-      row("Delivery",      d.delivery_method || d.delivery),
+      row("Sale ID",          d.sg_sale_id || d.id),
+      row("SG event ID",      d.sg_event_id),
+      row("AQ event",         d.aq_short_event_id),
+      row("Observed at",      formatDate(d.sale_at_utc || d.pulled_at)),
+      row("Section / Row",    d.section ? `${d.section} / ${d.row || "—"}` : null),
+      row("Quantity",         d.quantity),
+      row("Broadcast price",  d.broadcast_price),
+      opt("Approx. total",    total != null ? total.toFixed(2) : null),
+      opt("Stock type",       d.stock_type),
+      opt("Delivery",         d.delivery_method),
+      opt("In-hand date",     d.in_hand_date),
+      opt("Instant?",         d.is_instant != null ? String(d.is_instant) : null),
+      opt("Seller notes",     d.seller_notes),
+      opt("Venue (short)",    d.venue_short_id),
     ].join("");
   }
   return `<table class="kv">${rows}</table>`;

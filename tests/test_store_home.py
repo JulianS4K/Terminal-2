@@ -480,3 +480,233 @@ def test_or_ilike_clause_escapes_embedded_double_quote():
     # The pattern contains both a comma and a double quote — both get
     # quoting treatment. The embedded " is doubled to "".
     assert out == 'name.ilike."%He said ""yes"",%"'
+
+
+# ---------- Storefront cache-bust helper ----------
+
+def test_store_home_html_includes_version_query_string(store_home_client, monkeypatch):
+    """The /store HTML must rewrite static asset URLs to include `?v=<sha>`
+    so browser caches invalidate on every deploy. Without this, frontend
+    fixes appear undeployed for hours from the operator's perspective."""
+    # Force a deterministic version for the test by clearing the in-memory
+    # cache and stubbing the version constant.
+    monkeypatch.setattr(app_module, "_STOREFRONT_VERSION", "abc1234")
+    monkeypatch.setattr(app_module, "_STOREFRONT_HTML_CACHE", {})
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    body = r.text
+    assert '/static/store/store.js?v=abc1234"' in body, (
+        "store.js URL must include ?v=<sha> query string"
+    )
+    assert '/static/store/style.css?v=abc1234"' in body, (
+        "style.css URL must include ?v=<sha> query string"
+    )
+    # Negative: the un-versioned URL should not appear anywhere in the
+    # served HTML (we don't want a half-rewritten shell).
+    assert '/static/store/store.js"' not in body
+    assert '/static/store/style.css"' not in body
+
+
+def test_build_storefront_version_prefers_render_git_commit(monkeypatch):
+    """Render auto-sets RENDER_GIT_COMMIT to the full SHA on every deploy;
+    we use the first 7 chars."""
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "deadbeefcafe0123456789abcdef")
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    assert app_module._build_storefront_version() == "deadbee"
+
+
+def test_build_storefront_version_falls_back_to_git_commit(monkeypatch):
+    """Defensive fallback for CI/workflows that set GIT_COMMIT instead."""
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.setenv("GIT_COMMIT", "1234567890abcdef")
+    assert app_module._build_storefront_version() == "1234567"
+
+
+def test_build_storefront_version_dev_when_unset(monkeypatch):
+    """Both env vars unset → 'dev' literal. Local-dev behavior; in prod
+    Render always sets RENDER_GIT_COMMIT so this branch only fires by
+    accident."""
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    assert app_module._build_storefront_version() == "dev"
+
+
+def test_store_html_response_has_no_cache_header(store_home_client):
+    """Bootstrap-safety: /store HTML must include Cache-Control: no-cache
+    so browsers revalidate on every page load and never get trapped on
+    stale HTML pointing at un-versioned asset URLs.
+
+    Without this header, a browser that cached /store before a cache-bust
+    shipped would keep loading the old JS via the un-versioned URL until
+    its heuristic cache expires (could be hours/days). The `?v=<sha>`
+    query string on the asset URLs in PR #121 only helps once the BROWSER
+    re-fetches /store and sees the new HTML — this header forces that
+    re-fetch on every request.
+    """
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    cc = r.headers.get("cache-control", "")
+    assert "no-cache" in cc.lower(), (
+        f"Cache-Control must include no-cache; got: {cc!r}"
+    )
+
+
+def test_all_storefront_html_routes_revalidate(store_home_client):
+    """Every served /store/* HTML shell — index, event, share, shares —
+    must carry the no-cache header. Catches a regression where someone
+    swaps one route back to FileResponse or raw HTMLResponse without
+    realizing the helper enforces revalidate.
+    """
+    # /store/event/{id} works without DB because the route only reads the
+    # static HTML shell — the event_id is consumed by JS at runtime.
+    paths = ["/store", "/store/event/3346000", "/s/test-id", "/store/shares"]
+    for path in paths:
+        r = store_home_client.get(path)
+        assert r.status_code == 200, f"{path} → {r.status_code}"
+        cc = r.headers.get("cache-control", "")
+        assert "no-cache" in cc.lower(), (
+            f"{path}: Cache-Control missing no-cache; got: {cc!r}"
+        )
+
+
+# ---------- /api/store/movers stale-while-revalidate cache ----------
+#
+# The movers route refactor in PR #144 wraps the ~1s compute path in a
+# 5-min SWR cache so the homescreen only pays the compute cost once per
+# (city, days, limit) tuple per TTL. These tests mock `_compute_movers`
+# directly (the heavy SQL+joins path) so we can assert the cache wrapper
+# semantics independent of the compute implementation.
+
+def _setup_movers_cache_test(monkeypatch, ttl=300.0):
+    """Reset cache state + provide a counting fake compute. Returns the
+    counter dict so the caller can assert call counts."""
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_TTL", ttl)
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    counter = {"n": 0}
+
+    def _fake_compute(db, city, day_cap, cap):
+        counter["n"] += 1
+        return {
+            "city": city,
+            "days": day_cap,
+            "count": counter["n"],  # encode call number so we can detect fresh vs stale
+            "events": [{"id": counter["n"], "name": f"call {counter['n']}"}],
+        }
+    monkeypatch.setattr(app_module, "_compute_movers", _fake_compute)
+    return counter
+
+
+def test_movers_cache_cold_miss_computes(monkeypatch):
+    """First-ever request for a (city, days, limit) tuple computes
+    synchronously, populates the cache, returns fresh payload."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    r = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    assert r.status_code == 200
+    assert counter["n"] == 1, "cold miss must call _compute_movers exactly once"
+    body = r.json()
+    assert body["count"] == 1  # first call's encoded counter
+    assert body["city"] == "NYC"
+
+    # Cache populated under the expected key.
+    assert app_module._movers_cache, "cache must be non-empty after cold-miss compute"
+
+
+def test_movers_cache_fresh_hit_skips_compute(monkeypatch):
+    """Second request within TTL returns cached payload without invoking
+    _compute_movers again. This is the whole point — eliminate the ~1s
+    compute on every homescreen load past the first."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    r2 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+
+    assert counter["n"] == 1, (
+        f"second call within TTL must NOT recompute; saw {counter['n']} calls"
+    )
+    # Both responses must be byte-identical (same cached object).
+    assert r1.json() == r2.json()
+    assert r2.json()["count"] == 1  # still the first call's payload
+
+
+def test_movers_cache_separate_keys_compute_independently(monkeypatch):
+    """Cache key includes (city, days, limit) — different tuples must
+    each get their own compute on cold-miss."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    r2 = client.get("/api/store/movers?city=NYC&days=14&limit=8")  # different days
+    r3 = client.get("/api/store/movers?city=NYC&days=21&limit=4")  # different limit
+
+    assert counter["n"] == 3, (
+        f"three distinct keys must trigger three computes; saw {counter['n']}"
+    )
+    # r1 and a hypothetical r4 with the same params would share — confirm:
+    r4 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    assert counter["n"] == 3, "r4 hits the r1 cache slot, no new compute"
+    assert r4.json() == r1.json()
+
+
+def test_movers_cache_key_folds_city_case(monkeypatch):
+    """'nyc' / 'NYC' / 'New York' map to the same cache slot via the
+    canonical key (uppercased). Prevents per-casing duplicate cache entries."""
+    counter = _setup_movers_cache_test(monkeypatch)
+    client = TestClient(app_module.app)
+
+    client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    client.get("/api/store/movers?city=nyc&days=21&limit=8")
+    client.get("/api/store/movers?city=Nyc&days=21&limit=8")
+    # All three collapse to key "NYC|21|8". Note: the route maps NEW YORK
+    # + NEW YORK CITY through the same venue_patterns, so they ALSO
+    # cache-key to NYC. But that mapping happens inside _compute_movers,
+    # NOT the cache key — so 'NEW YORK' would key as 'NEW YORK|21|8'
+    # separately. This test only proves case-insensitive folding on a
+    # single token; alias-folding would be a separate cache-key change.
+    assert counter["n"] == 1, (
+        f"case-insensitive city should share one cache slot; saw {counter['n']} computes"
+    )
+
+
+def test_movers_cache_failed_compute_doesnt_poison(monkeypatch):
+    """If _compute_movers raises on cold-miss, the exception propagates
+    (no cached payload to fall back to) AND no stale entry is written
+    to the cache. Next call retries cleanly."""
+    monkeypatch.setattr(app_module, "_movers_cache", {})
+    monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+
+    counter = {"n": 0}
+    def _flaky_compute(db, city, day_cap, cap):
+        counter["n"] += 1
+        if counter["n"] == 1:
+            raise RuntimeError("simulated compute failure")
+        return {"city": city, "days": day_cap, "count": counter["n"], "events": []}
+    monkeypatch.setattr(app_module, "_compute_movers", _flaky_compute)
+
+    client = TestClient(app_module.app)
+
+    # First call: compute raises — endpoint should 5xx (any server-error
+    # status; FastAPI returns 502 in this configuration, 500 in others —
+    # we don't care which, only that the cache wasn't poisoned).
+    try:
+        r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+        assert 500 <= r1.status_code < 600, (
+            f"compute failure must surface as 5xx; got {r1.status_code}"
+        )
+    except RuntimeError:
+        pass  # acceptable — TestClient sometimes re-raises sync handler exceptions
+
+    assert not app_module._movers_cache, (
+        "failed cold-miss compute must NOT write a poisoned entry into the cache"
+    )
+
+    # Second call: succeeds and caches.
+    r2 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    assert r2.status_code == 200
+    assert r2.json()["count"] == 2
+    assert app_module._movers_cache, "successful compute writes to cache"

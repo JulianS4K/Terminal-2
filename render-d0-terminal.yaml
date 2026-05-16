@@ -24,6 +24,16 @@ services:
     buildCommand: 'echo "static assets — no build step"'
     publishPath: static/terminal
 
+    # Path rewrites — the HTML in static/terminal/*.html references assets
+    # by their canonical app.py path (e.g. /static/terminal/style.css), but
+    # publishPath strips the static/terminal/ prefix on the CDN. Rewrite the
+    # /static/terminal/* requests to the unprefixed CDN root so the same
+    # HTML works on the CDN, on storefront-test, and on localhost.
+    routes:
+      - type: rewrite
+        source: /static/terminal/*
+        destination: /:splat
+
     # No env vars needed for static frontend. If D0 wires up
     # client-side config (Supabase anon key for read-only data fetch),
     # add them here with `sync: false` so they prompt on provisioning.
