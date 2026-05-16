@@ -51,7 +51,7 @@ Per `LANE_DISCIPLINE.md §B1`:
 - `supabase/functions/_shared/cron-auth.ts`
 - `KANBAN.md` SECURITY BACKLOG section
 - This file (`docs/b1_operating_constraints.md`)
-- `docs/anon_callable_surface_inventory.md`, `docs/edge_function_auth_inventory.md` (B1's living inventories)
+- `docs/anon_callable_surface_inventory.md`, `docs/edge_function_auth_inventory.md`, `docs/markdown_inventory.md` (B1's living inventories — anon surface, edge-fn auth posture, repo `.md` catalogue)
 - `.github/workflows/secret-scan.yml`, `.github/workflows/secdef-lint.yml` (B1-authored CI workflows)
 - Per-lane patches for security CRIT/HIGH (cross-lane allowed; see §"Cross-lane patch protocol" below)
 
@@ -118,6 +118,7 @@ Run at session start. Total runtime ~5 min. All read-only.
 | 14 | Code-scanning / secret-scanning alerts | `gh api repos/JulianS4K/Terminal-2/code-scanning/alerts?state=open` + `gh api .../secret-scanning/alerts?state=open` + `gh api .../dependabot/alerts?state=open` | All triaged this session (resolved or filed as B1-NEXT) |
 | 15 | **Bible-drift spot-check** (added 2026-05-16) | Pick 1 canonical doc (`PROJECT_BIBLE.md` / `RESOURCES_BIBLE.md` / `CLAUDE.md` / `BOT_HIERARCHY.md` / `LANE_DISCIPLINE.md` / `MIGRATION_CONVENTIONS.md` / `SYNC_PROTOCOL.md`); pick 3 concrete claims from it (a referenced function, table, RPC, service ID, channel ID, function-call signature, or migration timestamp); verify each against live state via `pg_proc` / `pg_tables` / `gh api` / `mcp__render__*` / `cron.job`. Bibles rotate; over time every section gets touched. | 3 of 3 verified. Else: open drift PR or file `flag` to bible owner (A1 for current bibles). |
 | 16 | **Communication-channel health** (added 2026-05-16) | (a) bot_chat thread closure rate — count `resolved_at IS NOT NULL` rows from last 7d vs `event_type IN ('flag','question')` from same window; flag if closure rate drops below 50%. (b) Slack alert volume sanity — Slack MCP per-channel message-count if available; flag dormant or spammy channels. (c) Scheduled-task signal-to-noise — review last 24h of scheduled-task posts; flag tasks that post on every run (should be silent on clean state). | Closure rate > 50%, no dormant/spammy channels, scheduled tasks silent on clean state. |
+| 17 | **New `.md` file detection** (added 2026-05-16) | `git log --since='<last sweep>' --diff-filter=A --name-only --pretty=format: -- '*.md' \| sort -u` → if any results, classify each new file into one of the 9 sections in `docs/markdown_inventory.md` and append. | All new `.md` files catalogued; no orphans. |
 
 Output:
 - **Clean sweep** → `bot_chat_log('change_log', 'security', 'B1', 'B1 sweep <date> — clean. Baseline: <release_health_check rows hash>.')`
