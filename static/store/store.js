@@ -770,6 +770,37 @@
   }
 
   // ---------- Event detail page ----------
+  // SEO + share-card metadata updater. Runs after /api/store/events/:id
+  // resolves so document.title + OG tags reflect the event name + venue.
+  // Pure DOM mutation; no fetches. Crawlers/preview-bots that run JS pick
+  // these up; static fallbacks in <head> cover the no-JS path.
+  function updateEventMeta(event) {
+    if (!event) return;
+    const name = String(event.name || "").trim();
+    const venue = event.venue || {};
+    const venueLabel = [venue.name, venue.location].filter(Boolean).join(", ");
+    const titleText = name
+      ? `${name} — VibePass`
+      : "Event tickets — VibePass";
+    const descText = name && venueLabel
+      ? `Direct-inventory tickets for ${name} at ${venueLabel}. Transparent pricing on VibePass.`
+      : (name
+          ? `Direct-inventory tickets for ${name}. Transparent pricing on VibePass.`
+          : "Direct-inventory event tickets. Transparent pricing on VibePass.");
+
+    document.title = titleText;
+    const setMeta = (selector, value) => {
+      const el = document.querySelector(selector);
+      if (el && value != null) el.setAttribute("content", String(value));
+    };
+    setMeta('meta[name="description"]', descText);
+    setMeta('meta[property="og:title"]', titleText);
+    setMeta('meta[property="og:description"]', descText);
+    setMeta('meta[property="og:url"]', location.href);
+    setMeta('meta[name="twitter:title"]', titleText);
+    setMeta('meta[name="twitter:description"]', descText);
+  }
+
   function mountEvent() {
     // The event/listings page is also the share-link surface — the URL is
     // the source of truth for the filter set. Two URL shapes can land here:
@@ -1486,6 +1517,12 @@
       const filters = res.filters || readFiltersFromUI();
 
       $("#evName").textContent = event.name || "Untitled event";
+
+      // Update SEO/share-card metadata from the resolved event payload.
+      // Crawlers that DO run JS (Googlebot, modern social previewers) pick
+      // up these mutations; static fallback values in <head> cover the
+      // no-JS / static-snapshot path.
+      updateEventMeta(event);
 
       // Venue hero image (audit-lane venue_assets.hero_image_url). Subtle
       // backdrop, dimmed by CSS so the heading stays legible.

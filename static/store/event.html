@@ -6,7 +6,27 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>VibePass — event</title>
+  <!-- Title + description are overridden per-event by store.js once the
+       /api/store/events/:id payload lands. These defaults are what crawlers
+       that don't run JS see, and what shows briefly before JS settles. -->
+  <title>VibePass — event tickets</title>
+  <meta name="description" content="Direct-inventory tickets for this event on VibePass. Transparent pricing, no daisy chains." />
+
+  <!-- Open Graph / share-card rendering. JS updates og:title, og:description,
+       og:url with per-event values when the event payload resolves so share
+       links render with the event name + venue + date. -->
+  <meta property="og:type" content="event" />
+  <meta property="og:site_name" content="VibePass" />
+  <meta property="og:title" content="VibePass — event tickets" />
+  <meta property="og:description" content="Direct-inventory tickets for this event." />
+  <meta property="og:url" content="" />
+  <meta property="og:image" content="https://vibepass-storefront-test.onrender.com/static/store/og-default.svg" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="VibePass — event tickets" />
+  <meta name="twitter:description" content="Direct-inventory tickets for this event." />
+
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
 <body data-page="event">
