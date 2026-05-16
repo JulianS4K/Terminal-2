@@ -219,36 +219,62 @@ D1 owns Render writes exclusively per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.
 
 ## Slack posture monitoring
 
-**Current state (2026-05-15)**: no Slack MCP tool available, no active Slack integration in the repo. Existing Slack references are incidental:
-- `docs/security-runbook-2026-05-11.md` mentions Slack DM as an out-of-band delivery channel for rotated passwords
-- `COWORKER_ONBOARDING.md` directs coworkers to GitHub issues over Slack
+**Current state (2026-05-16, canonical per bot_chat 207 standing rule)**: Slack MCP is installed at workspace `s4kent-bots`. Three channels mirror the lane hierarchy:
 
-Until/unless operator installs a Slack MCP, B1's Slack monitoring is **grep-based**, focused on detecting accidental leakage of Slack credentials into the repo.
+| Channel | ID | Audience | B1 posting authority |
+|---|---|---|---|
+| `#terminal-2-alerts` | `C0B3PR8MJ07` | public, all bots read | **No manual posts.** Scheduled-task + auto-pipe surface only. |
+| `#terminal-2-admin` | `C0B3PU1DGVD` | private, A1 / B1 / C1 | **B1 lane-primary** per bot_chat 207. B1's lane-scoped scheduled task (`b1-security-autocheck`) posts here on findings. B1 may also post directly for fast-twitch security CRIT/HIGH escalations to A1. Routine info stays in `bot_chat`. |
+| `#terminal-2-d0` | `C0B420N237F` | private, D0 / D1 / D2 | B1 does not post here (frontend-lane channel). |
 
-### What B1 checks (per-session, read-only)
+**Principle (per bot_chat 187 + 207)**: `bot_chat` is the canonical durable record. Slack is the fast-twitch surface where waiting on next-session `bot_chat` polling is too slow. NEVER coordinate exclusively in Slack — every decision needs a `bot_chat` trail for audit.
+
+### Scheduled-task surface
+
+| Task | Cadence | Slack target | Scope |
+|---|---|---|---|
+| `bot-chat-aging-sweep` (A1) | hourly `:00` | `#terminal-2-alerts` | Polls `bot_chat` for unresolved `p0_security`/`flag`/`question` >2h; pages if any |
+| `b1-security-autocheck` (B1) | half-hourly `:15`+`:50` per operator directive | **`#terminal-2-admin`** per bot_chat 207 | release_health_check fails + new SECDEF anon-callable + tables without RLS + B1-tagged bot_chat + CI failures + branch-protection drift. Silent on clean state. |
+| `c1-daily-checkpoint` (C1) | daily 09:00 ET | `#terminal-2-alerts` | C1 runbook + checkpoint digest |
+| `d1-bot-chat-monitor` (D1) | hourly `:30` | (read-only summary; no Slack post) | D1-relevant bot_chat scan |
+| `d2-bot-chat-monitor` (D2) | hourly `:45` | varies | D2 monitor |
+| `d0-frontend-autocheck` (D0) | hourly `:25` | varies | D0 lane sweep |
+
+B1's `b1-security-autocheck` SKILL.md lives at `C:\Users\julia\.claude\scheduled-tasks\b1-security-autocheck\SKILL.md`. Cron tweaks via `mcp__scheduled-tasks__update_scheduled_task`.
+
+### Hard rules
+
+1. **`bot_chat` is the canonical durable record.** Every decision must have a `bot_chat` trail.
+2. **Per-channel posting**:
+   - `#terminal-2-alerts`: no manual posts from any bot
+   - `#terminal-2-admin`: A1/B1/C1 may post directly; B1's `b1-security-autocheck` posts here on findings (per bot_chat 207 lane-primary rule)
+   - `#terminal-2-d0`: frontend lane only — B1 does not post here
+3. **To escalate fast** (bot_chat → Slack auto-pipe): post `bot_chat` with `event_type='p0_security'` OR `meta.severity='high'`. The hourly aging-sweep mirrors to `#terminal-2-alerts` within the hour.
+4. **Loop-prevention rule** (per bot_chat 171): if you read a Slack post originating from a scheduled task, do NOT reply via Slack. Post a `bot_chat` reply with `event_type='status'` + `p_in_reply_to=<originating bot_chat id>` (per CLAUDE.md §1 resolve protocol — auto-resolves the parent via `v_bot_chat_unresolved` view).
+
+### B1's repo-side Slack monitoring (per-session, grep-based)
+
+Interactive B1 sessions do NOT invoke Slack MCP directly — the surface is reserved for scheduled tasks. B1 monitors Slack-leakage risk in the repo:
 
 | Area | Probe | Pass condition |
 |---|---|---|
-| Slack tokens leaked in code | `gitleaks` ruleset (already running via `.github/workflows/secret-scan.yml`) — built-in rules cover `xoxb-*`, `xoxp-*`, `xoxa-*`, `xoxs-*`, `xoxr-*` bot/user/app tokens | 0 findings |
-| Slack signing secrets / webhook URLs | grep repo for `hooks.slack.com/services/`, `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_WEBHOOK_URL` | None present (or all in `.gitleaksignore` with documented justification) |
-| Slack GitHub App on the repo | `gh api repos/JulianS4K/Terminal-2/installation` (when scope allows) — track Slack App installation status | Track changes between sweeps |
-| Slack workflow steps in Actions | grep `.github/workflows/*.yml` for `slack` — track any workflow that posts to Slack | No unexpected Slack-posting workflows |
+| Slack tokens leaked in code | `gitleaks` ruleset via `.github/workflows/secret-scan.yml` — covers `xoxb-*`, `xoxp-*`, `xoxa-*`, `xoxs-*`, `xoxr-*` | 0 findings |
+| Slack webhooks leaked in code | grep `hooks.slack.com/services/` across repo + git history | 0 findings |
+| Slack-shaped env names | grep `SLACK_*` env var references | Only scheduled-task config; no leaks in regular code |
+| Slack-posting workflows | `grep -liE 'slack' .github/workflows/*.yml` | No regular-CI Slack posts (only scheduled-task wrappers) |
+| Slack GitHub App | `gh api repos/JulianS4K/Terminal-2/installation` (when scope allows) | Track installation status |
 
-### What B1 does on findings
+### Severity routing for Slack-related findings
 
-- **Slack token (`xox*`) in any commit** → SEC-CRIT. Token must be revoked in Slack workspace immediately (operator-coordinated). History rewrite + force-push window per the same protocol as the `CRON_SECRET` incident.
-- **Webhook URL leaked** → SEC-MED. Slack webhook URLs are abusable (anyone can post to the channel) but limited blast radius. Rotate webhook + redact.
-- **New Slack GitHub App installed unexpectedly** → SEC-HIGH. Could be operator-installed integration OR account-takeover signal. `flag` to operator for confirmation.
-- **New Slack-posting workflow appears** → SEC-MED. Could leak PR contents / repo metadata to a Slack workspace. Review the workflow before next sweep.
+- **Slack token (`xox*`) in any commit** → SEC-CRIT. Token revoke in workspace immediately (operator-coordinated). History rewrite + force-push window.
+- **Webhook URL leaked** → SEC-MED. Rotate webhook + redact.
+- **New Slack GitHub App installed unexpectedly** → SEC-HIGH. Operator confirmation required (could be account-takeover).
+- **New Slack-posting workflow appears (outside scheduled-task wrappers)** → SEC-MED. Could violate the "no direct posting" rule + leak metadata.
+- **Bot caught posting to Slack from interactive session** → SEC-MED governance violation. `flag` in `bot_chat` against the offending lane.
 
-### Future state (when Slack MCP becomes available)
+### Future scope (additional scheduled tasks if needed)
 
-Add to per-session sweep:
-- List Slack workspace members; flag new admins
-- Search recent messages for incident-shape patterns (leaked tokens shared in DMs, external pen-test chatter, social-engineering attempts)
-- Verify Slack workspace 2FA enforcement, SSO config, retention policy
-
-Filed as [B1-NEXT-21] for operator decision on Slack MCP install.
+Slack workspace-admin diff, 2FA enforcement check, recent-message search for incident-shape patterns — file as new scheduled tasks rather than invoking Slack MCP from interactive B1 sessions. Tracked as [B1-NEXT-21].
 
 ## Escalation paths
 
@@ -267,7 +293,8 @@ The operator may direct B1 to work on surfaces outside the default scope for a s
 4. Default scope reverts when the task completes
 
 **Active operator routings**:
-- 2026-05-15: "FULL KGB LEVEL MONITORING AND REPORTING" — establishes the broad monitoring mandate operationalized in this doc.
+- 2026-05-15: "FULL GUESTAPO LEVEL MONITORING AND REPORTING" (rebranded from earlier "KGB-level" later that day) — establishes the broad monitoring mandate operationalized in this doc.
+- 2026-05-15 (bot_chat 207): standing rule — every active bot must create a lane-scoped aging-sweep scheduled task posting to its lane-primary channel. B1's slot is `:15` (`b1-security-autocheck`); operator-directed second slot at `:50` for cross-channel chatter coverage.
 
 ## Historical drift acknowledged
 
