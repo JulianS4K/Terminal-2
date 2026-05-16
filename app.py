@@ -5031,7 +5031,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     # Velocity windows for the 1h/24h ticket delta + getin pct moves.
     try:
         vw = (db.table("v_event_velocity_windows")
-                .select("tevo_event_id,tevo_tix_now,tevo_tix_d1h,tevo_tix_d24h,"
+                .select("tevo_event_id,tevo_tix_now,tevo_tix_d24h,"
                         "tevo_getin_now,tevo_getin_d24h_pct,tevo_now_at")
                 .in_("tevo_event_id", list(metrics_by_id.keys()))
                 .execute().data) or []
@@ -5044,15 +5044,38 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     perf_ids = [int(p) for p in perf_ids if p]
     perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
 
+    # Freshness gate for velocity signals. v_event_velocity_windows computes
+    # d1h/d24h via subqueries that fall back to the most recent sample <= now-Xh,
+    # so when the collector hasn't fired in the relevant window (known gap
+    # for collect-listings-1-7d + 60d+ per PROJECT_BIBLE.md §9) both subqueries
+    # resolve to the SAME ancient row → d1h == d24h, mis-attributing "N sold
+    # today" when reality is "N sold over multiple days". When the latest TEvo
+    # capture is older than this many hours, treat the velocity row as
+    # suspect and don't surface d24h/d1h numbers. premium (price-based) still
+    # works since it doesn't depend on cadence.
+    _VELOCITY_FRESH_MAX_AGE_SEC = 3 * 3600  # 3 hours
+
+    def _is_velocity_fresh(v: dict) -> bool:
+        ts = v.get("tevo_now_at")
+        if not ts:
+            return False
+        try:
+            captured = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - captured).total_seconds()
+            return 0 <= age <= _VELOCITY_FRESH_MAX_AGE_SEC
+        except (TypeError, ValueError):
+            return False
+
     candidates: list[dict] = []
     for eid, m in metrics_by_id.items():
         if eid in inactive:
             continue
         ev = events_by_id.get(eid) or {}
         v = velocity_by_id.get(eid) or {}
-        tix_d24h = v.get("tevo_tix_d24h")
-        tix_d1h = v.get("tevo_tix_d1h")
-        getin_pct_24h = v.get("tevo_getin_d24h_pct")
+        velocity_fresh = _is_velocity_fresh(v)
+        # Suppress d24h/d1h reads when the underlying velocity row is stale.
+        tix_d24h = v.get("tevo_tix_d24h") if velocity_fresh else None
+        getin_pct_24h = v.get("tevo_getin_d24h_pct") if velocity_fresh else None
         getin_now = v.get("tevo_getin_now")
         from_price = m.get("retail_min") if m.get("retail_min") is not None else getin_now
 
@@ -5098,7 +5121,6 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "primary_performer_color": (a or {}).get("color_primary"),
             "from_price": from_price,
             "tix_d24h": d24h_val,
-            "tix_d1h": tix_d1h,
             "getin_pct_24h": pct_val,
             "signal": signal,
         })
@@ -6382,12 +6404,12 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
     }
 
 
-@app.get("/store")
+@app.api_route("/store", methods=["GET", "HEAD"])
 def store_index_page():
     return _render_storefront_page("index.html")
 
 
-@app.get("/store/event/{event_id}")
+@app.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
     return _render_storefront_page("event.html")
 
@@ -6684,14 +6706,14 @@ def store_share_list(
     return {"count": len(shares), "shares": shares}
 
 
-@app.get("/s/{share_id}")
+@app.api_route("/s/{share_id}", methods=["GET", "HEAD"])
 def store_shared_page(share_id: str):  # noqa: ARG001 — id read by JS from URL
     """Serves the same event detail page; JS detects /s/ prefix and resolves
     the share via /api/store/share/{id} instead of using URL filter params."""
     return _render_storefront_page("event.html")
 
 
-@app.get("/store/shares")
+@app.api_route("/store/shares", methods=["GET", "HEAD"])
 def store_shares_page():
     return _render_storefront_page("shares.html")
 

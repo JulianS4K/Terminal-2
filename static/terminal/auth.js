@@ -7,8 +7,8 @@
 //
 // Operator one-time setup (per d2_dashboard/DEPLOY.md):
 //   Supabase Auth → URL Configuration → Redirect URLs, add:
-//     https://vibepass-terminal-test.onrender.com/static/terminal/login.html
-//     http://localhost:8000/static/terminal/login.html  (for dev)
+//     https://vibepass-terminal-test.onrender.com/login.html         (Render publishPath=static/terminal serves at root)
+//     http://localhost:8000/static/terminal/login.html                (localhost uvicorn serves under /static prefix)
 //
 // Public anon key — safe to embed in static-site JS (RLS gates access).
 
@@ -67,7 +67,9 @@
 
   function loginUrl(returnUrl) {
     const here = returnUrl || (location.pathname + location.search);
-    return '/static/terminal/login.html?return=' + encodeURIComponent(here);
+    // Relative path — browser resolves relative to current page, so works
+    // under both /static/terminal/ (localhost uvicorn) and / (Render CDN).
+    return 'login.html?return=' + encodeURIComponent(here);
   }
 
   async function requireAuth() {
@@ -91,7 +93,11 @@
 
   async function signInWithGoogle(returnUrl) {
     const here = returnUrl || (location.pathname + location.search);
-    const redirectTo = location.origin + '/static/terminal/login.html?return=' + encodeURIComponent(here);
+    // Absolute URL required by Supabase OAuth (must match an allow-listed
+    // redirect URL exactly). Use new URL() to resolve login.html relative to
+    // current page — yields /static/terminal/login.html on localhost or
+    // /login.html on Render where publishPath=static/terminal serves at root.
+    const redirectTo = new URL('login.html?return=' + encodeURIComponent(here), location.href).toString();
     const { error } = await client.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -104,7 +110,7 @@
 
   async function signOut() {
     try { await client.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
-    window.location.href = '/static/terminal/login.html';
+    window.location.href = 'login.html';
   }
 
   function getAccessToken() {

@@ -4,6 +4,8 @@
 **Cadence**: every day at 09:00 ET (preferred); ad-hoc if alerts fire
 **Purpose**: keep prod state and repo state in sync, close drift before it compounds
 
+**Scheduled-task path (2026-05-15)**: A1 provisioned the `c1-daily-checkpoint` scheduled task. The 9-step routine below auto-fires at 09:00 daily; operator must "Run now" once from the Scheduled sidebar to pre-approve Supabase MCP + Slack MCP tools. Slack alerts on `release_health_check` new fail rows, `p0_security` / `severity=high` bot_chat entries, deploy failures (channel C0B3PR8MJ07). bot_chat remains the canonical coordination surface — bots do not post Slack directly. See bot_chat 171.
+
 ---
 
 ## Why this exists
@@ -104,11 +106,19 @@ Per push-protocol: A1 has final-merge authority on contentious cases. C1 merges 
 4. Not in B1's security queue without B1 sign-off
 
 For each eligible PR:
+
 ```bash
-gh pr merge <num> --merge  # or --squash per repo convention
+# Pre-merge token-leakage audit (operator directive 2026-05-15, bot_chat 139 + 141):
+gh pr view <num> --json files --template '{{range .files}}{{.path}}{{"\n"}}{{end}}'
+# Scan diff for the 8 patterns in docs/token-discipline-rules.md §"Pre-merge code audit"
+# (file-header bloat, pre: mega-lists, restate-code comments, near-duplicates, dead code, etc.)
+# Findings → bot_chat flag to lane owner. Merge proceeds unless structural waste.
+
+# Then merge:
+gh pr merge <num> --squash  # or --merge per repo convention
 ```
 
-Document each merge in the daily checkpoint summary.
+Document each merge + any leakage findings in the daily checkpoint summary.
 
 ### Step 6 — Stale branch sweep (2 min)
 
@@ -166,10 +176,35 @@ gh pr merge --merge --auto
 SELECT public.bot_chat_log(
   p_level := 'admin',
   p_lane := 'C1',
-  p_event_type := 'checkpoint',
+  p_event_type := 'status',
   p_message := 'Daily checkpoint 2026-MM-DD complete. <summary>. See docs/c1-checkpoint-<date>.md'
 );
 ```
+
+> Note (2026-05-15): runbook originally specified `event_type='checkpoint'` but that value is not in the `bot_chat_event_type_check` constraint allowlist. Using `'status'` until either the constraint is widened or this runbook is patched (open follow-up #11 in [docs/c1-checkpoint-2026-05-15.md](docs/c1-checkpoint-2026-05-15.md)).
+
+### Step 9 — Token discipline audit (2 min)
+
+Added 2026-05-15 per operator directive (bot_chat 139). Charter: C1 owns token monitor + minimization alongside drift monitoring.
+
+```sql
+-- Oversized bot_chat posts in the last 24h (rule: <=1500 chars; see docs/token-discipline-rules.md)
+SELECT id, bot_lane, event_type, length(message) AS chars, left(message, 80) AS preview
+FROM public.bot_chat
+WHERE created_at > now() - interval '24 hours'
+  AND length(message) > 1500
+ORDER BY chars DESC;
+```
+
+```bash
+# Bloated migration headers in the last 24h (rule: <=15 lines)
+for f in $(git log --since="24 hours ago" --name-only --pretty="" -- supabase/migrations/ | sort -u); do
+  hdr=$(awk '/^[^-]/{exit} {print}' "$f" 2>/dev/null | wc -l)
+  [ "$hdr" -gt 15 ] && echo "$hdr  $f"
+done
+```
+
+Flag findings in `bot_chat` as `event_type='flag'`. Original author re-compresses on next post; old entries are tracked but not retroactively edited.
 
 ---
 

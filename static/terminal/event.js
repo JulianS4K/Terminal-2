@@ -322,10 +322,24 @@
     const share = (qtyOwn && qtyMkt && qtyMkt > 0) ? (qtyOwn / qtyMkt * 100) : null;
     setKpiSub('kpiQtyOwnedSub', share != null ? `${share.toFixed(1)}% of market` : '');
 
-    // Get-in  (TEvo nothing direct; SG cost_min)
-    const tevoGetin = market != null ? null : null;  // v1 chart_data lacks min; SG side carries it
-    setKpi('kpiGetinVal', sg && sg.cost_min != null ? '$' + T.fmtNum(sg.cost_min, { max: 0 }) : (tevoGetin != null ? '$' + T.fmtNum(tevoGetin) : '—'));
-    setKpiSg('kpiGetinSG', null, null, '', 0, true);  // suppress SG row (already primary)
+    // Get-in (cheapest available ticket): prefer SG cost_min, fall back to TEvo
+    // splits.market.singles.min_px (smallest 1-tix market lot). Keeps the cell
+    // populated for TEvo-only events instead of "—".
+    let getinVal = sg && sg.cost_min != null ? sg.cost_min : null;
+    let getinSrc = sg && sg.cost_min != null ? 'SG' : null;
+    if (getinVal == null && _lastPayload && _lastPayload.splits) {
+      const marketSingles = _lastPayload.splits.market && _lastPayload.splits.market.singles;
+      if (marketSingles && marketSingles.min_px != null) {
+        getinVal = marketSingles.min_px;
+        getinSrc = 'TEvo';
+      }
+    }
+    setKpi('kpiGetinVal', getinVal != null ? '$' + T.fmtNum(getinVal, { max: 0 }) : '—');
+    const getinSub = document.getElementById('kpiGetinSG');
+    if (getinSub) {
+      getinSub.textContent = getinSrc ? getinSrc.toLowerCase() === 'sg' ? '' : 'src: TEvo singles' : '';
+      getinSub.className = 'kpi-sg';
+    }
 
     // Owned Median (our retail)
     setKpi('kpiOwnedMedianVal', owned != null ? '$' + T.fmtNum(owned, { max: 0 }) : '—');
@@ -881,12 +895,19 @@
 
   function renderFreshness(fr) {
     if (!fr) return;
+    // Weather: prefer obs latest, fall back to most-recent forecast time so
+    // outdoor events with forecast-only data don't render a misleading dim chip.
+    const weatherTs = fr.weather_latest || latestForecastTs();
+    // ESPN: max of team + injuries timestamps (NOT first non-null — team
+    // snapshots are gameday-batched and often 3d stale even when injuries
+    // ingested 6 min ago).
+    const espnTs = maxTs(fr.espn_team_latest, fr.espn_inj_latest);
     const map = {
       'tevo':     fr.tevo_listings_latest,
       'sg-lst':   fr.sg_listings_latest,
       'sg-sales': fr.sg_sales_latest,
-      'weather':  fr.weather_latest,
-      'espn':     fr.espn_team_latest || fr.espn_inj_latest,
+      'weather':  weatherTs,
+      'espn':     espnTs,
     };
     Object.entries(map).forEach(([src, ts]) => {
       const el = document.querySelector(`.fr-chip[data-src="${src}"]`);
@@ -904,6 +925,21 @@
       el.classList.add(stale ? 'stale' : 'fresh');
       el.title = `${label}: ${T.fmtDate(ts)}`;
     });
+  }
+  function maxTs(...tss) {
+    let best = null;
+    for (const t of tss) {
+      if (!t) continue;
+      if (best == null || new Date(t).getTime() > new Date(best).getTime()) best = t;
+    }
+    return best;
+  }
+  function latestForecastTs() {
+    const w = _lastPayload && _lastPayload.weather;
+    if (!w || w.hidden) return null;
+    const fc = w.forecast || [];
+    if (!fc.length) return null;
+    return fc.reduce((acc, f) => maxTs(acc, f.observed_at), null);
   }
   function chipLabel(src) {
     return { tevo: 'TEvo', 'sg-lst': 'SG L', 'sg-sales': 'SG S', weather: 'Wx', espn: 'ESPN' }[src] || src;
