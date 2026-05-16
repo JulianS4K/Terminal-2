@@ -24,6 +24,7 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 | (sub D2) | Undelivered FE | same as D2 (or split when scope activates) | deferred |
 | D3 | Broadway (sub of D2) | `broadway-scraper-eChQ6` | active |
 | D4 | Our Ticketing Infra | unassigned | future |
+| E1 | External Markets (Kalshi, prediction markets, exchanges) | unassigned | future — stub created 2026-05-15 |
 
 ## Per-lane restrictions
 
@@ -90,6 +91,8 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 - Migrations to fix drift → A1 (admin / push)
 - Security findings → B1 (security manager)
 - Bot-lane code changes → respective lane owner via PR comment
+
+**Cross-cutting onboarding requirement (2026-05-15)**: every active bot must create a lane-scoped aging-sweep scheduled task on first activation. Spec in `CLAUDE.md §5`. Minute slot registry maintained there.
 
 **Reads:** everything.
 
@@ -232,6 +235,33 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 **NEVER writes:**
 - Anything outside its own future namespace
 - D1's Render service (`vibepass-storefront-test`) — D1 owns; touch only D1's surface — D4 gets its own deploy target when scoped, not Render
+
+### E1 — External Markets (lane stub, 2026-05-15)
+
+**Status**: lane stub. No active bot session yet. Activates when operator assigns + Kalshi work begins (per bot_chat 221 / 223).
+
+**Mission**: integrate external prediction markets and exchanges. First target: Kalshi (sports + macro event contracts). Future: Polymarket, sportsbooks, and — if direction (B) of bot_chat 221 activates — building Kalshi-styled ticket-price prediction markets ourselves.
+
+**Writes (when active)**:
+- `kalshi_client.py` (initial) + future `<exchange>_client.py` files
+- Edge functions for market data ingest (`supabase/functions/kalshi-*`)
+- Migration files matching `*_markets_*.sql` pattern (e.g. `<ts>_markets_kalshi_xref.sql`)
+- `markets_*` tables (e.g. `kalshi_event_xref`, `kalshi_market_snapshots`)
+- `docs/markets-*.md` design notes
+
+**Reads**: entire data plane (especially `listings_snapshots`, `aq_event_map`, `v_market_listings_by_event`, `events`). Cross-event correlation with our owned inventory is the operating premise.
+
+**NEVER writes**:
+- Ticket-ingest pipelines (A1 / D2 territory)
+- Frontend code (D-tier)
+- Order tables (D2 territory)
+- Other lanes' Render services
+
+**Render**: no service provisioned yet. Will spawn `vibepass-markets-*` when MVP needs deploy target. A1 owns provisioning.
+
+**Sign-off model**: A1 reviews + merges per push-protocol. No subordinate lane underneath E1 yet.
+
+**Why E-tier (not extension of D-tier)**: D = ticket data + storefronts. E = external markets + financial integration. Different category and risk profile (esp. if direction B activates — CFTC regulatory considerations on prediction markets); keeps D-tier focused.
 
 ## Cross-cutting rules
 

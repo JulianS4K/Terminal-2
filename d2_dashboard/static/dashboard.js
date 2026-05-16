@@ -298,7 +298,7 @@ function renderDashboard(domain) {
           <div class="filter-group">
             <span class="toolbar-meta">Source:</span>
             <label><input type="checkbox" class="flt-source" value="evo"      checked /> evo</label>
-            <label><input type="checkbox" class="flt-source" value="seatgeek" checked /> sg</label>
+            <label><input type="checkbox" class="flt-source" value="seatgeek_sales" checked /> sg market</label>
             <label><input type="checkbox" class="flt-source" value="tickpick" checked /> tickpick</label>
             <label><input type="checkbox" class="flt-source" value="vivid"    checked /> vivid</label>
           </div>
@@ -1361,24 +1361,29 @@ function renderReadableOrder(source, d) {
       opt("Auto-flags",      autoFlags),
       opt("Payment state",   payment.state ? `${payment.state} (${payment.type || "?"})` : null),
     ].join("");
-  } else if (source === "seatgeek") {
-    // SG seller_order/{id} payload: event.name + event.date + event.time
-    // (not event.title / event.datetime_local). Quantity lives under
-    // listing, not at the top level. Combine date+time into ISO for the
-    // formatDate helper.
-    const ev = d.event || {};
-    const listing = d.listing || {};
-    const evDate = ev.date ? `${ev.date}T${ev.time || "00:00:00"}` : (ev.datetime_local || ev.datetime_utc);
+  } else if (source === "seatgeek_sales") {
+    // Broker firehose row (flat shape, read direct from
+    // public.seatgeek_sales_snapshots). Event name/venue are not joined
+    // in the deep fetch; they're already visible in the parent row from
+    // unified_orders. Focus the detail panel on sale-specific fields.
+    const total = (d.broadcast_price != null && d.quantity)
+      ? Number(d.broadcast_price) * Number(d.quantity || 1)
+      : null;
     rows = [
-      row("Order ID",      d.order_id || d.id),
-      row("Event",         ev.name || ev.title || d.event_title),
-      row("Event date",    formatDate(evDate)),
-      row("Venue",         ev.venue),
-      row("Section / Row", listing.section ? `${listing.section} / ${listing.row || "—"}` : null),
-      row("Status",        d.status),
-      row("Quantity",      listing.quantity || d.quantity),
-      row("Total",         d.total),
-      row("Delivery",      d.delivery_method || d.delivery),
+      row("Sale ID",          d.sg_sale_id || d.id),
+      row("SG event ID",      d.sg_event_id),
+      row("AQ event",         d.aq_short_event_id),
+      row("Observed at",      formatDate(d.sale_at_utc || d.pulled_at)),
+      row("Section / Row",    d.section ? `${d.section} / ${d.row || "—"}` : null),
+      row("Quantity",         d.quantity),
+      row("Broadcast price",  d.broadcast_price),
+      opt("Approx. total",    total != null ? total.toFixed(2) : null),
+      opt("Stock type",       d.stock_type),
+      opt("Delivery",         d.delivery_method),
+      opt("In-hand date",     d.in_hand_date),
+      opt("Instant?",         d.is_instant != null ? String(d.is_instant) : null),
+      opt("Seller notes",     d.seller_notes),
+      opt("Venue (short)",    d.venue_short_id),
     ].join("");
   }
   return `<table class="kv">${rows}</table>`;

@@ -1,0 +1,150 @@
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg); color: var(--text);
+  font-family: var(--sans); font-size: 13px; line-height: 1.5;
+  min-height: 100vh; -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+  display: grid; grid-template-columns: auto 1fr auto;
+  align-items: center; gap: 16px;
+  padding: 8px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  font-family: var(--mono); font-size: 12px;
+}
+.brand { color: var(--accent); font-weight: 600; letter-spacing: 0.5px; }
+.pagenav { display: flex; gap: 4px; font-size: 11px; letter-spacing: 0.5px; }
+.pagenav a {
+  color: var(--muted); text-decoration: none;
+  padding: 4px 10px; border-bottom: 2px solid transparent;
+}
+.pagenav a:hover { color: var(--text); }
+.pagenav a.active { color: var(--warn); border-bottom-color: var(--warn); }
+.status { color: var(--muted); }
+.status.ok { color: var(--pos); }
+.status.err { color: var(--neg); }
+
+.wrap {
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.wrap > section {
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 16px 20px;
+}
+
+/* ---------- Doorway ---------- */
+/* section.doorway selector beats .wrap > section specificity (0,1,1 vs 0,1,0). */
+
+section.doorway {
+  border-left: 4px solid var(--warn);
+}
+.doorway-tag {
+  display: inline-block;
+  font-family: var(--mono); font-size: 10px;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  padding: 3px 10px;
+  background: var(--panel-2); border: 1px solid var(--warn); color: var(--warn);
+  margin-bottom: 12px;
+}
+.doorway h1 {
+  margin: 8px 0 12px; font-size: 26px;
+  color: var(--text);
+}
+.doorway p {
+  margin: 0 0 12px; color: var(--muted);
+  max-width: 880px; line-height: 1.6;
+}
+.doorway p strong { color: var(--text); }
+.doorway code {
+  background: var(--bg); padding: 1px 6px;
+  font-family: var(--mono); font-size: 11px; color: var(--accent);
+  border: 1px solid var(--line);
+}
+
+.doorway-cta {
+  display: flex; align-items: center; gap: 12px;
+  margin: 16px 0;
+}
+.btn-primary {
+  display: inline-block;
+  background: var(--accent); color: #000;
+  text-decoration: none;
+  font-family: var(--mono); font-size: 13px; font-weight: 600;
+  padding: 10px 20px;
+  letter-spacing: 0.5px; text-transform: uppercase;
+  border: 1px solid var(--accent);
+}
+.btn-primary:hover { background: #fde047; border-color: #fde047; }
+
+.health-badge {
+  font-family: var(--mono); font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  letter-spacing: 0.5px;
+}
+.health-badge.live { color: var(--pos); border-color: var(--pos); }
+.health-badge.down { color: var(--neg); border-color: var(--neg); }
+.health-badge.dim  { color: var(--muted); }
+
+/* ---------- Merge contract grid ---------- */
+
+.merge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+}
+.mg-cell {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+}
+.mg-lbl {
+  display: block;
+  font-family: var(--mono); font-size: 10px;
+  color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.8px;
+  margin-bottom: 10px;
+}
+.mg-cell ul {
+  margin: 0; padding-left: 18px;
+  color: var(--muted); font-size: 12px;
+  line-height: 1.7;
+}
+.mg-cell li { padding: 2px 0; }
+.mg-cell code {
+  background: var(--bg); padding: 1px 5px;
+  font-family: var(--mono); font-size: 11px; color: var(--accent);
+  border: 1px solid var(--line);
+}
+.mg-cell a { color: var(--accent); }
+.mg-cell strong { color: var(--text); }
+
+/* ---------- Reference list ---------- */
+
+.panel-title {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.ref-list {
+  margin: 0; padding-left: 18px;
+  color: var(--muted); font-size: 12px;
+  line-height: 1.8;
+}
+.ref-list a { color: var(--accent); }
+.ref-list code {
+  background: var(--bg); padding: 1px 5px;
+  font-family: var(--mono); font-size: 11px; color: var(--accent);
+  border: 1px solid var(--line);
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 11px; }

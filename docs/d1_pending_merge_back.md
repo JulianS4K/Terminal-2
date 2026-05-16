@@ -1,4 +1,21 @@
-# D1 — Pending merge-back work
+# D1 — Pending merge-back work [ARCHIVED 2026-05-16]
+
+> **🎯 STATUS: ARCHIVED — all parked items have either landed or been superseded.** This file is kept as a historical record of the MVP-stabilization period (2026-05-13). For current D1 work, see:
+> - `docs/d1_retail_finish_punchlist.md` — active sprint roadmap (sections A-J)
+> - `docs/d1_operating_constraints.md` — current scope + post-reorg posture
+> - `docs/d1-render-perf-2026-05-15.md` — Render plan-bump perf baseline
+>
+> **Status of items originally captured here:**
+> - PR #76 (Sprint 1.5 UX batch on `claude/store-sql-only-demo-mode`): superseded — the 7 UX fixes were either re-implemented or rolled into PR #84 + later D1 work
+> - PR #77 (D1 operating constraints doc): landed as `docs/d1_operating_constraints.md`
+> - PR #79 (MVP catalog TEvo-direct): landed as PR #84 consolidated bundle
+> - render.yaml healthCheckPath: `/healthz` change landed via PR #117 + subsequent edits
+> - bot_chat row 68 (B1 RULE 2 carve-out for Sprint 2): still applicable — Sprint 2 remains FROZEN per the operator directive in `docs/d1_retail_finish_punchlist.md §B`. The architectural review request stays valid; no code change needed until Sprint 2 thaws
+> - Sprint 4a/5 sketches: superseded by the punchlist roadmap (sections F+G)
+>
+> Historical context below is preserved unchanged.
+
+---
 
 Filed 2026-05-13 alongside PR #79 (MVP catalog TEvo-direct). Render is being repointed to `claude/d1-mvp-tevo-direct` for MVP review. Work captured here is parked on **other branches** and needs to come back when MVP shape is locked.
 

@@ -73,6 +73,20 @@ _(if I'm in the middle of something, it goes here so design knows what files I'm
 
 ## NEXT
 
+### NEXT (D0) — Consolidated frontend lane post row 157 reorg
+
+Plan: [docs/d0_frontend_consolidation_plan.md](docs/d0_frontend_consolidation_plan.md). Self-contract: [docs/d0_operating_constraints.md](docs/d0_operating_constraints.md). Coordination: [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md). 5 D0-tracked rows:
+
+- **D0 → operator** — Supabase Auth Redirect URLs whitelist (2 URLs, dashboard action). Per `bot_chat` row 145. Unblocks PR #113 deployed login flow.
+- **D0 → operator** — Render plan flip `vibepass-storefront-test` free → starter ($14/mo). Per D1 row 169 outstanding item 1. MCP `update_web_service` doesn't support plan changes — dashboard or Render REST API only.
+- **D0** — Phase 2 design tokens: author `static/_shared/design-tokens.css`, refactor terminal CSS to reference it. Weeks 1-4.
+- **D0** — `docs/d0_roadmap.md` (rolling Now/Next/Later/Backlog). First version covers D1+D2 outstanding items routed through D0.
+- **D0 sign-off requirement on D1/D2 PRs PAUSED 7 days** (active 2026-05-22). Per operator directive `bot_chat` 170. Claim protocol + token discipline + CI gate still active.
+
+### NEXT (D0 — checkpoint) — Phase 4 service-merge decision · review 2026-08-15
+
+Recommend at decision time: collapse `vibepass-terminal-test` + `d2-orders-dashboard` into one operator-facing service; keep `vibepass-storefront-test` separate. Decision gates: ops MAU >50, deploy frequency stable. Cost-saver ~$14/mo at 3-service starter baseline.
+
 ### NEXT (P1 → A1) — Audit + sync storefront branch; gate live-TEvo flip behind your green light
 
 **What**: Storefront branch `claude/store-sql-only-demo-mode` (HEAD `0901efd` as of 2026-05-12) is feature-complete for the MVP and ready for an audit pass. Asking A1 to review + sync to prod, after which we'd flip Render env `STOREFRONT_SQL_ONLY=false` to exercise the live-TEvo paths in production.
@@ -271,6 +285,32 @@ Defense-in-depth follow-ups identified during the Phase-2 monitoring sweep. Each
 - **[B1-NEXT-8] [SEC-MED]** §6 retrofit on `_health_check_pg_net_errors()` (A1's, added by PR #115). File PR comment to A1 per cross-lane patch protocol. Read-only diagnostic but defense-in-depth retrofit warranted.
 - **[B1-NEXT-9] [SEC-MED]** §6 retrofit on `get_broker_event_page(integer, integer)` (A1's, added by PR #115). Body is already gated by `auth.jwt()->>'email'`; §6 guard is belt-and-suspenders. File PR comment to A1.
 - **[B1-NEXT-10] [SEC-LOW]** Migration slot collision audit — `20260515300000` (3 files), `20260515320000` (2 files) collide. MIGRATION_CONVENTIONS.md §3 bump-by-30-or-50 rule not followed. Not security-class but flags discipline drift; recommend filenames be renamed to next free slots in a future cleanup PR.
+
+### B1-NEXT — git + render monitoring expansion (filed 2026-05-15 by B1 charter §git+render)
+
+Operator-extended mandate covers git settings + Render workspace. Initial sweep landed [`docs/git_repo_security_posture.md`](docs/git_repo_security_posture.md) + [`docs/render_security_posture.md`](docs/render_security_posture.md). Findings filed below.
+
+- **[B1-NEXT-11] [SEC-HIGH]** Reassess history-rewrite priority on leaked `CRON_SECRET` in commit `5297739`. Original SECURITY BACKLOG item scoped assuming private repo; current `visibility: public` means rotated value is internet-readable. Operator decides: `git filter-repo` + force-push window, OR accept (value rotated, blast radius is whoever scraped between leak + rotation). Documented as G-1 in git posture inventory.
+- **[B1-NEXT-12] [SEC-MED]** Enable `dependabot_security_updates` on the repo (currently `disabled`). After 2026-05-11 `requirements.txt` unpinning incident (SW-3 above), Dependabot is the right tool. Operator-only — Settings → Code security. Documented as G-2.
+- **[B1-NEXT-13] [SEC-MED]** Enable `secret_scanning_non_provider_patterns` (currently `disabled`). Catches project-shape secrets like `CRON_SECRET`, `APPSCRIPT_INGEST_SECRET`. Operator-only. Documented as G-3.
+- **[B1-NEXT-14] [SEC-MED]** Enable `secret_scanning_validity_checks` (currently `disabled`). Confirms whether leaked tokens are still active. Operator-only. Documented as G-4.
+- **[B1-NEXT-15] [SEC-LOW]** Consider enabling branch-protection `enforce_admins` for `main` (currently `false`). Admin (`JulianS4K`) can bypass protections. Acceptable single-operator risk profile but documented for transparency. Operator-only. G-6.
+- **[B1-NEXT-16] [SEC-LOW]** Consider enabling `required_signatures` for `main`. Currently `false`. GitHub-server-side commits (PR merges) make impersonation low-risk, but signing would harden against compromised local dev environment. G-7.
+- **[B1-NEXT-17] [SEC-LOW]** Consider enabling Actions `sha_pinning_required`. Currently `false`. Workflows reference Actions by mutable tags (`@v4`, `@v7`). Tighten to immutable SHA pins for supply-chain hardening. G-8.
+- **[B1-NEXT-18] [SEC-MED]** Verify Actions secrets are populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optional `SUPABASE_PAT`). `gh api .../actions/secrets` returned empty at sweep — could be permission-filtered, could be unset. If unset, sync-check fails silently. Operator confirms next session.
+- **[B1-NEXT-19] [SEC-LOW]** Render `ipAllowList: 0.0.0.0/0` on `d2-orders-dashboard` and `vibepass-terminal-test` — both supposed to be `@s4kent.com` authenticated at app layer. Optional secondary defense: tighten allowlist to known operator IPs. PR comment to D1 (Render-write authority). Documented as R-1.
+- **[B1-NEXT-20] [SEC-LOW]** Render services `autoDeploy: yes` from `main` on every commit. Standard CD; consider manual approval gate for `vibepass-storefront-test` (public retail). PR comment to D1. R-2.
+- **[B1-NEXT-21] [SEC-LOW]** Slack surface monitoring — operator decision on installing a Slack MCP. Currently no active Slack integration in the repo (gitleaks catches `xoxb-*`/`xoxp-*` tokens via push-protection; no Slack-posting workflows; no webhooks). Future state: with Slack MCP, B1 monitors workspace admins, 2FA enforcement, recent-message search for incident leaks. Without MCP, B1's Slack coverage is grep + gitleaks only. See `docs/b1_operating_constraints.md` "Slack posture monitoring" section.
+
+### B1-NEXT — Librarian / archivist role (filed 2026-05-16 per operator directive)
+
+Operator extended B1's mandate 2026-05-16: "communication channel, Librarians and archivists and maintaining bible(s) so communication between bots is seamless and up to date." Operationalized in `docs/b1_operating_constraints.md` "Librarian / archivist role" + per-session sweep steps 15-16.
+
+- **[B1-NEXT-24] [SEC-LOW]** Periodic full-pass drift audit of `PROJECT_BIBLE.md` §3 (canonical RPC table) — verify all 32 listed RPCs exist in `pg_proc` with the signatures stated. Rotating quarterly cadence; first pass at session start. Tracked here separately from per-session sweep step 15 (which is per-session rotating spot-check).
+- **[B1-NEXT-25] [SEC-LOW]** Periodic full-pass drift audit of `RESOURCES_BIBLE.md` §1 (external services) — verify Render service IDs match `mcp__render__list_services`, vault secret names match `get_app_secret` allowlist, lane ownership rows match `BOT_HIERARCHY.md`. Rotating quarterly.
+- **[B1-NEXT-26] [SEC-LOW]** `bot_chat` thread-closure rate dashboard — query for `(count(resolved) + count(status-closed)) / count(total flag+question)` by lane over rolling 7d. File flag if any lane closure rate < 50%. Could be added as a row in `release_health_check()` (`coordination.thread_closure_rate_7d`).
+- **[B1-NEXT-27] [SEC-LOW]** Cross-bible consistency check (PROJECT_BIBLE.md vs LANE_DISCIPLINE.md vs BOT_HIERARCHY.md). Lane ownership rows, push restrictions, write-surface declarations should align across the three. Periodic full diff.
+- **[B1-NEXT-28] [SEC-LOW]** Slack channel signal-quality metric — once interactive Slack MCP loads in B1 sessions, per-channel message rate + dormancy + scheduled-task vs human post ratio. Threshold-based alerts on signal degradation.
 
 ### NEXT (code) — [SEC-CRIT] Rotate the leaked `CRON_SECRET` value, then redact from KANBAN/AGENTS
 
