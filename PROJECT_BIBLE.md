@@ -345,6 +345,7 @@ SELECT public.bot_chat_log(
 | AQ NFL data was partial before this session | RESOLVED 2026-05-16 | Now 292 NFL games bridged via ESPN |
 | `espn_scoreboard_queue` cron default 90d | A1 pending | NFL drift each fall when schedule releases |
 | `aq_short_event_id` 0% on `listings_snapshots` | A1 cron resumed 2026-05-16 | First firing 2026-05-17 04:02 UTC |
+| `CLAUDE.md §1` claims `v_bot_chat_unresolved` auto-closes via `status + in_reply_to` replies, but the deployed view is `WHERE resolved_at IS NULL` only (no closure-by-status logic) | C1 (view-owner per CLAUDE.md §1 / PR #114 Cluster D-1) | `status`-event_type replies do NOT remove parents from `v_bot_chat_unresolved`. Workaround: explicit `bot_chat_resolve()` call. Caught by B1 in PR #140 post-merge audit; tracked in bot_chat 233. |
 
 ---
 
@@ -382,4 +383,4 @@ If §11 doesn't cover your case → fall back to the file map in §10.
 
 ---
 
-**Bible refresh policy**: A1 updates this file when (a) a new canonical RPC ships, (b) a hard rule changes, (c) a column-name landmine is discovered, or (d) a landmark migration lands. Don't edit without A1 review (avoid drift).
+**Bible refresh policy**: A1 owns merges. A1 updates this file when (a) a new canonical RPC ships, (b) a hard rule changes, (c) a column-name landmine is discovered, or (d) a landmark migration lands. B1 (added 2026-05-16 per operator librarian directive) authors drift-detection PRs when bible content diverges from live state — A1 still merges. Other lanes: don't edit without A1 / B1 review (avoid drift).
