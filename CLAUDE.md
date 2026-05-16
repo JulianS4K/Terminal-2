@@ -71,7 +71,9 @@ Lane assignments per `LANE_DISCIPLINE.md`:
 - **C1** — supervisor docs + audit harnesses + lane discipline
 - Operator may explicitly route HTML work to a bot outside its default lane (this is the override path)
 
-### 4. Render workspace — per-service scoped access (2026-05-14, reorg 2026-05-15)
+### 4. Render workspace — per-service scoped access (2026-05-14, reorg 2026-05-15; testing-unified 2026-05-16)
+
+**Testing-unified architecture (2026-05-16, PR #168)**: During dev/test, all runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold-start drag). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts in `app.py`. `vibepass-terminal-test` remains as the D0 static CDN host; `d2-orders-dashboard` stays alive as an idle placeholder. At beta, each surface migrates back to its own service via dedicated DNS + un-mounting from `app.py`.
 
 Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are forbidden without operator approval.
 
