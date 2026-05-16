@@ -394,8 +394,24 @@
 
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      filter(input.value);
+      const q = (input.value || "").trim();
       hideSuggest();
+      // Empty submit → revert to the home view (full catalog).
+      if (!q) {
+        render(allEvents, "all");
+        return;
+      }
+      // Backend search — hits /api/store/search for the FULL result set,
+      // not just the in-memory home payload. Click-Search previously called
+      // filter(q) which ran an in-memory scan over the 60 events that
+      // /api/store/home returned, so any query that didn't match one of
+      // those (e.g. "knicks" when we don't have Knicks owned-inventory on
+      // home) rendered "No events match" — even though /api/store/search
+      // would have returned playoff games we hold. searchAndRender() fixes
+      // this by going to the backend on every Submit click. Live as-you-type
+      // still hits the in-memory filter (instant) + the suggest dropdown
+      // (debounced); only the explicit Submit promotes to backend.
+      searchAndRender(q);
     });
     // Local in-memory filter on the already-loaded catalog AND a debounced
     // call to /api/store/search for live suggestions (TEvo + our SQL).
@@ -403,6 +419,64 @@
       filter(input.value);
       scheduleSuggest(input.value);
     });
+
+    // ------------------------------------------------------------------
+    // searchAndRender: backend-search promote (Submit click handler target)
+    // ------------------------------------------------------------------
+    // Fetches /api/store/search?q=...&limit=60, normalizes the search-
+    // response shape (which differs slightly from /api/store/home — see
+    // app.py:_search_live + _search_sql_only) to what render() expects,
+    // then re-renders the main grid. Defensively filters cancelled +
+    // (If Necessary) speculative names client-side until PR #175 lands
+    // the server-side filter.
+    function searchAndRender(q) {
+      if (!loadComplete) return;  // same cold-start gate as filter()
+      status.hidden = false;
+      status.textContent = `Searching for "${q}"…`;
+      grid.hidden = true;
+      empty.hidden = true;
+      api(`/api/store/search?q=${encodeURIComponent(q)}&limit=60`)
+        .then((data) => {
+          const raw = Array.isArray(data && data.events) ? data.events : [];
+          // Shape adapter: /search returns {location, occurs_at, owned_tix}
+          // while render() expects {venue_location, occurs_at_local,
+          // owned_tickets_count}. Map the keys without losing data.
+          const normalized = raw.map((e) => ({
+            id: e.id,
+            name: e.name,
+            venue_name: e.venue_name || null,
+            venue_location: e.venue_location || e.location || null,
+            occurs_at_local: e.occurs_at_local || e.occurs_at || null,
+            primary_performer_name: e.primary_performer_name || null,
+            primary_performer_logo: e.primary_performer_logo || null,
+            primary_performer_color: e.primary_performer_color || null,
+            from_price: e.from_price != null ? Number(e.from_price) : null,
+            owned_tickets_count: e.owned_tix != null ? Number(e.owned_tix) :
+                                 (e.owned_tickets_count != null ? Number(e.owned_tickets_count) : null),
+            owned_groups_count: e.owned_groups_count != null ? Number(e.owned_groups_count) : null,
+            rivalry: e.rivalry || null,
+            mlb_series: e.mlb_series || null,
+            tournament: e.tournament || null,
+            holiday: e.holiday || null,
+          }));
+          // Client-side speculative filter — mirrors PR #175's server-side
+          // logic. Drops CANCELLED + (If Necessary). Kept here in addition
+          // to the server filter so the fix works even if the older server
+          // build hasn't redeployed yet.
+          const cleaned = normalized.filter((e) => {
+            const up = (e.name || "").toUpperCase();
+            return !up.includes("CANCELLED") && !up.includes("(IF NECESSARY)");
+          });
+          render(cleaned, "search");
+        })
+        .catch((err) => {
+          console.error("searchAndRender failed:", err);
+          // Fall back to the in-memory local filter so the user still gets
+          // SOMETHING relevant rather than a blank page. Original behavior.
+          status.hidden = true;
+          filter(q);
+        });
+    }
 
     wireSuggestDropdown();
 
