@@ -1,19 +1,42 @@
 # Render Workspace Security Posture — Terminal-2
 
-**Owner**: B1 (Security Manager — read-only on Render) · **Last full sweep**: 2026-05-15 · **Update cadence**: per-session sweep step 13 (see [`b1_operating_constraints.md`](b1_operating_constraints.md))
+**Owner**: B1 (Security Manager — read-only on Render) · **Last full sweep**: 2026-05-16 · **Update cadence**: per-session sweep step 13 (see [`b1_operating_constraints.md`](b1_operating_constraints.md))
 
 Living snapshot of the Render workspace serving Terminal-2 lanes. B1 diffs current `mcp__render__*` output against this doc to catch regressions.
 
-**Lane scope**: per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.md) Cross-cutting Rule #6, **D1 owns Render writes exclusively**. B1 monitors only. Findings that require Render writes become PR comments to D1.
+**Lane scope**: per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.md) Cross-cutting Rule #6, A1 + D1 own Render writes. D2 + D0 have write scope on their own services per PROJECT_BIBLE.md §2. B1 monitors only — findings that require Render writes become PR comments to the service owner.
 
 ---
 
-## Active findings (open, 2026-05-15)
+## ⚠ Testing-unified architecture (post-2026-05-16, PR #168 + #169)
+
+**Current runtime topology** (per [PROJECT_BIBLE.md §2](../PROJECT_BIBLE.md) + [CLAUDE.md §4](../CLAUDE.md)):
+
+```
+vibepass-storefront-test (TESTING UNIFIED RUNTIME)  ◄── all runtime traffic
+├── D0 /terminal, /undelivered      (D0 mounts in app.py)
+├── D1 /, /store, /api/store/*      (D1 mounts in app.py — original surface)
+└── D2 /api/d2/* (8 routes)         (D2 mounts via app.include_router, line 6789)
+
+vibepass-terminal-test               ◄── D0 static CDN only (no runtime)
+d2-orders-dashboard                  ◄── ALIVE but idle (beta-time placeholder)
+```
+
+**At beta**: each surface migrates back to its own service (DNS swap + un-mount from `app.py`). The 3-service segregation that existed pre-2026-05-16 is the production target; current state is intentional test-time convergence onto the always-warm starter plan.
+
+**Security implications of unified runtime**:
+- Single app process surface → single auth boundary. D0/D1/D2 routes share `require_auth` dependency injection from `app.py`. Email-gated `@s4kent.com` access flows through one JWT verification path. ✅ less attack surface than 3 isolated services.
+- Render `ipAllowList` discipline now applies to ONE service (vibepass-storefront-test). The IP-allowlist hardening conversation from R-1 below collapses to one decision point.
+- A misbehaving D2 endpoint can theoretically degrade D0/D1 traffic via shared process. ⚠ Render free-tier instance + starter plan dyno share one process. Defense-in-depth: keep D2 routes prefix-isolated to `/api/d2/*` (per `include_router` mount strategy in `app.py:6789`).
+
+---
+
+## Active findings (open, 2026-05-16)
 
 | # | Severity | Finding | Action |
 |---|---|---|---|
-| R-1 | SEC-LOW | All 3 Terminal-2 services have `ipAllowList: 0.0.0.0/0` ("everywhere"). For `vibepass-storefront-test` (public retail) this is intended. For `vibepass-terminal-test` (broker terminal, supposed to be `@s4kent.com`-gated) and `d2-orders-dashboard` (internal ops), the IP allowlist could be a secondary defense. Auth lives at the app layer; this is belt-and-suspenders. | File [B1-NEXT-19]. PR comment to D1 (Render-write authority) — operator decision: tighten IP allowlist on internal services or accept current posture. |
-| R-2 | SEC-LOW | All 3 Terminal-2 services `autoDeploy: yes` on every commit to `main`. CD is standard — but a malicious PR that gets past `pytest`/`check`/`scan` + reviewer auto-deploys to production. | File [B1-NEXT-20]. PR comment to D1: optional deploy gate (manual approve) for `vibepass-storefront-test` (public retail). |
+| R-1 | SEC-LOW | `ipAllowList: 0.0.0.0/0` ("everywhere") on `vibepass-storefront-test`. With testing-unified, this is the single live service — broker terminal (`/terminal/*`), storefront (`/store/*`), D2 dashboard (`/api/d2/*`) all share this gate. Auth lives at app layer (`require_auth` + body-gated `auth.jwt()->>'email'` on D0 RPCs); IP allowlist would be secondary defense. | [B1-NEXT-19] — PR comment to D1 (service owner). Operator decision: tighten allowlist to known operator IPs, or accept current posture. |
+| R-2 | SEC-LOW | `vibepass-storefront-test` `autoDeploy: yes` on every commit to `main`. Standard CD; a malicious PR past `pytest`/`check`/`scan` + reviewer auto-deploys to the single live runtime. Higher blast radius now that 3 lanes share one service. | [B1-NEXT-20] — PR comment to D1: optional manual approval gate (Render UI) given unified-runtime blast radius. |
 
 No SEC-MED or SEC-HIGH findings.
 
@@ -45,7 +68,7 @@ Single workspace; no multi-tenancy.
 
 Source: `mcp__render__list_services` filtered to repo `https://github.com/JulianS4K/Terminal-2`
 
-### vibepass-storefront-test (D1 lane)
+### vibepass-storefront-test (TESTING UNIFIED RUNTIME · D1 + D0 mounts + D2 router)
 
 | Field | Value |
 |---|---|
@@ -64,9 +87,9 @@ Source: `mcp__render__list_services` filtered to repo `https://github.com/Julian
 | Created | 2026-05-11T20:46:39Z |
 | URL | https://vibepass-storefront-test.onrender.com |
 
-Public retail-facing storefront. Anon access intended.
+Public retail-facing storefront + UNIFIED RUNTIME hosting D0 (`/terminal`, `/undelivered`), D1 (`/`, `/store/*`, `/api/store/*`), D2 (`/api/d2/*` — 8 routes via `app.include_router(d2_router)` at `app.py:6789`). All test-time runtime traffic flows here. At beta: D0+D2 migrate back to their own services.
 
-### d2-orders-dashboard (D2 lane)
+### d2-orders-dashboard (D2 lane · IDLE PLACEHOLDER during testing-unified)
 
 | Field | Value |
 |---|---|
@@ -85,9 +108,9 @@ Public retail-facing storefront. Anon access intended.
 | Created | 2026-05-13T17:18:11Z |
 | URL | https://d2-orders-dashboard.onrender.com |
 
-Internal D2 dashboard. Auth-gated at app layer; IP allowlist is belt-and-suspenders.
+Internal D2 dashboard — service ALIVE but receives no live traffic under testing-unified architecture (D2's APIRouter is mounted on `vibepass-storefront-test` instead). Kept warm as a beta-time placeholder; will be re-activated when D2 migrates off the unified shell (DNS swap + unmount from `app.py`).
 
-### vibepass-terminal-test (D0 lane — per PR #107)
+### vibepass-terminal-test (D0 lane — CDN ONLY during testing-unified)
 
 | Field | Value |
 |---|---|
@@ -104,7 +127,7 @@ Internal D2 dashboard. Auth-gated at app layer; IP allowlist is belt-and-suspend
 | Created | 2026-05-15T03:22:54Z |
 | URL | https://vibepass-terminal-test.onrender.com |
 
-D0 broker terminal static frontend. The serves frontend HTML/JS only; auth happens at API layer (`/api/*` on storefront service routes to broker).
+D0 broker terminal static frontend. Serves frontend HTML/JS only via CDN; runtime moved to `vibepass-storefront-test` under testing-unified (D0's `/terminal` route + dependents now mount on app.py). Auth happens at API layer on the unified runtime.
 
 ---
 

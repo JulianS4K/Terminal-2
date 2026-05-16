@@ -1,7 +1,7 @@
 # Markdown Inventory — Terminal-2 docs catalogue
 
 **Owner**: B1 (Security Manager — librarian/archivist role per operator directive 2026-05-16)
-**Last full sweep**: 2026-05-16 (112 tracked `.md` files)
+**Last full sweep**: 2026-05-16 (afternoon update — 124 tracked `.md` files; +12 since morning sweep at 112)
 **Update cadence**: per-session sweep step 17 (new-file detection); quarterly full re-cat
 
 Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. B1 maintains; A1 merges drift PRs.
@@ -49,6 +49,9 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 | [`SYNC_PROTOCOL.md`](../SYNC_PROTOCOL.md) | PR / merge tracks (fast / careful / emergency) | PR-flow protocol changes |
 | [`SCHEMA.md`](../SCHEMA.md) | DB schema reference | Schema-shape changes |
 | [`CRON_HIERARCHY.md`](../CRON_HIERARCHY.md) | Cron tier budgets (T0–T4) | Cron policy changes |
+| [`docs/pr_governance.md`](pr_governance.md) | PR governance ratified 2026-05-16 (commit `a83f80b`); fast/careful/emergency tracks per its own spec | PR-flow rule changes |
+| [`docs/bot_chat_conventions.md`](bot_chat_conventions.md) | bot_chat event_type semantics + resolve protocol + closure-by-status rules | bot_chat schema changes |
+| [`docs/token-discipline-rules.md`](token-discipline-rules.md) | Token-discipline rules (companion to PROJECT_BIBLE.md §7 codified by B1 2026-05-16) | Token-budget conventions change |
 
 ## §3 — Per-bot self-contracts 🛡️
 
@@ -91,6 +94,7 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 | [`bin/sync-check.md`](../bin/sync-check.md) | Sync-check tool docs |
 | [`d2_dashboard/DEPLOY.md`](../d2_dashboard/DEPLOY.md) | D2 dashboard deploy notes |
 | [`docs/seatgeek/kanban-tasks.md`](seatgeek/kanban-tasks.md) | SG-specific work board |
+| [`docs/current-state-index.md`](current-state-index.md) | Operational index of current-state docs (added 2026-05-16) |
 | [`docs/seatgeek/migration-guide.md`](seatgeek/migration-guide.md) | SG migration guide |
 
 ## §6 — Point-in-time snapshots (audits, checkpoints, handoffs) 🗂️
@@ -109,11 +113,18 @@ Each file is a frozen record of state at a moment in time. NOT a living source-o
 - [`docs/sync-audit-2026-05-08.md`](sync-audit-2026-05-08.md)
 - [`docs/workflow-audit-2026-05-08.md`](workflow-audit-2026-05-08.md)
 - [`docs/security-audit-2026-05-14-post-pr101.md`](security-audit-2026-05-14-post-pr101.md) — B1's
+- [`docs/audit-2026-05-15-consolidation-plan.md`](audit-2026-05-15-consolidation-plan.md) — C1's consolidation plan
+- [`docs/audit-2026-05-15-merge-token-leakage.md`](audit-2026-05-15-merge-token-leakage.md) — pre-merge token leakage scan
+- [`docs/audit-2026-05-15-migration-header-bloat.md`](audit-2026-05-15-migration-header-bloat.md) — migration-header bloat audit
+- [`docs/audit-2026-05-15-schema-sprawl.md`](audit-2026-05-15-schema-sprawl.md) — schema-sprawl audit
 
 **Checkpoints / handoffs**:
 - [`docs/checkpoint-2026-05-15-friday.md`](checkpoint-2026-05-15-friday.md)
 - [`docs/checkpoint-2026-05-15-evening.md`](checkpoint-2026-05-15-evening.md)
+- [`docs/checkpoint-2026-05-16-evening.md`](checkpoint-2026-05-16-evening.md) — 2026-05-16 EOD (testing-unified architecture landed)
+- [`docs/c1-checkpoint-2026-05-15.md`](c1-checkpoint-2026-05-15.md) — C1's daily checkpoint
 - [`docs/c1-ownership-takeover-2026-05-14.md`](c1-ownership-takeover-2026-05-14.md)
+- [`docs/A1_HANDOFF_2026-05-15.md`](A1_HANDOFF_2026-05-15.md) — A1 → C1 handoff
 - [`docs/SESSION_2026-05-14_HANDOFF.md`](SESSION_2026-05-14_HANDOFF.md)
 - [`SESSION_2026-05-07.md`](../SESSION_2026-05-07.md)
 - [`SESSION_2026-05-13.md`](../SESSION_2026-05-13.md)
@@ -193,10 +204,11 @@ Mostly D0 / design-bot owned; ~16 files at `design/` and `docs/event-view-wirefr
 
 | Metric | Current value | Threshold |
 |---|---|---|
-| Total tracked `.md` | 112 | n/a |
-| New since 2026-05-14 | ~12 (within expected churn) | flag if >30/week |
+| Total tracked `.md` | 124 (+12 since 2026-05-16 morning) | n/a |
+| New since 2026-05-14 | ~24 (within expected churn for governance-write sprint) | flag if >30/week |
 | Bibles drift entries (PROJECT_BIBLE.md §9) | 10 | review when >20 |
 | Per-bot self-contracts | 4 of expected 6 (missing A1, D2; D3/D4 deferred) | track gap |
+| Architecture-snapshot freshness | render_security_posture.md updated 2026-05-16 for testing-unified (PR #168/#169) | re-sync on each PR touching `app.py` mount points |
 
 ---
 
