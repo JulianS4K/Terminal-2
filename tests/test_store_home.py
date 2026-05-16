@@ -329,8 +329,14 @@ def test_home_velocity_fields_always_null(store_home_client):
 
 def test_home_tbd_detected_from_name(store_home_client):
     """events.tbd column doesn't exist in our SQL schema — TBD is detected
-    from the event name string via _is_tbd(). Patterns observed in prod:
-    "(Date TBD)", "Date and Time TBD", "(If Necessary)".
+    from the event name string via _is_tbd().
+
+    Updated 2026-05-16: "(If Necessary)" is now FILTERED at the speculative-
+    event layer (sg_classify SKIP-override parity) rather than flagged with
+    the tbd badge. Consumer surfaces should never surface playoff games
+    that may not happen. "(Date TBD)" + "Date and Time TBD" still surface
+    with the tbd badge — those games WILL happen, the time is just pending.
+    See _is_speculative_event_name() vs _is_tbd().
     """
     store_home_client.fakedb.tables = {
         "latest_event_metrics": [_lem(i, retail_min=1000.0) for i in [1, 2, 3, 4]],
@@ -344,10 +350,30 @@ def test_home_tbd_detected_from_name(store_home_client):
     }
     r = store_home_client.get("/api/store/home")
     by_id = {e["id"]: e for e in r.json()["events"]}
-    assert by_id[1]["tbd"] is True, "(Date TBD) must be detected"
-    assert by_id[2]["tbd"] is True, "(If Necessary) must be detected"
-    assert by_id[3]["tbd"] is True, "Date and Time TBD must be detected"
+    assert by_id[1]["tbd"] is True, "(Date TBD) must surface with tbd badge"
+    assert 2 not in by_id, "(If Necessary) must be filtered out (speculative)"
+    assert by_id[3]["tbd"] is True, "Date and Time TBD must surface with tbd badge"
     assert by_id[4]["tbd"] is False, "ordinary scheduled event must not be flagged tbd"
+
+
+def test_home_speculative_events_filtered(store_home_client):
+    """Consumer storefront drops CANCELLED + (If Necessary) — playoff games
+    that may not happen. Mirrors broker-side sg_classify SKIP-override.
+    Railway audit 2026-05-16 found these leaking; fix lands here."""
+    store_home_client.fakedb.tables = {
+        "latest_event_metrics": [_lem(i, retail_min=1000.0) for i in [1, 2, 3]],
+        "events": [
+            _event(1, name="Knicks vs Pacers G3 - CANCELLED"),
+            _event(2, name="Pistons G7 (Home Game 4) (If Necessary)"),
+            _event(3, name="Yankees vs Red Sox"),
+        ],
+        "event_lifecycle": [_lc(i) for i in [1, 2, 3]],
+    }
+    r = store_home_client.get("/api/store/home")
+    by_id = {e["id"]: e for e in r.json()["events"]}
+    assert 1 not in by_id, "CANCELLED games must not surface to consumers"
+    assert 2 not in by_id, "(If Necessary) playoff placeholders must not surface"
+    assert 3 in by_id, "real scheduled events must surface"
 
 
 def test_is_tbd_helper_unit():
@@ -518,17 +544,31 @@ def test_build_storefront_version_prefers_render_git_commit(monkeypatch):
 def test_build_storefront_version_falls_back_to_git_commit(monkeypatch):
     """Defensive fallback for CI/workflows that set GIT_COMMIT instead."""
     monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
     monkeypatch.setenv("GIT_COMMIT", "1234567890abcdef")
     assert app_module._build_storefront_version() == "1234567"
 
 
-def test_build_storefront_version_dev_when_unset(monkeypatch):
-    """Both env vars unset → 'dev' literal. Local-dev behavior; in prod
-    Render always sets RENDER_GIT_COMMIT so this branch only fires by
-    accident."""
+def test_build_storefront_version_uses_railway_git_commit_sha(monkeypatch):
+    """Railway auto-sets RAILWAY_GIT_COMMIT_SHA — added 2026-05-16 to fix
+    Railway audit finding that every deploy served ?v=dev (no Render env)."""
     monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
     monkeypatch.delenv("GIT_COMMIT", raising=False)
-    assert app_module._build_storefront_version() == "dev"
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "abcdef1234567890")
+    assert app_module._build_storefront_version() == "abcdef1"
+
+
+def test_build_storefront_version_dev_epoch_when_unset(monkeypatch):
+    """All git env vars unset → 'dev-<epoch>' so each container start gets a
+    fresh cache-bust suffix even on misconfigured envs. Was 'dev' literal
+    before — that defeated cache-bust on any deploy without git env wired."""
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    v = app_module._build_storefront_version()
+    assert v.startswith("dev-")
+    assert v[4:].isdigit()
+    assert int(v[4:]) > 1_700_000_000  # post-2023 epoch sanity check
 
 
 def test_store_html_response_has_no_cache_header(store_home_client):

@@ -24,12 +24,13 @@ import re
 import secrets
 import sys
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -53,26 +54,103 @@ def _build_storefront_version() -> str:
     references inside the served HTML shells.
 
     Resolution order:
-      1. RENDER_GIT_COMMIT — auto-set by Render on every deploy.
-      2. GIT_COMMIT — set by some CI workflows; defensive fallback.
-      3. f"dev{epoch}" — local dev / unset prod; still bumps per-boot
-         so a fresh container always re-fetches.
+      1. RENDER_GIT_COMMIT       — auto-set by Render on every deploy.
+      2. RAILWAY_GIT_COMMIT_SHA  — auto-set by Railway on every deploy.
+      3. GIT_COMMIT              — set by some CI workflows; defensive fallback.
+      4. f"dev-{epoch}"          — local dev / unset prod; bumps per container
+         start so a fresh boot always re-fetches even if env wasn't wired.
+
+    Was returning hardcoded "dev" before; Railway audit 2026-05-16 found that
+    every Railway deploy served `?v=dev` (no RENDER_GIT_COMMIT, no GIT_COMMIT)
+    which defeated the cache-bust entirely. Adding Railway env + an epoch
+    fallback restores the invariant.
     """
-    sha = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
+    sha = (os.environ.get("RENDER_GIT_COMMIT")
+           or os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+           or os.environ.get("GIT_COMMIT"))
     if sha:
         return sha[:7]
-    # Local dev / unset prod env — hard-refresh works locally; in prod the
-    # env var is always set by Render so this branch only fires by accident.
-    return "dev"
+    # Last-resort: per-container epoch so fresh boots always cache-bust.
+    return f"dev-{int(time.time())}"
+
+
+def _build_storefront_base_url() -> str:
+    """Absolute base URL used in OG share-card tags so previews
+    (iMessage/Slack/WhatsApp/Discord/Twitter) point at THIS deploy, not at
+    a hardcoded sibling deploy. Was hardcoded `vibepass-storefront-test.onrender.com`
+    in static/store/index.html (PR #166) so Railway-shared links previewed
+    the Render service.
+
+    Resolution order:
+      1. STOREFRONT_BASE_URL    — manual override (full URL with scheme).
+      2. RENDER_EXTERNAL_URL    — auto-set by Render to https://<service>.onrender.com.
+      3. RAILWAY_PUBLIC_DOMAIN  — auto-set by Railway to <env>.up.railway.app (no scheme).
+      4. Fallback hardcoded Render URL — preserves prior behavior on unconfigured
+         envs so nothing regresses.
+    """
+    override = os.environ.get("STOREFRONT_BASE_URL")
+    if override:
+        return override.rstrip("/")
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if render_url:
+        return render_url.rstrip("/")
+    railway_dom = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if railway_dom:
+        dom = railway_dom.strip().lstrip("https://").lstrip("http://")
+        return f"https://{dom}"
+    return "https://vibepass-storefront-test.onrender.com"
 
 
 _STOREFRONT_VERSION = _build_storefront_version()
+_STOREFRONT_BASE_URL = _build_storefront_base_url()
 _STOREFRONT_HTML_CACHE: dict[str, str] = {}
+
+
+# ---------- Speculative-event filter ----------
+#
+# Consumer storefront should NOT surface tickets whose names mark them as
+# games that may NEVER happen — playoff "(If Necessary)" series-extenders,
+# plus already-CANCELLED games. We hold inventory for these as brokers (they
+# can be valuable IF the game happens) but they're a bad consumer-checkout
+# experience because the event may be voided.
+#
+# IMPORTANT: "(Date TBD)" + "Date and Time TBD" are NOT included — those
+# games ARE happening, the date just isn't confirmed yet. The existing
+# `tbd` badge on the storefront card surfaces them with a clear warning
+# (see _is_tbd() + the test_home_tbd_detected_from_name test).
+#
+# sg_classify_events() already gates these out of broker tier-polling per
+# the 20260516030000 migration. The consumer storefront search/movers/home
+# queries don't share that classification, so we filter at the app layer
+# using a name substring scan. Patterns are case-insensitive.
+#
+# Railway audit 2026-05-16 found "(If Necessary)" games leaking into
+# /api/store/search?q=knicks and /api/store/movers — surfaced as bookable
+# on the consumer storefront despite the broker tier already marking them
+# SKIP. CANCELLED was already filtered at 3 app-layer call sites; this
+# helper consolidates + adds (If Necessary).
+_SPECULATIVE_NAME_PATTERNS = (
+    "CANCELLED",
+    "(IF NECESSARY)",
+)
+
+
+def _is_speculative_event_name(name: str | None) -> bool:
+    """True when an event name contains any pattern indicating the game may
+    never happen as scheduled (CANCELLED or playoff if-necessary). Consumer
+    surfaces should drop these. (Date TBD) events are NOT speculative —
+    they're real scheduled games with pending datetime confirmation, surfaced
+    via the `tbd` badge."""
+    if not name:
+        return False
+    upper = name.upper()
+    return any(p in upper for p in _SPECULATIVE_NAME_PATTERNS)
 
 
 def _read_storefront_html(name: str) -> str:
     """Read a `static/store/<name>` HTML shell, rewrite the store.js +
-    style.css refs to include `?v=<sha>`, cache the result for the life
+    style.css refs to include `?v=<sha>`, swap the hardcoded OG share-card
+    base URL for this deploy's actual host, cache the result for the life
     of the container. The source files don't change mid-process.
     """
     cached = _STOREFRONT_HTML_CACHE.get(name)
@@ -82,9 +160,9 @@ def _read_storefront_html(name: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         html = f.read()
     v = _STOREFRONT_VERSION
-    # Match the exact strings used in the HTML shells. Closing-quote
-    # specificity prevents accidental matches inside JS strings or
-    # CSS url() refs that might be added later.
+    base = _STOREFRONT_BASE_URL
+    # Cache-bust asset URLs. Closing-quote specificity prevents accidental
+    # matches inside JS strings or CSS url() refs that might be added later.
     html = html.replace(
         '/static/store/store.js"',
         f'/static/store/store.js?v={v}"',
@@ -93,6 +171,16 @@ def _read_storefront_html(name: str) -> str:
         '/static/store/style.css"',
         f'/static/store/style.css?v={v}"',
     )
+    # Replace the hardcoded `https://vibepass-storefront-test.onrender.com`
+    # base in OG share-card tags (PR #166) with this deploy's actual host so
+    # iMessage/Slack/WhatsApp/Discord/Twitter previews point at the right
+    # deploy (Render vs Railway vs custom). When base resolves to the same
+    # default this is a no-op string replace.
+    if base != "https://vibepass-storefront-test.onrender.com":
+        html = html.replace(
+            "https://vibepass-storefront-test.onrender.com",
+            base,
+        )
     _STOREFRONT_HTML_CACHE[name] = html
     return html
 
@@ -4662,9 +4750,10 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
         print(f"search_sql_only events query failed: {e}")
         ev_rows = []
 
-    # Tag with we_own + from_price via latest_event_metrics. Drop CANCELLED
-    # name strings (rare in our table but cheap to filter).
-    ev_rows = [e for e in ev_rows if "CANCELLED" not in (e.get("name") or "").upper()]
+    # Tag with we_own + from_price via latest_event_metrics. Drop speculative
+    # names (CANCELLED / (If Necessary) / (Date TBD)) — consumer storefront
+    # should not surface playoff "may not happen" inventory.
+    ev_rows = [e for e in ev_rows if not _is_speculative_event_name(e.get("name"))]
     if ev_rows:
         ev_ids = [int(e["id"]) for e in ev_rows if e.get("id")]
         metrics: dict[int, dict] = {}
@@ -4798,8 +4887,10 @@ def _search_live(db, q_norm: str, limit: int) -> dict:
     pf_in = s.get("performers", []) or []
     vn_in = s.get("venues", []) or []
 
-    # Drop CANCELLED (TEvo bakes the marker right into the name string).
-    ev_in = [e for e in ev_in if "CANCELLED" not in (e.get("name") or "").upper()]
+    # Drop speculative event names — CANCELLED + (If Necessary) + (Date TBD).
+    # TEvo bakes these markers right into the name string for playoff/round-N
+    # placeholders. Consumer search should never surface them as bookable.
+    ev_in = [e for e in ev_in if not _is_speculative_event_name(e.get("name"))]
 
     # Cross-check against our SQL to know which events we actually own.
     ev_ids = [int(e.get("id") or 0) for e in ev_in if e.get("id")]
@@ -5002,6 +5093,14 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         print(f"store_movers events query failed: {e}")
         return {"city": city, "days": day_cap, "count": 0, "events": []}
 
+    if not events_rows:
+        return {"city": city, "days": day_cap, "count": 0, "events": []}
+    # Drop speculative names (CANCELLED / (If Necessary) / (Date TBD)) —
+    # playoff "may not happen" placeholders shouldn't surface to consumers
+    # via the movers strip. event_lifecycle.is_active stays true for these
+    # because the game *could* happen, so the name-string filter is the
+    # right layer. Mirrors search + home behavior.
+    events_rows = [e for e in events_rows if not _is_speculative_event_name(e.get("name"))]
     if not events_rows:
         return {"city": city, "days": day_cap, "count": 0, "events": []}
     events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
@@ -5232,7 +5331,7 @@ def store_home(
     # marker into the event name).
     events_by_id = {
         k: v for k, v in events_by_id.items()
-        if "CANCELLED" not in (v.get("name") or "").upper()
+        if not _is_speculative_event_name(v.get("name"))
     }
 
     # Active-only via event_lifecycle.
@@ -6790,6 +6889,52 @@ try:
     logging.getLogger(__name__).info("d2_dashboard router mounted at unified shell (%d routes)", len(d2_router.routes))
 except Exception as _d2_import_err:  # pragma: no cover — d2 module optional in dev
     logging.getLogger(__name__).warning("d2_dashboard router NOT mounted: %s", _d2_import_err)
+
+
+# ---------- Site essentials (SEO + browser-tab UX) ----------
+#
+# Browsers + crawlers probe these at fixed paths. Without explicit routes,
+# /robots.txt + /sitemap.xml + /favicon.ico would 404. Railway audit
+# 2026-05-16 found all 3 missing on the deployed storefront.
+
+_ROBOTS_TXT = (
+    "User-agent: *\n"
+    "Allow: /\n"
+    "Disallow: /api/\n"
+    "Disallow: /store/test\n"
+    "Disallow: /store/test/\n"
+    f"Sitemap: {_STOREFRONT_BASE_URL}/sitemap.xml\n"
+)
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots_txt():
+    """Crawler directive — public pages allowed, /api/ + test harness denied.
+    Sitemap URL self-references this deploy's base so each environment
+    advertises its own sitemap correctly."""
+    return Response(content=_ROBOTS_TXT, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap_xml():
+    """Minimal sitemap covering the public storefront entry points. Per-event
+    URLs are dynamic + ranked elsewhere; this is the static surface map only.
+    """
+    base = _STOREFRONT_BASE_URL
+    urls = ["/store", "/store/about", "/store/privacy", "/store/terms"]
+    body = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    body += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    for path in urls:
+        body += f"  <url><loc>{base}{path}</loc></url>\n"
+    body += "</urlset>\n"
+    return Response(content=body, media_type="application/xml; charset=utf-8")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_ico():
+    """Browsers probe /favicon.ico even when the page declares an SVG.
+    Redirect to the canonical SVG so users get the icon instead of a 404."""
+    return RedirectResponse(url="/static/store/favicon.svg", status_code=308)
 
 
 # Static assets (CSS / JS / images) served from /static.
