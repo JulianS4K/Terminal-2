@@ -4237,7 +4237,11 @@ def store_events(
     cap = min(max(limit, 1), 500)
     # offset → TEvo page index. TEvo paginates 1-based.
     per_page = min(cap, 100)
-    offset = max(offset, 0)
+    # Cap offset to prevent absurd values from triggering a 502 on impossible
+    # page lookups (TEvo doesn't paginate beyond what its catalog holds —
+    # office-filtered catalog is ~3-4k events at peak, so 5000 is a safe
+    # upper bound that catches malicious/bug values like ?offset=999999).
+    offset = min(max(offset, 0), 5000)
     start_page = (offset // per_page) + 1
     # When offset is NOT a multiple of per_page, we land mid-page and have to
     # slice the leading rows off the first fetched page. Account for that in
