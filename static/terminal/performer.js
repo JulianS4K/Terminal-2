@@ -36,9 +36,10 @@
       } else {
         T.setStatus(`Loaded`, 'ok');
       }
-      try { renderHero(assets, portfolio); } catch (e) { console.error('hero', e); }
-      try { renderRollup(portfolio); }       catch (e) { console.error('rollup', e); }
-      try { renderEvents(portfolio); }       catch (e) { console.error('events', e); }
+      try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
+      try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
+      try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
+      try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
     });
   }
 
@@ -141,6 +142,97 @@
         <td class="num">${ownedShare}</td>
         <td><span class="badge ${lcCls}">${escapeHtml(String(lc).toUpperCase())}</span></td>
         <td>${isHome === '—' ? '—' : `<span class="badge ${isHome === 'HOME' ? 'lifecycle-active' : ''}">${isHome}</span>`}</td>
+      `;
+      tb.appendChild(tr);
+    });
+    body.appendChild(tbl);
+  }
+
+  // ---------- Blind spots — games we DON'T own ----------
+  //
+  // For each upcoming event under this performer where we hold zero
+  // inventory AND the market has > MIN_MARKET_TIX tickets active, surface
+  // the row sorted by approx market notional (qty × median). These are
+  // games we could profitably enter — broker decision-support, no Phase
+  // 2b/2c RPC needed (existing /api/portfolio events already carry
+  // owned_tickets_count + tickets_count + retail_median per row).
+  //
+  // Aligns with the entity-level Blind Spots framing in Phase 2c E.1
+  // (Snapshot/Motion/Coverage/Blind) — surfacing the "Coverage" gap at
+  // the performer drill-down rather than waiting for the dedicated
+  // /terminal/blind-spots page (Phase 2c proper, needs get_broker_
+  // blind_spots RPC from A1).
+
+  const BLIND_SPOT_MIN_MARKET_TIX = 50;
+  const BLIND_SPOT_MAX_ROWS       = 20;
+
+  function renderBlindSpots(portfolio) {
+    const body = document.getElementById('phBlindSpotsBody');
+    const countEl = document.getElementById('phBlindSpotsCount');
+    if (!body) return;
+    body.innerHTML = '';
+    if (!portfolio || portfolio.__err) {
+      body.innerHTML = '<div class="empty">portfolio unavailable — cannot derive blind spots</div>';
+      return;
+    }
+    const events = portfolio.events || [];
+
+    // Lifecycle gate first — speculative + ghost events surface elsewhere
+    // already (and aren't real blind-spot candidates per consumer storefront
+    // filter logic from PR #175). Then qty + ownership filter.
+    const candidates = events.filter((e) => {
+      const lifecycleActive = !e.lifecycle || e.lifecycle.is_active !== false;
+      if (!lifecycleActive) return false;
+      const owned = Number(e.owned_tickets_count || 0);
+      const market = Number(e.tickets_count || 0);
+      return owned === 0 && market > BLIND_SPOT_MIN_MARKET_TIX;
+    });
+
+    // Sort by approx market notional desc. Falls back to market qty when
+    // retail_median missing (small event with no median yet → still surfaces).
+    candidates.sort((a, b) => {
+      const an = (Number(a.tickets_count) || 0) * (Number(a.retail_median) || 0);
+      const bn = (Number(b.tickets_count) || 0) * (Number(b.retail_median) || 0);
+      if (bn !== an) return bn - an;
+      return (Number(b.tickets_count) || 0) - (Number(a.tickets_count) || 0);
+    });
+
+    const total = candidates.length;
+    if (countEl) countEl.textContent = total
+      ? `${total} blind spot${total === 1 ? '' : 's'} (showing top ${Math.min(total, BLIND_SPOT_MAX_ROWS)})`
+      : '';
+
+    if (!total) {
+      body.innerHTML = '<div class="empty">no blind spots — we have inventory on every active upcoming game for this performer ✓</div>';
+      return;
+    }
+
+    const tbl = document.createElement('table');
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Event</th>
+        <th>Venue</th>
+        <th class="num">T-days</th>
+        <th class="num">Mkt qty</th>
+        <th class="num">Mkt median</th>
+        <th class="num">Approx GMV</th>
+      </tr></thead>
+      <tbody></tbody>
+    `;
+    const tb = tbl.querySelector('tbody');
+    candidates.slice(0, BLIND_SPOT_MAX_ROWS).forEach((e) => {
+      const days = T.daysUntil(e.occurs_at_local);
+      const qty = Number(e.tickets_count) || 0;
+      const med = Number(e.retail_median) || 0;
+      const gmv = qty * med;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a></td>
+        <td>${escapeHtml(e.venue_name || '—')}</td>
+        <td class="num">${days === null ? '—' : days}</td>
+        <td class="num">${T.fmtNum(qty)}</td>
+        <td class="num">${med ? '$' + T.fmtNum(Math.round(med)) : '—'}</td>
+        <td class="num">${gmv ? '$' + T.fmtNum(Math.round(gmv)) : '—'}</td>
       `;
       tb.appendChild(tr);
     });
