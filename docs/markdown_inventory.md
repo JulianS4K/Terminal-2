@@ -1,7 +1,7 @@
 # Markdown Inventory — Terminal-2 docs catalogue
 
 **Owner**: B1 (Security Manager — librarian/archivist role per operator directive 2026-05-16)
-**Last full sweep**: 2026-05-16 (afternoon update — 124 tracked `.md` files; +12 since morning sweep at 112)
+**Last full sweep**: 2026-05-17 ~02:30 UTC — 126 tracked `.md` files (+2 since 2026-05-16 afternoon: war-games playbook + code-review audit, both from PR #172)
 **Update cadence**: per-session sweep step 17 (new-file detection); quarterly full re-cat
 
 Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. B1 maintains; A1 merges drift PRs.
@@ -73,6 +73,7 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 | [`docs/render_security_posture.md`](render_security_posture.md) | Render workspace + 3 services config | Per-session sweep step 13 |
 | [`docs/markdown_inventory.md`](markdown_inventory.md) | **This doc** — every `.md` file catalogued | Per-session sweep step 17 (new); quarterly full re-cat |
 | [`docs/security-runbook-2026-05-11.md`](security-runbook-2026-05-11.md) | Security incident response playbook | When new playbook step is added |
+| [`docs/war_games_playbook.md`](war_games_playbook.md) | 10 adversarial scenarios (W-1..W-10) with read-only probe templates for idle-time rotation | When new scenario surface emerges; rotate scenarios per sweep step 19 |
 
 ## §5 — Active operational state 📋
 
@@ -117,6 +118,7 @@ Each file is a frozen record of state at a moment in time. NOT a living source-o
 - [`docs/audit-2026-05-15-merge-token-leakage.md`](audit-2026-05-15-merge-token-leakage.md) — pre-merge token leakage scan
 - [`docs/audit-2026-05-15-migration-header-bloat.md`](audit-2026-05-15-migration-header-bloat.md) — migration-header bloat audit
 - [`docs/audit-2026-05-15-schema-sprawl.md`](audit-2026-05-15-schema-sprawl.md) — schema-sprawl audit
+- [`docs/security-audit-2026-05-16-code-review.md`](security-audit-2026-05-16-code-review.md) — B1's edge-function code audit (PR #172, CRIT+HIGH+MED retrofitted by PR #174)
 
 **Checkpoints / handoffs**:
 - [`docs/checkpoint-2026-05-15-friday.md`](checkpoint-2026-05-15-friday.md)
@@ -204,8 +206,8 @@ Mostly D0 / design-bot owned; ~16 files at `design/` and `docs/event-view-wirefr
 
 | Metric | Current value | Threshold |
 |---|---|---|
-| Total tracked `.md` | 124 (+12 since 2026-05-16 morning) | n/a |
-| New since 2026-05-14 | ~24 (within expected churn for governance-write sprint) | flag if >30/week |
+| Total tracked `.md` | 126 (+2 since 2026-05-16 afternoon — both from PR #172) | n/a |
+| New since 2026-05-14 | ~26 (within expected churn for governance-write sprint) | flag if >30/week |
 | Bibles drift entries (PROJECT_BIBLE.md §9) | 10 | review when >20 |
 | Per-bot self-contracts | 4 of expected 6 (missing A1, D2; D3/D4 deferred) | track gap |
 | Architecture-snapshot freshness | render_security_posture.md updated 2026-05-16 for testing-unified (PR #168/#169) | re-sync on each PR touching `app.py` mount points |
