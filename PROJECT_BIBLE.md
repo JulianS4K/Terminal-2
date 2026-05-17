@@ -105,6 +105,8 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `espn_scoreboard_process()` | — | Process ESPN responses → date_lookup |
 | `refresh_sg_broker_sales_event_metrics(max_events)` | int (default 200) | Populate `seatgeek_event_metrics.sold_*` from deduped (DISTINCT ON sg_sale_id) sales snapshots. Hourly cron @ :17. |
 | `sg_canonical_refresh_v2_pull(window_minutes)` | int (default 15; NULL = full) | Reconciles `sg_events_canonical.last_v2_pull_at` + `last_v2_listings_count` + `last_v2_status` + `has_v2_listings_pulled` from `seatgeek_listings_snapshots`. Cron @ :12,:42. Backfill ran 2026-05-16: 574 rows brought to 100% coverage. |
+| `sg_broker_listings_process(p_limit)` / `sg_broker_sales_process(p_limit)` | int (default **50**) | **Bounded drain** (2026-05-17). Reads `sg_broker_pending` rows that have an `_http_response`, joins `aq_event_map` + `seatgeek_event_xref` once, inserts rows + marks resolved. Cron is the 1-min priority variant only (30-min duplicates unscheduled). If pendings outpace 50/min, raise the param. |
+| `sweep_all_expired_pg_net_pending(ttl_hours)` | int (default 12) | Cron-driven housekeeping. Includes `sg_broker_pending` as of 2026-05-17. Marks `resolved_at = now()` for pendings where the `_http_response` row has been pruned. |
 | `sg_attempt_event_xref_v3(...)` | bigint, text, date, timestamptz, text, [text], [text], [text] | **Matcher v3**: ±24h date tolerance + parking skip + `cross_source_venue_resolve` lookup. Replaces v2 in `cross_source_match_tick`. |
 | `auto_match_sg_canonical_v3()` | — | Sweeps all unlinked SG canonical rows through matcher v3. Returns `(attempted, newly_matched, parking_skipped, still_unmatched, needs_tevo_search)`. |
 | `cross_source_venue_resolve(name, city, state)` | text, [text], [text] | Returns `tevo_venue_id` from any-source venue name via 3-tier match (canonical / aliases array / prefix). Driven by `cross_source_venue_map` (391 TEvo rows + 129 SG / 94 TickPick / 85 Vivid aliases as of 2026-05-16). |
@@ -207,6 +209,18 @@ DO $body$ BEGIN
 END $body$;
 ```
 
+### Function signature changes — drop old overloads explicitly
+Adding (or removing) a parameter — **even one with a `DEFAULT`** — creates a NEW overload, not a replacement. The old function survives and callers that pass no args resolve ambiguously: `function X() is not unique`. Caught twice now: A1 bot_chat 258 (`match_to_aq_event_id` 7-arg), A1 mig 20260517160004 (`sg_broker_*_process` 0-arg). Pattern:
+```sql
+-- before adding a parameter to existing fn, drop the prior signature
+DROP FUNCTION IF EXISTS public.your_fn(text, int);     -- prior signature
+CREATE OR REPLACE FUNCTION public.your_fn(p_a text, p_b int, p_new int DEFAULT 50) ...
+```
+If you can't predict the prior signature, query `pg_proc` for `proname` to enumerate overloads before authoring the migration.
+
+### `sg_broker_pending` — drains via 1-min priority cron
+The bounded-drain functions (`sg_broker_listings_process(p_limit=50)` / `sg_broker_sales_process(p_limit=50)`) run from the 1-min priority crons. The 30-min variants were unscheduled 2026-05-17 (redundant). If you need to drain faster ad-hoc, pass a larger `p_limit`. Pending rows whose `_http_response` has been pruned (>6h old) are housekept by `sweep_all_expired_pg_net_pending` at `:20` hourly.
+
 ### Email gate inside SECDEF RPC
 ```sql
 v_email := coalesce(auth.jwt()->>'email', '');
@@ -308,6 +322,11 @@ SELECT public.bot_chat_log(
 | 2026-05-16 | 20260516100000 | `evo_orders` event-mapping columns (tevo_event_id + aq_short_event_id) + backfill |
 | 2026-05-16 | 20260516110000 | NEW RPC `refresh_sg_broker_sales_event_metrics` + hourly cron; populates `seatgeek_event_metrics.sold_*` from `seatgeek_sales_snapshots` |
 | 2026-05-16 | 20260516120000 | 3 analytics views: `v_event_sales_velocity`, `v_event_sales_metrics_filtered`, `v_event_price_arbitrage` |
+| **2026-05-17** | 20260517160000 | **sg_broker_{listings,sales}_process bounded drain** — added `p_limit int DEFAULT 50` + lifted aq_event_map + seatgeek_event_xref into LEFT JOIN (drops per-row correlated subqueries). New rows born with `tevo_event_id` populated where xref exists. Unscheduled 30-min variants (redundant with 1-min priority). Drains 50 pendings in ~5s; was timing out at 2min draining unbounded. |
+| 2026-05-17 | 20260517160001 | Partial indexes `(*_prev_*_null_idx)` on `listings_snapshots` + `seatgeek_listings_snapshots` — fixes the seq-scan in `listings_deltas_backfill_chunked` that A1 PR #189 didn't address. Backfill of 15 events now <1s (was 5min timeout). |
+| 2026-05-17 | 20260517160002 | `match_listings_to_sg_tick` narrow + indexes — D2's bot_chat 225 sketch shipped: window 24h→6h, `ROW_NUMBER()` uniqueness instead of triple `NOT EXISTS`, helper indexes. 591ms vs prior 5min timeout. |
+| 2026-05-17 | 20260517160003 | `sweep_all_expired_pg_net_pending` now covers `sg_broker_pending` + one-shot drain of 1,595 zombies (orphaned by `net._http_response` prune). |
+| 2026-05-17 | 20260517160004 | Hotfix: drop legacy 0-arg overloads of `sg_broker_{listings,sales}_process`. Mig 20260517160000's `DEFAULT 50` addition created an overload not a replacement; cron `SELECT fn()` resolved ambiguously. Same class as A1 bot_chat 258 lesson. |
 
 ---
 
@@ -315,7 +334,7 @@ SELECT public.bot_chat_log(
 
 | Gap | Status | Symptom / workaround |
 |---|---|---|
-| `tevo_event_id` 0% populated on SG snapshot tables | Open (separate ingest workstream) | Query SG snapshots by `sg_event_id` (indexes added 2026-05-16) |
+| `tevo_event_id` populated on SG snapshot tables | Partial: PR #178 backfilled to 87.35%; mig 20260517160000 ensures NEW rows are born populated where xref exists | Query by `sg_event_id` when `tevo_event_id IS NULL` (no xref) |
 | `seatgeek_event_xref.last_listings_at`/`last_sales_at` | Dead globally (0/967) | Use `MAX(captured_at)` on snapshot tables |
 | `sg_events_canonical.has_v2_listings_pulled` | Dead (25/4609 = 0.5%) | Same |
 | ESPN snapshot pipeline = gameday-scope only | (specced, not built) | Forward-look ESPN panels empty by design |
