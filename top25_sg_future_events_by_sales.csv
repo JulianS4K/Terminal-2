@@ -1,0 +1,26 @@
+rank,sg_event_id,event,date_utc,venue,city,state,category,sales_count,tickets_sold,gross_revenue_usd,avg_price_usd
+1,18010320,BTS,2026-05-27 20:00,Allegiant Stadium,Las Vegas,NV,K-pop,2580,5402,1753186.34,334.48
+2,18010315,BTS,2026-05-23 20:00,Allegiant Stadium,Las Vegas,NV,K-pop,2376,4948,2097942.69,431.11
+3,18030654,BTS,2026-05-28 20:00,Allegiant Stadium,Las Vegas,NV,K-pop,1656,3464,1196829.28,356.99
+4,18010313,BTS,2026-05-18 02:00,Stanford Stadium,Stanford,CA,concert,1339,2769,1000524.28,379.80
+5,18004656,Bruno Mars,2026-05-20 19:00,Ohio Stadium,Columbus,OH,Pop,1324,3252,813338.15,250.06
+6,17174340,Spain vs Cabo Verde - World Cup - Match 14 (Group H),2026-06-15 12:00,Mercedes-Benz Stadium,Atlanta,GA,Fifa World Cup,974,2432,1259373.71,514.72
+7,17307552,Germany vs Curacao - World Cup - Match 10 (Group E),2026-06-14 12:00,NRG Stadium,Houston,TX,Fifa World Cup,919,2267,1247496.95,545.64
+8,17873122,Morgan Wallen,2026-05-29 17:15,Empower Field at Mile High,Denver,CO,Country and Folk,871,2246,646437.53,287.52
+9,17873127,Morgan Wallen,2026-06-06 17:30,Acrisure Stadium,Pittsburgh,PA,Country and Folk,870,2322,677146.08,296.57
+10,17385143,Netherlands vs Japan - World Cup - Match 11 (Group F),2026-06-14 15:00,AT&T Stadium,Arlington,TX,Fifa World Cup,848,2065,1743634.18,838.21
+11,17269669,Brazil vs Morocco - World Cup - Match 7 (Group C),2026-06-13 18:00,MetLife Stadium,East Rutherford,NJ,Fifa World Cup,805,1940,2370357.26,1220.12
+12,17213259,Ecuador vs Cote d'Ivoire - World Cup - Match 9 (Group E),2026-06-14 19:00,Lincoln Financial Field,Philadelphia,PA,Fifa World Cup,711,1869,1188104.05,639.23
+13,18050496,Don Toliver,2026-06-13 19:30,American Airlines Center - TX,Dallas,TX,Rap/Hip Hop,670,1365,284799.18,215.51
+14,17691540,Toronto Blue Jays at New York Yankees,2026-05-18 19:05,Yankee Stadium,Bronx,NY,MLB,661,1901,115974.59,63.80
+15,17691545,Tampa Bay Rays at New York Yankees,2026-05-23 13:35,Yankee Stadium,Bronx,NY,MLB,648,2175,222199.73,107.08
+16,18050463,Don Toliver,2026-05-19 19:30,State Farm Arena,Atlanta,GA,Rap/Hip Hop,605,1183,242737.23,209.52
+17,17248695,Belgium vs Egypt - World Cup - Match 16 (Group G),2026-06-15 12:00,Lumen Field,Seattle,WA,Fifa World Cup,585,1425,786554.99,551.95
+18,17691543,Toronto Blue Jays at New York Yankees (Cap Night),2026-05-21 19:05,Yankee Stadium,Bronx,NY,MLB,575,1703,122831.96,73.92
+19,17691551,Boston Red Sox at New York Yankees (Military Appreciation Night),2026-06-06 19:35,Yankee Stadium,Bronx,NY,MLB,571,1892,306482.86,165.28
+20,17691544,Tampa Bay Rays at New York Yankees (Giancarlo Stanton Basketball Jersey Night),2026-05-22 19:05,Yankee Stadium,Bronx,NY,MLB,570,1747,148887.59,87.37
+21,17164014,Saudi Arabia vs Uruguay - World Cup - Match 13 (Group H),2026-06-15 18:00,Hard Rock Stadium,Miami Gardens,FL,Fifa World Cup,556,1372,552471.25,400.07
+22,17691546,Tampa Bay Rays at New York Yankees,2026-05-24 13:35,Yankee Stadium,Bronx,NY,MLB,534,1916,164953.30,91.96
+23,17693983,Cleveland Guardians at Philadelphia Phillies (NEEDTOBREATHE Postgame Concert),2026-05-23 16:05,Citizens Bank Park,Philadelphia,PA,MLB,502,1804,165231.11,92.83
+24,17691552,Boston Red Sox at New York Yankees,2026-06-07 13:35,Yankee Stadium,Bronx,NY,MLB,498,1705,266846.79,166.61
+25,17692136,Los Angeles Dodgers at San Diego Padres,2026-05-20 17:40,PETCO Park,San Diego,CA,MLB,497,1527,184634.87,117.55
