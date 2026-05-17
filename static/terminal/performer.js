@@ -1,7 +1,14 @@
-// D0 Terminal — Performer detail page.
-// URL: ?performer=<id>. Fetches /api/broker/performer/{id}/assets for the
-// header + /api/portfolio?performer_id=<id> for the events list + rollup.
-// Injuries / roster / news / xref deferred to the cross-source explorer page.
+// D0 Terminal — Performer page (two modes).
+//
+// INDEX mode  (no ?performer in URL): 4-league directory from
+//   get_broker_performer_index. Click a row → DETAIL mode.
+// DETAIL mode (?performer=<id>):      hero + portfolio rollup +
+//   4 tabs (Overview / Upcoming Events / Blind Spots / ESPN Context).
+//   Fetches /api/broker/performer/{id}/assets + /api/portfolio?performer_id
+//   like before, plus get_broker_performer_page for the ESPN tab.
+//
+// ESPN tab is lazy-loaded on first click (one Path C RPC). Other tabs
+// derive from the assets + portfolio payload already in memory.
 
 (function () {
   'use strict';
@@ -18,12 +25,85 @@
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const performerId = getPerformerId();
     if (!performerId) {
-      T.setStatus('No performer id — pass ?performer=<id>', 'err');
-      document.getElementById('phName').textContent = 'Pick a performer';
-      document.getElementById('phEventsBody').innerHTML =
-        '<div class="empty">Append <code>?performer=&lt;id&gt;</code> to the URL. Find performer ids via the Movers page (click a row) or via the <code>events</code> table.</div>';
+      showIndexMode();
       return;
     }
+    showDetailMode(performerId);
+  }
+
+  // ============================================================
+  // INDEX mode — 4-league directory
+  // ============================================================
+  async function showIndexMode() {
+    const idx = document.getElementById('perf-index');
+    if (idx) idx.removeAttribute('hidden');
+    T.setStatus('Loading performer index…');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      document.getElementById('perfIndexBody').innerHTML =
+        '<div class="empty">index needs auth — sign in with @s4kent.com</div>';
+      T.setStatus('Auth required', 'err');
+      return;
+    }
+    const res = await Auth.client.rpc('get_broker_performer_index');
+    if (res.error) {
+      T.setStatus(res.error.message, 'err');
+      document.getElementById('perfIndexBody').innerHTML =
+        `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
+      return;
+    }
+    T.setStatus('Loaded', 'ok');
+    renderIndex(res.data || {});
+  }
+
+  function renderIndex(d) {
+    const body = document.getElementById('perfIndexBody');
+    const countsEl = document.getElementById('perfIndexCounts');
+    const counts = d.counts || {};
+    const leagues = d.leagues || {};
+    if (countsEl) {
+      const parts = ['NFL','NBA','MLB','MLS']
+        .filter(l => counts[l])
+        .map(l => `${l} ${counts[l]}`);
+      if (counts.total) parts.push(`· ${counts.total} total`);
+      countsEl.textContent = parts.join(' · ');
+    }
+    body.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'entity-index-grid';
+    ['NFL','NBA','MLB','MLS'].forEach(league => {
+      const teams = leagues[league] || [];
+      const col = document.createElement('div');
+      col.className = 'entity-index-col';
+      col.innerHTML = `<div class="entity-index-col-hdr">${league} <span class="muted small">(${teams.length})</span></div>`;
+      const ul = document.createElement('ul');
+      ul.className = 'entity-index-list';
+      teams.forEach(t => {
+        const li = document.createElement('li');
+        const upcoming = t.events_count_next_90d != null ? `<span class="entity-idx-count">${t.events_count_next_90d}</span>` : '';
+        li.innerHTML = `<a href="performer.html?performer=${t.tevo_performer_id}">
+            <span class="entity-idx-name">${escapeHtml(t.display_name || t.performer_name || '—')}</span>
+            ${t.abbreviation ? `<span class="muted small">${escapeHtml(t.abbreviation)}</span>` : ''}
+            ${upcoming}
+          </a>`;
+        ul.appendChild(li);
+      });
+      col.appendChild(ul);
+      grid.appendChild(col);
+    });
+    body.appendChild(grid);
+  }
+
+  // ============================================================
+  // DETAIL mode — hero + rollup + 4 tabs
+  // ============================================================
+  function showDetailMode(performerId) {
+    // Unhide DETAIL chrome
+    document.getElementById('perf-hero').removeAttribute('hidden');
+    document.getElementById('perfTabs').removeAttribute('hidden');
+    document.getElementById('paneOverview').removeAttribute('hidden');
+
+    wireTabs(performerId);
     T.setStatus(`Loading performer ${performerId}…`);
 
     Promise.all([
@@ -31,15 +111,50 @@
       T.api(`/api/portfolio?performer_id=${performerId}`).catch(e => ({ __err: e })),
     ]).then(([assets, portfolio]) => {
       const firstErr = [assets, portfolio].find(r => r && r.__err);
-      if (firstErr) {
-        T.setStatus(firstErr.__err.message, 'err');
-      } else {
-        T.setStatus(`Loaded`, 'ok');
-      }
+      if (firstErr) T.setStatus(firstErr.__err.message, 'err');
+      else T.setStatus('Loaded', 'ok');
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
       try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
+    });
+  }
+
+  // ---------- Tab nav ----------
+  const _tabState = { loaded: { espn: false }, performerId: null };
+
+  function wireTabs(performerId) {
+    _tabState.performerId = performerId;
+    const nav = document.getElementById('perfTabs');
+    if (!nav) return;
+    nav.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.event-tab');
+      if (!btn) return;
+      const tabId = btn.dataset.tab;
+      activateTab(tabId);
+      if (tabId === 'espn' && !_tabState.loaded.espn) {
+        await loadEspnContext(performerId);
+      }
+    });
+  }
+
+  function activateTab(tabId) {
+    document.querySelectorAll('#perfTabs .event-tab').forEach(b => {
+      const on = b.dataset.tab === tabId;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const paneIds = {
+      overview:   'paneOverview',
+      upcoming:   'paneUpcoming',
+      blindspots: 'paneBlindspots',
+      espn:       'paneEspn',
+    };
+    Object.entries(paneIds).forEach(([id, paneId]) => {
+      const pane = document.getElementById(paneId);
+      if (!pane) return;
+      if (id === tabId) { pane.removeAttribute('hidden'); pane.classList.add('active'); }
+      else { pane.setAttribute('hidden', ''); pane.classList.remove('active'); }
     });
   }
 
@@ -64,12 +179,8 @@
 
     const logo = document.getElementById('phLogo');
     const url = a.logo_default_url || a.logo_dark_url || a.logo_4k_primary_url;
-    if (url) {
-      logo.src = url;
-      logo.alt = name + ' logo';
-    } else {
-      logo.style.display = 'none';
-    }
+    if (url) { logo.src = url; logo.alt = name + ' logo'; }
+    else { logo.style.display = 'none'; }
 
     if (a.color_primary) {
       document.getElementById('perf-hero').style.borderLeft = `4px solid ${a.color_primary}`;
@@ -94,6 +205,7 @@
   function renderEvents(portfolio) {
     const body = document.getElementById('phEventsBody');
     const countEl = document.getElementById('phEventCount');
+    const tabCount = document.getElementById('tabCountUpcoming');
     body.innerHTML = '';
     if (!portfolio || portfolio.__err) {
       body.innerHTML = '<div class="empty">portfolio unavailable</div>';
@@ -101,6 +213,7 @@
     }
     const events = portfolio.events || [];
     countEl.textContent = events.length ? `${events.length} events` : '';
+    if (tabCount) tabCount.textContent = events.length ? String(events.length) : '';
     if (!events.length) {
       body.innerHTML = '<div class="empty">no upcoming events for this performer</div>';
       return;
@@ -148,27 +261,14 @@
     body.appendChild(tbl);
   }
 
-  // ---------- Blind spots — games we DON'T own ----------
-  //
-  // For each upcoming event under this performer where we hold zero
-  // inventory AND the market has > MIN_MARKET_TIX tickets active, surface
-  // the row sorted by approx market notional (qty × median). These are
-  // games we could profitably enter — broker decision-support, no Phase
-  // 2b/2c RPC needed (existing /api/portfolio events already carry
-  // owned_tickets_count + tickets_count + retail_median per row).
-  //
-  // Aligns with the entity-level Blind Spots framing in Phase 2c E.1
-  // (Snapshot/Motion/Coverage/Blind) — surfacing the "Coverage" gap at
-  // the performer drill-down rather than waiting for the dedicated
-  // /terminal/blind-spots page (Phase 2c proper, needs get_broker_
-  // blind_spots RPC from A1).
-
+  // ---------- Blind spots ----------
   const BLIND_SPOT_MIN_MARKET_TIX = 50;
   const BLIND_SPOT_MAX_ROWS       = 20;
 
   function renderBlindSpots(portfolio) {
     const body = document.getElementById('phBlindSpotsBody');
     const countEl = document.getElementById('phBlindSpotsCount');
+    const tabCount = document.getElementById('tabCountBlindspots');
     if (!body) return;
     body.innerHTML = '';
     if (!portfolio || portfolio.__err) {
@@ -176,10 +276,6 @@
       return;
     }
     const events = portfolio.events || [];
-
-    // Lifecycle gate first — speculative + ghost events surface elsewhere
-    // already (and aren't real blind-spot candidates per consumer storefront
-    // filter logic from PR #175). Then qty + ownership filter.
     const candidates = events.filter((e) => {
       const lifecycleActive = !e.lifecycle || e.lifecycle.is_active !== false;
       if (!lifecycleActive) return false;
@@ -187,26 +283,21 @@
       const market = Number(e.tickets_count || 0);
       return owned === 0 && market > BLIND_SPOT_MIN_MARKET_TIX;
     });
-
-    // Sort by approx market notional desc. Falls back to market qty when
-    // retail_median missing (small event with no median yet → still surfaces).
     candidates.sort((a, b) => {
       const an = (Number(a.tickets_count) || 0) * (Number(a.retail_median) || 0);
       const bn = (Number(b.tickets_count) || 0) * (Number(b.retail_median) || 0);
       if (bn !== an) return bn - an;
       return (Number(b.tickets_count) || 0) - (Number(a.tickets_count) || 0);
     });
-
     const total = candidates.length;
     if (countEl) countEl.textContent = total
       ? `${total} blind spot${total === 1 ? '' : 's'} (showing top ${Math.min(total, BLIND_SPOT_MAX_ROWS)})`
       : '';
-
+    if (tabCount) tabCount.textContent = total ? String(total) : '';
     if (!total) {
       body.innerHTML = '<div class="empty">no blind spots — we have inventory on every active upcoming game for this performer ✓</div>';
       return;
     }
-
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
@@ -239,13 +330,104 @@
     body.appendChild(tbl);
   }
 
+  // ---------- ESPN Context (lazy-loaded tab) ----------
+  async function loadEspnContext(performerId) {
+    const body = document.getElementById('phEspnContextBody');
+    const meta = document.getElementById('phEspnContextMeta');
+    if (body) body.innerHTML = '<div class="empty">loading ESPN context…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">ESPN context needs auth — sign in with @s4kent.com</div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    const t0 = performance.now();
+    const res = await Auth.client.rpc('get_broker_performer_page', { p_performer_id: performerId });
+    if (res.error) {
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
+      if (meta) meta.textContent = 'error';
+      return;
+    }
+    _tabState.loaded.espn = true;
+    renderEspnContext(res.data || {}, performance.now() - t0);
+  }
+
+  function renderEspnContext(d, ms) {
+    const body = document.getElementById('phEspnContextBody');
+    const meta = document.getElementById('phEspnContextMeta');
+    if (!body) return;
+    if (d.hidden) {
+      body.innerHTML = `<div class="empty">no ESPN xref for this performer (${escapeHtml(d.reason || 'hidden')})</div>`;
+      if (meta) meta.textContent = '';
+      return;
+    }
+    if (meta) meta.textContent = `${d.espn_league || ''} · team ${d.espn_team_id || ''} · ${ms.toFixed(0)}ms`;
+    const standings = d.standings || null;
+    const injuries  = d.injuries || [];
+    const recent    = d.recent_results || [];
+    const standingsHtml = !standings ? '<div class="empty">no standings snapshot</div>' : `
+      <table class="espn-standings">
+        <tbody>
+          <tr><td class="lbl">RECORD</td><td>${standings.wins ?? '—'}-${standings.losses ?? '—'}${standings.ties ? '-' + standings.ties : ''}</td></tr>
+          <tr><td class="lbl">WIN %</td><td>${standings.win_pct != null ? T.fmtPct(Number(standings.win_pct) * 100, 1) : '—'}</td></tr>
+          <tr><td class="lbl">STREAK</td><td>${escapeHtml(standings.streak || '—')}</td></tr>
+          <tr><td class="lbl">CONFERENCE RANK</td><td>${standings.conference_rank ?? '—'}</td></tr>
+          <tr><td class="lbl">DIVISION RANK</td><td>${standings.division_rank ?? '—'}</td></tr>
+          <tr><td class="lbl">PLAYOFF SEED</td><td>${standings.playoff_seed ?? '—'}</td></tr>
+          <tr><td class="lbl">GAMES BACK</td><td>${standings.games_back ?? '—'}</td></tr>
+          <tr><td class="lbl">SUMMARY</td><td class="muted">${escapeHtml(standings.standing_summary || standings.record_summary || '—')}</td></tr>
+          <tr><td class="lbl">CAPTURED</td><td class="muted small">${T.fmtDate(standings.captured_at)}</td></tr>
+        </tbody>
+      </table>`;
+    const injHtml = !injuries.length ? '<div class="empty">no current injury report</div>' : `
+      <table class="espn-injuries">
+        <thead><tr>
+          <th>Athlete</th><th>Pos</th><th>Status</th><th>Injury</th><th>Return</th><th>Note</th>
+        </tr></thead>
+        <tbody>${injuries.map(i => `
+          <tr>
+            <td>${escapeHtml(i.athlete_name || '—')}</td>
+            <td>${escapeHtml(i.position || '—')}</td>
+            <td><span class="injury-status">${escapeHtml(i.status || '—')}</span></td>
+            <td>${escapeHtml(i.injury_type || '—')}</td>
+            <td>${i.return_date ? T.fmtDate(i.return_date) : '—'}</td>
+            <td class="muted">${escapeHtml(i.short_comment || '')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+    const recHtml = !recent.length ? '<div class="empty">no recent completed games</div>' : `
+      <table class="espn-recent">
+        <thead><tr>
+          <th>When</th><th>vs</th><th>Score</th><th>Status</th>
+        </tr></thead>
+        <tbody>${recent.map(g => {
+          const us = g.is_home ? g.home_score : g.away_score;
+          const them = g.is_home ? g.away_score : g.home_score;
+          return `
+            <tr>
+              <td class="muted">${T.fmtDate(g.captured_at)}</td>
+              <td>${g.is_home ? 'vs' : '@'} <strong>${escapeHtml(g.opponent_team_id || '?')}</strong></td>
+              <td class="num">${us ?? '—'} - ${them ?? '—'}</td>
+              <td>${escapeHtml(g.status_short || '—')}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+      </table>`;
+    body.innerHTML = `
+      <div class="espn-grid">
+        <div class="espn-col"><div class="espn-col-hdr">STANDINGS</div>${standingsHtml}</div>
+        <div class="espn-col"><div class="espn-col-hdr">INJURY REPORT</div>${injHtml}</div>
+        <div class="espn-col espn-col-wide"><div class="espn-col-hdr">RECENT — last 5</div>${recHtml}</div>
+      </div>`;
+  }
+
   // ---------- Util ----------
 
   function setText(id, txt) {
     const el = document.getElementById(id);
     if (el) el.textContent = txt;
   }
-
   function escapeHtml(s) {
     if (s === null || s === undefined) return '';
     return String(s).replace(/[&<>"']/g, c => ({

@@ -11,8 +11,9 @@
   const PAGES = [
     { id: 'home',      label: 'HOME',      href: './' },
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
-    { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
+    { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
   ];
 
@@ -154,10 +155,7 @@
       if (vens.length) {
         parts.push('<div class="ts-section"><div class="ts-section-lbl">VENUES</div>');
         vens.forEach(v => {
-          // No venue.html yet — link to home with venue filter param for now;
-          // home filter is a future Phase 2b; for now the link still navigates
-          // and the URL captures the intent.
-          const href = `./?venue=${v.tevo_venue_id}`;
+          const href = `venue.html?venue=${v.tevo_venue_id}`;
           const meta = [v.city, v.state].filter(Boolean).join(', ');
           flat.push({ href, label: v.venue_name, kind: 'venue' });
           parts.push(`<a class="ts-row" href="${href}" data-kind="venue">
