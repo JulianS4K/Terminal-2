@@ -31,6 +31,10 @@
     wireRangeSelector(eventId);
     wireTabs(eventId);
     wireSalesWindow(eventId);
+    // Cross-source metrics RPC is independent of the v3 / Path A fetch
+    // — fire it in parallel so it renders even when fetchPayload fails
+    // (localhost dev without Path A API + without Path C auth).
+    loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
     await loadAndRender(eventId);
   }
 
@@ -1405,7 +1409,8 @@
     if (body) body.innerHTML = '<div class="empty">Loading SG listings…</div>';
     if (meta) meta.textContent = 'loading…';
     const t0 = performance.now();
-    const res = await rpcOrNull('get_event_sg_listings_full', { p_event_id: eventId, p_limit: 500 });
+    // Omit p_limit — RPC default is now 100000 (mig 20260518030000), surfaces all rows.
+    const res = await rpcOrNull('get_event_sg_listings_full', { p_event_id: eventId });
     if (res.error) {
       if (meta) meta.textContent = 'error';
       if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
@@ -1476,7 +1481,8 @@
     if (body) body.innerHTML = '<div class="empty">Loading EVO listings…</div>';
     if (meta) meta.textContent = 'loading…';
     const t0 = performance.now();
-    const res = await rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId, p_limit: 500 });
+    // Omit p_limit — RPC default 100000 (mig 20260518030000).
+    const res = await rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId });
     if (res.error) {
       if (meta) meta.textContent = 'error';
       if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
@@ -1559,8 +1565,9 @@
     if (body) body.innerHTML = '<div class="empty">Loading SG sales…</div>';
     if (meta) meta.textContent = 'loading…';
     const t0 = performance.now();
+    // Omit p_limit — RPC default 100000 (mig 20260518030000); keep window selector.
     const res = await rpcOrNull('get_event_sg_sales_full', {
-      p_event_id: eventId, p_limit: 500, p_window_days: windowDays
+      p_event_id: eventId, p_window_days: windowDays
     });
     if (res.error) {
       if (meta) meta.textContent = 'error';
@@ -1838,6 +1845,85 @@
     host.appendChild(tbl);
     body.innerHTML = '';
     body.appendChild(host);
+  }
+
+  // ---------- Cross-source metrics (Overview tab) ----------
+  // Calls get_event_cross_source_metrics (mig 20260518040000). The RPC
+  // returns a pre-aligned `rows` array — FE just iterates + formats.
+  // Uses listings_all_* / listings_owned_* from PR #204 (not deprecated cost_*).
+  async function loadCrossSourceMetrics(eventId) {
+    const body = document.getElementById('crossSourceBody');
+    const meta = document.getElementById('crossSourceMeta');
+    if (body) body.innerHTML = '<div class="empty">loading cross-source metrics…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_cross_source_metrics', { p_event_id: eventId });
+    if (res.error) {
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      if (meta) meta.textContent = 'error';
+      return;
+    }
+    renderCrossSourceMetrics(res.data || {}, performance.now() - t0);
+  }
+
+  function renderCrossSourceMetrics(d, ms) {
+    const body = document.getElementById('crossSourceBody');
+    const meta = document.getElementById('crossSourceMeta');
+    if (!body) return;
+    const rows = d.rows || [];
+    const hasSg = d.sg_event_id != null;
+    if (meta) {
+      const parts = [`${ms != null ? ms.toFixed(0) + 'ms' : ''}`];
+      if (hasSg) parts.unshift(`sg_event_id ${d.sg_event_id}`);
+      else parts.unshift('no SG bridge — TEvo-only event');
+      meta.textContent = parts.filter(Boolean).join(' · ');
+    }
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no metrics available</div>';
+      return;
+    }
+    function fmtVal(v, isMoney) {
+      if (v === null || v === undefined) return '<span class="dim">—</span>';
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '<span class="dim">—</span>';
+      if (isMoney) return '$' + T.fmtNum(Math.round(n));
+      return T.fmtNum(n);
+    }
+    function deltaPct(tevo, sg) {
+      // SG vs TEvo — positive means SG higher than TEvo
+      if (tevo === null || tevo === undefined || sg === null || sg === undefined) return null;
+      const t = Number(tevo), s = Number(sg);
+      if (!Number.isFinite(t) || !Number.isFinite(s) || t === 0) return null;
+      return ((s - t) / t) * 100;
+    }
+    function deltaCell(tevo, sg) {
+      const p = deltaPct(tevo, sg);
+      if (p === null) return '<span class="dim">—</span>';
+      const cls = Math.abs(p) < 1 ? '' : (p > 0 ? 'pos' : 'neg');
+      return `<span class="${cls}">${p >= 0 ? '+' : ''}${p.toFixed(1)}%</span>`;
+    }
+    const tbl = document.createElement('table');
+    tbl.className = 'cross-src-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Metric</th>
+        <th class="num">TEvo</th>
+        <th class="num">SG</th>
+        <th class="num">Δ SG vs TEvo</th>
+      </tr></thead>
+      <tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(r.label || '')}</td>
+        <td class="num">${fmtVal(r.tevo, r.is_money)}</td>
+        <td class="num">${fmtVal(r.sg, r.is_money)}</td>
+        <td class="num">${deltaCell(r.tevo, r.sg)}</td>`;
+      tb.appendChild(tr);
+    });
+    body.innerHTML = '';
+    body.appendChild(tbl);
   }
 
   // ---------- Last event snapshot (Overview tab) ----------
