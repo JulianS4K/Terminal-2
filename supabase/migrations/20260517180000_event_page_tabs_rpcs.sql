@@ -129,6 +129,7 @@ AS $func$
 DECLARE
   v_email       text;
   v_sg_event_id bigint;
+  v_event_date  date;
   v_rows        jsonb;
 BEGIN
   v_email := coalesce(auth.jwt()->>'email', '');
@@ -143,13 +144,20 @@ BEGIN
     RETURN jsonb_build_object('hidden', true, 'reason', 'no_sg_bridge', 'count', 0, 'rows', '[]'::jsonb);
   END IF;
 
+  -- A1 fixup (PR follow-up to #196): days_to_event_at_sale column doesn't
+  -- exist on seatgeek_sales_snapshots — compute inline via sg_events_canonical.
+  SELECT sg_event_date INTO v_event_date
+  FROM public.sg_events_canonical WHERE sg_event_id = v_sg_event_id LIMIT 1;
+
   -- DISTINCT ON sg_sale_id mandatory per PROJECT_BIBLE §3 (11x dedup factor).
   -- Scope to sg_event_id uses idx_sg_sales_sg_event_id_time (A1 ship 2026-05-16).
   WITH latest AS (
     SELECT DISTINCT ON (sg_sale_id)
       sg_sale_id, sale_at_utc, pulled_at,
       section, row, quantity, broadcast_price, stock_type,
-      days_to_event_at_sale
+      CASE WHEN v_event_date IS NOT NULL
+           THEN (v_event_date - sale_at_utc::date)::int
+           ELSE NULL END AS days_to_event_at_sale
     FROM public.seatgeek_sales_snapshots
     WHERE sg_event_id = v_sg_event_id
       AND sale_at_utc > now() - make_interval(days => greatest(1, least(p_window_days, 90)))
