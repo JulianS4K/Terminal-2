@@ -1322,7 +1322,10 @@
   // ============================================================
   // Tab navigation + lazy-load (Phase 2a Tabs — mig 20260517180000)
   // ============================================================
-  const _tabState = { loaded: { 'sg-listings': false, 'evo-listings': false, 'sg-sales': false } };
+  const _tabState = { loaded: {
+    'sg-listings': false, 'evo-listings': false, 'sg-sales': false,
+    'evo-orders': false, 'sg-seller-orders': false, 'cross-broker': false,
+  } };
 
   function wireTabs(eventId) {
     const nav = document.getElementById('eventTabs');
@@ -1338,6 +1341,12 @@
         await loadEvoListingsFull(eventId);
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
+      } else if (tabId === 'evo-orders' && !_tabState.loaded['evo-orders']) {
+        await loadEvoOrdersFull(eventId);
+      } else if (tabId === 'sg-seller-orders' && !_tabState.loaded['sg-seller-orders']) {
+        await loadSgSellerOrdersFull(eventId);
+      } else if (tabId === 'cross-broker' && !_tabState.loaded['cross-broker']) {
+        await loadCrossBrokerFull(eventId);
       }
     });
   }
@@ -1349,10 +1358,13 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     const paneIds = {
-      'overview':     'paneOverview',
-      'sg-listings':  'paneSgListings',
-      'evo-listings': 'paneEvoListings',
-      'sg-sales':     'paneSgSales',
+      'overview':         'paneOverview',
+      'sg-listings':      'paneSgListings',
+      'evo-listings':     'paneEvoListings',
+      'sg-sales':         'paneSgSales',
+      'evo-orders':       'paneEvoOrders',
+      'sg-seller-orders': 'paneSgSellerOrders',
+      'cross-broker':     'paneCrossBroker',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -1600,6 +1612,227 @@
         <td class="num">${r.broadcast_price != null ? '$' + T.fmtNum(Math.round(r.broadcast_price)) : '—'}</td>
         <td>${escapeHtml(r.stock_type || '—')}</td>
         <td class="num">${r.days_to_event_at_sale != null ? T.fmtNum(r.days_to_event_at_sale) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Our TEvo Orders (full) ----------
+  async function loadEvoOrdersFull(eventId) {
+    const body = document.getElementById('evoOrdersFullBody');
+    const meta = document.getElementById('evoOrdersFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading our TEvo orders…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_evo_orders_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['evo-orders'] = true;
+    renderEvoOrdersFull(res.data, performance.now() - t0);
+  }
+
+  function renderEvoOrdersFull(d, ms) {
+    const body = document.getElementById('evoOrdersFullBody');
+    const meta = document.getElementById('evoOrdersFullMeta');
+    const countChip = document.getElementById('tabCountEvoOrders');
+    if (!body) return;
+    const rows = (d && d.rows) || [];
+    const distinctOrders = (d && d.distinct_orders) || 0;
+    if (meta) meta.textContent = `${rows.length} items · ${distinctOrders} orders · ${ms.toFixed(0)}ms`;
+    if (countChip) countChip.textContent = String(distinctOrders);
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no TEvo orders for this event</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Created</th><th>Order</th><th>State</th><th>Type</th>
+        <th>Section</th><th>Row</th><th>Seats</th>
+        <th class="num">Qty</th>
+        <th class="num">Item $</th><th class="num">Retail</th><th class="num">Whsl</th>
+        <th class="num">Total</th><th class="num">Fees</th>
+        <th>Hold Expires</th>
+        <th>Buyer Brokerage</th><th>Fraud</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    let lastOrderId = null;
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const firstOfOrder = r.evo_order_id !== lastOrderId;
+      lastOrderId = r.evo_order_id;
+      const stateCls = r.state ? 'status-' + String(r.state).toLowerCase() : '';
+      const seats = Array.isArray(r.ticket_group_seats) ? r.ticket_group_seats.join(',')
+                  : (r.ticket_group_seats == null ? '' : JSON.stringify(r.ticket_group_seats));
+      const holdExp = r.hold_expires_at ? T.fmtDate(r.hold_expires_at) : '—';
+      tr.innerHTML = `
+        <td>${firstOfOrder ? T.fmtDate(r.evo_created_at) : '<span class="muted">·</span>'}</td>
+        <td>${firstOfOrder ? '<strong>' + escapeHtml(String(r.evo_order_id)) + '</strong>' : '<span class="muted">·</span>'}</td>
+        <td>${firstOfOrder ? `<span class="pill ${stateCls}">${escapeHtml(r.state || '—')}</span>` : ''}</td>
+        <td>${firstOfOrder ? escapeHtml(r.type || '—') : ''}</td>
+        <td>${escapeHtml(r.ticket_group_section || '—')}</td>
+        <td>${escapeHtml(r.ticket_group_row || '—')}</td>
+        <td class="muted">${escapeHtml(seats)}</td>
+        <td class="num">${T.fmtNum(r.item_quantity != null ? r.item_quantity : r.ticket_group_quantity)}</td>
+        <td class="num">${r.item_price != null ? '$' + T.fmtNum(Math.round(r.item_price)) : '—'}</td>
+        <td class="num">${r.ticket_group_retail_price != null ? '$' + T.fmtNum(Math.round(r.ticket_group_retail_price)) : '—'}</td>
+        <td class="num">${r.ticket_group_wholesale_price != null ? '$' + T.fmtNum(Math.round(r.ticket_group_wholesale_price)) : '—'}</td>
+        <td class="num">${firstOfOrder && r.total != null ? '$' + T.fmtNum(Math.round(r.total)) : ''}</td>
+        <td class="num">${firstOfOrder && r.service_fee != null ? '$' + T.fmtNum(Math.round(r.service_fee)) : ''}</td>
+        <td>${firstOfOrder ? holdExp : ''}</td>
+        <td>${firstOfOrder ? escapeHtml(r.buyer_brokerage_name || '—') : ''}</td>
+        <td>${firstOfOrder ? escapeHtml(r.fraud_check_status || '—') : ''}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Our SG SellerDirect Orders (full) ----------
+  async function loadSgSellerOrdersFull(eventId) {
+    const body = document.getElementById('sgSellerOrdersFullBody');
+    const meta = document.getElementById('sgSellerOrdersFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading our SG SellerDirect orders…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_sg_seller_orders_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['sg-seller-orders'] = true;
+    renderSgSellerOrdersFull(res.data, performance.now() - t0);
+  }
+
+  function renderSgSellerOrdersFull(d, ms) {
+    const body = document.getElementById('sgSellerOrdersFullBody');
+    const meta = document.getElementById('sgSellerOrdersFullMeta');
+    const countChip = document.getElementById('tabCountSgSellerOrders');
+    if (!body) return;
+    if (!d || d.hidden) {
+      const reason = d && d.reason === 'no_sg_bridge' ? 'no SG bridge for this event' : 'hidden';
+      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+      if (meta) meta.textContent = '0 rows';
+      if (countChip) countChip.textContent = '0';
+      return;
+    }
+    const rows = d.rows || [];
+    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
+    if (countChip) countChip.textContent = String(rows.length);
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no SG SellerDirect orders for this event</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Created (SG)</th><th>Order</th><th>Status</th>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Sale $</th>
+        <th class="num">Payment Total</th><th class="num">Fees</th><th class="num">Tax</th>
+        <th>Delivery</th><th>Stock</th>
+        <th>Pulled</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const statusCls = r.status ? 'status-' + String(r.status).toLowerCase() : '';
+      tr.innerHTML = `
+        <td>${T.fmtDate(r.created_at_sg)}</td>
+        <td><strong>${escapeHtml(String(r.sg_order_id || '—'))}</strong></td>
+        <td><span class="pill ${statusCls}">${escapeHtml(r.status || '—')}</span></td>
+        <td>${escapeHtml(r.sale_section || '—')}</td>
+        <td>${escapeHtml(r.sale_row || '—')}</td>
+        <td class="num">${T.fmtNum(r.sale_quantity)}</td>
+        <td class="num">${r.sale_price != null ? '$' + T.fmtNum(Math.round(r.sale_price)) : '—'}</td>
+        <td class="num">${r.payment_total != null ? '$' + T.fmtNum(Math.round(r.payment_total)) : '—'}</td>
+        <td class="num">${r.payment_fees != null ? '$' + T.fmtNum(Math.round(r.payment_fees)) : '—'}</td>
+        <td class="num">${r.payment_tax != null ? '$' + T.fmtNum(Math.round(r.payment_tax)) : '—'}</td>
+        <td>${escapeHtml(r.delivery_method || r.delivery || '—')}</td>
+        <td>${escapeHtml(r.stock_type || '—')}</td>
+        <td class="muted">${T.fmtDate(r.pulled_at)}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Cross-Broker (TickPick + Vivid combined, full) ----------
+  async function loadCrossBrokerFull(eventId) {
+    const body = document.getElementById('crossBrokerFullBody');
+    const meta = document.getElementById('crossBrokerFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading TickPick + Vivid…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_cross_broker_orders_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['cross-broker'] = true;
+    renderCrossBrokerFull(res.data, performance.now() - t0);
+  }
+
+  function renderCrossBrokerFull(d, ms) {
+    const body = document.getElementById('crossBrokerFullBody');
+    const meta = document.getElementById('crossBrokerFullMeta');
+    const countChip = document.getElementById('tabCountCrossBroker');
+    if (!body) return;
+    const rows = (d && d.rows) || [];
+    const tpN = (d && d.tickpick_count) || 0;
+    const vvN = (d && d.vivid_count) || 0;
+    if (meta) meta.textContent = `${rows.length} rows · TP ${tpN} · Vivid ${vvN} · ${ms.toFixed(0)}ms`;
+    if (countChip) countChip.textContent = String(rows.length);
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no TickPick or Vivid orders for this event<div class="muted small">(Vivid bridge requires aq_short_event_id → sg_event_id → tevo_event_id; bridge data may be incomplete)</div></div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Source</th><th>Ordered</th><th>Order ID</th><th>Status</th>
+        <th>Section</th><th>Row</th><th>Seats</th>
+        <th class="num">Qty</th><th class="num">Total</th>
+        <th>Notes / Match</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const statusCls = r.status ? 'status-' + String(r.status).toLowerCase() : '';
+      const srcCls = 'src-' + String(r.source || '');
+      const seats = Array.isArray(r.seat_numbers) ? r.seat_numbers.join(',') : '';
+      const noteParts = [];
+      if (r.notes) noteParts.push(r.notes);
+      if (r.matched_via) noteParts.push(`match: ${r.matched_via}${r.match_confidence != null ? ' (' + Number(r.match_confidence).toFixed(2) + ')' : ''}`);
+      tr.innerHTML = `
+        <td><span class="pill ${srcCls}">${escapeHtml(r.source || '—')}</span></td>
+        <td>${T.fmtDate(r.ordered_at)}</td>
+        <td><strong>${escapeHtml(String(r.source_order_id || '—'))}</strong></td>
+        <td><span class="pill ${statusCls}">${escapeHtml(r.status || r.order_status || '—')}</span></td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="muted">${escapeHtml(seats)}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.total != null ? '$' + T.fmtNum(Math.round(r.total)) : '—'}</td>
+        <td class="muted">${escapeHtml(noteParts.join(' · '))}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
