@@ -3274,15 +3274,17 @@ def broker_movers(window_hours: int = 24, include_inactive: bool = False, _=Depe
     window_hours = max(1, min(int(window_hours), 168))
     db = require_sb()
 
-    # Pre-aggregated in SQL via get_event_movers RPC (mig 20260508040000).
-    # Returns one row per future-dated event with cur+prior values for
-    # market_median / owned_median / market_tix / owned_tix. ~300 rows
-    # max — small enough to top10/rollup in Python.
+    # Pre-aggregated in SQL via get_event_movers_with_sg RPC
+    # (mig 20260518000000 wraps the original get_event_movers from mig
+    # 20260508040000). Adds per-event SG sales count over the same window
+    # — powers the new "SG sales" column on movers + the "BLIND SPOTS —
+    # SG SELLING, WE'RE NOT" panel. DISTINCT ON (sg_sale_id) inside the
+    # RPC handles the 11x SG firehose dedup (PROJECT_BIBLE §3).
     #
     # Old approach (Python aggregation over a 50k-row window) was silently
     # capped at 1000 rows by PostgREST's per-request row limit, producing
     # an empty Movers report even when the underlying data was rich.
-    rpc_rows = db.rpc("get_event_movers", {"p_window_hours": window_hours}).execute().data or []
+    rpc_rows = db.rpc("get_event_movers_with_sg", {"p_window_hours": window_hours}).execute().data or []
 
     # Filter ghost/completed/cancelled events unless caller explicitly opts in.
     # event_lifecycle is a view over derive_event_lifecycle(); cheap to query
@@ -3350,6 +3352,11 @@ def broker_movers(window_hours: int = 24, include_inactive: bool = False, _=Depe
             "prev_owned_val":   round(prev_owned_val, 2) if prev_owned_val is not None else None,
             "delta_owned_val":  (None if cur_owned_val is None or prev_owned_val is None
                                  else round(cur_owned_val - prev_owned_val, 2)),
+            # SG broker-sales count over the same window (DISTINCT ON sg_sale_id
+            # inside the RPC handles 11x firehose dedup). Drives the new SG
+            # column on the movers table + BLIND SPOTS panel (sg_sales > N
+            # AND cur_owned_tix = 0).
+            "sg_sales_window":  r.get("sg_sales_window") or 0,
         })
 
     if not rows_built:
