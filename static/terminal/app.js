@@ -6,19 +6,39 @@
 
   const STATUS = document.getElementById('status');
 
-  // API host. The terminal deploys as a static site on
-  // vibepass-terminal-test.onrender.com (per render-d0-terminal.yaml — D0's
-  // assigned Render service, srv-d839339kh4rs73ac3s20). FastAPI lives on
-  // D1's vibepass-storefront-test service. So in prod we cross-origin to
-  // D1's host; on localhost everything is same-origin against the dev
-  // uvicorn. Override at runtime via localStorage.terminalApiBase if the
-  // operator wants to point at a different host (preview, staging).
+  // API host — resolves the FastAPI shell location based on where the
+  // browser opened the terminal pages. Three deploy topologies:
+  //
+  //   1. localhost dev (uvicorn) — same-origin. `/api/*` lives next to the
+  //      static files.
+  //   2. Static CDN (vibepass-terminal-test.onrender.com, per render-d0-
+  //      terminal.yaml) — cross-origin to the FastAPI shell on a sibling
+  //      service. CSP `connect-src` allowlists the shell host.
+  //   3. FastAPI shell directly (vibepass-storefront-test.onrender.com OR
+  //      its Railway mirror at glorious-appreciation-production-a6ce.up.
+  //      railway.app OR any future preview/staging host) — same-origin.
+  //      Cross-origin to the canonical Render host from here is wrong: it
+  //      forces a CORS preflight + cold-start trip just to talk to ourselves,
+  //      and breaks entirely when the canonical shell is sleeping (FREE plan
+  //      cold-start, PROJECT_BIBLE §10). Operator hit "failed to fetch" on
+  //      Railway 2026-05-17 — that path is what triggered this fix.
+  //
+  // Override via localStorage.terminalApiBase for ad-hoc preview/staging.
   const API_BASE = (function () {
     const override = (typeof localStorage !== 'undefined') && localStorage.getItem('terminalApiBase');
     if (override) return override.replace(/\/$/, '');
     const h = location.hostname;
+    // Topology 1: localhost dev.
     if (h === 'localhost' || h === '127.0.0.1' || h === '') return '';
-    return 'https://vibepass-storefront-test.onrender.com';
+    // Topology 2: static CDN — cross-origin to the canonical FastAPI shell.
+    // Includes the original publishPath=static/terminal layout and the new
+    // wider publishPath=static layout (PR #181); both serve from this host.
+    if (h.includes('terminal-test')) {
+      return 'https://vibepass-storefront-test.onrender.com';
+    }
+    // Topology 3: FastAPI shell deploys (any other host). Use same-origin
+    // so /api/* hits the local FastAPI without a CORS round-trip.
+    return '';
   })();
 
   function setStatus(msg, cls) {
