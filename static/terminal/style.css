@@ -496,6 +496,22 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   line-height: 1.5;
 }
 
+/* ---------- Deploy version chip (in topbar) ---------- */
+
+.version-chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  padding: 2px 6px;
+  margin-right: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  letter-spacing: 0.3px;
+  cursor: help;
+}
+.version-chip:hover { color: var(--text); border-color: var(--muted); }
+
 /* ---------- Top-nav auth control ---------- */
 
 .auth-ctrl {
