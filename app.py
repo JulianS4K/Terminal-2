@@ -650,6 +650,26 @@ def undelivered_landing():
     return FileResponse(os.path.join(STATIC_DIR, "undelivered", "index.html"))
 
 
+@app.get("/version.json")
+def version_json():
+    """Public deploy-version endpoint — same _STOREFRONT_VERSION the cache-bust
+    pipeline uses, plus the resolution chain that produced it, plus a deploy
+    indicator from common Render/Railway env vars. Consumed by nav.js's
+    version chip (PR #184) so terminal pages render a real SHA in the topbar
+    even though they don't go through _read_storefront_html (which only
+    rewrites store pages). Cheap; safe to call cross-origin."""
+    return {
+        "version": _STOREFRONT_VERSION,
+        "render_commit": os.environ.get("RENDER_GIT_COMMIT") or None,
+        "railway_commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA") or None,
+        "git_commit": os.environ.get("GIT_COMMIT") or None,
+        "render_service_id": os.environ.get("RENDER_SERVICE_ID") or None,
+        "render_external_url": os.environ.get("RENDER_EXTERNAL_URL") or None,
+        "railway_public_domain": os.environ.get("RAILWAY_PUBLIC_DOMAIN") or None,
+        "deployed_at_iso": os.environ.get("RENDER_GIT_COMMIT_TIME") or None,
+    }
+
+
 @app.get("/healthz")
 def healthz():
     """Diagnostic endpoint. Public — no secrets returned, just boot + connectivity
