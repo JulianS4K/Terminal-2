@@ -29,6 +29,8 @@
     }
 
     wireRangeSelector(eventId);
+    wireTabs(eventId);
+    wireSalesWindow(eventId);
     await loadAndRender(eventId);
   }
 
@@ -72,6 +74,7 @@
       safe('competingEvents',  () => renderCompetingEvents(data.competing_events));
       safe('recentListings',   () => renderRecentListings(data.recent_listings));
       safe('performerEspn',    () => renderPerformerEspn(data.performer_espn_context, data.performer));
+      safe('lastSnapshot',     () => renderLastSnapshot(data.chart_data));
     } catch (e) {
       handleRpcError(e);
     }
@@ -1314,6 +1317,355 @@
         badges.appendChild(b);
       }
     }
+  }
+
+  // ============================================================
+  // Tab navigation + lazy-load (Phase 2a Tabs — mig 20260517180000)
+  // ============================================================
+  const _tabState = { loaded: { 'sg-listings': false, 'evo-listings': false, 'sg-sales': false } };
+
+  function wireTabs(eventId) {
+    const nav = document.getElementById('eventTabs');
+    if (!nav) return;
+    nav.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.event-tab');
+      if (!btn) return;
+      const tabId = btn.dataset.tab;
+      activateTab(tabId);
+      if (tabId === 'sg-listings' && !_tabState.loaded['sg-listings']) {
+        await loadSgListingsFull(eventId);
+      } else if (tabId === 'evo-listings' && !_tabState.loaded['evo-listings']) {
+        await loadEvoListingsFull(eventId);
+      } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
+        await loadSgSalesFull(eventId);
+      }
+    });
+  }
+
+  function activateTab(tabId) {
+    document.querySelectorAll('.event-tab').forEach(b => {
+      const on = b.dataset.tab === tabId;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const paneIds = {
+      'overview':     'paneOverview',
+      'sg-listings':  'paneSgListings',
+      'evo-listings': 'paneEvoListings',
+      'sg-sales':     'paneSgSales',
+    };
+    Object.entries(paneIds).forEach(([id, paneId]) => {
+      const pane = document.getElementById(paneId);
+      if (!pane) return;
+      if (id === tabId) {
+        pane.removeAttribute('hidden');
+        pane.classList.add('active');
+      } else {
+        pane.setAttribute('hidden', '');
+        pane.classList.remove('active');
+      }
+    });
+  }
+
+  function wireSalesWindow(eventId) {
+    const sel = document.getElementById('sgSalesWindow');
+    if (!sel) return;
+    sel.addEventListener('change', async () => {
+      _tabState.loaded['sg-sales'] = false;
+      const body = document.getElementById('sgSalesFullBody');
+      if (body) body.innerHTML = '<div class="empty">Loading…</div>';
+      await loadSgSalesFull(eventId);
+    });
+  }
+
+  async function rpcOrNull(rpcName, args) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      return { error: { message: 'no auth — Path C unavailable (localhost dev)' } };
+    }
+    return Auth.client.rpc(rpcName, args);
+  }
+
+  // ---------- SG Listings (full) ----------
+  async function loadSgListingsFull(eventId) {
+    const body = document.getElementById('sgListingsFullBody');
+    const meta = document.getElementById('sgListingsFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading SG listings…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_sg_listings_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['sg-listings'] = true;
+    renderSgListingsFull(res.data, performance.now() - t0);
+  }
+
+  function renderSgListingsFull(d, ms) {
+    const body = document.getElementById('sgListingsFullBody');
+    const meta = document.getElementById('sgListingsFullMeta');
+    const countChip = document.getElementById('tabCountSgListings');
+    if (!body) return;
+    if (!d || d.hidden) {
+      const reason = d && d.reason === 'no_sg_bridge' ? 'no SG bridge for this event' : 'hidden';
+      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+      if (meta) meta.textContent = '0 rows';
+      if (countChip) countChip.textContent = '0';
+      return;
+    }
+    const rows = d.rows || [];
+    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
+    if (countChip) countChip.textContent = String(rows.length);
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no SG listings in last 7 days</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Captured</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Retail (all-in)</th><th class="num">Bcst</th>
+        <th>Stock</th><th>Delivery</th><th>Splits</th><th>In-hand</th>
+        <th>Source</th><th>Type</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      if (r.is_broker_owned) tr.className = 'owned-row';
+      tr.innerHTML = `
+        <td>${T.fmtDate(r.captured_at)}</td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.retail_price_all_in != null ? '$' + T.fmtNum(Math.round(r.retail_price_all_in)) : '—'}</td>
+        <td class="num">${r.broadcast_price != null ? '$' + T.fmtNum(Math.round(r.broadcast_price)) : '—'}</td>
+        <td>${escapeHtml(r.stock_type || '—')}</td>
+        <td>${escapeHtml(r.delivery_method || '—')}${r.is_instant_download ? ' <span class="pill">instant</span>' : ''}</td>
+        <td>${escapeHtml(Array.isArray(r.splits) ? r.splits.join(',') : (r.splits || '—'))}</td>
+        <td>${r.in_hand_date ? T.fmtDate(r.in_hand_date) : '—'}</td>
+        <td>${escapeHtml(r.market_source || '—')}</td>
+        <td>${r.is_broker_owned ? '<span class="pill broker">broker</span>' : '<span class="pill market">market</span>'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- EVO Listings (full) ----------
+  async function loadEvoListingsFull(eventId) {
+    const body = document.getElementById('evoListingsFullBody');
+    const meta = document.getElementById('evoListingsFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading EVO listings…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['evo-listings'] = true;
+    renderEvoListingsFull(res.data, performance.now() - t0);
+  }
+
+  function renderEvoListingsFull(d, ms) {
+    const body = document.getElementById('evoListingsFullBody');
+    const meta = document.getElementById('evoListingsFullMeta');
+    const countChip = document.getElementById('tabCountEvoListings');
+    if (!body) return;
+    const rows = (d && d.rows) || [];
+    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms`;
+    if (countChip) countChip.textContent = String(rows.length);
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no EVO listings in last 7 days</div>';
+      return;
+    }
+    const ownedCount = rows.filter(r => r.is_owned).length;
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Captured</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Retail</th><th class="num">Wholesale</th>
+        <th class="num">Δ Retail</th><th class="num">Δ Qty</th>
+        <th>Format</th><th>Splits</th><th>Type</th>
+        <th>Brokerage</th><th>Office</th><th>Flags</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      if (r.is_owned) tr.className = 'owned-row';
+      const dRetail = (r.prev_retail_price != null && r.retail_price != null)
+        ? (Number(r.retail_price) - Number(r.prev_retail_price)) : null;
+      const dQty = (r.prev_quantity != null && r.quantity != null)
+        ? (Number(r.quantity) - Number(r.prev_quantity)) : null;
+      const dRetailHtml = dRetail == null ? '—'
+        : `<span class="${dRetail >= 0 ? 'pos' : 'neg'}">${dRetail >= 0 ? '+' : ''}$${T.fmtNum(Math.round(dRetail))}</span>`;
+      const dQtyHtml = dQty == null ? '—'
+        : `<span class="${dQty >= 0 ? 'pos' : 'neg'}">${dQty >= 0 ? '+' : ''}${dQty}</span>`;
+      const flags = [];
+      if (r.is_ancillary) flags.push('ancillary');
+      if (r.instant_delivery) flags.push('instant');
+      if (r.eticket) flags.push('eticket');
+      tr.innerHTML = `
+        <td>${T.fmtDate(r.captured_at)}</td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
+        <td class="num">${r.wholesale_price != null ? '$' + T.fmtNum(Math.round(r.wholesale_price)) : '—'}</td>
+        <td class="num">${dRetailHtml}</td>
+        <td class="num">${dQtyHtml}</td>
+        <td>${escapeHtml(r.format || '—')}</td>
+        <td>${escapeHtml(Array.isArray(r.splits) ? r.splits.join(',') : (r.splits || '—'))}</td>
+        <td>${escapeHtml(r.type || '—')}</td>
+        <td>${escapeHtml(r.brokerage_name || (r.brokerage_id != null ? String(r.brokerage_id) : '—'))}</td>
+        <td>${escapeHtml(r.office_name || '—')}</td>
+        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : flags.map(f => `<span class="pill">${f}</span>`).join(' ') || '<span class="pill market">market</span>'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+    if (meta) meta.textContent = `${rows.length} rows (${ownedCount} ours) · ${ms.toFixed(0)}ms`;
+  }
+
+  // ---------- SG Sales (full) ----------
+  async function loadSgSalesFull(eventId) {
+    const body = document.getElementById('sgSalesFullBody');
+    const meta = document.getElementById('sgSalesFullMeta');
+    const sel = document.getElementById('sgSalesWindow');
+    const windowDays = sel ? (parseInt(sel.value, 10) || 30) : 30;
+    if (body) body.innerHTML = '<div class="empty">Loading SG sales…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_sg_sales_full', {
+      p_event_id: eventId, p_limit: 500, p_window_days: windowDays
+    });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['sg-sales'] = true;
+    renderSgSalesFull(res.data, performance.now() - t0, windowDays);
+  }
+
+  function renderSgSalesFull(d, ms, windowDays) {
+    const body = document.getElementById('sgSalesFullBody');
+    const meta = document.getElementById('sgSalesFullMeta');
+    const countChip = document.getElementById('tabCountSgSales');
+    if (!body) return;
+    if (!d || d.hidden) {
+      const reason = d && d.reason === 'no_sg_bridge' ? 'no SG bridge for this event' : 'hidden';
+      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+      if (meta) meta.textContent = '0 rows';
+      if (countChip) countChip.textContent = '0';
+      return;
+    }
+    const rows = d.rows || [];
+    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · ${windowDays}d window · sg_event_id ${d.sg_event_id}`;
+    if (countChip) countChip.textContent = String(rows.length);
+    if (!rows.length) {
+      body.innerHTML = `<div class="empty">no SG sales in last ${windowDays} days</div>`;
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Sold</th><th>Pulled</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Bcst Price</th>
+        <th>Stock</th><th class="num">Days→Event</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${T.fmtDate(r.sale_at_utc)}</td>
+        <td class="muted">${T.fmtDate(r.pulled_at)}</td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.broadcast_price != null ? '$' + T.fmtNum(Math.round(r.broadcast_price)) : '—'}</td>
+        <td>${escapeHtml(r.stock_type || '—')}</td>
+        <td class="num">${r.days_to_event_at_sale != null ? T.fmtNum(r.days_to_event_at_sale) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Last event snapshot (Overview tab) ----------
+  // Surfaces the latest non-null values from chart_data.event_metrics_series
+  // — the most recent row written by the cron, across all metrics. This is
+  // the "what does the event look like right now per our pull" panel.
+  function renderLastSnapshot(chart) {
+    const body = document.getElementById('lastSnapshotBody');
+    const ageEl = document.getElementById('lastSnapshotAge');
+    const section = document.getElementById('last-snapshot');
+    if (!body) return;
+    const rows = (chart && chart.event_metrics_series) || [];
+    if (!rows.length) {
+      if (section) section.style.display = 'none';
+      return;
+    }
+    if (section) section.style.display = '';
+    const latest = rows[rows.length - 1] || {};
+    const captured = latest.captured_at;
+    if (ageEl) {
+      const ageMin = captured ? Math.round((Date.now() - new Date(captured).getTime()) / 60000) : null;
+      ageEl.textContent = captured
+        ? `latest ${T.fmtDate(captured)} (${ageMin}m ago)`
+        : 'latest —';
+    }
+
+    // Walk back through rows to fill any null fields with the most recent
+    // non-null value for that field. Some series (zone medians, SG side)
+    // are populated less often than the headline market series.
+    const fields = [
+      ['tickets_count',          'TIX COUNT'],
+      ['listings_count',         'LISTINGS'],
+      ['owned_tickets_count',    'OUR TIX'],
+      ['owned_listings_count',   'OUR LISTINGS'],
+      ['retail_median',          'RETAIL MED', '$'],
+      ['nonowned_median_retail', 'NONOWNED MED', '$'],
+      ['owned_median_retail',    'OUR MED', '$'],
+      ['min_retail',             'GET-IN', '$'],
+      ['owned_min_retail',       'OUR MIN', '$'],
+      ['cost_median',            'COST MED', '$'],
+      ['retail_p25',             'P25', '$'],
+      ['retail_p75',             'P75', '$'],
+    ];
+    function latestNonNullField(col) {
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const v = rows[i] && rows[i][col];
+        if (v !== null && v !== undefined && !Number.isNaN(Number(v))) {
+          return { val: Number(v), at: rows[i].captured_at };
+        }
+      }
+      return null;
+    }
+    const cells = fields.map(([col, label, prefix]) => {
+      const found = latestNonNullField(col);
+      const valHtml = found
+        ? `<span class="last-snap-val">${prefix === '$' ? '$' : ''}${T.fmtNum(Math.round(found.val))}</span>`
+        : `<span class="last-snap-val dim">—</span>`;
+      return `<div class="last-snap-cell"><span class="last-snap-lbl">${label}</span>${valHtml}</div>`;
+    }).join('');
+    body.innerHTML = `<div class="last-snap-grid">${cells}</div>
+      <div class="last-snap-meta">snapshot fields fall back to the most recent non-null value across the loaded window (${rows.length} pulls)</div>`;
   }
 
   // ---------- Util ----------

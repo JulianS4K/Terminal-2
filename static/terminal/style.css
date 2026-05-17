@@ -656,27 +656,34 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   grid-template-columns: repeat(12, 1fr);
   gap: 12px;
 }
-.wrap.event > section {
+/* Apply panel chrome + grid placement via descendant selectors so the
+   sections inside .tab-pane (display:contents) still participate. */
+.wrap.event section {
   background: var(--panel);
   border: 1px solid var(--line);
   padding: 12px 16px;
 }
-.wrap.event > #hero               { grid-column: 1 / -1; }
-.wrap.event > #kpi-grid           { grid-column: 1 / -1; padding: 12px 16px; }
-.wrap.event > #chart              { grid-column: 1 / -1; padding: 12px 8px; }
-.wrap.event > #sg-broker-sales    { grid-column: 1 / -1; }
-.wrap.event > #sg-listings-summary{ grid-column: 1 / -1; }
-.wrap.event > #splits             { grid-column: 1 / 7; }
-.wrap.event > #zones              { grid-column: 7 / 13; }
-.wrap.event > #sales-tape         { grid-column: 1 / -1; }
-.wrap.event > #espn               { grid-column: 1 / -1; }
-.wrap.event > #weather            { grid-column: 1 / -1; }
-.wrap.event > #order-strip        { grid-column: 1 / 7; }
-.wrap.event > #cross-source-orders{ grid-column: 7 / 13; }
-.wrap.event > #alerts             { grid-column: 1 / 7; }
-.wrap.event > #competing-events   { grid-column: 7 / 13; }
-.wrap.event > #recent-listings    { grid-column: 1 / 7; }
-.wrap.event > #performer-espn     { grid-column: 7 / 13; }
+.wrap.event #hero               { grid-column: 1 / -1; }
+.wrap.event #kpi-grid           { grid-column: 1 / -1; padding: 12px 16px; }
+.wrap.event #last-snapshot      { grid-column: 1 / -1; }
+.wrap.event #chart              { grid-column: 1 / -1; padding: 12px 8px; }
+.wrap.event #sg-broker-sales    { grid-column: 1 / -1; }
+.wrap.event #sg-listings-summary{ grid-column: 1 / -1; }
+.wrap.event #splits             { grid-column: 1 / 7; }
+.wrap.event #zones              { grid-column: 7 / 13; }
+.wrap.event #sales-tape         { grid-column: 1 / -1; }
+.wrap.event #espn               { grid-column: 1 / -1; }
+.wrap.event #weather            { grid-column: 1 / -1; }
+.wrap.event #order-strip        { grid-column: 1 / 7; }
+.wrap.event #cross-source-orders{ grid-column: 7 / 13; }
+.wrap.event #alerts             { grid-column: 1 / 7; }
+.wrap.event #competing-events   { grid-column: 7 / 13; }
+.wrap.event #recent-listings    { grid-column: 1 / 7; }
+.wrap.event #performer-espn     { grid-column: 7 / 13; }
+.wrap.event #sg-listings-full   { grid-column: 1 / -1; }
+.wrap.event #evo-listings-full  { grid-column: 1 / -1; }
+.wrap.event #sg-sales-full      { grid-column: 1 / -1; }
+.wrap.event nav.event-tabs      { grid-column: 1 / -1; }
 
 /* Hero band — main info left, status side panel right */
 .wrap.event > #hero {
@@ -1054,3 +1061,108 @@ body[data-page="login"] {
 .login-foot a { color: var(--accent); text-decoration: none; }
 .login-foot a:hover { text-decoration: underline; }
 .login-foot .dot { color: var(--dim); }
+
+/* ---------- Event-page tabs (Phase 2a) ---------- */
+.event-tabs {
+  display: flex; gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin: 8px 0 12px;
+  font-family: var(--mono);
+}
+.event-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  color: var(--muted);
+  padding: 8px 16px;
+  font-family: var(--mono); font-size: 12px;
+  font-weight: 600; letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 100ms, background 100ms;
+}
+.event-tab:hover { color: var(--text); background: var(--panel-2); }
+.event-tab.active {
+  color: var(--accent);
+  background: var(--panel);
+  border-color: var(--line);
+  border-bottom: 1px solid var(--panel);
+  position: relative; top: 1px;
+}
+.event-tab .tab-count {
+  color: var(--dim);
+  font-weight: 400;
+  font-size: 11px;
+  margin-left: 4px;
+}
+.event-tab.active .tab-count { color: var(--text); }
+
+.tab-pane { display: contents; }
+.tab-pane[hidden] { display: none; }
+
+/* ---------- Last event snapshot (Overview tab) ---------- */
+#last-snapshot { padding: 12px 16px; }
+.last-snap-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px 16px;
+  font-family: var(--mono); font-size: 12px;
+}
+.last-snap-cell { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.last-snap-lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+.last-snap-val { color: var(--text); font-size: 14px; font-weight: 600; }
+.last-snap-val.dim { color: var(--dim); }
+.last-snap-meta { color: var(--muted); font-size: 11px; margin-top: 8px; }
+
+/* ---------- Full-list tabs (SG Listings / EVO Listings / SG Sales) ---------- */
+.full-list-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono); font-size: 11px;
+}
+.full-list-tbl thead th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+.full-list-tbl tbody td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--text);
+  white-space: nowrap;
+}
+.full-list-tbl tbody tr:hover td { background: var(--shade); }
+.full-list-tbl .num { text-align: right; }
+.full-list-tbl .owned-row td { background: rgba(74, 222, 128, 0.04); }
+.full-list-tbl .owned-row td:first-child { border-left: 2px solid var(--pos); }
+.full-list-tbl .pill {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.full-list-tbl .pill.owned { color: var(--pos); border-color: var(--pos); }
+.full-list-tbl .pill.market { color: var(--muted); }
+.full-list-tbl .pill.broker { color: var(--accent); border-color: var(--accent); }
+.full-list-host { max-height: 70vh; overflow-y: auto; }
+
+.sales-window-ctrl {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.sales-window-ctrl .range-select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11px;
+  padding: 2px 4px;
+}
