@@ -95,6 +95,7 @@
         <span>PRICE &amp; INVENTORY · <span id="chartRangeLabel">7d</span></span>
         <div class="chart-controls">
           <span class="legend" id="chartLegend"></span>
+          <span class="velocity-strip" id="velocityChips"></span>
           <select id="chartRange" class="range-select">
             <option value="6">6h</option>
             <option value="24">24h</option>
@@ -106,6 +107,16 @@
         </div>
       </div>
       <div id="chartHost"></div>
+    </section>
+
+    <section id="sg-broker-sales">
+      <div class="panel-title">SG BROKER SALES — AGGREGATE</div>
+      <div id="sgBrokerSalesBody"></div>
+    </section>
+
+    <section id="sg-listings-summary">
+      <div class="panel-title">SG LISTINGS — COST DISTRIBUTION</div>
+      <div id="sgListingsSummaryBody"></div>
     </section>
 
     <section id="splits">
@@ -140,8 +151,13 @@
     </section>
 
     <section id="order-strip">
-      <div class="panel-title">ORDERS — STATE MIX</div>
+      <div class="panel-title">ORDERS — EVO STATE MIX</div>
       <div id="ordersBody"></div>
+    </section>
+
+    <section id="cross-source-orders">
+      <div class="panel-title">CROSS-SOURCE ORDERS — TICKPICK + VIVID</div>
+      <div id="crossSourceOrdersBody"></div>
     </section>
 
     <section id="alerts">
@@ -150,6 +166,21 @@
         <span class="muted small" id="alertsCount"></span>
       </div>
       <div id="alertsBody"></div>
+    </section>
+
+    <section id="competing-events">
+      <div class="panel-title">COMPETING EVENTS — +/-24H × 20MI</div>
+      <div id="competingEventsBody"></div>
+    </section>
+
+    <section id="recent-listings">
+      <div class="panel-title">RECENT TEVO LISTINGS — LAST 24H × 10</div>
+      <div id="recentListingsBody"></div>
+    </section>
+
+    <section id="performer-espn">
+      <div class="panel-title">PERFORMER ESPN — NEXT 5 GAMES</div>
+      <div id="performerEspnBody"></div>
     </section>
   </main>
 

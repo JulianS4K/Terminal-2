@@ -51,20 +51,27 @@
       const orders   = adaptOrders(data.orders, eventId);
       const cadences = adaptCadences(data.cadences);
 
-      safe('hero',       () => renderHero(overview, bridge));
+      safe('hero',       () => renderHero(overview, bridge, data.performer));
       safe('eventMode',  () => renderEventMode(bridge, data));
-      safe('kpiGrid',    () => renderKPIGrid(chart, data.sg_side_by_side));
+      safe('kpiGrid',    () => renderKPIGrid(chart, data.sg_side_by_side, data.velocity));
       safe('chart',      () => renderChart(chart, data.event_alerts));
       safe('chartLegend',() => renderChartLegend());
       safe('splits',     () => renderSplits(data.splits));
-      safe('zones',      () => renderZones(zones));
+      safe('zones',      () => renderZones(zones, data.zone_deltas));
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
       safe('weather',    () => renderWeather(data.weather));
-      safe('orders',     () => renderOrders(orders));
+      safe('orders',     () => renderOrders(orders, data.cross_source_orders));
       safe('coverage',   () => renderCoverage(cadences, overview, data.freshness, bridge));
       safe('freshness',  () => renderFreshness(data.freshness));
       safe('alerts',     () => renderAlerts(data.event_alerts));
+      // v3 enrichments (PR pending)
+      safe('sgBrokerSales',    () => renderSgBrokerSales(data.sg_broker_sales));
+      safe('sgListingsSummary',() => renderSgListingsSummary(data.sg_listings_summary, data.sg_side_by_side));
+      safe('velocityChips',    () => renderVelocityChips(data.velocity));
+      safe('competingEvents',  () => renderCompetingEvents(data.competing_events));
+      safe('recentListings',   () => renderRecentListings(data.recent_listings));
+      safe('performerEspn',    () => renderPerformerEspn(data.performer_espn_context, data.performer));
     } catch (e) {
       handleRpcError(e);
     }
@@ -92,14 +99,22 @@
   async function fetchPayload(eventId) {
     const Auth = window.TerminalAuth;
     if (Auth && Auth.client && Auth.getAccessToken()) {
-      const { data, error } = await Auth.client
-        .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: CHART_HOURS });
-      if (error) {
-        const err = new Error(error.message || 'RPC error');
-        err.code = error.code; err.details = error.details; err.hint = error.hint;
+      // Try v3 first (9 enrichment keys); fall back to v2 if v3 isn't applied
+      // yet on this Supabase project. Both shapes are forward-compatible —
+      // renderers no-op or empty-state when their keys aren't in the payload.
+      let res = await Auth.client
+        .rpc('get_broker_event_page_v3', { p_event_id: eventId, p_chart_hours: CHART_HOURS });
+      if (res.error && (res.error.code === '42883' || /does not exist/i.test(res.error.message || ''))) {
+        // v3 not applied yet — fall back to v2
+        res = await Auth.client
+          .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: CHART_HOURS });
+      }
+      if (res.error) {
+        const err = new Error(res.error.message || 'RPC error');
+        err.code = res.error.code; err.details = res.error.details; err.hint = res.error.hint;
         throw err;
       }
-      return data;
+      return res.data;
     }
     // Path A fallback (localhost dev only). Returns v1 shape; v2 panels render empty states.
     const idStr = String(eventId);
@@ -225,7 +240,10 @@
 
   // ---------- Hero ----------
 
-  function renderHero(overview, bridge) {
+  function renderHero(overview, bridge, performer) {
+    // v3: paint logo + brand color + league badge from performer payload
+    // before laying out title/badges so the hero border applies correctly.
+    try { renderHeroV3Branding(performer); } catch (e) { console.error('heroBranding', e); }
     if (!overview) return;
     const ev = overview.event || {};
     document.getElementById('evTitle').textContent = ev.name || `Event ${ev.id || ''}`;
@@ -566,7 +584,7 @@
 
   // ---------- Zones (carried from v1) ----------
 
-  function renderZones(zones) {
+  function renderZones(zones, deltas) {
     const body = document.getElementById('zonesBody');
     body.innerHTML = '';
     if (!zones) {
@@ -578,12 +596,19 @@
       body.innerHTML = '<div class="empty">no zone data</div>';
       return;
     }
+    // Build a delta lookup by zone name (v3 enrichment)
+    const deltaByZone = {};
+    if (Array.isArray(deltas)) {
+      deltas.forEach(d => { if (d && d.zone) deltaByZone[d.zone] = d; });
+    }
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
         <th>Zone</th>
         <th class="num">Qty</th>
+        <th class="num">Δ qty 24h</th>
         <th class="num">Median</th>
+        <th class="num">Δ% 24h</th>
         <th class="num">Ours qty</th>
         <th class="num">Ours %</th>
       </tr></thead><tbody></tbody>`;
@@ -592,10 +617,19 @@
       const tr = document.createElement('tr');
       const ourPct = (r.owned_share !== null && r.owned_share !== undefined)
         ? T.fmtPct(r.owned_share * 100, 0) : '—';
+      const d = deltaByZone[r.zone];
+      const dQtyCell = d && d.delta_tix_abs != null
+        ? `<span class="${d.delta_tix_abs > 0 ? 'pos' : d.delta_tix_abs < 0 ? 'neg' : 'muted'}">${d.delta_tix_abs >= 0 ? '+' : ''}${T.fmtNum(d.delta_tix_abs)}</span>`
+        : '—';
+      const dMedCell = d && d.delta_median_pct != null
+        ? `<span class="${d.delta_median_pct > 0 ? 'pos' : d.delta_median_pct < 0 ? 'neg' : 'muted'}">${d.delta_median_pct >= 0 ? '+' : ''}${Number(d.delta_median_pct).toFixed(1)}%</span>`
+        : '—';
       tr.innerHTML = `
         <td class="zone-name">${escapeHtml(r.zone || '—')}</td>
         <td class="num">${T.fmtNum(r.tickets_count)}</td>
+        <td class="num">${dQtyCell}</td>
         <td class="num">$${T.fmtNum(r.retail_median, { max: 0 })}</td>
+        <td class="num">${dMedCell}</td>
         <td class="num ours">${T.fmtNum(r.owned_tickets_count)}</td>
         <td class="num ours">${ourPct}</td>`;
       tb.appendChild(tr);
@@ -801,15 +835,17 @@
 
   // ---------- Orders strip ----------
 
-  function renderOrders(orders) {
+  function renderOrders(orders, crossSource) {
     const body = document.getElementById('ordersBody');
     body.innerHTML = '';
     if (!orders) {
       body.innerHTML = '<div class="empty">orders unavailable</div>';
+      renderCrossSourceOrders(crossSource);  // still surface tickpick/vivid if present
       return;
     }
     if (!orders.summary || orders.summary.total_items === 0) {
-      body.innerHTML = '<div class="empty">no orders for this event</div>';
+      body.innerHTML = '<div class="empty">no EVO orders for this event</div>';
+      renderCrossSourceOrders(crossSource);
       return;
     }
     const byState = orders.summary.by_state || {};
@@ -849,6 +885,8 @@
       <span class="lbl">gross sold</span><span class="val">$${T.fmtNum(orders.summary.gross_sold, { max: 0 })}</span>
       <span class="lbl">last update</span><span class="val">${T.fmtDate(orders.summary.last_update_at)}</span>
     `;
+    // v3: surface tickpick/vivid orders for this event AFTER EVO rendering
+    setTimeout(() => renderCrossSourceOrders(crossSource), 0);
     body.appendChild(summary);
   }
 
@@ -1035,6 +1073,247 @@
 
   function severityRank(sev) {
     return { info: 0, low: 1, medium: 2, warn: 2, high: 3, critical: 4 }[sev] || 0;
+  }
+
+  // ============================================================
+  // v3 enrichment renderers (PR pending; v3 RPC adds 6 new panels)
+  // ============================================================
+
+  // ---------- SG broker sales aggregate ----------
+  function renderSgBrokerSales(s) {
+    const section = document.getElementById('sg-broker-sales');
+    const body = document.getElementById('sgBrokerSalesBody');
+    if (!body) return;
+    if (!s || s.hidden) {
+      if (section) section.style.display = 'none';
+      return;
+    }
+    if (section) section.style.display = '';
+    const gmv = Number(s.gross_estimate) || 0;
+    const tix = Number(s.tickets_sold) || 0;
+    const sales = Number(s.sales_count) || 0;
+    const avgPx = sales ? Math.round(gmv / Math.max(tix, 1)) : null;
+    body.innerHTML = `
+      <div class="kpi-strip">
+        <div class="kpi-strip-cell"><span class="kpi-lbl">SALES</span><span class="kpi-val">${T.fmtNum(sales)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">TIX SOLD</span><span class="kpi-val">${T.fmtNum(tix)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">EST GMV</span><span class="kpi-val">$${T.fmtNum(Math.round(gmv))}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">MIN</span><span class="kpi-val">${s.min_sale_price != null ? '$' + T.fmtNum(Math.round(s.min_sale_price)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">MEDIAN</span><span class="kpi-val">${s.median_sale_price != null ? '$' + T.fmtNum(Math.round(s.median_sale_price)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">MAX</span><span class="kpi-val">${s.max_sale_price != null ? '$' + T.fmtNum(Math.round(s.max_sale_price)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">SECTIONS</span><span class="kpi-val">${T.fmtNum(s.distinct_sections)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">LATEST</span><span class="kpi-val small">${T.fmtDate(s.latest_sale_at)}</span></div>
+      </div>`;
+  }
+
+  // ---------- SG listings summary (cost distribution) ----------
+  function renderSgListingsSummary(m, sxs) {
+    const section = document.getElementById('sg-listings-summary');
+    const body = document.getElementById('sgListingsSummaryBody');
+    if (!body) return;
+    if (!m || m.hidden) {
+      if (section) section.style.display = 'none';
+      return;
+    }
+    if (section) section.style.display = '';
+    // Optional 24h-ago delta from sxs.d24h_ago for cost_median
+    const prev = sxs && !sxs.hidden && sxs.d24h_ago ? sxs.d24h_ago : null;
+    const dPct = (prev && prev.cost_median && m.cost_median)
+      ? ((m.cost_median / prev.cost_median - 1) * 100) : null;
+    body.innerHTML = `
+      <div class="kpi-strip">
+        <div class="kpi-strip-cell"><span class="kpi-lbl">LISTINGS</span><span class="kpi-val">${T.fmtNum(m.listings_count)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">TIX</span><span class="kpi-val">${T.fmtNum(m.tickets_count)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">COST MIN</span><span class="kpi-val">${m.cost_min != null ? '$' + T.fmtNum(Math.round(m.cost_min)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">P25</span><span class="kpi-val">${m.cost_p25 != null ? '$' + T.fmtNum(Math.round(m.cost_p25)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">MEDIAN</span><span class="kpi-val">${m.cost_median != null ? '$' + T.fmtNum(Math.round(m.cost_median)) : '—'}${dPct != null ? `<span class="kpi-sg ${dPct >= 0 ? 'pos' : 'neg'}">${dPct >= 0 ? '+' : ''}${dPct.toFixed(1)}% d24h</span>` : ''}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">P75</span><span class="kpi-val">${m.cost_p75 != null ? '$' + T.fmtNum(Math.round(m.cost_p75)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">P90</span><span class="kpi-val">${m.cost_p90 != null ? '$' + T.fmtNum(Math.round(m.cost_p90)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">MAX</span><span class="kpi-val">${m.cost_max != null ? '$' + T.fmtNum(Math.round(m.cost_max)) : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">FILL</span><span class="kpi-val">${m.fill_rate != null ? (m.fill_rate * 100).toFixed(0) + '%' : '—'}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">SECTIONS</span><span class="kpi-val">${T.fmtNum(m.unique_sections)}</span></div>
+      </div>`;
+  }
+
+  // ---------- Velocity chips (inline strip) ----------
+  function renderVelocityChips(v) {
+    const host = document.getElementById('velocityChips');
+    if (!host) return;
+    if (!v || v.hidden) {
+      host.innerHTML = '<span class="muted small">velocity n/a</span>';
+      return;
+    }
+    function chip(label, delta, fmt) {
+      if (delta == null || delta === 0) return '';
+      const positive = delta > 0;
+      const cls = positive ? 'pos' : 'neg';
+      const fmtVal = fmt === 'pct' ? (delta >= 0 ? '+' : '') + delta.toFixed(1) + '%'
+                   : (delta >= 0 ? '+' : '') + T.fmtNum(Math.abs(delta), { max: 0 });
+      return `<span class="velocity-chip ${cls}">${label}: ${fmtVal}</span>`;
+    }
+    host.innerHTML = [
+      chip('TEvo tix 1h', v.tevo_tix_d1h),
+      chip('TEvo tix 24h', v.tevo_tix_d24h),
+      chip('TEvo getin 24h', v.tevo_getin_d24h_pct, 'pct'),
+      chip('SG getin 24h', v.sg_getin_d24h),
+    ].filter(Boolean).join('') || '<span class="muted small">no movement detected in window</span>';
+  }
+
+  // ---------- Competing events ----------
+  function renderCompetingEvents(c) {
+    const body = document.getElementById('competingEventsBody');
+    if (!body) return;
+    if (!c || !c.events || c.events.length === 0) {
+      body.innerHTML = '<div class="empty">no competing events within +/-24h / 20mi</div>';
+      return;
+    }
+    const ul = document.createElement('ul');
+    ul.className = 'competing-list';
+    c.events.slice(0, 10).forEach(e => {
+      const li = document.createElement('li');
+      const eid = e.event_id || e.id;
+      const name = e.name || e.event_name || ('Event ' + eid);
+      const dist = e.distance_miles != null ? `${Number(e.distance_miles).toFixed(1)}mi` : '';
+      const venue = e.venue_name || e.venue || '';
+      const when = T.fmtDate(e.occurs_at_local || e.occurs_at || e.starts_at);
+      li.innerHTML = `<a href="event.html?event=${eid}">${escapeHtml(name)}</a> <span class="muted">${escapeHtml(venue)}${venue && dist ? ' · ' : ''}${dist} · ${escapeHtml(when)}</span>`;
+      ul.appendChild(li);
+    });
+    body.innerHTML = '';
+    body.appendChild(ul);
+  }
+
+  // ---------- Recent TEvo listings (firehose snippet) ----------
+  function renderRecentListings(rows) {
+    const body = document.getElementById('recentListingsBody');
+    if (!body) return;
+    if (!rows || !rows.length) {
+      body.innerHTML = '<div class="empty">no listings in last 24h</div>';
+      return;
+    }
+    const tbl = document.createElement('table');
+    tbl.className = 'recent-listings-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Captured</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Retail</th><th>Source</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const sourceLabel = r.is_owned ? 'ours' : (r.brokerage_name || 'market');
+      tr.innerHTML = `
+        <td>${T.fmtDate(r.captured_at)}</td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
+        <td class="${r.is_owned ? 'ours' : 'muted'}">${escapeHtml(sourceLabel)}</td>`;
+      tb.appendChild(tr);
+    });
+    body.innerHTML = '';
+    body.appendChild(tbl);
+  }
+
+  // ---------- Cross-source orders (TickPick + Vivid) ----------
+  function renderCrossSourceOrders(cs) {
+    const body = document.getElementById('crossSourceOrdersBody');
+    const section = document.getElementById('cross-source-orders');
+    if (!body) return;
+    const tp = (cs && cs.tickpick) || [];
+    const vv = (cs && cs.vivid) || [];
+    if (!tp.length && !vv.length) {
+      if (section) section.style.display = 'none';
+      return;
+    }
+    if (section) section.style.display = '';
+    function rowsHtml(rows, source) {
+      if (!rows.length) return '';
+      return rows.slice(0, 10).map(o => {
+        const total = o.total != null ? '$' + T.fmtNum(o.total, { max: 2 }) : '—';
+        const sec = escapeHtml(o.section || '—');
+        const row = escapeHtml(o.row || '—');
+        return `<tr><td><span class="src-pill src-${source}">${source}</span></td><td>${escapeHtml(o.status || '—')}</td><td class="num">${T.fmtNum(o.quantity)}</td><td class="num">${total}</td><td>${sec} / ${row}</td><td class="muted">${T.fmtDate(o.ordered_at)}</td></tr>`;
+      }).join('');
+    }
+    body.innerHTML = `
+      <div class="cross-src-meta muted small">
+        TickPick: ${tp.length} orders · Vivid: ${vv.length} orders (top 10 each)
+      </div>
+      <table class="cross-src-tbl">
+        <thead><tr><th>Src</th><th>Status</th><th class="num">Qty</th><th class="num">Total</th><th>Sec/Row</th><th>Ordered</th></tr></thead>
+        <tbody>${rowsHtml(tp, 'tickpick')}${rowsHtml(vv, 'vivid')}</tbody>
+      </table>`;
+  }
+
+  // ---------- Performer ESPN context (next 5 games) ----------
+  function renderPerformerEspn(ctx, performer) {
+    const section = document.getElementById('performer-espn');
+    const body = document.getElementById('performerEspnBody');
+    if (!body) return;
+    if (!ctx || ctx.hidden) {
+      if (section) section.style.display = 'none';
+      return;
+    }
+    if (!Array.isArray(ctx) || ctx.length === 0) {
+      // ctx could be the raw array OR wrapped — handle both
+      const arr = Array.isArray(ctx) ? ctx : (ctx.events || []);
+      if (!arr.length) {
+        if (section) section.style.display = 'none';
+        return;
+      }
+    }
+    if (section) section.style.display = '';
+    const arr = Array.isArray(ctx) ? ctx : (ctx.events || []);
+    const teamId = (performer && performer.espn_team_id) || '';
+    const league = (performer && performer.espn_league) || '';
+    body.innerHTML = `<div class="muted small">${escapeHtml(league)}${teamId ? ` · team ${escapeHtml(teamId)}` : ''} — next ${arr.length} games (this event has no ESPN xref)</div>`;
+    const ul = document.createElement('ul');
+    ul.className = 'performer-espn-list';
+    arr.slice(0, 5).forEach(g => {
+      const li = document.createElement('li');
+      const opp = g.is_home ? g.away_team_id : g.home_team_id;
+      const venueHint = g.is_home ? 'HOME' : '@';
+      li.innerHTML = `<span class="muted">${T.fmtDate(g.game_at_utc)}</span> ${venueHint} <strong>${escapeHtml(opp || '?')}</strong> <span class="muted small">${escapeHtml(g.status_short || '')}</span>`;
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+  }
+
+  // ============================================================
+  // v3 extensions to existing renderers (hero/kpi/zones/orders)
+  // ============================================================
+
+  // renderHero — extended in-place via renderHeroV3Branding hook
+  function renderHeroV3Branding(performer) {
+    if (!performer || performer.hidden) return;
+    const logoUrl = performer.logo_default_url || performer.logo_dark_url || performer.logo_4k_primary_url;
+    if (logoUrl) {
+      let img = document.getElementById('heroPerformerLogo');
+      if (!img) {
+        img = document.createElement('img');
+        img.id = 'heroPerformerLogo';
+        img.className = 'hero-performer-logo';
+        img.alt = performer.name || 'performer';
+        const heroMain = document.querySelector('.hero-main');
+        if (heroMain) heroMain.insertBefore(img, heroMain.firstChild);
+      }
+      img.src = logoUrl;
+    }
+    if (performer.color_primary) {
+      const hero = document.getElementById('hero');
+      if (hero) hero.style.borderLeft = `4px solid ${performer.color_primary}`;
+    }
+    // Add a league badge to the existing badges row
+    if (performer.espn_league) {
+      const badges = document.getElementById('evBadges');
+      if (badges && !badges.querySelector('.badge.league')) {
+        const b = document.createElement('span');
+        b.className = 'badge league';
+        b.textContent = String(performer.espn_league).toUpperCase();
+        badges.appendChild(b);
+      }
+    }
   }
 
   // ---------- Util ----------

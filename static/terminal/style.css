@@ -496,6 +496,127 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   line-height: 1.5;
 }
 
+/* ---------- v3 enrichment panels (PR pending) ---------- */
+
+/* KPI strip — horizontal multi-cell layout for SG broker sales + SG listings summary */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.kpi-strip-cell {
+  background: var(--panel);
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  font-family: var(--mono);
+}
+.kpi-strip-cell .kpi-lbl {
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.kpi-strip-cell .kpi-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.kpi-strip-cell .kpi-val .kpi-sg {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 400;
+}
+.kpi-strip-cell .kpi-val.small { font-size: 11px; font-weight: 500; }
+.kpi-sg.pos { color: var(--pos); }
+.kpi-sg.neg { color: var(--neg); }
+
+/* Velocity chips inside chart-controls strip */
+.velocity-strip { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.velocity-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  letter-spacing: 0.3px;
+}
+.velocity-chip.pos { color: var(--pos); border-color: rgba(74, 222, 128, 0.4); }
+.velocity-chip.neg { color: var(--neg); border-color: rgba(239, 68, 68, 0.4); }
+
+/* Competing events list */
+.competing-list {
+  margin: 0; padding: 0; list-style: none;
+  font-family: var(--mono); font-size: 12px;
+}
+.competing-list li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.competing-list li a { color: var(--text); text-decoration: none; }
+.competing-list li a:hover { color: var(--accent); text-decoration: underline; }
+
+/* Recent listings table */
+.recent-listings-tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+.recent-listings-tbl th { text-align: left; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--line); font-weight: 500; font-size: 10px; text-transform: uppercase; }
+.recent-listings-tbl th.num, .recent-listings-tbl td.num { text-align: right; }
+.recent-listings-tbl td { padding: 3px 6px; border-bottom: 1px solid var(--line-2); }
+.recent-listings-tbl tr:hover td { background: var(--panel-2); }
+.recent-listings-tbl td.ours { color: var(--accent); }
+
+/* Cross-source orders table */
+.cross-src-meta { margin-bottom: 8px; }
+.cross-src-tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+.cross-src-tbl th { text-align: left; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--line); font-weight: 500; font-size: 10px; text-transform: uppercase; }
+.cross-src-tbl th.num, .cross-src-tbl td.num { text-align: right; }
+.cross-src-tbl td { padding: 3px 6px; border-bottom: 1px solid var(--line-2); }
+.src-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+.src-pill.src-tickpick { color: var(--info); border-color: rgba(96, 165, 250, 0.4); }
+.src-pill.src-vivid    { color: var(--warn); border-color: rgba(245, 158, 11, 0.4); }
+
+/* Performer ESPN context list */
+.performer-espn-list {
+  margin: 8px 0 0; padding: 0; list-style: none;
+  font-family: var(--mono); font-size: 12px;
+}
+.performer-espn-list li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+/* Hero performer logo (added inline by renderHeroV3Branding) */
+.hero-performer-logo {
+  width: 48px; height: 48px;
+  object-fit: contain;
+  margin-right: 12px;
+  vertical-align: middle;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  padding: 2px;
+}
+.hero-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+.hero-main > h1.title { display: inline-block; }
+
+/* League badge variant */
+.badge.league {
+  border-color: var(--info);
+  color: var(--info);
+}
+
 /* ---------- Deploy version chip (in topbar) ---------- */
 
 .version-chip {
@@ -540,16 +661,22 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   border: 1px solid var(--line);
   padding: 12px 16px;
 }
-.wrap.event > #hero          { grid-column: 1 / -1; }
-.wrap.event > #kpi-grid      { grid-column: 1 / -1; padding: 12px 16px; }
-.wrap.event > #chart         { grid-column: 1 / -1; padding: 12px 8px; }
-.wrap.event > #splits        { grid-column: 1 / 7; }
-.wrap.event > #zones         { grid-column: 7 / 13; }
-.wrap.event > #sales-tape    { grid-column: 1 / -1; }
-.wrap.event > #espn          { grid-column: 1 / -1; }
-.wrap.event > #weather       { grid-column: 1 / -1; }
-.wrap.event > #order-strip   { grid-column: 1 / -1; }
-.wrap.event > #alerts        { grid-column: 1 / -1; }
+.wrap.event > #hero               { grid-column: 1 / -1; }
+.wrap.event > #kpi-grid           { grid-column: 1 / -1; padding: 12px 16px; }
+.wrap.event > #chart              { grid-column: 1 / -1; padding: 12px 8px; }
+.wrap.event > #sg-broker-sales    { grid-column: 1 / -1; }
+.wrap.event > #sg-listings-summary{ grid-column: 1 / -1; }
+.wrap.event > #splits             { grid-column: 1 / 7; }
+.wrap.event > #zones              { grid-column: 7 / 13; }
+.wrap.event > #sales-tape         { grid-column: 1 / -1; }
+.wrap.event > #espn               { grid-column: 1 / -1; }
+.wrap.event > #weather            { grid-column: 1 / -1; }
+.wrap.event > #order-strip        { grid-column: 1 / 7; }
+.wrap.event > #cross-source-orders{ grid-column: 7 / 13; }
+.wrap.event > #alerts             { grid-column: 1 / 7; }
+.wrap.event > #competing-events   { grid-column: 7 / 13; }
+.wrap.event > #recent-listings    { grid-column: 1 / 7; }
+.wrap.event > #performer-espn     { grid-column: 7 / 13; }
 
 /* Hero band — main info left, status side panel right */
 .wrap.event > #hero {
