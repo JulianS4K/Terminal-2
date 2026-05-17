@@ -965,19 +965,76 @@
       if (count) count.textContent = '0 alerts';
       return;
     }
-    if (count) count.textContent = `${alerts.length} alert${alerts.length === 1 ? '' : 's'}`;
-    const ul = document.createElement('ul');
-    ul.className = 'alerts-list';
-    alerts.slice(0, 20).forEach(a => {
-      const li = document.createElement('li');
-      li.className = 'alert-row sev-' + (a.severity || 'info');
-      li.innerHTML = `
-        <span class="al-time muted">${T.fmtDate(a.fired_at)}</span>
-        <span class="al-rule">${escapeHtml(a.rule_key || '')}</span>
-        <span class="al-msg">${escapeHtml(a.message || '')}</span>`;
-      ul.appendChild(li);
+
+    // Operator audit 2026-05-17: alerts panel listed 5×(competing_event_added)
+    // + 4×(tevo_getin_drop/surge_1h) with near-identical messages. Visual noise.
+    // Group by rule_key + collapse messages with the same dollar pattern; show
+    // count chip per group + the most recent firing time. Expand-on-click via
+    // <details> so the raw list is still one click away.
+    const groups = new Map();  // rule_key → { rule, severity, items: [], latest_at }
+    for (const a of alerts) {
+      const rule = a.rule_key || 'unknown';
+      if (!groups.has(rule)) {
+        groups.set(rule, {
+          rule,
+          severity: a.severity || 'info',
+          items: [],
+          latest_at: a.fired_at,
+        });
+      }
+      const g = groups.get(rule);
+      g.items.push(a);
+      if (a.fired_at && (!g.latest_at || a.fired_at > g.latest_at)) {
+        g.latest_at = a.fired_at;
+        // Severity worsens over time? Track max severity per group.
+        if (severityRank(a.severity) > severityRank(g.severity)) g.severity = a.severity;
+      }
+    }
+    // Sort groups by latest firing desc.
+    const groupArr = Array.from(groups.values())
+      .sort((x, y) => (y.latest_at || '').localeCompare(x.latest_at || ''));
+
+    if (count) {
+      count.textContent = `${alerts.length} alert${alerts.length === 1 ? '' : 's'} · ${groupArr.length} rule${groupArr.length === 1 ? '' : 's'}`;
+    }
+
+    groupArr.forEach(g => {
+      const det = document.createElement('details');
+      det.className = 'alerts-group sev-' + g.severity;
+      // Auto-expand when only 1 item — same UX as flat list before
+      if (g.items.length === 1) det.open = true;
+      const summary = document.createElement('summary');
+      // Dedup messages: surface the latest message + " ×N" if N>1 same-pattern firings
+      const latestMsg = g.items
+        .slice()
+        .sort((a, b) => (b.fired_at || '').localeCompare(a.fired_at || ''))[0].message || '';
+      summary.innerHTML = `
+        <span class="al-rule">${escapeHtml(g.rule)}</span>
+        ${g.items.length > 1 ? `<span class="al-count">×${g.items.length}</span>` : ''}
+        <span class="al-msg">${escapeHtml(latestMsg)}</span>
+        <span class="al-time muted">latest ${T.fmtDate(g.latest_at)}</span>`;
+      det.appendChild(summary);
+      // Expanded body — full chronological list
+      const ul = document.createElement('ul');
+      ul.className = 'alerts-list';
+      g.items
+        .slice()
+        .sort((a, b) => (b.fired_at || '').localeCompare(a.fired_at || ''))
+        .forEach(a => {
+          const li = document.createElement('li');
+          li.className = 'alert-row sev-' + (a.severity || 'info');
+          li.innerHTML = `
+            <span class="al-time muted">${T.fmtDate(a.fired_at)}</span>
+            <span class="al-msg">${escapeHtml(a.message || '')}</span>`;
+          ul.appendChild(li);
+        });
+      det.appendChild(ul);
+      body.appendChild(det);
     });
-    body.appendChild(ul);
+  }
+
+  function severityRank(sev) {
+    return { info: 0, low: 1, medium: 2, warn: 2, high: 3, critical: 4 }[sev] || 0;
   }
 
   // ---------- Util ----------
