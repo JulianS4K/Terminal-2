@@ -1,9 +1,11 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-16 by A1
+**Last updated**: 2026-05-17 by A1
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
-This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md` (561 LOC, only when you need it).
+This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
+
+**⚠ BEFORE CREATING ANY NEW TABLE / VIEW / RPC / CRON / EDGE-FN — check `RESOURCES_BIBLE.md` first.** 132 tables + 152 views + 75+ crons + 40+ edge fns already exist. Recurring waste: re-implementing `event_metrics`, `*_xref`, `*_pending`, `v_event_*` patterns when one already exists. Quick check: `SELECT relname FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace WHERE nspname='public' AND relkind IN ('r','v','m')` — search the output for keywords before authoring.
 
 | Need | Read |
 |---|---|

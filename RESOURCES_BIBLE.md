@@ -1,6 +1,23 @@
 # RESOURCES_BIBLE.md
 
-**Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Updated 2026-05-13 (main HEAD `0a9459b`).**
+**Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Updated 2026-05-17 (main HEAD `e04387e`+post-#191).**
+
+**⚠ READ THIS BEFORE CREATING ANY TABLE / VIEW / RPC / CRON.** The inventory below is curated — if a name nearby fits your need, reuse instead of creating. Common collisions: `*_metrics`, `*_xref`, `v_event_*`, `sg_*_pending`. Run `SELECT relname FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace WHERE nspname='public' AND relkind IN ('r','v','m')` before authoring net-new structures.
+
+## Snapshot streams (5 firehoses) — generation rates, 24h window @ 2026-05-17 ~15:00 UTC
+
+| Stream | Source table | Rows/24h | Last row | Notes |
+|---|---|---:|---|---|
+| **SG listings** (marketplace firehose) | `seatgeek_listings_snapshots` | **1,590,358** | 14:56 UTC | SG broker-data `/v2/listings` per priority tier. 11× pull dedup factor; query via DISTINCT ON `sglid` + latest `captured_at`. 3.14 GB table. |
+| **TEvo listings** (broker firehose) | `listings_snapshots` | **507,142** | 14:51 UTC | TEvo `/v9/ticket_groups` per watchlisted performer/venue. Includes our office's owned listings (`is_owned=true AND brokerage_id=1768`). 3.14 GB table. |
+| **SG sales** (marketplace firehose) | `seatgeek_sales_snapshots` | **734,658** | 14:35 UTC | SG broker-data `/v2/sales` — all completed broker sales on the SG marketplace. Mandatory DISTINCT ON `sg_sale_id`. `tevo_event_id` now 87.35% populated (post A1.1 PR #178). 1.16 GB table. |
+| **TEvo orders** (our pipeline) | `evo_orders` | 51 new + repulls | 14:35 UTC | Our office's TEvo orders via `/v9/orders` queue/process. `tevo_event_id` 96.17% populated via `evo_order_items` join. 1.3 MB table. |
+| **SG seller orders** (our SG SellerDirect) | `seatgeek_orders` | 400 (repulls, no new sales today) | 14:37 UTC | Our office's SG SellerDirect orders. Static for now (400 rows). Different from `sg_sales` firehose. |
+| **SG seller listings** (our SG SellerDirect) | `seatgeek_seller_listings` | 9 (repulls) | 14:37 UTC | Our office's SG SellerDirect listings. Sparse — most events have 0. |
+
+**"SG broker sales" disambiguation**: the term in conversation could mean **either** (a) the SG marketplace firehose at 734K/24h = all broker sales on SG via the broker API (`seatgeek_sales_snapshots`) **or** (b) our office's SG SellerDirect sales pulled from our seller account (`seatgeek_orders`, 400/static). Most analytics work uses (a) since it has volume; (b) is for reconciliation of OUR account specifically.
+
+
 
 Companion to `BOT_HIERARCHY.md` (which is *who* can push) and `MIGRATION_CONVENTIONS.md` (which is *how* to push). This doc is *what exists*.
 
@@ -24,6 +41,39 @@ Conventions:
 | Migration `20260516100000` | `evo_orders` schema fix: ADD `tevo_event_id` + `aq_short_event_id` columns + backfill from `evo_order_items` (99.5% tevo / 88% aq populated post-apply) | #161 |
 | Migration `20260516110000` | NEW RPC `refresh_sg_broker_sales_event_metrics(p_max_events)` — populates `seatgeek_event_metrics.sold_*` from `seatgeek_sales_snapshots` (DISTINCT ON sg_sale_id; 11× dedup). Hourly cron `sg_broker_sales_metrics_refresh_hourly` @ :17 with policy gate. | #161 |
 | Migration `20260516120000` | NEW views: `v_event_sales_velocity` (sales/hour time series), `v_event_sales_metrics_filtered` (p99 outlier filter), `v_event_price_arbitrage` (TEvo retail vs SG cost vs SG sales realized per upcoming event) | #161 |
+| Migration `20260516200000`+`200100` | D2 metrics swap (sg → sg_sales) + cron freshness swap | #163 |
+| Migration `20260516210000`+`210100`+`210200` | SG SellerDirect WebSocket per-type tables + webhook secret + ingest RPCs | #164 |
+| Migration `20260516220000`+`220100` | NEW views `v_sg_broker_sales_by_section` + `v_sg_broker_sales_by_event` (D2-authored, applied 2026-05-17) | #166 |
+| Migration `20260516230000` | NEW RPC `sg_canonical_refresh_v2_pull(p_window_minutes)` + cron `sg_canonical_v2_pull_refresh_30min` @ :12,:42. Closes 99.5% NULL-population gap on `sg_events_canonical.last_v2_pull_at`. | #177 |
+| Migration `20260516240000` | NEW table `cross_source_venue_map` (391 TEvo + 129 SG + 94 TickPick + 85 Vivid aliases) + RPC `cross_source_venue_resolve(name, city, state)` + RPC `refresh_cross_source_venue_map()` + RPC `sg_attempt_event_xref_v3` (matcher v3: ±24h tolerance + parking skip + venue map lookup) + RPC `auto_match_sg_canonical_v3()` | #177 |
+| Migration `20260516250000` | NEW table `sg_tevo_search_attempts` (24h retry suppression for the TEvo /v9/events search bridge) + cron `sg_to_tevo_search_bridge_30min` @ :23,:53. Updated `cross_source_match_tick()` to also call v3 matcher. | #177 |
+| Migration `20260516260000` | Drop dead 7-arg overload of `match_to_aq_event_id` (B1 OPS-HIGH #258 — `match_unmatched_orders_sweep_hourly` was failing every :22 with "function not unique"). | #177 |
+| Migration `20260516270000` | `queue_performer_wiki_searches` orphan filter — `EXISTS performer_metadata` predicate. Fixes B1 OPS-MED #259 FK violation. | #177 |
+| Migration `20260516280000` | **A1.1**: `seatgeek_sales_snapshots.tevo_event_id` backfill enablement. Dedup 32,627 duplicate rows + DROP CONSTRAINT `seatgeek_sales_dedup` (was `UNIQUE(tevo_event_id, sg_sale_id)`) + CREATE `seatgeek_sales_dedup_v2` (`UNIQUE(sg_event_id, sg_sale_id, pulled_at)`) + BEFORE INSERT trigger `trg_sg_sales_populate_tevo_event_id` (auto-populates from xref) + RPC `backfill_seatgeek_sales_tevo_event_id(p_chunk_size)`. Column 0.03% → 87.35% populated. | #178 |
+| Migration `20260516290000` | D0 audit batch A1.2/A1.3/A1.4: Vivid event_date sentinel cleared (1 row) + Aces (`LA780EA` → tevo `56746`) + LAFC (`LA94425` → tevo `55771`, canonical name `'Los Angeles FC'`) + NEW column `aq_performer_map.aliases text[]` + GIN idx + alias arrays populated for Aces (`Aces, Vegas Aces, LV Aces`) and LAFC (`LAFC, Los Angeles Football Club`). | #179 |
+| Migration `20260516290001` | A1.6: `get_broker_event_page_v2.freshness.weather_latest` falls back to forecast max-observed when no observations exist. | #179 |
+| Migration `20260517000000` | Fix `listings_deltas_backfill_chunked` statement timeout cascade. `SET LOCAL statement_timeout='5min'` + first-row sentinel (COALESCE lag, current) + EXISTS-based remaining check + smallest-first ordering + drop pg_sleep + chunk 100→30. | #189 |
+| Migration `20260517010000` | **D0 v3**: NEW RPC `get_broker_event_page_v3` (9 enrichment keys on top of v2: performer + velocity + sg_broker_sales + sg_listings_summary + competing_events + cross_source_orders + recent_listings + zone_deltas + performer_espn_context). Email-gated `@s4kent.com`. | #186 |
+| Migration `20260517020000` (renamed from `010000` to break collision with v3) | Close 5 RLS gaps (C1 #272): `cross_source_venue_map`, `sg_tevo_search_attempts`, `sg_event_priority_state`, `sg_priority_policy`, `cron_pause_state_20260514` — all enabled with `admin_only` deny-all policy + REVOKE anon/auth + GRANT service_role. | #190 |
+| Migration `20260517030000` | Hotfix v3 `sg_broker_sales`: inline scoped dedup (was timing out on `v_sg_broker_sales_by_event` view doing DISTINCT ON over 1.3M rows). | #191 |
+
+**New tables added today (2026-05-16/17, 5 net-new in public schema)**:
+- `cross_source_venue_map` (PR #177) — TEvo-anchored venue resolver with SG/TickPick/Vivid aliases.
+- `sg_tevo_search_attempts` (PR #177) — 24h retry suppression for the TEvo /v9/events search bridge.
+- `cron_pause_state_20260514` (pre-history, RLS added today)
+- `sg_event_priority_state` (pre-history, RLS added today)
+- `sg_priority_policy` (pre-history, RLS added today)
+
+**New views added today**:
+- `v_sg_broker_sales_by_section` (D2, applied via #166 today)
+- `v_sg_broker_sales_by_event` (D2, applied via #166 today)
+- `v_event_sales_velocity`, `v_event_sales_metrics_filtered`, `v_event_price_arbitrage` (already noted via #161)
+
+**New RPCs added today**: `sg_canonical_refresh_v2_pull`, `cross_source_venue_resolve`, `refresh_cross_source_venue_map`, `sg_attempt_event_xref_v3`, `auto_match_sg_canonical_v3`, `cross_source_match_tick` (updated), `match_to_aq_event_id` (8-arg only, 7-arg dropped), `queue_performer_wiki_searches` (orphan filter), `backfill_seatgeek_sales_tevo_event_id`, `trg_sg_sales_populate_tevo_event_id` (trigger fn), `get_broker_event_page_v2` (weather fallback), `get_broker_event_page_v3` (9 enrichment keys), `listings_deltas_backfill_chunked` (perf rewrite).
+
+**New crons added today**:
+- `sg_canonical_v2_pull_refresh_30min` @ :12,:42 (PR #177)
+- `sg_to_tevo_search_bridge_30min` @ :23,:53 (PR #177)
 
 ---
 
