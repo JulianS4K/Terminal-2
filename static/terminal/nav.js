@@ -75,6 +75,23 @@
     if (v) {
       chip.textContent = 'v:' + v.slice(0, 7);
       chip.title = `host: ${location.hostname}\nversion: ${v}`;
+    } else {
+      // Async fallback — fetch /version.json from same origin (cheap,
+      // ~5ms warm). Works on FastAPI-shell deploys (storefront-test +
+      // Railway) where terminal HTML is served verbatim without a
+      // cache-bust suffix to detect synchronously. Static CDN doesn't
+      // have this endpoint → chip stays "v:dev" which is the honest
+      // signal ("this came from CDN bytes, not the FastAPI shell").
+      fetch('/version.json', { credentials: 'omit' })
+        .then(r => r.ok ? r.json() : null)
+        .then(j => {
+          if (!j || !j.version || j.version === 'dev') return;
+          chip.textContent = 'v:' + String(j.version).slice(0, 7);
+          chip.title = `host: ${location.hostname}\nversion: ${j.version}` +
+            (j.render_external_url ? `\nrender: ${j.render_external_url}` : '') +
+            (j.railway_public_domain ? `\nrailway: ${j.railway_public_domain}` : '');
+        })
+        .catch(() => { /* chip stays "v:dev" — acceptable degraded state */ });
     }
   }
 
