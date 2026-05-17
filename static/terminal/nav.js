@@ -37,8 +37,188 @@
     if (status) topbar.insertBefore(nav, status);
     else topbar.appendChild(nav);
 
+    injectSearchBox(topbar);
     injectVersionChip(topbar);
     injectAuthControl(topbar);
+  }
+
+  // ---------- Global terminal search ----------
+  //
+  // Topbar search input, available on every terminal page (via nav.js).
+  // Calls `terminal_search` SECDEF RPC (mig 20260517230000) and renders a
+  // 3-section dropdown — Events / Performers / Venues.
+  //
+  // Keyboard: type-to-search (300ms debounce), ↑/↓ to navigate suggestions,
+  // Enter to follow first/selected result, Esc closes. Click-outside closes.
+  //
+  // Localhost dev (no Path C auth) gets a degraded "search unavailable"
+  // hint when the user focuses the input.
+  function injectSearchBox(topbar) {
+    if (topbar.querySelector('.term-search')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'term-search';
+    wrap.innerHTML = `
+      <input type="search" class="term-search-input" placeholder="Search events / performers / venues…" autocomplete="off" spellcheck="false" />
+      <div class="term-search-suggest" hidden></div>`;
+    // Insert before version chip / auth ctrl / status. Use the .pagenav as
+    // anchor — search slots immediately after the nav links.
+    const nav = topbar.querySelector('nav.pagenav');
+    if (nav && nav.nextSibling) topbar.insertBefore(wrap, nav.nextSibling);
+    else if (nav) topbar.appendChild(wrap);
+    else topbar.appendChild(wrap);
+
+    const input = wrap.querySelector('.term-search-input');
+    const sugg  = wrap.querySelector('.term-search-suggest');
+    let debounceT = 0;
+    let lastQ = '';
+    let activeIdx = -1;
+    let flat = []; // flat list of {href, label, kind} for keyboard nav
+
+    function close() {
+      sugg.setAttribute('hidden', '');
+      activeIdx = -1;
+      updateActive();
+    }
+    function open() { sugg.removeAttribute('hidden'); }
+    function updateActive() {
+      [...sugg.querySelectorAll('.ts-row')].forEach((r, i) => {
+        r.classList.toggle('active', i === activeIdx);
+      });
+    }
+    function follow(idx) {
+      if (idx < 0 || idx >= flat.length) return;
+      window.location.href = flat[idx].href;
+    }
+
+    async function runSearch(q) {
+      if (q === lastQ) return;
+      lastQ = q;
+      if (q.length < 2) { close(); return; }
+      const Auth = window.TerminalAuth;
+      if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+        sugg.innerHTML = '<div class="ts-empty">search needs auth — sign in with @s4kent.com</div>';
+        open();
+        return;
+      }
+      sugg.innerHTML = '<div class="ts-empty">searching…</div>';
+      open();
+      const res = await Auth.client.rpc('terminal_search', { p_q: q, p_limit: 6 });
+      if (res.error) {
+        const msg = res.error.message || 'search RPC error';
+        // 42883 = function does not exist (migration not yet applied)
+        const friendly = res.error.code === '42883'
+          ? 'search RPC not deployed yet — pending migration 20260517230000'
+          : msg;
+        sugg.innerHTML = `<div class="ts-empty err">${escapeHtml(friendly)}</div>`;
+        return;
+      }
+      const d = res.data || {};
+      renderResults(d);
+    }
+
+    function renderResults(d) {
+      const evs   = d.events     || [];
+      const perfs = d.performers || [];
+      const vens  = d.venues     || [];
+      flat = [];
+      if (!evs.length && !perfs.length && !vens.length) {
+        sugg.innerHTML = `<div class="ts-empty">no matches for &ldquo;${escapeHtml(d.q || '')}&rdquo;</div>`;
+        return;
+      }
+      const parts = [];
+      if (evs.length) {
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">EVENTS</div>');
+        evs.forEach(e => {
+          const href = `event.html?event=${e.tevo_event_id}`;
+          const meta = [e.venue_name, fmtDateShort(e.occurs_at_local)].filter(Boolean).join(' · ');
+          flat.push({ href, label: e.name, kind: 'event' });
+          parts.push(`<a class="ts-row" href="${href}" data-kind="event">
+              <span class="ts-name">${escapeHtml(e.name || '(unnamed)')}</span>
+              <span class="ts-meta">${escapeHtml(meta)}</span>
+            </a>`);
+        });
+        parts.push('</div>');
+      }
+      if (perfs.length) {
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">PERFORMERS</div>');
+        perfs.forEach(p => {
+          const href = `performer.html?performer=${p.tevo_performer_id}`;
+          flat.push({ href, label: p.performer_name, kind: 'performer' });
+          parts.push(`<a class="ts-row" href="${href}" data-kind="performer">
+              <span class="ts-name">${escapeHtml(p.performer_name || '(unnamed)')}</span>
+              <span class="ts-meta">${escapeHtml(p.category || '')}</span>
+            </a>`);
+        });
+        parts.push('</div>');
+      }
+      if (vens.length) {
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">VENUES</div>');
+        vens.forEach(v => {
+          // No venue.html yet — link to home with venue filter param for now;
+          // home filter is a future Phase 2b; for now the link still navigates
+          // and the URL captures the intent.
+          const href = `./?venue=${v.tevo_venue_id}`;
+          const meta = [v.city, v.state].filter(Boolean).join(', ');
+          flat.push({ href, label: v.venue_name, kind: 'venue' });
+          parts.push(`<a class="ts-row" href="${href}" data-kind="venue">
+              <span class="ts-name">${escapeHtml(v.venue_name || '(unnamed)')}</span>
+              <span class="ts-meta">${escapeHtml(meta)}</span>
+            </a>`);
+        });
+        parts.push('</div>');
+      }
+      sugg.innerHTML = parts.join('');
+      activeIdx = flat.length ? 0 : -1;
+      updateActive();
+    }
+
+    input.addEventListener('input', () => {
+      clearTimeout(debounceT);
+      const q = input.value.trim();
+      debounceT = setTimeout(() => runSearch(q), 250);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { input.blur(); close(); return; }
+      if (e.key === 'Enter') { e.preventDefault(); follow(activeIdx); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!flat.length) return;
+        activeIdx = (activeIdx + (e.key === 'ArrowDown' ? 1 : -1) + flat.length) % flat.length;
+        updateActive();
+        const row = sugg.querySelectorAll('.ts-row')[activeIdx];
+        if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+      }
+    });
+    input.addEventListener('focus', () => {
+      if (lastQ.length >= 2 && sugg.innerHTML) open();
+    });
+    document.addEventListener('click', (e) => {
+      if (!wrap.contains(e.target)) close();
+    });
+
+    // '/' shortcut focuses the search anywhere — only when not already in
+    // an input/textarea, so it doesn't hijack page-level typing.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      e.preventDefault();
+      input.focus();
+      input.select();
+    });
+  }
+
+  function fmtDateShort(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch (_) { return ''; }
+  }
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+    }[c]));
   }
 
   // ---------- Deploy version chip ----------
