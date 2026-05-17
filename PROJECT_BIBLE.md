@@ -149,6 +149,15 @@ SELECT * FROM public._v_d0_event_index WHERE sg_event_id = $1;
 SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 ```
 
+**Snapshot inventory** (where the firehose tables live + what's available to surface as event-page tabs / time-series panels):
+- 5 live firehoses (SG listings, SG sales, TEvo listings, TEvo orders, SG seller orders) → `RESOURCES_BIBLE.md` "Snapshot streams" table
+- 3 lower-volume order streams (TickPick, SG seller listings, Vivid) → same table
+- 4 specialized live snapshots (ESPN event/injuries/team, event_competitors) → same table
+- 4 idle/empty (seatdata × 2, event_section_row, legacy `snapshots`) → same table
+- **D0 tab option matrix** (already shipped + 8 next-surface candidates with RPC patterns) → `RESOURCES_BIBLE.md` "D0 tab option matrix"
+
+Rule: before proposing a new snapshot capture, check the inventory — there's probably already a firehose for what you want, you just need a SECDEF RPC wrapper. 24h activity stats refresh on each major doc rebase.
+
 ---
 
 ## 6. MCP tools by lane

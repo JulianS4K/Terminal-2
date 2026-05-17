@@ -4,18 +4,68 @@
 
 **⚠ READ THIS BEFORE CREATING ANY TABLE / VIEW / RPC / CRON.** The inventory below is curated — if a name nearby fits your need, reuse instead of creating. Common collisions: `*_metrics`, `*_xref`, `v_event_*`, `sg_*_pending`. Run `SELECT relname FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace WHERE nspname='public' AND relkind IN ('r','v','m')` before authoring net-new structures.
 
-## Snapshot streams (5 firehoses) — generation rates, 24h window @ 2026-05-17 ~15:00 UTC
+## Snapshot streams — generation rates, 24h window @ 2026-05-17 ~21:42 UTC
 
-| Stream | Source table | Rows/24h | Last row | Notes |
-|---|---|---:|---|---|
-| **SG listings** (marketplace firehose) | `seatgeek_listings_snapshots` | **1,590,358** | 14:56 UTC | SG broker-data `/v2/listings` per priority tier. 11× pull dedup factor; query via DISTINCT ON `sglid` + latest `captured_at`. 3.14 GB table. |
-| **TEvo listings** (broker firehose) | `listings_snapshots` | **507,142** | 14:51 UTC | TEvo `/v9/ticket_groups` per watchlisted performer/venue. Includes our office's owned listings (`is_owned=true AND brokerage_id=1768`). 3.14 GB table. |
-| **SG sales** (marketplace firehose) | `seatgeek_sales_snapshots` | **734,658** | 14:35 UTC | SG broker-data `/v2/sales` — all completed broker sales on the SG marketplace. Mandatory DISTINCT ON `sg_sale_id`. `tevo_event_id` now 87.35% populated (post A1.1 PR #178). 1.16 GB table. |
-| **TEvo orders** (our pipeline) | `evo_orders` | 51 new + repulls | 14:35 UTC | Our office's TEvo orders via `/v9/orders` queue/process. `tevo_event_id` 96.17% populated via `evo_order_items` join. 1.3 MB table. |
-| **SG seller orders** (our SG SellerDirect) | `seatgeek_orders` | 400 (repulls, no new sales today) | 14:37 UTC | Our office's SG SellerDirect orders. Static for now (400 rows). Different from `sg_sales` firehose. |
-| **SG seller listings** (our SG SellerDirect) | `seatgeek_seller_listings` | 9 (repulls) | 14:37 UTC | Our office's SG SellerDirect listings. Sparse — most events have 0. |
+**Five live firehoses + six smaller/idle/derived snapshot tables. D0: this is the surface area for event-page tabs / time-series panels. Pick from this list before proposing new captures.**
 
-**"SG broker sales" disambiguation**: the term in conversation could mean **either** (a) the SG marketplace firehose at 734K/24h = all broker sales on SG via the broker API (`seatgeek_sales_snapshots`) **or** (b) our office's SG SellerDirect sales pulled from our seller account (`seatgeek_orders`, 400/static). Most analytics work uses (a) since it has volume; (b) is for reconciliation of OUR account specifically.
+### Live firehoses (high-volume, query carefully)
+
+| Stream | Source table | Rows/24h | Events/24h | Last row | Dedup key | Time col | Notes |
+|---|---|---:|---:|---|---|---|---|
+| **SG listings** (marketplace) | `seatgeek_listings_snapshots` | **1,224,517** | 437 | 21:41 | `sglid` (DISTINCT ON) | `captured_at` | SG broker-data `/v2/listings`. 11× pull dedup. 3.2 GB / 3.84M rows. Use `sg_event_id` (idx_sg_listings_sg_event_id_time). |
+| **SG sales** (marketplace) | `seatgeek_sales_snapshots` | **516,054** | 601 | 21:42 | `sg_sale_id` (DISTINCT ON) | `pulled_at` (ingest) + `sale_at_utc` (actual) | SG broker-data `/v2/sales`. 11× dedup mandatory. 1.18 GB / 1.73M rows. `idx_sg_sales_sg_event_id_time`. |
+| **TEvo listings** (broker) | `listings_snapshots` | **454,795** | 413 | 21:41 | `(event_id, tevo_ticket_group_id, captured_at)` | `captured_at` | TEvo `/v9/ticket_groups`. Includes OUR office (`is_owned=true AND brokerage_id=1768`). 3.6 GB / 8.96M rows. |
+| **TEvo orders** (our pipeline) | `evo_orders` + `evo_order_items` | 11 new | 0 new (all repulls) | 21:35 | `evo_order_id` (PK) | `pulled_at` + `evo_created_at` | Our office's `/v9/orders`. `tevo_event_id` 99.5% populated. 1.3 MB. |
+| **SG seller orders** (our SG SellerDirect) | `seatgeek_orders` | 400 (repulls) | 186 | 21:37 | `sg_order_id` (PK) | `pulled_at` + `created_at_sg` | OUR office's SG SellerDirect orders. Static 400 rows. Different from sales firehose. |
+
+### Lower-volume / per-broker order streams (forever retention)
+
+| Stream | Source table | Rows/24h | Events/24h | Last row | Notes |
+|---|---|---:|---:|---|---|
+| **TickPick orders** | `tickpick_orders` | 74 | 0 new (repulls) | 21:18 | 1,223 total. `tevo_event_id` ~81%; matcher v3 active. |
+| **SG seller listings** (our SG SellerDirect) | `seatgeek_seller_listings` | 71 | 6 | 19:07 | OUR office's SG inventory. 1,031 total / 47 events all-time. |
+| **Vivid orders** | `vivid_orders` | 31 | 0 new (repulls) | 21:26 | 945 total. `tevo_event_id` ~91%. |
+
+### Idle / specialized / derived snapshots
+
+| Source table | Rows/24h | Status | Purpose |
+|---|---:|---|---|
+| `espn_event_snapshots` | 581 | LIVE (gameday-scope) | Per-game state (score, status, attendance, win-prob). Captured during/near game time only. |
+| `espn_injuries_snapshots` | 514 | LIVE | Per-athlete injury report history (status, return date, comment). |
+| `espn_team_snapshots` | 71 | LIVE | Team-state (wins/losses, streak, playoff seed). Daily-ish. |
+| `event_competitors_snapshot` | 816 | LIVE | Per-event "competing event in same market" rollup. Refreshed via cron. |
+| `seatdata_sales_snapshots` | 0 | **STALE** (last 2026-05-09) | SeatData wholesale-channel sales. Pipeline dormant. |
+| `seatdata_listings_snapshots` | 0 | **EMPTY** | SeatData mirror. Pipeline dormant. |
+| `event_section_row_snapshots` | 0 | **EMPTY** | Per-section-row aggregate. C1-owned schema, ingest not wired. |
+| `snapshots` (legacy) | 0 | **LEGACY** (last 2026-04-23) | Pre-history per-event aggregate. Superseded by `event_metrics`. Do not write. |
+
+### D0 tab option matrix — what surfaces are wired vs available
+
+**Already shipped (PR #196 + #197 — event-page tabs)**:
+- `get_event_sg_listings_full(p_event_id, p_limit)` → SG listings from firehose, DISTINCT ON `sglid`, last 7d, cap 500
+- `get_event_evo_listings_full(p_event_id, p_limit)` → TEvo listings, DISTINCT ON `tevo_ticket_group_id`, owned-first sort, cap 500
+- `get_event_sg_sales_full(p_event_id, p_limit, p_window_days)` → SG broker sales, DISTINCT ON `sg_sale_id`, window 1-90d, cap 500
+
+**Available next surfaces (D0 options — pattern: copy the v3 RPC mold, email-gated, REVOKE PUBLIC + GRANT anon/authenticated)**:
+
+| Proposed tab | Source | Dimensions D0 could surface | Effort |
+|---|---|---|---|
+| **Our SG inventory** (`get_event_sg_seller_listings_full`) | `seatgeek_seller_listings` | section/row/seat range, cost, in_hand_date, eDelivery/instant. WHERE `tevo_event_id=p_event_id` — already 97% populated. | low — small table, just filter. |
+| **Our SG sales** (`get_event_sg_orders_full`) | `seatgeek_orders` | sale_section/row, sale_price, sale_quantity, status, delivery, payment_fees, payment_total. | low — 186 distinct events, fast scan. |
+| **Our TEvo orders** (`get_event_evo_orders_full`) | `evo_orders` + `evo_order_items` | total/subtotal/fees, buyer_brokerage, hold_expires_at, ticket_group section/row/seats, fraud_check_status. | low — already joined for inventory views. |
+| **TickPick + Vivid combined** (`get_event_cross_broker_orders_full`) | `tickpick_orders` + `vivid_orders` (UNION) | per-broker section/row/qty/total, ordered_at, status. Useful for cross-marketplace deltas. | low — schemas mostly aligned. |
+| **ESPN game snapshot timeline** (`get_event_espn_timeline`) | `espn_event_snapshots` (via performer→ESPN team xref) | score, status_short, attendance, win-prob over time on game day. | low — needs `performer_espn_team_xref` join through events.performer_id. |
+| **Injury timeline** (`get_event_injuries`) | `espn_injuries_snapshots` (via team xref) | athlete_name, status, injury_type, return_date, short_comment — over time approaching event. | low — same join as ESPN timeline. |
+| **Section-row roll-up tab** (`get_event_section_aggregates`) | `seatgeek_listings_snapshots` + `listings_snapshots` aggregated | per-section min/median/max/qty/listings_count — cross-source. Faster than fetching all rows. | medium — needs `GROUP BY section,row` over both firehoses. |
+| **Velocity timeline** (`get_event_sales_velocity`) | `seatgeek_sales_snapshots` GROUP BY hour | sales/hour, avg price, min/max bracket — last N days. (View `v_event_sales_velocity` already exists; just wrap as RPC.) | low — wrapper RPC over existing view. |
+
+**"SG broker sales" disambiguation**: the term in conversation could mean **either** (a) the SG marketplace firehose at 516K/24h = all broker sales on SG via the broker API (`seatgeek_sales_snapshots`) **or** (b) our office's SG SellerDirect sales pulled from our seller account (`seatgeek_orders`, 400/static). Most analytics work uses (a) since it has volume; (b) is for reconciliation of OUR account specifically. D0 can surface both as separate tabs.
+
+**Retention policy** (per migration `20260512210000`):
+- All 5 live firehoses + all order tables = **NEVER swept, forever retention**
+- ESPN snapshots = retained (no prune cron)
+- SeatData snapshots = retained but pipeline dormant
+- `snapshots` (legacy) = retained but unused — do not write
 
 
 
