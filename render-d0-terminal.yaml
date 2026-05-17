@@ -1,16 +1,19 @@
 # Render.com Infrastructure-as-Code blueprint for D0's broker terminal frontend.
 #
-# OWNER: D0 (Terminal FE) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6.
+# OWNER: D0 (Terminal FE) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6 +
+#        PR #173 (D0 → workspace-wide Render perms).
 # Service: vibepass-terminal-test (srv-d839339kh4rs73ac3s20, provisioned 2026-05-15)
 # URL:     https://vibepass-terminal-test.onrender.com
 # Companion blueprints:
-#   - render.yaml             (D1's vibepass-storefront-test)
-#   - render-d2-dashboard.yaml (D2's d2-orders-dashboard)
+#   - render.yaml             (D1's vibepass-storefront-test — FastAPI shell, PR #168 testing-unified)
+#   - render-d2-dashboard.yaml (D2's d2-orders-dashboard — placeholder per PR #168)
 #
-# This is a static-site deploy (pre-built HTML/JS/CSS, served via Render's
-# CDN — no Python runtime). The terminal frontend code lives at
-# static/terminal/*. Currently a placeholder index.html until D0 builds
-# the operational terminal UI.
+# 2026-05-17 publishPath widening (operator directive "run entire merged on
+# static for now"): expanded scope from `static/terminal` → `static` so the
+# CDN serves all 4 merged frontends (terminal + store + undelivered + home),
+# not just the terminal. Workaround for storefront-test FREE-plan cold-start
+# blackouts until the operator-side plan flip (PROJECT_BIBLE §10, bot_chat
+# #174) lands. Static-CDN bytes never blackout.
 
 services:
   - type: static
@@ -18,21 +21,57 @@ services:
     branch: main
     autoDeploy: true
     # No build step — assets are pre-built HTML/CSS/JS committed to the repo.
-    # When D0 introduces a JS framework with a build pipeline, change to
-    # something like `cd static/terminal && npm install && npm run build`
-    # and adjust publishPath accordingly.
     buildCommand: 'echo "static assets — no build step"'
-    publishPath: static/terminal
 
-    # Path rewrites — the HTML in static/terminal/*.html references assets
-    # by their canonical app.py path (e.g. /static/terminal/style.css), but
-    # publishPath strips the static/terminal/ prefix on the CDN. Rewrite the
-    # /static/terminal/* requests to the unprefixed CDN root so the same
-    # HTML works on the CDN, on storefront-test, and on localhost.
+    # Widened from `static/terminal` to `static` (2026-05-17). The CDN now
+    # serves every D0/D1/D2 frontend subtree:
+    #   /terminal/*    → static/terminal/* (D0 broker)
+    #   /store/*       → static/store/*    (D1 consumer storefront)
+    #   /undelivered/* → static/undelivered/* (D0/D2 fulfillment doorway)
+    #   /home/*        → static/home/*     (D0 home tiles)
+    publishPath: static
+
     routes:
+      # Rewrite #1 — strip the FastAPI `/static/` prefix so HTML files that
+      # use absolute paths like `/static/store/store.js` resolve correctly
+      # on the CDN (where files live at /store/store.js after publishPath).
+      - type: rewrite
+        source: /static/*
+        destination: /:splat
+
+      # Rewrite #2 — `/static/terminal/*` (old D0 absolute-path convention,
+      # pre-PR #175) routes to /terminal/* under the new publishPath. Kept
+      # alongside #1 for explicit clarity; both reduce to the same target.
       - type: rewrite
         source: /static/terminal/*
-        destination: /:splat
+        destination: /terminal/:splat
+
+      # Redirect #3 — bare-root files (legacy URLs from publishPath=
+      # static/terminal era like `vibepass-terminal-test.onrender.com/
+      # performer.html`) now redirect to the /terminal/ subdir form so
+      # operator bookmarks + shared links don't 404.
+      - type: redirect
+        source: /performer.html
+        destination: /terminal/performer.html
+      - type: redirect
+        source: /event.html
+        destination: /terminal/event.html
+      - type: redirect
+        source: /movers.html
+        destination: /terminal/movers.html
+      - type: redirect
+        source: /orders.html
+        destination: /terminal/orders.html
+      - type: redirect
+        source: /login.html
+        destination: /terminal/login.html
+
+      # Root index — bare `/` lands on the terminal home (D0's primary
+      # surface on this CDN). Use a redirect not a rewrite so the URL bar
+      # shows /terminal/ and relative-path nav resolves correctly.
+      - type: redirect
+        source: /
+        destination: /terminal/
 
     # No env vars needed for static frontend. If D0 wires up
     # client-side config (Supabase anon key for read-only data fetch),
