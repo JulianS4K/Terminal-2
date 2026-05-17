@@ -683,6 +683,9 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .wrap.event #sg-listings-full   { grid-column: 1 / -1; }
 .wrap.event #evo-listings-full  { grid-column: 1 / -1; }
 .wrap.event #sg-sales-full      { grid-column: 1 / -1; }
+.wrap.event #evo-orders-full        { grid-column: 1 / -1; }
+.wrap.event #sg-seller-orders-full  { grid-column: 1 / -1; }
+.wrap.event #cross-broker-full      { grid-column: 1 / -1; }
 .wrap.event nav.event-tabs      { grid-column: 1 / -1; }
 
 /* Hero band — main info left, status side panel right */
@@ -1068,7 +1071,25 @@ body[data-page="login"] {
   border-bottom: 1px solid var(--line);
   margin: 8px 0 12px;
   font-family: var(--mono);
+  flex-wrap: wrap;
 }
+.event-tabs-sep {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 14px;
+  align-self: center;
+  padding: 0 6px;
+  user-select: none;
+}
+/* Order-status pills shown in our-order tabs */
+.full-list-tbl .pill.status-completed,
+.full-list-tbl .pill.status-accepted { color: var(--pos); border-color: var(--pos); }
+.full-list-tbl .pill.status-pending,
+.full-list-tbl .pill.status-hold     { color: var(--info); border-color: var(--info); }
+.full-list-tbl .pill.status-rejected,
+.full-list-tbl .pill.status-cancelled { color: var(--neg); border-color: var(--neg); }
+.full-list-tbl .pill.src-tickpick { color: var(--info); border-color: var(--info); }
+.full-list-tbl .pill.src-vivid    { color: #c084fc; border-color: #c084fc; }
 .event-tab {
   background: transparent;
   border: 1px solid transparent;
