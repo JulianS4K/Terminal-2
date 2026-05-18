@@ -11,22 +11,30 @@
 
   const T = window.Terminal;
   const DEFAULT_HOURS = 168;
-  let CHART_HOURS = DEFAULT_HOURS;
-  // PR redesign 2026-05-18: 3-pane stacked chart (TradingView/Bloomberg style).
-  // Price (60%) + Inventory (20%) + Volume bars (20%), X-axis synchronized via
-  // uPlot cursor.sync. Each pane is an independent uPlot instance.
-  let _chartInstances = { price: null, inv: null, vol: null };
+  // V3 page-load p_chart_hours: bumped to 720 (30d) so both charts have full
+  // TEvo history available even when their range selector is set to 30d.
+  // Re-render cost is negligible; only the chart_data series array grows.
+  const V3_LOAD_HOURS = 720;
+  // PR redesign 2026-05-18 v2: TWO fully independent chart sections.
+  //   #chart-price → 6 medians on $-axis + ESPN annotations
+  //   #chart-inventory → 3 qty lines (left axis) + SG sale BARS (right axis)
+  // Each section has its own range selector + state cache + tooltip. No cursor sync.
+  let _chartInstances = { price: null, inv: null };
   let _lastPayload = null;
-  // Chart-extension state cache (mig 20260519150000 / get_event_chart_extended):
-  // fetched in parallel with v3; merges 5 SG series + 2 ESPN annotation arrays
-  // into the chart whenever it lands. Same state-machine pattern as splits/zones.
-  let _chartExtState = { payload: undefined };
-  let _chartExtAlerts = []; // cached for re-renders after extended payload arrives
-  // Legend toggle state (session-scope; persists across re-renders).
-  // Maps series-key → boolean (true = visible). Defaults to true on first sight.
+  // Per-chart window (hours). Default 168h (7d) on first load.
+  let _chartPriceHours = DEFAULT_HOURS;
+  let _chartInvHours   = DEFAULT_HOURS;
+  // Per-chart extended-RPC payload caches (mig 20260519150000).
+  // Each chart fetches at its own window independently.
+  let _chartExtStatePrice = { payload: undefined };
+  let _chartExtStateInv   = { payload: undefined };
+  // Alerts cached for the price chart's annotation overlay re-renders.
+  let _chartExtAlerts = [];
+  // Legend toggle state (session-scope, shared map — keys are globally unique).
   const _chartVisible = new Map();
-  // Series spec cache so tooltip can read from all 3 panes at a given idx.
-  let _chartLastBuild = null;
+  // Per-chart build caches so each tooltip can read its own series at cursor.idx.
+  let _chartLastBuildPrice = null;
+  let _chartLastBuildInv   = null;
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
@@ -41,7 +49,8 @@
       return;
     }
 
-    wireRangeSelector(eventId);
+    wireRangeSelectorPrice(eventId);
+    wireRangeSelectorInv(eventId);
     wireTabs(eventId);
     wireSalesWindow(eventId);
     // Path-C-only enrichment RPCs fire in parallel — render even when
@@ -50,7 +59,9 @@
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
     loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
-    loadChartExtended(eventId).catch(e => console.error('[chartExtended]', e));
+    // Each chart fetches its own extended payload at its own window in parallel
+    loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
+    loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
     await loadAndRender(eventId);
   }
 
@@ -76,8 +87,11 @@
       safe('hero',       () => renderHero(overview, bridge, data.performer));
       safe('eventMode',  () => renderEventMode(bridge, data));
       safe('kpiGrid',    () => renderKPIGrid(chart, data.sg_side_by_side, data.velocity));
-      safe('chart',      () => renderChart(chart, data.event_alerts));
-      safe('chartLegend',() => renderChartLegend());
+      // Two independent chart sections (PR redesign v2)
+      safe('chartPrice',       () => renderChartPrice(chart, data.event_alerts));
+      safe('chartInventory',   () => renderChartInventory(chart));
+      safe('chartLegendPrice', () => renderChartLegendPrice());
+      safe('chartLegendInv',   () => renderChartLegendInv());
       // Splits + Zones — TEvo side rendered now; SG side merged in by loadSgZonesSplits.
       // Splits + Zones: feed only the TEvo side here. The SG side lives in a
       // module-level cache populated by loadSgZonesSplits (parallel fetch);
@@ -110,20 +124,50 @@
     try { fn(); } catch (e) { console.error('[' + label + ']', e); }
   }
 
-  function wireRangeSelector(eventId) {
-    const sel = document.getElementById('chartRange');
+  // Per-chart range selectors (PR redesign v2). Each only re-fetches its own
+  // extended payload + re-renders its own chart. v3 is NOT re-fetched — its
+  // payload was loaded at V3_LOAD_HOURS (720) which covers all default windows.
+  function wireRangeSelectorPrice(eventId) {
+    const sel = document.getElementById('chartPriceRange');
     if (!sel) return;
     sel.addEventListener('change', async () => {
-      CHART_HOURS = parseInt(sel.value, 10) || DEFAULT_HOURS;
-      const lbl = document.getElementById('chartRangeLabel');
+      _chartPriceHours = parseInt(sel.value, 10) || DEFAULT_HOURS;
+      const lbl = document.getElementById('chartPriceRangeLabel');
       if (lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
       const aw = document.getElementById('alertsWindow');
       if (aw) aw.textContent = sel.options[sel.selectedIndex].textContent;
-      // Drop stale extended payload so series don't render mismatched windows
-      _chartExtState.payload = undefined;
-      // Re-fire both fetches; renderChart re-runs when each lands
-      loadChartExtended(eventId).catch(e => console.error('[chartExtended]', e));
-      await loadAndRender(eventId);
+      _chartExtStatePrice.payload = undefined;
+      // Re-render immediately with the new window clip (TEvo data from cached v3)
+      if (_lastPayload && _lastPayload.chart_data) {
+        try {
+          const chart = adaptChart(_lastPayload.chart_data);
+          renderChartPrice(chart, _chartExtAlerts);
+          renderChartLegendPrice();
+        } catch (e) { console.error('[priceRangeRender]', e); }
+      }
+      // Then fetch fresh SG series for the new window — re-renders on arrival
+      loadChartExtended('price', eventId, _chartPriceHours)
+        .catch(e => console.error('[chartExt price]', e));
+    });
+  }
+
+  function wireRangeSelectorInv(eventId) {
+    const sel = document.getElementById('chartInvRange');
+    if (!sel) return;
+    sel.addEventListener('change', async () => {
+      _chartInvHours = parseInt(sel.value, 10) || DEFAULT_HOURS;
+      const lbl = document.getElementById('chartInvRangeLabel');
+      if (lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
+      _chartExtStateInv.payload = undefined;
+      if (_lastPayload && _lastPayload.chart_data) {
+        try {
+          const chart = adaptChart(_lastPayload.chart_data);
+          renderChartInventory(chart);
+          renderChartLegendInv();
+        } catch (e) { console.error('[invRangeRender]', e); }
+      }
+      loadChartExtended('inv', eventId, _chartInvHours)
+        .catch(e => console.error('[chartExt inv]', e));
     });
   }
 
@@ -135,12 +179,14 @@
       // Try v3 first (9 enrichment keys); fall back to v2 if v3 isn't applied
       // yet on this Supabase project. Both shapes are forward-compatible —
       // renderers no-op or empty-state when their keys aren't in the payload.
+      // v3 fetched ONCE at V3_LOAD_HOURS (720h). Range selectors clip per-chart
+      // X-axis afterward; no v3 re-fetch on window flips.
       let res = await Auth.client
-        .rpc('get_broker_event_page_v3', { p_event_id: eventId, p_chart_hours: CHART_HOURS });
+        .rpc('get_broker_event_page_v3', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
       if (res.error && (res.error.code === '42883' || /does not exist/i.test(res.error.message || ''))) {
         // v3 not applied yet — fall back to v2
         res = await Auth.client
-          .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: CHART_HOURS });
+          .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
       }
       if (res.error) {
         const err = new Error(res.error.message || 'RPC error');
@@ -153,7 +199,7 @@
     const idStr = String(eventId);
     const [overview, chartData, zones, orders, cadences] = await Promise.all([
       T.api(`/api/broker/event/${idStr}/overview`),
-      T.api(`/api/broker/event/${idStr}/chart-data?hours=${CHART_HOURS}`),
+      T.api(`/api/broker/event/${idStr}/chart-data?hours=${V3_LOAD_HOURS}`),
       T.api(`/api/broker/event/${idStr}/zones`),
       T.api(`/api/broker/event/${idStr}/orders`),
       T.api(`/api/broker/event/${idStr}/cadences`),
@@ -447,80 +493,6 @@
   // Series specs carry a `pane` field so the tooltip + legend can route
   // visibility across the right instance.
 
-  function renderChart(chart, alerts) {
-    const hostPrice = document.getElementById('chartHostPrice');
-    const hostInv   = document.getElementById('chartHostInv');
-    const hostVol   = document.getElementById('chartHostVol');
-    if (!hostPrice || !hostInv || !hostVol) {
-      // Backwards-compat: legacy single-host page → no-op so we don't crash
-      // on environments still serving the pre-redesign HTML.
-      const legacy = document.getElementById('chartHost');
-      if (legacy) legacy.innerHTML = '<div class="empty">chart redesigned to 3-pane; reload</div>';
-      return;
-    }
-    hostPrice.innerHTML = '';
-    hostInv.innerHTML   = '';
-    hostVol.innerHTML   = '';
-    if (!chart || !window.uPlot) return;
-
-    _chartExtAlerts = alerts || [];
-
-    // Merge SG-side series from extended-RPC cache (parallel fetch — may be
-    // undefined on first paint; setChartExtended triggers a re-render).
-    const ext = _chartExtState.payload || null;
-    const extSeries = (ext && ext.series) || {};
-
-    // Series specs, grouped by pane. `key` is the toggle id, `pane` is the
-    // instance that owns the series, `scale` is the within-pane axis tag.
-    const specs = [
-      // ---- PRICE PANE (6 medians) ----
-      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', pane: 'price', scale: 'y', width: 2,   dash: null,    data: chart.prices_owned },
-      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', pane: 'price', scale: 'y', width: 1.5, dash: [4, 4],  data: chart.prices_market },
-      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', pane: 'price', scale: 'y', width: 1.5, dash: [6, 3],  data: chart.prices_nonowned },
-      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', pane: 'price', scale: 'y', width: 1.5, dash: null,    data: extSeries.sg_listings_median       || [] },
-      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', pane: 'price', scale: 'y', width: 1.5, dash: [3, 3],  data: extSeries.sg_listings_owned_median || [] },
-      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', pane: 'price', scale: 'y', width: 1.5, dash: [5, 2],  data: extSeries.sg_sales_median          || [] },
-      // ---- INVENTORY PANE (3 qty lines) ----
-      { key: 'counts_owned',    label: 'TEvo Owned qty', color: '#60a5fa', pane: 'inv',   scale: 'y', width: 1.5, dash: null,    fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
-      { key: 'counts_market',   label: 'TEvo Mkt qty',   color: '#94a3b8', pane: 'inv',   scale: 'y', width: 1,   dash: [2, 2],  data: chart.counts_market },
-      { key: 'sg_list_ct',      label: 'SG list qty',    color: '#22d3ee', pane: 'inv',   scale: 'y', width: 1.5, dash: null,    data: extSeries.sg_listings_count        || [] },
-      // ---- VOLUME PANE (1 bar series) ----
-      { key: 'sg_sale_ct',      label: 'SG sale ct',     color: '#84cc16', pane: 'vol',   scale: 'y', width: 1,   dash: null,    bars: true, data: extSeries.sg_sales_count   || [] },
-    ];
-
-    // Unified time axis built from the union of ALL series — keeps cursor.sync
-    // alignments correct even when SG series have a sparser bucket density.
-    const tset = new Set();
-    specs.forEach(s => (s.data || []).forEach(p => tset.add(p.t)));
-    const ts = [...tset].sort();
-    const xs = ts.map(t => Math.round(new Date(t).getTime() / 1000));
-    const idxByT = new Map(ts.map((t, i) => [t, i]));
-    const project = (s) => {
-      const arr = new Array(ts.length).fill(null);
-      (s || []).forEach(p => { const i = idxByT.get(p.t); if (i != null) arr[i] = p.v; });
-      return arr;
-    };
-    specs.forEach(s => { s.projected = project(s.data); });
-
-    // Stash for the cross-pane tooltip + legend re-renders.
-    _chartLastBuild = { specs, xs };
-
-    // Render each pane (returns the uPlot instance or null if no series).
-    _chartInstances.price = renderPanePrice(hostPrice, specs, xs, alerts, ext);
-    _chartInstances.inv   = renderPaneInv  (hostInv,   specs, xs);
-    _chartInstances.vol   = renderPaneVol  (hostVol,   specs, xs);
-
-    // Single resize listener — rebuilds all 3 panes (debounced)
-    if (!hostPrice.__resizeWired) {
-      hostPrice.__resizeWired = true;
-      let resizeTimer;
-      window.addEventListener('resize', () => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => renderChart(chart, _chartExtAlerts), 200);
-      });
-    }
-  }
-
   // Shared axis styling — canvas-drawn so we set fonts/strokes directly.
   // The old `#chart .uplot text { fill }` CSS doesn't apply because uPlot
   // draws axis labels on canvas, not SVG.
@@ -534,14 +506,69 @@
     ticks: { stroke: AXIS_TICKS, size: 6 },
   };
 
-  function renderPanePrice(host, specs, xs, alerts, ext) {
-    const paneSpecs = specs.filter(s => s.pane === 'price');
-    const data = [xs, ...paneSpecs.map(s => s.projected)];
+  // Helpers shared by both chart renderers
+  function buildSeriesData(specs) {
+    // Time-axis union for the chart's specs, then project each series onto it.
+    const tset = new Set();
+    specs.forEach(s => (s.data || []).forEach(p => tset.add(p.t)));
+    const ts = [...tset].sort();
+    const xs = ts.map(t => Math.round(new Date(t).getTime() / 1000));
+    const idxByT = new Map(ts.map((t, i) => [t, i]));
+    specs.forEach(s => {
+      const arr = new Array(ts.length).fill(null);
+      (s.data || []).forEach(p => { const i = idxByT.get(p.t); if (i != null) arr[i] = p.v; });
+      s.projected = arr;
+    });
+    return { xs, specs };
+  }
+
+  // X-axis clip range for a given hours window. Returns [minSec, maxSec].
+  // If the series data is older than the window, uPlot clips to the window
+  // (showing an empty area for the missing time); if newer, the data fits.
+  function clipRangeForHours(hours, xs) {
+    if (!xs || !xs.length) return undefined;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const minSec = nowSec - hours * 3600;
+    const dataMax = xs[xs.length - 1];
+    // Right edge: max(now, dataMax) so a future-dated event still shows its
+    // most recent snapshot inside the window.
+    return [minSec, Math.max(nowSec, dataMax)];
+  }
+
+  // ---------- PRICE CHART ----------
+  // 6 line series on a single $-axis. ESPN injury/state crosses + alert
+  // triangles via canvas hooks. Hover tooltip via #chartPriceTooltip.
+  function renderChartPrice(chart, alerts) {
+    const host = document.getElementById('chartHostPrice');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!chart || !window.uPlot) return;
+
+    _chartExtAlerts = alerts || [];
+    const ext = _chartExtStatePrice.payload || null;
+    const extSeries = (ext && ext.series) || {};
+
+    const specs = [
+      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', width: 2,   dash: null,   data: chart.prices_owned },
+      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', width: 1.5, dash: [4, 4], data: chart.prices_market },
+      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', width: 1.5, dash: [6, 3], data: chart.prices_nonowned },
+      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', width: 1.5, dash: null,   data: extSeries.sg_listings_median       || [] },
+      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', width: 1.5, dash: [3, 3], data: extSeries.sg_listings_owned_median || [] },
+      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', width: 1.5, dash: [5, 2], data: extSeries.sg_sales_median          || [] },
+    ];
+    const { xs } = buildSeriesData(specs);
+    _chartLastBuildPrice = { specs, xs };
+
+    const xRange = clipRangeForHours(_chartPriceHours, xs);
+    const data = [xs, ...specs.map(s => s.projected)];
     const { w, h } = paneSize(host);
     const opts = {
       width: w, height: h,
-      cursor: { drag: { x: true, y: false }, sync: { key: 'evt-chart', setSeries: false } },
-      scales: { x: { time: true }, y: {} },
+      cursor: { drag: { x: true, y: false } },
+      scales: {
+        x: { time: true, range: xRange ? (() => xRange) : undefined },
+        y: {},
+      },
       axes: [
         X_AXIS,
         { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
@@ -552,9 +579,9 @@
       ],
       series: [
         { label: 'time' },
-        ...paneSpecs.map(s => ({
+        ...specs.map(s => ({
           label: s.label, stroke: s.color, width: s.width, scale: 'y',
-          spanGaps: true, dash: s.dash || undefined, fill: s.fill || undefined,
+          spanGaps: true, dash: s.dash || undefined,
           show: _chartVisible.get(s.key) !== false,
         })),
       ],
@@ -564,86 +591,98 @@
           (u) => drawInjuryMarkers(u, ext && ext.annotations && ext.annotations.injuries),
           (u) => drawGameStateMarkers(u, ext && ext.annotations && ext.annotations.game_state),
         ],
-        ready: [
-          (u) => renderAnnotationTooltips(u, host, ext && ext.annotations),
-        ],
-        setSize: [
-          (u) => renderAnnotationTooltips(u, host, ext && ext.annotations),
-        ],
-        setCursor: [
-          (u) => updateChartTooltip(u),
-        ],
+        ready:   [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
+        setSize: [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
+        setCursor: [(u) => updateChartTooltipFor('price', u)],
       },
     };
-    return new window.uPlot(opts, data, host);
+    _chartInstances.price = new window.uPlot(opts, data, host);
+
+    if (!host.__resizeWired) {
+      host.__resizeWired = true;
+      let resizeTimer;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => renderChartPrice(chart, _chartExtAlerts), 200);
+      });
+    }
   }
 
-  function renderPaneInv(host, specs, xs) {
-    const paneSpecs = specs.filter(s => s.pane === 'inv');
-    const data = [xs, ...paneSpecs.map(s => s.projected)];
-    const { w, h } = paneSize(host);
-    const opts = {
-      width: w, height: h,
-      cursor: { drag: { x: true, y: false }, sync: { key: 'evt-chart', setSeries: false } },
-      scales: { x: { time: true }, y: {} },
-      axes: [
-        X_AXIS,
-        { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
-          grid: { stroke: AXIS_GRID, width: 1 },
-          ticks: { stroke: AXIS_TICKS, size: 6 },
-          values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
-          size: 56 },
-      ],
-      series: [
-        { label: 'time' },
-        ...paneSpecs.map(s => ({
-          label: s.label, stroke: s.color, width: s.width, scale: 'y',
-          spanGaps: true, dash: s.dash || undefined, fill: s.fill || undefined,
-          show: _chartVisible.get(s.key) !== false,
-        })),
-      ],
-      hooks: {
-        setCursor: [(u) => updateChartTooltip(u)],
-      },
-    };
-    return new window.uPlot(opts, data, host);
-  }
+  // ---------- INVENTORY CHART ----------
+  // 3 line series on left Y-axis (integer ticket counts) + 1 bar series on
+  // right Y-axis (SG sale count). uPlot supports per-series scales natively;
+  // right axis registered as scale 'yr' with side=1.
+  function renderChartInventory(chart) {
+    const host = document.getElementById('chartHostInv');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!chart || !window.uPlot) return;
 
-  function renderPaneVol(host, specs, xs) {
-    const paneSpecs = specs.filter(s => s.pane === 'vol');
-    const data = [xs, ...paneSpecs.map(s => s.projected)];
+    const ext = _chartExtStateInv.payload || null;
+    const extSeries = (ext && ext.series) || {};
+
+    const specs = [
+      { key: 'counts_owned',  label: 'TEvo Owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
+      { key: 'counts_market', label: 'TEvo Mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: chart.counts_market },
+      { key: 'sg_list_ct',    label: 'SG list qty',    color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: extSeries.sg_listings_count || [] },
+      { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.sg_sales_count || [] },
+    ];
+    const { xs } = buildSeriesData(specs);
+    _chartLastBuildInv = { specs, xs };
+
+    const xRange = clipRangeForHours(_chartInvHours, xs);
+    const data = [xs, ...specs.map(s => s.projected)];
     const { w, h } = paneSize(host);
-    // uPlot built-in bars factory: width = 60% of bucket spacing, max 32px,
-    // min 1px. Cheap, no plugin needed.
-    const barsPath = window.uPlot.paths.bars
+    const barsPath = window.uPlot.paths && window.uPlot.paths.bars
       ? window.uPlot.paths.bars({ size: [0.6, 32, 1] })
       : undefined;
+
     const opts = {
       width: w, height: h,
-      cursor: { drag: { x: true, y: false }, sync: { key: 'evt-chart', setSeries: false } },
-      scales: { x: { time: true }, y: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] } },
+      cursor: { drag: { x: true, y: false } },
+      scales: {
+        x:  { time: true, range: xRange ? (() => xRange) : undefined },
+        y:  {},
+        yr: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] },
+      },
       axes: [
         X_AXIS,
-        { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
+        { scale: 'y',  side: 3, stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
           values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
           size: 56 },
+        { scale: 'yr', side: 1, stroke: AXIS_STROKE, font: AXIS_FONT,
+          grid: { show: false },
+          ticks: { stroke: AXIS_TICKS, size: 6 },
+          values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
+          size: 48 },
       ],
       series: [
         { label: 'time' },
-        ...paneSpecs.map(s => ({
-          label: s.label, stroke: s.color, fill: s.color, width: s.width, scale: 'y',
+        ...specs.map(s => ({
+          label: s.label, stroke: s.color, width: s.width, scale: s.scale,
+          spanGaps: true, dash: s.dash || undefined,
+          fill: s.bars ? s.color : (s.fill || undefined),
           paths: s.bars ? barsPath : undefined,
-          points: { show: false },
+          points: s.bars ? { show: false } : undefined,
           show: _chartVisible.get(s.key) !== false,
         })),
       ],
       hooks: {
-        setCursor: [(u) => updateChartTooltip(u)],
+        setCursor: [(u) => updateChartTooltipFor('inv', u)],
       },
     };
-    return new window.uPlot(opts, data, host);
+    _chartInstances.inv = new window.uPlot(opts, data, host);
+
+    if (!host.__resizeWired) {
+      host.__resizeWired = true;
+      let resizeTimer;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => renderChartInventory(chart), 200);
+      });
+    }
   }
 
   function paneSize(host) {
@@ -654,13 +693,15 @@
     return { w, h };
   }
 
-  // Cross-pane tooltip — reads value at the cursor idx from all 3 instances
-  // and renders a compact floating table anchored to the cursor X position.
-  function updateChartTooltip(srcInstance) {
-    const tip = document.getElementById('chartTooltip');
-    if (!tip) return;
-    const build = _chartLastBuild;
-    if (!build || !srcInstance || !srcInstance.cursor) return;
+  // Per-chart tooltip — reads value at cursor idx from that chart's build cache
+  // and renders a compact floating table inside that chart's section.
+  function updateChartTooltipFor(chartKey, srcInstance) {
+    const sectionId = chartKey === 'price' ? 'chart-price' : 'chart-inventory';
+    const tipId     = chartKey === 'price' ? 'chartPriceTooltip' : 'chartInvTooltip';
+    const build     = chartKey === 'price' ? _chartLastBuildPrice : _chartLastBuildInv;
+    const tip       = document.getElementById(tipId);
+    const section   = document.getElementById(sectionId);
+    if (!tip || !section || !build || !srcInstance || !srcInstance.cursor) return;
     const idx = srcInstance.cursor.idx;
     if (idx == null || idx < 0 || idx >= build.xs.length) {
       tip.hidden = true;
@@ -670,44 +711,34 @@
     const ts = new Date(tSec * 1000);
     const rows = [];
     build.specs.forEach(s => {
-      if (_chartVisible.get(s.key) === false) return; // hidden by legend toggle
+      if (_chartVisible.get(s.key) === false) return;
       const v = s.projected[idx];
       if (v == null) return;
-      const fmt = s.pane === 'price'
-        ? '$' + Math.round(v)
-        : Math.round(v).toString();
+      const fmt = chartKey === 'price' ? '$' + Math.round(v) : Math.round(v).toString();
       rows.push(
         `<div class="tt-row"><i style="background:${s.color}"></i>` +
         `<span class="tt-label">${escapeHtml(s.label)}</span>` +
         `<span class="tt-val">${fmt}</span></div>`
       );
     });
-    if (!rows.length) {
-      tip.hidden = true;
-      return;
-    }
-    // Format compact local time
+    if (!rows.length) { tip.hidden = true; return; }
     const tStr = ts.toLocaleString(undefined, {
       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
     });
     tip.innerHTML = `<div class="tt-time">${escapeHtml(tStr)}</div>` + rows.join('');
-    // Position: anchor to the cursor X on the source instance, clamp to chart bounds
-    const chartHost = document.getElementById('chart');
-    if (!chartHost) return;
-    const chartRect = chartHost.getBoundingClientRect();
+    // Position relative to this section's bounding box
+    const sectionRect = section.getBoundingClientRect();
     const srcCanvas = srcInstance.root;
     const srcRect = srcCanvas.getBoundingClientRect();
-    const px = (srcInstance.cursor.left || 0) + (srcRect.left - chartRect.left);
-    // Render to measure, then position with overflow-protection
+    const px = (srcInstance.cursor.left || 0) + (srcRect.left - sectionRect.left);
     tip.style.left = '0px';
     tip.style.top  = '0px';
     tip.hidden = false;
     const tipWidth = tip.offsetWidth;
-    const maxLeft = chartRect.width - tipWidth - 8;
+    const maxLeft = sectionRect.width - tipWidth - 8;
     const desiredLeft = px + 12;
-    const finalLeft = Math.max(8, Math.min(desiredLeft, maxLeft));
-    tip.style.left = finalLeft + 'px';
-    tip.style.top  = '36px';  // below the chart title bar
+    tip.style.left = Math.max(8, Math.min(desiredLeft, maxLeft)) + 'px';
+    tip.style.top  = '36px';
   }
 
   function drawAlertsMarkers(u, alerts) {
@@ -818,38 +849,37 @@
       `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`));
   }
 
-  function renderChartLegend() {
-    const el = document.getElementById('chartLegend');
+  // Shared legend renderer — chartKey selects which build cache + DOM target.
+  // Toggle clicks call uPlot.setSeries({show}) on that chart's instance only.
+  function renderChartLegendFor(chartKey) {
+    const elId    = chartKey === 'price' ? 'chartPriceLegend' : 'chartInvLegend';
+    const build   = chartKey === 'price' ? _chartLastBuildPrice : _chartLastBuildInv;
+    const ext     = chartKey === 'price' ? _chartExtStatePrice.payload : _chartExtStateInv.payload;
+    const instance = _chartInstances[chartKey];
+    const el = document.getElementById(elId);
     if (!el) return;
-    const build = _chartLastBuild;
-    const ext = _chartExtState.payload;
     const hasSg = ext && !ext.sg_hidden;
 
-    // Build clickable series swatches from the spec list. Each swatch toggles
-    // the matching series on its pane via uPlot.setSeries({show}).
     let html = '';
     if (build && build.specs && build.specs.length) {
       const visibleSpecs = build.specs.filter(s => hasSg || !s.key.startsWith('sg_'));
-      // Group by pane in legend for visual clarity: Price → Inv → Vol
-      const order = { price: 0, inv: 1, vol: 2 };
-      const sorted = [...visibleSpecs].sort((a, b) => order[a.pane] - order[b.pane]);
-      html = sorted.map(s => {
+      html = visibleSpecs.map(s => {
         const isOn = _chartVisible.get(s.key) !== false;
         const opa = isOn ? '1' : '0.35';
-        return `<span class="legend-item" data-key="${escapeHtml(s.key)}" data-pane="${s.pane}" style="opacity:${opa};cursor:pointer" title="Click to toggle">` +
+        return `<span class="legend-item" data-key="${escapeHtml(s.key)}" style="opacity:${opa};cursor:pointer" title="Click to toggle">` +
                `<i style="background:${s.color}"></i> ${escapeHtml(s.label)}</span>`;
       }).join('');
     } else {
       // Fallback static legend pre-first-render
-      const items = [
-        ['#fbbf24', 'TEvo Owned'], ['#737373', 'TEvo Mkt'], ['#a78bfa', 'TEvo Non-own'],
-        ['#60a5fa', 'TEvo Own qty'], ['#94a3b8', 'TEvo Mkt qty'],
-      ];
+      const items = chartKey === 'price'
+        ? [['#fbbf24', 'TEvo Owned'], ['#737373', 'TEvo Mkt'], ['#a78bfa', 'TEvo Non-own']]
+        : [['#60a5fa', 'TEvo Own qty'], ['#94a3b8', 'TEvo Mkt qty']];
       html = items.map(([c, l]) =>
         `<span><i style="background:${c}"></i> ${escapeHtml(l)}</span>`).join('');
     }
 
-    if (ext && (
+    // Annotation chips only on the price legend
+    if (chartKey === 'price' && ext && (
       (ext.annotations && ext.annotations.injuries && ext.annotations.injuries.length) ||
       (ext.annotations && ext.annotations.game_state && ext.annotations.game_state.length)
     )) {
@@ -859,24 +889,22 @@
     }
     el.innerHTML = html;
 
-    // Wire click handlers (idempotent — innerHTML wipes prior listeners).
+    // Wire click handlers on this legend's items only
     el.querySelectorAll('.legend-item').forEach(node => {
       node.addEventListener('click', () => {
         const key = node.getAttribute('data-key');
-        const pane = node.getAttribute('data-pane');
-        const cur = _chartVisible.get(key) !== false; // default true
+        const cur = _chartVisible.get(key) !== false;
         _chartVisible.set(key, !cur);
-        // Find the series index on the target pane and toggle
-        const inst = _chartInstances[pane];
-        if (inst && _chartLastBuild) {
-          const paneSpecs = _chartLastBuild.specs.filter(s => s.pane === pane);
-          const idx = paneSpecs.findIndex(s => s.key === key);
-          if (idx >= 0) inst.setSeries(idx + 1 /* +1 for time series */, { show: !cur });
+        if (instance && build) {
+          const idx = build.specs.findIndex(s => s.key === key);
+          if (idx >= 0) instance.setSeries(idx + 1 /* +1 for time series */, { show: !cur });
         }
-        renderChartLegend(); // refresh opacity
+        renderChartLegendFor(chartKey); // refresh opacity
       });
     });
   }
+  function renderChartLegendPrice() { renderChartLegendFor('price'); }
+  function renderChartLegendInv()   { renderChartLegendFor('inv');   }
 
   // ---------- Splits ----------
 
@@ -2473,37 +2501,41 @@
   }
 
   // ---------- Chart Extended (mig 20260519150000 / get_event_chart_extended) ----------
-  // Fetches 5 SG-side series + 2 ESPN annotation arrays in parallel with v3.
-  // On arrival, updates _chartExtState and re-renders the chart (which reads
-  // the cache and merges the new series + draws annotation markers).
-  // No-ops gracefully if the RPC isn't deployed yet (errors silenced).
-  async function loadChartExtended(eventId) {
+  // Per-chart fetcher: each chart calls this with its own window. Updates the
+  // matching cache (_chartExtStatePrice or _chartExtStateInv) and re-renders
+  // ONLY that chart. PR redesign v2 — two fully independent loaders.
+  async function loadChartExtended(chartKey, eventId, hours) {
     const res = await rpcOrNull('get_event_chart_extended', {
       p_event_id: eventId,
-      p_chart_hours: CHART_HOURS,
+      p_chart_hours: hours || DEFAULT_HOURS,
     });
     if (res.error) {
-      // 42883 = function not deployed (early/staged rollout) → no-op
       if (res.error.code === '42883' || /does not exist/i.test(res.error.message || '')) {
         return;
       }
-      console.error('[chartExtended]', res.error);
+      console.error('[chartExtended ' + chartKey + ']', res.error);
       return;
     }
-    setChartExtended(res.data || null);
+    setChartExtended(chartKey, res.data || null);
   }
 
-  function setChartExtended(payload) {
-    _chartExtState.payload = payload;
-    // Trigger chart re-render IFF the TEvo-side payload is already in.
-    // adaptChart is idempotent; re-using the cached payload's chart_data.
+  function setChartExtended(chartKey, payload) {
+    if (chartKey === 'price') _chartExtStatePrice.payload = payload;
+    else                       _chartExtStateInv.payload   = payload;
+    // Trigger re-render of the matching chart only IF the TEvo-side payload
+    // is already in. adaptChart is idempotent.
     if (_lastPayload && _lastPayload.chart_data) {
       try {
         const chart = adaptChart(_lastPayload.chart_data);
-        renderChart(chart, _chartExtAlerts);
-        renderChartLegend();
+        if (chartKey === 'price') {
+          renderChartPrice(chart, _chartExtAlerts);
+          renderChartLegendPrice();
+        } else {
+          renderChartInventory(chart);
+          renderChartLegendInv();
+        }
       } catch (e) {
-        console.error('[setChartExtended re-render]', e);
+        console.error('[setChartExtended ' + chartKey + ' re-render]', e);
       }
     }
   }

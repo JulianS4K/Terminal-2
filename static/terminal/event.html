@@ -122,13 +122,17 @@
       <div id="crossSourceBody"><div class="empty">loading…</div></div>
     </section>
 
-    <section id="chart">
+    <!-- 2 fully independent chart sections (PR redesign 2026-05-18, v2).
+         Each owns its own range selector, legend, tooltip, and uPlot instance.
+         No cursor.sync — each chart is standalone. -->
+
+    <section id="chart-price" class="chart-section">
       <div class="chart-title">
-        <span>PRICE &amp; INVENTORY · <span id="chartRangeLabel">7d</span></span>
+        <span>PRICE &amp; MEDIANS · <span id="chartPriceRangeLabel">7d</span></span>
         <div class="chart-controls">
-          <span class="legend" id="chartLegend"></span>
+          <span class="legend" id="chartPriceLegend"></span>
           <span class="velocity-strip" id="velocityChips"></span>
-          <select id="chartRange" class="range-select">
+          <select id="chartPriceRange" class="range-select" aria-label="Price chart range">
             <option value="6">6h</option>
             <option value="24">24h</option>
             <option value="72">3d</option>
@@ -138,13 +142,27 @@
           </select>
         </div>
       </div>
-      <!-- 3-pane stacked layout (PR redesign 2026-05-18) — replaces single
-           chartHost. Price 60% / Inventory 20% / Volume 20%. uPlot instances
-           share X-axis via cursor.sync. -->
-      <div id="chartHostPrice" class="chart-pane chart-pane-price"></div>
-      <div id="chartHostInv"   class="chart-pane chart-pane-inv"></div>
-      <div id="chartHostVol"   class="chart-pane chart-pane-vol"></div>
-      <div id="chartTooltip" class="chart-tooltip" hidden></div>
+      <div id="chartHostPrice" class="chart-pane"></div>
+      <div id="chartPriceTooltip" class="chart-tooltip" hidden></div>
+    </section>
+
+    <section id="chart-inventory" class="chart-section">
+      <div class="chart-title">
+        <span>INVENTORY &amp; SALES · <span id="chartInvRangeLabel">7d</span></span>
+        <div class="chart-controls">
+          <span class="legend" id="chartInvLegend"></span>
+          <select id="chartInvRange" class="range-select" aria-label="Inventory chart range">
+            <option value="6">6h</option>
+            <option value="24">24h</option>
+            <option value="72">3d</option>
+            <option value="168" selected>7d</option>
+            <option value="720">30d</option>
+            <option value="4320">ALL</option>
+          </select>
+        </div>
+      </div>
+      <div id="chartHostInv" class="chart-pane"></div>
+      <div id="chartInvTooltip" class="chart-tooltip" hidden></div>
     </section>
 
     <section id="sg-broker-sales">
