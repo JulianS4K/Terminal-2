@@ -49,7 +49,6 @@
 
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
-| B1-NEXT-1 | D2 | `d2_cron_freshness()` missing `current_user NOT IN` body guard. REVOKE/GRANT done; this is the 3rd element of §6. | 1-statement `CREATE OR REPLACE FUNCTION` adding guard at top of body |
 | B1-NEXT-3 | B1 | Edge function auth-posture inventory (16 fns). Per-function record of `x-cron-secret` vs open vs JWT-gated. | Author `docs/edge_function_auth_inventory.md` |
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
 | B1-NEXT-8 | A1 | `_health_check_pg_net_errors()` missing §6 body guard (added by PR #115). | Add guard via CREATE OR REPLACE; preserve return shape |
@@ -366,7 +365,7 @@ Defense-in-depth follow-ups identified during the Phase-2 monitoring sweep. Each
 
 > **🛡️ For the LIVE operating subset** (only OPEN items, severity-sorted, with closure protocol) → [`docs/b1_open_findings.md`](docs/b1_open_findings.md). Fixing bots: **delete your row from that doc in the same PR as your fix.** KANBAN here keeps the historical audit trail.
 
-- **[B1-NEXT-1] [SEC-MED]** Add `current_user NOT IN ('service_role','postgres','supabase_admin')` body guard to `d2_cron_freshness()` ([supabase/migrations/20260513230300_d2_cron_freshness_function.sql](supabase/migrations/20260513230300_d2_cron_freshness_function.sql)). REVOKE/GRANT already done; this closes the missing third element of BOT_HIERARCHY.md §6. **Cross-lane to D2** — needs PR comment coordination per [LANE_DISCIPLINE.md §B1](LANE_DISCIPLINE.md).
+- **[B1-NEXT-1] [SEC-MED] ✅ CLOSED by D2 (mig `20260519110000_d2_cron_freshness_body_guard_and_sg_broker_mapping`).** CREATE OR REPLACE converted `d2_cron_freshness()` from LANGUAGE sql → plpgsql with the `current_user NOT IN ('service_role','postgres','supabase_admin')` body guard. Same mig folds in PR #147's pending mapping swap (SG source → `sg_broker_sales_queue_30min` + `sg_priority_sales_process_1min`) since the dashboard SG source moved from seller-side to broker firehose on 2026-05-16.
 - **[B1-NEXT-2] [SEC-LOW]** Drop the dead v1 overload of `match_to_aq_event_id` (the 7-arg form, superseded by 8-arg form in [supabase/migrations/20260515230000_matcher_v2_tier_1_5.sql](supabase/migrations/20260515230000_matcher_v2_tier_1_5.sql)). Cleanup, not security.
 - **[B1-NEXT-3] [SEC-MED]** Edge function auth posture inventory (`docs/edge_function_auth_inventory.md`). 16 functions deployed; need per-function record of `x-cron-secret` enforcement vs. open vs. JWT-gated. Heavyweight per-function audit.
 - **[B1-NEXT-4] [SEC-LOW]** Evaluate CodeQL / SAST for FastAPI + edge functions. Decide whether to add as a CI workflow.
