@@ -1038,10 +1038,131 @@
     }
     listEl.addEventListener("click", onReserveDelegatedClick);
 
+    // ---- Quick pricing rollup (from-price by quantity + by section) ----
+    // Computed client-side from the same listings array the server returns.
+    // No new fetch, no broker-internal fields. Re-runs from renderListings()
+    // so filter changes update the rollup. Buckets a listing into every
+    // quantity tier its `splits` array exposes (TEvo ticket_groups.splits is
+    // the allowed split sizes; absent → fall back to available_quantity).
+    function _qpBucketFor(n) {
+      if (n === 1) return "singles";
+      if (n === 2) return "pairs";
+      if (n === 3) return "triples";
+      if (n === 4) return "quads";
+      if (n >= 5) return "five_plus";
+      return null;
+    }
+    function _qpBucketsFromListing(l) {
+      const fromSplits = Array.isArray(l.splits) && l.splits.length
+        ? l.splits
+        : [Number(l.available_quantity || 0)];
+      const set = new Set();
+      fromSplits.forEach((s) => {
+        const b = _qpBucketFor(Number(s) || 0);
+        if (b) set.add(b);
+      });
+      return Array.from(set);
+    }
+    function renderQuickPricing(listings) {
+      const host = $("#quickPricing");
+      const bucketsHost = $("#qpBuckets");
+      const sectionsHost = $("#qpSections");
+      if (!host || !bucketsHost || !sectionsHost) return;
+      bucketsHost.replaceChildren();
+      sectionsHost.replaceChildren();
+      if (!listings || !listings.length) {
+        host.hidden = true;
+        return;
+      }
+
+      // Quantity buckets: groups offering + min retail_price for each.
+      const order = ["singles", "pairs", "triples", "quads", "five_plus"];
+      const labels = { singles: "1", pairs: "2", triples: "3", quads: "4", five_plus: "5+" };
+      const agg = {};
+      order.forEach((b) => { agg[b] = { groups: 0, min_price: null }; });
+      for (const l of listings) {
+        const px = Number(l.retail_price);
+        if (!Number.isFinite(px) || px <= 0) continue;
+        for (const b of _qpBucketsFromListing(l)) {
+          agg[b].groups += 1;
+          if (agg[b].min_price == null || px < agg[b].min_price) agg[b].min_price = px;
+        }
+      }
+      const anyBucket = order.some((b) => agg[b].groups > 0);
+      if (anyBucket) {
+        order.forEach((b) => {
+          const cell = document.createElement("div");
+          cell.className = "qp-bucket";
+          if (!agg[b].groups) cell.classList.add("empty");
+          const qty = document.createElement("div");
+          qty.className = "qp-qty";
+          qty.textContent = labels[b];
+          const price = document.createElement("div");
+          price.className = "qp-price";
+          price.textContent = agg[b].min_price != null ? `from ${fmtMoney(agg[b].min_price)}` : "—";
+          const grp = document.createElement("div");
+          grp.className = "qp-meta muted";
+          grp.textContent = agg[b].groups
+            ? `${agg[b].groups} listing${agg[b].groups === 1 ? "" : "s"}`
+            : "none";
+          cell.append(qty, price, grp);
+          bucketsHost.append(cell);
+        });
+      }
+
+      // Section rollup: top 10 sections by listings count.
+      const bySection = new Map();
+      for (const l of listings) {
+        const sec = (l.section == null || l.section === "") ? "—" : String(l.section);
+        const px = Number(l.retail_price);
+        const tix = Number(l.available_quantity) || 0;
+        const cur = bySection.get(sec) || { section: sec, listings: 0, tickets: 0, min_price: null };
+        cur.listings += 1;
+        cur.tickets += tix;
+        if (Number.isFinite(px) && px > 0 && (cur.min_price == null || px < cur.min_price)) {
+          cur.min_price = px;
+        }
+        bySection.set(sec, cur);
+      }
+      const top = Array.from(bySection.values())
+        .sort((a, b) => b.listings - a.listings || (a.min_price ?? Infinity) - (b.min_price ?? Infinity))
+        .slice(0, 10);
+      if (top.length > 1) {
+        const hdr = document.createElement("div");
+        hdr.className = "qp-sections-hdr muted";
+        hdr.textContent = `By section · top ${top.length}`;
+        sectionsHost.append(hdr);
+        const ul = document.createElement("ul");
+        ul.className = "qp-sec-list";
+        top.forEach((r) => {
+          const li = document.createElement("li");
+          li.className = "qp-sec";
+          const name = document.createElement("span");
+          name.className = "qp-sec-name";
+          name.textContent = `Sec ${r.section}`;
+          const meta = document.createElement("span");
+          meta.className = "qp-sec-meta muted";
+          meta.textContent = `${r.listings} · ${r.tickets} tix`;
+          const price = document.createElement("span");
+          price.className = "qp-sec-price";
+          price.textContent = r.min_price != null ? `from ${fmtMoney(r.min_price)}` : "—";
+          li.append(name, meta, price);
+          ul.append(li);
+        });
+        sectionsHost.append(ul);
+        sectionsHost.hidden = false;
+      } else {
+        sectionsHost.hidden = true;
+      }
+
+      host.hidden = !(anyBucket || top.length > 1);
+    }
+
     // ---- Listings rendering (server already filtered) ----
     function renderListings() {
       listCount.textContent = `${allListings.length}`;
       listEl.replaceChildren();
+      renderQuickPricing(allListings);
       if (!allListings.length) {
         noListings.hidden = false;
         return;
@@ -1223,6 +1344,9 @@
           // only on the Seats tab; parking list flips inverse.
           if (filterBar) filterBar.hidden = !seats;
           $("#listings").hidden = !seats;
+          const qp = $("#quickPricing");
+          if (qp && !seats) qp.hidden = true;
+          else if (qp && seats) renderQuickPricing(allListings);
           const noMatch = $("#noListings");
           if (noMatch && !seats) noMatch.hidden = true;
           parkUl.hidden = seats;
