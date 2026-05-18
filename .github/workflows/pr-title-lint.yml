@@ -17,6 +17,10 @@ jobs:
   lint:
     name: Lint PR title
     runs-on: ubuntu-latest
+    # Skip the lint for bot-generated PRs — Dependabot, github-actions[bot],
+    # renovate[bot]. Their auto-titles follow their own conventions; failing
+    # them is noise, not signal.
+    if: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && github.event.pull_request.user.login != 'github-actions[bot]' && github.event.pull_request.user.login != 'renovate[bot]' }}
     steps:
       - name: Check format
         uses: actions/github-script@v7

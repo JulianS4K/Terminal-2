@@ -21,7 +21,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     env:
-      OWNERS: "JulianS4K"
+      # Human owners (CODEOWNERS) + trusted bot accounts. Bots edit
+      # specific scoped paths (Dependabot → requirements.txt + workflows;
+      # github-actions[bot] → release/labeler/scorecard outputs).
+      OWNERS: "JulianS4K dependabot[bot] github-actions[bot]"
       FORBIDDEN_PATHS: |
         ^app\.py$
         ^evo_client\.py$

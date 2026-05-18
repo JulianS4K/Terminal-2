@@ -25,7 +25,10 @@ updates:
     reviewers:
       - "JulianS4K"
     commit-message:
-      prefix: "chore(deps)"
+      # Prefix is just "chore" — Dependabot auto-appends "(deps)" because of
+      # include:scope. Previously prefix:"chore(deps)" + include:scope produced
+      # "chore(deps)(deps): ..." which tripped pr-title-lint. Fixed 2026-05-18.
+      prefix: "chore"
       include: "scope"
     # Group minor + patch updates per package family — reduces PR noise.
     groups:
@@ -52,7 +55,10 @@ updates:
     reviewers:
       - "JulianS4K"
     commit-message:
-      prefix: "chore(ci-deps)"
+      # See Python prefix note above. Use bare "chore" + include:scope so
+      # Dependabot produces "chore(github-actions): ..." cleanly.
+      prefix: "chore"
+      include: "scope"
 
   # Note: Deno (Supabase edge functions) is NOT supported by Dependabot.
   # Edge function deps are pinned via import URLs (e.g.,
