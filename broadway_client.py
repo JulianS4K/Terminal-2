@@ -154,6 +154,39 @@ class Performance:
 
 
 @dataclass
+class BroadwayShowStub:
+    """Minimal show pointer returned by discover_shows().
+
+    Just enough to drive a follow-up discover_performances(slug) call.
+    Full metadata arrives later via fetch_sections payload.show."""
+    slug: str
+    title: str | None = None
+    show_page_url: str | None = None
+
+
+@dataclass
+class SnapshotShowResult:
+    """Structured result from snapshot_show().
+
+    discover_error is set when discover_performances raised; in that
+    case snapshots and fetch_errors are empty. Otherwise both lists
+    are populated per-performance.
+    """
+    slug: str
+    discover_error: "BroadwayError | None" = None
+    snapshots: list["SectionsSnapshot"] = field(default_factory=list)
+    fetch_errors: list[dict] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.discover_error is None
+
+    @property
+    def attempted(self) -> int:
+        return len(self.snapshots) + len(self.fetch_errors)
+
+
+@dataclass
 class SectionsSnapshot:
     slug: str
     show_id: int                     # = show.aristotle_id (URL middle)
@@ -657,18 +690,100 @@ class BroadwayClient:
                        status=status, rows=len(out))
         return out
 
-    def snapshot_show(self, slug: str) -> list[SectionsSnapshot]:
+    def discover_shows(self) -> list[BroadwayShowStub]:
+        """Harvest all current show slugs from /shows/.
+
+        Returns one stub per unique slug found on the index page. Cron
+        calls this once daily; results upsert into broadway_shows so
+        the pull queue can enumerate "all current Broadway shows"
+        without an operator-maintained slug list.
+
+        Same drift-detection guards as discover_performances:
+          - non-200 → BroadwayError
+          - 200 with zero anchors AND no Broadway.com markers in body
+            → BroadwayParseError (Fastly challenge / page redesign)
+          - 200 with zero anchors but markers present → returns []
+            (cold-start edge case — should not happen on a real
+            Broadway.com index, but tolerate it without raising)
+        """
+        url = f"{WWW_BASE}/shows/"
+        status, html = self._get(url)
+        if status != 200:
+            self._log_pull("shows_index", slug=None, show_id=None, event_id=None,
+                           status=status, rows=None, error=html[:300])
+            raise BroadwayError(f"shows index fetch returned {status} for {url}")
+        soup = BeautifulSoup(html, "html.parser")
+        seen: dict[str, BroadwayShowStub] = {}
+        # Match /shows/<slug>/ anchors (anywhere on the index). Skip the
+        # bare /shows/ link itself and any anchor whose slug contains
+        # non-slug characters.
+        show_path_re = re.compile(r"^/shows/(?P<slug>[a-z0-9][a-z0-9-]+)/?$", re.I)
+        for a in soup.find_all("a", href=True):
+            parsed = urlparse(a["href"])
+            host_ok = (not parsed.netloc) or parsed.netloc == "www.broadway.com"
+            if not host_ok:
+                continue
+            m = show_path_re.match(parsed.path)
+            if not m:
+                continue
+            slug = m.group("slug").lower()
+            if slug in seen:
+                continue
+            title = a.get_text(" ", strip=True) or None
+            seen[slug] = BroadwayShowStub(
+                slug=slug,
+                title=title,
+                show_page_url=f"{WWW_BASE}/shows/{slug}/",
+            )
+        out = list(seen.values())
+        if not out:
+            html_lower = html.lower()
+            if "broadway.com" not in html_lower:
+                self._log_pull(
+                    "shows_index", slug=None, show_id=None, event_id=None,
+                    status=status, rows=0,
+                    error="200 OK but no show anchors and no Broadway.com markers — likely Fastly bot challenge or page redesign",
+                )
+                raise BroadwayParseError(
+                    f"HTTP 200 but no shows and no Broadway.com markers for {url}. "
+                    "Likely Fastly bot challenge or page redesign."
+                )
+        self._log_pull("shows_index", slug=None, show_id=None, event_id=None,
+                       status=status, rows=len(out))
+        return out
+
+    def snapshot_show(self, slug: str) -> SnapshotShowResult:
         """Pull every performance's sections snapshot for a single show.
-        Intended as the daily-cron unit of work, one show at a time."""
-        perfs = self.discover_performances(slug)
-        snaps: list[SectionsSnapshot] = []
+
+        Returns a SnapshotShowResult that distinguishes:
+          - discover_error (whole-show failure: show page 403, parse error)
+          - per-performance fetch_errors (individual perf failed but
+            others may have succeeded)
+          - snapshots (successful captures)
+
+        Designed for cron use: caller iterates over a list of slugs and
+        aggregates SnapshotShowResults into a run-level summary.
+        """
+        out = SnapshotShowResult(slug=slug)
+        try:
+            perfs = self.discover_performances(slug)
+        except BroadwayError as e:
+            out.discover_error = e
+            return out
         for p in perfs:
             try:
-                snaps.append(self.fetch_sections(p.slug, p.show_id, p.event_id))
+                out.snapshots.append(
+                    self.fetch_sections(p.slug, p.show_id, p.event_id)
+                )
             except BroadwayError as e:
-                print(f"broadway: skipping {p.slug}/{p.show_id}/{p.event_id}: {e}",
-                      file=sys.stderr)
-        return snaps
+                out.fetch_errors.append({
+                    "slug": p.slug,
+                    "show_id": p.show_id,
+                    "event_id": p.event_id,
+                    "error_class": type(e).__name__,
+                    "error_message": str(e),
+                })
+        return out
 
 
 # ---------- CLI for smoke-testing ----------
@@ -687,6 +802,7 @@ def _main(argv: list[str]) -> int:
         print("  python broadway_client.py sections <slug> <show_id> <event_id>")
         print("  python broadway_client.py sections-url <full-url>")
         print("  python broadway_client.py discover <slug>")
+        print("  python broadway_client.py shows")
         print("  python broadway_client.py snapshot <slug>")
         print("  python broadway_client.py dump-raw <url> <out-path>")
         print("  python broadway_client.py parse-file <html-path>")
@@ -701,9 +817,18 @@ def _main(argv: list[str]) -> int:
     elif cmd == "discover":
         for p in cli.discover_performances(argv[2]):
             print(_json.dumps(asdict(p), default=str))
+    elif cmd == "shows":
+        for s in cli.discover_shows():
+            print(_json.dumps(asdict(s), default=str))
     elif cmd == "snapshot":
-        for s in cli.snapshot_show(argv[2]):
+        result = cli.snapshot_show(argv[2])
+        if result.discover_error:
+            print(f"discover failed: {result.discover_error}", file=sys.stderr)
+            return 4
+        for s in result.snapshots:
             _print_snapshot(s)
+        for err in result.fetch_errors:
+            print(_json.dumps({"fetch_error": err}), file=sys.stderr)
     elif cmd == "dump-raw":
         import pathlib as _pl
         url, out_arg = argv[2], argv[3]

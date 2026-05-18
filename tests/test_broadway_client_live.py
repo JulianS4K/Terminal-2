@@ -100,3 +100,26 @@ def test_fetch_sections_first_performance():
     # A sold-out or cancelled performance can legitimately return zero
     # sections — only assert the shape, not the count.
     assert isinstance(snap.sections, list)
+
+
+def test_discover_shows_returns_canonical_set():
+    """discover_shows should find at least a handful of stable long-run
+    shows (Hamilton, Lion King, Wicked). If none of those are present
+    the index has materially changed."""
+    from broadway_client import BroadwayClient, BroadwayError
+
+    cli = BroadwayClient()
+    try:
+        shows = cli.discover_shows()
+    except BroadwayError as e:
+        _skip_if_egress_blocked(e, "https://www.broadway.com/shows/")
+        raise
+    assert shows, "discover_shows returned no shows from /shows/"
+    slugs = {s.slug for s in shows}
+    # At least one of these long-run anchors should be present. Exact
+    # set churns season-to-season; assert a non-empty intersection.
+    canonical = {"hamilton", "the-lion-king", "wicked", "six"}
+    assert slugs & canonical, (
+        f"none of the canonical long-run shows found in discover_shows result. "
+        f"got: {sorted(slugs)[:20]}"
+    )
