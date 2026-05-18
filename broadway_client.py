@@ -57,6 +57,7 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from urllib.robotparser import RobotFileParser
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -209,6 +210,33 @@ class SectionsSnapshot:
     raw_payload: dict[str, Any] | None = None
 
 
+# ---------- idempotency helper ----------
+
+def quantize_capture_time(captured_at: datetime, bucket: str) -> datetime:
+    """Round captured_at to the bucket-appropriate granularity so
+    duplicate cron firings within the same dedup window can't both
+    write to broadway_listings_snapshots (PK collision becomes a
+    feature, not a bug).
+
+    Buckets match supabase/migrations/<ts>_broadway_listings_pipeline.sql:
+      '0-72h' bucket — hourly cron, 50min dedup → round to minute
+      '72h+'  bucket — daily cron, 20h  dedup → round to hour
+
+    The write-through path (future broadway_collect edge function)
+    quantizes before INSERT, so two firings within the same minute
+    (hot) or hour (cold) attempt the same primary key — ON CONFLICT
+    DO NOTHING absorbs the duplicate cleanly.
+    """
+    if bucket == "0-72h":
+        return captured_at.replace(second=0, microsecond=0)
+    if bucket == "72h+":
+        return captured_at.replace(minute=0, second=0, microsecond=0)
+    raise ValueError(
+        f"quantize_capture_time: unknown bucket {bucket!r}, "
+        "expected '0-72h' or '72h+'"
+    )
+
+
 # ---------- client ----------
 
 # bs4 fallback selectors — only used if inline payload extraction fails.
@@ -255,12 +283,18 @@ class BroadwayClient:
         timeout_s: int = 25,
         user_agent: str | None = None,
         pace_s: float = 1.5,
+        respect_robots: bool = True,
     ):
         self.db = db
         self.timeout_s = timeout_s
         self.pace_s = pace_s
+        self.respect_robots = respect_robots
         self._last_request_at: float = 0.0
         self.session = requests.Session()
+        # Lazy-loaded /robots.txt policy per host base. Populated on
+        # first _check_robots call, then cached for the session.
+        self._robots: dict[str, "RobotFileParser"] = {}
+        self._robots_loaded: bool = False
         _ua = user_agent or os.environ.get(
             "BROADWAY_USER_AGENT",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -283,8 +317,69 @@ class BroadwayClient:
         if elapsed < self.pace_s:
             time.sleep(self.pace_s - elapsed + random.uniform(0, 0.25))
 
+    def _ensure_robots(self) -> None:
+        """Lazy-fetch /robots.txt for www + checkout broadway hosts and
+        cache the parsed policy. Fail-open: if the fetch returns any
+        non-200 (including egress-proxy 403, Fastly bot deny, 404,
+        500) or raises, we treat that host as 'no policy' rather than
+        blocking work.
+
+        We do our own urllib fetch + manual rp.parse() instead of
+        rp.read() because urllib.robotparser.RobotFileParser interprets
+        a 401/403 response as 'everything disallowed' — that's wrong
+        for our context (an egress block or Fastly deny should not
+        translate to 'we have a policy saying no').
+
+        Fetched via urllib stdlib (not requests.Session) to keep the
+        check independent of session cookies / pacing.
+        """
+        if self._robots_loaded:
+            return
+        self._robots_loaded = True
+        import urllib.request
+        ua = self.session.headers.get("User-Agent", "*")
+        for host_base in (WWW_BASE, CHECKOUT_BASE):
+            try:
+                req = urllib.request.Request(
+                    f"{host_base}/robots.txt",
+                    headers={"User-Agent": ua},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if getattr(resp, "status", 200) != 200:
+                        continue
+                    body = resp.read().decode("utf-8", errors="replace")
+            except Exception:
+                # Any failure — network, HTTP error, timeout — fail open.
+                continue
+            rp = RobotFileParser()
+            rp.parse(body.splitlines())
+            self._robots[host_base] = rp
+
+    def _check_robots(self, url: str) -> None:
+        """Raise BroadwayError if /robots.txt disallows this URL for
+        our UA. No-op when respect_robots=False or when robots.txt
+        isn't loadable. Policy compliance only — RULE 2 (GET-only) is
+        the security boundary and is unrelated."""
+        if not self.respect_robots:
+            return
+        self._ensure_robots()
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return
+        host_base = f"{parsed.scheme}://{parsed.netloc}"
+        rp = self._robots.get(host_base)
+        if rp is None:
+            return  # No policy for this host; fail open.
+        ua = self.session.headers.get("User-Agent", "*")
+        if not rp.can_fetch(ua, url):
+            raise BroadwayError(
+                f"robots.txt disallows {url} for UA {ua!r}. "
+                "Pass respect_robots=False to override (RULE 2 still applies)."
+            )
+
     def _get(self, url: str, *, max_retries: int = 3) -> tuple[int, str]:
         _assert_readonly_method("GET")
+        self._check_robots(url)
         attempt = 0
         backoff = 1.5
         while True:
