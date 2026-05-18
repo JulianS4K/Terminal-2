@@ -1,25 +1,131 @@
 # Git Repo Security Posture — Terminal-2
 
-**Owner**: B1 (Security Manager) · **Last full sweep**: 2026-05-15 · **Update cadence**: per-session sweep step 12 + 14 (see [`b1_operating_constraints.md`](b1_operating_constraints.md))
+**Owner**: B1 (Security Manager) · **Last full sweep**: 2026-05-17 (expanded — capabilities audit) · **Update cadence**: per-session sweep step 12 + 14 (see [`b1_operating_constraints.md`](b1_operating_constraints.md))
 
-Living snapshot of GitHub repo security configuration. B1 diffs current `gh api` output against this doc to catch regressions.
+Living snapshot of GitHub repo security + maintenance configuration. B1 diffs current `gh api` output against this doc to catch regressions AND to track which GitHub capabilities are utilized vs available.
 
 ---
 
-## Active findings (open, 2026-05-15)
+## Active findings (open, 2026-05-17)
+
+Original sweep G-1 through G-8 unchanged from 2026-05-15 baseline. Expanded with G-9 through G-19 from the 2026-05-17 capabilities audit.
+
+### Original sweep (2026-05-15)
 
 | # | Severity | Finding | Action |
 |---|---|---|---|
-| G-1 | SEC-HIGH | Repo `visibility: public` AND historic `CRON_SECRET` literal in commit `5297739` (now-rotated, but readable on the internet). The KANBAN.md SECURITY BACKLOG "[OPS-ONLY] History rewrite of leaked literal" item was originally scoped assuming private repo. Public posture changes the calculus. | File [B1-NEXT-11] reassessing history-rewrite priority. Operator decides whether to `git filter-repo` + force-push window. |
-| G-2 | SEC-MED | `dependabot_security_updates: disabled` (also `dependabot_security_alerts` returns 403 = disabled). After the 2026-05-11 `requirements.txt` unpinning incident (SW-3 in KANBAN), Dependabot is the right tool to keep transitive deps current. | File [B1-NEXT-12]. Operator-only to enable (Settings → Code security). |
-| G-3 | SEC-MED | `secret_scanning_non_provider_patterns: disabled` | File [B1-NEXT-13]. Won't catch custom-shaped secrets (e.g., `CRON_SECRET`, `APPSCRIPT_INGEST_SECRET`). Operator-only to enable. |
-| G-4 | SEC-MED | `secret_scanning_validity_checks: disabled` | File [B1-NEXT-14]. Wouldn't confirm if a leaked token is still active. Operator-only. |
-| G-5 | SEC-MED | No CodeQL / code-scanning analysis exists (`code-scanning/alerts` returns 404 "no analysis found"). | Already filed as [B1-NEXT-4]. Decision deferred; this confirms current state. |
-| G-6 | SEC-LOW | `enforce_admins: false` — admin (`JulianS4K`) can bypass branch protection. Acceptable single-operator risk profile, but documented here. | File [B1-NEXT-15] (low-pri, operator-only). |
-| G-7 | SEC-LOW | `required_signatures: false` — commits not GPG-signed. Single-operator + GitHub-server-side commits via PR merge make impersonation low-risk. | File [B1-NEXT-16] (low-pri). |
-| G-8 | SEC-LOW | Actions `sha_pinning_required: false` — third-party Actions can be referenced by mutable tags (supply-chain vector). Currently using `actions/checkout@v4`, `actions/github-script@v7`, `actions/upload-artifact@v4`, `gitleaks/gitleaks-action@v2` — all tag-pinned. | File [B1-NEXT-17]. Could enable + convert to SHA pins. |
+| G-1 | SEC-HIGH | Repo `visibility: public` AND historic `CRON_SECRET` literal in commit `5297739` (now-rotated, but readable on the internet). | [B1-NEXT-11]. Operator decides `git filter-repo` window. |
+| G-2 | SEC-MED | `dependabot_security_updates: disabled` | [B1-NEXT-12]. Operator-only (Settings → Code security). |
+| G-3 | SEC-MED | `secret_scanning_non_provider_patterns: disabled` | [B1-NEXT-13]. Operator-only. |
+| G-4 | SEC-MED | `secret_scanning_validity_checks: disabled` | [B1-NEXT-14]. Operator-only. |
+| G-5 | SEC-MED | No CodeQL / code-scanning analysis (`code-scanning/alerts` returns 404). | [B1-NEXT-4]. Decision deferred. |
+| G-6 | SEC-LOW | `enforce_admins: false` — admin can bypass branch protection. | [B1-NEXT-15]. Operator-only. |
+| G-7 | SEC-LOW | `required_signatures: false` — commits not GPG-signed. | [B1-NEXT-16]. |
+| G-8 | SEC-LOW | Actions `sha_pinning_required: false` — third-party Actions tag-pinned. | [B1-NEXT-17]. |
+
+### Capabilities audit expansion (2026-05-17)
+
+| # | Severity | Finding | Action |
+|---|---|---|---|
+| G-9 | SEC-LOW | `allow_forking: true` on public repo. Forks clone full history including the leaked `CRON_SECRET` commit `5297739`. Compounds G-1. | [B1-NEXT-40]. Operator decision — typically allow_forking stays true unless concerned about derivative works; the real fix is G-1 history-rewrite. |
+| G-10 | SEC-LOW | `delete_branch_on_merge: false`. B1 manually deleted 14 orphan merged branches 2026-05-17. Hygiene issue, not security. | [B1-NEXT-41]. Operator-only toggle (Settings → General → "Automatically delete head branches"). |
+| G-11 | SEC-LOW | `has_wiki: true`, `has_projects: true`, `has_downloads: true` — all enabled but never used. Unused features = attack surface (spam, public-visibility leakage via wiki). | [B1-NEXT-42]. Operator decision. Disable unused. |
+| G-12 | SEC-MED | No `SECURITY.md` security disclosure policy. Public repo + no vuln-reporting channel = researchers open public issues with vulnerabilities. | [B1-NEXT-43]. B1 can author. Files at `.github/SECURITY.md` or repo root. |
+| G-13 | SEC-LOW | No `LICENSE` file. Public repo without license = full copyright reserved (US default). Proprietary code; intentional. README footer should call this out. | Document, no action. |
+| G-14 | SEC-LOW | Branch protection — `required_approving_review_count` not set, CODEOWNERS review not required, `dismiss_stale_reviews` not set. Currently any user with push access (only `JulianS4K`) can merge to `main` without explicit review. | [B1-NEXT-44]. Operator decision — single-operator profile may or may not require formal review gate. |
+| G-15 | SEC-LOW | `required_conversation_resolution: false` on branch protection. PRs can merge with unresolved review comments. | [B1-NEXT-45]. Operator-only. |
+| G-16 | SEC-LOW | No private vulnerability reporting enabled. Public repo with no PVR = no private channel for researchers. | [B1-NEXT-46]. Operator-only (Settings → Code security → Private vulnerability reporting). |
+| G-17 | SEC-LOW | No `actions/dependency-review-action` in CI. With Dependabot enabled, this workflow blocks PRs that add vulnerable deps. | [B1-NEXT-47]. Blocked on G-2 (Dependabot enable). B1 can author once Dependabot lives. |
+| G-18 | SEC-LOW | No OSSF Scorecard workflow. Automated repo-security scoring (`.github/workflows/scorecard.yml`). | [B1-NEXT-48]. B1 can author. |
+| G-19 | SEC-LOW | No `.github/dependabot.yml` for version updates. Even with security updates disabled, version updates can run separately. | [B1-NEXT-49]. Blocked on G-2 enable decision. |
 
 No SEC-CRIT findings.
+
+---
+
+## Section 7 — Available capabilities NOT YET utilized
+
+Audit of GitHub features available to this repo that aren't currently in use, organized by purpose. Each entry: capability, current state, recommended action, who-can-do.
+
+### Security capabilities (12 items)
+
+| Capability | Current | Recommendation | Owner |
+|---|---|---|---|
+| CodeQL code-scanning | Not enabled (G-5) | Add `.github/workflows/codeql.yml` after operator approves B1-NEXT-4 | B1 authors, Operator approves |
+| Dependabot security updates | Disabled (G-2) | Enable via Settings → Code security | Operator |
+| Dependabot version updates | No `dependabot.yml` (G-19) | Add `.github/dependabot.yml` with weekly pip+gh-actions schedule | B1 authors (after G-2) |
+| Secret scanning non-provider patterns | Disabled (G-3) | Enable; catches `CRON_SECRET`, `APPSCRIPT_INGEST_SECRET` shapes | Operator |
+| Secret scanning validity checks | Disabled (G-4) | Enable; confirms whether leaked tokens still active | Operator |
+| Private Vulnerability Reporting (PVR) | Not enabled (G-16) | Enable; gives researchers a private channel | Operator |
+| Repository Security Advisories | Not used | Draft CVE workflow when first vuln surfaces; no setup needed | Operator (per-incident) |
+| dependency-review-action workflow | Missing (G-17) | Add as PR check after Dependabot enabled | B1 authors |
+| OSSF Scorecard | Missing (G-18) | Add `.github/workflows/scorecard.yml` — weekly score + badge | B1 authors |
+| Required CODEOWNERS review | Not set on branch protection (G-14) | Branch protection rule update | Operator |
+| Required conversation resolution | Disabled (G-15) | Branch protection rule update | Operator |
+| Dismiss stale reviews | Not set (G-14) | Branch protection rule update | Operator |
+| SHA pinning for Actions | Disabled (G-8) | Enable + convert workflow refs from `@v4` → `@<sha>` | Operator + B1 |
+| Required commit signatures | Disabled (G-7) | Operator decision; single-operator profile makes low-priority | Operator |
+| Enforce admins on branch protection | Disabled (G-6) | Operator decision; bypass acceptable for single-op | Operator |
+
+### Maintenance capabilities (8 items)
+
+| Capability | Current | Recommendation | Owner |
+|---|---|---|---|
+| Auto-delete head branches | Disabled (G-10) | Enable; saves manual cleanup (B1 deleted 14 orphans 2026-05-17) | Operator |
+| Auto-merge | Disabled | Could enable with required reviews + green CI to free operator time | Operator |
+| Stale PR/issue closer workflow | Missing | Low priority — bots don't generate stale PRs (squash-merged quickly) | Skip unless needed |
+| PR labeler workflow | Missing | Auto-label by branch prefix (`a1/*` → `level:admin`, `claude/d0-*` → terminal). Reduces manual labeling. | B1 authors |
+| PR size labeler | Missing | Flag mega-PRs (e.g., >500 LOC). Low priority. | Skip |
+| `SECURITY.md` | Missing (G-12) | Author at `.github/SECURITY.md`: report channel = bot_chat or GitHub PVR (after G-16) | B1 authors |
+| `CONTRIBUTING.md` | Missing | Author at `.github/CONTRIBUTING.md`: bot-only contributions; for outside contributors, route to `bot_chat`. Mostly aspirational since this is internal. | B1 authors (low pri) |
+| `LICENSE` | Missing (G-13) | Proprietary; intentional. README footer notes "proprietary, internal use." | None |
+
+### Observability capabilities (4 items)
+
+| Capability | Current | Recommendation | Owner |
+|---|---|---|---|
+| GitHub Insights tab | Available, not actively reviewed | Per-session B1 sweep could spot-check Insights → Traffic for unusual external access | B1 (manual web view; no API access for traffic data without admin scope) |
+| Workflow run history | Available via `gh run list` | Already used ad-hoc; could add to per-session sweep as step 21 if needed | B1 |
+| Actions usage report | Org-level only | N/A (user repo, not org) | N/A |
+| Dependency graph | Implicit via Dependabot when enabled | Will activate when G-2 enabled | Auto |
+
+### Workflow / process capabilities (3 items)
+
+| Capability | Current | Recommendation | Owner |
+|---|---|---|---|
+| Rulesets | None (`repos/.../rulesets` returned empty) | Newer than branch protection; more flexible (file-path restrictions, commit message regex). Branch protection currently covers needs — defer until specific use case. | Future |
+| Required workflows | Org-level only | N/A (user repo) | N/A |
+| Repository topics | Empty | Add: `ticket-trading`, `fastapi`, `supabase`, `multi-bot`, `claude-code` for discoverability. Or leave empty if intentionally low-profile. | Operator |
+| Repository description | `null` | Add 1-line description visible on GitHub homepage. Currently shows blank under repo name. | Operator |
+
+---
+
+## Section 8 — Recommended next steps (prioritized)
+
+### Quick wins (operator, ~5 min total via web UI)
+
+1. **`delete_branch_on_merge: true`** — Settings → General → "Automatically delete head branches"
+2. **Enable Dependabot security updates** — Settings → Code security → Dependabot
+3. **Enable secret-scanning non-provider patterns** — Settings → Code security
+4. **Enable secret-scanning validity checks** — Settings → Code security
+5. **Enable Private Vulnerability Reporting** — Settings → Code security
+6. **Disable `has_wiki`, `has_projects`, `has_downloads`** if unused — Settings → General → Features
+7. **Add repo description + topics** — Settings → General
+
+### B1-authored follow-ups (after operator quick wins)
+
+1. `.github/SECURITY.md` — vuln disclosure policy referencing PVR + bot_chat
+2. `.github/dependabot.yml` — weekly pip + gh-actions version updates
+3. `.github/workflows/dependency-review.yml` — block PRs adding vulnerable deps (after Dependabot live)
+4. `.github/workflows/scorecard.yml` — OSSF Scorecard weekly run + badge
+5. `.github/workflows/labeler.yml` — auto-label PRs by branch prefix (`a1/*`, `claude/d0-*`, etc.)
+
+### Operator-only larger decisions
+
+1. CodeQL — B1-NEXT-4 still pending evaluation
+2. Branch protection tightening (required reviews + CODEOWNERS + conversation resolution) — G-14/15
+3. SHA pinning for Actions — G-8
+4. History rewrite for leaked `CRON_SECRET` — G-1
 
 ---
 
