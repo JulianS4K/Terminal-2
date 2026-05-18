@@ -5245,22 +5245,58 @@ def _bucket_by_primary_label(pool: list[dict]) -> dict[str, list[dict]]:
     return buckets
 
 
+# Grading curve thresholds. If any single label holds more than
+# _DOMINANCE_THRESHOLD of the pool at sample time, cap its share in the
+# output to _DOMINANT_CAP_PCT. Without this, a pool that's 95% deals
+# still yields ~90% deals via round-robin (small buckets drain first,
+# then the dominant bucket fills the remainder). The curve trades a
+# smaller card count for a guaranteed label mix.
+_DOMINANCE_THRESHOLD = 0.80
+_DOMINANT_CAP_PCT = 0.40
+
+
 def _round_robin_pop_by_label(buckets: dict[str, list[dict]], n: int) -> list[dict]:
     """Drain up to `n` events from `buckets` by rotating through
     _LABEL_PRIORITY. Pops the top-score event from each non-empty bucket
     per cycle. Mutates `buckets` in place so successive calls continue
     from where the prior call left off (used to build top-strip then
     rest-grid from one shared pool with no overlap).
+
+    Grading curve: if any single label exceeds _DOMINANCE_THRESHOLD of
+    the current pool, cap its picks at ceil(n * _DOMINANT_CAP_PCT). When
+    the cap is hit and only the dominant bucket has items left, the
+    function returns fewer than `n` events — under-filling is preferred
+    over a monolithic output (e.g., 10 deals).
     """
     if n <= 0:
         return []
+    total = sum(len(buckets[lbl]) for lbl in _LABEL_PRIORITY)
+    dominant_lbl: str | None = None
+    dominant_cap = n
+    if total > 0:
+        for lbl in _LABEL_PRIORITY:
+            if buckets[lbl] and len(buckets[lbl]) / total > _DOMINANCE_THRESHOLD:
+                dominant_lbl = lbl
+                dominant_cap = max(1, int(n * _DOMINANT_CAP_PCT + 0.5))
+                break
+
     out: list[dict] = []
-    while len(out) < n and any(buckets[lbl] for lbl in _LABEL_PRIORITY):
+    dominant_taken = 0
+    while len(out) < n:
+        made_progress = False
         for lbl in _LABEL_PRIORITY:
             if len(out) >= n:
                 break
-            if buckets[lbl]:
-                out.append(buckets[lbl].pop(0))
+            if not buckets[lbl]:
+                continue
+            if lbl == dominant_lbl and dominant_taken >= dominant_cap:
+                continue
+            out.append(buckets[lbl].pop(0))
+            if lbl == dominant_lbl:
+                dominant_taken += 1
+            made_progress = True
+        if not made_progress:
+            break
     return out
 
 
