@@ -71,7 +71,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 |---|---|---|
 | `seatgeek_sales_snapshots` | `sold_at`, `price`, `captured_at` | `sale_at_utc`, `broadcast_price`, `pulled_at` |
 | `seatgeek_listings_snapshots` | `price` | `broadcast_price` (+ `retail_price_all_in` for all-in display) |
-| `seatgeek_event_metrics` | `retail_min/median/p90` | `cost_min/median/p90` |
+| `seatgeek_event_metrics` | `cost_min/median/p90` (DROPPED 2026-05-18) | `listings_all_min/median/p90` (full firehose) or `listings_owned_min/median/p90` (broker-owned subset) — PR-4a/4b |
 | `event_alerts` | `event_id`, `created_at` | `tevo_event_id`, `fired_at` |
 | `nws_alerts` | `expires` | `expires_at` |
 | `weather_observations` | `captured_at` | `observed_at` (reading) + `fetched_at` (ingest) |
@@ -336,6 +336,13 @@ SELECT public.bot_chat_log(
 | 2026-05-17 | 20260517160002 | `match_listings_to_sg_tick` narrow + indexes — D2's bot_chat 225 sketch shipped: window 24h→6h, `ROW_NUMBER()` uniqueness instead of triple `NOT EXISTS`, helper indexes. 591ms vs prior 5min timeout. |
 | 2026-05-17 | 20260517160003 | `sweep_all_expired_pg_net_pending` now covers `sg_broker_pending` + one-shot drain of 1,595 zombies (orphaned by `net._http_response` prune). |
 | 2026-05-17 | 20260517160004 | Hotfix: drop legacy 0-arg overloads of `sg_broker_{listings,sales}_process`. Mig 20260517160000's `DEFAULT 50` addition created an overload not a replacement; cron `SELECT fn()` resolved ambiguously. Same class as A1 bot_chat 258 lesson. |
+| 2026-05-17 | 20260517260000 | **SG broker-listings event metrics** — 18 new cols on `seatgeek_event_metrics`: `listings_all_*` (full firehose) + `listings_owned_*` (`is_broker_owned=true` subset), both from `broadcast_price`. New `refresh_sg_broker_listings_event_metrics(p_max_events int)` hourly cron @ :47. Companion to PR #161 sales-side @ :17. Also DROP NOT NULL on `tevo_event_id` to allow SG-only events. |
+| **2026-05-18** | 20260518010000 | **event_sentiment cron**: schedule existing `backfill_event_sentiment(200)` @ :15,:45 via cron_should_fire gate. Fn existed since mig 20260509130000, never had a cron. |
+| 2026-05-18 | 20260518020000 | **event_competitors cron re-schedule**: re-schedule `refresh_event_competitors()` @ :40 hourly (was scheduled in mig 20260509350000 and lost). Sparse coverage by-design — only events with 20mi/24h venue neighbors. |
+| 2026-05-18 | 20260518030000 | **event_section_row_snapshots batch + cron**: new `rollup_event_section_row_batch(p_max_events int)` wrapper around existing single-event `rollup_event_section_row` (mig 20260512100150). Hourly cron @ :03. Writes source=tevo only; SG mirror pending future PR. |
+| 2026-05-18 | 20260518040000–040004 | **cost_* reader migration (5 readers)**: `v_event_price_arbitrage` + `v_event_full_v2` + `v_event_velocity_windows` + v2 RPC + v3 RPC all swap `cost_*` → `listings_all_*` (or `listings_owned_*` for arbitrage). Payload key names also renamed. |
+| 2026-05-18 | 20260518050000 | **cost_* columns DROP** + retire `compute_seatgeek_event_metrics` (legacy SellerDirect-only populator). 8 deprecated cost_* cols removed from `seatgeek_event_metrics`. |
+| 2026-05-18 | 20260518060000 | **event_metrics owned distribution DDL**: ADD COLUMN `owned_p25/p75/p90` numeric. Writer (Python app.py event-processor) is cross-lane — bot_chat handoff posted. Cols sit at NULL until writer-side ship. |
 
 ---
 
