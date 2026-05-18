@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-17 by A1 (post-PR #228 — pg_net async landmine + 2026-05-19 mig lineup)
+**Last updated**: 2026-05-17 by A1 (post-PR #237 — chart RPC + espn_team_id cross-league landmine)
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -88,6 +88,8 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `sg_events_canonical` Parking pseudo-events | match against TEvo | **TEvo merges parking into main listing** — skip `sg_category IN ('Parking','parking')` and `*venue_name ILIKE '%parking%'` rows. Matcher v3 enforces this. |
 | TEvo `/v9/events` date filter | `occurs_at_gte` (underscore) | **`"occurs_at.gte"` (dotted)** — underscore returns 422 Invalid Parameters |
 | `pg_net.http_get()` inside a loop | `PERFORM pg_sleep(N)` between calls to pace upstream rate limits | **NO-OP for rate limiting** — pg_net is **asynchronous**. The function returns a request_id immediately; HTTP fire happens in a background dispatch worker that doesn't honor function-side `pg_sleep`. Evidence: 50 queued GETs fired with IDENTICAL `_http_response.created` timestamp `02:34:45.137759`. PR #212/#214 pg_sleep stagger never worked. **Right pattern**: cap burst size to ≤ upstream token quota and use cron frequency for throughput. Codified as macro in §7. Discovered via PR #228 / mig 20260519140000. |
+| `espn_team_id` / `espn_event_id` cross-table reads | filter by id alone | **Cross-league collision** — espn_team_id `"28"` maps to BOTH MLB Atlanta Braves AND an NHL team (`28` had 1,400 NHL injury rows vs 3 MLB rows in 7-day window). Always **scope by `espn_league`** when reading `espn_injuries_snapshots` / `espn_event_snapshots` / cross-team joins. `event_xref.espn_league` carries it through from the TEvo side. Discovered via PR #237 / mig 20260519150000. |
+| ESPN team-ID resolution for forward-look events | `espn_event_snapshots` | **Snapshot pipeline is gameday-scope only** (§10 drift). For future events use `espn_event_date_lookup` (forward-look home/away/game_at_utc) first, fall back to snapshots only for past games. |
 
 ---
 
@@ -97,6 +99,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 |---|---|---|
 | `get_broker_event_page_v2(p_event_id, p_chart_hours)` | int, int (default 720) | **D0 Phase 2a primary**. 11 payload keys incl. sales_tape/weather/espn/sg_side_by_side/splits/freshness. Email-gated `@s4kent.com`. ~185ms. |
 | `get_broker_event_page(p_event_id, p_chart_hours)` | — | v1; v2 composes it for base payload |
+| `get_event_chart_extended(p_event_id, p_chart_hours, p_espn_home_team, p_espn_away_team)` | int, int (default 168), text, text | **D0 chart expansion (PR #237 / mig 20260519150000)**. 5 SG-side time-series (listings_median/owned_median/listings_count/sales_median/sales_count) + 2 ESPN annotation arrays (injuries LAG(status) per athlete league-scoped + game_state LAG(status_short)). Adaptive bucket (15min..1d). Auto-resolves home/away from `espn_event_date_lookup` if not passed. Returns `sg_hidden:true` for TEvo-only events. ~308ms warm @ 7d. |
 | `match_to_aq_event_id(source, src_id, name, venue, date, lat, lon, [src_venue_id])` | — | 4-tier matcher (direct id / venue+id / venue-exact / venue-fuzzy) |
 | `create_system_aq_event(source, name, venue, date, src_id)` | — | SYS-md5 fallback when matcher returns NULL |
 | `match_unmatched_orders_sweep(max, create_synth)` | int, bool | Cron-driven order sweep across 5 surfaces |
@@ -376,6 +379,7 @@ SELECT public.bot_chat_log(
 | 2026-05-19 | 20260519120000 | **SG priority crons 1min→5min**: `sg_priority_poll_tick_5min`, `sg_priority_listings_process_5min`, `sg_priority_sales_process_5min` renamed with staggered minute offsets. Reduces pg_cron load + 429 collision risk. Tier policy (240s/300s/1800s) still governs per-event cadence; cron just wakes the driver. |
 | 2026-05-19 | 20260519130000 | **SG broker 429 monitoring protocol**: `v_sg_broker_429_health` (hourly pct_429 rollup over 24h), `v_sg_broker_429_starved_events` (events 429'd 3+ times with no recent success), `check_sg_broker_429_health()` with hysteresis-protected bot_chat flag @ pct_429 > 15%. 15-min cron `sg_broker_429_health_check_15min`. |
 | **2026-05-19** | 20260519140000 | **🔥 SG broker burst-size emergency hotfix (PR #228)**: caps burst to 8 events/call on `sg_broker_listings_queue` + `sg_broker_sales_queue` (3+3 polls on `sg_priority_poll_tick`) — under SG's 10-token bucket. Drops broken `PERFORM pg_sleep(0.9)` calls (no-op given pg_net async dispatch — see §3 landmine + §7 macro). New schedules: listings `*/5`, sales `2-57/5`, poll_tick `4-59/5`. pct_429 went 70.7% (02:00 hour) → 0.0% on every firing 02:50 onward. Sustained 0.73 req/sec << 1.25 req/sec quota. |
+| 2026-05-19 | 20260519150000 | **D0 chart expansion RPC (PR #237)**: `get_event_chart_extended(p_event_id, p_chart_hours DEFAULT 168, p_espn_home_team text, p_espn_away_team text)` returns 5 SG-side series (listings_median/owned_median/listings_count/sales_median/sales_count over adaptive 15min..1d buckets) + 2 ESPN annotation arrays (injuries LAG(status) per athlete league-scoped; game_state LAG(status_short) per espn_event_id). Auto-resolves home/away from `espn_event_date_lookup` (forward-look) → `espn_event_snapshots` (gameday) when not passed. SECDEF + email gate. Landmine surfaced: `espn_team_id` collides cross-league (id=28 = MLB + NHL); RPC scopes by `espn_league`. Codified in §3 + §4. Latency 308ms warm @ 7d. |
 
 ---
 
@@ -386,7 +390,7 @@ SELECT public.bot_chat_log(
 | `tevo_event_id` populated on SG snapshot tables | Partial: PR #178 backfilled to 87.35%; mig 20260517160000 ensures NEW rows are born populated where xref exists | Query by `sg_event_id` when `tevo_event_id IS NULL` (no xref) |
 | `seatgeek_event_xref.last_listings_at`/`last_sales_at` | Dead globally (0/967) | Use `MAX(captured_at)` on snapshot tables |
 | `sg_events_canonical.has_v2_listings_pulled` | Dead (25/4609 = 0.5%) | Same |
-| ESPN snapshot pipeline = gameday-scope only | (specced, not built) | Forward-look ESPN panels empty by design |
+| ESPN snapshot pipeline = gameday-scope only | (specced, not built) | Forward-look ESPN panels empty by design. Use `espn_event_date_lookup` for forward-look team IDs / game_at_utc. |
 | 29% active TEvo events have no SG bridge | NWSL/USL/AHL/niche real gap | First-class TEvo-only UI state |
 | SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
 | `aq_short_event_id` 0% on `listings_snapshots` | Cron resumed 2026-05-16; firing 04:02 UTC | Use `event_id` for TEvo reads |
