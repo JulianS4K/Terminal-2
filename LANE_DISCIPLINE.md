@@ -161,10 +161,20 @@ D0 has full workspace-wide Render permissions, parity with A1. All `mcp__render_
 **Must filter from any client response:**
 - `wholesale_price`, `wholesale_min`, `wholesale_*`
 - `brokerage_id`, `brokerage_name`, `office_id`, `office_name`
-- `is_owned`, `is_ancillary` provenance flags that reveal S4K's inventory position
+- `is_owned`, `is_ancillary` provenance flags that reveal S4K's inventory position (see storefront carveout below)
 - TEvo signing tokens, API tokens, secrets from vault
 - Raw broker_* table rows
 - Any column not whitelisted by a `*_public` RPC
+
+**Storefront-product carveout (`/api/store/*` only, codified 2026-05-18 from B1 war-games W-3 / bot_chat 308):**
+
+The storefront is a "100% we-own catalog" by product design — every event surfaced is one S4K holds inventory for, with no "browse market" fallthrough (see `store_events()` docstring in `app.py`). Under this model the following fields are **intentionally exposed** on `/api/store/*` responses and power the retail availability UX ("X tix · Y listings" badge in `static/store/store.js`, buyable-vs-browse split):
+
+- `we_own` (bool) — drives result prioritization in `/api/store/search`
+- `owned_tix` / `owned_tickets_count` (int) — inventory-availability count
+- `owned_groups_count` (int) — listings count for the same event
+
+These are retail-availability signals (analogous to "5 tickets left" on any consumer ticket marketplace), not wholesale-side broker flags. The broader `is_owned` / `is_ancillary` rule above still applies to terminal / portfolio / broker API responses where the field carries wholesale-position semantics.
 
 **Filter pattern:** call public-RPC → response only contains retail-safe fields → serialize that to client. Never dump raw broker rows. RULE 7 (retail product = S4K-owned only) applies: listings exposed must be filtered to S4K-owned where applicable.
 

@@ -491,6 +491,85 @@ a { color: inherit; }
 /* Parking-list rows reuse .row styles but trim some seat-only ornaments. */
 .parking-list .parking-row { /* same .row grid; no overrides needed today */ }
 
+/* ----- Quick pricing rollup (event detail, between tabs and filter bar) -----
+   Computed client-side from the listings array. Two stacked blocks:
+     1. .qp-buckets — 5-cell row of from-price by quantity (1/2/3/4/5+).
+     2. .qp-sections — top-10 sections by listings count + from-price.
+   Hidden by JS when there's no seat data or the Parking tab is active. */
+.quick-pricing {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.qp-buckets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.qp-bucket {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 6px;
+  text-align: center;
+  background: rgba(255,255,255,0.015);
+}
+.qp-bucket.empty { opacity: 0.45; }
+.qp-bucket .qp-qty {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.qp-bucket .qp-price {
+  font-weight: 800;
+  font-size: 16px;
+  color: var(--accent-2);
+  line-height: 1.1;
+}
+.qp-bucket.empty .qp-price { color: var(--muted); font-weight: 600; }
+.qp-bucket .qp-meta { font-size: 11px; margin-top: 2px; }
+
+.qp-sections-hdr {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.qp-sec-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.qp-sec {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.02);
+  font-size: 12px;
+}
+.qp-sec-name { font-weight: 700; }
+.qp-sec-meta { font-size: 11px; }
+.qp-sec-price { color: var(--accent-2); font-weight: 700; }
+
+/* Narrow viewports: collapse the 5-cell bucket row into 2 columns so the
+   "from $X" price stays readable. Mirrors the catalog responsive break. */
+@media (max-width: 560px) {
+  .qp-buckets { grid-template-columns: repeat(3, 1fr); }
+  .qp-bucket .qp-price { font-size: 14px; }
+}
+
 /* Inline filter-bar error pill — surfaces when applyFiltersAndFetch
    catches. Mirrors search-dropdown error tone so the bad-state vocabulary
    is consistent. Per D1 UX audit 2026-05-12 fix #5. */
