@@ -285,6 +285,12 @@
     // cold-start where the round-trip is ~12s). When load resolves below,
     // any pending user query is re-applied at that point.
     let loadComplete = false;
+    // True once the user has submitted a backend search via /api/store/
+    // search. Prevents loadCatalog's late .then() from clobbering search
+    // results with the unfiltered home grid when home was still pending
+    // at submit time (operator report 2026-05-18 — "yankees" + Search
+    // produced silent no-op because the gate at searchAndRender bailed).
+    let userHasSearched = false;
 
     function render(events, mode) {
       // mode: "all" (initial load) or "search" (after a query)
@@ -398,6 +404,7 @@
       hideSuggest();
       // Empty submit → revert to the home view (full catalog).
       if (!q) {
+        userHasSearched = false;
         render(allEvents, "all");
         return;
       }
@@ -430,7 +437,16 @@
     // (If Necessary) speculative names client-side until PR #175 lands
     // the server-side filter.
     function searchAndRender(q) {
-      if (!loadComplete) return;  // same cold-start gate as filter()
+      // No loadComplete gate here — Submit is an explicit user action and
+      // /api/store/search is independent of /api/store/home (different
+      // endpoint, different code path). If the home catalog is still
+      // pending or stalled, the user can still recover by submitting a
+      // search. The original gate (PR #141) was added to prevent the
+      // in-memory filter() from racing with the home fetch; that race
+      // never applied to backend-search Submit because Submit doesn't
+      // touch the in-memory allEvents array. Removed 2026-05-18 after
+      // operator report: typing "yankees" + clicking Search produced
+      // silent no-op when home was hanging.
       status.hidden = false;
       status.textContent = `Searching for "${q}"…`;
       grid.hidden = true;
@@ -468,6 +484,7 @@
             return !up.includes("CANCELLED") && !up.includes("(IF NECESSARY)");
           });
           render(cleaned, "search");
+          userHasSearched = true;
         })
         .catch((err) => {
           console.error("searchAndRender failed:", err);
@@ -538,6 +555,14 @@
           allEvents = res.events || [];
           loadComplete = true;
           renderCatalogFilterBanner(performerId, venueId, allEvents);
+          // Don't clobber a backend search the user submitted while home
+          // was still pending. The Submit-gate removal (2026-05-18) lets
+          // a user search even before home resolves; if they did, leave
+          // their results in place.
+          if (userHasSearched) {
+            status.hidden = true;
+            return;
+          }
           // If user typed during the load window, honor that query now.
           // Otherwise render the full grid as before.
           const pendingQuery = (input.value || "").trim();
