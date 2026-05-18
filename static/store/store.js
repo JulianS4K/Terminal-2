@@ -631,15 +631,26 @@
     }
     loadCatalog();
 
-    // NYC movers strip — only shown on the bare /store view (no performer
-    // or venue filter). Velocity-driven, sorted by 24h ticket drop.
+    // NYC movers strip + rest grid — only shown on the bare /store view
+    // (no performer or venue filter). Label-driven now (selling_fast /
+    // demand_rising / trending / deal). days=90 to give the 3mo horizon
+    // enough pool for the proportional rest sampling. limit kept at 8 for
+    // back-compat (the server clamps top to [5,8] of 1% regardless).
     if (!performerId && !venueId) {
       const strip = $("#moversStrip");
       const row = $("#moversRow");
+      const rest = $("#moversRest");
+      const restGrid = $("#moversRestGrid");
       if (strip && row) {
-        api("/api/store/movers?city=NYC&days=21&limit=8")
-          .then((res) => renderMoversStrip(strip, row, res))
-          .catch(() => { strip.hidden = true; });
+        api("/api/store/movers?city=NYC&days=90&limit=8")
+          .then((res) => {
+            renderMoversStrip(strip, row, res);
+            if (rest && restGrid) renderMoversRest(rest, restGrid, res);
+          })
+          .catch(() => {
+            strip.hidden = true;
+            if (rest) rest.hidden = true;
+          });
       }
     }
 
@@ -822,56 +833,97 @@
     return a;
   }
 
+  // Label badge config — multi-label system (server returns `labels` array of
+  // {name, conf}). conf=2 (dual TEvo+SG corroboration) renders with an accent
+  // outline via CSS, conf=1 is the base style. Order in this map controls
+  // the visual display order of badges on a card.
+  const LABEL_DISPLAY = {
+    selling_fast:  "🔥 selling fast",
+    demand_rising: "📈 demand rising",
+    trending:      "✨ trending",
+    deal:          "💸 deal",
+  };
+
+  function _moverCard(ev) {
+    const a = document.createElement("a");
+    a.className = "mover-card";
+    if (ev.from_pad) a.classList.add("from-pad");
+    a.href = `/store/event/${Number(ev.id) || 0}`;
+    if (ev.primary_performer_color) {
+      a.style.setProperty("--card-accent", ev.primary_performer_color);
+    }
+    // Multi-label badges. Server returns labels array; iterate in our display
+    // order to keep badge sequence consistent across cards.
+    const labels = Array.isArray(ev.labels) ? ev.labels : [];
+    if (labels.length) {
+      const badges = document.createElement("div");
+      badges.className = "mover-badges";
+      Object.keys(LABEL_DISPLAY).forEach((lblName) => {
+        const lbl = labels.find((L) => L && L.name === lblName);
+        if (!lbl) return;
+        const span = document.createElement("span");
+        span.className = `mover-badge ${lblName} conf-${lbl.conf || 1}`;
+        span.textContent = LABEL_DISPLAY[lblName];
+        badges.append(span);
+      });
+      a.append(badges);
+    }
+    const title = document.createElement("div");
+    title.className = "mover-title";
+    title.textContent = ev.name || "Untitled event";
+    a.append(title);
+    const where = document.createElement("div");
+    where.className = "mover-where";
+    where.textContent = [ev.venue_name, fmtWhen(ev.occurs_at_local)].filter(Boolean).join(" · ");
+    a.append(where);
+    const meta = document.createElement("div");
+    meta.className = "mover-meta";
+    if (ev.from_price != null) {
+      const fp = document.createElement("span");
+      fp.className = "mover-price";
+      fp.textContent = `from ${fmtMoney(ev.from_price)}`;
+      meta.append(fp);
+    }
+    if (ev.tix_d24h != null && Number(ev.tix_d24h) < 0) {
+      const note = document.createElement("span");
+      note.className = "mover-note";
+      note.textContent = `${Math.abs(Number(ev.tix_d24h))} sold today`;
+      meta.append(note);
+    } else if (ev.sg_sales_24h && Number(ev.sg_sales_24h) > 0) {
+      // Fallback note: SG-side activity when TEvo velocity isn't available
+      const note = document.createElement("span");
+      note.className = "mover-note";
+      note.textContent = `${Number(ev.sg_sales_24h)} SG sold 24h`;
+      meta.append(note);
+    }
+    a.append(meta);
+    return a;
+  }
+
   // Render the "Moving fast in NYC" strip — horizontal card row above
-  // the main grid. Each card carries at most one velocity badge from
-  // the locked-down trio: 🔥 selling fast, 📈 demand rising, ⭐ premium.
+  // the main grid. Each card carries 1+ multi-label badges (selling_fast /
+  // demand_rising / trending / deal). Top 1% of qualifying pool, clamped
+  // server-side to [5, 8] cards.
   function renderMoversStrip(strip, row, payload) {
     const items = (payload && payload.events) || [];
     row.replaceChildren();
     if (!items.length) { strip.hidden = true; return; }
     strip.hidden = false;
     for (const ev of items) {
-      const a = document.createElement("a");
-      a.className = "mover-card";
-      a.href = `/store/event/${Number(ev.id) || 0}`;
-      if (ev.primary_performer_color) {
-        a.style.setProperty("--card-accent", ev.primary_performer_color);
-      }
-      // Velocity badge: 'selling_fast' | 'demand_rising' | 'premium' | null
-      if (ev.signal) {
-        const badge = document.createElement("span");
-        badge.className = `mover-badge ${ev.signal}`;
-        badge.textContent = ({
-          selling_fast: "🔥 selling fast",
-          demand_rising: "📈 demand rising",
-          premium: "⭐ premium",
-        })[ev.signal] || "";
-        a.append(badge);
-      }
-      const title = document.createElement("div");
-      title.className = "mover-title";
-      title.textContent = ev.name || "Untitled event";
-      a.append(title);
-      const where = document.createElement("div");
-      where.className = "mover-where";
-      where.textContent = [ev.venue_name, fmtWhen(ev.occurs_at_local)].filter(Boolean).join(" · ");
-      a.append(where);
-      const meta = document.createElement("div");
-      meta.className = "mover-meta";
-      if (ev.from_price != null) {
-        const fp = document.createElement("span");
-        fp.className = "mover-price";
-        fp.textContent = `from ${fmtMoney(ev.from_price)}`;
-        meta.append(fp);
-      }
-      if (ev.tix_d24h != null && Number(ev.tix_d24h) < 0) {
-        const note = document.createElement("span");
-        note.className = "mover-note";
-        note.textContent = `${Math.abs(Number(ev.tix_d24h))} sold today`;
-        meta.append(note);
-      }
-      a.append(meta);
-      row.append(a);
+      row.append(_moverCard(ev));
+    }
+  }
+
+  // Render the "More moving in NYC" rest grid (2 rows × 5 cards). Same card
+  // markup as the strip. Server sends `rest` array (≤10) sampled proportional
+  // to label distribution; padded from owned-1-50 events when primary thin.
+  function renderMoversRest(section, gridEl, payload) {
+    const items = (payload && payload.rest) || [];
+    gridEl.replaceChildren();
+    if (!items.length) { section.hidden = true; return; }
+    section.hidden = false;
+    for (const ev of items) {
+      gridEl.append(_moverCard(ev));
     }
   }
 

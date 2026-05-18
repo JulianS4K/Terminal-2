@@ -5141,6 +5141,128 @@ def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
         _MOVERS_CACHE_REFRESHING.discard(key)
 
 
+# ---------------------------------------------------------------------------
+# Movers label system (multi-label per event + proportional sampling).
+# Used by _compute_movers below. Labels:
+#   selling_fast   TEvo d24h <= -50 OR SG sales_24h >= 25
+#   demand_rising  (TEvo d24h<0 AND getin pct >= 5%) OR
+#                  (SG median delta >= +5% AND SG listings delta <= -5%)
+#   trending       SG sales_24h >= 10 (absolute volume, regardless of velocity)
+#   deal           retail_min < $20
+# Confidence = 2 if both TEvo+SG paths fire for the label, else 1.
+# selling_fast > demand_rising > trending > deal is the priority order for
+# bucketing in proportional rest sampling (each event bucketed under its
+# highest-priority label only).
+# ---------------------------------------------------------------------------
+_LABEL_PRIORITY = ("selling_fast", "demand_rising", "trending", "deal")
+
+
+def _movers_compute_labels(d24h_val, pct_val, retail_min,
+                           sg_sales_24h, sg_median_delta_pct,
+                           sg_listings_delta_pct) -> list[dict]:
+    """Classify an event into 0+ labels based on TEvo + SG signals. Returns
+    a list of {"name": str, "conf": 1|2}. Empty list means the event doesn't
+    qualify for the movers strip.
+    """
+    labels: list[dict] = []
+
+    # selling_fast: high velocity (either market)
+    tevo_sf = d24h_val is not None and d24h_val <= -50
+    sg_sf = sg_sales_24h is not None and sg_sales_24h >= 25
+    if tevo_sf or sg_sf:
+        labels.append({"name": "selling_fast", "conf": 2 if (tevo_sf and sg_sf) else 1})
+
+    # demand_rising: tickets dropping AND price firming, either market
+    tevo_dr = (d24h_val is not None and d24h_val < 0
+               and pct_val is not None and pct_val >= 5.0)
+    sg_dr = (sg_median_delta_pct is not None and sg_median_delta_pct >= 5.0
+             and sg_listings_delta_pct is not None and sg_listings_delta_pct <= -5.0)
+    if tevo_dr or sg_dr:
+        labels.append({"name": "demand_rising", "conf": 2 if (tevo_dr and sg_dr) else 1})
+
+    # trending: SG absolute volume signal (single-source)
+    if sg_sales_24h is not None and sg_sales_24h >= 10:
+        labels.append({"name": "trending", "conf": 1})
+
+    # deal: cheap get-in (single-source)
+    if retail_min is not None:
+        try:
+            if float(retail_min) < 20:
+                labels.append({"name": "deal", "conf": 1})
+        except (TypeError, ValueError):
+            pass
+
+    return labels
+
+
+def _movers_compute_score(labels: list[dict], d24h_val) -> float:
+    """Per-event ranking score used by top-1% slice + within-bucket ordering
+    in proportional rest sampling. Higher = better.
+    """
+    if not labels:
+        return 0.0
+    max_conf = max(L["conf"] for L in labels)
+    n = len(labels)
+    mag = abs(int(d24h_val)) if isinstance(d24h_val, int) else 0
+    return max_conf * 10.0 + n * 2.0 + (mag / 50.0)
+
+
+def _sample_proportional_by_label(pool: list[dict], n: int) -> list[dict]:
+    """Sample up to `n` events from `pool`, allocating slots in proportion
+    to the label-distribution in the pool. Each event goes into the bucket
+    of its highest-priority label (per _LABEL_PRIORITY). Within a bucket,
+    events are taken in score-DESC order. Largest-remainder rounding to
+    keep the total at exactly n (or len(pool) if smaller).
+
+    Returns a flat list, ordered by label-priority then by score within
+    each label group.
+    """
+    if not pool or n <= 0:
+        return []
+
+    # Bucket each event under its highest-priority label
+    buckets: dict[str, list[dict]] = {lbl: [] for lbl in _LABEL_PRIORITY}
+    for e in pool:
+        primary = None
+        for lbl in _LABEL_PRIORITY:
+            if any(L["name"] == lbl for L in (e.get("labels") or [])):
+                primary = lbl
+                break
+        if primary:
+            buckets[primary].append(e)
+
+    nonempty = [(lbl, evs) for lbl, evs in buckets.items() if evs]
+    if not nonempty:
+        return []
+
+    total_in_buckets = sum(len(evs) for _, evs in nonempty)
+    n_target = min(n, total_in_buckets)
+
+    # Largest-remainder allocation
+    raw = [(lbl, len(evs) * n_target / total_in_buckets, evs) for lbl, evs in nonempty]
+    base = [(lbl, int(r), evs) for lbl, r, evs in raw]
+    remainders = sorted(
+        [(lbl, (len(evs) * n_target / total_in_buckets) - int(len(evs) * n_target / total_in_buckets), evs)
+         for lbl, _, evs in base],
+        key=lambda x: -x[1])
+    allocated = {lbl: c for lbl, c, _ in base}
+    deficit = n_target - sum(allocated.values())
+    for lbl, _, _ in remainders[:deficit]:
+        allocated[lbl] += 1
+    # Cap each allocation to bucket size
+    for lbl, _, evs in base:
+        allocated[lbl] = min(allocated[lbl], len(evs))
+
+    out: list[dict] = []
+    for lbl in _LABEL_PRIORITY:
+        take = allocated.get(lbl, 0)
+        if not take:
+            continue
+        sorted_bucket = sorted(buckets[lbl], key=lambda e: -e.get("score", 0.0))
+        out.extend(sorted_bucket[:take])
+    return out
+
+
 def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     """Pure compute path for the movers endpoint. Extracted from the route
     handler so both the cold-cache code path AND the background-refresh
@@ -5254,28 +5376,123 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         except (TypeError, ValueError):
             return False
 
-    candidates: list[dict] = []
+    # ----- SG enrichment (xref + sales 48h + listings now/prior windows) -----
+    # Each block wrapped in try/except so SG-side failures degrade to TEvo-only
+    # labels rather than killing the strip. Bible §3 landmines respected:
+    # sales firehose 11-23x dedup via sg_sale_id, listings keyed by sg_event_id.
+    sg_event_id_by_tevo: dict[int, int] = {}
+    try:
+        sg_xref = (db.table("seatgeek_event_xref")
+                     .select("tevo_event_id,sg_event_id")
+                     .in_("tevo_event_id", list(metrics_by_id.keys()))
+                     .execute().data) or []
+        sg_event_id_by_tevo = {int(r["tevo_event_id"]): int(r["sg_event_id"])
+                               for r in sg_xref if r.get("sg_event_id")}
+    except Exception as e:
+        print(f"store_movers sg_xref query failed: {e}")
+    tevo_by_sg = {v: k for k, v in sg_event_id_by_tevo.items()}
+    sg_ids = list(sg_event_id_by_tevo.values())
+
+    sg_sales_24h_by_tevo: dict[int, int] = {}
+    sg_sales_prior_24h_by_tevo: dict[int, int] = {}
+    if sg_ids:
+        try:
+            cutoff_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+            cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            rows = (db.table("seatgeek_sales_snapshots")
+                      .select("sg_event_id,sg_sale_id,sale_at_utc,pulled_at")
+                      .in_("sg_event_id", sg_ids)
+                      .gte("sale_at_utc", cutoff_48h)
+                      .limit(20000)
+                      .execute().data) or []
+            # Python-side DISTINCT ON sg_sale_id (latest pulled_at wins)
+            latest_by_sale: dict = {}
+            for r in rows:
+                sid = r.get("sg_sale_id")
+                if sid is None:
+                    continue
+                prior = latest_by_sale.get(sid)
+                if not prior or (r.get("pulled_at") or "") > (prior.get("pulled_at") or ""):
+                    latest_by_sale[sid] = r
+            for r in latest_by_sale.values():
+                sg_eid = int(r["sg_event_id"])
+                tev = tevo_by_sg.get(sg_eid)
+                if not tev:
+                    continue
+                sat = r.get("sale_at_utc") or ""
+                if sat >= cutoff_24h:
+                    sg_sales_24h_by_tevo[tev] = sg_sales_24h_by_tevo.get(tev, 0) + 1
+                else:
+                    sg_sales_prior_24h_by_tevo[tev] = sg_sales_prior_24h_by_tevo.get(tev, 0) + 1
+        except Exception as e:
+            print(f"store_movers sg_sales query failed: {e}")
+
+    # SG listings two windows: now (≤6h) and prior (24-30h ago). DISTINCT ON
+    # sglid per window, then count + median(broadcast_price).
+    sg_listings_now: dict[int, dict] = {}    # tev -> {count, median}
+    sg_listings_prior: dict[int, dict] = {}
+    if sg_ids:
+        for window_label, lo_iso, hi_iso in [
+            ("now",
+             (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(),
+             None),
+            ("prior",
+             (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat(),
+             (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()),
+        ]:
+            try:
+                q = (db.table("seatgeek_listings_snapshots")
+                       .select("sg_event_id,sglid,broadcast_price,captured_at")
+                       .in_("sg_event_id", sg_ids)
+                       .gte("captured_at", lo_iso))
+                if hi_iso is not None:
+                    q = q.lt("captured_at", hi_iso)
+                rows = q.order("captured_at", desc=True).limit(50000).execute().data or []
+            except Exception as e:
+                print(f"store_movers sg_listings {window_label} query failed: {e}")
+                rows = []
+            # DISTINCT ON sglid (latest captured_at wins; rows already ordered DESC)
+            per_event: dict[int, dict] = {}
+            for r in rows:
+                sg_eid = int(r["sg_event_id"])
+                sglid = r.get("sglid")
+                if sg_eid not in per_event:
+                    per_event[sg_eid] = {"sglids": set(), "prices": []}
+                if sglid in per_event[sg_eid]["sglids"]:
+                    continue
+                per_event[sg_eid]["sglids"].add(sglid)
+                bp = r.get("broadcast_price")
+                if bp is not None:
+                    try:
+                        per_event[sg_eid]["prices"].append(float(bp))
+                    except (TypeError, ValueError):
+                        pass
+            target = sg_listings_now if window_label == "now" else sg_listings_prior
+            for sg_eid, agg in per_event.items():
+                tev = tevo_by_sg.get(sg_eid)
+                if not tev:
+                    continue
+                prices = sorted(agg["prices"])
+                median = prices[len(prices) // 2] if prices else None
+                target[tev] = {"count": len(agg["sglids"]), "median": median}
+
+    # ----- Classify each event into 0+ labels -----
+    # We compute labels for ALL owned (>=1) events. Partition into primary
+    # (owned > 50) and secondary (owned 1-50) downstream — secondary is used
+    # only to pad the rest grid when primary is thin.
+    primary: list[dict] = []
+    secondary: list[dict] = []
     for eid, m in metrics_by_id.items():
         if eid in inactive:
             continue
         ev = events_by_id.get(eid) or {}
         v = velocity_by_id.get(eid) or {}
         velocity_fresh = _is_velocity_fresh(v)
-        # Suppress d24h/d1h reads when the underlying velocity row is stale.
         tix_d24h = v.get("tevo_tix_d24h") if velocity_fresh else None
         getin_pct_24h = v.get("tevo_getin_d24h_pct") if velocity_fresh else None
         getin_now = v.get("tevo_getin_now")
         from_price = m.get("retail_min") if m.get("retail_min") is not None else getin_now
 
-        # Signal classification — only the three labels the directive allows.
-        # Priority: premium > selling_fast > demand_rising. Premium runs
-        # first because expensive playoff inventory should always carry the
-        # "⭐" badge even when ticket delta is small.
-        signal: str | None = None
-        try:
-            getin_val = float(getin_now) if getin_now is not None else None
-        except (TypeError, ValueError):
-            getin_val = None
         try:
             d24h_val = int(tix_d24h) if tix_d24h is not None else None
         except (TypeError, ValueError):
@@ -5285,20 +5502,34 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         except (TypeError, ValueError):
             pct_val = None
 
-        if getin_val is not None and getin_val >= 500:
-            signal = "premium"
-        elif d24h_val is not None and d24h_val <= -50:
-            signal = "selling_fast"
-        elif d24h_val is not None and d24h_val < 0 and pct_val is not None and pct_val >= 5.0:
-            signal = "demand_rising"
+        # SG aggregates for this event
+        sg_sales_24h = sg_sales_24h_by_tevo.get(eid, 0)
+        sg_sales_prior = sg_sales_prior_24h_by_tevo.get(eid, 0)
+        sg_sales_delta_pct = None
+        if sg_sales_prior > 0:
+            sg_sales_delta_pct = round(100.0 * (sg_sales_24h - sg_sales_prior) / sg_sales_prior, 1)
+        sg_now = sg_listings_now.get(eid)
+        sg_prior = sg_listings_prior.get(eid)
+        sg_listings_delta_pct = None
+        sg_median_delta_pct = None
+        if sg_now and sg_prior and sg_prior["count"] > 0:
+            sg_listings_delta_pct = round(
+                100.0 * (sg_now["count"] - sg_prior["count"]) / sg_prior["count"], 1)
+        if (sg_now and sg_prior and sg_prior["median"]
+                and sg_prior["median"] > 0 and sg_now["median"] is not None):
+            sg_median_delta_pct = round(
+                100.0 * (sg_now["median"] - sg_prior["median"]) / sg_prior["median"], 1)
 
-        # Mover-worthy if it has any signal OR meaningful 24h activity (so
-        # the strip isn't a blank slate when no event hits the strict gates).
-        if signal is None and (d24h_val is None or d24h_val > -5):
+        labels = _movers_compute_labels(
+            d24h_val, pct_val, m.get("retail_min"),
+            sg_sales_24h, sg_median_delta_pct, sg_listings_delta_pct)
+        if not labels:
             continue
+        score = _movers_compute_score(labels, d24h_val)
 
         a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
-        candidates.append({
+        owned_tickets = m.get("owned_tickets_count") or 0
+        card = {
             "id": ev.get("id"),
             "name": ev.get("name"),
             "occurs_at_local": ev.get("occurs_at_local"),
@@ -5310,26 +5541,48 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "from_price": from_price,
             "tix_d24h": d24h_val,
             "getin_pct_24h": pct_val,
-            "signal": signal,
-        })
+            "sg_sales_24h": sg_sales_24h,
+            "sg_sales_delta_pct": sg_sales_delta_pct,
+            "sg_listings_delta_pct": sg_listings_delta_pct,
+            "sg_median_delta_pct": sg_median_delta_pct,
+            "owned_tickets_count": owned_tickets,
+            "labels": labels,
+            "score": score,
+        }
+        if owned_tickets > 50:
+            primary.append(card)
+        else:
+            secondary.append(card)
 
-    # Sort by absolute 24h ticket-drop magnitude desc, tie-break to soonest.
-    # Events with no d24h fall to the end (treat None as 0 activity).
-    def _mover_sort_key(c):
-        d = c.get("tix_d24h")
-        # Most negative = highest priority. Convert to positive magnitude.
-        mag = -int(d) if isinstance(d, int) and d < 0 else 0
-        occurs = c.get("occurs_at_local") or "9999"
-        # Sort key wants most-active FIRST = larger magnitudes first → negate.
-        return (-mag, occurs)
-    candidates.sort(key=_mover_sort_key)
-    candidates = candidates[:cap]
+    # ----- Sort primary by score DESC, slice top 1% (clamp [5,8]) -----
+    primary.sort(key=lambda c: (-c["score"], c.get("occurs_at_local") or "9999"))
+    n_primary = len(primary)
+    if n_primary == 0:
+        n_top = 0
+    else:
+        n_top = max(5, min(8, round(n_primary * 0.01)))
+        n_top = min(n_top, n_primary)
+    top = primary[:n_top]
+    primary_rest_pool = primary[n_top:]
+
+    # ----- Build rest via proportional sampling; pad from secondary if thin -----
+    rest = _sample_proportional_by_label(primary_rest_pool, n=10)
+    if len(rest) < 10 and secondary:
+        seen_ids = {c["id"] for c in primary}
+        secondary_pool = [c for c in secondary if c["id"] not in seen_ids]
+        secondary_pool.sort(key=lambda c: (-c["score"], c.get("occurs_at_local") or "9999"))
+        pad_n = 10 - len(rest)
+        padded = _sample_proportional_by_label(secondary_pool, n=pad_n)
+        for c in padded:
+            c["from_pad"] = True
+        rest.extend(padded)
 
     return {
         "city": city,
         "days": day_cap,
-        "count": len(candidates),
-        "events": candidates,
+        "count": len(top) + len(rest),
+        "events": top,
+        "rest": rest,
     }
 
 
