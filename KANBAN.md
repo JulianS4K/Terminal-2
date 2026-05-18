@@ -52,7 +52,6 @@
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
 | B1-NEXT-18 | Op | Verify Actions secrets populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). | Operator confirms next session via Settings → Secrets |
 | B1-NEXT-31 | A1 | §6 body guard absent on 7 JWT-gated SECDEF RPCs: `get_broker_event_page` (v1/v2/v3), `get_event_sg_listings_full`, `get_event_evo_listings_full`, `get_event_sg_sales_full`, `get_event_cross_source_metrics`. JWT body check IS primary mitigation; guard is 2nd belt. **BLOCKED on spec clarification** — literal §6 `current_user NOT IN (service_role, postgres, supabase_admin)` would brick these (anon/authenticated callers via PostgREST). bot_chat question pending B1 response. | Wait for B1 spec; verified `public_exec=false` already in place on all 7 |
-| B1-NEXT-39 | D0 + D1 | `/api/store/search` exposes `we_own` (bool) + `owned_tix` (count). LANE_DISCIPLINE.md §D1 wall rule lists `is_owned` as forbidden. May be intentional storefront-product behavior. bot_chat 308. | If intentional: add carveout to LANE_DISCIPLINE.md §D1. If not: filter columns from `/api/store/search` response in `app.py` |
 
 ### SEC-LOW (hygiene)
 
