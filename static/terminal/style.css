@@ -420,6 +420,158 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 }
 #perf-hero .ph-right .meta .dot { margin: 0 8px; color: var(--dim); }
 
+/* ---------- VENUE page (mirrors performer page layout) ---------- */
+
+.wrap.venue { display: flex; flex-direction: column; gap: 12px; }
+.wrap.venue > section,
+.wrap.venue > .tab-pane > section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+}
+#venue-hero {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 16px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+}
+#venue-hero .ph-left img {
+  width: 88px; height: 88px; object-fit: cover;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+#venue-hero .ph-right .title { margin: 0 0 4px; font-size: 22px; }
+#venue-hero .ph-right .meta {
+  margin: 0; color: var(--muted);
+  font-family: var(--mono); font-size: 12px;
+}
+#venue-hero .ph-right .meta .dot { margin: 0 8px; color: var(--dim); }
+#venue-hero .ph-right .meta a { color: var(--accent); }
+
+/* Tab-panes on performer + venue pages use plain flex (not display:contents)
+   because the surrounding .wrap.{performer,venue} containers are flex columns
+   themselves, not 12-col grids like event page. */
+.wrap.performer .tab-pane,
+.wrap.venue     .tab-pane { display: block; }
+.wrap.performer .tab-pane[hidden],
+.wrap.venue     .tab-pane[hidden] { display: none; }
+
+/* ---------- Entity index (performer + venue 4-league directory) ---------- */
+
+.entity-index-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.entity-index-col {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 8px;
+}
+.entity-index-col-hdr {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.entity-index-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  font-family: var(--mono); font-size: 12px;
+  max-height: 70vh; overflow-y: auto;
+}
+.entity-index-list li {
+  border-bottom: 1px solid var(--line-2);
+}
+.entity-index-list li:last-child { border-bottom: 0; }
+.entity-index-list a {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 6px;
+  color: var(--text);
+  text-decoration: none;
+}
+.entity-index-list a:hover {
+  background: var(--shade);
+  border-left: 2px solid var(--accent);
+  padding-left: 4px;
+}
+.entity-idx-name {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.entity-idx-count {
+  color: var(--muted);
+  font-size: 10px;
+  background: var(--panel);
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+
+/* ---------- ESPN context tab (performer) ---------- */
+
+.espn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 12px;
+}
+.espn-col { min-width: 0; }
+.espn-col-wide { grid-column: span 1; }
+.espn-col-hdr {
+  font-family: var(--mono); font-size: 10px;
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line-2);
+}
+.espn-standings, .espn-injuries, .espn-recent {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--mono); font-size: 11px;
+}
+.espn-standings td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--line-2);
+}
+.espn-standings td.lbl {
+  color: var(--muted); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  width: 40%;
+}
+.espn-injuries thead th, .espn-recent thead th {
+  text-align: left;
+  color: var(--muted); font-weight: 600;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.espn-injuries tbody td, .espn-recent tbody td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--line-2);
+}
+.espn-injuries .injury-status {
+  color: var(--warn);
+  font-weight: 600;
+}
+.espn-recent .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Venue owned-inventory summary chip */
+.venue-owned-summary {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-2);
+}
+
 /* ---------- ORDERS page ---------- */
 
 .wrap.orders { display: flex; flex-direction: column; gap: 12px; }

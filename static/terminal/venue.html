@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Venue</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="venue">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap venue">
+
+    <!-- INDEX MODE: 4-league venue directory. Shown when no ?venue=<id>. -->
+    <section id="venue-index" hidden>
+      <div class="panel-title row">
+        <span>VENUES — NFL · NBA · MLB · MLS</span>
+        <span class="muted small" id="venueIndexCounts"></span>
+      </div>
+      <div id="venueIndexBody"><div class="empty">loading…</div></div>
+    </section>
+
+    <!-- DETAIL MODE: hero + tabs. -->
+    <section id="venue-hero" hidden>
+      <div class="ph-left">
+        <img id="vhHero" alt="" />
+      </div>
+      <div class="ph-right">
+        <h1 class="title" id="vhName">—</h1>
+        <p class="meta">
+          <span id="vhCity">—</span>
+          <span class="dot">·</span>
+          <span id="vhCapacity">—</span>
+          <span class="dot">·</span>
+          <span id="vhIndoor" class="badge">—</span>
+          <span class="dot">·</span>
+          <a id="vhMapsLink" target="_blank" rel="noopener" class="muted small">map ↗</a>
+        </p>
+      </div>
+    </section>
+
+    <nav class="event-tabs" id="venueTabs" role="tablist" hidden>
+      <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+      <button class="event-tab" data-tab="events" role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountVenueEvents"></span></button>
+      <button class="event-tab" data-tab="owned"  role="tab" aria-selected="false">Owned Inventory</button>
+      <button class="event-tab" data-tab="sg"     role="tab" aria-selected="false">SG Activity</button>
+    </nav>
+
+    <div class="tab-pane active" id="vPaneOverview" role="tabpanel" hidden>
+      <section id="venue-rollup">
+        <div class="panel-title">VENUE ROLLUP — NEXT 90D</div>
+        <div class="rollup-grid">
+          <div class="ru-cell"><span class="ru-num" id="vrEvents">—</span><span class="ru-lbl">events</span></div>
+          <div class="ru-cell"><span class="ru-num" id="vrPerformers">—</span><span class="ru-lbl">distinct performers</span></div>
+          <div class="ru-cell"><span class="ru-num" id="vrMarketTix">—</span><span class="ru-lbl">market tickets</span></div>
+          <div class="ru-cell"><span class="ru-num" id="vrOwnedTix">—</span><span class="ru-lbl">owned tickets</span></div>
+          <div class="ru-cell"><span class="ru-num" id="vrOwnedNotional">—</span><span class="ru-lbl">owned notional</span></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="tab-pane" id="vPaneEvents" role="tabpanel" hidden>
+      <section id="venue-events">
+        <div class="panel-title row">
+          <span>UPCOMING EVENTS — NEXT 90D</span>
+          <span class="muted small" id="vEventCount"></span>
+        </div>
+        <div id="vEventsBody"></div>
+      </section>
+    </div>
+
+    <div class="tab-pane" id="vPaneOwned" role="tabpanel" hidden>
+      <section id="venue-owned">
+        <div class="panel-title">OWNED INVENTORY — AT THIS VENUE</div>
+        <div id="vOwnedBody"></div>
+      </section>
+    </div>
+
+    <div class="tab-pane" id="vPaneSg" role="tabpanel" hidden>
+      <section id="venue-sg">
+        <div class="panel-title row">
+          <span>SG ACTIVITY — last 24h aggregate</span>
+          <span class="muted small" id="vSgMeta"></span>
+        </div>
+        <div id="vSgBody"></div>
+      </section>
+    </div>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+  <script src="nav.js"></script>
+  <script src="venue.js"></script>
+</body>
+</html>
