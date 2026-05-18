@@ -138,7 +138,13 @@
           </select>
         </div>
       </div>
-      <div id="chartHost"></div>
+      <!-- 3-pane stacked layout (PR redesign 2026-05-18) — replaces single
+           chartHost. Price 60% / Inventory 20% / Volume 20%. uPlot instances
+           share X-axis via cursor.sync. -->
+      <div id="chartHostPrice" class="chart-pane chart-pane-price"></div>
+      <div id="chartHostInv"   class="chart-pane chart-pane-inv"></div>
+      <div id="chartHostVol"   class="chart-pane chart-pane-vol"></div>
+      <div id="chartTooltip" class="chart-tooltip" hidden></div>
     </section>
 
     <section id="sg-broker-sales">

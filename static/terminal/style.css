@@ -119,23 +119,20 @@ main.wrap {
 .kpi-value.neg  { color: var(--neg); }
 .kpi-sub { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
-/* ---------- Chart ---------- */
+/* ---------- Chart — 3-pane stacked redesign (operator redesign 2026-05-18) ---------- */
 
 #chart {
   grid-column: 1 / -1;
   background: var(--panel);
   border: 1px solid var(--line);
   padding: 8px;
-  /* Flex column so chart-title (now wraps the 10-series legend post-PR #237)
-     takes natural height and #chartHost absorbs the remainder. Without
-     this, the canvas — sized at rect.height - 20 in renderChart — plus a
-     wrapped title overflows the 320px fixed container and bleeds below
-     into #sg-broker-sales. */
+  /* Flex column: chart-title (auto height) + 3 panes (flex-weighted 6:2:2)
+     + floating tooltip. min-height bumped from 420 → 540 to give the new
+     stacked layout enough vertical room. */
   display: flex;
   flex-direction: column;
-  height: 40vh;
-  min-height: 420px;   /* up from 320 — accommodates ~10-series wrapped legend */
-  position: relative;  /* needed for absolute .chart-anno-host overlay */
+  min-height: 540px;
+  position: relative;  /* anchor for .chart-anno-host + .chart-tooltip */
 }
 #chart .chart-title {
   display: flex; justify-content: space-between; align-items: flex-start;
@@ -146,21 +143,33 @@ main.wrap {
   text-transform: uppercase; letter-spacing: 0.5px;
   flex: 0 0 auto;
 }
-#chart #chartHost {
-  flex: 1 1 auto;
-  min-height: 0;    /* required for flex children that contain a canvas */
+/* Stacked panes. flex weights 6:2:2 = price 60%, inv 20%, vol 20% of remaining
+   vertical space. min-height:0 required for flex children that contain a
+   canvas (otherwise the canvas pushes the parent past the flex allotment). */
+#chart .chart-pane {
+  min-height: 0;
   position: relative;
+  overflow: hidden;
 }
+#chart .chart-pane-price { flex: 6 1 0; }
+#chart .chart-pane-inv   { flex: 2 1 0; border-top: 1px solid var(--line-2); }
+#chart .chart-pane-vol   { flex: 2 1 0; border-top: 1px solid var(--line-2); }
+#chart .chart-pane canvas { display: block; }
+
+/* Legend — now clickable swatches per series. Toggling dims the swatch + hides
+   the series via uPlot.setSeries({show:false}). Annotation icons unchanged. */
 #chart .legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 #chart .legend span { display: flex; align-items: center; gap: 4px; }
+#chart .legend .legend-item { transition: opacity 80ms ease; user-select: none; }
+#chart .legend .legend-item:hover { opacity: 1 !important; text-decoration: underline; text-decoration-style: dotted; }
+#chart .legend .legend-anno { cursor: default; }
 #chart .legend i {
   width: 10px; height: 2px; display: inline-block;
 }
 #chart .legend .legend-sep {
   color: var(--line-2); padding: 0 4px;
 }
-/* Annotation legend icons (mig 20260519150000) — small + cross for injury,
-   small square for game-state. Different from series swatches. */
+/* Annotation legend icons — small + cross for injury, small square for state. */
 #chart .legend i.anno-inj-i {
   width: 10px; height: 10px; background: transparent;
   border: 0; position: relative;
@@ -174,9 +183,46 @@ main.wrap {
 #chart .legend i.anno-gs-i {
   width: 8px; height: 8px; background: #14b8a6;
 }
+
+/* uPlot draws axis labels via canvas (not SVG), so the old
+   `#chart .uplot text { fill: ... }` rule was a no-op — axis text rendered
+   in default dark-gray, invisible on #0a0a0a background. Axis colors are
+   now set programmatically via opts.axes[*].stroke + .font in renderChart. */
 #chart .uplot { background: transparent; }
-#chart .uplot text { fill: var(--muted) !important; font-family: var(--mono) !important; font-size: 10px !important; }
-#chart .u-axis { color: var(--muted); }
+
+/* Cross-pane tooltip — floats above all 3 panes, anchored to cursor X. */
+.chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  background: rgba(15, 15, 15, 0.96);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #e5e5e5;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  min-width: 160px;
+  max-width: 260px;
+}
+.chart-tooltip[hidden] { display: none; }
+.chart-tooltip .tt-time {
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line-2);
+  padding-bottom: 3px;
+}
+.chart-tooltip .tt-row {
+  display: flex; align-items: center; gap: 6px;
+  line-height: 1.4;
+}
+.chart-tooltip .tt-row i {
+  width: 10px; height: 2px; flex: 0 0 auto;
+}
+.chart-tooltip .tt-label { flex: 1 1 auto; color: var(--muted); }
+.chart-tooltip .tt-val   { flex: 0 0 auto; color: #f5f5f5; font-weight: 500; }
 
 /* Chart annotation overlay (mig 20260519150000) — sibling DOM layer for
    hover tooltips over canvas-drawn marker dots. Pointer events restricted

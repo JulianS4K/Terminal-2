@@ -12,13 +12,21 @@
   const T = window.Terminal;
   const DEFAULT_HOURS = 168;
   let CHART_HOURS = DEFAULT_HOURS;
-  let _chartInstance = null;
+  // PR redesign 2026-05-18: 3-pane stacked chart (TradingView/Bloomberg style).
+  // Price (60%) + Inventory (20%) + Volume bars (20%), X-axis synchronized via
+  // uPlot cursor.sync. Each pane is an independent uPlot instance.
+  let _chartInstances = { price: null, inv: null, vol: null };
   let _lastPayload = null;
   // Chart-extension state cache (mig 20260519150000 / get_event_chart_extended):
   // fetched in parallel with v3; merges 5 SG series + 2 ESPN annotation arrays
   // into the chart whenever it lands. Same state-machine pattern as splits/zones.
   let _chartExtState = { payload: undefined };
   let _chartExtAlerts = []; // cached for re-renders after extended payload arrives
+  // Legend toggle state (session-scope; persists across re-renders).
+  // Maps series-key → boolean (true = visible). Defaults to true on first sight.
+  const _chartVisible = new Map();
+  // Series spec cache so tooltip can read from all 3 panes at a given idx.
+  let _chartLastBuild = null;
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
@@ -426,81 +434,128 @@
     return 'neg';
   }
 
-  // ---------- Chart (8 series + event_alerts markers) ----------
+  // ---------- Chart — 3-pane stacked (Price / Inventory / Volume bars) ----------
+  //
+  // TradingView/Bloomberg-style stacked layout (operator redesign 2026-05-18).
+  // Replaces the single-pane multi-scale chart that PR #237 grew to 10 series.
+  // Each pane is an independent uPlot instance; X-axis synced via cursor.sync.
+  //
+  //   Price (60%)     — 6 medians ($-axis) + ESPN/alert annotations
+  //   Inventory (20%) — 3 ticket-count lines (integer axis)
+  //   Volume (20%)    — SG sale-count bars (histogram)
+  //
+  // Series specs carry a `pane` field so the tooltip + legend can route
+  // visibility across the right instance.
 
   function renderChart(chart, alerts) {
-    const host = document.getElementById('chartHost');
-    host.innerHTML = '';
+    const hostPrice = document.getElementById('chartHostPrice');
+    const hostInv   = document.getElementById('chartHostInv');
+    const hostVol   = document.getElementById('chartHostVol');
+    if (!hostPrice || !hostInv || !hostVol) {
+      // Backwards-compat: legacy single-host page → no-op so we don't crash
+      // on environments still serving the pre-redesign HTML.
+      const legacy = document.getElementById('chartHost');
+      if (legacy) legacy.innerHTML = '<div class="empty">chart redesigned to 3-pane; reload</div>';
+      return;
+    }
+    hostPrice.innerHTML = '';
+    hostInv.innerHTML   = '';
+    hostVol.innerHTML   = '';
     if (!chart || !window.uPlot) return;
 
-    // Cache alerts for re-renders triggered by extended-payload arrival
     _chartExtAlerts = alerts || [];
 
-    // Merge the SG-side series from _chartExtState (lands in parallel — may be
-    // undefined on first paint; chart redraws when it arrives). Reading via
-    // the cache instead of an explicit arg matches the splits/zones pattern.
+    // Merge SG-side series from extended-RPC cache (parallel fetch — may be
+    // undefined on first paint; setChartExtended triggers a re-render).
     const ext = _chartExtState.payload || null;
     const extSeries = (ext && ext.series) || {};
-    const sgListMed   = extSeries.sg_listings_median       || [];
-    const sgListOwnMed= extSeries.sg_listings_owned_median || [];
-    const sgListCt    = extSeries.sg_listings_count        || [];
-    const sgSaleMed   = extSeries.sg_sales_median          || [];
-    const sgSaleCt    = extSeries.sg_sales_count           || [];
 
-    const seriesSpecs = [
-      // TEvo (existing 5)
-      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', scale: 'y',   width: 2,   dash: null,    data: chart.prices_owned },
-      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', scale: 'y',   width: 1.5, dash: [4, 4],  data: chart.prices_market },
-      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', scale: 'y',   width: 1.5, dash: [6, 3],  data: chart.prices_nonowned },
-      { key: 'counts_owned',    label: 'TEvo Owned qty', color: '#60a5fa', scale: 'qty', width: 1,   dash: null,    fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
-      { key: 'counts_market',   label: 'TEvo Mkt qty',   color: '#94a3b8', scale: 'qty', width: 1,   dash: [2, 2],  data: chart.counts_market },
-      // SG (new 5, from extended RPC payload)
-      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', scale: 'y',   width: 1.5, dash: null,    data: sgListMed },
-      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', scale: 'y',   width: 1.5, dash: [3, 3],  data: sgListOwnMed },
-      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', scale: 'y',   width: 1.5, dash: [5, 2],  data: sgSaleMed },
-      { key: 'sg_list_ct',      label: 'SG list qty',    color: '#22d3ee', scale: 'qty', width: 1,   dash: [2, 2],  data: sgListCt },
-      { key: 'sg_sale_ct',      label: 'SG sale ct',     color: '#84cc16', scale: 'sgct',width: 1.5, dash: null,    data: sgSaleCt, points: { show: true, size: 4 } },
+    // Series specs, grouped by pane. `key` is the toggle id, `pane` is the
+    // instance that owns the series, `scale` is the within-pane axis tag.
+    const specs = [
+      // ---- PRICE PANE (6 medians) ----
+      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', pane: 'price', scale: 'y', width: 2,   dash: null,    data: chart.prices_owned },
+      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', pane: 'price', scale: 'y', width: 1.5, dash: [4, 4],  data: chart.prices_market },
+      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', pane: 'price', scale: 'y', width: 1.5, dash: [6, 3],  data: chart.prices_nonowned },
+      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', pane: 'price', scale: 'y', width: 1.5, dash: null,    data: extSeries.sg_listings_median       || [] },
+      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', pane: 'price', scale: 'y', width: 1.5, dash: [3, 3],  data: extSeries.sg_listings_owned_median || [] },
+      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', pane: 'price', scale: 'y', width: 1.5, dash: [5, 2],  data: extSeries.sg_sales_median          || [] },
+      // ---- INVENTORY PANE (3 qty lines) ----
+      { key: 'counts_owned',    label: 'TEvo Owned qty', color: '#60a5fa', pane: 'inv',   scale: 'y', width: 1.5, dash: null,    fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
+      { key: 'counts_market',   label: 'TEvo Mkt qty',   color: '#94a3b8', pane: 'inv',   scale: 'y', width: 1,   dash: [2, 2],  data: chart.counts_market },
+      { key: 'sg_list_ct',      label: 'SG list qty',    color: '#22d3ee', pane: 'inv',   scale: 'y', width: 1.5, dash: null,    data: extSeries.sg_listings_count        || [] },
+      // ---- VOLUME PANE (1 bar series) ----
+      { key: 'sg_sale_ct',      label: 'SG sale ct',     color: '#84cc16', pane: 'vol',   scale: 'y', width: 1,   dash: null,    bars: true, data: extSeries.sg_sales_count   || [] },
     ];
 
-    // Build unified time axis
+    // Unified time axis built from the union of ALL series — keeps cursor.sync
+    // alignments correct even when SG series have a sparser bucket density.
     const tset = new Set();
-    seriesSpecs.forEach(s => (s.data || []).forEach(p => tset.add(p.t)));
+    specs.forEach(s => (s.data || []).forEach(p => tset.add(p.t)));
     const ts = [...tset].sort();
     const xs = ts.map(t => Math.round(new Date(t).getTime() / 1000));
-    const idx = new Map(ts.map((t, i) => [t, i]));
+    const idxByT = new Map(ts.map((t, i) => [t, i]));
     const project = (s) => {
       const arr = new Array(ts.length).fill(null);
-      (s || []).forEach(p => { const i = idx.get(p.t); if (i != null) arr[i] = p.v; });
+      (s || []).forEach(p => { const i = idxByT.get(p.t); if (i != null) arr[i] = p.v; });
       return arr;
     };
+    specs.forEach(s => { s.projected = project(s.data); });
 
-    const data = [xs, ...seriesSpecs.map(s => project(s.data))];
+    // Stash for the cross-pane tooltip + legend re-renders.
+    _chartLastBuild = { specs, xs };
 
-    // Pick a tick-friendly width (re-render on resize)
-    const rect = host.getBoundingClientRect();
-    const w = Math.max(800, rect.width || host.clientWidth || 1200);
-    const h = Math.max(280, (rect.height || 320) - 20);
+    // Render each pane (returns the uPlot instance or null if no series).
+    _chartInstances.price = renderPanePrice(hostPrice, specs, xs, alerts, ext);
+    _chartInstances.inv   = renderPaneInv  (hostInv,   specs, xs);
+    _chartInstances.vol   = renderPaneVol  (hostVol,   specs, xs);
 
+    // Single resize listener — rebuilds all 3 panes (debounced)
+    if (!hostPrice.__resizeWired) {
+      hostPrice.__resizeWired = true;
+      let resizeTimer;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => renderChart(chart, _chartExtAlerts), 200);
+      });
+    }
+  }
+
+  // Shared axis styling — canvas-drawn so we set fonts/strokes directly.
+  // The old `#chart .uplot text { fill }` CSS doesn't apply because uPlot
+  // draws axis labels on canvas, not SVG.
+  const AXIS_FONT = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  const AXIS_STROKE = '#a3a3a3';     // lighter than --muted so it's readable on #0a0a0a
+  const AXIS_GRID = '#262626';
+  const AXIS_TICKS = '#404040';
+  const X_AXIS = {
+    stroke: AXIS_STROKE, font: AXIS_FONT,
+    grid: { stroke: AXIS_GRID, width: 1 },
+    ticks: { stroke: AXIS_TICKS, size: 6 },
+  };
+
+  function renderPanePrice(host, specs, xs, alerts, ext) {
+    const paneSpecs = specs.filter(s => s.pane === 'price');
+    const data = [xs, ...paneSpecs.map(s => s.projected)];
+    const { w, h } = paneSize(host);
     const opts = {
       width: w, height: h,
-      cursor: { drag: { x: true, y: false } },
-      scales: { x: { time: true }, y: {}, qty: {}, sgct: {} },
+      cursor: { drag: { x: true, y: false }, sync: { key: 'evt-chart', setSeries: false } },
+      scales: { x: { time: true }, y: {} },
       axes: [
-        { stroke: 'var(--muted)', grid: { stroke: 'var(--line-2)', width: 1 } },
-        { scale: 'y',   stroke: 'var(--muted)', grid: { stroke: 'var(--line-2)', width: 1 },
-          values: (u, v) => v.map(x => x === null ? '' : '$' + Math.round(x)) },
-        { scale: 'qty', side: 1, stroke: 'var(--muted)', grid: { show: false },
-          values: (u, v) => v.map(x => x === null ? '' : Math.round(x)) },
-        // Hidden axis: sg sale count shares the right-side gutter implicitly via
-        // its own scale (sgct), but we don't draw a separate axis to keep the
-        // chart visually clean. uPlot still scales it correctly.
+        X_AXIS,
+        { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
+          grid: { stroke: AXIS_GRID, width: 1 },
+          ticks: { stroke: AXIS_TICKS, size: 6 },
+          values: (u, v) => v.map(x => x == null ? '' : '$' + Math.round(x)),
+          size: 56 },
       ],
       series: [
         { label: 'time' },
-        ...seriesSpecs.map(s => ({
-          label: s.label, stroke: s.color, width: s.width, scale: s.scale,
+        ...paneSpecs.map(s => ({
+          label: s.label, stroke: s.color, width: s.width, scale: 'y',
           spanGaps: true, dash: s.dash || undefined, fill: s.fill || undefined,
-          points: s.points || undefined,
+          show: _chartVisible.get(s.key) !== false,
         })),
       ],
       hooks: {
@@ -515,19 +570,144 @@
         setSize: [
           (u) => renderAnnotationTooltips(u, host, ext && ext.annotations),
         ],
+        setCursor: [
+          (u) => updateChartTooltip(u),
+        ],
       },
     };
+    return new window.uPlot(opts, data, host);
+  }
 
-    _chartInstance = new window.uPlot(opts, data, host);
+  function renderPaneInv(host, specs, xs) {
+    const paneSpecs = specs.filter(s => s.pane === 'inv');
+    const data = [xs, ...paneSpecs.map(s => s.projected)];
+    const { w, h } = paneSize(host);
+    const opts = {
+      width: w, height: h,
+      cursor: { drag: { x: true, y: false }, sync: { key: 'evt-chart', setSeries: false } },
+      scales: { x: { time: true }, y: {} },
+      axes: [
+        X_AXIS,
+        { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
+          grid: { stroke: AXIS_GRID, width: 1 },
+          ticks: { stroke: AXIS_TICKS, size: 6 },
+          values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
+          size: 56 },
+      ],
+      series: [
+        { label: 'time' },
+        ...paneSpecs.map(s => ({
+          label: s.label, stroke: s.color, width: s.width, scale: 'y',
+          spanGaps: true, dash: s.dash || undefined, fill: s.fill || undefined,
+          show: _chartVisible.get(s.key) !== false,
+        })),
+      ],
+      hooks: {
+        setCursor: [(u) => updateChartTooltip(u)],
+      },
+    };
+    return new window.uPlot(opts, data, host);
+  }
 
-    if (!host.__resizeWired) {
-      host.__resizeWired = true;
-      let resizeTimer;
-      window.addEventListener('resize', () => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => renderChart(chart, _chartExtAlerts), 200);
-      });
+  function renderPaneVol(host, specs, xs) {
+    const paneSpecs = specs.filter(s => s.pane === 'vol');
+    const data = [xs, ...paneSpecs.map(s => s.projected)];
+    const { w, h } = paneSize(host);
+    // uPlot built-in bars factory: width = 60% of bucket spacing, max 32px,
+    // min 1px. Cheap, no plugin needed.
+    const barsPath = window.uPlot.paths.bars
+      ? window.uPlot.paths.bars({ size: [0.6, 32, 1] })
+      : undefined;
+    const opts = {
+      width: w, height: h,
+      cursor: { drag: { x: true, y: false }, sync: { key: 'evt-chart', setSeries: false } },
+      scales: { x: { time: true }, y: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] } },
+      axes: [
+        X_AXIS,
+        { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
+          grid: { stroke: AXIS_GRID, width: 1 },
+          ticks: { stroke: AXIS_TICKS, size: 6 },
+          values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
+          size: 56 },
+      ],
+      series: [
+        { label: 'time' },
+        ...paneSpecs.map(s => ({
+          label: s.label, stroke: s.color, fill: s.color, width: s.width, scale: 'y',
+          paths: s.bars ? barsPath : undefined,
+          points: { show: false },
+          show: _chartVisible.get(s.key) !== false,
+        })),
+      ],
+      hooks: {
+        setCursor: [(u) => updateChartTooltip(u)],
+      },
+    };
+    return new window.uPlot(opts, data, host);
+  }
+
+  function paneSize(host) {
+    const rect = host.getBoundingClientRect();
+    const w = Math.max(400, rect.width || host.clientWidth || 1200);
+    // Subtract a small budget for the host's own padding; uPlot wants exact px.
+    const h = Math.max(40, Math.floor(rect.height || host.clientHeight || 120));
+    return { w, h };
+  }
+
+  // Cross-pane tooltip — reads value at the cursor idx from all 3 instances
+  // and renders a compact floating table anchored to the cursor X position.
+  function updateChartTooltip(srcInstance) {
+    const tip = document.getElementById('chartTooltip');
+    if (!tip) return;
+    const build = _chartLastBuild;
+    if (!build || !srcInstance || !srcInstance.cursor) return;
+    const idx = srcInstance.cursor.idx;
+    if (idx == null || idx < 0 || idx >= build.xs.length) {
+      tip.hidden = true;
+      return;
     }
+    const tSec = build.xs[idx];
+    const ts = new Date(tSec * 1000);
+    const rows = [];
+    build.specs.forEach(s => {
+      if (_chartVisible.get(s.key) === false) return; // hidden by legend toggle
+      const v = s.projected[idx];
+      if (v == null) return;
+      const fmt = s.pane === 'price'
+        ? '$' + Math.round(v)
+        : Math.round(v).toString();
+      rows.push(
+        `<div class="tt-row"><i style="background:${s.color}"></i>` +
+        `<span class="tt-label">${escapeHtml(s.label)}</span>` +
+        `<span class="tt-val">${fmt}</span></div>`
+      );
+    });
+    if (!rows.length) {
+      tip.hidden = true;
+      return;
+    }
+    // Format compact local time
+    const tStr = ts.toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+    tip.innerHTML = `<div class="tt-time">${escapeHtml(tStr)}</div>` + rows.join('');
+    // Position: anchor to the cursor X on the source instance, clamp to chart bounds
+    const chartHost = document.getElementById('chart');
+    if (!chartHost) return;
+    const chartRect = chartHost.getBoundingClientRect();
+    const srcCanvas = srcInstance.root;
+    const srcRect = srcCanvas.getBoundingClientRect();
+    const px = (srcInstance.cursor.left || 0) + (srcRect.left - chartRect.left);
+    // Render to measure, then position with overflow-protection
+    tip.style.left = '0px';
+    tip.style.top  = '0px';
+    tip.hidden = false;
+    const tipWidth = tip.offsetWidth;
+    const maxLeft = chartRect.width - tipWidth - 8;
+    const desiredLeft = px + 12;
+    const finalLeft = Math.max(8, Math.min(desiredLeft, maxLeft));
+    tip.style.left = finalLeft + 'px';
+    tip.style.top  = '36px';  // below the chart title bar
   }
 
   function drawAlertsMarkers(u, alerts) {
@@ -641,35 +821,61 @@
   function renderChartLegend() {
     const el = document.getElementById('chartLegend');
     if (!el) return;
+    const build = _chartLastBuild;
     const ext = _chartExtState.payload;
     const hasSg = ext && !ext.sg_hidden;
-    const items = [
-      ['#fbbf24', 'TEvo Owned'],
-      ['#737373', 'TEvo Mkt'],
-      ['#a78bfa', 'TEvo Non-own'],
-      ['#60a5fa', 'TEvo Own qty'],
-      ['#94a3b8', 'TEvo Mkt qty'],
-    ];
-    if (hasSg) {
-      items.push(
-        ['#22d3ee', 'SG list med'],
-        ['#fb7185', 'SG owned med'],
-        ['#84cc16', 'SG sale med'],
-        ['#22d3ee', 'SG list qty', 'dashed'],
-        ['#84cc16', 'SG sale ct'],
-      );
+
+    // Build clickable series swatches from the spec list. Each swatch toggles
+    // the matching series on its pane via uPlot.setSeries({show}).
+    let html = '';
+    if (build && build.specs && build.specs.length) {
+      const visibleSpecs = build.specs.filter(s => hasSg || !s.key.startsWith('sg_'));
+      // Group by pane in legend for visual clarity: Price → Inv → Vol
+      const order = { price: 0, inv: 1, vol: 2 };
+      const sorted = [...visibleSpecs].sort((a, b) => order[a.pane] - order[b.pane]);
+      html = sorted.map(s => {
+        const isOn = _chartVisible.get(s.key) !== false;
+        const opa = isOn ? '1' : '0.35';
+        return `<span class="legend-item" data-key="${escapeHtml(s.key)}" data-pane="${s.pane}" style="opacity:${opa};cursor:pointer" title="Click to toggle">` +
+               `<i style="background:${s.color}"></i> ${escapeHtml(s.label)}</span>`;
+      }).join('');
+    } else {
+      // Fallback static legend pre-first-render
+      const items = [
+        ['#fbbf24', 'TEvo Owned'], ['#737373', 'TEvo Mkt'], ['#a78bfa', 'TEvo Non-own'],
+        ['#60a5fa', 'TEvo Own qty'], ['#94a3b8', 'TEvo Mkt qty'],
+      ];
+      html = items.map(([c, l]) =>
+        `<span><i style="background:${c}"></i> ${escapeHtml(l)}</span>`).join('');
     }
-    let html = items.map(([c, l, mod]) =>
-      `<span><i style="background:${c}${mod === 'dashed' ? ';opacity:.5' : ''}"></i> ${l}</span>`).join('');
+
     if (ext && (
       (ext.annotations && ext.annotations.injuries && ext.annotations.injuries.length) ||
       (ext.annotations && ext.annotations.game_state && ext.annotations.game_state.length)
     )) {
       html += '<span class="legend-sep">|</span>';
-      html += '<span><i class="anno-inj-i"></i> Injury</span>';
-      html += '<span><i class="anno-gs-i"></i> State</span>';
+      html += '<span class="legend-anno"><i class="anno-inj-i"></i> Injury</span>';
+      html += '<span class="legend-anno"><i class="anno-gs-i"></i> State</span>';
     }
     el.innerHTML = html;
+
+    // Wire click handlers (idempotent — innerHTML wipes prior listeners).
+    el.querySelectorAll('.legend-item').forEach(node => {
+      node.addEventListener('click', () => {
+        const key = node.getAttribute('data-key');
+        const pane = node.getAttribute('data-pane');
+        const cur = _chartVisible.get(key) !== false; // default true
+        _chartVisible.set(key, !cur);
+        // Find the series index on the target pane and toggle
+        const inst = _chartInstances[pane];
+        if (inst && _chartLastBuild) {
+          const paneSpecs = _chartLastBuild.specs.filter(s => s.pane === pane);
+          const idx = paneSpecs.findIndex(s => s.key === key);
+          if (idx >= 0) inst.setSeries(idx + 1 /* +1 for time series */, { show: !cur });
+        }
+        renderChartLegend(); // refresh opacity
+      });
+    });
   }
 
   // ---------- Splits ----------
