@@ -3,7 +3,7 @@
 # version drift that could silently break deploys. Dependabot can bump the
 # lower bound — never bump the upper bound without verifying.
 fastapi>=0.115,<0.120
-uvicorn[standard]>=0.30,<0.34
+uvicorn[standard]>=0.47.0,<0.48
 requests>=2.32,<3.0
 supabase>=2.9,<3.0
 anthropic>=0.40,<1.0
