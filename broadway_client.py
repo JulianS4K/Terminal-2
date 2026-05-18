@@ -546,10 +546,24 @@ class BroadwayClient:
 
         # Fallbacks — should rarely fire on a healthy page.
         listings = self._listings_from_html(html)
+        if not listings:
+            # HTTP 200 + no inline payload + no bs4 matches = either Fastly
+            # bot-challenge deflection (real Broadway origin never reached)
+            # or a page redesign. Either way, returning an empty snapshot
+            # is indistinguishable from a legitimately-empty performance,
+            # which silently corrupts downstream drift signals. Raise loud.
+            self._log_pull(
+                "sections", slug=slug, show_id=show_id, event_id=event_id,
+                status=status, rows=0,
+                error="200 OK but no inline payload and no listings — likely Fastly bot challenge or page redesign",
+            )
+            raise BroadwayParseError(
+                f"HTTP 200 but no inline payload and no listings for {url}. "
+                "Likely Fastly bot challenge or page redesign."
+            )
         self._log_pull(
             "sections", slug=slug, show_id=show_id, event_id=event_id,
             status=status, rows=len(listings),
-            error=None if listings else "parser found no listings — selectors may be stale",
         )
         return SectionsSnapshot(
             slug=slug,
@@ -613,6 +627,32 @@ class BroadwayClient:
                 day_of_week=a.get("data-dow"),
                 sections_url=f"{CHECKOUT_BASE}{parsed.path}",
             ))
+        if not out:
+            # Zero sections-URL anchors on a 200 response. Two cases:
+            # (a) real Broadway.com show page but the show legitimately
+            #     has no upcoming performances (closed/dark week);
+            # (b) Fastly bot-challenge or error page deflected as 200,
+            #     so we never hit the real origin.
+            # Distinguish by looking for any Broadway.com brand marker
+            # in the body — challenge pages don't have these. Conservative
+            # fingerprint: the slug itself appears in the HTML, or the
+            # canonical brand string "broadway.com" appears outside of
+            # script/href noise (cheap substring check is fine here).
+            html_lower = html.lower()
+            looks_like_broadway = (
+                slug.lower() in html_lower
+                or "broadway.com" in html_lower
+            )
+            if not looks_like_broadway:
+                self._log_pull(
+                    "show_page", slug=slug, show_id=None, event_id=None,
+                    status=status, rows=0,
+                    error="200 OK but no sections anchors and no Broadway.com markers — likely Fastly bot challenge or page redesign",
+                )
+                raise BroadwayParseError(
+                    f"HTTP 200 but no performances and no Broadway.com markers for {url}. "
+                    "Likely Fastly bot challenge or page redesign."
+                )
         self._log_pull("show_page", slug=slug, show_id=None, event_id=None,
                        status=status, rows=len(out))
         return out

@@ -199,42 +199,33 @@ deliberate.
 | 403 bot deny (`x-fastly-bot-decision: deny`, `Reference #...`) | `BroadwayError("... returned 403 ...")` | ✅ Loud failure |
 | 429 rate-limit (with `Retry-After`) | Retries 3× via backoff, then `BroadwayError("... returned 429 ...")` | ✅ Loud failure |
 | 503 origin error | Retries 3× via backoff, then `BroadwayError("... returned 503 ...")` | ✅ Loud failure |
-| **200 bot-challenge HTML** (no inline JSON, no anchors) | **Returns empty `SectionsSnapshot`** (`sections=[]`, `show=None`) | ⚠️ **Silent gap** |
+| 200 bot-challenge HTML (no inline JSON, no anchors) | `BroadwayParseError("HTTP 200 but no inline payload and no listings ...")` | ✅ Loud failure (fixed 2026-05-18) |
 | 200 valid origin payload | Parses to full `SectionsSnapshot` | ✅ Control case |
+| 200 real show page, zero upcoming performances | Returns `[]` from `discover_performances` (no raise) | ✅ Distinguished by Broadway.com brand markers |
 
-### Silent-empty gap (Fastly bot-challenge 200)
+### Silent-empty gap — FIXED 2026-05-18 (D3)
 
-When Fastly returns a 200 with a JS-only challenge page — characteristic
-of bot management deflection that doesn't want to admit it deflected —
-`fetch_sections` degrades to the bs4 fallback (`_listings_from_html`),
-finds zero matching selectors, and returns a populated-looking
-`SectionsSnapshot` with `sections=[]` and `show=None`.
+**Was**: when Fastly returned 200 with a JS challenge page,
+`fetch_sections` fell through to the bs4 fallback, found zero
+selectors, and returned a populated-looking `SectionsSnapshot` with
+`sections=[]` and `show=None` — indistinguishable from a
+legitimately-empty performance.
 
-Downstream consumers (cron, dashboards, drift alerts) cannot distinguish
-this from a legitimately-empty performance (sold out, cancelled,
-listings pulled). The same gap exists in `discover_performances` (returns
-`[]` not raising).
+**Now** (`broadway_client.py:547-563`): on `status==200 + inline payload None + listings empty`,
+`fetch_sections` raises `BroadwayParseError` with a message that names
+Fastly bot challenge / page redesign as the likely causes. The
+`broadway_pull_log` row also gets a clear error string.
 
-**Proposed fix** (D3-owned, not in this PR — flag for D3 to land in a
-follow-up):
+Same guard in `discover_performances` (`broadway_client.py:630-654`),
+with a twist: zero anchors on a real Broadway.com page is a legitimate
+state (closed run, dark week). The fix only raises when zero anchors
+**and** the response body lacks Broadway.com brand markers
+(`slug.lower()` or `"broadway.com"` substring). Real show pages always
+carry at least one of those; challenge pages don't.
 
-```python
-# in fetch_sections, after _extract_inline_payload + fallback:
-if status == 200 and payload is None and not listings:
-    raise BroadwayParseError(
-        f"HTTP 200 but no inline payload and no listings — likely Fastly "
-        f"bot challenge or page redesign. URL: {url}"
-    )
-```
-
-Similar guard in `discover_performances` after the anchor loop: if
-zero matches AND the response body length is suspiciously small or
-contains known challenge markers, raise.
-
-The simulation tests will then need to be updated to expect the new
-exception — `test_fastly_bot_challenge_200_silent_empty` is the
-canary that pins the *current* (undesirable) behavior so the fix is
-a deliberate signature change, not an accident.
+Pinned by `test_fastly_bot_challenge_200_raises`,
+`test_discover_against_fastly_bot_challenge_raises`, and
+`test_discover_legit_empty_show_page_does_not_raise`.
 
 ## Troubleshooting
 
@@ -244,6 +235,7 @@ a deliberate signature change, not an accident.
 | `HTTP 403` with `set-cookie: bot-detection=...` or a challenge HTML body | Fastly bot defense fired. Drive via `chrome-devtools-mcp` instead of `requests` (real TLS fingerprint + client hints). |
 | `HTTP 403` without `host_not_allowed` or a Fastly challenge | Likely Broadway.com origin block. Try a real-browser UA via `BROADWAY_USER_AGENT` env var (`broadway_client.py:231-236`). |
 | `HTTP 429` | Rate-limited (Fastly or origin). The client backs off via `Retry-After` (`broadway_client.py:262-269`). Lower pace by passing `pace_s=` to the constructor. |
-| `no inline payload found` despite HTTP 200 | Either page structure changed OR Fastly returned a challenge page that has the right status but no `var json = ...`. Run `dump-raw` + inspect; if it's the latter, switch to browser-driven fetch. |
+| `BroadwayParseError: HTTP 200 but no inline payload and no listings` | Either page structure changed OR Fastly returned a challenge page that has the right status but no `var json = ...`. Run `dump-raw` + inspect; if it's the latter, switch to browser-driven fetch via `chrome-devtools-mcp`. |
+| `BroadwayParseError: HTTP 200 but no performances and no Broadway.com markers` | Same root cause but from `discover_performances` — the show-page response has zero sections-URL anchors AND lacks Broadway.com brand strings. |
 | `no performances discovered` | Show closed, slug typo, or `<a>` markup on the show page changed. Try `python broadway_client.py dump-raw https://www.broadway.com/shows/<slug>/ /tmp/show.html` and inspect. |
 | `Could not find Google Chrome executable` (MCP error) | `chrome-devtools-mcp` started but Chrome isn't installed and Puppeteer couldn't download (egress block). Install system Chrome or open allowlist to Puppeteer's CDN. |

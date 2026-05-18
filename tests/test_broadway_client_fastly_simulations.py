@@ -21,7 +21,7 @@ from __future__ import annotations
 import requests
 import pytest
 
-from broadway_client import BroadwayClient, BroadwayError
+from broadway_client import BroadwayClient, BroadwayError, BroadwayParseError
 
 
 # ---------- mock plumbing ----------
@@ -159,32 +159,24 @@ def test_fastly_bot_deny_403(monkeypatch):
     assert "403" in str(exc.value)
 
 
-def test_fastly_bot_challenge_200_silent_empty(monkeypatch):
-    """KNOWN GAP: Fastly returns HTTP 200 with a JS challenge page —
-    no Django inline JSON. fetch_sections silently degrades to the
-    bs4 fallback, finds zero matching selectors, and returns a
-    SectionsSnapshot with sections=[] and show=None.
+def test_fastly_bot_challenge_200_raises(monkeypatch):
+    """Fastly returns HTTP 200 with a JS challenge page (no Django
+    inline JSON, no bs4-matching listings). Previously this fell
+    through to an empty SectionsSnapshot indistinguishable from a
+    legitimately-empty show.
 
-    This LOOKS like a successful 'show currently has no listings'
-    response. Downstream consumers can't distinguish 'sold out /
-    empty' from 'blocked by Fastly'. Proposed fix (D3-owned): in
-    fetch_sections, when both _extract_inline_payload returns None
-    AND _listings_from_html returns []  AND status==200, raise
-    BroadwayParseError instead of returning an empty snapshot.
-
-    This test pins the current behavior so any future fix is a
-    deliberate change, not an accident."""
+    Fixed 2026-05-18 (D3): fetch_sections now raises
+    BroadwayParseError on 200 + no inline payload + no listings.
+    Raises loudly so cron drift signals don't get corrupted."""
     _install_fake_session(
         monkeypatch, 200, FASTLY_BOT_CHALLENGE_200_BODY,
         headers={"x-served-by": "cache-fastly-test"},
     )
     cli = BroadwayClient()
-    snap = cli.fetch_sections(**SECTIONS_KWARGS)
-    # Current (undesirable) behavior — silent empty.
-    assert snap.sections == []
-    assert snap.show is None
-    assert snap.performance_time is None
-    # The snapshot was constructed (no exception). This is the bug.
+    with pytest.raises(BroadwayParseError) as exc:
+        cli.fetch_sections(**SECTIONS_KWARGS)
+    assert "no inline payload" in str(exc.value).lower()
+    assert "fastly" in str(exc.value).lower() or "redesign" in str(exc.value).lower()
 
 
 def test_fastly_clean_200_valid_payload(monkeypatch):
@@ -210,17 +202,42 @@ def test_fastly_clean_200_valid_payload(monkeypatch):
 
 # ---------- discover_performances against same patterns ----------
 
-def test_discover_against_fastly_bot_challenge_silent_empty(monkeypatch):
-    """Same KNOWN GAP applies to discover_performances: a 200 with
-    no matching anchors yields an empty list, indistinguishable from
-    'show is real but has no current performances'."""
+def test_discover_against_fastly_bot_challenge_raises(monkeypatch):
+    """Fixed 2026-05-18 (D3): discover_performances raises
+    BroadwayParseError on 200 + zero anchors + no Broadway.com brand
+    markers in the body. A challenge page has no slug / no
+    'broadway.com' string outside of script noise — that's the
+    fingerprint we key on."""
     _install_fake_session(
         monkeypatch, 200, FASTLY_BOT_CHALLENGE_200_BODY,
         headers={"x-served-by": "cache-fastly-test"},
     )
     cli = BroadwayClient()
-    perfs = cli.discover_performances("the-25th-annual-putnam-county-spelling-bee")
-    assert perfs == []  # current behavior — silent empty
+    with pytest.raises(BroadwayParseError) as exc:
+        cli.discover_performances("the-25th-annual-putnam-county-spelling-bee")
+    assert "no performances" in str(exc.value).lower()
+
+
+def test_discover_legit_empty_show_page_does_not_raise(monkeypatch):
+    """Counter-case: a real Broadway.com show page that legitimately
+    has no upcoming performances (closed run, dark week) still
+    returns [] without raising. Distinguished by the presence of
+    Broadway.com brand markers in the HTML (slug or 'broadway.com'
+    substring)."""
+    legit_empty_html = (
+        "<html><head><title>Hamilton | Broadway.com</title></head>"
+        "<body><h1>Hamilton</h1>"
+        "<p>This show is currently between performance weeks. "
+        "Check back at <a href='https://www.broadway.com'>broadway.com</a> "
+        "for updated schedules.</p></body></html>"
+    )
+    _install_fake_session(
+        monkeypatch, 200, legit_empty_html,
+        headers={"x-served-by": "cache-fastly-test"},
+    )
+    cli = BroadwayClient()
+    perfs = cli.discover_performances("hamilton")
+    assert perfs == []
 
 
 def test_discover_against_fastly_403(monkeypatch):
