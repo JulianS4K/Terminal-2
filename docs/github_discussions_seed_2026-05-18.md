@@ -258,12 +258,18 @@ Category IDs:
 
 After post: B1 captures the discussion URLs in a follow-up commit to this file under each post heading.
 
-## URLs (filled post-publish)
+## URLs (published 2026-05-18)
 
 | Category | Post title | URL |
 |---|---|---|
-| Announcements | Welcome to Terminal-2 — read this first | _(pending publish)_ |
-| Ideas | RFC flow — propose changes here before writing code | _(pending publish)_ |
-| General | [coord] Cross-lane coordination — when bot_chat is too short | _(pending publish)_ |
-| Q&A | FAQ — common questions about Terminal-2 | _(pending publish)_ |
-| Show and tell | 🎉 Recent ships (May 2026) — terminal v3 + multi-bot governance | _(pending publish)_ |
+| Announcements | Welcome to Terminal-2 — read this first | [#231](https://github.com/JulianS4K/Terminal-2/discussions/231) |
+| Ideas | RFC flow — propose changes here before writing code | [#232](https://github.com/JulianS4K/Terminal-2/discussions/232) |
+| General | [coord] Cross-lane coordination — when bot_chat is too short | [#233](https://github.com/JulianS4K/Terminal-2/discussions/233) |
+| Q&A | FAQ — common questions about Terminal-2 | [#234](https://github.com/JulianS4K/Terminal-2/discussions/234) |
+| Show and tell | 🎉 Recent ships (May 2026) — terminal v3 + multi-bot governance | [#235](https://github.com/JulianS4K/Terminal-2/discussions/235) |
+
+## Operator follow-ups (optional)
+
+1. **Pin the welcome post** (#231) — discussion pinning is web-UI-only (`pinDiscussion` GraphQL mutation doesn't exist; REST endpoint 404s). To pin: go to [discussion #231](https://github.com/JulianS4K/Terminal-2/discussions/231) → "..." menu → "Pin discussion".
+2. **Add Coordination + Decisions categories** if you want the originally-proposed 8-category structure rather than the 6 defaults. Settings → Discussions → "New category".
+3. **Run a Poll** in the Polls category when an operator decision needs multi-choice input (B1 will draft the poll body when an example comes up).
