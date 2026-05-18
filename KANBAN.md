@@ -50,10 +50,7 @@
 |---|---|---|---|
 | B1-NEXT-3 | B1 | Edge function auth-posture inventory (16 fns). Per-function record of `x-cron-secret` vs open vs JWT-gated. | Author `docs/edge_function_auth_inventory.md` |
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
-| B1-NEXT-8 | A1 | `_health_check_pg_net_errors()` missing §6 body guard (added by PR #115). | Add guard via CREATE OR REPLACE; preserve return shape |
 | B1-NEXT-18 | Op | Verify Actions secrets populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). | Operator confirms next session via Settings → Secrets |
-| B1-NEXT-29 | A1 | `refresh_sg_broker_sales_event_metrics(integer)` missing §6 body guard. Hourly cron at `:17`. | Add guard via CREATE OR REPLACE |
-| B1-NEXT-30 | A1 (D2) | `sg_seller_orders_queue(p_pages, p_statuses)` missing §6 body guard + **EXECUTE granted to PUBLIC** (real defense-in-depth bug, not just convention drift). Verified 2026-05-18. | Add guard via CREATE OR REPLACE + REVOKE EXECUTE FROM PUBLIC |
 | B1-NEXT-31 | A1 | §6 body guard absent on 7 JWT-gated SECDEF RPCs: `get_broker_event_page` (v1/v2/v3), `get_event_sg_listings_full`, `get_event_evo_listings_full`, `get_event_sg_sales_full`, `get_event_cross_source_metrics`. JWT body check IS primary mitigation; guard is 2nd belt. **BLOCKED on spec clarification** — literal §6 `current_user NOT IN (service_role, postgres, supabase_admin)` would brick these (anon/authenticated callers via PostgREST). bot_chat question pending B1 response. | Wait for B1 spec; verified `public_exec=false` already in place on all 7 |
 | B1-NEXT-39 | D0 + D1 | `/api/store/search` exposes `we_own` (bool) + `owned_tix` (count). LANE_DISCIPLINE.md §D1 wall rule lists `is_owned` as forbidden. May be intentional storefront-product behavior. bot_chat 308. | If intentional: add carveout to LANE_DISCIPLINE.md §D1. If not: filter columns from `/api/store/search` response in `app.py` |
 
@@ -76,7 +73,6 @@
 | B1-NEXT-27 | B1 | Cross-bible consistency check (PROJECT_BIBLE.md vs LANE_DISCIPLINE.md vs BOT_HIERARCHY.md). | Periodic full diff |
 | B1-NEXT-28 | B1 (post-MCP) | Slack channel signal-quality metric. | Blocked on B1-NEXT-21 |
 | B1-NEXT-35 | Op | Create scheduled task `b1-war-games-rotation`. Every 4h. | Operator approves Slack MCP tool + cron creation |
-| B1-NEXT-37 | A1 | Backfill `cron_policy` rows for **5** daily collect-listings windowed crons: `0-24h` (1-59/10 schedule, 144 fires/24h), `1-7d` / `7-30d` / `30-60d` / `60d+` (twice-daily, 2 fires/24h). All currently `fire_no_policy`. | 1 SQL INSERT into `cron_policy` (5 rows) |
 | B1-NEXT-40 | Op | **G-9**: `allow_forking: true` on public repo. Forks clone full history including the leaked `CRON_SECRET` commit `5297739`. Compounds G-1. | Operator decision (usually allow_forking stays true; real fix is G-1 history rewrite) |
 | B1-NEXT-44 | Op | **G-14**: Branch protection on `main` — no required approving review count, no CODEOWNERS review required, no dismiss-stale-reviews. Single-operator can push without formal review. | Operator decision — Settings → Branches → Edit rule for `main` |
 | B1-NEXT-45 | Op | **G-15**: `required_conversation_resolution: false`. PRs can merge with unresolved review comments. | Settings → Branches → toggle |

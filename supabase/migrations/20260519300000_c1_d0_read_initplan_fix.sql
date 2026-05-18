@@ -14,6 +14,15 @@
 -- Verified 2026-05-18 against prod: the policy `d0_s4kent_read` exists on
 -- all 10 tables with identical USING clause shape (no per-table semantic drift).
 
+-- IDIOM NOTE (applied to prod via fixup migration `c1_d0_read_initplan_fix_v2`
+-- 2026-05-18 17:00 UTC): the advisor lint detects `auth.<function>()` only when the
+-- function call itself is the direct child of a SELECT, not when the entire
+-- `->>` accessor is wrapped. So wrap `auth.jwt()` directly and chain `->>'email'`
+-- off the sub-SELECT result.
+--
+-- Wrong (still flags WARN):   `coalesce((select auth.jwt()->>'email'), '')`
+-- Right (clears WARN):        `coalesce((select auth.jwt())->>'email', '')`
+
 DO $$
 DECLARE
   t text;
@@ -27,7 +36,7 @@ BEGIN
     EXECUTE format($f$
       CREATE POLICY d0_s4kent_read ON public.%I
         FOR SELECT TO authenticated
-        USING (coalesce((select auth.jwt()->>'email'), '') LIKE '%%@s4kent.com')
+        USING (coalesce((select auth.jwt())->>'email', '') LIKE '%%@s4kent.com')
     $f$, t);
   END LOOP;
 END $$;
