@@ -79,7 +79,7 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 
 | File | Purpose |
 |---|---|
-| [`KANBAN.md`](../KANBAN.md) | Active work board + B1-NEXT security backlog |
+| [`KANBAN.md`](../KANBAN.md) | **Single source of truth** for OPEN work across all lanes (🟢 OPEN section at top) + per-lane archive + B1-NEXT historical backlog |
 | [`docs/cron-landscape-2026-05-09.md`](cron-landscape-2026-05-09.md) | All scheduled jobs by lane (somewhat stale; cron set has churned since) |
 | [`docs/cron-and-queue-health-2026-05-11.md`](cron-and-queue-health-2026-05-11.md) | Cron + pg_net queue health snapshot |
 | [`docs/release-discipline.md`](release-discipline.md) | Anti-drift practices + smoke harness discipline |

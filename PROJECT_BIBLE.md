@@ -9,6 +9,7 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 
 | Need | Read |
 |---|---|
+| **What's open right now? (all lanes, severity-sorted)** | **`KANBAN.md §🟢 OPEN WORK` — single source of truth, populate-as-you-go, delete-when-fixed** |
 | What can I do? Hard rules, hierarchy, macros, recipes | **This file** |
 | What exists? Tables/views/crons/edge-fn inventory | `RESOURCES_BIBLE.md` |
 | Who can push to where? | `BOT_HIERARCHY.md` |
@@ -26,6 +27,7 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 5. **A1 is sole pusher to `main`** (see `MIGRATION_CONVENTIONS.md §9`).
 6. **Cross-lane file edits require coordination** via `bot_chat` `question` or PR comment to the lane owner.
 7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
+8. **Check `KANBAN.md §🟢 OPEN WORK` before claiming new work.** It is the single-source-of-truth for what's currently actionable across all lanes — severity-sorted, with the smallest fix for each finding. **Fixing bot DELETES its row from that section in the same PR as the fix** (row's absence IS the closure signal; archive sections below preserve the historical detail). Populate as you go — anyone can add a row; B1 maintains for security findings, each lane for its own. Broadcast: bot_chat 311 (2026-05-17).
 
 When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
