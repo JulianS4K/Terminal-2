@@ -255,6 +255,17 @@ STOREFRONT_SQL_ONLY = os.environ.get("STOREFRONT_SQL_ONLY", "false").lower() == 
 if STOREFRONT_SQL_ONLY:
     print("STOREFRONT_SQL_ONLY=true — storefront serves from listings_snapshots; no live TEvo calls on store routes.")
 
+# STOREFRONT_SEARCH_SQL_ONLY — independent flag for /api/store/search routing
+# (operator 2026-05-18). Splits search off from the general STOREFRONT_SQL_ONLY
+# so search can default to SQL (snappy + zero TEvo quota) while event-detail
+# stays on TEvo live (fresh ticket-group pricing). To revert search to TEvo:
+# set STOREFRONT_SEARCH_SQL_ONLY=false. STOREFRONT_SQL_ONLY=true still wins
+# (forces SQL for both) for backward compat with prior deployments. Live
+# search code path (_search_live) is preserved as a flippable fallback.
+STOREFRONT_SEARCH_SQL_ONLY = os.environ.get("STOREFRONT_SEARCH_SQL_ONLY", "true").lower() == "true"
+if STOREFRONT_SEARCH_SQL_ONLY and not STOREFRONT_SQL_ONLY:
+    print("STOREFRONT_SEARCH_SQL_ONLY=true — /api/store/search uses _search_sql_only; event-detail still live TEvo.")
+
 # STOREFRONT_PREFER_INTERNAL_ZONES — flip on once the hand-curated granular
 # zones (NYK at MSG taxonomy, etc.) cover most/all sections. Today most of
 # them have coverage gaps that leave shoppers with un-filterable listings,
@@ -692,6 +703,7 @@ def healthz():
         "python": _sys.version.split()[0],
         "is_production": _is_production(),
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
+        "storefront_search_sql_only": STOREFRONT_SEARCH_SQL_ONLY,
         "supabase_url_set": bool(SUPABASE_URL),
         "supabase_service_role_key_set": bool(SUPABASE_SERVICE_ROLE_KEY),
         "supabase_anon_key_set": bool(SUPABASE_ANON_KEY),
@@ -731,6 +743,7 @@ def public_config():
         # Storefront SQL-only demo mode flag. UI hides geolocation + shows
         # a 'demo · sql snapshot' pill so users know what they're seeing.
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
+        "storefront_search_sql_only": STOREFRONT_SEARCH_SQL_ONLY,
     }
 
 # ---------- Protected routes ----------
@@ -5053,14 +5066,22 @@ def store_search(
     # Normalize so "  Knicks  ", "knicks", "KNICKS" all hit the same slot.
     # Mode (sql vs live) still differentiates so flipping STOREFRONT_SQL_ONLY
     # doesn't serve stale-mode cache entries.
-    cache_key = f"{_normalize_search_key(q_norm)}|{lim}|{'sql' if STOREFRONT_SQL_ONLY else 'live'}"
+    # Cache key segregates by which path actually ran. Matches the routing
+    # decision below so a STOREFRONT_SEARCH_SQL_ONLY flip doesn't serve stale
+    # cross-mode entries.
+    _search_path = "sql" if (STOREFRONT_SQL_ONLY or STOREFRONT_SEARCH_SQL_ONLY) else "live"
+    cache_key = f"{_normalize_search_key(q_norm)}|{lim}|{_search_path}"
     cached = _search_cache_get(cache_key)
     if cached is not None:
         return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
 
     t0 = time.time()
     db = require_sb()
-    if STOREFRONT_SQL_ONLY:
+    # Routing: STOREFRONT_SEARCH_SQL_ONLY (default true) takes search to the
+    # SQL path. STOREFRONT_SQL_ONLY=true wins regardless (legacy unified flag).
+    # _search_live preserved as a flippable fallback — set
+    # STOREFRONT_SEARCH_SQL_ONLY=false in env to revert search to TEvo.
+    if STOREFRONT_SQL_ONLY or STOREFRONT_SEARCH_SQL_ONLY:
         payload = _search_sql_only(db, q_norm, lim)
     else:
         payload = _search_live(db, q_norm, lim)
