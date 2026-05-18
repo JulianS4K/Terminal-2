@@ -65,8 +65,11 @@
       safe('chart',      () => renderChart(chart, data.event_alerts));
       safe('chartLegend',() => renderChartLegend());
       // Splits + Zones — TEvo side rendered now; SG side merged in by loadSgZonesSplits.
-      safe('splits',     () => renderSplits(data.splits, null));
-      safe('zones',      () => renderZones(zones, data.zone_deltas, null));
+      // Splits + Zones: feed only the TEvo side here. The SG side lives in a
+      // module-level cache populated by loadSgZonesSplits (parallel fetch);
+      // each panel re-renders whenever either side updates.
+      safe('splits',     () => setSplitsTevo(data.splits));
+      safe('zones',      () => setZonesTevo(zones, data.zone_deltas));
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
       // Weather now lazy-loaded via loadWeatherLocalized (drops global-alert path).
@@ -532,28 +535,41 @@
 
   // ---------- Splits ----------
 
-  // Renders TEvo splits + SG splits side-by-side. sgSplits comes from
-  // get_event_sg_zones_splits and is bucketed identically.
-  function renderSplits(splits, sgSplits) {
+  // Splits + Zones use a module-level state cache so the two parallel data
+  // sources (v3 fetchPayload for TEvo + get_event_sg_zones_splits for SG)
+  // can update independently without clobbering each other on re-render.
+  // Each setter writes its side then triggers a unified render reading both.
+  const _splitsState = { tevo: undefined, sg: undefined };
+  const _zonesState  = { tevo: undefined, deltas: undefined, sg: undefined };
+
+  function setSplitsTevo(splits)   { _splitsState.tevo = splits; renderSplits(); }
+  function setSplitsSg(sgSplits)   { _splitsState.sg   = sgSplits; renderSplits(); }
+  function setZonesTevo(zones, deltas) {
+    _zonesState.tevo = zones; _zonesState.deltas = deltas; renderZones();
+  }
+  function setZonesSg(sgZones)     { _zonesState.sg   = sgZones; renderZones(); }
+
+  // Renders TEvo splits + SG splits side-by-side from the module state cache.
+  // Either or both sides may still be `undefined` (loading) when this fires.
+  function renderSplits() {
     const body = document.getElementById('splitsBody');
     if (!body) return;
     body.innerHTML = '';
-    // Left col — TEvo
     const left = document.createElement('div');
     left.className = 'dual-src-col';
     left.innerHTML = '<div class="dual-src-hdr">TEvo</div>';
-    left.appendChild(buildTevoSplitsTable(splits));
-    // Right col — SG
+    left.appendChild(buildTevoSplitsTable(_splitsState.tevo));
     const right = document.createElement('div');
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG</div>';
-    right.appendChild(buildSgSplitsTable(sgSplits));
+    right.appendChild(buildSgSplitsTable(_splitsState.sg));
     body.appendChild(left);
     body.appendChild(right);
   }
 
   function buildTevoSplitsTable(splits) {
     const wrap = document.createElement('div');
+    if (splits === undefined) { wrap.innerHTML = '<div class="empty">loading TEvo…</div>'; return wrap; }
     if (!splits) { wrap.innerHTML = '<div class="empty">no TEvo splits data</div>'; return wrap; }
     const owned = splits.owned || {};
     const market = splits.market || {};
@@ -641,25 +657,28 @@
 
   // ---------- Zones (carried from v1) ----------
 
-  // TEvo zones + SG zones (per-section rollup) side-by-side.
-  function renderZones(zones, deltas, sgZones) {
+  // TEvo zones + SG sections side-by-side. Reads from the module state
+  // cache (_zonesState) so parallel TEvo + SG updates don't clobber each
+  // other (race fix — was passing null clobbered SG-already-rendered).
+  function renderZones() {
     const body = document.getElementById('zonesBody');
     if (!body) return;
     body.innerHTML = '';
     const left = document.createElement('div');
     left.className = 'dual-src-col';
     left.innerHTML = '<div class="dual-src-hdr">TEvo (zones)</div>';
-    left.appendChild(buildTevoZonesTable(zones, deltas));
+    left.appendChild(buildTevoZonesTable(_zonesState.tevo, _zonesState.deltas));
     const right = document.createElement('div');
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG (sections)</div>';
-    right.appendChild(buildSgZonesTable(sgZones));
+    right.appendChild(buildSgZonesTable(_zonesState.sg));
     body.appendChild(left);
     body.appendChild(right);
   }
 
   function buildTevoZonesTable(zones, deltas) {
     const wrap = document.createElement('div');
+    if (zones === undefined) { wrap.innerHTML = '<div class="empty">loading TEvo…</div>'; return wrap; }
     if (!zones) { wrap.innerHTML = '<div class="empty">zones unavailable</div>'; return wrap; }
     const rows = zones.zones || [];
     if (!rows.length) { wrap.innerHTML = '<div class="empty">no zone data</div>'; return wrap; }
@@ -2089,8 +2108,10 @@
   }
 
   // ---------- SG zones + splits (mig 20260519010000) ----------
-  // When the RPC resolves, re-render Splits + Zones with SG data merged in.
-  // TEvo side is pulled from the cached _lastPayload (set by loadAndRender).
+  // Writes its result into the module state cache; renderZones/renderSplits
+  // re-render reading from the cache. Race-safe: order of arrival between
+  // this RPC and the v3 fetchPayload doesn't matter — either side can land
+  // first and the other will paint when it arrives.
   async function loadSgZonesSplits(eventId) {
     const res = await rpcOrNull('get_event_sg_zones_splits', { p_event_id: eventId });
     let sgZones, sgSplits;
@@ -2102,12 +2123,8 @@
       if (d.hidden) { sgZones = d; sgSplits = d; }
       else { sgZones = { zones: d.zones || [] }; sgSplits = { splits: d.splits || {} }; }
     }
-    const data = _lastPayload || {};
-    const tevoZones  = data.zones || {};
-    const tevoDeltas = data.zone_deltas || null;
-    const tevoSplits = data.splits || null;
-    renderZones(tevoZones, tevoDeltas, sgZones);
-    renderSplits(tevoSplits, sgSplits);
+    setZonesSg(sgZones);
+    setSplitsSg(sgSplits);
   }
 
   // ---------- Last event snapshot (Overview tab) ----------
