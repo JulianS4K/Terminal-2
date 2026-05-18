@@ -80,6 +80,9 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `events` | `is_classified`, `tbd` | (neither exists — use `EXISTS(event_xref...)` for sports; parse `(Date TBD)` from name) |
 | `listings_snapshots` (TEvo firehose 8M rows) | filter by `aq_short_event_id` | **0% populated** — query by `event_id` only. Filter ours: `is_owned=true AND brokerage_id=1768` |
 | `seatgeek_sales/listings_snapshots.tevo_event_id` | use as join key | **0% populated** — always query by `sg_event_id` (indexes added 2026-05-16) |
+| `seatgeek_sales_snapshots` aggregates | `count(*)` / `SUM(broadcast_price)` directly | **11–23× overcount** — UNIQUE `(sg_event_id, sg_sale_id, pulled_at)` means each logical sale re-inserts every poll. **MANDATORY**: `DISTINCT ON (sg_sale_id) ORDER BY sg_sale_id, pulled_at DESC` before any aggregate. `MAX()` alone is safe (idempotent). Exemplars: `v_event_sales_metrics_filtered`, `v_event_sales_velocity` (PR #161); v3 RPC `sg_broker_sales` (PR #191). |
+| `v_event_weather_with_fallback.is_climo_fallback` | (column doesn't exist) | Derive `weather_kind = 'climatology_outdoor'`. Values: `'none' / 'forecast_indoor' / 'forecast_outdoor' / 'climatology_outdoor'`. |
+| `v_event_weather_with_fallback.climo_temp_f` | wrong name (no `_avg`) | Actual is `climo_avg_temp_f`. Sibling climo cols: `climo_avg_precip_in`, `climo_avg_wind_mph`, `climo_stddev_temp_f`, `climo_precip_pct`. The view also exposes top-level pre-resolved `temp_f / precip_in / precip_pct / wind_mph / weather_summary` — use those if you don't need a forecast-vs-climo badge. |
 | `sg_events_canonical` Parking pseudo-events | match against TEvo | **TEvo merges parking into main listing** — skip `sg_category IN ('Parking','parking')` and `*venue_name ILIKE '%parking%'` rows. Matcher v3 enforces this. |
 | TEvo `/v9/events` date filter | `occurs_at_gte` (underscore) | **`"occurs_at.gte"` (dotted)** — underscore returns 422 Invalid Parameters |
 
@@ -343,6 +346,7 @@ SELECT public.bot_chat_log(
 | 2026-05-18 | 20260518040000–040004 | **cost_* reader migration (5 readers)**: `v_event_price_arbitrage` + `v_event_full_v2` + `v_event_velocity_windows` + v2 RPC + v3 RPC all swap `cost_*` → `listings_all_*` (or `listings_owned_*` for arbitrage). Payload key names also renamed. |
 | 2026-05-18 | 20260518050000 | **cost_* columns DROP** + retire `compute_seatgeek_event_metrics` (legacy SellerDirect-only populator). 8 deprecated cost_* cols removed from `seatgeek_event_metrics`. |
 | 2026-05-18 | 20260518060000 | **event_metrics owned distribution DDL**: ADD COLUMN `owned_p25/p75/p90` numeric. Writer (Python app.py event-processor) is cross-lane — bot_chat handoff posted. Cols sit at NULL until writer-side ship. |
+| **2026-05-19** | 20260519100000 | **SG sales DISTINCT ON view cleanup**: 4 views (`seatgeek_event_latest`, `unified_orders`, `v_aq_match_quality`, `v_orphan_seatgeek_data`) were aggregating without DISTINCT ON sg_sale_id, silently 11–23× overcounting. Rebuilt with proper dedup. 2 dependents (`unified_orders_by_event`, `order_status_coverage`) recreated unchanged. Spot-check: event 3091415 sales_count went 8,431 → 368; unified_orders sg_sales rows went 1.82M → 121K. |
 
 ---
 
