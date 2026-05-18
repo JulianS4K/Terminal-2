@@ -74,13 +74,12 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 | [`docs/markdown_inventory.md`](markdown_inventory.md) | **This doc** — every `.md` file catalogued | Per-session sweep step 17 (new); quarterly full re-cat |
 | [`docs/security-runbook-2026-05-11.md`](security-runbook-2026-05-11.md) | Security incident response playbook | When new playbook step is added |
 | [`docs/war_games_playbook.md`](war_games_playbook.md) | 10 adversarial scenarios (W-1..W-10) with read-only probe templates for idle-time rotation | When new scenario surface emerges; rotate scenarios per sweep step 19 |
-| [`docs/b1_open_findings.md`](b1_open_findings.md) | Live ledger of OPEN B1 security findings (severity-sorted; fixing bots delete their row) | Per-session sweep (B1 populates new findings; fixing bots prune) |
 
 ## §5 — Active operational state 📋
 
 | File | Purpose |
 |---|---|
-| [`KANBAN.md`](../KANBAN.md) | Active work board + B1-NEXT security backlog |
+| [`KANBAN.md`](../KANBAN.md) | **Single source of truth** for OPEN work across all lanes (🟢 OPEN section at top) + per-lane archive + B1-NEXT historical backlog |
 | [`docs/cron-landscape-2026-05-09.md`](cron-landscape-2026-05-09.md) | All scheduled jobs by lane (somewhat stale; cron set has churned since) |
 | [`docs/cron-and-queue-health-2026-05-11.md`](cron-and-queue-health-2026-05-11.md) | Cron + pg_net queue health snapshot |
 | [`docs/release-discipline.md`](release-discipline.md) | Anti-drift practices + smoke harness discipline |
