@@ -60,7 +60,11 @@ jobs:
       - name: Check forbidden paths
         run: |
           AUTHOR="${{ github.event.pull_request.user.login }}"
-          if echo "$OWNERS" | grep -wq "$AUTHOR"; then
+          # Bash glob compare instead of `grep -wq`: GitHub bot logins contain
+          # bracket chars (e.g. `dependabot[bot]`) which grep interprets as a
+          # regex character class. Space-padded substring match is literal +
+          # word-boundary-safe (no overlap between, say, `bot` and `dependabot`).
+          if [[ " $OWNERS " == *" $AUTHOR "* ]]; then
             echo "Author $AUTHOR is an owner — backend writes allowed."
             exit 0
           fi
