@@ -303,6 +303,18 @@
     const status = $("#status");
     const grid = $("#grid");
     const empty = $("#empty");
+    // Suggest dropdown DOM + state — declared early so functions that
+    // reference them (hideSuggest/wireSuggestDropdown/scheduleSuggest)
+    // don't hit TDZ when called before the previous declaration location
+    // ~line 639. Operator report 2026-05-18: typing + Submit threw
+    // "Cannot access 'suggestEl' before initialization" because
+    // wireSuggestDropdown() is called at line 524 (was), which referenced
+    // suggestEl before its declaration ran. mountCatalog halted mid-flight
+    // there → const suggestEl line never executed → submit handler (already
+    // registered) fires later and re-hits TDZ on hideSuggest.
+    const suggestEl = $("#searchSuggest");
+    let suggestTimer = null;
+    let suggestSeq = 0;
 
     let allEvents = [];
     // loadComplete gates filter() so the user can't trigger a misleading
@@ -636,9 +648,8 @@
     // + 2-char minimum keeps upstream load reasonable (TEvo doesn't cache
     // suggestions — see notes in evo_client.search_suggestions). Server
     // also caches per-q for 60s.
-    const suggestEl = $("#searchSuggest");
-    let suggestTimer = null;
-    let suggestSeq = 0;  // monotonic so stale responses don't overwrite
+    // (suggestEl / suggestTimer / suggestSeq moved to top of mountCatalog
+    //  to fix TDZ — see comment block there.)
 
     function scheduleSuggest(qRaw) {
       const q = (qRaw || "").trim();
