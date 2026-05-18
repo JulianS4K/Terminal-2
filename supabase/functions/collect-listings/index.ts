@@ -313,7 +313,13 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
   const ownedTicketsCount = ownedSeats.reduce((s, r) => s + (r.quantity || 0), 0);
   const ownedGroupsCount = ownedSeats.length;
   const ownedShare = ticketsCount > 0 ? ownedTicketsCount / ticketsCount : null;
+  // PR #206 PR-5 (mig 20260518060000) — owned distribution columns. Mirrors the
+  // retail_* percentile pattern but filtered to is_owned rows. Falls through to
+  // null when ownedRetail is empty (no owned seats on this capture).
   const ownedMedianRetail = percentile(ownedRetail, 0.5);
+  const ownedP25         = percentile(ownedRetail, 0.25);
+  const ownedP75         = percentile(ownedRetail, 0.75);
+  const ownedP90         = percentile(ownedRetail, 0.9);
 
   return {
     event_id: eventId,
@@ -344,6 +350,9 @@ function computeEventMetrics(rows: ListingRow[], eventId: number, capturedAt: st
     owned_tickets_count: ownedTicketsCount,
     owned_share: round4(ownedShare),
     owned_median_retail: round2(ownedMedianRetail),
+    owned_p25: round2(ownedP25),
+    owned_p75: round2(ownedP75),
+    owned_p90: round2(ownedP90),
   };
 }
 
