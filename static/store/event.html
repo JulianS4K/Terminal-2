@@ -102,6 +102,18 @@
           </button>
         </nav>
 
+        <!-- Quick pricing: "at-a-glance" view of what's available by
+             quantity-bucket (1 / 2 / 3 / 4 / 5+) and by section. Computed
+             client-side from the same listings the server returns — no
+             extra fetch, no broker-internal fields. Re-renders whenever
+             renderListings() runs so filter changes update the rollup.
+             Hidden when the seats list is empty (parking tab also leaves
+             this strip hidden). -->
+        <aside id="quickPricing" class="quick-pricing" hidden aria-label="Quick pricing">
+          <div id="qpBuckets" class="qp-buckets" role="group" aria-label="From-price by quantity"></div>
+          <div id="qpSections" class="qp-sections" hidden aria-label="By section"></div>
+        </aside>
+
         <!-- Inline filters drive the page view AND the share URL. URL is the
              source of truth: every change updates ?zones=&section=&min_price=
              &max_price=&min_qty= via replaceState and re-fetches the listings.
