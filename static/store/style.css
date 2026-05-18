@@ -1191,10 +1191,75 @@ a.perf-chip:hover {
   border: 1px solid rgba(74, 222, 128, 0.45);
   color: #b6f0c8;
 }
-.mover-badge.premium {
-  background: rgba(250, 204, 21, 0.12);
-  border: 1px solid rgba(250, 204, 21, 0.5);
-  color: #ffe69a;
+/* premium label dropped per operator 2026-05-18; selectors kept commented
+   for searchability but no rules emit. */
+
+/* New label-system additions (operator 2026-05-18 — multi-label per card) */
+.mover-badge.trending {
+  background: rgba(96, 165, 250, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  color: #b9d5fb;
+}
+.mover-badge.deal {
+  background: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  color: #d8b7fb;
+}
+/* conf-2 (dual TEvo+SG corroboration) renders with a brighter/thicker outline */
+.mover-badge.conf-2 {
+  border-width: 1.5px;
+  filter: brightness(1.15);
+}
+/* Multi-badge container — flex wrap so 2+ badges stack tidily */
+.mover-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+/* Rest grid below the strip — 2 rows × 5 cards. */
+.movers-rest {
+  margin-top: 16px;
+}
+.movers-rest-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 8px;
+}
+.movers-rest-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(2, auto);
+  gap: 12px;
+}
+@media (max-width: 1100px) {
+  .movers-rest-grid {
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: auto;
+  }
+}
+@media (max-width: 700px) {
+  .movers-rest-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+/* Pad-fill cards (owned 1-50) get a subtle de-emphasis so users can tell
+   they're "limited inventory" — still bookable, just thinner. */
+.mover-card.from-pad {
+  opacity: 0.78;
+}
+.mover-card.from-pad::after {
+  content: "limited";
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.5px;
 }
 .mover-title {
   font-size: 14px;

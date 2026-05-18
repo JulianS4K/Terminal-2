@@ -882,8 +882,14 @@ def test_movers_drops_tix_d24h_when_velocity_stale(monkeypatch):
     )
 
     # Fresh event (1002): velocity trusted; -500 ticket drop fires selling_fast.
+    # Note: post-PR #273, signal-string was replaced with labels-array
+    # (multi-label per event). The selling_fast label still fires from the
+    # TEvo path here (SG data not stubbed in this fixture, so conf=1).
     assert 1002 in by_id, "fresh-velocity event should make the strip"
-    assert by_id[1002]["signal"] == "selling_fast"
+    labels_1002 = by_id[1002].get("labels") or []
+    assert any(L.get("name") == "selling_fast" for L in labels_1002), (
+        f"fresh event must carry selling_fast label; got labels={labels_1002}"
+    )
     assert by_id[1002]["tix_d24h"] == -500
 
 

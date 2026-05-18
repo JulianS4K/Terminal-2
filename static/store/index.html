@@ -71,6 +71,14 @@
         <h2 class="movers-title">Moving fast in NYC · next 3 weeks</h2>
         <div id="moversRow" class="movers-row"></div>
       </section>
+      <!-- Rest section — 10 cards in 2 rows × 5, sampled proportionally to the
+           label distribution in the pool. Padded from owned-1-50 events if the
+           strict owned>50 primary pool runs short. Populated by /api/store/movers
+           (response key: `rest`). -->
+      <section id="moversRest" class="movers-rest" hidden aria-label="More moving in NYC">
+        <h2 class="movers-rest-title">More moving in NYC</h2>
+        <div id="moversRestGrid" class="movers-rest-grid"></div>
+      </section>
       <div id="status" class="status" aria-live="polite">Loading available events…</div>
       <div id="grid" class="grid" hidden></div>
       <div id="empty" class="empty" hidden>
