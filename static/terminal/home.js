@@ -21,6 +21,8 @@
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireMoversControls();
+    // Blind spots fires its own RPC, independent of /api/broker/movers — runs in parallel.
+    renderBlindSpots().catch(e => console.error('[blindSpots]', e));
     load();
   }
 
@@ -37,7 +39,6 @@
           events.owned_value_winners, events.owned_value_losers,
         ]);
         renderCoverage(state.rows);
-        renderBlindSpots(state.rows);
         renderMovers();
         renderOwnedEvents(state.rows);
       })
@@ -80,62 +81,114 @@
 
   // ---------- Blind spots panel — SG selling, we're not ----------
   //
-  // Filter: sg_sales_window >= BLIND_SPOT_MIN_SG_SALES AND cur_owned_tix == 0.
-  // Operator can't capture revenue on inventory they don't hold; surface the
-  // gap so they can investigate (procure, contact buyer, or list elsewhere).
-  // The window matches the mover window selector — at 24h the chip threshold
-  // is "5 SG sales in 24h"; at 7d it's "5 SG sales in 7d". Threshold 5 is a
-  // tuning placeholder.
+  // Calls get_blind_spots_sg_selling(p_min_score) RPC (mig 20260520370000).
+  // Composite 0-4 score across:
+  //   1. listings shrinking >= 5% over 48h
+  //   2. price rising       >= 10% over 48h
+  //   3. sales accelerating >= 30% (last 24h vs prior 24h)
+  //   4. sales clearing at/above current ask
+  // Surfaces events scoring >= 3/4. Pool: ~3,150 unmatched US SG events
+  // polled at 12h cadence (TRACK_BLINDSPOT tier).
+  //
+  // Replaces the prior heuristic (sg_sales_window >= 5 AND cur_owned_tix == 0
+  // pulled from /api/broker/movers) — that surfaced matched events with SG
+  // activity but doesn't cover the unmatched-US cohort the new tracker targets.
 
-  const BLIND_SPOT_MIN_SG_SALES = 5;
-  const BLIND_SPOT_MAX_ROWS     = 20;
+  const BLIND_SPOT_MIN_SCORE = 3;
+  const BLIND_SPOT_MAX_ROWS  = 20;
 
-  function renderBlindSpots(rows) {
+  async function renderBlindSpots() {
     const body = document.getElementById('blindSpotsBody');
     const countEl = document.getElementById('blindSpotsCount');
     if (!body) return;
-    const candidates = rows
-      .filter(r => (+r.sg_sales_window || 0) >= BLIND_SPOT_MIN_SG_SALES
-                && (+r.cur_owned_tix || 0) === 0)
-      .sort((a, b) => {
-        const sa = +a.sg_sales_window || 0;
-        const sb = +b.sg_sales_window || 0;
-        if (sb !== sa) return sb - sa;
-        return (+b.cur_market_tix || 0) - (+a.cur_market_tix || 0);
-      });
-    const n = candidates.length;
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+
+    body.innerHTML = '<div class="empty">loading…</div>';
+
+    let rows;
+    try {
+      const res = await Auth.client.rpc('get_blind_spots_sg_selling',
+        { p_min_score: BLIND_SPOT_MIN_SCORE });
+      if (res.error) throw new Error(res.error.message || 'RPC error');
+      rows = res.data || [];
+    } catch (e) {
+      body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+
+    const n = rows.length;
     if (countEl) countEl.textContent = n
       ? `${n} event${n === 1 ? '' : 's'} (showing top ${Math.min(n, BLIND_SPOT_MAX_ROWS)})`
       : '';
+
     if (!n) {
-      body.innerHTML = '<div class="empty">no SG-only sales activity above threshold ✓</div>';
+      body.innerHTML =
+        '<div class="empty">no SG-selling signals at score &ge; ' + BLIND_SPOT_MIN_SCORE +
+        '/4 (48h baseline accumulating)</div>';
       return;
     }
+
     const tbl = document.createElement('table');
     tbl.className = 'blind-spots-tbl';
     tbl.innerHTML = `
       <thead><tr>
-        <th>Event</th><th>Performer</th><th>Venue</th>
+        <th>Event</th><th>Venue</th>
         <th class="num">T-days</th>
-        <th class="num">SG sales</th>
-        <th class="num">Mkt qty</th>
-        <th class="num">Mkt median</th>
+        <th class="num" title="Composite 0-4 across listings drop + price rise + sales accel + sales above ask">Score</th>
+        <th class="num" title="DISTINCT sg_sale_id in last 24h">Sales 24h</th>
+        <th class="num" title="Sales velocity: last 24h vs prior 24h">Vel %</th>
+        <th class="num">Listings</th>
+        <th class="num" title="48h delta on distinct sglid count">L Δ%</th>
+        <th class="num">Med px</th>
+        <th class="num" title="48h delta on median listing price">P Δ%</th>
+        <th class="num" title="Median sale 24h vs current median ask">Sale/Ask</th>
+        <th class="num" title="Sales 24h / Listings now">Clear</th>
       </tr></thead>
       <tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
-    candidates.slice(0, BLIND_SPOT_MAX_ROWS).forEach(r => {
-      const d = T.daysUntil(r.occurs_at_local || r.occurs_at);
+
+    rows.slice(0, BLIND_SPOT_MAX_ROWS).forEach(r => {
+      const d = T.daysUntil(r.sg_datetime_utc);
       const tr = document.createElement('tr');
+
+      // Event cell links to event.html if we have a TEvo bridge, else plain text.
+      const eventLabel = r.tevo_event_id
+        ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id))}</a>`
+        : escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id));
+
+      // Score cell — hover reveals which signals are lit.
+      const signalsTitle = [
+        (r.signal_listings_drop  ? '✓' : '✗') + ' listings shrinking ≥ 5%',
+        (r.signal_price_rise     ? '✓' : '✗') + ' price rising ≥ 10%',
+        (r.signal_sales_accel    ? '✓' : '✗') + ' sales accelerating ≥ 30%',
+        (r.signal_sales_above_ask? '✓' : '✗') + ' sales clearing at/above ask'
+      ].join(' · ');
+
+      const pct = v => (v == null ? '—' : T.fmtPct(v));
+      const cls = (cond, on, off) => cond ? on : (off || '');
+
       tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a></td>
-        <td>${escapeHtml(r.performer_name || '—')}</td>
-        <td>${escapeHtml(r.venue_name || '—')}</td>
+        <td>${eventLabel}</td>
+        <td>${escapeHtml(r.sg_venue_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="num warn">${T.fmtNum(+r.sg_sales_window || 0)}</td>
-        <td class="num">${T.fmtNum(+r.cur_market_tix || 0)}</td>
-        <td class="num">${r.cur_market_med ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>`;
+        <td class="num" title="${signalsTitle}"><strong>${r.selling_score}/4</strong></td>
+        <td class="num">${r.sales_24h_count || 0}</td>
+        <td class="num ${cls(r.sales_velocity_pct > 0, 'pos', r.sales_velocity_pct < 0 ? 'neg' : '')}">${pct(r.sales_velocity_pct)}</td>
+        <td class="num">${r.listings_now}</td>
+        <td class="num ${cls(r.listings_pct_delta < 0, 'neg', r.listings_pct_delta > 0 ? 'pos' : '')}">${pct(r.listings_pct_delta)}</td>
+        <td class="num">${r.median_now ? '$' + T.fmtNum(Math.round(+r.median_now)) : '—'}</td>
+        <td class="num ${cls(r.price_pct_delta > 0, 'pos', r.price_pct_delta < 0 ? 'neg' : '')}">${pct(r.price_pct_delta)}</td>
+        <td class="num ${cls(r.sale_vs_listing_pct > 0, 'pos', r.sale_vs_listing_pct < 0 ? 'neg' : '')}">${pct(r.sale_vs_listing_pct)}</td>
+        <td class="num">${r.clearing_ratio != null ? T.fmtNum(Math.round(r.clearing_ratio * 100)) + '%' : '—'}</td>`;
       tb.appendChild(tr);
     });
+
     body.innerHTML = '';
     body.appendChild(tbl);
   }
