@@ -43,7 +43,33 @@
   }
 
   async function api(path, init) {
-    const r = await fetch(path, init);
+    // 20s default timeout via AbortController. Was unbounded — when the
+    // backend or network stalled (Render free-tier cold-start dragging
+    // past 30s, supabase latency spike, transient connection hang), the
+    // promise never resolved and the UI sat on "Loading…" indefinitely.
+    // loadCatalog's PR #141 loadComplete gate compounds the symptom: the
+    // spinner stays until either then() or catch() fires. With the
+    // timeout, a stall surfaces an AbortError through the existing catch
+    // path → user sees the Retry button instead of an infinite spinner.
+    // Per-call override: pass `init.timeout` in ms.
+    const userInit = init || {};
+    const timeoutMs = Number.isFinite(userInit.timeout) ? userInit.timeout : 20000;
+    const controller = new AbortController();
+    const fetchInit = { ...userInit, signal: userInit.signal || controller.signal };
+    delete fetchInit.timeout;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let r;
+    try {
+      r = await fetch(path, fetchInit);
+    } catch (e) {
+      clearTimeout(timer);
+      if (e && (e.name === "AbortError" || e.code === 20)) {
+        const tag = String(path).split("?")[0].replace(/^\/api\/store\//, "");
+        throw new Error(`timeout ${tag}: server didn't respond within ${Math.round(timeoutMs / 1000)}s`);
+      }
+      throw e;
+    }
+    clearTimeout(timer);
     if (!r.ok) {
       const body = await r.text();
       let msg = body;
