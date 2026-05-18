@@ -12,4 +12,4 @@ defusedxml>=0.7,<1.0
 # tzdata — fallback IANA tzdata for systems without OS-level timezone files
 # (Windows dev, slim Docker images). Needed by d2_dashboard's metrics endpoint
 # for the "today" window which anchors on America/New_York. Tiny (~330 KB).
-tzdata>=2024.1,<2026.0
+tzdata>=2026.2,<2027.0
