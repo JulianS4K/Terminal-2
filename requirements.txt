@@ -8,7 +8,7 @@ requests>=2.32,<3.0
 supabase>=2.30.0,<3.0
 anthropic>=0.40,<1.0
 beautifulsoup4>=4.14.3,<5.0
-defusedxml>=0.7,<1.0
+defusedxml>=0.7.1,<1.0
 # tzdata — fallback IANA tzdata for systems without OS-level timezone files
 # (Windows dev, slim Docker images). Needed by d2_dashboard's metrics endpoint
 # for the "today" window which anchors on America/New_York. Tiny (~330 KB).
