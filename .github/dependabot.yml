@@ -39,6 +39,15 @@ updates:
     # Allow security updates outside the group + window.
     allow:
       - dependency-type: "all"
+    # Pin majors held by operator 2026-05-18 (B1 triage in PR #239 description).
+    # Each entry blocks the version range until the operator explicitly unblocks
+    # after smoke-testing the major bump. Security advisories override `ignore`
+    # — vulnerable versions still get PRs.
+    ignore:
+      - dependency-name: "anthropic"
+        versions: [">=1.0"]
+        # anthropic v1.0 = major API redesign. Hold until anthropic_client.py
+        # is audited for v1 compatibility. Original PR #225 closed.
 
   # GitHub Actions versions (workflow files)
   - package-ecosystem: "github-actions"
@@ -59,6 +68,27 @@ updates:
       # Dependabot produces "chore(github-actions): ..." cleanly.
       prefix: "chore"
       include: "scope"
+    # Pin majors held by operator 2026-05-18 (B1 triage in PR #239 description).
+    # Each entry blocks the version range until the operator explicitly unblocks
+    # after smoke-testing the major bump.
+    ignore:
+      - dependency-name: "actions/upload-artifact"
+        versions: [">=5"]
+        # v5 introduced breaking change: artifacts can no longer be merged
+        # automatically. v6 + v7 inherit. Stay on v4 until workflow logic is
+        # updated. Original PR #220 closed.
+      - dependency-name: "actions/github-script"
+        versions: [">=8"]
+        # v8 switched to Node 22 + script API changes. Need ecosystem test.
+        # Original PR #221 closed.
+      - dependency-name: "actions/labeler"
+        versions: [">=6"]
+        # v6 changed config schema (sync-labels parameter moved). labeler.yml
+        # uses v5 syntax. Test before bumping. Original PR #222 closed.
+      - dependency-name: "github/codeql-action"
+        versions: [">=4"]
+        # v4 has migration notes; scorecard.yml uses v3 upload-sarif. Hold
+        # until CodeQL workflow is authored (B1-NEXT-4). Original PR #240 closed.
 
   # Note: Deno (Supabase edge functions) is NOT supported by Dependabot.
   # Edge function deps are pinned via import URLs (e.g.,
