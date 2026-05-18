@@ -82,6 +82,7 @@
 | B1-NEXT-40 | Op | **G-9**: `allow_forking: true` on public repo. Forks clone full history including the leaked `CRON_SECRET` commit `5297739`. Compounds G-1. | Operator decision (usually allow_forking stays true; real fix is G-1 history rewrite) |
 | B1-NEXT-44 | Op | **G-14**: Branch protection on `main` — no required approving review count, no CODEOWNERS review required, no dismiss-stale-reviews. Single-operator can push without formal review. | Operator decision — Settings → Branches → Edit rule for `main` |
 | B1-NEXT-45 | Op | **G-15**: `required_conversation_resolution: false`. PRs can merge with unresolved review comments. | Settings → Branches → toggle |
+| B1-NEXT-51 | A1 (B1 assists) | 5 deferred major-version bumps (held in `.github/dependabot.yml` ignore rules 2026-05-18): `anthropic>=1.0`, `actions/upload-artifact>=5`, `actions/github-script>=8`, `actions/labeler>=6`, `github/codeql-action>=4`. Each needs smoke-test before operator unblocks. Original Dependabot PRs were #220/#221/#222/#225/#240 (all closed). | One smoke-test PR per bump (or batch). Remove the corresponding `ignore:` block after each lands. |
 
 ### Operator-only (settings / lockdown-gated applies)
 
