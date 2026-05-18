@@ -1077,6 +1077,14 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 }
 .range-select:focus { outline: none; border-color: var(--accent); }
 
+/* Alerts toggle inside price chart controls — off by default per operator 2026-05-18 */
+.alerts-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  cursor: pointer; user-select: none;
+}
+.alerts-toggle input[type="checkbox"] { cursor: pointer; }
+
 /* Splits panel */
 #splits .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
 .splits-tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
