@@ -513,13 +513,19 @@
             tournament: e.tournament || null,
             holiday: e.holiday || null,
           }));
-          // Client-side speculative filter — mirrors PR #175's server-side
-          // logic. Drops CANCELLED + (If Necessary). Kept here in addition
-          // to the server filter so the fix works even if the older server
-          // build hasn't redeployed yet.
+          // Client-side filter — two gates:
+          // 1. Speculative-name guard (mirrors PR #175 server-side logic).
+          //    Drops CANCELLED + (If Necessary).
+          // 2. Owned-inventory only (operator 2026-05-18). Storefront pitches
+          //    "Direct inventory, transparent pricing" — Submit-driven grid
+          //    must not surface events we can't sell. _search_sql_only +
+          //    _search_live return `we_own:false` events for the as-you-type
+          //    suggest dropdown's "browse" section, but the main grid only
+          //    shows what's bookable.
           const cleaned = normalized.filter((e) => {
             const up = (e.name || "").toUpperCase();
-            return !up.includes("CANCELLED") && !up.includes("(IF NECESSARY)");
+            if (up.includes("CANCELLED") || up.includes("(IF NECESSARY)")) return false;
+            return (Number(e.owned_tickets_count) || 0) > 0;
           });
           render(cleaned, "search");
           userHasSearched = true;
