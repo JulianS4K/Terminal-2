@@ -33,10 +33,11 @@
 | `espn_event_snapshots` | 581 | LIVE (gameday-scope) | Per-game state (score, status, attendance, win-prob). Captured during/near game time only. |
 | `espn_injuries_snapshots` | 514 | LIVE | Per-athlete injury report history (status, return date, comment). |
 | `espn_team_snapshots` | 71 | LIVE | Team-state (wins/losses, streak, playoff seed). Daily-ish. |
-| `event_competitors_snapshot` | 816 | LIVE | Per-event "competing event in same market" rollup. Refreshed via cron. |
+| `event_competitors_snapshot` | 816 | LIVE (cron @ :40 hourly via mig 20260518020000) | Per-event "competing event in same market" rollup. Sparse coverage by-design — only events with 20mi/24h venue neighbors get rows. |
+| `event_sentiment` | 8+ (growing) | LIVE (cron @ :15,:45 via mig 20260518010000) | Per-event sentiment + velocity signals (sentiment_index, tix_per_hour, getin_per_hour, owned_share_change, pairs_change_per_hour). NULL when no prior 6-36h snapshot. |
+| `event_section_row_snapshots` | 1,268+ (growing) | LIVE (cron @ :03 hourly via mig 20260518030000) | Per-section-row aggregate from listings_snapshots (source=tevo). C1-owned schema, A1 wrote populator + scheduler. SG-side mirror pending future PR. |
 | `seatdata_sales_snapshots` | 0 | **STALE** (last 2026-05-09) | SeatData wholesale-channel sales. Pipeline dormant. |
 | `seatdata_listings_snapshots` | 0 | **EMPTY** | SeatData mirror. Pipeline dormant. |
-| `event_section_row_snapshots` | 0 | **EMPTY** | Per-section-row aggregate. C1-owned schema, ingest not wired. |
 | `snapshots` (legacy) | 0 | **LEGACY** (last 2026-04-23) | Pre-history per-event aggregate. Superseded by `event_metrics`. Do not write. |
 
 ### D0 tab option matrix — what surfaces are wired vs available
