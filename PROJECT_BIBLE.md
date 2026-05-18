@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-17 by A1
+**Last updated**: 2026-05-17 by A1 (post-PR #228 — pg_net async landmine + 2026-05-19 mig lineup)
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -87,6 +87,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `v_event_weather_with_fallback.climo_temp_f` | wrong name (no `_avg`) | Actual is `climo_avg_temp_f`. Sibling climo cols: `climo_avg_precip_in`, `climo_avg_wind_mph`, `climo_stddev_temp_f`, `climo_precip_pct`. The view also exposes top-level pre-resolved `temp_f / precip_in / precip_pct / wind_mph / weather_summary` — use those if you don't need a forecast-vs-climo badge. |
 | `sg_events_canonical` Parking pseudo-events | match against TEvo | **TEvo merges parking into main listing** — skip `sg_category IN ('Parking','parking')` and `*venue_name ILIKE '%parking%'` rows. Matcher v3 enforces this. |
 | TEvo `/v9/events` date filter | `occurs_at_gte` (underscore) | **`"occurs_at.gte"` (dotted)** — underscore returns 422 Invalid Parameters |
+| `pg_net.http_get()` inside a loop | `PERFORM pg_sleep(N)` between calls to pace upstream rate limits | **NO-OP for rate limiting** — pg_net is **asynchronous**. The function returns a request_id immediately; HTTP fire happens in a background dispatch worker that doesn't honor function-side `pg_sleep`. Evidence: 50 queued GETs fired with IDENTICAL `_http_response.created` timestamp `02:34:45.137759`. PR #212/#214 pg_sleep stagger never worked. **Right pattern**: cap burst size to ≤ upstream token quota and use cron frequency for throughput. Codified as macro in §7. Discovered via PR #228 / mig 20260519140000. |
 
 ---
 
@@ -232,8 +233,28 @@ CREATE OR REPLACE FUNCTION public.your_fn(p_a text, p_b int, p_new int DEFAULT 5
 ```
 If you can't predict the prior signature, query `pg_proc` for `proname` to enumerate overloads before authoring the migration.
 
-### `sg_broker_pending` — drains via 1-min priority cron
-The bounded-drain functions (`sg_broker_listings_process(p_limit=50)` / `sg_broker_sales_process(p_limit=50)`) run from the 1-min priority crons. The 30-min variants were unscheduled 2026-05-17 (redundant). If you need to drain faster ad-hoc, pass a larger `p_limit`. Pending rows whose `_http_response` has been pruned (>6h old) are housekept by `sweep_all_expired_pg_net_pending` at `:20` hourly.
+### `sg_broker_pending` — drains via 5-min priority cron
+The bounded-drain functions (`sg_broker_listings_process(p_limit=50)` / `sg_broker_sales_process(p_limit=50)`) run from the 5-min priority crons (rebased 1min→5min per mig 20260519120000). The 30-min variants were unscheduled 2026-05-17 (redundant). If you need to drain faster ad-hoc, pass a larger `p_limit`. Pending rows whose `_http_response` has been pruned (>6h old) are housekept by `sweep_all_expired_pg_net_pending` at `:20` hourly.
+
+The bounded-FIRE functions (`sg_broker_listings_queue` / `sg_broker_sales_queue` / `sg_priority_poll_tick`) were burst-size-capped to 8/8/6 events per call per mig 20260519140000 to fit under SG's 10-req/8s quota — see the pg_net pattern macro below.
+
+### pg_net rate-limiting pattern (burst cap, NOT pg_sleep)
+```sql
+-- ❌ WRONG (no-op): pg_sleep inside a loop doesn't pace pg_net's async dispatch
+FOR r IN <select> LOOP
+  SELECT net.http_get(...) INTO v_req;
+  PERFORM pg_sleep(0.9);  -- has no effect on HTTP dispatch timing
+END LOOP;
+
+-- ✅ RIGHT: cap LIMIT to ≤ upstream token quota; let cron frequency drive throughput
+-- e.g. SG quota = 10 req / 8s, so:
+FOR r IN <select> ... ORDER BY ... LIMIT p_max_events  -- cap at 8 in cron caller
+LOOP
+  SELECT net.http_get(...) INTO v_req;  -- async-dispatched; bucket sees 8 < 10
+END LOOP;
+-- Then schedule cron @ */5 * * * *  (5min >> 8s reset; bucket refills between firings)
+```
+**Throughput math**: (burst × firings/hr) ≥ inflow_rate. SG sustained: 96 listings + 96 sales + 72 priority = 0.73 req/sec << 1.25 req/sec quota.
 
 ### Email gate inside SECDEF RPC
 ```sql
@@ -348,7 +369,13 @@ SELECT public.bot_chat_log(
 | 2026-05-18 | 20260518040000–040004 | **cost_* reader migration (5 readers)**: `v_event_price_arbitrage` + `v_event_full_v2` + `v_event_velocity_windows` + v2 RPC + v3 RPC all swap `cost_*` → `listings_all_*` (or `listings_owned_*` for arbitrage). Payload key names also renamed. |
 | 2026-05-18 | 20260518050000 | **cost_* columns DROP** + retire `compute_seatgeek_event_metrics` (legacy SellerDirect-only populator). 8 deprecated cost_* cols removed from `seatgeek_event_metrics`. |
 | 2026-05-18 | 20260518060000 | **event_metrics owned distribution DDL**: ADD COLUMN `owned_p25/p75/p90` numeric. Writer (Python app.py event-processor) is cross-lane — bot_chat handoff posted. Cols sit at NULL until writer-side ship. |
-| **2026-05-19** | 20260519100000 | **SG sales DISTINCT ON view cleanup**: 4 views (`seatgeek_event_latest`, `unified_orders`, `v_aq_match_quality`, `v_orphan_seatgeek_data`) were aggregating without DISTINCT ON sg_sale_id, silently 11–23× overcounting. Rebuilt with proper dedup. 2 dependents (`unified_orders_by_event`, `order_status_coverage`) recreated unchanged. Spot-check: event 3091415 sales_count went 8,431 → 368; unified_orders sg_sales rows went 1.82M → 121K. |
+| **2026-05-19** | 20260519000000 | **D0 weather localized RPC**: `get_event_weather_localized(p_event_id)` returns venue-localized forecast (`v_event_weather_with_fallback`) + NWS alerts filtered to event's UGC zones (`v_event_nws_alerts`). Replaces v3 RPC's global-alert behavior. Email-gated. |
+| 2026-05-19 | 20260519010000 | **D0 SG zones/splits RPC**: `get_event_sg_zones_splits(p_event_id)` per-section rollup (min/median/max broadcast_price + listings + tickets) + per-quantity-bucket splits (singles/pairs/triples/quads/five_plus) over 24h deduped SG listings. Bridge via `seatgeek_event_xref`. Email-gated. |
+| 2026-05-19 | 20260519100000 | **SG sales DISTINCT ON view cleanup**: 4 views (`seatgeek_event_latest`, `unified_orders`, `v_aq_match_quality`, `v_orphan_seatgeek_data`) were aggregating without DISTINCT ON sg_sale_id, silently 11–23× overcounting. Rebuilt with proper dedup. 2 dependents (`unified_orders_by_event`, `order_status_coverage`) recreated unchanged. Spot-check: event 3091415 sales_count went 8,431 → 368; unified_orders sg_sales rows went 1.82M → 121K. |
+| 2026-05-19 | 20260519110000 | **SG broker 429-aware pipeline**: processors set `sg_broker_pending.rows_persisted = -429` (re-queueable) vs `-1` (terminal failure) vs `>=0` (success row count). 429 rows auto-retry on next firing instead of staying terminal. Sentinel feeds the 429 monitoring views in mig 130000. |
+| 2026-05-19 | 20260519120000 | **SG priority crons 1min→5min**: `sg_priority_poll_tick_5min`, `sg_priority_listings_process_5min`, `sg_priority_sales_process_5min` renamed with staggered minute offsets. Reduces pg_cron load + 429 collision risk. Tier policy (240s/300s/1800s) still governs per-event cadence; cron just wakes the driver. |
+| 2026-05-19 | 20260519130000 | **SG broker 429 monitoring protocol**: `v_sg_broker_429_health` (hourly pct_429 rollup over 24h), `v_sg_broker_429_starved_events` (events 429'd 3+ times with no recent success), `check_sg_broker_429_health()` with hysteresis-protected bot_chat flag @ pct_429 > 15%. 15-min cron `sg_broker_429_health_check_15min`. |
+| **2026-05-19** | 20260519140000 | **🔥 SG broker burst-size emergency hotfix (PR #228)**: caps burst to 8 events/call on `sg_broker_listings_queue` + `sg_broker_sales_queue` (3+3 polls on `sg_priority_poll_tick`) — under SG's 10-token bucket. Drops broken `PERFORM pg_sleep(0.9)` calls (no-op given pg_net async dispatch — see §3 landmine + §7 macro). New schedules: listings `*/5`, sales `2-57/5`, poll_tick `4-59/5`. pct_429 went 70.7% (02:00 hour) → 0.0% on every firing 02:50 onward. Sustained 0.73 req/sec << 1.25 req/sec quota. |
 
 ---
 
