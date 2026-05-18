@@ -523,9 +523,9 @@ In-lane D3.
 | PR | Scope | Lane | Gating |
 |---|---|---|---|
 | #261 (this) | Tests + Fastly fix + scale plan + base schema | D3 | none |
-| #N+1 | `discover_shows()` + `snapshot_show` refactor (#2, #5) | D3 | none |
-| #N+2 | robots.txt honoring (#10) + idempotency helpers (#8) | D3 | none |
-| #N+3 | `broadway_run_log` + close-tracking columns (#6, #11) | D3 | none |
-| #N+4 | Edge function `broadway_collect` — wires through to all the above | D3 | none |
+| #N+1 | `discover_shows()` + `snapshot_show` refactor (#2, #5) | D3 | ✅ landed in PR #261 (commit c36561b) |
+| #N+2 | robots.txt honoring (#10) + idempotency helpers (#8) | D3 | ✅ landed in PR #261 (commit e9c6122) |
+| #N+3 | `broadway_run_log` + close-tracking columns (#6, #11) | D3 | ✅ migration drafted in PR #261; apply gated |
+| #N+4 | Edge function `broadway_collect` — wires through to all the above | D3 | follow-up PR |
 | #N+5 | Cron schedules | D3 → A1 | operator approval (cron.*) |
-| #N+6 | Dashboard wiring for missed-snapshots + run-log views | D2 sub-PR | none |
+| #N+6 | Dashboard wiring for missed-snapshots + run-log views | D2 sub-PR | follow-up |
