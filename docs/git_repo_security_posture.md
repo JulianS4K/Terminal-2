@@ -1,6 +1,6 @@
 # Git Repo Security Posture — Terminal-2
 
-**Owner**: B1 (Security Manager) · **Last full sweep**: 2026-05-17 (expanded — capabilities audit) · **Update cadence**: per-session sweep step 12 + 14 (see [`b1_operating_constraints.md`](b1_operating_constraints.md))
+**Owner**: B1 (Security Manager) · **Last full sweep**: 2026-05-18 (post Phase 2 operator quick wins — 6 findings closed) · **Update cadence**: per-session sweep step 12 + 14 (see [`b1_operating_constraints.md`](b1_operating_constraints.md))
 
 Living snapshot of GitHub repo security + maintenance configuration. B1 diffs current `gh api` output against this doc to catch regressions AND to track which GitHub capabilities are utilized vs available.
 
@@ -15,9 +15,9 @@ Original sweep G-1 through G-8 unchanged from 2026-05-15 baseline. Expanded with
 | # | Severity | Finding | Action |
 |---|---|---|---|
 | G-1 | SEC-HIGH | Repo `visibility: public` AND historic `CRON_SECRET` literal in commit `5297739` (now-rotated, but readable on the internet). | [B1-NEXT-11]. Operator decides `git filter-repo` window. |
-| G-2 | SEC-MED | `dependabot_security_updates: disabled` | [B1-NEXT-12]. Operator-only (Settings → Code security). |
-| G-3 | SEC-MED | `secret_scanning_non_provider_patterns: disabled` | [B1-NEXT-13]. Operator-only. |
-| G-4 | SEC-MED | `secret_scanning_validity_checks: disabled` | [B1-NEXT-14]. Operator-only. |
+| G-2 | SEC-MED | ~~`dependabot_security_updates: disabled`~~ ✅ **CLOSED 2026-05-18** — operator enabled. 0 open alerts on first scan. |
+| G-3 | SEC-MED | `secret_scanning_non_provider_patterns: disabled` — **DEFERRED 2026-05-18**: requires GitHub Advanced Security (GHAS) on individual public repos. Push protection (free tier) + gitleaks CI cover the gap. Reopen if repo moves to org with GHAS. |
+| G-4 | SEC-MED | `secret_scanning_validity_checks: disabled` — **DEFERRED 2026-05-18**: same GHAS-paid gate as G-3. |
 | G-5 | SEC-MED | No CodeQL / code-scanning analysis (`code-scanning/alerts` returns 404). | [B1-NEXT-4]. Decision deferred. |
 | G-6 | SEC-LOW | `enforce_admins: false` — admin can bypass branch protection. | [B1-NEXT-15]. Operator-only. |
 | G-7 | SEC-LOW | `required_signatures: false` — commits not GPG-signed. | [B1-NEXT-16]. |
@@ -28,16 +28,16 @@ Original sweep G-1 through G-8 unchanged from 2026-05-15 baseline. Expanded with
 | # | Severity | Finding | Action |
 |---|---|---|---|
 | G-9 | SEC-LOW | `allow_forking: true` on public repo. Forks clone full history including the leaked `CRON_SECRET` commit `5297739`. Compounds G-1. | [B1-NEXT-40]. Operator decision — typically allow_forking stays true unless concerned about derivative works; the real fix is G-1 history-rewrite. |
-| G-10 | SEC-LOW | `delete_branch_on_merge: false`. B1 manually deleted 14 orphan merged branches 2026-05-17. Hygiene issue, not security. | [B1-NEXT-41]. Operator-only toggle (Settings → General → "Automatically delete head branches"). |
-| G-11 | SEC-LOW | `has_wiki: true`, `has_projects: true`, `has_downloads: true` — all enabled but never used. Unused features = attack surface (spam, public-visibility leakage via wiki). | [B1-NEXT-42]. Operator decision. Disable unused. |
-| G-12 | SEC-MED | No `SECURITY.md` security disclosure policy. Public repo + no vuln-reporting channel = researchers open public issues with vulnerabilities. | [B1-NEXT-43]. B1 can author. Files at `.github/SECURITY.md` or repo root. |
+| G-10 | SEC-LOW | ~~`delete_branch_on_merge: false`~~ ✅ **CLOSED 2026-05-18** — operator enabled. |
+| G-11 | SEC-LOW | `has_wiki/projects/downloads: true` — **SUPERSEDED 2026-05-18** by operator "use to fullest extent" directive. Wiki + Projects now intentionally enabled. Discussions added (was false → true). Downloads stays on (no operational impact). |
+| G-12 | SEC-MED | ~~No `SECURITY.md` security disclosure policy.~~ ✅ **CLOSED 2026-05-18** by [PR #219](https://github.com/JulianS4K/Terminal-2/pull/219) — `.github/SECURITY.md` published. |
 | G-13 | SEC-LOW | No `LICENSE` file. Public repo without license = full copyright reserved (US default). Proprietary code; intentional. README footer should call this out. | Document, no action. |
 | G-14 | SEC-LOW | Branch protection — `required_approving_review_count` not set, CODEOWNERS review not required, `dismiss_stale_reviews` not set. Currently any user with push access (only `JulianS4K`) can merge to `main` without explicit review. | [B1-NEXT-44]. Operator decision — single-operator profile may or may not require formal review gate. |
 | G-15 | SEC-LOW | `required_conversation_resolution: false` on branch protection. PRs can merge with unresolved review comments. | [B1-NEXT-45]. Operator-only. |
-| G-16 | SEC-LOW | No private vulnerability reporting enabled. Public repo with no PVR = no private channel for researchers. | [B1-NEXT-46]. Operator-only (Settings → Code security → Private vulnerability reporting). |
-| G-17 | SEC-LOW | No `actions/dependency-review-action` in CI. With Dependabot enabled, this workflow blocks PRs that add vulnerable deps. | [B1-NEXT-47]. Blocked on G-2 (Dependabot enable). B1 can author once Dependabot lives. |
-| G-18 | SEC-LOW | No OSSF Scorecard workflow. Automated repo-security scoring (`.github/workflows/scorecard.yml`). | [B1-NEXT-48]. B1 can author. |
-| G-19 | SEC-LOW | No `.github/dependabot.yml` for version updates. Even with security updates disabled, version updates can run separately. | [B1-NEXT-49]. Blocked on G-2 enable decision. |
+| G-16 | SEC-LOW | ~~No private vulnerability reporting enabled.~~ ✅ **CLOSED 2026-05-18** — operator enabled. SECURITY.md "preferred" link now resolves. |
+| G-17 | SEC-LOW | ~~No `actions/dependency-review-action` in CI.~~ ✅ **CLOSED 2026-05-18** by [PR #219](https://github.com/JulianS4K/Terminal-2/pull/219) + Dependabot enable (G-2). Workflow now active on PRs touching `requirements.txt` / `workflows/*`. |
+| G-18 | SEC-LOW | ~~No OSSF Scorecard workflow.~~ ✅ **CLOSED 2026-05-18** by [PR #219](https://github.com/JulianS4K/Terminal-2/pull/219) — `.github/workflows/scorecard.yml` runs Mondays 12:00 UTC. |
+| G-19 | SEC-LOW | ~~No `.github/dependabot.yml` for version updates.~~ ✅ **CLOSED 2026-05-18** by [PR #219](https://github.com/JulianS4K/Terminal-2/pull/219) + Dependabot enable (G-2). Weekly pip + gh-actions schedule active. |
 
 No SEC-CRIT findings.
 

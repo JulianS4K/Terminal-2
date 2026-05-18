@@ -1,6 +1,6 @@
 # GitHub Features Plan — Terminal-2
 
-**Owner**: B1 (Security Manager) · **Status**: 2026-05-17 — initial proposal, awaiting operator decisions on Discussions / Projects / Wiki enable
+**Owner**: B1 (Security Manager) · **Status**: 2026-05-18 — Phase 2 operator quick wins partially landed (4 of 7 toggles); Phase 3 content seeding now unblocked for Discussions + PVR-backed Security tab
 
 Operator directive 2026-05-17: *"use git to its fullest extent including using discussions tab, projects tab, wiki tab and securities and quality tab and others that may assist in quality and productivity."*
 
@@ -22,13 +22,13 @@ This doc maps every GitHub surface to a concrete proposed use within Terminal-2'
 - ✅ Added [`.github/workflows/dependency-review.yml`](../.github/workflows/dependency-review.yml) — inert until operator enables (G-2)
 - ✅ Added [`.github/workflows/scorecard.yml`](../.github/workflows/scorecard.yml) — OSSF Scorecard, weekly cron, results to code-scanning + public scorecard.dev
 
-**Phase 2 (operator must enable in Settings → Code security)**:
-1. Dependabot security updates (G-2 / B1-NEXT-12)
-2. Dependabot security alerts (companion)
-3. Secret scanning non-provider patterns (G-3 / B1-NEXT-13)
-4. Secret scanning validity checks (G-4 / B1-NEXT-14)
-5. Private Vulnerability Reporting (G-16 / B1-NEXT-46) — so SECURITY.md's "preferred" channel works
-6. CodeQL (G-5 / B1-NEXT-4) — adds a 4th workflow `codeql.yml` (B1 authors after operator OK)
+**Phase 2 (operator must enable in Settings → Code security)** — **STATUS as of 2026-05-18**:
+1. ✅ Dependabot security updates (G-2 / B1-NEXT-12) — **ENABLED 2026-05-18**, 0 open alerts on first scan
+2. ✅ Dependabot security alerts — companion to #1
+3. ⏸️ Secret scanning non-provider patterns (G-3 / B1-NEXT-13) — **DEFERRED** (GHAS-paid feature, not available on free individual public repo)
+4. ⏸️ Secret scanning validity checks (G-4 / B1-NEXT-14) — **DEFERRED** (same GHAS gate)
+5. ✅ Private Vulnerability Reporting (G-16 / B1-NEXT-46) — **ENABLED 2026-05-18**, SECURITY.md PVR link now resolves
+6. 🟡 CodeQL (G-5 / B1-NEXT-4) — pending operator decision; adds `codeql.yml` workflow when chosen
 
 **Phase 3 (after Phase 2 lands)**:
 - Repository Security Advisories — draft CVE entries when first vuln surfaces (per-incident, no setup)
@@ -48,7 +48,7 @@ This doc maps every GitHub surface to a concrete proposed use within Terminal-2'
 - Operator broadcasts that should be discoverable later (currently scattered between bot_chat broadcasts and Slack)
 - Cross-bot knowledge base (Q&A — searchable past questions, replaces re-asking)
 
-**Phase 2 — operator enables** (Settings → General → Features → Discussions)
+**Phase 2 — operator enables** (Settings → General → Features → Discussions) — ✅ **ENABLED 2026-05-18**, tab now live
 
 **Phase 3 — B1 seeds these categories**:
 
@@ -255,34 +255,33 @@ git push origin v0.1.0-beta
 
 ## Cumulative operator-action checklist
 
-**Quick wins (~10 minutes total, all in Settings)**:
+**Quick wins** — STATUS as of 2026-05-18:
 
 1. Settings → Code security:
-   - Enable Dependabot security updates
-   - Enable secret-scanning non-provider patterns
-   - Enable secret-scanning validity checks
-   - Enable Private Vulnerability Reporting
-   - Enable Code scanning → CodeQL → "Default" setup (or wait for B1 to author `codeql.yml`)
+   - ✅ Dependabot security updates (enabled 2026-05-18)
+   - ⏸️ Secret-scanning non-provider patterns (DEFERRED — GHAS-paid)
+   - ⏸️ Secret-scanning validity checks (DEFERRED — GHAS-paid)
+   - ✅ Private Vulnerability Reporting (enabled 2026-05-18)
+   - 🟡 CodeQL → "Default" setup (pending operator decision)
 
 2. Settings → General → Features:
-   - Toggle Discussions ON
-   - Decide on Wiki: keep ON (B1 will seed) or OFF (defer)
-   - Decide on Projects: keep ON (B1 will create board)
-   - Toggle "Automatically delete head branches" ON (closes G-10)
+   - ✅ Discussions ON (enabled 2026-05-18)
+   - ✅ Wiki kept ON per fullest-extent directive (B1 will seed)
+   - ✅ Projects kept ON per fullest-extent directive (B1 will create board)
+   - ✅ Automatically delete head branches (enabled 2026-05-18)
 
 3. Settings → General → Pull Requests:
-   - Toggle "Always suggest updating pull request branches" ON
-   - Decide: allow auto-merge?
+   - 🟡 "Always suggest updating pull request branches" — pending operator
+   - 🟡 Allow auto-merge — pending operator decision
 
 4. Settings → General → repo metadata:
-   - Add 1-line description
-   - Add topics: `ticket-trading`, `fastapi`, `supabase`, `multi-bot`, `claude-code`
+   - ⏸️ Description + topics — SKIPPED 2026-05-18 (operator noted UI didn't surface these fields)
 
-5. Repo → Projects tab → New project → "Board" template → name "Terminal-2 Open Work"
+5. 🟡 Repo → Projects tab → New project "Terminal-2 Open Work" — pending operator
 
-6. Repo → Wiki tab → Create first page (auto-initializes the wiki repo)
+6. 🟡 Repo → Wiki tab → Create first page — pending operator
 
-7. Repo → Discussions tab (after step 1) → "Get started" → enable + B1's proposed categories
+7. ✅ Repo → Discussions tab — operator enabled 2026-05-18, B1 to seed categories
 
 **After operator quick wins** — B1 follow-up PRs:
 - B1 authors `.github/workflows/codeql.yml` (after CodeQL enabled)

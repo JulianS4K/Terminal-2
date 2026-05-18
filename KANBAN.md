@@ -52,15 +52,11 @@
 | B1-NEXT-3 | B1 | Edge function auth-posture inventory (16 fns). Per-function record of `x-cron-secret` vs open vs JWT-gated. | Author `docs/edge_function_auth_inventory.md` |
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
 | B1-NEXT-8 | A1 | `_health_check_pg_net_errors()` missing §6 body guard (added by PR #115). | Add guard via CREATE OR REPLACE; preserve return shape |
-| B1-NEXT-12 | Op | `dependabot_security_updates` is disabled. | Settings → Code security → Enable. G-2. |
-| B1-NEXT-13 | Op | `secret_scanning_non_provider_patterns` disabled. | Operator settings toggle. G-3. |
-| B1-NEXT-14 | Op | `secret_scanning_validity_checks` disabled. | Operator settings toggle. G-4. |
 | B1-NEXT-18 | Op | Verify Actions secrets populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). | Operator confirms next session via Settings → Secrets |
 | B1-NEXT-29 | A1 | `refresh_sg_broker_sales_event_metrics(integer)` missing §6 body guard. Hourly cron at `:17`. | Add guard via CREATE OR REPLACE |
 | B1-NEXT-30 | A1 (D2) | `sg_seller_orders_queue(p_pages, p_statuses)` missing §6 body guard. | Add guard via CREATE OR REPLACE |
 | B1-NEXT-31 | A1 | §6 body guard absent on 7 JWT-gated SECDEF RPCs: `get_broker_event_page` (v1/v2/v3), `get_event_sg_listings_full`, `get_event_evo_listings_full`, `get_event_sg_sales_full`, `get_event_cross_source_metrics`. JWT body check IS primary mitigation; guard is 2nd belt. | Add guard via CREATE OR REPLACE per fn (or batch migration) |
 | B1-NEXT-39 | D0 + D1 | `/api/store/search` exposes `we_own` (bool) + `owned_tix` (count). LANE_DISCIPLINE.md §D1 wall rule lists `is_owned` as forbidden. May be intentional storefront-product behavior. bot_chat 308. | If intentional: add carveout to LANE_DISCIPLINE.md §D1. If not: filter columns from `/api/store/search` response in `app.py` |
-| B1-NEXT-43 | B1 | **G-12**: No `SECURITY.md` security disclosure policy. Public repo + no vuln-reporting channel = researchers open public GitHub issues with vulnerabilities. | Author `.github/SECURITY.md`: reporting channel = GitHub PVR (after B1-NEXT-46) or bot_chat |
 
 ### SEC-LOW (hygiene)
 
@@ -84,14 +80,8 @@
 | B1-NEXT-35 | Op | Create scheduled task `b1-war-games-rotation`. Every 4h. | Operator approves Slack MCP tool + cron creation |
 | B1-NEXT-37 | A1 | Backfill `cron_policy` rows for 4 daily collect-listings windowed crons (1-7d/7-30d/30-60d/60d+). | 1 SQL INSERT into `cron_policy` |
 | B1-NEXT-40 | Op | **G-9**: `allow_forking: true` on public repo. Forks clone full history including the leaked `CRON_SECRET` commit `5297739`. Compounds G-1. | Operator decision (usually allow_forking stays true; real fix is G-1 history rewrite) |
-| B1-NEXT-41 | Op | **G-10**: `delete_branch_on_merge: false`. B1 manually pruned 14 orphan branches 2026-05-17. Hygiene. | Settings → General → "Automatically delete head branches" |
-| B1-NEXT-42 | Op | **G-11**: `has_wiki: true`, `has_projects: true`, `has_downloads: true` — enabled but unused. Attack surface (wiki spam, public visibility). | Settings → General → Features → disable unused |
 | B1-NEXT-44 | Op | **G-14**: Branch protection on `main` — no required approving review count, no CODEOWNERS review required, no dismiss-stale-reviews. Single-operator can push without formal review. | Operator decision — Settings → Branches → Edit rule for `main` |
 | B1-NEXT-45 | Op | **G-15**: `required_conversation_resolution: false`. PRs can merge with unresolved review comments. | Settings → Branches → toggle |
-| B1-NEXT-46 | Op | **G-16**: Private Vulnerability Reporting (PVR) not enabled. Public repo with no private channel for security researchers. | Settings → Code security → "Private vulnerability reporting" |
-| B1-NEXT-47 | B1 (blocked on G-2) | **G-17**: No `actions/dependency-review-action` in CI. Blocks PRs adding vulnerable deps once Dependabot enabled. | Add `.github/workflows/dependency-review.yml` after B1-NEXT-12 lands |
-| B1-NEXT-48 | B1 | **G-18**: No OSSF Scorecard workflow. Automated repo-security scoring + badge. | Add `.github/workflows/scorecard.yml` |
-| B1-NEXT-49 | B1 (blocked on G-2) | **G-19**: No `.github/dependabot.yml` for version updates. | Add weekly pip + gh-actions schedule after B1-NEXT-12 lands |
 
 ### Operator-only (settings / lockdown-gated applies)
 
