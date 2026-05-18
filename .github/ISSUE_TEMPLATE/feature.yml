@@ -1,0 +1,56 @@
+name: 💡 Feature request
+description: Propose new functionality. For larger architectural changes, use Discussions → Ideas instead.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For **architectural** proposals (touching multiple lanes, governance, or RFC-level scope), open a [Discussion](https://github.com/JulianS4K/Terminal-2/discussions) under "Ideas" instead. Issues are best for focused, scoped features.
+
+  - type: dropdown
+    id: lane
+    attributes:
+      label: Affected lane (best guess)
+      options:
+        - A1 Admin
+        - B1 Security
+        - C1 Canonical
+        - D0 Terminal FE
+        - D1 Storefront
+        - D2 Dashboard
+        - D3 Broadway scraper
+        - D4 Ticketing infra
+        - E1 External markets
+        - Cross-cutting / unsure
+    validations:
+      required: false
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: User-facing or operational pain — be concrete.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: textarea
+    id: success
+    attributes:
+      label: What does success look like?
+      description: How will we know it works?
+    validations:
+      required: false

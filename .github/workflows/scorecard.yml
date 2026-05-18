@@ -1,0 +1,62 @@
+# OSSF Scorecard — weekly automated repo-security scoring
+#
+# Authored 2026-05-17 (B1-NEXT-48 / G-18). Posts results to GitHub
+# code-scanning so they surface in the Security tab + commit/PR checks.
+# Also publishes a JSON report uploadable as a workflow artifact.
+#
+# What it checks (16 default checks): branch protection, code review, CI tests,
+# dangerous workflow patterns, dependency update tool, fuzzing, license,
+# maintained, packaging, pinned dependencies, SAST, security policy, signed
+# releases, token permissions, vulnerabilities, webhooks.
+#
+# https://github.com/ossf/scorecard
+
+name: OSSF Scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "0 12 * * 1"   # Monday 12:00 UTC
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for uploading SARIF to code-scanning
+      security-events: write
+      # Needed for the action to read repo settings
+      id-token: write
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true   # Public results: shown on https://scorecard.dev/
+
+      - name: Upload SARIF to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+
+      - name: Upload artifact (raw JSON)
+        uses: actions/upload-artifact@v4
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 30

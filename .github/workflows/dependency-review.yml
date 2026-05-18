@@ -1,0 +1,44 @@
+# Dependency review — block PRs that add vulnerable / unwanted deps
+#
+# Authored 2026-05-17 (B1-NEXT-47 / G-17). Activates when Dependabot security
+# alerts are enabled (B1-NEXT-12 / G-2 — currently disabled). Until then, this
+# workflow runs but has nothing to compare against — it will pass trivially.
+#
+# Behavior post-enable:
+# - Diffs new vs. base dependencies on every PR
+# - Fails if any added dep has a known vuln >= 'moderate' severity
+# - Fails on disallowed licenses (e.g., AGPL — we're proprietary internal)
+
+name: Dependency Review
+
+on:
+  pull_request:
+    paths:
+      - "requirements.txt"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/**/*.yml"
+
+permissions:
+  contents: read
+  pull-requests: write   # for summary comment
+
+jobs:
+  review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          # Comment on the PR with the diff summary
+          comment-summary-in-pr: on-failure
+          # Disallow licenses incompatible with our proprietary stance.
+          # Leave deny-licenses empty initially — re-tighten after first false-positives
+          # are triaged. Common dangerous-for-proprietary licenses to consider:
+          # GPL-2.0, GPL-3.0, AGPL-3.0, SSPL-1.0
+          deny-licenses: ""

@@ -1,0 +1,59 @@
+# PR title format check — enforces `<type>(<lane>): <short imperative>`
+#
+# Authored 2026-05-17. Matches docs/pr_governance.md commit-message format.
+# Catches PRs with generic titles like "Update KANBAN" before merge.
+
+name: PR Title Lint
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint:
+    name: Lint PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check format
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            // Format: <type>(<lane>): <message>
+            // type: feat|fix|chore|docs|refactor|test|perf|style|build|ci|revert
+            // lane: a1|b1|c1|d0|d1|d2|d3|d4|e1|security|bibles|governance|deps|ci-deps|admin|bridge|d0/event|d0/home|d0/terminal|store|sg|sg/cron|sg/sales|sg/metrics|sg-bridge|unified-shell|metrics|d2|d2-* (loose: any [a-z0-9/-]+)
+            const re = /^(feat|fix|chore|docs|refactor|test|perf|style|build|ci|revert)\(([a-z0-9/_-]+)\):\s+.{5,}$/;
+            if (!re.test(title)) {
+              const msg = [
+                `❌ PR title does not match the required format.`,
+                ``,
+                `**Format**: \`<type>(<lane>): <short imperative>\``,
+                ``,
+                `**Examples**:`,
+                `- \`chore(security): GitHub capabilities audit\``,
+                `- \`feat(d0/event): tab navigation + Last Snapshot panel\``,
+                `- \`fix(admin): drop dead match_to_aq_event_id 7-arg overload\``,
+                ``,
+                `**Allowed types**: feat, fix, chore, docs, refactor, test, perf, style, build, ci, revert`,
+                ``,
+                `**Common lanes**: a1, b1, c1, d0, d1, d2, d3, d4, e1, security, bibles, governance, deps, ci-deps, sg, store`,
+                ``,
+                `See docs/pr_governance.md for the full convention.`,
+                ``,
+                `Current title: \`${title}\``,
+              ].join('\n');
+              core.setFailed(msg);
+              // Post a comment so the author sees the failure inline
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: msg,
+              });
+            } else {
+              console.log(`✅ Title matches format: ${title}`);
+            }
