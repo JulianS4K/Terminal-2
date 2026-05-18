@@ -27,24 +27,34 @@
       </div>
     </section>
 
-    <section id="book-card">
-      <div class="panel-title">BOOK SUMMARY</div>
-      <div class="book-grid">
-        <div class="bk-row"><span class="bk-lbl">Total owned tickets</span><span class="bk-val" id="bkOwnedTix">—</span></div>
-        <div class="bk-row"><span class="bk-lbl">Owned notional (mark)</span><span class="bk-val" id="bkOwnedNotional">—</span></div>
-        <div class="bk-row"><span class="bk-lbl">Events with owned position</span><span class="bk-val" id="bkOwnedEvents">—</span></div>
-        <div class="bk-row"><span class="bk-lbl">Market tickets tracked</span><span class="bk-val" id="bkMarketTix">—</span></div>
+    <section id="blind-spots">
+      <div class="panel-title row">
+        <span>BLIND SPOTS — SG SELLING, WE'RE NOT</span>
+        <span class="muted small" id="blindSpotsCount"></span>
       </div>
+      <div id="blindSpotsBody"><div class="empty">loading…</div></div>
     </section>
 
-    <section id="movers-strip">
+    <section id="movers-panel">
       <div class="panel-title row">
-        <span>TOP MOVERS · 24H · OUR BOOK MARK-TO-MARKET</span>
-        <a href="movers.html" class="more-link">all movers →</a>
+        <span>MOVERS · OUR BOOK MARK-TO-MARKET</span>
+        <span class="muted small" id="moversCount"></span>
       </div>
-      <div class="movers-grid" id="moversGrid">
-        <div class="empty">loading…</div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">WINDOW</span>
+          <button class="ctrl-btn" data-window="1">1h</button>
+          <button class="ctrl-btn" data-window="6">6h</button>
+          <button class="ctrl-btn is-active" data-window="24">24h</button>
+          <button class="ctrl-btn" data-window="168">7d</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SEGMENT</span>
+          <button class="ctrl-btn is-active" data-segment="all">All</button>
+          <button class="ctrl-btn" data-segment="owned">Owned only</button>
+        </div>
       </div>
+      <div id="moversBody"><div class="empty">loading…</div></div>
     </section>
 
     <section id="owned-events">
@@ -53,11 +63,6 @@
         <span class="muted small" id="ownedEventCount"></span>
       </div>
       <div id="ownedEventsBody"></div>
-    </section>
-
-    <section id="risk-alerts">
-      <div class="panel-title">RISK ALERTS</div>
-      <div id="riskBody" class="empty">order-book RPC pending — alerts unlock when hold_expires_at + owned_premium_pct surfaces land</div>
     </section>
   </main>
 
