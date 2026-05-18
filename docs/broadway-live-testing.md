@@ -91,42 +91,159 @@ pytest tests/test_broadway_client.py -v
 (`broadway_client.py:671-675`) so you can't accidentally write outside
 the repo.
 
-## chrome-devtools-mcp: when (not) to use it
+## chrome-devtools-mcp + Fastly defenses
 
 The repo's `.mcp.json` ships an opt-in entry for
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp).
 It launches a real headless Chrome via Puppeteer and exposes
 navigation/screenshot/DOM-query tools.
 
-**Useful for**:
+### Broadway.com sits behind Fastly
+
+`www.broadway.com` and `checkout.broadway.com` are fronted by Fastly's
+CDN/WAF. That edge layer applies bot-defense signals **before** any
+Django origin ever sees the request, including:
+
+- **TLS fingerprint (JA3 / JA4)** — Python `requests` (via `urllib3` +
+  OpenSSL) has a distinctive cipher/extension order that Fastly can
+  flag as non-browser. Chrome's TLS ClientHello matches the curated
+  "real-browser" profiles Fastly's edge whitelists.
+- **HTTP/2 frame ordering & SETTINGS** — h2 from `requests` differs
+  from Chrome's; Fastly can fingerprint this even when TLS looks fine.
+- **Client hints** — `Sec-CH-UA`, `Sec-CH-UA-Mobile`, `Sec-CH-UA-Platform`,
+  `Sec-Fetch-*` — present on every real Chrome request, absent on
+  `requests` unless we forge them all.
+- **Edge-issued cookies / session tokens** — Fastly may set a
+  short-TTL cookie on first hit and reject subsequent requests that
+  don't echo it. `requests.Session` doesn't replay the JS-set portion.
+- **Rate / IP heuristics** — datacenter IP ranges (Render, AWS, GCP)
+  get harsher defaults than residential.
+
+The Django inline-payload parsing in `broadway_client.py` is correct
+and fast **once you can reach the origin**. The pre-payload challenge
+is getting past the Fastly edge.
+
+### Browser-driven simulation flow
+
+Use `chrome-devtools-mcp` from a Claude Code session to drive real
+Chrome through the same flow `broadway_client.py` does, and capture
+what Fastly returns under different conditions. Useful probes:
+
+1. **Headless vs. headful** — `mcp__chrome-devtools__new_page` opens
+   the URL, `list_network_requests` shows whether Fastly returned the
+   real payload (HTTP 200 with the inline `var json = {…}.data`) or a
+   challenge page (HTTP 403 / 429 / a `set-cookie` ladder).
+2. **Verify the inline payload survives the edge** — once a real
+   Chrome reaches the origin, `evaluate_script` extracts the embedded
+   JSON exactly the way `_extract_inline_payload` would, confirming
+   the parser will find what it expects.
+3. **Header capture** — `list_network_requests` exposes Fastly
+   response headers (`x-served-by`, `x-cache`, `fastly-debug-*`,
+   `x-timer`) so we know what edge POPs we're hitting and whether
+   we're cache-hit vs. origin-pass.
+4. **UA / fingerprint A/B** — `emulate` swaps device + UA combos to
+   characterize which patterns get clean 200s vs. which trip a
+   challenge. Findings feed `BROADWAY_USER_AGENT` defaults.
+
+### Setup on admin PC
+
+`chrome-devtools-mcp` auto-launches via the `.mcp.json` entry:
+
+```json
+"chrome-devtools": {
+  "type": "stdio",
+  "command": "npx",
+  "args": ["-y", "chrome-devtools-mcp@latest"]
+}
+```
+
+On first invocation, the package's Puppeteer dependency downloads a
+known-good Chromium build (~150 MB) into its cache. No manual install
+needed if Node ≥ 18 is on PATH. If you already have a system Chrome,
+the MCP server prefers it via `puppeteer-core` channel resolution.
+
+**This container's failure mode** (for the record): no Chrome binary
+present + Puppeteer download blocked by egress allowlist → MCP errors
+with `Could not find Google Chrome executable for channel 'stable'`.
+On admin PC neither blocker applies.
+
+### Useful for (general)
+
 - JS-rendered SPAs where the data isn't in the initial HTML (Next.js,
   React Router, hydration-only payloads)
-- Bot-detected sites with Cloudflare challenges, TLS fingerprinting, or
-  canvas-fingerprint walls
+- Bot-detected sites: Fastly (as above), Cloudflare challenges,
+  Akamai Bot Manager, PerimeterX, DataDome
 - Visual diff / screenshot regression
 - Capturing complex multi-step flows (search → results → detail)
 
-**NOT useful for broadway.com**:
-- The checkout page is server-rendered Django and inlines the entire
-  pricing payload as JSON in a `<script>` block. `requests` + regex is
-  strictly faster and simpler than driving a browser — there's nothing
-  JavaScript does that we need.
-- Egress allowlists block by **destination hostname** before the
-  request leaves the container. Whether the request originates from
-  `requests` or from headless Chrome doesn't matter — the proxy denies
-  on hostname alone. Browsers don't bypass egress firewalls.
+### NOT a substitute for the egress allowlist
 
-If a future scraper target genuinely needs a browser (TickPick's
-checkout pages, for example, hydrate via React), `chrome-devtools-mcp`
-is wired up — see the entry in `.mcp.json`. On first invocation Chrome
-will download (~150 MB); after that it's local.
+Browsers don't bypass egress firewalls. Whether the request originates
+from `requests` or from headless Chrome, our container's egress proxy
+denies on **destination hostname** before the request leaves. If
+`*.broadway.com` isn't on the allowlist, neither path works. Fix the
+allowlist first; then choose `requests` vs. Chrome based on what
+Fastly's edge actually does.
+
+## Fastly-block simulation results (offline)
+
+`tests/test_broadway_client_fastly_simulations.py` mocks
+`requests.Session.get` to return canonical Fastly-edge responses and
+runs the broadway client against each. Pure-offline; no network, no
+LIVE_BROADWAY needed. Pin the current behavior so any future change is
+deliberate.
+
+| Fastly response | Client behavior | Verdict |
+|---|---|---|
+| 403 proxy deny (`Fastly error: unknown domain ...`) | `BroadwayError("... returned 403 ...")` | ✅ Loud failure |
+| 403 bot deny (`x-fastly-bot-decision: deny`, `Reference #...`) | `BroadwayError("... returned 403 ...")` | ✅ Loud failure |
+| 429 rate-limit (with `Retry-After`) | Retries 3× via backoff, then `BroadwayError("... returned 429 ...")` | ✅ Loud failure |
+| 503 origin error | Retries 3× via backoff, then `BroadwayError("... returned 503 ...")` | ✅ Loud failure |
+| **200 bot-challenge HTML** (no inline JSON, no anchors) | **Returns empty `SectionsSnapshot`** (`sections=[]`, `show=None`) | ⚠️ **Silent gap** |
+| 200 valid origin payload | Parses to full `SectionsSnapshot` | ✅ Control case |
+
+### Silent-empty gap (Fastly bot-challenge 200)
+
+When Fastly returns a 200 with a JS-only challenge page — characteristic
+of bot management deflection that doesn't want to admit it deflected —
+`fetch_sections` degrades to the bs4 fallback (`_listings_from_html`),
+finds zero matching selectors, and returns a populated-looking
+`SectionsSnapshot` with `sections=[]` and `show=None`.
+
+Downstream consumers (cron, dashboards, drift alerts) cannot distinguish
+this from a legitimately-empty performance (sold out, cancelled,
+listings pulled). The same gap exists in `discover_performances` (returns
+`[]` not raising).
+
+**Proposed fix** (D3-owned, not in this PR — flag for D3 to land in a
+follow-up):
+
+```python
+# in fetch_sections, after _extract_inline_payload + fallback:
+if status == 200 and payload is None and not listings:
+    raise BroadwayParseError(
+        f"HTTP 200 but no inline payload and no listings — likely Fastly "
+        f"bot challenge or page redesign. URL: {url}"
+    )
+```
+
+Similar guard in `discover_performances` after the anchor loop: if
+zero matches AND the response body length is suspiciously small or
+contains known challenge markers, raise.
+
+The simulation tests will then need to be updated to expect the new
+exception — `test_fastly_bot_challenge_200_silent_empty` is the
+canary that pins the *current* (undesirable) behavior so the fix is
+a deliberate signature change, not an accident.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
 | `HTTP 403 ... host_not_allowed` | Egress proxy blocks `*.broadway.com`. Add to allowlist. |
-| `HTTP 403` without `host_not_allowed` | Broadway.com bot detection. Try a real-browser UA via `BROADWAY_USER_AGENT` env var (`broadway_client.py:231-236`). |
-| `HTTP 429` | Rate-limited. The client backs off via `Retry-After` (`broadway_client.py:262-269`). Lower pace by passing `pace_s=` to the constructor. |
-| `no inline payload found` | Page structure changed. Run `dump-raw` + diff against the fixture; update `_extract_inline_payload` if the assignment shape moved. |
+| `HTTP 403` with `set-cookie: bot-detection=...` or a challenge HTML body | Fastly bot defense fired. Drive via `chrome-devtools-mcp` instead of `requests` (real TLS fingerprint + client hints). |
+| `HTTP 403` without `host_not_allowed` or a Fastly challenge | Likely Broadway.com origin block. Try a real-browser UA via `BROADWAY_USER_AGENT` env var (`broadway_client.py:231-236`). |
+| `HTTP 429` | Rate-limited (Fastly or origin). The client backs off via `Retry-After` (`broadway_client.py:262-269`). Lower pace by passing `pace_s=` to the constructor. |
+| `no inline payload found` despite HTTP 200 | Either page structure changed OR Fastly returned a challenge page that has the right status but no `var json = ...`. Run `dump-raw` + inspect; if it's the latter, switch to browser-driven fetch. |
 | `no performances discovered` | Show closed, slug typo, or `<a>` markup on the show page changed. Try `python broadway_client.py dump-raw https://www.broadway.com/shows/<slug>/ /tmp/show.html` and inspect. |
+| `Could not find Google Chrome executable` (MCP error) | `chrome-devtools-mcp` started but Chrome isn't installed and Puppeteer couldn't download (egress block). Install system Chrome or open allowlist to Puppeteer's CDN. |
