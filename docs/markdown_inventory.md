@@ -28,7 +28,7 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 
 | File | Purpose | Owner |
 |---|---|---|
-| [`README.md`](../README.md) | Repo intro | A1 |
+| [`README.md`](../README.md) | Repo entry point — quick-link table to bibles + architecture overview + TEvo gotchas + useful queries | **B1** (since 2026-05-17 operator directive: B1 keeps README current; per-session sweep step 20) |
 | [`START_HERE.md`](../START_HERE.md) | 2-minute bootstrap | A1 |
 | [`PROJECT_BIBLE.md`](../PROJECT_BIBLE.md) | Single-source-of-truth for the 80% bots need (RPC table, hierarchy, drift watchlist) | A1 / B1 co-curator |
 | [`RESOURCES_BIBLE.md`](../RESOURCES_BIBLE.md) | What exists, who owns it, where it came from | A1 / B1 co-curator |

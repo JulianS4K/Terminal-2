@@ -26,6 +26,7 @@ Operationalized as continuous monitoring across **ten surfaces** (operator exten
 | **Render workspace posture** | Workspace access, service list, IP allowlists, autoDeploy triggers, env-var inventory (names only, not values), preview-deploys posture, suspended state, deploy notification config |
 | **Slack posture** | Slack webhooks pointing into / out of the repo, Slack tokens / signing secrets / bot tokens leaked in code or git history, Slack GitHub App installations, Slack-shaped URLs (`hooks.slack.com/services/*`) appearing in commits, Slack messages (when an operator-installed Slack MCP becomes available) for incident leaks and external-attack chatter |
 | **Librarian / archivist** (added 2026-05-16 per operator directive) | Drift between canonical reference docs (`PROJECT_BIBLE.md`, `RESOURCES_BIBLE.md`, `CLAUDE.md`, `BOT_HIERARCHY.md`, `LANE_DISCIPLINE.md`, `MIGRATION_CONVENTIONS.md`, `SYNC_PROTOCOL.md`) and live state; cross-bible consistency (e.g., a fact in PROJECT_BIBLE.md §3 RPC table that contradicts what's in pg_proc); communication-channel health (Slack channels, `bot_chat` thread closure rates, scheduled-task signal-to-noise) |
+| **README freshness** (added 2026-05-17 per operator directive) | `README.md` is the repo-level entry point for first-time human readers + bots that don't yet know to look at `PROJECT_BIBLE.md`. B1 keeps it current as architecture/folder-layout/governance changes ship: quick-link table, architecture diagram, repo layout, useful queries, TEvo gotchas pointer. Triggered by any merge that touches top-level dirs, governance docs, edge functions, or hosting (Render service set) |
 
 ## Read surface
 
@@ -52,6 +53,7 @@ Per `LANE_DISCIPLINE.md §B1`:
 - `KANBAN.md` SECURITY BACKLOG section
 - This file (`docs/b1_operating_constraints.md`)
 - `docs/anon_callable_surface_inventory.md`, `docs/edge_function_auth_inventory.md`, `docs/markdown_inventory.md` (B1's living inventories — anon surface, edge-fn auth posture, repo `.md` catalogue)
+- `README.md` (B1-maintained as of 2026-05-17 operator directive — repo entry point freshness)
 - `.github/workflows/secret-scan.yml`, `.github/workflows/secdef-lint.yml` (B1-authored CI workflows)
 - Per-lane patches for security CRIT/HIGH (cross-lane allowed; see §"Cross-lane patch protocol" below)
 
@@ -121,6 +123,7 @@ Run at session start. Total runtime ~5 min. All read-only.
 | 17 | **New `.md` file detection** (added 2026-05-16) | `git log --since='<last sweep>' --diff-filter=A --name-only --pretty=format: -- '*.md' \| sort -u` → if any results, classify each new file into one of the 9 sections in `docs/markdown_inventory.md` and append. | All new `.md` files catalogued; no orphans. |
 | 18 | **PR cleanup after merge** (added 2026-05-16; codifying the narrative section below) | Cross-reference `gh pr list --state merged --limit 100 --json headRefName` against `git branch -r`. For each remote branch whose PR has merged AND no open PR targets it: `git push origin --delete <branch>`. Skip branches with active worktrees + own current working branch. | Remote branch count drops to (open PRs) + `origin/main`. |
 | 19 | **War-games rotation** (added 2026-05-16 per operator directive) | Pick 1-2 scenarios from `docs/war_games_playbook.md` (10 total; full rotation covers in ~5-10 sessions). Run the read-only probe template for the picked scenario(s). Findings → SEC-tagged KANBAN entry + bot_chat per severity. Clean runs → no post (counts toward rotation coverage). | 0 SEC-CRIT/HIGH live openings found; scenario row updated in playbook §"First run findings". |
+| 20 | **README freshness check** (added 2026-05-17 per operator directive) | Read `README.md` quickly + diff against: (a) hosted-services list (`mcp__render__list_services`); (b) folder layout (`ls` top-level dirs); (c) governance docs in quick-links table (do all 7 referenced docs exist?); (d) edge function count claim vs `ls supabase/functions/`; (e) migration count claim vs `ls supabase/migrations/*.sql \| wc -l`; (f) useful queries — referenced tables/views/columns exist. | All claims match live state. Else: file PR same-session with the deltas. README staleness > 1 week qualifies as SEC-LOW hygiene (won't break anything but misleads new readers/bots). |
 
 Output:
 - **Clean sweep** → `bot_chat_log('change_log', 'security', 'B1', 'B1 sweep <date> — clean. Baseline: <release_health_check rows hash>.')`

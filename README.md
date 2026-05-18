@@ -1,144 +1,151 @@
-# evo terminal
+# Terminal-2
 
-Ticket Evolution market intelligence dashboard. FastAPI + Supabase + Railway, locked to `@s4kent.com` via Google OAuth.
+Ticket-trading intelligence + retail platform. FastAPI on Render + Supabase Postgres + 18 edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Multi-bot orchestrated — see [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).
+
+## Quick links for bots starting a session
+
+| Read first | Why |
+|---|---|
+| **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md)** | Operating playbook — hard rules, lane scope, SQL macros, column-name landmines, workflow recipes |
+| **[`KANBAN.md §🟢 OPEN WORK`](KANBAN.md)** | Single source of truth for **what's open right now** across all lanes (severity-sorted). Delete your row when you fix it. |
+| [`RESOURCES_BIBLE.md`](RESOURCES_BIBLE.md) | Inventory: 132 tables + 152 views + 75+ crons + 40+ edge fns. **Check here before authoring anything new.** |
+| [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) | Who can push to where. A1 is sole pusher to `main`. |
+| [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) | Migration filename rules + header + apply protocol |
+| [`CLAUDE.md`](CLAUDE.md) | Security rules + 2026-05-13 lockdown invariants |
+| [`LANE_DISCIPLINE.md`](LANE_DISCIPLINE.md) | Per-lane write surfaces + cross-lane patch protocol |
 
 ## Architecture
 
 ```
-Browser  ─► Railway (FastAPI + static HTML)  ─► Supabase (Postgres + Auth)
-                      │                                 ▲
-                      └─► TEvo API (signed)             │
-                                                        │
-  ┌─ scheduled (pg_cron) ──► Edge Function ─► Supabase ─┘
-  │                               │
-  └───────────────────────────── TEvo API
+Browser ─► Render (FastAPI + static)  ─► Supabase (Postgres + Auth + Edge Functions)
+                  │                                   ▲
+                  ├─► TEvo / SG / TickPick / Vivid    │
+                  │   (read-only — no writes per      │
+                  │    CLAUDE.md §1 rule 2)           │
+                  │                                   │
+                  └─► /api/store/* (retail)           │
+                                                      │
+              ┌── pg_cron (75+ jobs) ─► Edge Function ─┤
+              │                              │         │
+              └─ upstream APIs ──────────────┘         │
+                                                       │
+                              cross-bot coordination ──┘
+                              via public.bot_chat
 ```
 
-- **Local UI (Railway)**: live TEvo search, watchlist CRUD, view collected data
-- **Edge Function (Supabase)**: scheduled collector, writes price snapshots
-- **Postgres (Supabase)**: watchlist config, time-series snapshots, TEvo creds, views
+**Hosted services** (Render):
+- `vibepass-storefront-test` — unified shell hosting D0 terminal + D1 storefront + D2 dashboard (testing-unified architecture, PR #168 2026-05-16)
+- `vibepass-terminal-test` — static CDN for D0 frontend assets
+- `d2-orders-dashboard` — beta-time placeholder, no live traffic
 
-## Folder layout
+## Repo layout
 
 ```
-Terminal/1.0/
-├── evo_client.py                      TEvo v9 API client (Python)
-├── main.py                            CLI: search events → pick → stats
-├── app.py                             FastAPI app w/ Google OAuth gate
-├── requirements.txt                   pip deps for Railway
-├── Procfile                           Railway start command
+.
+├── app.py                            FastAPI shell (all /api/* routes; mounts D2 router)
+├── evo_client.py                     TEvo v9 API client
+├── *_client.py                       SeatGeek, TickPick, Vivid, SeatData clients (read-only)
+├── d2_dashboard/                     D2 orders dashboard + APIRouter (mounted on app.py)
 ├── static/
-│   └── index.html                     Single-page UI (5 tabs, auth bootstrap)
-└── supabase/
-    ├── migrations/
-    │   └── 20260423000000_init.sql    Schema + views + seeds
-    ├── functions/
-    │   └── collect/
-    │       └── index.ts               Edge Function: TS port of collector
-    └── cron.sql                       pg_cron schedule (not yet applied)
+│   ├── terminal/                     D0 — broker terminal (event/performer/venue pages)
+│   ├── store/                        D1 — consumer retail storefront
+│   ├── home/                         D0 home page
+│   ├── undelivered/                  D2 undelivered-orders surface
+│   └── _shared/                      Cross-surface utilities
+├── supabase/
+│   ├── migrations/                   318+ migrations (YYYYMMDDHHMMSS_descriptive.sql)
+│   └── functions/                    18 edge functions (collect, espn, sg-to-tevo-search-bridge, etc.)
+├── docs/                             Bot operating constraints + audits + bibles + war-games
+├── design/                           Wireframes + design proposals
+├── scripts/                          CI helpers (check_readonly.py, etc.)
+├── tests/                            pytest suite
+├── KANBAN.md                         Live work board + B1-NEXT security backlog
+├── PROJECT_BIBLE.md                  Operating playbook (read first every session)
+├── RESOURCES_BIBLE.md                What exists — tables/views/crons/edge fns
+├── CLAUDE.md                         Project-wide security rules + lockdown
+├── BOT_HIERARCHY.md                  Push restrictions per bot
+├── LANE_DISCIPLINE.md                Per-lane write surfaces
+├── MIGRATION_CONVENTIONS.md          Migration naming + headers + apply protocol
+├── render.yaml                       D1 storefront IaC
+├── render-d2-dashboard.yaml          D2 dashboard IaC
+└── Procfile                          Web entrypoint: uvicorn app:app
 ```
 
-## Fresh setup (end-to-end)
-
-### 1. Supabase project
-
-1. Create project at https://supabase.com/dashboard. Note the project ref.
-2. Dashboard → SQL Editor → paste `supabase/migrations/20260423000000_init.sql` → Run.
-3. Insert real TEvo creds:
-   ```sql
-   insert into settings (key, value) values
-     ('tevo_token',  'YOUR_REAL_TOKEN'),
-     ('tevo_secret', 'YOUR_REAL_SECRET')
-   on conflict (key) do update set value = excluded.value, updated_at = now();
-   ```
-
-### 2. Google OAuth
-
-1. https://console.cloud.google.com → new project.
-2. APIs & Services → OAuth consent screen → External → fill required fields.
-3. Credentials → Create OAuth client ID → Web application.
-4. Authorized redirect URI: `https://<your-project-ref>.supabase.co/auth/v1/callback`
-5. Copy the Client ID + Secret.
-6. Supabase Dashboard → Authentication → Providers → Google → enable, paste creds, save.
-7. Authentication → URL Configuration → Site URL = your Railway URL; Redirect URLs = `https://<railway-url>/**`.
-
-### 3. Edge Function
+## Local dev
 
 ```powershell
-scoop install supabase
-supabase login
-supabase link --project-ref <your-project-ref>
-supabase functions deploy collect --no-verify-jwt
-supabase secrets set CRON_SECRET="pick-any-random-string"
-```
-(TEvo creds come from the `settings` table; no need to set them as secrets.)
+# Install deps (pinned in requirements.txt)
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 
-### 4. Railway
+# Env from .env.example
+cp .env.example .env  # then fill SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, etc.
 
-```powershell
-scoop install railway
-railway login
-railway init
-railway up
-railway service              # pick the service it created
-railway variables --set "SUPABASE_URL=https://<your-project-ref>.supabase.co"
-railway variables --set "SUPABASE_SERVICE_ROLE_KEY=<service_role JWT from Dashboard>"
-railway variables --set "SUPABASE_ANON_KEY=<anon public JWT from Dashboard>"
-railway variables --set "CRON_SECRET=<same value used for Edge Function>"
-railway variables --set "ALLOWED_EMAIL_DOMAIN=s4kent.com"
-railway domain               # prints the public URL
-railway logs                 # confirm startup
+# Run
+uvicorn app:app --reload --port 8765
 ```
 
-### 5. Verify
+Browser at `http://localhost:8765` lands on the home page. `/static/terminal/event.html?event=<id>` for the D0 broker view.
 
-Open the Railway URL. Login screen → sign in with Google (restricted to your domain) → terminal loads.
+## Production deploys
 
-On the **watchlist** tab, click "run collector now". Wait 60-80s. Refresh runs — should show `ok` with ~138 events, 0 errors.
+Auto-deploys on `main` push via Render. See `render.yaml` + `render-d2-dashboard.yaml` for IaC. A1 is sole pusher to `main`; subordinate bots open PRs against `main`.
 
-### 6. (Optional) Schedule automated collection
+## Bot orchestration (the short version)
 
-Only after the manual run works cleanly:
+This repo is jointly maintained by ~10 specialized bot lanes (A1 admin, B1 security, C1 canonical drift, D0 terminal FE, D1 storefront, D2 orders, D3 scrapers, D4 ticketing infra, E1 external markets). Coordination happens via the `public.bot_chat` table (durable, append-only) + scheduled-task heartbeats + Slack channels (`#terminal-2-alerts`, `#terminal-2-admin`, `#terminal-2-d0`).
 
-1. Dashboard → Database → Extensions → enable `pg_cron` and `pg_net`.
-2. SQL Editor → paste `supabase/cron.sql` with your project ref and CRON_SECRET substituted → Run.
+If you're a bot starting a session: **read `PROJECT_BIBLE.md` first, then check `KANBAN.md §🟢 OPEN WORK`** for what's currently actionable. Don't claim work that's already in flight (the row is annotated `[IN PROGRESS by <lane>, PR #<n>]`).
+
+If you're a human reading this: most operational decisions are recorded in the docs/audits/checkpoints under `docs/`. The 2026-05-13 SQL-data lockdown means prod DB mutations require explicit operator approval per call.
+
+## TEvo gotchas (still relevant)
+
+- `event.available_count` is deprecated. Use `get_event_stats()`.
+- `event.occurs_at` has a `Z` suffix but is **LOCAL time**. Use `occurs_at_local`.
+- Canonical signing string always includes `?`, even with empty query.
+- Rate limit ~5 req/sec sustained. Collectors pace at 3 concurrent × 200ms + retry-on-429.
+- `/v9/events` date filter uses **dotted notation**: `"occurs_at.gte"` (underscore form `occurs_at_gte` returns 422). See `PROJECT_BIBLE.md §3` column landmines for the full set.
 
 ## Credential rotation
 
-**TEvo creds** (no redeploy):
+**TEvo creds** (no redeploy — stored in `settings` table):
 ```sql
 update settings set value = 'new_token',  updated_at = now() where key = 'tevo_token';
 update settings set value = 'new_secret', updated_at = now() where key = 'tevo_secret';
 ```
 
-**Adding team members**: no code change needed — any `@s4kent.com` Google account can sign in. Change the allowed domain with:
+**Allowed domain** (Render env):
 ```powershell
-railway variables --set "ALLOWED_EMAIL_DOMAIN=new.domain.com"
+# Render dashboard → vibepass-storefront-test → Environment → ALLOWED_EMAIL_DOMAIN
 ```
+
+**Vault secrets** (per `MIGRATION_CONVENTIONS.md` allowlist): use `get_app_secret()` from Postgres. See `docs/release-discipline.md §7` for rotation runbook.
 
 ## Useful queries
 
 ```sql
 -- Current state of every tracked event
-select e.name, e.occurs_at_local, s.tickets_count, round(s.retail_price_avg)::int as avg_price
-from events e join latest_snapshots s on s.event_id = e.id
-order by e.occurs_at_local;
+SELECT e.name, e.occurs_at_local, em.listings_all_min, em.listings_owned_min
+FROM events e
+LEFT JOIN seatgeek_event_metrics em ON em.tevo_event_id = e.id
+WHERE e.occurs_at_local > now()
+ORDER BY e.occurs_at_local
+LIMIT 20;
 
--- Velocity: biggest price swings between last 2 snapshots
-select name, occurs_at_local, tickets_delta, avg_delta
-from event_velocity
-where tickets_delta is not null
-order by abs(coalesce(avg_delta, 0)) desc
-limit 20;
+-- Release health (one-shot smoke harness, B1-owned)
+SELECT * FROM public.release_health_check() WHERE status <> 'ok';
 
--- Recent collection runs
-select id, started_at, finished_at, events_collected, stats_errors
-from runs order by id desc limit 10;
+-- What's unresolved across bots
+SELECT id, event_type, bot_lane, created_at, substring(message, 1, 100)
+FROM public.bot_chat
+WHERE resolved_at IS NULL
+  AND event_type IN ('p0_security','flag','question')
+ORDER BY created_at DESC
+LIMIT 20;
 ```
 
-## TEvo gotchas
+---
 
-- `event.available_count` is deprecated. Use `get_event_stats()`.
-- `event.occurs_at` has a `Z` suffix but is LOCAL time. Use `occurs_at_local`.
-- Canonical signing string always includes `?`, even with empty query.
-- Rate limit is ~5 req/sec sustained. Collector paces at 3 concurrent × 200ms + retry-on-429.
+**License**: proprietary, internal use. Code authored by Anthropic Claude under operator direction.
