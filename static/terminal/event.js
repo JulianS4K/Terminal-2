@@ -30,6 +30,12 @@
   let _chartExtStateInv   = { payload: undefined };
   // Alerts cached for the price chart's annotation overlay re-renders.
   let _chartExtAlerts = [];
+  // Alerts markers on the price chart are OFF by default (operator request 2026-05-18 —
+  // arbitrage_opportunity fires ~17 alerts per cron tick, stacking to a dark vertical
+  // bar that dominates the chart). Toggle via #chartPriceAlertsToggle; persisted in
+  // localStorage so the preference survives reloads.
+  const _ALERTS_LS_KEY = 'd0_chart_show_alerts';
+  let _showAlerts = (typeof localStorage !== 'undefined' && localStorage.getItem(_ALERTS_LS_KEY) === '1');
   // Legend toggle state (session-scope, shared map — keys are globally unique).
   const _chartVisible = new Map();
   // Per-chart build caches so each tooltip can read its own series at cursor.idx.
@@ -51,6 +57,7 @@
 
     wireRangeSelectorPrice(eventId);
     wireRangeSelectorInv(eventId);
+    wireAlertsToggle();
     wireTabs(eventId);
     wireSalesWindow(eventId);
     // Path-C-only enrichment RPCs fire in parallel — render even when
@@ -148,6 +155,18 @@
       // Then fetch fresh SG series for the new window — re-renders on arrival
       loadChartExtended('price', eventId, _chartPriceHours)
         .catch(e => console.error('[chartExt price]', e));
+    });
+  }
+
+  function wireAlertsToggle() {
+    const cb = document.getElementById('chartPriceAlertsToggle');
+    if (!cb) return;
+    cb.checked = _showAlerts;
+    cb.addEventListener('change', () => {
+      _showAlerts = !!cb.checked;
+      try { localStorage.setItem(_ALERTS_LS_KEY, _showAlerts ? '1' : '0'); } catch (_) {}
+      const inst = _chartInstances.price;
+      if (inst && typeof inst.redraw === 'function') inst.redraw(false, true);
     });
   }
 
@@ -587,7 +606,9 @@
       ],
       hooks: {
         draw: [
-          (u) => drawAlertsMarkers(u, alerts || []),
+          // Read _showAlerts at draw time so the toggle takes effect via redraw()
+          // without rebuilding the chart instance.
+          (u) => drawAlertsMarkers(u, _showAlerts ? (_chartExtAlerts || []) : []),
           (u) => drawInjuryMarkers(u, ext && ext.annotations && ext.annotations.injuries),
           (u) => drawGameStateMarkers(u, ext && ext.annotations && ext.annotations.game_state),
         ],
