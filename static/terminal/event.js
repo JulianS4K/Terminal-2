@@ -31,10 +31,12 @@
     wireRangeSelector(eventId);
     wireTabs(eventId);
     wireSalesWindow(eventId);
-    // Cross-source metrics RPC is independent of the v3 / Path A fetch
-    // — fire it in parallel so it renders even when fetchPayload fails
-    // (localhost dev without Path A API + without Path C auth).
+    // Path-C-only enrichment RPCs fire in parallel — render even when
+    // fetchPayload (Path A / Path C v3) fails. PR #205 cross-source +
+    // PR redesign localized weather + SG zones/splits all independent.
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
+    loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
+    loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
     await loadAndRender(eventId);
   }
 
@@ -62,23 +64,26 @@
       safe('kpiGrid',    () => renderKPIGrid(chart, data.sg_side_by_side, data.velocity));
       safe('chart',      () => renderChart(chart, data.event_alerts));
       safe('chartLegend',() => renderChartLegend());
-      safe('splits',     () => renderSplits(data.splits));
-      safe('zones',      () => renderZones(zones, data.zone_deltas));
+      // Splits + Zones — TEvo side rendered now; SG side merged in by loadSgZonesSplits.
+      safe('splits',     () => renderSplits(data.splits, null));
+      safe('zones',      () => renderZones(zones, data.zone_deltas, null));
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
-      safe('weather',    () => renderWeather(data.weather));
-      safe('orders',     () => renderOrders(orders, data.cross_source_orders));
+      // Weather now lazy-loaded via loadWeatherLocalized (drops global-alert path).
+      safe('allOrders',  () => renderAllOrders(orders, data.cross_source_orders));
       safe('coverage',   () => renderCoverage(cadences, overview, data.freshness, bridge));
       safe('freshness',  () => renderFreshness(data.freshness));
       safe('alerts',     () => renderAlerts(data.event_alerts));
-      // v3 enrichments (PR pending)
+      // v3 enrichments
       safe('sgBrokerSales',    () => renderSgBrokerSales(data.sg_broker_sales));
-      safe('sgListingsSummary',() => renderSgListingsSummary(data.sg_listings_summary, data.sg_side_by_side));
       safe('velocityChips',    () => renderVelocityChips(data.velocity));
       safe('competingEvents',  () => renderCompetingEvents(data.competing_events));
       safe('recentListings',   () => renderRecentListings(data.recent_listings));
       safe('performerEspn',    () => renderPerformerEspn(data.performer_espn_context, data.performer));
       safe('lastSnapshot',     () => renderLastSnapshot(data.chart_data));
+      // Cross-source panel: re-render now that we have v3's sg_broker_sales
+      // available (overrides sold_price_median for "Realized sale median" row).
+      safe('crossSourceRerender', () => rerenderCrossSourceWithV3(data));
     } catch (e) {
       handleRpcError(e);
     }
@@ -527,24 +532,37 @@
 
   // ---------- Splits ----------
 
-  function renderSplits(splits) {
+  // Renders TEvo splits + SG splits side-by-side. sgSplits comes from
+  // get_event_sg_zones_splits and is bucketed identically.
+  function renderSplits(splits, sgSplits) {
     const body = document.getElementById('splitsBody');
+    if (!body) return;
     body.innerHTML = '';
-    if (!splits) {
-      body.innerHTML = '<div class="empty">no splits data</div>';
-      return;
-    }
+    // Left col — TEvo
+    const left = document.createElement('div');
+    left.className = 'dual-src-col';
+    left.innerHTML = '<div class="dual-src-hdr">TEvo</div>';
+    left.appendChild(buildTevoSplitsTable(splits));
+    // Right col — SG
+    const right = document.createElement('div');
+    right.className = 'dual-src-col';
+    right.innerHTML = '<div class="dual-src-hdr">SG</div>';
+    right.appendChild(buildSgSplitsTable(sgSplits));
+    body.appendChild(left);
+    body.appendChild(right);
+  }
+
+  function buildTevoSplitsTable(splits) {
+    const wrap = document.createElement('div');
+    if (!splits) { wrap.innerHTML = '<div class="empty">no TEvo splits data</div>'; return wrap; }
     const owned = splits.owned || {};
     const market = splits.market || {};
     const buckets = ['singles', 'pairs', 'triples', 'quads', 'five_plus'];
     const totalOwnedTg = sumTg(owned);
     const totalMarketTg = sumTg(market);
-
     if (totalOwnedTg === 0 && totalMarketTg === 0) {
-      body.innerHTML = '<div class="empty">no recent TEvo listings (last 24h) — possibly stale collector</div>';
-      return;
+      wrap.innerHTML = '<div class="empty">no recent TEvo listings (last 24h)</div>'; return wrap;
     }
-
     const tbl = document.createElement('table');
     tbl.className = 'splits-tbl';
     tbl.innerHTML = `
@@ -556,13 +574,10 @@
         <th class="num">Mkt TG</th>
         <th class="num">Mkt tix</th>
         <th class="num">Mkt avg $</th>
-      </tr></thead>
-      <tbody></tbody>
-    `;
+      </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
     buckets.forEach(b => {
-      const ob = owned[b] || {};
-      const mb = market[b] || {};
+      const ob = owned[b] || {}; const mb = market[b] || {};
       if (!ob.tg_count && !mb.tg_count) return;
       const tr = document.createElement('tr');
       tr.innerHTML = `
@@ -572,11 +587,46 @@
         <td class="num ours">${fmtPxCell(ob.avg_px)}</td>
         <td class="num">${fmtIntCell(mb.tg_count)}</td>
         <td class="num">${fmtIntCell(mb.tix_count)}</td>
-        <td class="num">${fmtPxCell(mb.avg_px)}</td>
-      `;
+        <td class="num">${fmtPxCell(mb.avg_px)}</td>`;
       tb.appendChild(tr);
     });
-    body.appendChild(tbl);
+    wrap.appendChild(tbl);
+    return wrap;
+  }
+
+  function buildSgSplitsTable(sgSplits) {
+    const wrap = document.createElement('div');
+    if (sgSplits === undefined) { wrap.innerHTML = '<div class="empty">loading SG…</div>'; return wrap; }
+    if (sgSplits === null || sgSplits.hidden) {
+      const reason = sgSplits && sgSplits.reason === 'no_sg_bridge' ? 'no SG bridge for this event' : 'SG unavailable';
+      wrap.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`; return wrap;
+    }
+    const buckets = ['singles','pairs','triples','quads','five_plus'];
+    const splits = sgSplits.splits || {};
+    const nonEmpty = buckets.some(b => splits[b]);
+    if (!nonEmpty) { wrap.innerHTML = '<div class="empty">no recent SG listings (last 24h)</div>'; return wrap; }
+    const tbl = document.createElement('table');
+    tbl.className = 'splits-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Split</th>
+        <th class="num">Groups</th>
+        <th class="num">Tickets</th>
+        <th class="num">Avg $</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    buckets.forEach(b => {
+      const r = splits[b]; if (!r) return;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="split-name">${labelForBucket(b)}</td>
+        <td class="num">${fmtIntCell(r.groups)}</td>
+        <td class="num">${fmtIntCell(r.tickets)}</td>
+        <td class="num">${fmtPxCell(r.avg_price)}</td>`;
+      tb.appendChild(tr);
+    });
+    wrap.appendChild(tbl);
+    return wrap;
   }
 
   function labelForBucket(b) {
@@ -591,23 +641,30 @@
 
   // ---------- Zones (carried from v1) ----------
 
-  function renderZones(zones, deltas) {
+  // TEvo zones + SG zones (per-section rollup) side-by-side.
+  function renderZones(zones, deltas, sgZones) {
     const body = document.getElementById('zonesBody');
+    if (!body) return;
     body.innerHTML = '';
-    if (!zones) {
-      body.innerHTML = '<div class="empty">zones unavailable</div>';
-      return;
-    }
+    const left = document.createElement('div');
+    left.className = 'dual-src-col';
+    left.innerHTML = '<div class="dual-src-hdr">TEvo (zones)</div>';
+    left.appendChild(buildTevoZonesTable(zones, deltas));
+    const right = document.createElement('div');
+    right.className = 'dual-src-col';
+    right.innerHTML = '<div class="dual-src-hdr">SG (sections)</div>';
+    right.appendChild(buildSgZonesTable(sgZones));
+    body.appendChild(left);
+    body.appendChild(right);
+  }
+
+  function buildTevoZonesTable(zones, deltas) {
+    const wrap = document.createElement('div');
+    if (!zones) { wrap.innerHTML = '<div class="empty">zones unavailable</div>'; return wrap; }
     const rows = zones.zones || [];
-    if (!rows.length) {
-      body.innerHTML = '<div class="empty">no zone data</div>';
-      return;
-    }
-    // Build a delta lookup by zone name (v3 enrichment)
+    if (!rows.length) { wrap.innerHTML = '<div class="empty">no zone data</div>'; return wrap; }
     const deltaByZone = {};
-    if (Array.isArray(deltas)) {
-      deltas.forEach(d => { if (d && d.zone) deltaByZone[d.zone] = d; });
-    }
+    if (Array.isArray(deltas)) deltas.forEach(d => { if (d && d.zone) deltaByZone[d.zone] = d; });
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
@@ -641,7 +698,45 @@
         <td class="num ours">${ourPct}</td>`;
       tb.appendChild(tr);
     });
-    body.appendChild(tbl);
+    wrap.appendChild(tbl);
+    return wrap;
+  }
+
+  function buildSgZonesTable(sgZones) {
+    const wrap = document.createElement('div');
+    if (sgZones === undefined) { wrap.innerHTML = '<div class="empty">loading SG…</div>'; return wrap; }
+    if (sgZones === null || sgZones.hidden) {
+      const reason = sgZones && sgZones.reason === 'no_sg_bridge' ? 'no SG bridge for this event' : 'SG unavailable';
+      wrap.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`; return wrap;
+    }
+    const rows = sgZones.zones || [];
+    if (!rows.length) { wrap.innerHTML = '<div class="empty">no SG section data (last 24h)</div>'; return wrap; }
+    const tbl = document.createElement('table');
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th>
+        <th class="num">Listings</th>
+        <th class="num">Tickets</th>
+        <th class="num">Min</th>
+        <th class="num">Median</th>
+        <th class="num">Max</th>
+        <th class="num">Owned</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.slice(0, 30).forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="zone-name">${escapeHtml(r.section || '—')}</td>
+        <td class="num">${T.fmtNum(r.listings)}</td>
+        <td class="num">${T.fmtNum(r.tickets)}</td>
+        <td class="num">${r.min != null ? '$' + T.fmtNum(Math.round(r.min)) : '—'}</td>
+        <td class="num">${r.median != null ? '$' + T.fmtNum(Math.round(r.median)) : '—'}</td>
+        <td class="num">${r.max != null ? '$' + T.fmtNum(Math.round(r.max)) : '—'}</td>
+        <td class="num ${r.owned_listings > 0 ? 'ours' : ''}">${T.fmtNum(r.owned_listings)}</td>`;
+      tb.appendChild(tr);
+    });
+    wrap.appendChild(tbl);
+    return wrap;
   }
 
   // ---------- Sales tape (SG, deduped already by RPC) ----------
@@ -762,139 +857,207 @@
     return 'inj-p';
   }
 
-  // ---------- Weather ----------
+  // ---------- Weather (localized via get_event_weather_localized) ----------
+  //
+  // Renders the full weather panel + the compact hero card. RPC returns:
+  //   forecast: { temp_f, summary, precip_pct, precip_in, wind_mph,
+  //               weather_kind, days_to_event, is_indoor }
+  //   alerts:   [{ alert_id, severity, urgency, alert_event, headline,
+  //                area_desc, onset_at, expires_at, matched_zone_kind }]
+  // weather_kind in {'none','forecast_indoor','forecast_outdoor','climatology_outdoor'}.
 
-  function renderWeather(w) {
+  function renderWeather(d) {
     const section = document.getElementById('weather');
     const body = document.getElementById('weatherBody');
     const subtitle = document.getElementById('weatherSubtitle');
     if (!body) return;
-    if (!w || w.hidden) {
-      section.style.display = 'none';
+    body.innerHTML = '';
+    const f = (d && d.forecast) || null;
+    const alerts = (d && d.alerts) || [];
+    if (!f && !alerts.length) {
+      if (section) section.style.display = 'none';
       return;
     }
-    section.style.display = '';
-    body.innerHTML = '';
-    if (subtitle) subtitle.textContent = w.event_at ? `event ${T.fmtDate(w.event_at)}` : '';
-
-    const fc = w.forecast || [];
-    const obs = w.recent_obs || [];
-    const alerts = w.nws_alerts || [];
-
-    if (fc.length) {
+    if (section) section.style.display = '';
+    if (subtitle) {
+      const dte = (f && f.days_to_event != null) ? `T-${f.days_to_event}d` : '';
+      const kind = (f && f.weather_kind && f.weather_kind !== 'none') ? f.weather_kind.replace(/_/g, ' ') : '';
+      subtitle.textContent = [dte, kind].filter(Boolean).join(' · ');
+    }
+    // Single forecast strip — single row card derived from the resolved
+    // top-level fcst columns on v_event_weather_with_fallback.
+    if (f && f.weather_kind !== 'none') {
       const fcWrap = document.createElement('div');
       fcWrap.className = 'wx-forecast';
-      fcWrap.innerHTML = '<div class="wx-sublabel">FORECAST · NEAREST TO EVENT TIME</div>';
+      const kindLbl = f.weather_kind === 'climatology_outdoor'
+        ? 'CLIMATOLOGY FALLBACK · OUTDOOR'
+        : f.weather_kind === 'forecast_indoor'
+        ? 'FORECAST · INDOOR (no outdoor signal)'
+        : 'FORECAST · OUTDOOR';
+      fcWrap.innerHTML = `<div class="wx-sublabel">${kindLbl}</div>`;
       const row = document.createElement('div');
       row.className = 'wx-row';
-      fc.forEach(f => {
-        const cell = document.createElement('div');
-        cell.className = 'wx-cell';
-        cell.innerHTML = `
-          <div class="wx-time">${shortHour(f.observed_at)}</div>
-          <div class="wx-temp">${f.temp_f != null ? Math.round(f.temp_f) + '°' : '—'}</div>
-          <div class="wx-precip">${f.precip_pct != null ? Math.round(f.precip_pct) + '%' : '—'} ${f.precip_in != null ? `· ${f.precip_in.toFixed(2)}"` : ''}</div>
-          <div class="wx-wind">${f.wind_mph != null ? Math.round(f.wind_mph) + ' mph' : '—'}${f.gust_mph != null ? ` · g${Math.round(f.gust_mph)}` : ''}</div>
-          <div class="wx-summary">${escapeHtml(f.weather_summary || '')}</div>
-        `;
-        row.appendChild(cell);
-      });
+      const cell = document.createElement('div');
+      cell.className = 'wx-cell';
+      cell.innerHTML = `
+        <div class="wx-temp">${f.temp_f != null ? Math.round(f.temp_f) + '°' : '—'}</div>
+        <div class="wx-precip">${f.precip_pct != null ? Math.round(f.precip_pct) + '%' : '—'}${f.precip_in != null ? ` · ${Number(f.precip_in).toFixed(2)}"` : ''}</div>
+        <div class="wx-wind">${f.wind_mph != null ? Math.round(f.wind_mph) + ' mph' : '—'}</div>
+        <div class="wx-summary">${escapeHtml(f.summary || '')}</div>`;
+      row.appendChild(cell);
       fcWrap.appendChild(row);
       body.appendChild(fcWrap);
     }
-
-    if (obs.length) {
-      const obsWrap = document.createElement('div');
-      obsWrap.className = 'wx-obs';
-      obsWrap.innerHTML = `<div class="wx-sublabel">RECENT OBSERVATIONS (${obs.length})</div>`;
-      const ul = document.createElement('ul');
-      obs.forEach(o => {
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="muted">${T.fmtDate(o.observed_at)}</span> ${o.temp_f != null ? Math.round(o.temp_f) + '°F' : '—'} · ${o.precip_pct != null ? o.precip_pct + '% precip' : '—'} · ${escapeHtml(o.weather_summary || '')}`;
-        ul.appendChild(li);
-      });
-      obsWrap.appendChild(ul);
-      body.appendChild(obsWrap);
-    }
-
     if (alerts.length) {
       const aw = document.createElement('div');
       aw.className = 'wx-alerts';
-      aw.innerHTML = `<div class="wx-sublabel">NWS ALERTS (${alerts.length})</div>`;
+      aw.innerHTML = `<div class="wx-sublabel">NWS ALERTS (${alerts.length}) · venue-scoped</div>`;
       const ul = document.createElement('ul');
       alerts.forEach(a => {
         const li = document.createElement('li');
-        li.innerHTML = `<strong>${escapeHtml(a.event || '')}</strong> <span class="muted">${escapeHtml(a.severity || '')} · expires ${T.fmtDate(a.expires_at)}</span> — ${escapeHtml(a.headline || '')}`;
+        const sev = String(a.severity || '').toLowerCase();
+        const sevCls = (sev === 'extreme' || sev === 'severe') ? 'neg' : (sev === 'moderate' ? 'warn' : 'muted');
+        li.innerHTML = `<strong>${escapeHtml(a.alert_event || '')}</strong> <span class="${sevCls}">${escapeHtml(a.severity || '')}</span> · <span class="muted">expires ${T.fmtDate(a.expires_at)}</span> — ${escapeHtml(a.headline || '')} <span class="muted small">[${escapeHtml(a.matched_zone_kind || '')}]</span>`;
         ul.appendChild(li);
       });
       aw.appendChild(ul);
       body.appendChild(aw);
+    } else {
+      const noneEl = document.createElement('div');
+      noneEl.className = 'muted small';
+      noneEl.style.marginTop = '8px';
+      noneEl.textContent = 'no active NWS alerts for venue';
+      body.appendChild(noneEl);
     }
   }
 
-  function shortHour(iso) {
-    if (!iso) return '—';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric' });
-    } catch (_) { return iso; }
+  function renderHeroWeather(forecast) {
+    const host = document.getElementById('hero-weather');
+    if (!host) return;
+    if (!forecast || forecast.weather_kind === 'none' || forecast.weather_kind === 'forecast_indoor' || forecast.temp_f == null) {
+      host.setAttribute('hidden', '');
+      return;
+    }
+    host.removeAttribute('hidden');
+    const tEl = document.getElementById('hwTemp');
+    const sEl = document.getElementById('hwSummary');
+    const pEl = document.getElementById('hwPrecip');
+    const wEl = document.getElementById('hwWind');
+    const kEl = document.getElementById('hwKindBadge');
+    if (tEl) tEl.textContent = Math.round(forecast.temp_f);
+    if (sEl) sEl.textContent = forecast.summary || '—';
+    if (pEl) pEl.textContent = forecast.precip_pct != null ? Math.round(forecast.precip_pct) + '% precip' : '—';
+    if (wEl) wEl.textContent = forecast.wind_mph != null ? Math.round(forecast.wind_mph) + ' mph' : '—';
+    if (kEl) {
+      if (forecast.weather_kind === 'climatology_outdoor') {
+        kEl.removeAttribute('hidden');
+        kEl.textContent = 'climo';
+      } else {
+        kEl.setAttribute('hidden', '');
+      }
+    }
   }
 
-  // ---------- Orders strip ----------
+  // ---------- All Orders (unified — EVO + TickPick + Vivid) ----------
+  //
+  // Replaces the legacy #order-strip (EVO state-mix bar) + #cross-source-orders
+  // (TP+Vivid separate panel). Single sortable table with a Source column.
+  // Shows ALL order states (pending/accepted/completed/rejected/etc.), not
+  // just pending. Sorted by created_at DESC, capped 30.
 
-  function renderOrders(orders, crossSource) {
-    const body = document.getElementById('ordersBody');
+  function renderAllOrders(orders, crossSource) {
+    const body = document.getElementById('allOrdersBody');
+    const countEl = document.getElementById('allOrdersCount');
+    if (!body) return;
+    const rows = [];
+    // EVO line-items
+    const items   = (orders && orders.items) || [];
+    const ordList = (orders && orders.orders) || [];
+    const stateById = new Map(ordList.map(o => [o.evo_order_id, o]));
+    items.forEach(it => {
+      const o = stateById.get(it.evo_order_id) || {};
+      rows.push({
+        source: 'evo',
+        order_id: it.evo_order_id,
+        status: o.state || 'unknown',
+        section: it.ticket_group_section || it.section,
+        row:     it.ticket_group_row     || it.row,
+        quantity: it.quantity,
+        total:    it.price != null && it.quantity != null ? Number(it.price) * Number(it.quantity) : null,
+        created_at: o.evo_created_at || o.evo_updated_at || it.pulled_at,
+      });
+    });
+    // TickPick
+    ((crossSource && crossSource.tickpick) || []).forEach(o => {
+      rows.push({
+        source: 'tickpick',
+        order_id: o.tp_order_id || o.order_id,
+        status: o.status || o.order_status || 'unknown',
+        section: o.section, row: o.row,
+        quantity: o.quantity,
+        total: o.total,
+        created_at: o.ordered_at,
+      });
+    });
+    // Vivid
+    ((crossSource && crossSource.vivid) || []).forEach(o => {
+      rows.push({
+        source: 'vivid',
+        order_id: o.vivid_order_id || o.order_id,
+        status: o.status || 'unknown',
+        section: o.section, row: o.row,
+        quantity: o.quantity,
+        total: o.total,
+        created_at: o.ordered_at,
+      });
+    });
+    rows.sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return tb - ta;
+    });
+    if (countEl) {
+      const evoN = rows.filter(r => r.source === 'evo').length;
+      const tpN  = rows.filter(r => r.source === 'tickpick').length;
+      const vvN  = rows.filter(r => r.source === 'vivid').length;
+      const parts = [];
+      if (evoN) parts.push(`EVO ${evoN}`);
+      if (tpN)  parts.push(`TP ${tpN}`);
+      if (vvN)  parts.push(`Vivid ${vvN}`);
+      if (rows.length) parts.push(`· ${rows.length} total`);
+      countEl.textContent = parts.join(' · ');
+    }
     body.innerHTML = '';
-    if (!orders) {
-      body.innerHTML = '<div class="empty">orders unavailable</div>';
-      renderCrossSourceOrders(crossSource);  // still surface tickpick/vivid if present
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no orders for this event from any source</div>';
       return;
     }
-    if (!orders.summary || orders.summary.total_items === 0) {
-      body.innerHTML = '<div class="empty">no EVO orders for this event</div>';
-      renderCrossSourceOrders(crossSource);
-      return;
-    }
-    const byState = orders.summary.by_state || {};
-    const stateOrder = ['pending', 'accepted', 'completed', 'rejected', 'pending_sub', 'unknown'];
-
-    const bar = document.createElement('div');
-    bar.className = 'order-bar';
-    stateOrder.forEach(st => {
-      const n = byState[st] || 0;
-      if (!n) return;
-      const seg = document.createElement('div');
-      seg.className = 'seg ' + st;
-      seg.style.flex = String(n);
-      seg.textContent = n >= 3 ? n : '';
-      seg.title = `${st}: ${n}`;
-      bar.appendChild(seg);
+    const tbl = document.createElement('table');
+    tbl.className = 'orders-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Source</th><th>Order</th><th>Status</th>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Total</th>
+        <th>Created</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.slice(0, 30).forEach(r => {
+      const tr = document.createElement('tr');
+      const statusCls = r.status ? 'status-' + String(r.status).toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
+      const srcCls = 'src-' + r.source;
+      tr.innerHTML = `
+        <td><span class="src-pill ${srcCls}">${escapeHtml(r.source)}</span></td>
+        <td>${escapeHtml(String(r.order_id || '—'))}</td>
+        <td><span class="status-pill ${statusCls}">${escapeHtml(r.status || '—')}</span></td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.total != null ? '$' + T.fmtNum(Math.round(r.total)) : '—'}</td>
+        <td class="muted">${T.fmtDate(r.created_at)}</td>`;
+      tb.appendChild(tr);
     });
-    body.appendChild(bar);
-
-    const legend = document.createElement('div');
-    legend.className = 'order-legend';
-    stateOrder.forEach(st => {
-      const n = byState[st] || 0;
-      if (!n) return;
-      const row = document.createElement('div');
-      row.className = 'row ' + st;
-      row.innerHTML = `<span class="lbl">${st}</span><span class="num">${n}</span>`;
-      legend.appendChild(row);
-    });
-    body.appendChild(legend);
-
-    const summary = document.createElement('div');
-    summary.className = 'order-summary';
-    summary.innerHTML = `
-      <span class="lbl">items</span><span class="val">${T.fmtNum(orders.summary.total_items)}</span>
-      <span class="lbl">tickets sold</span><span class="val">${T.fmtNum(orders.summary.tickets_sold)}</span>
-      <span class="lbl">gross sold</span><span class="val">$${T.fmtNum(orders.summary.gross_sold, { max: 0 })}</span>
-      <span class="lbl">last update</span><span class="val">${T.fmtDate(orders.summary.last_update_at)}</span>
-    `;
-    // v3: surface tickpick/vivid orders for this event AFTER EVO rendering
-    setTimeout(() => renderCrossSourceOrders(crossSource), 0);
-    body.appendChild(summary);
+    body.appendChild(tbl);
   }
 
   // ---------- Coverage + freshness ----------
@@ -1113,34 +1276,10 @@
       </div>`;
   }
 
-  // ---------- SG listings summary (cost distribution) ----------
-  function renderSgListingsSummary(m, sxs) {
-    const section = document.getElementById('sg-listings-summary');
-    const body = document.getElementById('sgListingsSummaryBody');
-    if (!body) return;
-    if (!m || m.hidden) {
-      if (section) section.style.display = 'none';
-      return;
-    }
-    if (section) section.style.display = '';
-    // Optional 24h-ago delta from sxs.d24h_ago for cost_median
-    const prev = sxs && !sxs.hidden && sxs.d24h_ago ? sxs.d24h_ago : null;
-    const dPct = (prev && prev.cost_median && m.cost_median)
-      ? ((m.cost_median / prev.cost_median - 1) * 100) : null;
-    body.innerHTML = `
-      <div class="kpi-strip">
-        <div class="kpi-strip-cell"><span class="kpi-lbl">LISTINGS</span><span class="kpi-val">${T.fmtNum(m.listings_count)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">TIX</span><span class="kpi-val">${T.fmtNum(m.tickets_count)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">COST MIN</span><span class="kpi-val">${m.cost_min != null ? '$' + T.fmtNum(Math.round(m.cost_min)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">P25</span><span class="kpi-val">${m.cost_p25 != null ? '$' + T.fmtNum(Math.round(m.cost_p25)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MEDIAN</span><span class="kpi-val">${m.cost_median != null ? '$' + T.fmtNum(Math.round(m.cost_median)) : '—'}${dPct != null ? `<span class="kpi-sg ${dPct >= 0 ? 'pos' : 'neg'}">${dPct >= 0 ? '+' : ''}${dPct.toFixed(1)}% d24h</span>` : ''}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">P75</span><span class="kpi-val">${m.cost_p75 != null ? '$' + T.fmtNum(Math.round(m.cost_p75)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">P90</span><span class="kpi-val">${m.cost_p90 != null ? '$' + T.fmtNum(Math.round(m.cost_p90)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MAX</span><span class="kpi-val">${m.cost_max != null ? '$' + T.fmtNum(Math.round(m.cost_max)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">FILL</span><span class="kpi-val">${m.fill_rate != null ? (m.fill_rate * 100).toFixed(0) + '%' : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">SECTIONS</span><span class="kpi-val">${T.fmtNum(m.unique_sections)}</span></div>
-      </div>`;
-  }
+  // (renderSgListingsSummary removed — deprecated cost_* fields per operator
+  // metrics inventory; CROSS-SOURCE METRICS panel covers the SG ask
+  // distribution via listings_all_* from PR #204.)
+
 
   // ---------- Velocity chips (inline strip) ----------
   function renderVelocityChips(v) {
@@ -1222,36 +1361,9 @@
     body.appendChild(tbl);
   }
 
-  // ---------- Cross-source orders (TickPick + Vivid) ----------
-  function renderCrossSourceOrders(cs) {
-    const body = document.getElementById('crossSourceOrdersBody');
-    const section = document.getElementById('cross-source-orders');
-    if (!body) return;
-    const tp = (cs && cs.tickpick) || [];
-    const vv = (cs && cs.vivid) || [];
-    if (!tp.length && !vv.length) {
-      if (section) section.style.display = 'none';
-      return;
-    }
-    if (section) section.style.display = '';
-    function rowsHtml(rows, source) {
-      if (!rows.length) return '';
-      return rows.slice(0, 10).map(o => {
-        const total = o.total != null ? '$' + T.fmtNum(o.total, { max: 2 }) : '—';
-        const sec = escapeHtml(o.section || '—');
-        const row = escapeHtml(o.row || '—');
-        return `<tr><td><span class="src-pill src-${source}">${source}</span></td><td>${escapeHtml(o.status || '—')}</td><td class="num">${T.fmtNum(o.quantity)}</td><td class="num">${total}</td><td>${sec} / ${row}</td><td class="muted">${T.fmtDate(o.ordered_at)}</td></tr>`;
-      }).join('');
-    }
-    body.innerHTML = `
-      <div class="cross-src-meta muted small">
-        TickPick: ${tp.length} orders · Vivid: ${vv.length} orders (top 10 each)
-      </div>
-      <table class="cross-src-tbl">
-        <thead><tr><th>Src</th><th>Status</th><th class="num">Qty</th><th class="num">Total</th><th>Sec/Row</th><th>Ordered</th></tr></thead>
-        <tbody>${rowsHtml(tp, 'tickpick')}${rowsHtml(vv, 'vivid')}</tbody>
-      </table>`;
-  }
+  // (renderCrossSourceOrders removed — folded into renderAllOrders which
+  // unifies EVO + TickPick + Vivid into a single sortable table.)
+
 
   // ---------- Performer ESPN context (next 5 games) ----------
   function renderPerformerEspn(ctx, performer) {
@@ -1328,7 +1440,7 @@
   // ============================================================
   const _tabState = { loaded: {
     'sg-listings': false, 'evo-listings': false, 'sg-sales': false,
-    'evo-orders': false, 'sg-seller-orders': false, 'cross-broker': false,
+    'our-orders': false,
   } };
 
   function wireTabs(eventId) {
@@ -1345,12 +1457,16 @@
         await loadEvoListingsFull(eventId);
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
-      } else if (tabId === 'evo-orders' && !_tabState.loaded['evo-orders']) {
-        await loadEvoOrdersFull(eventId);
-      } else if (tabId === 'sg-seller-orders' && !_tabState.loaded['sg-seller-orders']) {
-        await loadSgSellerOrdersFull(eventId);
-      } else if (tabId === 'cross-broker' && !_tabState.loaded['cross-broker']) {
-        await loadCrossBrokerFull(eventId);
+      } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
+        // Merged tab — fire all 3 broker-order RPCs in parallel, render each
+        // into its own stacked sub-section inside #paneOurOrders.
+        _tabState.loaded['our-orders'] = true;
+        await Promise.all([
+          loadEvoOrdersFull(eventId),
+          loadSgSellerOrdersFull(eventId),
+          loadCrossBrokerFull(eventId),
+        ]);
+        updateOurOrdersTabCount();
       }
     });
   }
@@ -1362,13 +1478,11 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     const paneIds = {
-      'overview':         'paneOverview',
-      'sg-listings':      'paneSgListings',
-      'evo-listings':     'paneEvoListings',
-      'sg-sales':         'paneSgSales',
-      'evo-orders':       'paneEvoOrders',
-      'sg-seller-orders': 'paneSgSellerOrders',
-      'cross-broker':     'paneCrossBroker',
+      'overview':     'paneOverview',
+      'sg-listings':  'paneSgListings',
+      'evo-listings': 'paneEvoListings',
+      'sg-sales':     'paneSgSales',
+      'our-orders':   'paneOurOrders',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -1381,6 +1495,17 @@
         pane.classList.remove('active');
       }
     });
+  }
+
+  // Aggregate the 3 sub-section counts into the merged Our Orders tab chip.
+  function updateOurOrdersTabCount() {
+    const chip = document.getElementById('tabCountOurOrders');
+    if (!chip) return;
+    const evo  = parseInt(document.getElementById('tabCountEvoOrders')?.textContent || '0', 10) || 0;
+    const sg   = parseInt(document.getElementById('tabCountSgSellerOrders')?.textContent || '0', 10) || 0;
+    const xb   = parseInt(document.getElementById('tabCountCrossBroker')?.textContent || '0', 10) || 0;
+    const total = evo + sg + xb;
+    chip.textContent = total ? String(total) : '';
   }
 
   function wireSalesWindow(eventId) {
@@ -1866,12 +1991,19 @@
     renderCrossSourceMetrics(res.data || {}, performance.now() - t0);
   }
 
-  function renderCrossSourceMetrics(d, ms) {
+  // Cache the last cross-source payload so we can re-render when v3 data
+  // arrives later and we want to override sold_price_median with the v3
+  // sg_broker_sales aggregate (which is what the SG BROKER SALES — AGGREGATE
+  // panel renders, ensuring both panels show the same number).
+  let _lastCrossSource = null;
+
+  function renderCrossSourceMetrics(d, ms, overrides) {
+    _lastCrossSource = d;
     const body = document.getElementById('crossSourceBody');
     const meta = document.getElementById('crossSourceMeta');
     if (!body) return;
-    const rows = d.rows || [];
-    const hasSg = d.sg_event_id != null;
+    const rows = (d && d.rows) || [];
+    const hasSg = d && d.sg_event_id != null;
     if (meta) {
       const parts = [`${ms != null ? ms.toFixed(0) + 'ms' : ''}`];
       if (hasSg) parts.unshift(`sg_event_id ${d.sg_event_id}`);
@@ -1882,6 +2014,9 @@
       body.innerHTML = '<div class="empty">no metrics available</div>';
       return;
     }
+    // Override "Realized sale median" SG cell with v3 sg_broker_sales aggregate
+    // when available (the SG BROKER SALES — AGGREGATE panel's source of truth).
+    const realizedOverride = overrides && overrides.realized_sale_median_sg;
     function fmtVal(v, isMoney) {
       if (v === null || v === undefined) return '<span class="dim">—</span>';
       const n = Number(v);
@@ -1890,7 +2025,6 @@
       return T.fmtNum(n);
     }
     function deltaPct(tevo, sg) {
-      // SG vs TEvo — positive means SG higher than TEvo
       if (tevo === null || tevo === undefined || sg === null || sg === undefined) return null;
       const t = Number(tevo), s = Number(sg);
       if (!Number.isFinite(t) || !Number.isFinite(s) || t === 0) return null;
@@ -1915,15 +2049,65 @@
     const tb = tbl.querySelector('tbody');
     rows.forEach(r => {
       const tr = document.createElement('tr');
+      let sgVal = r.sg;
+      if (r.label === 'Realized sale median' && realizedOverride != null) sgVal = realizedOverride;
       tr.innerHTML = `
         <td>${escapeHtml(r.label || '')}</td>
         <td class="num">${fmtVal(r.tevo, r.is_money)}</td>
-        <td class="num">${fmtVal(r.sg, r.is_money)}</td>
-        <td class="num">${deltaCell(r.tevo, r.sg)}</td>`;
+        <td class="num">${fmtVal(sgVal, r.is_money)}</td>
+        <td class="num">${deltaCell(r.tevo, sgVal)}</td>`;
       tb.appendChild(tr);
     });
     body.innerHTML = '';
     body.appendChild(tbl);
+  }
+
+  // Called after v3 RPC payload arrives — re-renders the cross-source panel
+  // using the v3 sg_broker_sales.median_sale_price as the canonical
+  // "Realized sale median" value (matches SG BROKER SALES — AGGREGATE).
+  function rerenderCrossSourceWithV3(data) {
+    if (!_lastCrossSource) return;
+    const med = data && data.sg_broker_sales && data.sg_broker_sales.median_sale_price;
+    renderCrossSourceMetrics(_lastCrossSource, null, {
+      realized_sale_median_sg: med != null ? Number(med) : null,
+    });
+  }
+
+  // ---------- Localized weather + NWS alerts (mig 20260519000000) ----------
+  async function loadWeatherLocalized(eventId) {
+    const res = await rpcOrNull('get_event_weather_localized', { p_event_id: eventId });
+    if (res.error) {
+      console.error('[weatherLocalized] RPC error:', res.error.message);
+      // Hide hero card; full panel will still show whatever the v3 payload provides.
+      const host = document.getElementById('hero-weather');
+      if (host) host.setAttribute('hidden', '');
+      return;
+    }
+    const d = res.data || {};
+    renderHeroWeather(d.forecast);
+    renderWeather(d);
+  }
+
+  // ---------- SG zones + splits (mig 20260519010000) ----------
+  // When the RPC resolves, re-render Splits + Zones with SG data merged in.
+  // TEvo side is pulled from the cached _lastPayload (set by loadAndRender).
+  async function loadSgZonesSplits(eventId) {
+    const res = await rpcOrNull('get_event_sg_zones_splits', { p_event_id: eventId });
+    let sgZones, sgSplits;
+    if (res.error) {
+      sgZones  = { hidden: true, reason: 'rpc_error' };
+      sgSplits = { hidden: true, reason: 'rpc_error' };
+    } else {
+      const d = res.data || {};
+      if (d.hidden) { sgZones = d; sgSplits = d; }
+      else { sgZones = { zones: d.zones || [] }; sgSplits = { splits: d.splits || {} }; }
+    }
+    const data = _lastPayload || {};
+    const tevoZones  = data.zones || {};
+    const tevoDeltas = data.zone_deltas || null;
+    const tevoSplits = data.splits || null;
+    renderZones(tevoZones, tevoDeltas, sgZones);
+    renderSplits(tevoSplits, sgSplits);
   }
 
   // ---------- Last event snapshot (Overview tab) ----------

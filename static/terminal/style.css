@@ -851,14 +851,12 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .wrap.event #cross-source-metrics { grid-column: 1 / -1; }
 .wrap.event #chart              { grid-column: 1 / -1; padding: 12px 8px; }
 .wrap.event #sg-broker-sales    { grid-column: 1 / -1; }
-.wrap.event #sg-listings-summary{ grid-column: 1 / -1; }
-.wrap.event #splits             { grid-column: 1 / 7; }
-.wrap.event #zones              { grid-column: 7 / 13; }
+.wrap.event #splits             { grid-column: 1 / -1; }
+.wrap.event #zones              { grid-column: 1 / -1; }
 .wrap.event #sales-tape         { grid-column: 1 / -1; }
 .wrap.event #espn               { grid-column: 1 / -1; }
 .wrap.event #weather            { grid-column: 1 / -1; }
-.wrap.event #order-strip        { grid-column: 1 / 7; }
-.wrap.event #cross-source-orders{ grid-column: 7 / 13; }
+.wrap.event #all-orders         { grid-column: 1 / -1; }
 .wrap.event #alerts             { grid-column: 1 / 7; }
 .wrap.event #competing-events   { grid-column: 7 / 13; }
 .wrap.event #recent-listings    { grid-column: 1 / 7; }
@@ -1464,3 +1462,109 @@ body[data-page="login"] {
   text-align: center;
 }
 .ts-empty.err { color: var(--neg); }
+
+/* ---------- Event redesign (post-PR #206) ---------- */
+
+/* Hero weather card — compact top-right of hero side-rail */
+#hero-weather {
+  display: flex; flex-direction: column;
+  align-items: flex-end;
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  margin-bottom: 6px;
+  min-width: 140px;
+}
+#hero-weather .hw-temp {
+  font-size: 24px; font-weight: 700; color: var(--accent);
+  display: flex; align-items: baseline; gap: 4px;
+}
+#hero-weather .hw-temp .hw-unit { font-size: 12px; color: var(--muted); }
+#hero-weather .hw-temp .hw-kind {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 9px;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+#hero-weather .hw-summary { color: var(--text); font-size: 11px; margin-top: 2px; }
+#hero-weather .hw-meta    { color: var(--muted); font-size: 10px; margin-top: 2px; }
+
+/* Dual-source side-by-side container (used by Splits + Zones panels) */
+.dual-src {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.dual-src-col {
+  min-width: 0;
+}
+.dual-src-hdr {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Unified Orders panel — EVO + TickPick + Vivid in one table */
+.orders-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono); font-size: 11px;
+}
+.orders-tbl thead th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.orders-tbl tbody td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--text);
+}
+.orders-tbl tbody tr:hover td { background: var(--shade); }
+.orders-tbl .num { text-align: right; }
+.src-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.src-pill.src-evo      { color: var(--accent); border-color: var(--accent); }
+.src-pill.src-tickpick { color: var(--info);   border-color: var(--info); }
+.src-pill.src-vivid    { color: #c084fc;       border-color: #c084fc; }
+.status-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.status-pill.status-pending     { color: var(--info); border-color: var(--info); }
+.status-pill.status-accepted,
+.status-pill.status-completed,
+.status-pill.status-confirmed   { color: var(--pos); border-color: var(--pos); }
+.status-pill.status-rejected,
+.status-pill.status-cancelled,
+.status-pill.status-pending-sub { color: var(--neg); border-color: var(--neg); }
+
+/* Our Orders merged tab — 3 stacked sub-sections */
+#paneOurOrders > section + section { margin-top: 12px; }
