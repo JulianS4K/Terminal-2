@@ -119,22 +119,21 @@ main.wrap {
 .kpi-value.neg  { color: var(--neg); }
 .kpi-sub { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
-/* ---------- Chart — 3-pane stacked redesign (operator redesign 2026-05-18) ---------- */
+/* ---------- Charts — 2 independent stacked sections (operator redesign v2 2026-05-18) ---------- */
 
-#chart {
+/* Each chart is its own section with its own range selector + legend + canvas
+   + tooltip. .chart-section applies the same panel chrome to both. */
+.chart-section {
   grid-column: 1 / -1;
   background: var(--panel);
   border: 1px solid var(--line);
   padding: 8px;
-  /* Flex column: chart-title (auto height) + 3 panes (flex-weighted 6:2:2)
-     + floating tooltip. min-height bumped from 420 → 540 to give the new
-     stacked layout enough vertical room. */
   display: flex;
   flex-direction: column;
-  min-height: 540px;
-  position: relative;  /* anchor for .chart-anno-host + .chart-tooltip */
+  min-height: 320px;
+  position: relative;  /* anchor for absolute .chart-anno-host + .chart-tooltip */
 }
-#chart .chart-title {
+.chart-section .chart-title {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: 0 8px 8px;
   border-bottom: 1px solid var(--line-2);
@@ -143,52 +142,43 @@ main.wrap {
   text-transform: uppercase; letter-spacing: 0.5px;
   flex: 0 0 auto;
 }
-/* Stacked panes. flex weights 6:2:2 = price 60%, inv 20%, vol 20% of remaining
-   vertical space. min-height:0 required for flex children that contain a
-   canvas (otherwise the canvas pushes the parent past the flex allotment). */
-#chart .chart-pane {
-  min-height: 0;
+.chart-section .chart-pane {
+  flex: 1 1 auto;
+  min-height: 0;  /* required for flex children containing a canvas */
   position: relative;
   overflow: hidden;
 }
-#chart .chart-pane-price { flex: 6 1 0; }
-#chart .chart-pane-inv   { flex: 2 1 0; border-top: 1px solid var(--line-2); }
-#chart .chart-pane-vol   { flex: 2 1 0; border-top: 1px solid var(--line-2); }
-#chart .chart-pane canvas { display: block; }
+.chart-section .chart-pane canvas { display: block; }
 
-/* Legend — now clickable swatches per series. Toggling dims the swatch + hides
-   the series via uPlot.setSeries({show:false}). Annotation icons unchanged. */
-#chart .legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-#chart .legend span { display: flex; align-items: center; gap: 4px; }
-#chart .legend .legend-item { transition: opacity 80ms ease; user-select: none; }
-#chart .legend .legend-item:hover { opacity: 1 !important; text-decoration: underline; text-decoration-style: dotted; }
-#chart .legend .legend-anno { cursor: default; }
-#chart .legend i {
+/* Legend — clickable swatches per series. Toggling dims the swatch + hides
+   the series via uPlot.setSeries({show:false}). Two legends now, one per chart. */
+.chart-section .legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.chart-section .legend span { display: flex; align-items: center; gap: 4px; }
+.chart-section .legend .legend-item { transition: opacity 80ms ease; user-select: none; }
+.chart-section .legend .legend-item:hover { opacity: 1 !important; text-decoration: underline; text-decoration-style: dotted; }
+.chart-section .legend .legend-anno { cursor: default; }
+.chart-section .legend i {
   width: 10px; height: 2px; display: inline-block;
 }
-#chart .legend .legend-sep {
+.chart-section .legend .legend-sep {
   color: var(--line-2); padding: 0 4px;
 }
-/* Annotation legend icons — small + cross for injury, small square for state. */
-#chart .legend i.anno-inj-i {
+/* Annotation legend icons — small + cross for injury, small square for state.
+   Only rendered on the price chart's legend per broker convention. */
+.chart-section .legend i.anno-inj-i {
   width: 10px; height: 10px; background: transparent;
   border: 0; position: relative;
 }
-#chart .legend i.anno-inj-i::before,
-#chart .legend i.anno-inj-i::after {
+.chart-section .legend i.anno-inj-i::before,
+.chart-section .legend i.anno-inj-i::after {
   content: ""; position: absolute; background: #ec4899;
 }
-#chart .legend i.anno-inj-i::before { left: 4px; top: 0; width: 2px; height: 10px; }
-#chart .legend i.anno-inj-i::after  { left: 0; top: 4px; width: 10px; height: 2px; }
-#chart .legend i.anno-gs-i {
+.chart-section .legend i.anno-inj-i::before { left: 4px; top: 0; width: 2px; height: 10px; }
+.chart-section .legend i.anno-inj-i::after  { left: 0; top: 4px; width: 10px; height: 2px; }
+.chart-section .legend i.anno-gs-i {
   width: 8px; height: 8px; background: #14b8a6;
 }
-
-/* uPlot draws axis labels via canvas (not SVG), so the old
-   `#chart .uplot text { fill: ... }` rule was a no-op — axis text rendered
-   in default dark-gray, invisible on #0a0a0a background. Axis colors are
-   now set programmatically via opts.axes[*].stroke + .font in renderChart. */
-#chart .uplot { background: transparent; }
+.chart-section .uplot { background: transparent; }
 
 /* Cross-pane tooltip — floats above all 3 panes, anchored to cursor X. */
 .chart-tooltip {
@@ -957,7 +947,8 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .wrap.event #kpi-grid           { grid-column: 1 / -1; padding: 12px 16px; }
 .wrap.event #last-snapshot      { grid-column: 1 / -1; }
 .wrap.event #cross-source-metrics { grid-column: 1 / -1; }
-.wrap.event #chart              { grid-column: 1 / -1; padding: 12px 8px; }
+.wrap.event #chart-price        { grid-column: 1 / -1; padding: 12px 8px; }
+.wrap.event #chart-inventory    { grid-column: 1 / -1; padding: 12px 8px; }
 .wrap.event #sg-broker-sales    { grid-column: 1 / -1; }
 .wrap.event #splits             { grid-column: 1 / -1; }
 .wrap.event #zones              { grid-column: 1 / -1; }
@@ -1073,8 +1064,8 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .kpi-cell .kpi-sg.pos { color: var(--pos); }
 .kpi-cell .kpi-sg.neg { color: var(--neg); }
 
-/* Chart controls */
-#chart .chart-controls {
+/* Chart controls (range selector + legend group inside each chart's title) */
+.chart-section .chart-controls {
   display: flex; gap: 12px; align-items: center;
 }
 .range-select {
