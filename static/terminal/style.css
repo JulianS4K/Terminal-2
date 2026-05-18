@@ -137,14 +137,62 @@ main.wrap {
   font-family: var(--mono); font-size: 11px; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.5px;
 }
-#chart .legend { display: flex; gap: 12px; }
+#chart .legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 #chart .legend span { display: flex; align-items: center; gap: 4px; }
 #chart .legend i {
   width: 10px; height: 2px; display: inline-block;
 }
+#chart .legend .legend-sep {
+  color: var(--line-2); padding: 0 4px;
+}
+/* Annotation legend icons (mig 20260519150000) — small + cross for injury,
+   small square for game-state. Different from series swatches. */
+#chart .legend i.anno-inj-i {
+  width: 10px; height: 10px; background: transparent;
+  border: 0; position: relative;
+}
+#chart .legend i.anno-inj-i::before,
+#chart .legend i.anno-inj-i::after {
+  content: ""; position: absolute; background: #ec4899;
+}
+#chart .legend i.anno-inj-i::before { left: 4px; top: 0; width: 2px; height: 10px; }
+#chart .legend i.anno-inj-i::after  { left: 0; top: 4px; width: 10px; height: 2px; }
+#chart .legend i.anno-gs-i {
+  width: 8px; height: 8px; background: #14b8a6;
+}
 #chart .uplot { background: transparent; }
 #chart .uplot text { fill: var(--muted) !important; font-family: var(--mono) !important; font-size: 10px !important; }
 #chart .u-axis { color: var(--muted); }
+
+/* Chart annotation overlay (mig 20260519150000) — sibling DOM layer for
+   hover tooltips over canvas-drawn marker dots. Pointer events restricted
+   to the dots so they don't block uPlot cursor interactions. */
+.chart-anno-host {
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+.chart-anno-dot {
+  position: absolute; width: 10px; height: 10px;
+  pointer-events: auto; cursor: help;
+  border-radius: 50%;
+}
+.chart-anno-dot.anno-inj {
+  background: rgba(236, 72, 153, 0.0);
+  /* the canvas already draws a + marker; this dot is purely the hover hit-target */
+  border: 1px solid transparent;
+}
+.chart-anno-dot.anno-inj:hover {
+  background: rgba(236, 72, 153, 0.18);
+  border-color: rgba(236, 72, 153, 0.6);
+}
+.chart-anno-dot.anno-gs {
+  background: rgba(20, 184, 166, 0.0);
+  border: 1px solid transparent;
+}
+.chart-anno-dot.anno-gs:hover {
+  background: rgba(20, 184, 166, 0.18);
+  border-color: rgba(20, 184, 166, 0.6);
+}
 
 /* ---------- Zones table ---------- */
 

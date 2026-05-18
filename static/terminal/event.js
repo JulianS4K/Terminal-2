@@ -14,6 +14,11 @@
   let CHART_HOURS = DEFAULT_HOURS;
   let _chartInstance = null;
   let _lastPayload = null;
+  // Chart-extension state cache (mig 20260519150000 / get_event_chart_extended):
+  // fetched in parallel with v3; merges 5 SG series + 2 ESPN annotation arrays
+  // into the chart whenever it lands. Same state-machine pattern as splits/zones.
+  let _chartExtState = { payload: undefined };
+  let _chartExtAlerts = []; // cached for re-renders after extended payload arrives
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
@@ -37,6 +42,7 @@
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
     loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
+    loadChartExtended(eventId).catch(e => console.error('[chartExtended]', e));
     await loadAndRender(eventId);
   }
 
@@ -105,6 +111,10 @@
       if (lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
       const aw = document.getElementById('alertsWindow');
       if (aw) aw.textContent = sel.options[sel.selectedIndex].textContent;
+      // Drop stale extended payload so series don't render mismatched windows
+      _chartExtState.payload = undefined;
+      // Re-fire both fetches; renderChart re-runs when each lands
+      loadChartExtended(eventId).catch(e => console.error('[chartExtended]', e));
       await loadAndRender(eventId);
     });
   }
@@ -423,17 +433,38 @@
     host.innerHTML = '';
     if (!chart || !window.uPlot) return;
 
+    // Cache alerts for re-renders triggered by extended-payload arrival
+    _chartExtAlerts = alerts || [];
+
+    // Merge the SG-side series from _chartExtState (lands in parallel — may be
+    // undefined on first paint; chart redraws when it arrives). Reading via
+    // the cache instead of an explicit arg matches the splits/zones pattern.
+    const ext = _chartExtState.payload || null;
+    const extSeries = (ext && ext.series) || {};
+    const sgListMed   = extSeries.sg_listings_median       || [];
+    const sgListOwnMed= extSeries.sg_listings_owned_median || [];
+    const sgListCt    = extSeries.sg_listings_count        || [];
+    const sgSaleMed   = extSeries.sg_sales_median          || [];
+    const sgSaleCt    = extSeries.sg_sales_count           || [];
+
     const seriesSpecs = [
-      { key: 'prices_owned',    label: 'Owned median',    color: '#fbbf24', scale: 'y',   width: 2,   dash: null },
-      { key: 'prices_market',   label: 'Market median',   color: '#737373', scale: 'y',   width: 1.5, dash: [4, 4] },
-      { key: 'prices_nonowned', label: 'Non-owned median',color: '#a78bfa', scale: 'y',   width: 1.5, dash: [6, 3] },
-      { key: 'counts_owned',    label: 'Owned qty',       color: '#60a5fa', scale: 'qty', width: 1,   dash: null, fill: 'rgba(96,165,250,0.08)' },
-      { key: 'counts_market',   label: 'Market qty',      color: '#94a3b8', scale: 'qty', width: 1,   dash: [2, 2] },
+      // TEvo (existing 5)
+      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', scale: 'y',   width: 2,   dash: null,    data: chart.prices_owned },
+      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', scale: 'y',   width: 1.5, dash: [4, 4],  data: chart.prices_market },
+      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', scale: 'y',   width: 1.5, dash: [6, 3],  data: chart.prices_nonowned },
+      { key: 'counts_owned',    label: 'TEvo Owned qty', color: '#60a5fa', scale: 'qty', width: 1,   dash: null,    fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
+      { key: 'counts_market',   label: 'TEvo Mkt qty',   color: '#94a3b8', scale: 'qty', width: 1,   dash: [2, 2],  data: chart.counts_market },
+      // SG (new 5, from extended RPC payload)
+      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', scale: 'y',   width: 1.5, dash: null,    data: sgListMed },
+      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', scale: 'y',   width: 1.5, dash: [3, 3],  data: sgListOwnMed },
+      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', scale: 'y',   width: 1.5, dash: [5, 2],  data: sgSaleMed },
+      { key: 'sg_list_ct',      label: 'SG list qty',    color: '#22d3ee', scale: 'qty', width: 1,   dash: [2, 2],  data: sgListCt },
+      { key: 'sg_sale_ct',      label: 'SG sale ct',     color: '#84cc16', scale: 'sgct',width: 1.5, dash: null,    data: sgSaleCt, points: { show: true, size: 4 } },
     ];
 
     // Build unified time axis
     const tset = new Set();
-    seriesSpecs.forEach(s => (chart[s.key] || []).forEach(p => tset.add(p.t)));
+    seriesSpecs.forEach(s => (s.data || []).forEach(p => tset.add(p.t)));
     const ts = [...tset].sort();
     const xs = ts.map(t => Math.round(new Date(t).getTime() / 1000));
     const idx = new Map(ts.map((t, i) => [t, i]));
@@ -443,7 +474,7 @@
       return arr;
     };
 
-    const data = [xs, ...seriesSpecs.map(s => project(chart[s.key]))];
+    const data = [xs, ...seriesSpecs.map(s => project(s.data))];
 
     // Pick a tick-friendly width (re-render on resize)
     const rect = host.getBoundingClientRect();
@@ -453,24 +484,36 @@
     const opts = {
       width: w, height: h,
       cursor: { drag: { x: true, y: false } },
-      scales: { x: { time: true }, y: {}, qty: {} },
+      scales: { x: { time: true }, y: {}, qty: {}, sgct: {} },
       axes: [
         { stroke: 'var(--muted)', grid: { stroke: 'var(--line-2)', width: 1 } },
         { scale: 'y',   stroke: 'var(--muted)', grid: { stroke: 'var(--line-2)', width: 1 },
           values: (u, v) => v.map(x => x === null ? '' : '$' + Math.round(x)) },
         { scale: 'qty', side: 1, stroke: 'var(--muted)', grid: { show: false },
           values: (u, v) => v.map(x => x === null ? '' : Math.round(x)) },
+        // Hidden axis: sg sale count shares the right-side gutter implicitly via
+        // its own scale (sgct), but we don't draw a separate axis to keep the
+        // chart visually clean. uPlot still scales it correctly.
       ],
       series: [
         { label: 'time' },
         ...seriesSpecs.map(s => ({
           label: s.label, stroke: s.color, width: s.width, scale: s.scale,
           spanGaps: true, dash: s.dash || undefined, fill: s.fill || undefined,
+          points: s.points || undefined,
         })),
       ],
       hooks: {
         draw: [
           (u) => drawAlertsMarkers(u, alerts || []),
+          (u) => drawInjuryMarkers(u, ext && ext.annotations && ext.annotations.injuries),
+          (u) => drawGameStateMarkers(u, ext && ext.annotations && ext.annotations.game_state),
+        ],
+        ready: [
+          (u) => renderAnnotationTooltips(u, host, ext && ext.annotations),
+        ],
+        setSize: [
+          (u) => renderAnnotationTooltips(u, host, ext && ext.annotations),
         ],
       },
     };
@@ -482,7 +525,7 @@
       let resizeTimer;
       window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => renderChart(chart, alerts), 200);
+        resizeTimer = setTimeout(() => renderChart(chart, _chartExtAlerts), 200);
       });
     }
   }
@@ -519,18 +562,114 @@
     return '#60a5fa';
   }
 
+  // Injury transition canvas marker — small "+" near top of chart, magenta.
+  // Same canvas-px coordinate convention as drawAlertsMarkers (canPos=true).
+  function drawInjuryMarkers(u, injuries) {
+    if (!injuries || !injuries.length || !u.ctx) return;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.strokeStyle = '#ec4899'; // pink/magenta — distinct from yellow/red alert palette
+    ctx.lineWidth = 2;
+    injuries.forEach(a => {
+      if (!a.at) return;
+      const tSec = Math.round(new Date(a.at).getTime() / 1000);
+      const x = u.valToPos(tSec, 'x', true);
+      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
+      const y = u.bbox.top + 14;
+      // small cross
+      ctx.beginPath();
+      ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y);
+      ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  // Game-state transition canvas marker — small square near top of chart, teal.
+  function drawGameStateMarkers(u, states) {
+    if (!states || !states.length || !u.ctx) return;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.fillStyle = '#14b8a6'; // teal
+    states.forEach(s => {
+      if (!s.at) return;
+      const tSec = Math.round(new Date(s.at).getTime() / 1000);
+      const x = u.valToPos(tSec, 'x', true);
+      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
+      const y = u.bbox.top + 26;
+      ctx.fillRect(x - 3, y - 3, 6, 6);
+    });
+    ctx.restore();
+  }
+
+  // DOM-overlay tooltips for annotations (canvas can't host hover tooltips natively).
+  // Sibling absolute-positioned dots over the chart canvas; native title= attribute
+  // for hover text. Cheap + zero plugin deps. Re-run on uPlot ready + setSize.
+  function renderAnnotationTooltips(u, host, annotations) {
+    if (!annotations) return;
+    let overlay = host.querySelector('.chart-anno-host');
+    if (!overlay) {
+      // Ensure host is positioned for absolute children
+      const cs = window.getComputedStyle(host);
+      if (cs.position === 'static') host.style.position = 'relative';
+      overlay = document.createElement('div');
+      overlay.className = 'chart-anno-host';
+      host.appendChild(overlay);
+    }
+    overlay.innerHTML = '';
+    const inj = annotations.injuries || [];
+    const gs  = annotations.game_state || [];
+    const addDot = (t, kind, tip) => {
+      const tSec = Math.round(new Date(t).getTime() / 1000);
+      // canPos=false → CSS pixels (matches DOM coordinate space)
+      const x = u.valToPos(tSec, 'x');
+      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
+      const yOffset = kind === 'inj' ? 12 : 24;
+      const dot = document.createElement('div');
+      dot.className = 'chart-anno-dot anno-' + kind;
+      dot.style.left = (x - 5) + 'px';
+      dot.style.top = (u.bbox.top + yOffset - 5) + 'px';
+      dot.title = tip;
+      overlay.appendChild(dot);
+    };
+    inj.forEach(a => addDot(a.at, 'inj',
+      `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'} · team ${a.espn_team_id || '?'}): ${a.prev_status || '—'} → ${a.new_status || '—'}`));
+    gs.forEach(s => addDot(s.at, 'gs',
+      `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`));
+  }
+
   function renderChartLegend() {
     const el = document.getElementById('chartLegend');
     if (!el) return;
+    const ext = _chartExtState.payload;
+    const hasSg = ext && !ext.sg_hidden;
     const items = [
-      ['#fbbf24', 'Owned'],
-      ['#737373', 'Market'],
-      ['#a78bfa', 'Non-owned'],
-      ['#60a5fa', 'Owned qty'],
-      ['#94a3b8', 'Mkt qty'],
+      ['#fbbf24', 'TEvo Owned'],
+      ['#737373', 'TEvo Mkt'],
+      ['#a78bfa', 'TEvo Non-own'],
+      ['#60a5fa', 'TEvo Own qty'],
+      ['#94a3b8', 'TEvo Mkt qty'],
     ];
-    el.innerHTML = items.map(([c, l]) =>
-      `<span><i style="background:${c}"></i> ${l}</span>`).join('');
+    if (hasSg) {
+      items.push(
+        ['#22d3ee', 'SG list med'],
+        ['#fb7185', 'SG owned med'],
+        ['#84cc16', 'SG sale med'],
+        ['#22d3ee', 'SG list qty', 'dashed'],
+        ['#84cc16', 'SG sale ct'],
+      );
+    }
+    let html = items.map(([c, l, mod]) =>
+      `<span><i style="background:${c}${mod === 'dashed' ? ';opacity:.5' : ''}"></i> ${l}</span>`).join('');
+    if (ext && (
+      (ext.annotations && ext.annotations.injuries && ext.annotations.injuries.length) ||
+      (ext.annotations && ext.annotations.game_state && ext.annotations.game_state.length)
+    )) {
+      html += '<span class="legend-sep">|</span>';
+      html += '<span><i class="anno-inj-i"></i> Injury</span>';
+      html += '<span><i class="anno-gs-i"></i> State</span>';
+    }
+    el.innerHTML = html;
   }
 
   // ---------- Splits ----------
@@ -2125,6 +2264,42 @@
     }
     setZonesSg(sgZones);
     setSplitsSg(sgSplits);
+  }
+
+  // ---------- Chart Extended (mig 20260519150000 / get_event_chart_extended) ----------
+  // Fetches 5 SG-side series + 2 ESPN annotation arrays in parallel with v3.
+  // On arrival, updates _chartExtState and re-renders the chart (which reads
+  // the cache and merges the new series + draws annotation markers).
+  // No-ops gracefully if the RPC isn't deployed yet (errors silenced).
+  async function loadChartExtended(eventId) {
+    const res = await rpcOrNull('get_event_chart_extended', {
+      p_event_id: eventId,
+      p_chart_hours: CHART_HOURS,
+    });
+    if (res.error) {
+      // 42883 = function not deployed (early/staged rollout) → no-op
+      if (res.error.code === '42883' || /does not exist/i.test(res.error.message || '')) {
+        return;
+      }
+      console.error('[chartExtended]', res.error);
+      return;
+    }
+    setChartExtended(res.data || null);
+  }
+
+  function setChartExtended(payload) {
+    _chartExtState.payload = payload;
+    // Trigger chart re-render IFF the TEvo-side payload is already in.
+    // adaptChart is idempotent; re-using the cached payload's chart_data.
+    if (_lastPayload && _lastPayload.chart_data) {
+      try {
+        const chart = adaptChart(_lastPayload.chart_data);
+        renderChart(chart, _chartExtAlerts);
+        renderChartLegend();
+      } catch (e) {
+        console.error('[setChartExtended re-render]', e);
+      }
+    }
   }
 
   // ---------- Last event snapshot (Overview tab) ----------
