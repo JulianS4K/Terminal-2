@@ -5228,59 +5228,39 @@ def _movers_compute_score(labels: list[dict], d24h_val) -> float:
     return max_conf * 10.0 + n * 2.0 + (mag / 50.0)
 
 
-def _sample_proportional_by_label(pool: list[dict], n: int) -> list[dict]:
-    """Sample up to `n` events from `pool`, allocating slots in proportion
-    to the label-distribution in the pool. Each event goes into the bucket
-    of its highest-priority label (per _LABEL_PRIORITY). Within a bucket,
-    events are taken in score-DESC order. Largest-remainder rounding to
-    keep the total at exactly n (or len(pool) if smaller).
-
-    Returns a flat list, ordered by label-priority then by score within
-    each label group.
+def _bucket_by_primary_label(pool: list[dict]) -> dict[str, list[dict]]:
+    """Group events into buckets keyed by their highest-priority label
+    (per _LABEL_PRIORITY). Each bucket is sorted by score DESC, then by
+    soonest occurs_at_local as tiebreak.
     """
-    if not pool or n <= 0:
-        return []
-
-    # Bucket each event under its highest-priority label
     buckets: dict[str, list[dict]] = {lbl: [] for lbl in _LABEL_PRIORITY}
     for e in pool:
-        primary = None
         for lbl in _LABEL_PRIORITY:
             if any(L["name"] == lbl for L in (e.get("labels") or [])):
-                primary = lbl
+                buckets[lbl].append(e)
                 break
-        if primary:
-            buckets[primary].append(e)
+    for lbl in buckets:
+        buckets[lbl].sort(
+            key=lambda c: (-c.get("score", 0.0), c.get("occurs_at_local") or "9999"))
+    return buckets
 
-    nonempty = [(lbl, evs) for lbl, evs in buckets.items() if evs]
-    if not nonempty:
+
+def _round_robin_pop_by_label(buckets: dict[str, list[dict]], n: int) -> list[dict]:
+    """Drain up to `n` events from `buckets` by rotating through
+    _LABEL_PRIORITY. Pops the top-score event from each non-empty bucket
+    per cycle. Mutates `buckets` in place so successive calls continue
+    from where the prior call left off (used to build top-strip then
+    rest-grid from one shared pool with no overlap).
+    """
+    if n <= 0:
         return []
-
-    total_in_buckets = sum(len(evs) for _, evs in nonempty)
-    n_target = min(n, total_in_buckets)
-
-    # Largest-remainder allocation
-    raw = [(lbl, len(evs) * n_target / total_in_buckets, evs) for lbl, evs in nonempty]
-    base = [(lbl, int(r), evs) for lbl, r, evs in raw]
-    remainders = sorted(
-        [(lbl, (len(evs) * n_target / total_in_buckets) - int(len(evs) * n_target / total_in_buckets), evs)
-         for lbl, _, evs in base],
-        key=lambda x: -x[1])
-    allocated = {lbl: c for lbl, c, _ in base}
-    deficit = n_target - sum(allocated.values())
-    for lbl, _, _ in remainders[:deficit]:
-        allocated[lbl] += 1
-    # Cap each allocation to bucket size
-    for lbl, _, evs in base:
-        allocated[lbl] = min(allocated[lbl], len(evs))
-
     out: list[dict] = []
-    for lbl in _LABEL_PRIORITY:
-        take = allocated.get(lbl, 0)
-        if not take:
-            continue
-        sorted_bucket = sorted(buckets[lbl], key=lambda e: -e.get("score", 0.0))
-        out.extend(sorted_bucket[:take])
+    while len(out) < n and any(buckets[lbl] for lbl in _LABEL_PRIORITY):
+        for lbl in _LABEL_PRIORITY:
+            if len(out) >= n:
+                break
+            if buckets[lbl]:
+                out.append(buckets[lbl].pop(0))
     return out
 
 
@@ -5575,25 +5555,26 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         else:
             secondary.append(card)
 
-    # ----- Sort primary by score DESC, slice top 1% (clamp [5,8]) -----
-    primary.sort(key=lambda c: (-c["score"], c.get("occurs_at_local") or "9999"))
+    # ----- Round-robin by label so strip + grid show a mix, not just the
+    # dominant bucket. Pure score-sort + proportional sampling both
+    # collapsed to whichever label was largest in the pool (typically
+    # deal, since cheap inventory dominates NYC owned events). Cycling
+    # selling_fast → demand_rising → trending → deal guarantees label
+    # diversity whenever 2+ buckets are non-empty.
+    primary_buckets = _bucket_by_primary_label(primary)
     n_primary = len(primary)
-    if n_primary == 0:
-        n_top = 0
-    else:
-        n_top = max(5, min(8, round(n_primary * 0.01)))
-        n_top = min(n_top, n_primary)
-    top = primary[:n_top]
-    primary_rest_pool = primary[n_top:]
+    n_top = max(5, min(8, round(n_primary * 0.01))) if n_primary else 0
+    n_top = min(n_top, n_primary)
+    top = _round_robin_pop_by_label(primary_buckets, n_top)
+    rest = _round_robin_pop_by_label(primary_buckets, 10)
 
-    # ----- Build rest via proportional sampling; pad from secondary if thin -----
-    rest = _sample_proportional_by_label(primary_rest_pool, n=10)
+    # Pad rest from secondary (owned 1-50) when primary pool runs thin.
     if len(rest) < 10 and secondary:
         seen_ids = {c["id"] for c in primary}
         secondary_pool = [c for c in secondary if c["id"] not in seen_ids]
-        secondary_pool.sort(key=lambda c: (-c["score"], c.get("occurs_at_local") or "9999"))
+        sec_buckets = _bucket_by_primary_label(secondary_pool)
         pad_n = 10 - len(rest)
-        padded = _sample_proportional_by_label(secondary_pool, n=pad_n)
+        padded = _round_robin_pop_by_label(sec_buckets, pad_n)
         for c in padded:
             c["from_pad"] = True
         rest.extend(padded)
