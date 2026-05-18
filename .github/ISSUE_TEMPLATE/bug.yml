@@ -1,0 +1,65 @@
+name: 🐛 Bug report
+description: Non-security bug in code, data, or hosted surface. For security issues, use Private Vulnerability Reporting (see "Security vulnerability" link).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for **functional bugs** — broken UI, wrong data, crashes, performance regressions. For security vulnerabilities, do NOT use this template; use [Private Vulnerability Reporting](https://github.com/JulianS4K/Terminal-2/security/advisories/new) instead.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - D0 Terminal (broker view)
+        - D1 Storefront (consumer retail)
+        - D2 Dashboard (orders)
+        - Edge function (Supabase)
+        - Backend API (FastAPI /api/*)
+        - Database / SQL
+        - CI / GitHub Actions
+        - Documentation
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: One paragraph. Be specific.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open https://...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: when
+    attributes:
+      label: When did this start? (commit SHA, PR #, or approximate timestamp UTC)
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context (logs, screenshots, related PRs/migrations)
+    validations:
+      required: false

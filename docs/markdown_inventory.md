@@ -74,6 +74,7 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 | [`docs/markdown_inventory.md`](markdown_inventory.md) | **This doc** — every `.md` file catalogued | Per-session sweep step 17 (new); quarterly full re-cat |
 | [`docs/security-runbook-2026-05-11.md`](security-runbook-2026-05-11.md) | Security incident response playbook | When new playbook step is added |
 | [`docs/war_games_playbook.md`](war_games_playbook.md) | 10 adversarial scenarios (W-1..W-10) with read-only probe templates for idle-time rotation | When new scenario surface emerges; rotate scenarios per sweep step 19 |
+| [`docs/github_features_plan.md`](github_features_plan.md) | Roadmap for utilizing all GitHub surfaces (Security tab, Discussions, Projects, Wiki, Issues, Actions, Releases, Insights). Phase 1 files in this PR; Phase 2/3 wait on operator enable | Quarterly review + when operator enables a Phase 2 item |
 
 ## §5 — Active operational state 📋
 

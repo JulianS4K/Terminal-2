@@ -1,0 +1,71 @@
+# Path-based PR labeler config — pairs with .github/workflows/labeler.yml
+#
+# When a PR touches files matching a pattern, the listed labels are applied.
+# Branch-prefix labeling (a1/* → level:admin) is handled in workflows/labeler.yml.
+
+"area:migrations":
+  - changed-files:
+      - any-glob-to-any-file: "supabase/migrations/**/*.sql"
+
+"area:edge-functions":
+  - changed-files:
+      - any-glob-to-any-file: "supabase/functions/**/*"
+
+"area:backend":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app.py"
+          - "*_client.py"
+          - "requirements.txt"
+          - "Procfile"
+
+"area:terminal-fe":
+  - changed-files:
+      - any-glob-to-any-file: "static/terminal/**/*"
+
+"area:storefront":
+  - changed-files:
+      - any-glob-to-any-file: "static/store/**/*"
+
+"area:dashboard":
+  - changed-files:
+      - any-glob-to-any-file: "d2_dashboard/**/*"
+
+"area:docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**/*.md"
+          - "*.md"
+
+"area:bibles":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "PROJECT_BIBLE.md"
+          - "RESOURCES_BIBLE.md"
+          - "CLAUDE.md"
+          - "BOT_HIERARCHY.md"
+          - "LANE_DISCIPLINE.md"
+          - "MIGRATION_CONVENTIONS.md"
+          - "SYNC_PROTOCOL.md"
+          - "SCHEMA.md"
+          - "CRON_HIERARCHY.md"
+
+"area:ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**/*"
+          - ".github/CODEOWNERS"
+          - "scripts/**/*"
+          - "bin/**/*"
+
+"area:tests":
+  - changed-files:
+      - any-glob-to-any-file: "tests/**/*"
+
+"area:design":
+  - changed-files:
+      - any-glob-to-any-file: "design/**/*"
+
+"area:kanban":
+  - changed-files:
+      - any-glob-to-any-file: "KANBAN.md"

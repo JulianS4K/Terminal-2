@@ -1,0 +1,60 @@
+# Dependabot configuration — version + security updates
+#
+# Activates when operator enables Dependabot in Settings → Code security
+# (currently disabled — see docs/git_repo_security_posture.md G-2).
+#
+# B1-NEXT-49 / G-19 — file authored 2026-05-17 to be ready when operator
+# enables. Until then it sits inert. Re-confirm schedule rhythm with operator
+# before enabling — weekly is a reasonable default; daily for high-churn deps.
+
+version: 2
+updates:
+
+  # Python dependencies (FastAPI app + clients)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "level:admin"
+      - "dependencies"
+    reviewers:
+      - "JulianS4K"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    # Group minor + patch updates per package family — reduces PR noise.
+    groups:
+      patches:
+        update-types: ["patch"]
+      minor:
+        update-types: ["minor"]
+    # Allow security updates outside the group + window.
+    allow:
+      - dependency-type: "all"
+
+  # GitHub Actions versions (workflow files)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels:
+      - "level:admin"
+      - "ci"
+    reviewers:
+      - "JulianS4K"
+    commit-message:
+      prefix: "chore(ci-deps)"
+
+  # Note: Deno (Supabase edge functions) is NOT supported by Dependabot.
+  # Edge function deps are pinned via import URLs (e.g.,
+  # `https://deno.land/std@0.224.0/`) — B1 manually audits via per-session
+  # sweep step 12 (git posture) + secret-scan workflow.

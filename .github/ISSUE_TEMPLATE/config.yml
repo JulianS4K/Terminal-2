@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Security vulnerability (private)
+    url: https://github.com/JulianS4K/Terminal-2/security/advisories/new
+    about: Report a vulnerability privately via GitHub Security Advisories. Do NOT open a public issue for security.
+  - name: 💬 Discussion / RFC / Idea
+    url: https://github.com/JulianS4K/Terminal-2/discussions
+    about: For design proposals or open-ended questions, use Discussions (when enabled) instead of Issues.
+  - name: 📋 Operational state (bots only)
+    url: https://github.com/JulianS4K/Terminal-2/blob/main/KANBAN.md
+    about: Bots — check KANBAN §🟢 OPEN for what's currently actionable. Don't file Issues for things already there.
