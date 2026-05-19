@@ -19,6 +19,10 @@
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    // Discovery — TEvo blindspot (broker selling, we own 0) + returning
+    // performers/venues. Companion to Movers; same nav grouping for the
+    // "what to watch" surface. Wired 2026-05-19 (PR A1 blindspot stack).
+    { id: 'discovery', label: 'DISCOVERY', href: 'discovery.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
   ];
 

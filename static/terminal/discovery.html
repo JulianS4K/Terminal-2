@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Discovery</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="discovery">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap movers">
+
+    <!-- TEvo blindspot panel — broker pool moving on events we own 0 of.
+         Backed by get_blind_spots_tevo_selling RPC (mig 20260519180000).
+         3-signal composite + confidence score + days-to-event band. -->
+    <section id="tevo-blind-spots">
+      <div class="panel-title row">
+        <span>BLIND SPOTS — TEvo SELLING, WE'RE NOT</span>
+        <span class="muted small" id="tevoBlindSpotsCount"></span>
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">MODE</span>
+          <button class="ctrl-btn is-active" data-tevo-mode="selling">Selling</button>
+          <button class="ctrl-btn"           data-tevo-mode="tracking">Tracking</button>
+          <button class="ctrl-btn"           data-tevo-mode="spike_only">Spikes only</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">BAND</span>
+          <button class="ctrl-btn is-active" data-tevo-band="">All</button>
+          <button class="ctrl-btn"           data-tevo-band="imminent_31_60">31-60d</button>
+          <button class="ctrl-btn"           data-tevo-band="near_61_180">61-180d</button>
+          <button class="ctrl-btn"           data-tevo-band="far_181_365">181-365d</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">CONFIDENCE</span>
+          <button class="ctrl-btn"           data-tevo-conf="0.3">≥ 0.3</button>
+          <button class="ctrl-btn is-active" data-tevo-conf="0.5">≥ 0.5</button>
+          <button class="ctrl-btn"           data-tevo-conf="0.8">≥ 0.8</button>
+        </div>
+      </div>
+      <div id="tevoBlindSpotsBody"><div class="empty">loading…</div></div>
+    </section>
+
+    <!-- Returning-entity panel — performers + venues with past activity →
+         gap → upcoming events. Backed by get_returning_entities RPC
+         (mig 20260519200000). v1: TEvo perf+venue + SG venue;
+         SG performer link deferred to v2. -->
+    <section id="returning-entities">
+      <div class="panel-title row">
+        <span>RETURNING — PERFORMERS &amp; VENUES BACK AFTER DORMANCY</span>
+        <span class="muted small" id="returningCount"></span>
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">GAP</span>
+          <button class="ctrl-btn"           data-ret-gap="60">≥ 60d</button>
+          <button class="ctrl-btn is-active" data-ret-gap="90">≥ 90d</button>
+          <button class="ctrl-btn"           data-ret-gap="180">≥ 180d</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SOURCE</span>
+          <button class="ctrl-btn is-active" data-ret-source="">All</button>
+          <button class="ctrl-btn"           data-ret-source="tevo">TEvo</button>
+          <button class="ctrl-btn"           data-ret-source="sg">SG</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">TYPE</span>
+          <button class="ctrl-btn is-active" data-ret-type="">All</button>
+          <button class="ctrl-btn"           data-ret-type="performer">Performer</button>
+          <button class="ctrl-btn"           data-ret-type="venue">Venue</button>
+        </div>
+      </div>
+      <div id="returningBody"><div class="empty">loading…</div></div>
+    </section>
+
+    <section id="discovery-note">
+      <div class="muted small">
+        Discovery surface — events where the broker pool is active but we own 0,
+        plus performers / venues coming back from dormancy. Big 5 (MLB / NBA / NFL /
+        NHL / MLS) excluded from blind spots — those are covered on the Movers tab.
+        Data refreshed twice daily by cron <code>tevo_blindspot_metrics_refresh_12h</code>.
+      </div>
+    </section>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+  <script src="nav.js"></script>
+  <script src="discovery.js"></script>
+</body>
+</html>
