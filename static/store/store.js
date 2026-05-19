@@ -834,20 +834,19 @@
   // `accent` line is the per-card secondary note describing why this event
   // qualified for the section (e.g. "↓ 35% below market" for price_drops).
   const SECTIONS = [
-    // Featured (operator directive 2026-05-19): top-of-home rail combining
-    // playoff games + owned>200 + NYC specials (which previously had its
-    // own row below). Sits first to capture attention. Tag = strongest
-    // signal: playoff > rivalry > holiday > high_owned.
+    // Featured (operator directive 2026-05-19 v2): narrow criteria — only
+    // playoff games + events with owned_median_retail > $50. Other signals
+    // (high-owned, specials) flow to their own rails. Cross-list dedup
+    // applied server-side: each event appears in AT MOST ONE rail.
+    // Tag = playoff label only; premium-only events show no per-card chip
+    // (internal owned counts dropped — not consumer-facing).
     { key: "featured", title: "Featured",
       accent: (ev) => ev._featured_tag || "" },
+    // Moving fast — server flags via velocity signals. Per-card accents
+    // dropped (those exposed internal sold-today counts); section title
+    // alone communicates the framing.
     { key: "moving_fast", title: "Moving fast in NYC",
-      accent: (ev) => {
-        const tx = Number(ev.tix_d24h);
-        const sg = Number(ev.sg_sales_24h);
-        if (Number.isFinite(tx) && tx < 0) return `${Math.abs(tx)} sold today`;
-        if (Number.isFinite(sg) && sg > 0) return `${sg} SG sold 24h`;
-        return "";
-      } },
+      accent: () => "" },
     { key: "price_drops", title: "Price drops in NYC",
       accent: (ev) => {
         const d = Number(ev._discount_pct);
@@ -858,9 +857,11 @@
         const c = Number(ev._climb_pct);
         return Number.isFinite(c) ? `↑ ${c.toFixed(0)}% in 24h` : "";
       } },
-    // Note: legacy "Upcoming Specials in NYC" rail removed — its content
-    // is now folded into the Featured section above. Backend still returns
-    // `specials` for backward compat with stale clients.
+    // Specials restored as its own rail (operator: "let the others
+    // populate to other lists we have"). Holiday/rivalry events with
+    // owned > 100 that don't qualify for Featured land here.
+    { key: "specials", title: "Upcoming Specials in NYC",
+      accent: (ev) => ev._special || "" },
   ];
 
   function _moverCard(ev, accent) {
