@@ -31,8 +31,13 @@
 --                                            Date TBD
 --
 -- COMPOSITE 3-SIGNAL DETECTION (mutually-exclusive directions):
---   signal_listings_drop   tevo_tix_d24h     <= -10    (≥10 tix gone in 24h)
---   signal_listings_spike  tevo_tix_d24h_pct >= +10%   (≥10% growth in listings)
+--   signal_listings_drop   tevo_tix_d24h <= -10 AND tevo_tix_d24h_pct <= -5%
+--                          PAIRED condition (v1.5 fix per algorithm review):
+--                          absolute floor filters noise on tiny pools where
+--                          a 10-tix drop is 33% (huge); pct floor filters
+--                          noise on big pools where 10-tix is 2% churn.
+--                          Both must fire.
+--   signal_listings_spike  tevo_tix_d24h_pct >= +10%   (pool loading)
 --   signal_price_rise      tevo_getin_d24h_pct >= +5%
 --
 -- DROP + SPIKE are mutually exclusive on the same event (one direction at
@@ -42,15 +47,20 @@
 --   * spike = pool loading  → "broker preparing for demand, watch closely"
 --   * rise  = price firming → "demand exceeding supply, regardless of vol"
 --
--- SCORES:
---   selling_score   = listings_drop::int + price_rise::int           (0..2)
---                     The "broker actively moving inventory" signal.
---   tracking_score  = (listings_drop OR listings_spike)::int + price_rise::int  (0..2)
---                     Wider net — includes spike events as "track these"
---                     even though they don't fit the selling narrative.
+-- SCORES + CONFIDENCE (v1.5 — algorithm review feedback):
+--   selling_score    = listings_drop::int + price_rise::int           (0..2)
+--   tracking_score   = (listings_drop OR listings_spike)::int + price_rise::int (0..2)
+--   confidence_score = avg of per-signal strengths that fire           (0..1)
+--                      Per-signal strength is how far past threshold each
+--                      signal is, capped at 1.0. RPC sorts by this rather
+--                      than by integer score — distinguishes a barely-firing
+--                      from a strongly-firing both-signals event.
 --
--- Default RPC behavior: returns selling_score >= 2 (both selling signals
--- fire). Spike-only events surface via the tracking_score path.
+-- DAYS-TO-EVENT BAND (v1.5):
+--   imminent_31_60  31-60d out  — sourcing window tightest; act fast
+--   near_61_180     61-180d out — mid-cycle decision
+--   far_181_365     181-365d out — research / monitor
+--   Surfaces on every row; RPC supports filtering.
 --
 -- VELOCITY FRESHNESS — 24h gate (NOT 3h):
 --   Blindspot events are owned=0 → not in the hot polling tier. The
@@ -59,10 +69,16 @@
 --   exclude virtually all blindspot events. 24h matches the collection
 --   cadence + our new tevo_blindspot_metrics_refresh_12h cron.
 --
--- WHY THRESHOLDS DIFFER FROM SG:
---   SG composite uses 5% / 10% / 30% / 0%. Tighter because SG firehose is
---   noisier (consumer marketplace, more listing churn). TEvo broker pool is
---   stickier — a 10-ticket drop or +10% growth or +5% getin rise is meaningful.
+-- KNOWN GAPS (deferred to v2):
+--   * No per-performer rolling baseline. A 10-tix drop on the Yankees is
+--     normal Tuesday; same drop on Cleveland Symphony is huge news. v2
+--     adds a `performer_baselines` matview with rolling mean ± stdev so
+--     signals fire on z-score deviation from the performer's own pattern.
+--   * No day-of-week or days-to-event seasonality awareness. The bands
+--     above are coarse triage, not statistical decomposition.
+--   * No outcome tracking. Detector doesn't learn from human sourcing
+--     decisions. Future: event_sourcing_decisions table feeding threshold
+--     auto-tuning after 90d of data.
 
 -- ============================================================
 -- 1. View — per-event composite score
@@ -161,27 +177,61 @@ scored AS (
     v.tevo_median_now,
     v.tevo_now_at,
     v.velocity_fresh,
-    -- Signal 1: pool draining (broker selling)
-    (v.velocity_fresh AND v.tevo_tix_d24h IS NOT NULL
-     AND v.tevo_tix_d24h <= -10)                                              AS signal_listings_drop,
+    -- Signal 1: pool draining (broker selling) — PAIRED condition
+    (v.velocity_fresh
+     AND v.tevo_tix_d24h     IS NOT NULL AND v.tevo_tix_d24h     <= -10
+     AND v.tevo_tix_d24h_pct IS NOT NULL AND v.tevo_tix_d24h_pct <= -5.0) AS signal_listings_drop,
     -- Signal 2: pool loading (broker prepping inventory for demand)
     (v.velocity_fresh AND v.tevo_tix_d24h_pct IS NOT NULL
-     AND v.tevo_tix_d24h_pct >= 10.0)                                         AS signal_listings_spike,
+     AND v.tevo_tix_d24h_pct >= 10.0)                                     AS signal_listings_spike,
     -- Signal 3: price firming
     (v.velocity_fresh AND v.tevo_getin_d24h_pct IS NOT NULL
-     AND v.tevo_getin_d24h_pct >= 5.0)                                        AS signal_price_rise
+     AND v.tevo_getin_d24h_pct >= 5.0)                                    AS signal_price_rise,
+    -- Per-signal strengths (0..1, capped) — used to derive confidence_score.
+    -- Strength = how far past threshold the metric is, normalized to a
+    -- "fully developed" point that's roughly 2× the trigger threshold.
+    -- A barely-firing signal scores ~0.5; a strongly-firing signal scores 1.0.
+    LEAST(1.0, GREATEST(0.0,
+      COALESCE(-v.tevo_tix_d24h_pct / 10.0, 0)))                          AS drop_strength,
+    LEAST(1.0, GREATEST(0.0,
+      COALESCE( v.tevo_tix_d24h_pct / 20.0, 0)))                          AS spike_strength,
+    LEAST(1.0, GREATEST(0.0,
+      COALESCE( v.tevo_getin_d24h_pct / 10.0, 0)))                        AS price_strength,
+    -- Days-to-event cohort (operator triage aid)
+    (occurs_at_local::date - CURRENT_DATE)                                AS days_to_event,
+    CASE
+      WHEN (occurs_at_local::date - CURRENT_DATE) <= 60   THEN 'imminent_31_60'
+      WHEN (occurs_at_local::date - CURRENT_DATE) <= 180  THEN 'near_61_180'
+      ELSE                                                     'far_181_365'
+    END                                                                   AS days_to_event_band
   FROM gated g
   LEFT JOIN velocity v ON v.tevo_event_id = g.tevo_event_id
 )
 SELECT
-  *,
-  -- "Selling" composite — drop + rise. Spike is excluded; spike narrative
-  -- is the opposite of selling (pool loading vs draining).
-  (signal_listings_drop::int + signal_price_rise::int)                  AS selling_score,
-  -- "Tracking" composite — wider net. Surfaces spike events alongside
-  -- selling events when callers ask via tracking_score >= N.
-  ((signal_listings_drop OR signal_listings_spike)::int
-    + signal_price_rise::int)                                            AS tracking_score
+  tevo_event_id, event_name, occurs_at_local, venue_id, venue_name,
+  venue_location, primary_performer_id, primary_performer_name,
+  owned_tickets_count, tickets_count, retail_min, retail_median,
+  metrics_captured_at, getin_no_parking, tevo_tix_d24h, tevo_tix_d24h_pct,
+  tevo_getin_d24h_pct, tevo_getin_now, tevo_median_now, tevo_now_at,
+  velocity_fresh, signal_listings_drop, signal_listings_spike,
+  signal_price_rise, days_to_event, days_to_event_band,
+  -- Score outputs
+  (signal_listings_drop::int + signal_price_rise::int)                                  AS selling_score,
+  ((signal_listings_drop OR signal_listings_spike)::int + signal_price_rise::int)        AS tracking_score,
+  -- Confidence: average of fired signals' strengths. 0..1. Differentiates
+  -- barely-firing (~0.5) from strongly-firing (~1.0). NULL when nothing fires.
+  CASE
+    WHEN (signal_listings_drop OR signal_listings_spike OR signal_price_rise) THEN
+      round((
+        (CASE WHEN signal_listings_drop  THEN drop_strength  ELSE 0 END) +
+        (CASE WHEN signal_listings_spike THEN spike_strength ELSE 0 END) +
+        (CASE WHEN signal_price_rise     THEN price_strength ELSE 0 END)
+      ) / NULLIF(
+        (signal_listings_drop::int + signal_listings_spike::int + signal_price_rise::int),
+        0
+      )::numeric, 3)
+    ELSE NULL
+  END                                                                                    AS confidence_score
 FROM scored
 WHERE velocity_fresh
   AND (signal_listings_drop OR signal_listings_spike OR signal_price_rise);
@@ -190,11 +240,12 @@ COMMENT ON VIEW public.v_tevo_blindspot_movers IS
   'TEvo blindspot mover candidates: US/CA events 31-365d out where we own 0
    tickets, broker pool has >=25 listings, parking-aware get-in >= $50, and
    the pool is showing demand signals. 3-signal detection: listings_drop
-   (pool draining), listings_spike (pool loading), price_rise. Two scores:
-   selling_score (drop+rise, the "sell now" signal) and tracking_score
-   (drop|spike+rise, wider net including events brokers are loading
-   inventory on). Companion to v_sg_blindspot_movers (mig 20260520370000)
-   which uses a 4-signal composite on SG data.';
+   (PAIRED abs+pct), listings_spike (pool loading), price_rise. Scores:
+   selling_score (drop+rise, 0..2), tracking_score (drop|spike+rise, 0..2),
+   confidence_score (0..1, avg of fired-signal strengths — preferred sort
+   key). v1.5 also tags days_to_event_band for cohort triage. Companion to
+   v_sg_blindspot_movers (mig 20260520370000) which uses a 4-signal
+   composite on SG data.';
 
 REVOKE ALL ON public.v_tevo_blindspot_movers FROM PUBLIC;
 GRANT SELECT ON public.v_tevo_blindspot_movers TO anon, authenticated, service_role;
@@ -205,13 +256,15 @@ GRANT SELECT ON public.v_tevo_blindspot_movers TO anon, authenticated, service_r
 -- ============================================================
 DROP FUNCTION IF EXISTS public.get_blind_spots_tevo_selling(int, int, int, text);
 DROP FUNCTION IF EXISTS public.get_blind_spots_tevo_selling(int, int, int, text, text);
+DROP FUNCTION IF EXISTS public.get_blind_spots_tevo_selling(numeric, int, int, text, text, text);
 
 CREATE OR REPLACE FUNCTION public.get_blind_spots_tevo_selling(
-  p_min_score int       DEFAULT 2,    -- semantics depend on p_mode
-  p_horizon_days int    DEFAULT 365,  -- view caps at 365d; callers can tighten
-  p_limit int           DEFAULT 25,
-  p_venue_pattern text  DEFAULT NULL, -- e.g. '%New York%' to narrow within US/CA
-  p_mode text           DEFAULT 'selling'  -- 'selling' | 'tracking' | 'spike_only'
+  p_min_confidence numeric DEFAULT 0.5,   -- v1.5: confidence floor (0..1)
+  p_horizon_days   int     DEFAULT 365,
+  p_limit          int     DEFAULT 25,
+  p_venue_pattern  text    DEFAULT NULL,  -- ILIKE wildcards to narrow within US/CA
+  p_mode           text    DEFAULT 'selling',   -- 'selling'|'tracking'|'spike_only'
+  p_band           text    DEFAULT NULL    -- v1.5: 'imminent_31_60'|'near_61_180'|'far_181_365'|NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -231,44 +284,34 @@ BEGIN
   IF p_mode NOT IN ('selling', 'tracking', 'spike_only') THEN
     RAISE EXCEPTION 'p_mode must be selling|tracking|spike_only' USING errcode = '22023';
   END IF;
+  IF p_band IS NOT NULL AND p_band NOT IN ('imminent_31_60','near_61_180','far_181_365') THEN
+    RAISE EXCEPTION 'p_band must be imminent_31_60|near_61_180|far_181_365|null' USING errcode = '22023';
+  END IF;
 
   SELECT coalesce(jsonb_agg(row_to_json(m) ORDER BY
-                              CASE p_mode WHEN 'tracking' THEN m.tracking_score
-                                                          ELSE m.selling_score END DESC,
-                              abs(coalesce(m.tevo_tix_d24h, 0)) DESC,
+                              m.confidence_score DESC NULLS LAST,
                               m.occurs_at_local ASC), '[]'::jsonb)
     INTO v_result
   FROM (
     SELECT
-      tevo_event_id,
-      event_name,
-      occurs_at_local,
-      venue_id,
-      venue_name,
-      venue_location,
-      primary_performer_id,
-      primary_performer_name,
-      tickets_count,
-      retail_min,
-      retail_median,
-      getin_no_parking,
-      tevo_tix_d24h,
-      tevo_tix_d24h_pct,
-      tevo_getin_d24h_pct,
-      tevo_getin_now,
-      tevo_median_now,
-      signal_listings_drop,
-      signal_listings_spike,
-      signal_price_rise,
-      selling_score,
-      tracking_score
+      tevo_event_id, event_name, occurs_at_local,
+      venue_id, venue_name, venue_location,
+      primary_performer_id, primary_performer_name,
+      tickets_count, retail_min, retail_median, getin_no_parking,
+      tevo_tix_d24h, tevo_tix_d24h_pct, tevo_getin_d24h_pct,
+      tevo_getin_now, tevo_median_now,
+      signal_listings_drop, signal_listings_spike, signal_price_rise,
+      selling_score, tracking_score, confidence_score,
+      days_to_event, days_to_event_band
     FROM public.v_tevo_blindspot_movers
     WHERE occurs_at_local::date <= CURRENT_DATE + (p_horizon_days || ' days')::interval
       AND (p_venue_pattern IS NULL OR venue_location ILIKE p_venue_pattern)
+      AND (p_band          IS NULL OR days_to_event_band = p_band)
+      AND confidence_score >= p_min_confidence
       AND (
-        (p_mode = 'selling'    AND selling_score  >= p_min_score) OR
-        (p_mode = 'tracking'   AND tracking_score >= p_min_score) OR
-        (p_mode = 'spike_only' AND signal_listings_spike = true)
+        (p_mode = 'selling'    AND selling_score  >= 1)   OR
+        (p_mode = 'tracking'   AND tracking_score >= 1)   OR
+        (p_mode = 'spike_only' AND signal_listings_spike  = true)
       )
     LIMIT p_limit
   ) m;
@@ -277,43 +320,45 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL    ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, text, text) TO anon, authenticated;
+REVOKE ALL    ON FUNCTION public.get_blind_spots_tevo_selling(numeric, int, int, text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_blind_spots_tevo_selling(numeric, int, int, text, text, text) TO anon, authenticated;
 
-COMMENT ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, text, text) IS
+COMMENT ON FUNCTION public.get_blind_spots_tevo_selling(numeric, int, int, text, text, text) IS
   'BLIND SPOTS — TEvo SELLING, WE''RE NOT. 3-signal composite over broker
    pool (no sales data on TEvo broker side). Candidate gates: owned=0,
    tickets>=25, 31-365d out, US/CA venue, parking-aware get-in >= $50.
-   Signals: listings shrinking (d24h<=-10), listings spiking (d24h_pct>=+10%),
-   get-in rising (>=+5%). Modes:
-     selling    — selling_score >= p_min_score (drop + rise, default 2)
-     tracking   — tracking_score >= p_min_score (drop|spike + rise)
-     spike_only — events with listings_spike fired (broker loading inventory)
-   p_venue_pattern accepts ILIKE wildcards for narrower geo scoping within
-   US/CA. Companion to get_blind_spots_sg_selling().';
+   Signals: listings shrinking (d24h<=-10 AND d24h_pct<=-5%), listings
+   spiking (d24h_pct>=+10%), get-in rising (>=+5%).
+   v1.5 sort: confidence_score DESC (avg of fired-signal strengths; 0..1).
+   Modes: selling|tracking|spike_only. Filter by p_band (imminent_31_60|
+   near_61_180|far_181_365|null). Companion to get_blind_spots_sg_selling().';
 
 -- ============================================================
 -- VERIFICATION (operator runs after apply):
 --
---   -- 1. View population + signal breakdown
+--   -- 1. View population + signal breakdown + confidence distribution
 --   SELECT count(*) AS total,
 --          count(*) FILTER (WHERE signal_listings_drop)  AS drops,
 --          count(*) FILTER (WHERE signal_listings_spike) AS spikes,
 --          count(*) FILTER (WHERE signal_price_rise)     AS price_rises,
---          count(*) FILTER (WHERE selling_score = 2)     AS selling_strong,
---          count(*) FILTER (WHERE tracking_score >= 1)   AS tracking_any,
+--          count(*) FILTER (WHERE confidence_score >= 0.8) AS conf_high,
+--          count(*) FILTER (WHERE confidence_score >= 0.5
+--                            AND confidence_score < 0.8)   AS conf_med,
 --          round(avg(getin_no_parking)::numeric, 0)      AS avg_getin
 --   FROM public.v_tevo_blindspot_movers;
---   -- Baseline 2026-05-19 measured: 27 events with any signal
---   -- (24 drops, 1 spike, 7 price rises) under the 24h-fresh / 31-365d /
---   -- $50-getin / US-CA gates.
 --
---   -- 2. RPC smoke (as authenticated user with email JWT)
---   SELECT public.get_blind_spots_tevo_selling();                            -- selling mode default
---   SELECT public.get_blind_spots_tevo_selling(1);                           -- selling one-sided
---   SELECT public.get_blind_spots_tevo_selling(2, 365, 25, NULL, 'tracking');-- include spikes
---   SELECT public.get_blind_spots_tevo_selling(0, 365, 25, NULL, 'spike_only'); -- spikes only
---   SELECT public.get_blind_spots_tevo_selling(2, 90, 10, '%New York%');     -- NYC narrow
+--   -- 2. Band distribution
+--   SELECT days_to_event_band, count(*),
+--          round(avg(confidence_score)::numeric, 2) AS avg_confidence
+--   FROM public.v_tevo_blindspot_movers
+--   GROUP BY days_to_event_band ORDER BY 1;
+--
+--   -- 3. RPC smoke (as authenticated user with email JWT)
+--   SELECT public.get_blind_spots_tevo_selling();                                   -- default: conf >= 0.5
+--   SELECT public.get_blind_spots_tevo_selling(0.8);                                -- strong only
+--   SELECT public.get_blind_spots_tevo_selling(0.5, 365, 25, NULL, 'tracking');     -- include spikes
+--   SELECT public.get_blind_spots_tevo_selling(0.0, 365, 25, NULL, 'spike_only');   -- spikes only
+--   SELECT public.get_blind_spots_tevo_selling(0.5, 90, 10, '%New York%', 'selling', 'imminent_31_60');
 --
 --   -- 3. Spot-check gates
 --   SELECT count(*) AS leaks
