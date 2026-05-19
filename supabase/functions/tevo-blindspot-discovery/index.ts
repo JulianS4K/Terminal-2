@@ -141,24 +141,41 @@ Deno.serve(async (req) => {
   // we've gathered enough candidates or hit a hard cap.
   const candidates: any[] = [];
   let page = 1;
-  const HARD_PAGE_CAP = 10;     // 100/page × 10 pages = 1k events max per run
+  let pagesWalked = 0;
+  let consecutiveAllKnownPages = 0;
+  let lastError: { status?: number; body?: string } | null = null;
+  const HARD_PAGE_CAP = 40;     // 100/page × 40 = 4k events max per run
   while (candidates.length < limit && page <= HARD_PAGE_CAP) {
     // NOTE: per PROJECT_BIBLE §3 landmine, TEvo date filter syntax is the
     // DOTTED form `occurs_at.gte` (not underscore — 422 Invalid Parameters).
+    // Sort column is `events.occurs_at_local` (matches chat fn pattern).
     const res = await tevoSearch(tevoToken, tevoSecret, {
       "occurs_at.gte": fromDate.toISOString(),
       "occurs_at.lte": toDate.toISOString(),
+      "order_by": "events.id DESC",
       page,
       per_page: 100,
     });
-    if (!res.ok) break;
+    if (!res.ok) {
+      lastError = { status: (res as any).status, body: (res as any).body };
+      break;
+    }
+    pagesWalked = page;
     const evs = (res.body as any).events ?? [];
     if (!evs.length) break;
+    let pageNew = 0;
     for (const e of evs) {
       if (existingIds.has(Number(e.id))) continue;     // already tracked
       if (!isUsOrCa(e.venue)) continue;                // US/CA only
       candidates.push(e);
+      pageNew += 1;
       if (candidates.length >= limit) break;
+    }
+    if (pageNew === 0) {
+      consecutiveAllKnownPages += 1;
+      if (consecutiveAllKnownPages >= 3) break;
+    } else {
+      consecutiveAllKnownPages = 0;
     }
     page += 1;
   }
@@ -214,6 +231,8 @@ Deno.serve(async (req) => {
         events_added: added,
         meta: {
           dry_run: dryRun,
+          pages_walked: pagesWalked,
+          last_error: lastError,
           window_from: fromDate.toISOString().slice(0, 10),
           window_to: toDate.toISOString().slice(0, 10),
           sample: candidates.slice(0, 3).map((c: any) => ({
