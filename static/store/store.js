@@ -834,6 +834,12 @@
   // `accent` line is the per-card secondary note describing why this event
   // qualified for the section (e.g. "↓ 35% below market" for price_drops).
   const SECTIONS = [
+    // Featured (operator directive 2026-05-19): top-of-home rail combining
+    // playoff games + owned>200 + NYC specials (which previously had its
+    // own row below). Sits first to capture attention. Tag = strongest
+    // signal: playoff > rivalry > holiday > high_owned.
+    { key: "featured", title: "Featured",
+      accent: (ev) => ev._featured_tag || "" },
     { key: "moving_fast", title: "Moving fast in NYC",
       accent: (ev) => {
         const tx = Number(ev.tix_d24h);
@@ -852,8 +858,9 @@
         const c = Number(ev._climb_pct);
         return Number.isFinite(c) ? `↑ ${c.toFixed(0)}% in 24h` : "";
       } },
-    { key: "specials", title: "Upcoming Specials in NYC",
-      accent: (ev) => ev._special || "" },
+    // Note: legacy "Upcoming Specials in NYC" rail removed — its content
+    // is now folded into the Featured section above. Backend still returns
+    // `specials` for backward compat with stale clients.
   ];
 
   function _moverCard(ev, accent) {

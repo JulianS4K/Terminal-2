@@ -939,8 +939,10 @@ def test_movers_response_no_longer_includes_tix_d1h(monkeypatch):
     r = client.get("/api/store/movers?city=NYC&days=30&limit=10")
     assert r.status_code == 200
     body = r.json()
-    # Inspect cards across all four themed sections — none should leak tix_d1h.
-    for key in ("moving_fast", "price_drops", "climbing", "specials"):
+    # Inspect cards across all themed sections — none should leak tix_d1h.
+    # Featured (PR 2026-05-19) added as a 5th key combining playoff + owned>200
+    # + NYC specials; shares the same candidate pool so same anti-leak check.
+    for key in ("featured", "moving_fast", "price_drops", "climbing", "specials"):
         for ev in body.get(key, []):
             assert "tix_d1h" not in ev, (
                 f"tix_d1h must not appear in mover response; got keys: {list(ev.keys())}"
