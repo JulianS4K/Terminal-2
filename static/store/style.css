@@ -263,6 +263,21 @@ a { color: inherit; }
   padding: 4px;
   flex-shrink: 0;
 }
+/* Sports-matchup logo cluster (2026-05-19). When both away + home assets
+   are available the card renders as "[away] [home]". Overlap by a few px
+   so the pair reads as a single matchup glyph rather than two unrelated
+   chips. Falls back to single logo when one side is null. */
+.card-logos {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.card-logos .card-logo + .card-logo {
+  margin-left: -8px;
+}
+.card-logo-away {
+  opacity: 0.92;
+}
 .card .when {
   font-size: 12px;
   color: var(--muted);

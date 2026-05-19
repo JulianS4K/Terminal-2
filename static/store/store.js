@@ -353,16 +353,33 @@
           a.style.setProperty("--card-accent", ev.primary_performer_color);
         }
 
-        // Header row: logo (if branded) + meta lines.
+        // Header row: logo(s) + meta lines.
+        // 2026-05-19: Sports matchups render BOTH team logos when away is
+        // populated (e.g. "Cavs @ Knicks" → away logo + home logo). Falls
+        // back to home-only when away is null (concerts, theater, playoff
+        // placeholders without secondary performer).
         const head = document.createElement("div");
         head.className = "card-head";
-        if (ev.primary_performer_logo) {
-          const img = document.createElement("img");
-          img.className = "card-logo";
-          img.src = ev.primary_performer_logo;
-          img.alt = "";
-          img.loading = "lazy";
-          head.append(img);
+        if (ev.away_performer_logo || ev.primary_performer_logo) {
+          const logos = document.createElement("div");
+          logos.className = "card-logos";
+          if (ev.away_performer_logo) {
+            const awayImg = document.createElement("img");
+            awayImg.className = "card-logo card-logo-away";
+            awayImg.src = ev.away_performer_logo;
+            awayImg.alt = ev.away_performer_name || "";
+            awayImg.loading = "lazy";
+            logos.append(awayImg);
+          }
+          if (ev.primary_performer_logo) {
+            const homeImg = document.createElement("img");
+            homeImg.className = "card-logo card-logo-home";
+            homeImg.src = ev.primary_performer_logo;
+            homeImg.alt = ev.primary_performer_name || "";
+            homeImg.loading = "lazy";
+            logos.append(homeImg);
+          }
+          head.append(logos);
         }
         const headText = document.createElement("div");
         const when = document.createElement("div");
@@ -504,6 +521,12 @@
             primary_performer_name: e.primary_performer_name || null,
             primary_performer_logo: e.primary_performer_logo || null,
             primary_performer_color: e.primary_performer_color || null,
+            // Away-team assets (2026-05-19) — pass through when /search
+            // payload carries them; otherwise null and card falls back to
+            // home-only render.
+            away_performer_name: e.away_performer_name || null,
+            away_performer_logo: e.away_performer_logo || null,
+            away_performer_color: e.away_performer_color || null,
             from_price: e.from_price != null ? Number(e.from_price) : null,
             owned_tickets_count: e.owned_tix != null ? Number(e.owned_tix) :
                                  (e.owned_tickets_count != null ? Number(e.owned_tickets_count) : null),
