@@ -960,3 +960,93 @@ def test_store_html_routes_respond_to_head(monkeypatch):
         assert r.status_code == 200, (
             f"HEAD {path} expected 200, got {r.status_code}"
         )
+
+
+# ---------- _section_featured / _section_specials holiday label tests ----------
+#
+# Operator directive 2026-05-19: distinguish the actual holiday day from
+# adjacent days in rail badges. Day-of keeps the bare name ("Memorial Day"),
+# weekend-of gets the framing ("Memorial Day Weekend"). holiday_by_eid value
+# shape: {"name": str, "weekend": bool}.
+
+def _featured_candidate(eid: int, owned: int = 150,
+                        occurs: str = "2026-05-25T19:00:00-04:00",
+                        med: float = 60.0) -> dict:
+    """Minimal candidate dict that satisfies the Featured 'other category'
+    branch fallthrough so we can test the holiday-tag path in isolation
+    (owned > 100, no playoff/rivalry/marquee regex hits in name)."""
+    return {
+        "id": eid,
+        "name": f"Test Event {eid}",   # no playoff/marquee keywords
+        "occurs_at_local": occurs,
+        "owned_tickets_count": owned,
+        "owned_median_retail": med,
+        "owned_share": 0.10,
+    }
+
+
+def test_section_featured_holiday_day_of_label():
+    """Holiday day-of: bare name, no 'Weekend' suffix."""
+    cand = _featured_candidate(1)
+    out = app_module._section_featured(
+        [cand],
+        holiday_by_eid={1: {"name": "Memorial Day", "weekend": False}},
+        rivalry_by_eid={},
+    )
+    assert len(out) == 1
+    assert out[0]["_featured_tag"] == "Memorial Day"
+    assert out[0]["_featured_kind"] == "holiday"
+
+
+def test_section_featured_holiday_weekend_of_label():
+    """Holiday weekend-of (±1/±2 from observed_date): 'Weekend' suffix."""
+    cand = _featured_candidate(2)
+    out = app_module._section_featured(
+        [cand],
+        holiday_by_eid={2: {"name": "Memorial Day", "weekend": True}},
+        rivalry_by_eid={},
+    )
+    assert len(out) == 1
+    assert out[0]["_featured_tag"] == "Memorial Day Weekend"
+    assert out[0]["_featured_kind"] == "holiday"
+
+
+def test_section_specials_holiday_day_of_label():
+    """Specials rail mirrors Featured for the label semantics."""
+    cand = _featured_candidate(3)
+    out = app_module._section_specials(
+        [cand],
+        holiday_by_eid={3: {"name": "Father's Day", "weekend": False}},
+        rivalry_by_eid={},
+    )
+    assert len(out) == 1
+    assert out[0]["_special"] == "Father's Day"
+    assert out[0]["_special_kind"] == "holiday"
+
+
+def test_section_specials_holiday_weekend_of_label():
+    """Specials rail — weekend-of gets the 'Weekend' framing."""
+    cand = _featured_candidate(4)
+    out = app_module._section_specials(
+        [cand],
+        holiday_by_eid={4: {"name": "Father's Day", "weekend": True}},
+        rivalry_by_eid={},
+    )
+    assert len(out) == 1
+    assert out[0]["_special"] == "Father's Day Weekend"
+    assert out[0]["_special_kind"] == "holiday"
+
+
+def test_section_specials_rivalry_wins_over_holiday():
+    """When BOTH a rivalry tag and a holiday tag apply, the rivalry text
+    is the more specific narrative — guard the prefer-rivalry behavior so
+    the new holiday-label refactor doesn't regress it."""
+    cand = _featured_candidate(5)
+    out = app_module._section_specials(
+        [cand],
+        holiday_by_eid={5: {"name": "Memorial Day", "weekend": True}},
+        rivalry_by_eid={5: "Yankees vs Red Sox"},
+    )
+    assert len(out) == 1
+    assert out[0]["_special"] == "Yankees vs Red Sox"
+    assert out[0]["_special_kind"] == "rivalry"
