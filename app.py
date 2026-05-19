@@ -5350,17 +5350,18 @@ def _section_climbing(candidates: list[dict], cap: int = 10) -> list[dict]:
 
 
 def _section_specials(candidates: list[dict],
-                      holiday_by_eid: dict[int, str],
+                      holiday_by_eid: dict[int, dict],
                       rivalry_by_eid: dict[int, str],
                       cap: int = 10) -> list[dict]:
     """Curated rail — events that qualify on a non-market basis. Two
     sources fold in here:
-      1. v_event_holidays: server-side holiday window match (Memorial
-         Day, Christmas, etc.)
+      1. v_event_holidays + holiday-window expansion: day-of OR ±2 day
+         (Memorial Day vs Memorial Day Weekend, etc.)
       2. v_rivalry_events: known rivalry games (Yankees-Red Sox, etc.)
     Both gated to owned > 100 — same depth bar the operator set for
     the "specials" rail. Each card is tagged with `_special` describing
-    what earned its slot (e.g. "Memorial Day" or "Yankees vs Red Sox").
+    what earned its slot (e.g. "Memorial Day", "Memorial Day Weekend",
+    or "Yankees vs Red Sox").
     """
     out = []
     for c in candidates:
@@ -5377,7 +5378,13 @@ def _section_specials(candidates: list[dict],
         rivalry = rivalry_by_eid.get(eid_int)
         if holiday or rivalry:
             # Prefer rivalry tag when both apply — more specific narrative.
-            c["_special"] = rivalry or holiday
+            if rivalry:
+                c["_special"] = rivalry
+            else:
+                hname = (holiday or {}).get("name") or ""
+                # Weekend-of holidays get "Memorial Day Weekend" framing;
+                # day-of keeps the bare holiday name.
+                c["_special"] = f"{hname} Weekend" if (holiday or {}).get("weekend") else hname
             c["_special_kind"] = "rivalry" if rivalry else "holiday"
             out.append(c)
     out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
@@ -5394,7 +5401,9 @@ def _section_featured(candidates: list,
 
       1. Playoff games           — `_classify_playoff()` regex hit
       2. Holiday calendar games  — date within holiday window (±2 days
-                                   from observed_date; weekend coverage)
+                                   from observed_date; weekend coverage).
+                                   Tag = "Memorial Day" for day-of,
+                                   "Memorial Day Weekend" for ±1/±2.
       3. Rivalry games           — `v_rivalry_events` membership
       4. Marquee competitions    — US Open Tennis / F1 / Inter Miami away
       5. Other category          — `owned_median_retail > $50` catch-all
@@ -5429,7 +5438,10 @@ def _section_featured(candidates: list,
             c["_featured_tag"] = rivalry
             c["_featured_kind"] = "rivalry"
         elif holiday:
-            c["_featured_tag"] = holiday
+            # Holiday tag — day-of keeps bare name ("Memorial Day"); ±1/±2
+            # gets the weekend framing ("Memorial Day Weekend").
+            hname = (holiday or {}).get("name") or ""
+            c["_featured_tag"] = f"{hname} Weekend" if (holiday or {}).get("weekend") else hname
             c["_featured_kind"] = "holiday"
         elif marquee:
             c["_featured_tag"] = marquee
@@ -5792,7 +5804,12 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     # tags. Both wrapped in try/except so a view-side failure degrades
     # to no-specials rather than killing the whole movers response.
     candidate_ids = [int(c["id"]) for c in candidates if c.get("id") is not None]
-    holiday_by_eid: dict[int, str] = {}
+    # holiday_by_eid value shape (2026-05-19): {"name": str, "weekend": bool}
+    # weekend=False → event is ON the holiday's observed_date (label "Memorial Day")
+    # weekend=True  → event is ±1/±2 days from observed_date (label "Memorial Day Weekend")
+    # Operator directive: distinguish day-of from weekend-of so the actual
+    # holiday day stands apart in the rail badges.
+    holiday_by_eid: dict[int, dict] = {}
     rivalry_by_eid: dict[int, str] = {}
     if candidate_ids:
         try:
@@ -5802,14 +5819,16 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                        .execute().data) or []
             # First match wins per event — v_event_holidays can emit
             # multiple rows when a date hits multiple holidays. The view
-            # already orders by match_specificity DESC server-side.
+            # already orders by match_specificity DESC server-side. This
+            # view is exact-date only (see line 5856 landmine note), so
+            # all matches from here are day-of → weekend=False.
             for r in hrows:
                 eid = r.get("tevo_event_id")
                 if eid is None:
                     continue
                 key = int(eid)
                 if key not in holiday_by_eid and r.get("holiday_name"):
-                    holiday_by_eid[key] = r["holiday_name"]
+                    holiday_by_eid[key] = {"name": r["holiday_name"], "weekend": False}
         except Exception as e:
             print(f"store_movers v_event_holidays query failed: {e}")
         try:
@@ -5886,7 +5905,9 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                     obs_d = _date_cls.fromisoformat(obs)
                 except (TypeError, ValueError):
                     continue
-                # Window: -2 day through +1 day inclusive
+                # Window: -2 day through +1 day inclusive.
+                # observed_date itself is included (dd=0) — used to flag
+                # day-of matches that v_event_holidays may have missed.
                 for dd in range(-2, 2):
                     ds = (obs_d + timedelta(days=dd)).isoformat()
                     date_to_options.setdefault(ds, []).append(h)
@@ -5935,7 +5956,15 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                     -_HOLIDAY_PRIORITY.get(hh.get("holiday_name", ""), 0),
                     0 if hh.get("country") == "US" else 1,
                 ))
-                holiday_by_eid[eid_int] = applicable[0].get("holiday_name", "")
+                chosen = applicable[0]
+                hname = chosen.get("holiday_name", "")
+                # Day-of vs weekend-of: if candidate occurs exactly on the
+                # holiday's observed_date, label as the bare holiday name.
+                # Otherwise label as "{Holiday} Weekend" via the section
+                # helper. Operator directive 2026-05-19: distinguish the
+                # actual day from adjacent days in rail badges.
+                is_day_of = (chosen.get("observed_date") == cd)
+                holiday_by_eid[eid_int] = {"name": hname, "weekend": not is_day_of}
     except Exception as e:
         print(f"store_movers holiday-window expansion failed: {e}")
 
