@@ -5288,64 +5288,43 @@ def _section_specials(candidates: list[dict],
     return out[:cap]
 
 
-def _section_featured(candidates: list, holiday_by_eid: dict, rivalry_by_eid: dict, cap: int = 12) -> list:
-    """Featured rail — operator directive 2026-05-19. Combines THREE qualifying
-    signals into a single curated row that sits at the top of the home page:
+def _section_featured(candidates: list, cap: int = 12) -> list:
+    """Featured rail — operator directive 2026-05-19 (narrowed 2026-05-19 v2).
+    Only two qualifying signals (specials + high-owned dropped — those flow
+    to their own rails via cross-list dedup):
 
-      1. Playoff games — any event whose name regex-matches via
-         `_classify_playoff()` (NBA Finals, Conference Finals, Stanley Cup,
-         World Series, "(Game N)", "Round N", etc.)
-      2. High-owned — `owned_tickets_count > 200` (depth bar set by operator)
-      3. Specials — owned > 100 AND (holiday OR rivalry) — absorbs the
-         prior `_section_specials` rail; FE drops it as a separate row
+      1. Playoff games — `_classify_playoff()` regex hit
+      2. Premium-owned market — `owned_median_retail > $50`
 
-    Each card gets a `_featured_tag` and `_featured_kind` describing what
-    earned the slot. Tag selection is strongest-signal-first:
-      playoff > rivalry > holiday > high_owned
-
-    Operates over the same candidate pool as the other sections (city-filtered
-    upstream — NYC for v1). A future expansion could pull globally for
-    playoff coverage outside NYC.
+    Each card gets `_featured_tag` describing the qualifier:
+      playoff label > "" (premium-only events show no tag; section title
+      "Featured" carries the framing). Internal owned-count labels removed
+      per operator directive — those are not consumer-facing.
     """
     out = []
-    seen = set()
     for c in candidates:
         eid = c.get("id")
         if eid is None:
             continue
-        try:
-            eid_int = int(eid)
-        except (TypeError, ValueError):
-            continue
-        if eid_int in seen:
-            continue
-        owned = c.get("owned_tickets_count") or 0
         playoff = _classify_playoff(c.get("name") or "")
-        holiday = holiday_by_eid.get(eid_int)
-        rivalry = rivalry_by_eid.get(eid_int)
+        med = c.get("owned_median_retail")
+        try:
+            med_f = float(med) if med is not None else None
+        except (TypeError, ValueError):
+            med_f = None
         is_playoff = bool(playoff)
-        is_high_owned = owned > 200
-        is_special = (owned > 100) and (holiday or rivalry)
-        if not (is_playoff or is_high_owned or is_special):
+        is_premium = (med_f is not None) and (med_f > 50.0)
+        if not (is_playoff or is_premium):
             continue
-        # Tag selection — strongest narrative first
+        # Consumer-friendly tag only. Playoff label wins; premium-only
+        # events get no tag (no internal owned counts in consumer UI).
         if is_playoff:
             c["_featured_tag"] = (playoff.get("label") or "Playoff")
             c["_featured_kind"] = "playoff"
-        elif rivalry:
-            c["_featured_tag"] = rivalry
-            c["_featured_kind"] = "rivalry"
-        elif holiday:
-            c["_featured_tag"] = holiday
-            c["_featured_kind"] = "holiday"
-        elif is_high_owned:
-            c["_featured_tag"] = f"{owned} owned tickets"
-            c["_featured_kind"] = "high_owned"
         else:
             c["_featured_tag"] = ""
-            c["_featured_kind"] = ""
+            c["_featured_kind"] = "premium"
         out.append(c)
-        seen.add(eid_int)
     out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
     return out[:cap]
 
@@ -5407,7 +5386,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     # Owned-only metrics so we don't list events we can't actually sell.
     metrics = (db.table("latest_event_metrics")
                  .select("event_id,owned_tickets_count,owned_groups_count,"
-                         "tickets_count,retail_min,captured_at")
+                         "tickets_count,retail_min,owned_median_retail,captured_at")
                  .gt("owned_tickets_count", 0)
                  .in_("event_id", ev_ids)
                  .execute().data) or []
@@ -5629,6 +5608,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "sg_median_delta_pct": sg_median_delta_pct,
             "sg_median_now": (sg_now or {}).get("median"),
             "owned_tickets_count": owned_tickets,
+            "owned_median_retail": m.get("owned_median_retail"),
         })
 
     # ----- Specials enrichment: pull holiday-window matches + rivalry
@@ -5676,21 +5656,41 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     # ----- Build the 4 themed sliders. Each section is independent and
     # gets its own copy of qualifying candidates (cards may appear in
     # more than one section, e.g. a rivalry game that's also moving fast).
-    moving_fast = _section_moving_fast(candidates)
-    price_drops = _section_price_drops(candidates)
-    climbing = _section_climbing(candidates)
-    specials = _section_specials(candidates, holiday_by_eid, rivalry_by_eid)
-    # Featured (operator directive 2026-05-19): playoff games + owned>200 +
-    # NYC specials. Sits at the top of the home page; absorbs the standalone
-    # specials rail. Built off the same candidate pool so signals stay
-    # consistent across rails. `specials` is still returned for backward
-    # compat (legacy FE renders an empty section gracefully).
-    featured = _section_featured(candidates, holiday_by_eid, rivalry_by_eid)
+    # Cross-list dedup (operator directive 2026-05-19 v2): an event appears
+    # in at most ONE rail. Process in priority order; each rail consumes
+    # events from a shared `seen` set, so subsequent rails skip them.
+    # Priority: Featured > moving_fast > price_drops > climbing > specials.
+    seen: set = set()
+    def _consume(items: list) -> list:
+        out = []
+        for c in items:
+            eid = c.get("id")
+            try:
+                eid_int = int(eid) if eid is not None else None
+            except (TypeError, ValueError):
+                eid_int = None
+            if eid_int is None or eid_int in seen:
+                continue
+            seen.add(eid_int)
+            out.append(c)
+        return out
+
+    # Featured = playoff + owned_median_retail > $50 (narrow per operator).
+    # Runs FIRST so curated picks win over generic-velocity rails.
+    featured = _consume(_section_featured(candidates))
+    moving_fast = _consume(_section_moving_fast(candidates))
+    price_drops = _consume(_section_price_drops(candidates))
+    climbing = _consume(_section_climbing(candidates))
+    # Specials brought back as its own rail (was folded into Featured in
+    # PR #279; operator narrowed Featured + asked specials to "populate to
+    # other lists we have"). Holiday/rivalry events with owned > 100 that
+    # don't qualify for Featured land here.
+    specials = _consume(_section_specials(candidates, holiday_by_eid, rivalry_by_eid))
 
     return {
         "city": city,
         "days": day_cap,
-        "count": len(moving_fast) + len(price_drops) + len(climbing) + len(specials) + len(featured),
+        "count": len(featured) + len(moving_fast) + len(price_drops) + len(climbing) + len(specials),
         "featured": featured,
         "moving_fast": moving_fast,
         "price_drops": price_drops,
