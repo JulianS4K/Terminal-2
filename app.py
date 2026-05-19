@@ -1117,6 +1117,47 @@ def _classify_marquee_competition(event_name: str | None) -> str | None:
     return None
 
 
+# Canadian team detection (2026-05-19 v4) — operator directive: Canadian
+# holidays (Canada Day, Civic Holiday, etc.) should only tag events where
+# a Canadian team is visiting an NYC venue. Otherwise the holiday window
+# leaks "Canada Day" tags onto Yankees-Tigers games which is nonsensical
+# for the consumer.
+_CANADIAN_TEAM_RE = re.compile(
+    r"\b("
+    r"Toronto\s+(?:Blue\s+Jays|Raptors|FC|Maple\s+Leafs)|"
+    r"Montréal?\s+Canadiens|CF\s+Montr|"
+    r"Vancouver\s+(?:Canucks|Whitecaps)|"
+    r"Edmonton\s+Oilers|Calgary\s+Flames|"
+    r"Ottawa\s+Senators|Winnipeg\s+Jets"
+    r")\b",
+    re.IGNORECASE,
+)
+
+def _has_canadian_team(event_name: str | None) -> bool:
+    """True if the event name mentions a Canadian major-league team. Used
+    to gate Canadian holiday tagging in the NYC storefront."""
+    if not event_name:
+        return False
+    return bool(_CANADIAN_TEAM_RE.search(event_name))
+
+
+# Holiday priority — higher wins on same-day conflicts (operator directive
+# 2026-05-19 v4: "Father's Day over Juneteenth when they conflict on same
+# day"). Generic ranking favors family-celebration holidays (typically
+# associated with attending sports together) over administrative holidays.
+_HOLIDAY_PRIORITY: dict[str, int] = {
+    "Father's Day":     100,
+    "Mother's Day":     100,
+    "Memorial Day":      95,
+    "Independence Day":  95,
+    "Labor Day":         95,
+    "Thanksgiving":      95,
+    "Christmas":         95,
+    "New Year's Day":    90,
+    "Juneteenth":        50,
+}
+
+
 def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
     """Bulk-fetch all six context dimensions a storefront card / detail page
     might surface, in one helper.
@@ -5365,16 +5406,28 @@ def _section_featured(candidates: list,
             c["_featured_tag"] = marquee
             c["_featured_kind"] = "marquee"
         else:
-            # Branch 5: "any other category" — requires median > $50
+            # Branch 5a: "any other category" — requires median > $50
+            # Branch 5b: market-anchor fallback (operator 2026-05-19 v4):
+            #   owned > 200 AND owned_share >= 20% catches bargain-tier
+            #   games where we dominate inventory but pricing is consumer-
+            #   friendly. Threshold based on Yankees distribution audit:
+            #   regular games sit 12-22% share; >=20% = "we are the market".
             med = c.get("owned_median_retail")
             try:
                 med_f = float(med) if med is not None else None
             except (TypeError, ValueError):
                 med_f = None
-            if not (med_f is not None and med_f > 50.0):
+            share = c.get("owned_share")
+            try:
+                share_f = float(share) if share is not None else None
+            except (TypeError, ValueError):
+                share_f = None
+            is_premium = (med_f is not None and med_f > 50.0)
+            is_market_anchor = (owned > 200) and (share_f is not None and share_f >= 0.20)
+            if not (is_premium or is_market_anchor):
                 continue
             c["_featured_tag"] = ""  # no internal-metric chip on consumer UI
-            c["_featured_kind"] = "premium"
+            c["_featured_kind"] = "premium" if is_premium else "market_anchor"
         out.append(c)
     out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
     return out[:cap]
@@ -5437,7 +5490,8 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     # Owned-only metrics so we don't list events we can't actually sell.
     metrics = (db.table("latest_event_metrics")
                  .select("event_id,owned_tickets_count,owned_groups_count,"
-                         "tickets_count,retail_min,owned_median_retail,captured_at")
+                         "tickets_count,retail_min,owned_median_retail,owned_share,"
+                         "captured_at")
                  .gt("owned_tickets_count", 0)
                  .in_("event_id", ev_ids)
                  .execute().data) or []
@@ -5660,6 +5714,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "sg_median_now": (sg_now or {}).get("median"),
             "owned_tickets_count": owned_tickets,
             "owned_median_retail": m.get("owned_median_retail"),
+            "owned_share": m.get("owned_share"),
         })
 
     # ----- Specials enrichment: pull holiday-window matches + rivalry
@@ -5726,11 +5781,16 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             out.append(c)
         return out
 
-    # Holiday-window expansion (operator directive 2026-05-19 v3): the base
-    # `v_event_holidays` view does an exact-date join on observed_date,
-    # which misses Memorial Day Saturday/Sunday games etc. Build a wider
-    # ±2 day window map by querying the `holidays` table directly and
-    # matching against candidate event dates. Failures degrade silently.
+    # Holiday-window expansion (operator directive 2026-05-19 v3, refined v4):
+    # base `v_event_holidays` exact-date join misses weekend games. Pull all
+    # in-window holidays + apply per-event applicability rules:
+    #   - US country-level     → tag (storefront is NYC)
+    #   - US state=NY or city=New York → tag
+    #   - US state/city != NY  → skip
+    #   - CA country-level     → tag ONLY when event has a Canadian team
+    #   - CA province-level (QC etc.) → never tag
+    # Priority: Father's/Mother's Day > Memorial/Independence/Labor/Thanks/
+    # Christmas > New Year's > Juneteenth > everything else.
     try:
         cand_dates = sorted({
             (c.get("occurs_at_local") or "")[:10]
@@ -5745,27 +5805,21 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                               .gte("observed_date", win_lo)
                               .lte("observed_date", win_hi)
                               .execute().data) or []
-            date_to_holiday: dict[str, str] = {}
+            # Group: date_str → list of (holiday_row) within ±2 day window
+            date_to_options: dict[str, list[dict]] = {}
             for h in holiday_rows:
                 obs = h.get("observed_date")
                 if not obs:
-                    continue
-                # Skip regionally-scoped holidays (city/state) for the window
-                # build — universal/country holidays only (Memorial Day, etc.)
-                if h.get("city") or h.get("state"):
                     continue
                 try:
                     obs_d = _date_cls.fromisoformat(obs)
                 except (TypeError, ValueError):
                     continue
-                # Window: -2 day (Sat) through +1 day after observed Monday
-                # (Tue) — covers Sat-Mon Memorial/Labor Day weekend, plus
-                # the day after for any spillover events.
+                # Window: -2 day through +1 day inclusive
                 for dd in range(-2, 2):
                     ds = (obs_d + timedelta(days=dd)).isoformat()
-                    if ds not in date_to_holiday:
-                        date_to_holiday[ds] = h["holiday_name"]
-            # Augment holiday_by_eid for events that didn't get an exact match
+                    date_to_options.setdefault(ds, []).append(h)
+            # Resolve per candidate. Apply applicability + priority.
             for c in candidates:
                 eid = c.get("id")
                 if eid is None:
@@ -5775,11 +5829,42 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                 except (TypeError, ValueError):
                     continue
                 if eid_int in holiday_by_eid:
-                    continue
+                    continue  # exact-date join from v_event_holidays already set
                 cd = (c.get("occurs_at_local") or "")[:10]
-                tag = date_to_holiday.get(cd)
-                if tag:
-                    holiday_by_eid[eid_int] = tag
+                options = date_to_options.get(cd, [])
+                if not options:
+                    continue
+                ev_name = c.get("name") or ""
+                applicable: list[dict] = []
+                for h in options:
+                    country = h.get("country")
+                    state = h.get("state")
+                    city = h.get("city")
+                    if country == "US":
+                        # NY-state / New-York-city restrictions OK (storefront
+                        # is NYC). Skip other-city / other-state US holidays.
+                        if city and city != "New York":
+                            continue
+                        if state and state != "NY":
+                            continue
+                        applicable.append(h)
+                    elif country == "CA":
+                        # Canadian holiday — only tag when a Canadian team
+                        # is visiting NYC. Skip province-specific holidays.
+                        if state:
+                            continue
+                        if not _has_canadian_team(ev_name):
+                            continue
+                        applicable.append(h)
+                    # other countries → silently skip
+                if not applicable:
+                    continue
+                # Priority sort: higher _HOLIDAY_PRIORITY wins; tie-break to US
+                applicable.sort(key=lambda hh: (
+                    -_HOLIDAY_PRIORITY.get(hh.get("holiday_name", ""), 0),
+                    0 if hh.get("country") == "US" else 1,
+                ))
+                holiday_by_eid[eid_int] = applicable[0].get("holiday_name", "")
     except Exception as e:
         print(f"store_movers holiday-window expansion failed: {e}")
 
