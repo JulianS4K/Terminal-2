@@ -12,31 +12,37 @@
 --     see listing-side movement (broker-pool tickets disappearing) +
 --     get-in price firming. Composite score drops from 4 signals (SG)
 --     to 2 signals (TEvo).
---   * Scope is naturally NYC-first since that's the storefront focus, but
---     RPC accepts a location filter for future expansion.
 --
--- DETECTION GATES:
---   * owned_tickets_count = 0       (the "blindspot" — we don't own any)
---   * tickets_count >= 10            (real broker-market depth)
---   * occurs_at in [today, +90d]    (forward-looking only)
---   * event_lifecycle is_active     (drop ghost/cancelled)
---   * velocity_fresh                 (tevo_now_at within 3h — §9 cadence gap landmine)
+-- CANDIDATE GATES (operator-confirmed 2026-05-19, batch 1):
+--   * owned_tickets_count = 0           — the blindspot
+--   * tickets_count       >= 25          — real broker market depth
+--   * occurs_at in [today+30d, today+90d] — drop game-time noise, keep
+--     a sourcing-actionable window
+--   * US or Canada venue                 — state/province regex match on
+--     `events.venue_location` (e.g. "Boston, MA" / "Toronto, ON")
+--   * get-in-without-parking >= $50      — recomputed from
+--     `listings_snapshots.retail_price` excluding sections matching
+--     `%park%|%lot%|%garage%|%valet%`. TEvo bible §3 landmine: parking
+--     rows fold into the main listing pool, dragging native `getin_now`
+--     down artificially.
+--   * event_lifecycle.is_active          — drops ghost/cancelled/postponed
+--   * speculative-name filter             — CANCELLED / If Necessary /
+--                                            Date TBD
 --
 -- COMPOSITE 2-SIGNAL SCORE:
---   signal_listings_drop  tevo_tix_d24h <= -10   (≥10 tix disappeared from broker pool)
+--   signal_listings_drop  tevo_tix_d24h <= -10   (≥10 tix gone in 24h)
 --   signal_price_rise     tevo_getin_d24h_pct >= +5%
---   Surface events where BOTH fire (score=2). Score=1 (one-sided) returned
---   in view but the default RPC threshold returns only score=2 events.
+--   selling_score         sum of the two booleans (0..2)
+--   Default RPC threshold: min_score=2 (both fire). min_score=1 for the
+--   exploratory mode (one-sided).
 --
 -- WHY THRESHOLDS DIFFER FROM SG:
 --   SG composite uses 5% / 10% / 30% / 0%. Tighter because SG firehose is
 --   noisier (consumer marketplace, more listing churn). TEvo broker pool is
 --   stickier — a 10-ticket drop + 5% getin rise is meaningful.
---
+
 -- ============================================================
--- 1. View — per-event composite score (anchored to latest_event_metrics +
---    v_event_velocity_windows). Reads are cheap because both upstream
---    matviews/views are already pre-aggregated.
+-- 1. View — per-event composite score
 -- ============================================================
 DROP VIEW IF EXISTS public.v_tevo_blindspot_movers;
 
@@ -56,19 +62,48 @@ WITH base AS (
     lem.tickets_count,
     lem.retail_min,
     lem.retail_median,
-    lem.captured_at            AS metrics_captured_at
+    lem.captured_at            AS metrics_captured_at,
+    -- Get-in without parking — recomputed from raw listings_snapshots
+    -- so the parking-section drag (bible §3 landmine) is excluded.
+    -- Correlated subquery on PRIMARY KEY (event_id) — fast.
+    (SELECT min(ls.retail_price)
+       FROM public.listings_snapshots ls
+      WHERE ls.event_id = e.id
+        AND ls.retail_price IS NOT NULL
+        AND NOT (
+          ls.section ILIKE '%park%' OR ls.section ILIKE '%lot%'
+          OR ls.section ILIKE '%garage%' OR ls.section ILIKE '%valet%'
+        )
+    )                          AS getin_no_parking
   FROM public.events e
   JOIN public.latest_event_metrics lem ON lem.event_id = e.id
   LEFT JOIN public.event_lifecycle el  ON el.event_id = e.id
-  WHERE e.occurs_at_local::date >= CURRENT_DATE
+  WHERE
+    -- Forward window: 30..90 days out (drop game-time + far-future)
+    e.occurs_at_local::date >= CURRENT_DATE + interval '30 days'
     AND e.occurs_at_local::date <= CURRENT_DATE + interval '90 days'
-    AND lem.owned_tickets_count = 0          -- blindspot: we own nothing
-    AND lem.tickets_count >= 10              -- real broker depth
+    -- Blindspot: we own nothing
+    AND lem.owned_tickets_count = 0
+    -- Real market depth
+    AND lem.tickets_count >= 25
+    -- Active lifecycle
     AND (el.is_active IS NULL OR el.is_active = true)
-    -- Drop speculative names (mirrors storefront filter)
+    -- Speculative-name filter (mirrors storefront)
     AND e.name NOT ILIKE '%CANCELLED%'
     AND e.name NOT ILIKE '%(If Necessary)%'
     AND e.name NOT ILIKE '%(Date TBD)%'
+    -- US or Canada only (state/province at end of venue_location string)
+    AND (
+      e.venue_location ~ ',\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\s*$'
+      OR e.venue_location ~ ',\s*(AB|BC|MB|NB|NL|NS|ON|PE|QC|SK|YT|NT|NU)\s*$'
+    )
+),
+gated AS (
+  -- Apply the parking-aware get-in floor in a second pass so the IS NOT NULL
+  -- + threshold gate sit together (clearer than a CASE in the base WHERE).
+  SELECT * FROM base
+  WHERE getin_no_parking IS NOT NULL
+    AND getin_no_parking >= 50
 ),
 velocity AS (
   SELECT
@@ -78,15 +113,15 @@ velocity AS (
     tevo_getin_now,
     tevo_median_now,
     tevo_now_at,
-    -- Freshness gate: cadence gap (collect-listings 1-7d, 60d+) can leave
-    -- d24h subqueries falling back to the same ancient sample, making
-    -- d24h = 0 misleadingly. Treat stale rows as no-signal. §9 landmine.
+    -- Freshness gate: cadence-gap landmine (collect-listings 1-7d / 60d+
+    -- can leave d24h subqueries falling back to ancient samples). Treat
+    -- stale rows as no-signal.
     (tevo_now_at IS NOT NULL AND tevo_now_at > now() - interval '3 hours') AS velocity_fresh
   FROM public.v_event_velocity_windows
 ),
 scored AS (
   SELECT
-    b.*,
+    g.*,
     v.tevo_tix_d24h,
     v.tevo_getin_d24h_pct,
     v.tevo_getin_now,
@@ -94,11 +129,11 @@ scored AS (
     v.tevo_now_at,
     v.velocity_fresh,
     (v.velocity_fresh AND v.tevo_tix_d24h IS NOT NULL
-     AND v.tevo_tix_d24h <= -10)                                                 AS signal_listings_drop,
+     AND v.tevo_tix_d24h <= -10)                                              AS signal_listings_drop,
     (v.velocity_fresh AND v.tevo_getin_d24h_pct IS NOT NULL
-     AND v.tevo_getin_d24h_pct >= 5.0)                                           AS signal_price_rise
-  FROM base b
-  LEFT JOIN velocity v ON v.tevo_event_id = b.tevo_event_id
+     AND v.tevo_getin_d24h_pct >= 5.0)                                        AS signal_price_rise
+  FROM gated g
+  LEFT JOIN velocity v ON v.tevo_event_id = g.tevo_event_id
 )
 SELECT
   *,
@@ -108,10 +143,10 @@ WHERE velocity_fresh
   AND (signal_listings_drop OR signal_price_rise);
 
 COMMENT ON VIEW public.v_tevo_blindspot_movers IS
-  'TEvo blindspot mover candidates: events where we own 0 tickets but
-   broker-pool listings are shrinking and/or get-in price is firming.
-   2-signal composite (no sales data on TEvo broker side). Owned >0 events
-   live in `latest_event_metrics` direct — this view targets the inverse.
+  'TEvo blindspot mover candidates: US/CA events 30-90d out where we own 0
+   tickets, broker pool has >=25 listings, parking-aware get-in >= $50, and
+   the pool is showing demand signals (listings shrinking and/or get-in
+   firming). 2-signal composite (no sales data on TEvo broker side).
    Companion to v_sg_blindspot_movers (mig 20260520370000) which uses a
    4-signal composite on SG data.';
 
@@ -122,11 +157,13 @@ GRANT SELECT ON public.v_tevo_blindspot_movers TO anon, authenticated, service_r
 -- 2. RPC — caller-facing wrapper. Returns JSON array sorted by score DESC,
 --    then by velocity magnitude. Email-gated per §6 caller guard.
 -- ============================================================
+DROP FUNCTION IF EXISTS public.get_blind_spots_tevo_selling(int, int, int, text);
+
 CREATE OR REPLACE FUNCTION public.get_blind_spots_tevo_selling(
   p_min_score int       DEFAULT 2,    -- 2 = both signals fire; 1 = either
   p_horizon_days int    DEFAULT 90,
   p_limit int           DEFAULT 25,
-  p_venue_pattern text  DEFAULT NULL  -- e.g. '%New York%' to scope to NYC
+  p_venue_pattern text  DEFAULT NULL  -- e.g. '%New York%' to narrow within US/CA
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -160,6 +197,7 @@ BEGIN
       tickets_count,
       retail_min,
       retail_median,
+      getin_no_parking,
       tevo_tix_d24h,
       tevo_getin_d24h_pct,
       tevo_getin_now,
@@ -183,32 +221,36 @@ GRANT EXECUTE ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, tex
 
 COMMENT ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, text) IS
   'BLIND SPOTS — TEvo SELLING, WE''RE NOT. 2-signal composite over broker
-   pool (no sales data on TEvo broker side). Signals: listings shrinking
-   (d24h ≤ -10) + get-in price rising (≥ +5%). Default min_score=2 returns
-   only events where both signals fire. p_venue_pattern accepts ILIKE
-   wildcards for geo scoping. Companion to get_blind_spots_sg_selling().';
+   pool (no sales data on TEvo broker side). Candidate gates: owned=0,
+   tickets>=25, 30-90d out, US/CA venue, parking-aware get-in >= $50.
+   Signals: listings shrinking (d24h <= -10) + get-in rising (>= +5%).
+   Default min_score=2 = both signals. p_venue_pattern accepts ILIKE
+   wildcards for narrower geo scoping within US/CA. Companion to
+   get_blind_spots_sg_selling().';
 
 -- ============================================================
 -- VERIFICATION (operator runs after apply):
 --
---   -- 1. View populated count + signal distribution
---   SELECT count(*),
+--   -- 1. View population
+--   SELECT count(*) AS total,
 --          count(*) FILTER (WHERE selling_score=2) AS both_signals,
---          count(*) FILTER (WHERE selling_score=1) AS one_signal
+--          count(*) FILTER (WHERE selling_score=1) AS one_signal,
+--          round(avg(getin_no_parking)::numeric, 0) AS avg_getin
 --   FROM public.v_tevo_blindspot_movers;
+--   -- Baseline pool (any signal): ~16-25 events expected (16 measured
+--   -- 2026-05-19 before velocity scoring layered on)
 --
---   -- 2. RPC smoke (run as authenticated user with email JWT)
---   SELECT public.get_blind_spots_tevo_selling();      -- default: min_score=2, 90d, top 25
---   SELECT public.get_blind_spots_tevo_selling(1);     -- one-signal min, more results
---   SELECT public.get_blind_spots_tevo_selling(2, 90, 10, '%New York%');  -- NYC only
+--   -- 2. RPC smoke (as authenticated user with email JWT)
+--   SELECT public.get_blind_spots_tevo_selling();             -- defaults
+--   SELECT public.get_blind_spots_tevo_selling(1);            -- one-signal min
+--   SELECT public.get_blind_spots_tevo_selling(2, 90, 10, '%New York%');
 --
---   -- 3. Spot-check: every result must have owned_tickets_count = 0 in
---   --    the source latest_event_metrics row
---   WITH r AS (
---     SELECT (jsonb_array_elements(public.get_blind_spots_tevo_selling())->>'tevo_event_id')::bigint AS eid
---   )
---   SELECT count(*) FILTER (WHERE lem.owned_tickets_count = 0) AS clean,
---          count(*)                                            AS total
---   FROM r JOIN public.latest_event_metrics lem ON lem.event_id = r.eid;
---   -- Expect clean == total.
+--   -- 3. Spot-check gates
+--   SELECT count(*) AS leaks
+--   FROM public.v_tevo_blindspot_movers
+--   WHERE getin_no_parking < 50
+--      OR tickets_count < 25
+--      OR owned_tickets_count <> 0
+--      OR occurs_at_local::date < CURRENT_DATE + interval '30 days';
+--   -- Expect 0.
 -- ============================================================
