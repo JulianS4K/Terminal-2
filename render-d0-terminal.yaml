@@ -66,12 +66,15 @@ services:
         source: /login.html
         destination: /terminal/login.html
 
-      # Root index — bare `/` lands on the terminal home (D0's primary
-      # surface on this CDN). Use a redirect not a rewrite so the URL bar
-      # shows /terminal/ and relative-path nav resolves correctly.
-      - type: redirect
+      # Root index — bare `/` serves the unified landing selector (cards for
+      # Terminal / Undelivered / Store). Rewrite (not redirect) so the URL
+      # bar stays clean at `/` and a user typing the host alone lands on the
+      # always-on selector. Selector cards link to `/terminal`, `/undelivered`,
+      # `/store` — each a subtree of this same static site (publishPath=static).
+      # Landing HTML at static/home/index.html; auth-aware gating in home.js.
+      - type: rewrite
         source: /
-        destination: /terminal/
+        destination: /home/index.html
 
     # No env vars needed for static frontend. If D0 wires up
     # client-side config (Supabase anon key for read-only data fetch),

@@ -9,6 +9,11 @@
   // at root (publishPath strips static/terminal/). Each link is resolved
   // relative to the current page URL by the browser.
   const PAGES = [
+    // ← HUB is an absolute /, taking the operator back to the unified
+    // landing selector (Terminal / Undelivered / Store) on the static
+    // site's root. HOME below remains the terminal's mark-to-market
+    // dashboard (broker desk view).
+    { id: 'hub',       label: '← HUB',     href: '/' },
     { id: 'home',      label: 'HOME',      href: './' },
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
