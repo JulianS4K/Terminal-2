@@ -96,6 +96,12 @@
 
   const BLIND_SPOT_MIN_SCORE = 3;
   const BLIND_SPOT_MAX_ROWS  = 20;
+  // Threshold for the table-row "blindspot" highlight: SG sales activity
+  // above this level with zero owned tickets flags the row warn-color.
+  // Mirrors the legacy heuristic (sg_sales_window >= 5 AND cur_owned_tix == 0)
+  // documented at line 93. Was referenced at line 290 but never declared —
+  // ReferenceError on render. Default kept at 5 to match prior behavior.
+  const BLIND_SPOT_MIN_SG_SALES = 5;
 
   async function renderBlindSpots() {
     const body = document.getElementById('blindSpotsBody');

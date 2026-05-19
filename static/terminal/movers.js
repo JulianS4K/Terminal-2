@@ -75,6 +75,11 @@
   // Same RPC + render shape as home.js. See home.js comment block for design.
   const BLIND_SPOT_MIN_SCORE = 3;
   const BLIND_SPOT_MAX_ROWS  = 20;
+  // Threshold for the row-level "blindspot" highlight: SG sales activity
+  // above this level with zero owned tickets flags the row warn-color.
+  // Mirrors the legacy heuristic; matched declaration in home.js (PR fixing
+  // ReferenceError on render).
+  const BLIND_SPOT_MIN_SG_SALES = 5;
 
   async function renderBlindSpots() {
     const body = document.getElementById('blindSpotsBody');
