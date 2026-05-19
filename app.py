@@ -4599,7 +4599,30 @@ def store_events(
         # Performer media: logo + brand color from Supabase performer_metadata.
         # Falls back to None on either side if the performer isn't seeded.
         perf_id = performer.get("id")
-        assets = perf_assets.get(int(perf_id)) if perf_id else None
+        try:
+            primary_pid = int(perf_id) if perf_id else None
+        except (TypeError, ValueError):
+            primary_pid = None
+        assets = perf_assets.get(primary_pid) if primary_pid else None
+        # Away-team assets — first non-primary performance in the array.
+        # 2026-05-19: "populate all store events with team assets where
+        # available". Sports matchups: TEvo emits both teams as separate
+        # performances. Playoff placeholders may carry only home.
+        away_pid: int | None = None
+        away_name: str | None = None
+        for p in performances:
+            pf = (p or {}).get("performer") or {}
+            pid_raw = pf.get("id")
+            try:
+                pid_int = int(pid_raw) if pid_raw else None
+            except (TypeError, ValueError):
+                pid_int = None
+            if pid_int is None or pid_int == primary_pid:
+                continue
+            away_pid = pid_int
+            away_name = pf.get("name")
+            break
+        away_assets = perf_assets.get(away_pid) if away_pid else None
 
         out.append({
             "id": ev.get("id"),
@@ -4614,6 +4637,12 @@ def store_events(
             "primary_performer_logo": (assets or {}).get("logo_default_url"),
             "primary_performer_color": (assets or {}).get("color_primary"),
             "primary_performer_league": (assets or {}).get("espn_league"),
+            # Away-team assets — populated when matchup data + metadata
+            # both available. FE renders both logos for sports cards.
+            "away_performer_id":    away_pid,
+            "away_performer_name":  away_name,
+            "away_performer_logo":  (away_assets or {}).get("logo_default_url"),
+            "away_performer_color": (away_assets or {}).get("color_primary"),
             # available_count is deprecated for authoritative pricing but
             # is fine as a "tickets available" indicator on cards (the
             # detail page uses /v9/events/:id/stats for exact numbers).
@@ -5458,7 +5487,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     try:
         ev_q = db.table("events").select(
             "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-            "primary_performer_id,primary_performer_name"
+            "primary_performer_id,primary_performer_name,performer_ids"
         ).gte("occurs_at_local", today_iso).lte("occurs_at_local", horizon_iso + "T23:59:59")
         # PostgREST `or_()` with a comma-separated list of `<col>.ilike.<pat>`
         # supports OR filters across multiple patterns. Use _or_ilike_clause so
@@ -5520,10 +5549,23 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         vw = []
     velocity_by_id = {int(v["tevo_event_id"]): v for v in vw if v.get("tevo_event_id") is not None}
 
-    # Bulk performer assets for card branding consistency.
-    perf_ids = [events_by_id[i].get("primary_performer_id") for i in metrics_by_id if i not in inactive]
-    perf_ids = [int(p) for p in perf_ids if p]
-    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+    # Bulk performer assets — fetch BOTH home (primary_performer_id) AND
+    # away (first secondary in performer_ids array) so cards can render
+    # home-vs-away branding. performer_ids is a text[] column on `events`;
+    # cast to int and dedupe. 2026-05-19: extends prior home-only fetch.
+    perf_ids_set: set[int] = set()
+    for i in metrics_by_id:
+        if i in inactive:
+            continue
+        ev = events_by_id[i]
+        pp = ev.get("primary_performer_id")
+        if pp:
+            try: perf_ids_set.add(int(pp))
+            except (TypeError, ValueError): pass
+        for raw_pid in (ev.get("performer_ids") or []):
+            try: perf_ids_set.add(int(raw_pid))
+            except (TypeError, ValueError): pass
+    perf_assets = _bulk_performer_assets(db, list(perf_ids_set)) if perf_ids_set else {}
 
     # Freshness gate for velocity signals. v_event_velocity_windows computes
     # d1h/d24h via subqueries that fall back to the most recent sample <= now-Xh,
@@ -5689,7 +5731,29 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             sg_median_delta_pct = round(
                 100.0 * (sg_now["median"] - sg_prior["median"]) / sg_prior["median"], 1)
 
-        a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
+        # Home-team assets (primary performer)
+        primary_pid_raw = ev.get("primary_performer_id")
+        primary_pid: int | None = None
+        try:
+            primary_pid = int(primary_pid_raw) if primary_pid_raw else None
+        except (TypeError, ValueError):
+            primary_pid = None
+        a = perf_assets.get(primary_pid) if primary_pid else None
+        # Away-team assets — first performer_id in array that's NOT primary.
+        # Sports matchups: events.performer_ids = [home_id, away_id, ...].
+        # Playoff/single-team entries may have only the primary; in that
+        # case away_* fields stay null (graceful no-op on FE).
+        away_pid: int | None = None
+        for raw_pid in (ev.get("performer_ids") or []):
+            try:
+                pid_int = int(raw_pid)
+            except (TypeError, ValueError):
+                continue
+            if primary_pid is not None and pid_int == primary_pid:
+                continue
+            away_pid = pid_int
+            break
+        b = perf_assets.get(away_pid) if away_pid else None
         owned_tickets = m.get("owned_tickets_count") or 0
         if owned_tickets <= 50:
             # Sections (except holidays) require owned > 50 for inventory depth;
@@ -5704,6 +5768,13 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "primary_performer_name": ev.get("primary_performer_name"),
             "primary_performer_logo": (a or {}).get("logo_default_url"),
             "primary_performer_color": (a or {}).get("color_primary"),
+            # Away-team assets — 2026-05-19: "populate all store events
+            # with team assets where available". Null when no away
+            # performer in array (e.g. playoff placeholder events).
+            "away_performer_id":    away_pid,
+            "away_performer_name":  (b or {}).get("name"),
+            "away_performer_logo":  (b or {}).get("logo_default_url"),
+            "away_performer_color": (b or {}).get("color_primary"),
             "from_price": from_price,
             "tix_d24h": d24h_val,
             "getin_pct_24h": pct_val,
@@ -5965,7 +6036,7 @@ def store_home(
         ev_rows = (db.table("events")
                      .select("id,name,occurs_at_local,venue_id,venue_name,"
                              "venue_location,primary_performer_id,"
-                             "primary_performer_name")
+                             "primary_performer_name,performer_ids")
                      .in_("id", ev_ids)
                      .gte("occurs_at_local", today_iso)
                      .limit(1000)
@@ -6021,10 +6092,18 @@ def store_home(
     # same — just two parallel calls instead of one slow one.
 
     # Bulk performer assets for card branding (logo + brand color).
-    perf_ids = list({int(e.get("primary_performer_id"))
-                     for e in events_by_id.values()
-                     if e.get("primary_performer_id")})
-    perf_assets = _bulk_performer_assets(db, perf_ids) if perf_ids else {}
+    # 2026-05-19: extends to home + away performers so cards can render
+    # matchup branding (Cavs-at-Knicks both logos, etc.).
+    perf_ids_set: set[int] = set()
+    for e in events_by_id.values():
+        pp = e.get("primary_performer_id")
+        if pp:
+            try: perf_ids_set.add(int(pp))
+            except (TypeError, ValueError): pass
+        for raw_pid in (e.get("performer_ids") or []):
+            try: perf_ids_set.add(int(raw_pid))
+            except (TypeError, ValueError): pass
+    perf_assets = _bulk_performer_assets(db, list(perf_ids_set)) if perf_ids_set else {}
 
     # Build cards. Schema mirrors /api/store/events for renderer reuse, plus
     # `from_price` + `owned_tickets_count` + `signal` actually populated
@@ -6033,7 +6112,24 @@ def store_home(
     for eid, ev in events_by_id.items():
         lem = lem_by_id.get(eid, {})
         perf_id = ev.get("primary_performer_id")
-        assets = perf_assets.get(int(perf_id)) if perf_id else None
+        try:
+            primary_pid = int(perf_id) if perf_id else None
+        except (TypeError, ValueError):
+            primary_pid = None
+        assets = perf_assets.get(primary_pid) if primary_pid else None
+        # Away-team assets — first performer in array that's NOT the home
+        # team. Null when array has only the primary (playoff placeholders).
+        away_pid: int | None = None
+        for raw_pid in (ev.get("performer_ids") or []):
+            try:
+                pid_int = int(raw_pid)
+            except (TypeError, ValueError):
+                continue
+            if primary_pid is not None and pid_int == primary_pid:
+                continue
+            away_pid = pid_int
+            break
+        away_assets = perf_assets.get(away_pid) if away_pid else None
 
         try:
             rm = float(lem.get("retail_min")) if lem.get("retail_min") is not None else None
@@ -6056,6 +6152,12 @@ def store_home(
             "primary_performer_logo": (assets or {}).get("logo_default_url"),
             "primary_performer_color": (assets or {}).get("color_primary"),
             "primary_performer_league": (assets or {}).get("espn_league"),
+            # Away-team assets — 2026-05-19: populate where available.
+            # Null fields when no away performer or no metadata.
+            "away_performer_id":    away_pid,
+            "away_performer_name":  (away_assets or {}).get("name"),
+            "away_performer_logo":  (away_assets or {}).get("logo_default_url"),
+            "away_performer_color": (away_assets or {}).get("color_primary"),
             # Available_count is filled from TEvo's per-event count on the
             # detail page; the matview's tickets_count is the storefront-
             # wide listing count which is the better cards-level signal.
