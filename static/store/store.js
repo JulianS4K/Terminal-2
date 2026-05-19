@@ -840,7 +840,7 @@
     // applied server-side: each event appears in AT MOST ONE rail.
     // Tag = playoff label only; premium-only events show no per-card chip
     // (internal owned counts dropped — not consumer-facing).
-    { key: "featured", title: "Featured",
+    { key: "featured", title: "Featured in NYC",
       accent: (ev) => ev._featured_tag || "" },
     // Moving fast — server flags via velocity signals. Per-card accents
     // dropped (those exposed internal sold-today counts); section title
