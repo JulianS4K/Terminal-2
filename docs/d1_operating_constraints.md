@@ -46,12 +46,14 @@ Auth: X-Token + X-Signature (HMAC-SHA256). Credentials resolved in priority orde
 | `venue_assets` | A1 | hero images, indoor/capacity tags |
 | `v_event_seating_chart` (view) | A1 | seating chart + fanvenues_key |
 | `performer_zones`, `performer_zone_rules` | A1 | zone curation chips |
-| `v_rivalry_events`, `sporting_rivalries`, `mlb_branded_series` | A1 | rivalry / branded-series badges |
+| `v_rivalry_events`, `sporting_rivalries`, `mlb_branded_series` | A1 | rivalry / branded-series badges + storefront Specials rail (PR #275) |
 | `v_mlb_game_series` | A1 | MLB series context |
 | `v_event_tournament_context`, `espn_tournament_events`, `event_xref` | C1 / A1 | F1/golf/tennis tournament parent |
 | `v_event_weather_with_fallback`, `weather_observations`, `nws_alerts` | A1 | weather row + alerts |
-| `v_event_calendar_context`, `holidays`, `school_break_windows` | A1 | holiday pills |
-| `v_event_velocity_windows` | A1 | NYC movers strip signals |
+| `v_event_calendar_context`, `holidays`, `school_break_windows` | A1 | event-detail holiday pills |
+| `v_event_holidays` | A1 | storefront Specials rail (holiday-window match, PR #275) |
+| `v_event_velocity_windows` | A1 | storefront `Moving fast` + `Climbing` rail signals |
+| `seatgeek_event_xref`, `seatgeek_sales_snapshots`, `seatgeek_listings_snapshots` | A1 | SG sales/listings deltas for movers rails (PR #273) |
 | `settings` | A1 | TEvo credential lookup at boot |
 | `bot_chat` | shared | inbound coordination messages |
 
@@ -146,6 +148,10 @@ curl 'https://vibepass-storefront-test.onrender.com/api/store/search?q=knicks&li
 
 curl 'https://vibepass-storefront-test.onrender.com/api/store/events/3346000'
 # expect: 200, inventory_source=live, listings_count>0
+
+curl 'https://vibepass-storefront-test.onrender.com/api/store/movers?city=NYC&days=90'
+# expect: 200, payload has moving_fast/price_drops/climbing/specials arrays
+# (post PR #275 — old events/rest shape is gone).
 ```
 
 Post `bot_chat` status (`bot_lane='D1'`, `event_type='change_log'`) referencing the merged PR # + smoke results.
