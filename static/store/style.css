@@ -1116,14 +1116,18 @@ a.perf-chip:hover {
   text-decoration: underline;
 }
 
-/* ----- Movers strip (homepage NYC widget) -----
-   Horizontal scroll row above the main grid. One card per top mover.
-   Hidden when the user is filtered (performer_id / venue_id) since the
-   strip is a home-view discovery aid, not a filter-respecting list. */
-.movers-strip {
+/* ----- Movers themed sliders (homepage NYC widget) -----
+   Four horizontal scrolling rows, one per theme (moving_fast, price_drops,
+   climbing, specials). Hidden when the user is filtered (performer_id /
+   venue_id) since these are home-view discovery aids, not filter-aware
+   lists. Empty sections are skipped server-side via the JS renderer. */
+.movers-sections {
   margin: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
 }
-.movers-title {
+.movers-section-title {
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.3px;
@@ -1131,16 +1135,16 @@ a.perf-chip:hover {
   color: var(--muted);
   margin: 0 0 10px;
 }
-.movers-row {
+.movers-section-row {
   display: flex;
   gap: 10px;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
   padding-bottom: 6px;
 }
-.movers-row::-webkit-scrollbar { height: 8px; }
-.movers-row::-webkit-scrollbar-track { background: transparent; }
-.movers-row::-webkit-scrollbar-thumb {
+.movers-section-row::-webkit-scrollbar { height: 8px; }
+.movers-section-row::-webkit-scrollbar-track { background: transparent; }
+.movers-section-row::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 4px;
 }
@@ -1172,7 +1176,11 @@ a.perf-chip:hover {
   background: var(--card-accent);
   border-radius: var(--radius) var(--radius) 0 0;
 }
-.mover-badge {
+
+/* Per-section accent line — replaces the prior multi-label badge stack.
+   Each section colors its accent to telegraph the signal: red for fast-
+   selling, green for drops, amber for climbing, gold for specials. */
+.mover-accent {
   align-self: flex-start;
   font-size: 10px;
   font-weight: 700;
@@ -1180,86 +1188,30 @@ a.perf-chip:hover {
   padding: 2px 8px;
   border-radius: 999px;
   margin-bottom: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.mover-badge.selling_fast {
+.movers-moving-fast .mover-accent {
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.45);
   color: #ffb6b6;
 }
-.mover-badge.demand_rising {
+.movers-price-drops .mover-accent {
   background: rgba(74, 222, 128, 0.12);
   border: 1px solid rgba(74, 222, 128, 0.45);
   color: #b6f0c8;
 }
-/* premium label dropped per operator 2026-05-18; selectors kept commented
-   for searchability but no rules emit. */
-
-/* New label-system additions (operator 2026-05-18 — multi-label per card) */
-.mover-badge.trending {
-  background: rgba(96, 165, 250, 0.12);
-  border: 1px solid rgba(96, 165, 250, 0.45);
-  color: #b9d5fb;
+.movers-climbing .mover-accent {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #ffe3a3;
 }
-.mover-badge.deal {
+.movers-specials .mover-accent {
   background: rgba(168, 85, 247, 0.12);
   border: 1px solid rgba(168, 85, 247, 0.45);
   color: #d8b7fb;
-}
-/* conf-2 (dual TEvo+SG corroboration) renders with a brighter/thicker outline */
-.mover-badge.conf-2 {
-  border-width: 1.5px;
-  filter: brightness(1.15);
-}
-/* Multi-badge container — flex wrap so 2+ badges stack tidily */
-.mover-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 4px;
-}
-
-/* Rest grid below the strip — 2 rows × 5 cards. */
-.movers-rest {
-  margin-top: 16px;
-}
-.movers-rest-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin: 0 0 8px;
-}
-.movers-rest-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  grid-template-rows: repeat(2, auto);
-  gap: 12px;
-}
-@media (max-width: 1100px) {
-  .movers-rest-grid {
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: auto;
-  }
-}
-@media (max-width: 700px) {
-  .movers-rest-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-/* Pad-fill cards (owned 1-50) get a subtle de-emphasis so users can tell
-   they're "limited inventory" — still bookable, just thinner. */
-.mover-card.from-pad {
-  opacity: 0.78;
-}
-.mover-card.from-pad::after {
-  content: "limited";
-  position: absolute;
-  bottom: 6px;
-  right: 8px;
-  font-size: 9px;
-  color: var(--muted);
-  letter-spacing: 0.5px;
 }
 .mover-title {
   font-size: 14px;

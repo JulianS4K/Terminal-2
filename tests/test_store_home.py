@@ -871,26 +871,23 @@ def test_movers_drops_tix_d24h_when_velocity_stale(monkeypatch):
     r = client.get("/api/store/movers?city=NYC&days=30&limit=10")
     assert r.status_code == 200, r.text
 
-    by_id = {e["id"]: e for e in r.json()["events"]}
+    # Post-PR #274/#275: response is split into 4 themed arrays
+    # (moving_fast, price_drops, climbing, specials). The fresh-velocity
+    # event with -500 d24h qualifies for `moving_fast` (d24h <= -50).
+    body = r.json()
+    moving_fast_by_id = {e["id"]: e for e in body.get("moving_fast", [])}
 
-    # Stale event (1001): velocity-suspect, so tix_d24h must be None and
-    # signal must NOT be selling_fast (no velocity-derived signal allowed).
-    # It also shouldn't make the cut as a candidate (no signal, no
-    # meaningful d24h activity since d24h was dropped).
-    assert 1001 not in by_id, (
-        "stale-velocity event must NOT surface — tix_d24h suppressed and no signal"
+    # Stale event (1001): velocity-suspect → tix_d24h dropped → no
+    # qualification for moving_fast (no d24h, no SG sales stubbed).
+    assert 1001 not in moving_fast_by_id, (
+        "stale-velocity event must NOT surface — tix_d24h suppressed"
     )
 
-    # Fresh event (1002): velocity trusted; -500 ticket drop fires selling_fast.
-    # Note: post-PR #273, signal-string was replaced with labels-array
-    # (multi-label per event). The selling_fast label still fires from the
-    # TEvo path here (SG data not stubbed in this fixture, so conf=1).
-    assert 1002 in by_id, "fresh-velocity event should make the strip"
-    labels_1002 = by_id[1002].get("labels") or []
-    assert any(L.get("name") == "selling_fast" for L in labels_1002), (
-        f"fresh event must carry selling_fast label; got labels={labels_1002}"
-    )
-    assert by_id[1002]["tix_d24h"] == -500
+    # Fresh event (1002): velocity trusted; -500 ticket drop qualifies it
+    # for the moving_fast section via the TEvo path. SG sales not stubbed
+    # here, so SG path doesn't fire — TEvo path is sufficient.
+    assert 1002 in moving_fast_by_id, "fresh-velocity event should make moving_fast"
+    assert moving_fast_by_id[1002]["tix_d24h"] == -500
 
 
 def test_movers_response_no_longer_includes_tix_d1h(monkeypatch):
@@ -900,7 +897,7 @@ def test_movers_response_no_longer_includes_tix_d1h(monkeypatch):
     from datetime import datetime, timezone, timedelta
     fresh_ts = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
 
-    fake_metrics = [{"event_id": 2001, "owned_tickets_count": 50, "owned_groups_count": 5, "retail_min": 30.0}]
+    fake_metrics = [{"event_id": 2001, "owned_tickets_count": 100, "owned_groups_count": 5, "retail_min": 30.0}]
     fake_events = [{"id": 2001, "name": "Test", "occurs_at_local": "2026-06-01T19:00:00-04:00",
                     "venue_name": "MSG", "venue_location": "New York, NY",
                     "primary_performer_id": 16303, "primary_performer_name": "Yankees"}]
@@ -941,10 +938,13 @@ def test_movers_response_no_longer_includes_tix_d1h(monkeypatch):
     client = TestClient(app_module.app)
     r = client.get("/api/store/movers?city=NYC&days=30&limit=10")
     assert r.status_code == 200
-    for ev in r.json()["events"]:
-        assert "tix_d1h" not in ev, (
-            f"tix_d1h must not appear in mover response; got keys: {list(ev.keys())}"
-        )
+    body = r.json()
+    # Inspect cards across all four themed sections — none should leak tix_d1h.
+    for key in ("moving_fast", "price_drops", "climbing", "specials"):
+        for ev in body.get(key, []):
+            assert "tix_d1h" not in ev, (
+                f"tix_d1h must not appear in mover response; got keys: {list(ev.keys())}"
+            )
 
 
 def test_store_html_routes_respond_to_head(monkeypatch):

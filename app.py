@@ -5163,141 +5163,129 @@ def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Movers label system (multi-label per event + proportional sampling).
-# Used by _compute_movers below. Labels:
-#   selling_fast   TEvo d24h <= -50 OR SG sales_24h >= 25
-#   demand_rising  (TEvo d24h<0 AND getin pct >= 5%) OR
-#                  (SG median delta >= +5% AND SG listings delta <= -5%)
-#   trending       SG sales_24h >= 10 (absolute volume, regardless of velocity)
-#   deal           retail_min < $20
-# Confidence = 2 if both TEvo+SG paths fire for the label, else 1.
-# selling_fast > demand_rising > trending > deal is the priority order for
-# bucketing in proportional rest sampling (each event bucketed under its
-# highest-priority label only).
+# Storefront sections — 3 themed sliders (price movement split into 2 rows):
+#   moving_fast   demand velocity        sg_sales_24h >= 10 OR tix_d24h <= -50
+#   price_drops   our price < SG market  retail_min < 0.7 * sg_median_now
+#   climbing      price firming          (TEvo getin +5% AND d24h<0) OR
+#                                        (SG median +5% AND SG listings -5%)
+#   specials      curated/calendar       owned > 100 AND (holiday-window
+#                                        match via v_event_holidays OR
+#                                        rivalry game via v_rivalry_events)
+# Each section is independent — a single event can appear in 0, 1, or 2
+# sections (e.g., a Yankees vs Red Sox game on July 4th qualifies as
+# both `specials` and `moving_fast`). The 4-row layout replaces the
+# previous single-strip label-mix approach so deals can't crowd out
+# other signals.
 # ---------------------------------------------------------------------------
-_LABEL_PRIORITY = ("selling_fast", "demand_rising", "trending", "deal")
 
 
-def _movers_compute_labels(d24h_val, pct_val, retail_min,
-                           sg_sales_24h, sg_median_delta_pct,
-                           sg_listings_delta_pct) -> list[dict]:
-    """Classify an event into 0+ labels based on TEvo + SG signals. Returns
-    a list of {"name": str, "conf": 1|2}. Empty list means the event doesn't
-    qualify for the movers strip.
+def _section_moving_fast(candidates: list[dict], cap: int = 10) -> list[dict]:
+    """Demand velocity: events selling fast across either market. SG path
+    is more reliable (confirmed sales); TEvo path captures supply leaving
+    the broker market even when SG xref is missing.
     """
-    labels: list[dict] = []
+    out = []
+    for c in candidates:
+        sg_sales = c.get("sg_sales_24h") or 0
+        d24h = c.get("tix_d24h")
+        if sg_sales >= 10 or (isinstance(d24h, int) and d24h <= -50):
+            out.append(c)
+    out.sort(key=lambda c: (
+        -(c.get("sg_sales_24h") or 0),
+        -abs(c.get("tix_d24h") or 0),
+        c.get("occurs_at_local") or "9999",
+    ))
+    return out[:cap]
 
-    # selling_fast: high velocity (either market)
-    tevo_sf = d24h_val is not None and d24h_val <= -50
-    sg_sf = sg_sales_24h is not None and sg_sales_24h >= 25
-    if tevo_sf or sg_sf:
-        labels.append({"name": "selling_fast", "conf": 2 if (tevo_sf and sg_sf) else 1})
 
-    # demand_rising: tickets dropping AND price firming, either market
-    tevo_dr = (d24h_val is not None and d24h_val < 0
-               and pct_val is not None and pct_val >= 5.0)
-    sg_dr = (sg_median_delta_pct is not None and sg_median_delta_pct >= 5.0
-             and sg_listings_delta_pct is not None and sg_listings_delta_pct <= -5.0)
-    if tevo_dr or sg_dr:
-        labels.append({"name": "demand_rising", "conf": 2 if (tevo_dr and sg_dr) else 1})
-
-    # trending: SG absolute volume signal (single-source)
-    if sg_sales_24h is not None and sg_sales_24h >= 10:
-        labels.append({"name": "trending", "conf": 1})
-
-    # deal: cheap get-in (single-source)
-    if retail_min is not None:
+def _section_price_drops(candidates: list[dict], cap: int = 10) -> list[dict]:
+    """Our get-in price is below SG market median by ≥30%. A real deal
+    signal vs. a flat $20 cutoff — captures relative value, not absolute
+    cheapness. Requires SG xref + recent listings; events without SG
+    coverage are silently skipped.
+    """
+    out = []
+    for c in candidates:
+        retail_min = c.get("from_price")
+        sg_median = c.get("sg_median_now")
+        if retail_min is None or sg_median is None:
+            continue
         try:
-            if float(retail_min) < 20:
-                labels.append({"name": "deal", "conf": 1})
+            rm = float(retail_min)
+            sm = float(sg_median)
+            if sm <= 0:
+                continue
+            discount = (sm - rm) / sm
+            if discount >= 0.30:
+                c["_discount_pct"] = round(discount * 100.0, 1)
+                out.append(c)
         except (TypeError, ValueError):
-            pass
+            continue
+    out.sort(key=lambda c: (-c.get("_discount_pct", 0.0),
+                            c.get("occurs_at_local") or "9999"))
+    return out[:cap]
 
-    return labels
 
-
-def _movers_compute_score(labels: list[dict], d24h_val) -> float:
-    """Per-event ranking score used by top-1% slice + within-bucket ordering
-    in proportional rest sampling. Higher = better.
+def _section_climbing(candidates: list[dict], cap: int = 10) -> list[dict]:
+    """Price firming: tickets dropping AND get-in climbing, or SG median
+    climbing AND SG listings shrinking. Dual-source for noise resistance
+    in thin pools (single-listing changes can shift median 5%+).
     """
-    if not labels:
-        return 0.0
-    max_conf = max(L["conf"] for L in labels)
-    n = len(labels)
-    mag = abs(int(d24h_val)) if isinstance(d24h_val, int) else 0
-    return max_conf * 10.0 + n * 2.0 + (mag / 50.0)
+    out = []
+    for c in candidates:
+        d24h = c.get("tix_d24h")
+        getin_pct = c.get("getin_pct_24h")
+        sg_med_d = c.get("sg_median_delta_pct")
+        sg_list_d = c.get("sg_listings_delta_pct")
+        tevo_climb = (isinstance(d24h, int) and d24h < 0
+                      and isinstance(getin_pct, (int, float)) and getin_pct >= 5.0)
+        sg_climb = (isinstance(sg_med_d, (int, float)) and sg_med_d >= 5.0
+                    and isinstance(sg_list_d, (int, float)) and sg_list_d <= -5.0)
+        if tevo_climb or sg_climb:
+            climb_pct = max(
+                getin_pct if isinstance(getin_pct, (int, float)) else -999,
+                sg_med_d if isinstance(sg_med_d, (int, float)) else -999,
+            )
+            c["_climb_pct"] = round(climb_pct, 1) if climb_pct > -999 else None
+            out.append(c)
+    out.sort(key=lambda c: (-(c.get("_climb_pct") or 0),
+                            c.get("occurs_at_local") or "9999"))
+    return out[:cap]
 
 
-def _bucket_by_primary_label(pool: list[dict]) -> dict[str, list[dict]]:
-    """Group events into buckets keyed by their highest-priority label
-    (per _LABEL_PRIORITY). Each bucket is sorted by score DESC, then by
-    soonest occurs_at_local as tiebreak.
+def _section_specials(candidates: list[dict],
+                      holiday_by_eid: dict[int, str],
+                      rivalry_by_eid: dict[int, str],
+                      cap: int = 10) -> list[dict]:
+    """Curated rail — events that qualify on a non-market basis. Two
+    sources fold in here:
+      1. v_event_holidays: server-side holiday window match (Memorial
+         Day, Christmas, etc.)
+      2. v_rivalry_events: known rivalry games (Yankees-Red Sox, etc.)
+    Both gated to owned > 100 — same depth bar the operator set for
+    the "specials" rail. Each card is tagged with `_special` describing
+    what earned its slot (e.g. "Memorial Day" or "Yankees vs Red Sox").
     """
-    buckets: dict[str, list[dict]] = {lbl: [] for lbl in _LABEL_PRIORITY}
-    for e in pool:
-        for lbl in _LABEL_PRIORITY:
-            if any(L["name"] == lbl for L in (e.get("labels") or [])):
-                buckets[lbl].append(e)
-                break
-    for lbl in buckets:
-        buckets[lbl].sort(
-            key=lambda c: (-c.get("score", 0.0), c.get("occurs_at_local") or "9999"))
-    return buckets
-
-
-# Grading curve thresholds. If any single label holds more than
-# _DOMINANCE_THRESHOLD of the pool at sample time, cap its share in the
-# output to _DOMINANT_CAP_PCT. Without this, a pool that's 95% deals
-# still yields ~90% deals via round-robin (small buckets drain first,
-# then the dominant bucket fills the remainder). The curve trades a
-# smaller card count for a guaranteed label mix.
-_DOMINANCE_THRESHOLD = 0.80
-_DOMINANT_CAP_PCT = 0.40
-
-
-def _round_robin_pop_by_label(buckets: dict[str, list[dict]], n: int) -> list[dict]:
-    """Drain up to `n` events from `buckets` by rotating through
-    _LABEL_PRIORITY. Pops the top-score event from each non-empty bucket
-    per cycle. Mutates `buckets` in place so successive calls continue
-    from where the prior call left off (used to build top-strip then
-    rest-grid from one shared pool with no overlap).
-
-    Grading curve: if any single label exceeds _DOMINANCE_THRESHOLD of
-    the current pool, cap its picks at ceil(n * _DOMINANT_CAP_PCT). When
-    the cap is hit and only the dominant bucket has items left, the
-    function returns fewer than `n` events — under-filling is preferred
-    over a monolithic output (e.g., 10 deals).
-    """
-    if n <= 0:
-        return []
-    total = sum(len(buckets[lbl]) for lbl in _LABEL_PRIORITY)
-    dominant_lbl: str | None = None
-    dominant_cap = n
-    if total > 0:
-        for lbl in _LABEL_PRIORITY:
-            if buckets[lbl] and len(buckets[lbl]) / total > _DOMINANCE_THRESHOLD:
-                dominant_lbl = lbl
-                dominant_cap = max(1, int(n * _DOMINANT_CAP_PCT + 0.5))
-                break
-
-    out: list[dict] = []
-    dominant_taken = 0
-    while len(out) < n:
-        made_progress = False
-        for lbl in _LABEL_PRIORITY:
-            if len(out) >= n:
-                break
-            if not buckets[lbl]:
-                continue
-            if lbl == dominant_lbl and dominant_taken >= dominant_cap:
-                continue
-            out.append(buckets[lbl].pop(0))
-            if lbl == dominant_lbl:
-                dominant_taken += 1
-            made_progress = True
-        if not made_progress:
-            break
-    return out
+    out = []
+    for c in candidates:
+        if (c.get("owned_tickets_count") or 0) <= 100:
+            continue
+        eid = c.get("id")
+        try:
+            eid_int = int(eid) if eid is not None else None
+        except (TypeError, ValueError):
+            eid_int = None
+        if eid_int is None:
+            continue
+        holiday = holiday_by_eid.get(eid_int)
+        rivalry = rivalry_by_eid.get(eid_int)
+        if holiday or rivalry:
+            # Prefer rivalry tag when both apply — more specific narrative.
+            c["_special"] = rivalry or holiday
+            c["_special_kind"] = "rivalry" if rivalry else "holiday"
+            out.append(c)
+    out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
+    return out[:cap]
 
 
 def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
@@ -5513,12 +5501,11 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                 median = prices[len(prices) // 2] if prices else None
                 target[tev] = {"count": len(agg["sglids"]), "median": median}
 
-    # ----- Classify each event into 0+ labels -----
-    # We compute labels for ALL owned (>=1) events. Partition into primary
-    # (owned > 50) and secondary (owned 1-50) downstream — secondary is used
-    # only to pad the rest grid when primary is thin.
-    primary: list[dict] = []
-    secondary: list[dict] = []
+    # ----- Build candidate pool with all signal data attached -----
+    # Every owned (>=1) event lands in `candidates` with its full signal
+    # payload. Each section helper below filters this pool independently;
+    # an event can qualify for 0, 1, or multiple sections.
+    candidates: list[dict] = []
     for eid, m in metrics_by_id.items():
         if eid in inactive:
             continue
@@ -5539,7 +5526,6 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         except (TypeError, ValueError):
             pct_val = None
 
-        # SG aggregates for this event
         sg_sales_24h = sg_sales_24h_by_tevo.get(eid, 0)
         sg_sales_prior = sg_sales_prior_24h_by_tevo.get(eid, 0)
         sg_sales_delta_pct = None
@@ -5557,16 +5543,13 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             sg_median_delta_pct = round(
                 100.0 * (sg_now["median"] - sg_prior["median"]) / sg_prior["median"], 1)
 
-        labels = _movers_compute_labels(
-            d24h_val, pct_val, m.get("retail_min"),
-            sg_sales_24h, sg_median_delta_pct, sg_listings_delta_pct)
-        if not labels:
-            continue
-        score = _movers_compute_score(labels, d24h_val)
-
         a = perf_assets.get(int(ev.get("primary_performer_id"))) if ev.get("primary_performer_id") else None
         owned_tickets = m.get("owned_tickets_count") or 0
-        card = {
+        if owned_tickets <= 50:
+            # Sections (except holidays) require owned > 50 for inventory depth;
+            # holidays is even tighter at > 100, applied in the section helper.
+            continue
+        candidates.append({
             "id": ev.get("id"),
             "name": ev.get("name"),
             "occurs_at_local": ev.get("occurs_at_local"),
@@ -5582,45 +5565,68 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "sg_sales_delta_pct": sg_sales_delta_pct,
             "sg_listings_delta_pct": sg_listings_delta_pct,
             "sg_median_delta_pct": sg_median_delta_pct,
+            "sg_median_now": (sg_now or {}).get("median"),
             "owned_tickets_count": owned_tickets,
-            "labels": labels,
-            "score": score,
-        }
-        if owned_tickets > 50:
-            primary.append(card)
-        else:
-            secondary.append(card)
+        })
 
-    # ----- Round-robin by label so strip + grid show a mix, not just the
-    # dominant bucket. Pure score-sort + proportional sampling both
-    # collapsed to whichever label was largest in the pool (typically
-    # deal, since cheap inventory dominates NYC owned events). Cycling
-    # selling_fast → demand_rising → trending → deal guarantees label
-    # diversity whenever 2+ buckets are non-empty.
-    primary_buckets = _bucket_by_primary_label(primary)
-    n_primary = len(primary)
-    n_top = max(5, min(8, round(n_primary * 0.01))) if n_primary else 0
-    n_top = min(n_top, n_primary)
-    top = _round_robin_pop_by_label(primary_buckets, n_top)
-    rest = _round_robin_pop_by_label(primary_buckets, 10)
+    # ----- Specials enrichment: pull holiday-window matches + rivalry
+    # tags. Both wrapped in try/except so a view-side failure degrades
+    # to no-specials rather than killing the whole movers response.
+    candidate_ids = [int(c["id"]) for c in candidates if c.get("id") is not None]
+    holiday_by_eid: dict[int, str] = {}
+    rivalry_by_eid: dict[int, str] = {}
+    if candidate_ids:
+        try:
+            hrows = (db.table("v_event_holidays")
+                       .select("tevo_event_id,holiday_name")
+                       .in_("tevo_event_id", candidate_ids)
+                       .execute().data) or []
+            # First match wins per event — v_event_holidays can emit
+            # multiple rows when a date hits multiple holidays. The view
+            # already orders by match_specificity DESC server-side.
+            for r in hrows:
+                eid = r.get("tevo_event_id")
+                if eid is None:
+                    continue
+                key = int(eid)
+                if key not in holiday_by_eid and r.get("holiday_name"):
+                    holiday_by_eid[key] = r["holiday_name"]
+        except Exception as e:
+            print(f"store_movers v_event_holidays query failed: {e}")
+        try:
+            rrows = (db.table("v_rivalry_events")
+                       .select("tevo_event_id,rivalry_name,rivalry_intensity")
+                       .in_("tevo_event_id", candidate_ids)
+                       .execute().data) or []
+            # v_rivalry_events emits duplicate rows when both teams in a
+            # matchup are competitors (app.py:1198 bible landmine).
+            # Dedupe Python-side; first row wins.
+            for r in rrows:
+                eid = r.get("tevo_event_id")
+                if eid is None:
+                    continue
+                key = int(eid)
+                if key not in rivalry_by_eid and r.get("rivalry_name"):
+                    rivalry_by_eid[key] = r["rivalry_name"]
+        except Exception as e:
+            print(f"store_movers v_rivalry_events query failed: {e}")
 
-    # Pad rest from secondary (owned 1-50) when primary pool runs thin.
-    if len(rest) < 10 and secondary:
-        seen_ids = {c["id"] for c in primary}
-        secondary_pool = [c for c in secondary if c["id"] not in seen_ids]
-        sec_buckets = _bucket_by_primary_label(secondary_pool)
-        pad_n = 10 - len(rest)
-        padded = _round_robin_pop_by_label(sec_buckets, pad_n)
-        for c in padded:
-            c["from_pad"] = True
-        rest.extend(padded)
+    # ----- Build the 4 themed sliders. Each section is independent and
+    # gets its own copy of qualifying candidates (cards may appear in
+    # more than one section, e.g. a rivalry game that's also moving fast).
+    moving_fast = _section_moving_fast(candidates)
+    price_drops = _section_price_drops(candidates)
+    climbing = _section_climbing(candidates)
+    specials = _section_specials(candidates, holiday_by_eid, rivalry_by_eid)
 
     return {
         "city": city,
         "days": day_cap,
-        "count": len(top) + len(rest),
-        "events": top,
-        "rest": rest,
+        "count": len(moving_fast) + len(price_drops) + len(climbing) + len(specials),
+        "moving_fast": moving_fast,
+        "price_drops": price_drops,
+        "climbing": climbing,
+        "specials": specials,
     }
 
 

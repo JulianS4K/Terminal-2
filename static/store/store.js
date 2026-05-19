@@ -637,26 +637,17 @@
     }
     loadCatalog();
 
-    // NYC movers strip + rest grid — only shown on the bare /store view
-    // (no performer or venue filter). Label-driven now (selling_fast /
-    // demand_rising / trending / deal). days=90 to give the 3mo horizon
-    // enough pool for the proportional rest sampling. limit kept at 8 for
-    // back-compat (the server clamps top to [5,8] of 1% regardless).
+    // NYC themed sliders — only shown on the bare /store view (no performer
+    // or venue filter). Server returns 4 keyed arrays (moving_fast,
+    // price_drops, climbing, specials) and each becomes its own horizontal
+    // slider. Empty sections are hidden. days=90 to give the 3mo horizon
+    // enough pool depth for each section's filter.
     if (!performerId && !venueId) {
-      const strip = $("#moversStrip");
-      const row = $("#moversRow");
-      const rest = $("#moversRest");
-      const restGrid = $("#moversRestGrid");
-      if (strip && row) {
-        api("/api/store/movers?city=NYC&days=90&limit=8")
-          .then((res) => {
-            renderMoversStrip(strip, row, res);
-            if (rest && restGrid) renderMoversRest(rest, restGrid, res);
-          })
-          .catch(() => {
-            strip.hidden = true;
-            if (rest) rest.hidden = true;
-          });
+      const host = $("#moversSections");
+      if (host) {
+        api("/api/store/movers?city=NYC&days=90")
+          .then((res) => renderMoversSections(host, res))
+          .catch(() => { host.hidden = true; });
       }
     }
 
@@ -839,40 +830,44 @@
     return a;
   }
 
-  // Label badge config — multi-label system (server returns `labels` array of
-  // {name, conf}). conf=2 (dual TEvo+SG corroboration) renders with an accent
-  // outline via CSS, conf=1 is the base style. Order in this map controls
-  // the visual display order of badges on a card.
-  const LABEL_DISPLAY = {
-    selling_fast:  "🔥 selling fast",
-    demand_rising: "📈 demand rising",
-    trending:      "✨ trending",
-    deal:          "💸 deal",
-  };
+  // Section render config — one entry per themed slider in display order.
+  // `accent` line is the per-card secondary note describing why this event
+  // qualified for the section (e.g. "↓ 35% below market" for price_drops).
+  const SECTIONS = [
+    { key: "moving_fast", title: "Moving fast in NYC",
+      accent: (ev) => {
+        const tx = Number(ev.tix_d24h);
+        const sg = Number(ev.sg_sales_24h);
+        if (Number.isFinite(tx) && tx < 0) return `${Math.abs(tx)} sold today`;
+        if (Number.isFinite(sg) && sg > 0) return `${sg} SG sold 24h`;
+        return "";
+      } },
+    { key: "price_drops", title: "Price drops in NYC",
+      accent: (ev) => {
+        const d = Number(ev._discount_pct);
+        return Number.isFinite(d) ? `↓ ${d.toFixed(0)}% below market` : "";
+      } },
+    { key: "climbing", title: "Climbing fast in NYC",
+      accent: (ev) => {
+        const c = Number(ev._climb_pct);
+        return Number.isFinite(c) ? `↑ ${c.toFixed(0)}% in 24h` : "";
+      } },
+    { key: "specials", title: "Upcoming Specials in NYC",
+      accent: (ev) => ev._special || "" },
+  ];
 
-  function _moverCard(ev) {
+  function _moverCard(ev, accent) {
     const a = document.createElement("a");
     a.className = "mover-card";
-    if (ev.from_pad) a.classList.add("from-pad");
     a.href = `/store/event/${Number(ev.id) || 0}`;
     if (ev.primary_performer_color) {
       a.style.setProperty("--card-accent", ev.primary_performer_color);
     }
-    // Multi-label badges. Server returns labels array; iterate in our display
-    // order to keep badge sequence consistent across cards.
-    const labels = Array.isArray(ev.labels) ? ev.labels : [];
-    if (labels.length) {
-      const badges = document.createElement("div");
-      badges.className = "mover-badges";
-      Object.keys(LABEL_DISPLAY).forEach((lblName) => {
-        const lbl = labels.find((L) => L && L.name === lblName);
-        if (!lbl) return;
-        const span = document.createElement("span");
-        span.className = `mover-badge ${lblName} conf-${lbl.conf || 1}`;
-        span.textContent = LABEL_DISPLAY[lblName];
-        badges.append(span);
-      });
-      a.append(badges);
+    if (accent) {
+      const badge = document.createElement("div");
+      badge.className = "mover-accent";
+      badge.textContent = accent;
+      a.append(badge);
     }
     const title = document.createElement("div");
     title.className = "mover-title";
@@ -890,47 +885,37 @@
       fp.textContent = `from ${fmtMoney(ev.from_price)}`;
       meta.append(fp);
     }
-    if (ev.tix_d24h != null && Number(ev.tix_d24h) < 0) {
-      const note = document.createElement("span");
-      note.className = "mover-note";
-      note.textContent = `${Math.abs(Number(ev.tix_d24h))} sold today`;
-      meta.append(note);
-    } else if (ev.sg_sales_24h && Number(ev.sg_sales_24h) > 0) {
-      // Fallback note: SG-side activity when TEvo velocity isn't available
-      const note = document.createElement("span");
-      note.className = "mover-note";
-      note.textContent = `${Number(ev.sg_sales_24h)} SG sold 24h`;
-      meta.append(note);
-    }
     a.append(meta);
     return a;
   }
 
-  // Render the "Moving fast in NYC" strip — horizontal card row above
-  // the main grid. Each card carries 1+ multi-label badges (selling_fast /
-  // demand_rising / trending / deal). Top 1% of qualifying pool, clamped
-  // server-side to [5, 8] cards.
-  function renderMoversStrip(strip, row, payload) {
-    const items = (payload && payload.events) || [];
-    row.replaceChildren();
-    if (!items.length) { strip.hidden = true; return; }
-    strip.hidden = false;
-    for (const ev of items) {
-      row.append(_moverCard(ev));
+  // Render the 4 themed sliders. Each one builds a labeled <section> with
+  // a horizontal scrolling row of `_moverCard()`s. Empty sections are
+  // skipped entirely (no header rendered); when all 4 are empty, the
+  // whole container hides.
+  function renderMoversSections(host, payload) {
+    host.replaceChildren();
+    let rendered = 0;
+    for (const cfg of SECTIONS) {
+      const items = (payload && payload[cfg.key]) || [];
+      if (!items.length) continue;
+      const section = document.createElement("section");
+      section.className = `movers-section movers-${cfg.key.replace(/_/g, "-")}`;
+      section.setAttribute("aria-label", cfg.title);
+      const h = document.createElement("h2");
+      h.className = "movers-section-title";
+      h.textContent = cfg.title;
+      section.append(h);
+      const row = document.createElement("div");
+      row.className = "movers-section-row";
+      for (const ev of items) {
+        row.append(_moverCard(ev, cfg.accent(ev)));
+      }
+      section.append(row);
+      host.append(section);
+      rendered += 1;
     }
-  }
-
-  // Render the "More moving in NYC" rest grid (2 rows × 5 cards). Same card
-  // markup as the strip. Server sends `rest` array (≤10) sampled proportional
-  // to label distribution; padded from owned-1-50 events when primary thin.
-  function renderMoversRest(section, gridEl, payload) {
-    const items = (payload && payload.rest) || [];
-    gridEl.replaceChildren();
-    if (!items.length) { section.hidden = true; return; }
-    section.hidden = false;
-    for (const ev of items) {
-      gridEl.append(_moverCard(ev));
-    }
+    host.hidden = rendered === 0;
   }
 
   // Shows a "Showing events for ___" banner above the catalog when the user

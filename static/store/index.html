@@ -63,22 +63,11 @@
       <!-- Filter banner — shown when the catalog was opened via a
            ?performer_id= or ?venue_id= link from an event page. -->
       <div id="catalogFilterBanner" class="banner" hidden></div>
-      <!-- Movers strip — top events in NYC for the next 3 weeks by
-           24h ticket velocity. Hidden when the user is filtered (the
-           strip is a home-view discovery aid, not a filter-respecting
-           list). Populated by /api/store/movers. -->
-      <section id="moversStrip" class="movers-strip" hidden aria-label="Moving fast in NYC">
-        <h2 class="movers-title">Moving fast in NYC · next 3 weeks</h2>
-        <div id="moversRow" class="movers-row"></div>
-      </section>
-      <!-- Rest section — 10 cards in 2 rows × 5, sampled proportionally to the
-           label distribution in the pool. Padded from owned-1-50 events if the
-           strict owned>50 primary pool runs short. Populated by /api/store/movers
-           (response key: `rest`). -->
-      <section id="moversRest" class="movers-rest" hidden aria-label="More moving in NYC">
-        <h2 class="movers-rest-title">More moving in NYC</h2>
-        <div id="moversRestGrid" class="movers-rest-grid"></div>
-      </section>
+      <!-- Themed sliders container — populated dynamically from
+           /api/store/movers (response keys: moving_fast, price_drops,
+           climbing, specials). Each section becomes one horizontal
+           slider with its own header; empty sections are hidden. -->
+      <div id="moversSections" class="movers-sections" hidden></div>
       <div id="status" class="status" aria-live="polite">Loading available events…</div>
       <div id="grid" class="grid" hidden></div>
       <div id="empty" class="empty" hidden>
