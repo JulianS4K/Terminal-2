@@ -1127,6 +1127,19 @@ a.perf-chip:hover {
   flex-direction: column;
   gap: 22px;
 }
+
+/* Featured rail (operator directive 2026-05-19): top-of-home curated row
+   combining playoff + owned>200 + NYC specials. Slightly larger title +
+   accent color so it visually leads the page. */
+.movers-section.movers-featured .movers-section-title {
+  font-size: 16px;
+  color: var(--accent, #ff5c2a);
+  letter-spacing: 0.5px;
+}
+.movers-section.movers-featured .mover-accent {
+  background: var(--accent, #ff5c2a);
+  color: #111;
+}
 .movers-section-title {
   font-size: 14px;
   font-weight: 700;

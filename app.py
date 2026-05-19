@@ -5288,6 +5288,68 @@ def _section_specials(candidates: list[dict],
     return out[:cap]
 
 
+def _section_featured(candidates: list, holiday_by_eid: dict, rivalry_by_eid: dict, cap: int = 12) -> list:
+    """Featured rail — operator directive 2026-05-19. Combines THREE qualifying
+    signals into a single curated row that sits at the top of the home page:
+
+      1. Playoff games — any event whose name regex-matches via
+         `_classify_playoff()` (NBA Finals, Conference Finals, Stanley Cup,
+         World Series, "(Game N)", "Round N", etc.)
+      2. High-owned — `owned_tickets_count > 200` (depth bar set by operator)
+      3. Specials — owned > 100 AND (holiday OR rivalry) — absorbs the
+         prior `_section_specials` rail; FE drops it as a separate row
+
+    Each card gets a `_featured_tag` and `_featured_kind` describing what
+    earned the slot. Tag selection is strongest-signal-first:
+      playoff > rivalry > holiday > high_owned
+
+    Operates over the same candidate pool as the other sections (city-filtered
+    upstream — NYC for v1). A future expansion could pull globally for
+    playoff coverage outside NYC.
+    """
+    out = []
+    seen = set()
+    for c in candidates:
+        eid = c.get("id")
+        if eid is None:
+            continue
+        try:
+            eid_int = int(eid)
+        except (TypeError, ValueError):
+            continue
+        if eid_int in seen:
+            continue
+        owned = c.get("owned_tickets_count") or 0
+        playoff = _classify_playoff(c.get("name") or "")
+        holiday = holiday_by_eid.get(eid_int)
+        rivalry = rivalry_by_eid.get(eid_int)
+        is_playoff = bool(playoff)
+        is_high_owned = owned > 200
+        is_special = (owned > 100) and (holiday or rivalry)
+        if not (is_playoff or is_high_owned or is_special):
+            continue
+        # Tag selection — strongest narrative first
+        if is_playoff:
+            c["_featured_tag"] = (playoff.get("label") or "Playoff")
+            c["_featured_kind"] = "playoff"
+        elif rivalry:
+            c["_featured_tag"] = rivalry
+            c["_featured_kind"] = "rivalry"
+        elif holiday:
+            c["_featured_tag"] = holiday
+            c["_featured_kind"] = "holiday"
+        elif is_high_owned:
+            c["_featured_tag"] = f"{owned} owned tickets"
+            c["_featured_kind"] = "high_owned"
+        else:
+            c["_featured_tag"] = ""
+            c["_featured_kind"] = ""
+        out.append(c)
+        seen.add(eid_int)
+    out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
+    return out[:cap]
+
+
 def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     """Pure compute path for the movers endpoint. Extracted from the route
     handler so both the cold-cache code path AND the background-refresh
@@ -5618,11 +5680,18 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     price_drops = _section_price_drops(candidates)
     climbing = _section_climbing(candidates)
     specials = _section_specials(candidates, holiday_by_eid, rivalry_by_eid)
+    # Featured (operator directive 2026-05-19): playoff games + owned>200 +
+    # NYC specials. Sits at the top of the home page; absorbs the standalone
+    # specials rail. Built off the same candidate pool so signals stay
+    # consistent across rails. `specials` is still returned for backward
+    # compat (legacy FE renders an empty section gracefully).
+    featured = _section_featured(candidates, holiday_by_eid, rivalry_by_eid)
 
     return {
         "city": city,
         "days": day_cap,
-        "count": len(moving_fast) + len(price_drops) + len(climbing) + len(specials),
+        "count": len(moving_fast) + len(price_drops) + len(climbing) + len(specials) + len(featured),
+        "featured": featured,
         "moving_fast": moving_fast,
         "price_drops": price_drops,
         "climbing": climbing,
