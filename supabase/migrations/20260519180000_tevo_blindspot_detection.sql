@@ -13,11 +13,12 @@
 --     get-in price firming. Composite score drops from 4 signals (SG)
 --     to 2 signals (TEvo).
 --
--- CANDIDATE GATES (operator-confirmed 2026-05-19, batch 1):
+-- CANDIDATE GATES (operator-confirmed 2026-05-19):
 --   * owned_tickets_count = 0           — the blindspot
 --   * tickets_count       >= 25          — real broker market depth
---   * occurs_at in [today+30d, today+90d] — drop game-time noise, keep
---     a sourcing-actionable window
+--   * occurs_at in [today+31d, today+365d] — drop game-time noise + open
+--     the upper bound to 1 year (was 90d in v1; widened per operator
+--     2026-05-19 — longer-horizon inventory is sourcing-actionable too)
 --   * US or Canada venue                 — state/province regex match on
 --     `events.venue_location` (e.g. "Boston, MA" / "Toronto, ON")
 --   * get-in-without-parking >= $50      — recomputed from
@@ -79,9 +80,9 @@ WITH base AS (
   JOIN public.latest_event_metrics lem ON lem.event_id = e.id
   LEFT JOIN public.event_lifecycle el  ON el.event_id = e.id
   WHERE
-    -- Forward window: 30..90 days out (drop game-time + far-future)
-    e.occurs_at_local::date >= CURRENT_DATE + interval '30 days'
-    AND e.occurs_at_local::date <= CURRENT_DATE + interval '90 days'
+    -- Forward window: 31..365 days out (drop game-time, allow long horizon)
+    e.occurs_at_local::date >= CURRENT_DATE + interval '31 days'
+    AND e.occurs_at_local::date <= CURRENT_DATE + interval '365 days'
     -- Blindspot: we own nothing
     AND lem.owned_tickets_count = 0
     -- Real market depth
@@ -143,7 +144,7 @@ WHERE velocity_fresh
   AND (signal_listings_drop OR signal_price_rise);
 
 COMMENT ON VIEW public.v_tevo_blindspot_movers IS
-  'TEvo blindspot mover candidates: US/CA events 30-90d out where we own 0
+  'TEvo blindspot mover candidates: US/CA events 31-365d out where we own 0
    tickets, broker pool has >=25 listings, parking-aware get-in >= $50, and
    the pool is showing demand signals (listings shrinking and/or get-in
    firming). 2-signal composite (no sales data on TEvo broker side).
@@ -161,7 +162,7 @@ DROP FUNCTION IF EXISTS public.get_blind_spots_tevo_selling(int, int, int, text)
 
 CREATE OR REPLACE FUNCTION public.get_blind_spots_tevo_selling(
   p_min_score int       DEFAULT 2,    -- 2 = both signals fire; 1 = either
-  p_horizon_days int    DEFAULT 90,
+  p_horizon_days int    DEFAULT 365,  -- view caps at 365d; callers can tighten
   p_limit int           DEFAULT 25,
   p_venue_pattern text  DEFAULT NULL  -- e.g. '%New York%' to narrow within US/CA
 )
@@ -222,7 +223,7 @@ GRANT EXECUTE ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, tex
 COMMENT ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, text) IS
   'BLIND SPOTS — TEvo SELLING, WE''RE NOT. 2-signal composite over broker
    pool (no sales data on TEvo broker side). Candidate gates: owned=0,
-   tickets>=25, 30-90d out, US/CA venue, parking-aware get-in >= $50.
+   tickets>=25, 31-365d out, US/CA venue, parking-aware get-in >= $50.
    Signals: listings shrinking (d24h <= -10) + get-in rising (>= +5%).
    Default min_score=2 = both signals. p_venue_pattern accepts ILIKE
    wildcards for narrower geo scoping within US/CA. Companion to
@@ -237,8 +238,8 @@ COMMENT ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, text) IS
 --          count(*) FILTER (WHERE selling_score=1) AS one_signal,
 --          round(avg(getin_no_parking)::numeric, 0) AS avg_getin
 --   FROM public.v_tevo_blindspot_movers;
---   -- Baseline pool (any signal): ~16-25 events expected (16 measured
---   -- 2026-05-19 before velocity scoring layered on)
+--   -- Baseline pool (any signal): ~34+ events expected (34 measured
+--   -- 2026-05-19 with 31-365d window, before velocity scoring layered on)
 --
 --   -- 2. RPC smoke (as authenticated user with email JWT)
 --   SELECT public.get_blind_spots_tevo_selling();             -- defaults
@@ -251,6 +252,7 @@ COMMENT ON FUNCTION public.get_blind_spots_tevo_selling(int, int, int, text) IS
 --   WHERE getin_no_parking < 50
 --      OR tickets_count < 25
 --      OR owned_tickets_count <> 0
---      OR occurs_at_local::date < CURRENT_DATE + interval '30 days';
+--      OR occurs_at_local::date < CURRENT_DATE + interval '31 days'
+--      OR occurs_at_local::date > CURRENT_DATE + interval '365 days';
 --   -- Expect 0.
 -- ============================================================
