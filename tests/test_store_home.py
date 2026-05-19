@@ -1050,3 +1050,65 @@ def test_section_specials_rivalry_wins_over_holiday():
     assert len(out) == 1
     assert out[0]["_special"] == "Yankees vs Red Sox"
     assert out[0]["_special_kind"] == "rivalry"
+
+
+# ---------- _classify_holiday_proximity tests ----------
+#
+# Operator 2026-05-19 v6: "suffix only when weekend = true, not for a
+# tuesday event". Helper returns "day_of" | "weekend_of" | None for the
+# ±2-day window expansion around a holiday's observed_date.
+# Reference holiday: Memorial Day Mon May 25, 2026 (weekday()=0).
+
+
+def test_classify_holiday_proximity_day_of():
+    """Candidate on the exact observed_date → 'day_of'."""
+    assert app_module._classify_holiday_proximity(
+        "2026-05-25", "2026-05-25"
+    ) == "day_of"
+
+
+def test_classify_holiday_proximity_saturday_before():
+    """Saturday before Memorial Day Mon → 'weekend_of'."""
+    assert app_module._classify_holiday_proximity(
+        "2026-05-23", "2026-05-25"  # Sat May 23 (weekday 5) → weekend
+    ) == "weekend_of"
+
+
+def test_classify_holiday_proximity_sunday_before():
+    """Sunday before Memorial Day Mon → 'weekend_of'."""
+    assert app_module._classify_holiday_proximity(
+        "2026-05-24", "2026-05-25"  # Sun May 24 (weekday 6) → weekend
+    ) == "weekend_of"
+
+
+def test_classify_holiday_proximity_tuesday_after_returns_none():
+    """The operator's exact case: Tue May 26 after Memorial Day Mon
+    May 25 is NOT 'Memorial Day Weekend'. Helper returns None so the
+    upstream loop skips tagging this event with the holiday."""
+    assert app_module._classify_holiday_proximity(
+        "2026-05-26", "2026-05-25"  # Tue May 26 (weekday 1) → no tag
+    ) is None
+
+
+def test_classify_holiday_proximity_friday_before_returns_none():
+    """Friday two days before Memorial Day Mon → no tag. Friday isn't
+    Sat or Sun; the long-weekend lead-in is not Featured-as-holiday
+    territory (the event still flows to other Featured branches if it
+    qualifies on owned_median or market-anchor)."""
+    assert app_module._classify_holiday_proximity(
+        "2026-05-22", "2026-05-25"  # Fri May 22 (weekday 4) → no tag
+    ) is None
+
+
+def test_classify_holiday_proximity_fathers_day_saturday():
+    """Father's Day = Sun Jun 21, 2026. Saturday Jun 20 → 'weekend_of'."""
+    assert app_module._classify_holiday_proximity(
+        "2026-06-20", "2026-06-21"  # Sat Jun 20 (weekday 5) → weekend
+    ) == "weekend_of"
+
+
+def test_classify_holiday_proximity_invalid_input_returns_none():
+    """Malformed ISO date → None (defensive — caller may pass empty
+    observed_date string when chosen row lacks the field)."""
+    assert app_module._classify_holiday_proximity("", "2026-05-25") is None
+    assert app_module._classify_holiday_proximity("not-a-date", "2026-05-25") is None

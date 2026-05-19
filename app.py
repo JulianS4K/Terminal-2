@@ -1158,6 +1158,38 @@ _HOLIDAY_PRIORITY: dict[str, int] = {
 }
 
 
+def _classify_holiday_proximity(candidate_date_iso: str,
+                                observed_date_iso: str) -> str | None:
+    """Decide whether a candidate event date earns a holiday tag, and what
+    flavor. Returns one of:
+      - "day_of"     → candidate == observed_date           (tag "Memorial Day")
+      - "weekend_of" → candidate is Sat/Sun in ±2 window    (tag "Memorial Day Weekend")
+      - None         → candidate is a non-holiday weekday   (no tag)
+
+    Operator directive 2026-05-19 v6: "suffix only when weekend = true,
+    not for a tuesday event". A Tuesday after Memorial Day Monday is NOT
+    Memorial Day Weekend — the holiday window-expansion (±2 from observed_date)
+    only earns a weekend tag for actual weekend days. Other weekdays in
+    the window fall back to the non-holiday Featured branches (premium,
+    market-anchor) or land in other rails (moving_fast, etc.).
+
+    Pure function — accepts ISO date strings, returns a string or None.
+    Caller is expected to have already verified the candidate's date is
+    within ±2 days of observed_date (i.e. the holiday is in range).
+    """
+    from datetime import date as _date_cls
+    try:
+        cand_d = _date_cls.fromisoformat(candidate_date_iso)
+    except (TypeError, ValueError):
+        return None
+    if candidate_date_iso == observed_date_iso:
+        return "day_of"
+    # weekday(): 0=Mon..6=Sun; 5=Sat, 6=Sun
+    if cand_d.weekday() in (5, 6):
+        return "weekend_of"
+    return None
+
+
 def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
     """Bulk-fetch all six context dimensions a storefront card / detail page
     might surface, in one helper.
@@ -5958,13 +5990,16 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                 ))
                 chosen = applicable[0]
                 hname = chosen.get("holiday_name", "")
-                # Day-of vs weekend-of: if candidate occurs exactly on the
-                # holiday's observed_date, label as the bare holiday name.
-                # Otherwise label as "{Holiday} Weekend" via the section
-                # helper. Operator directive 2026-05-19: distinguish the
-                # actual day from adjacent days in rail badges.
-                is_day_of = (chosen.get("observed_date") == cd)
-                holiday_by_eid[eid_int] = {"name": hname, "weekend": not is_day_of}
+                # Day-of vs weekend-of vs skip: see _classify_holiday_proximity
+                # docstring. Operator 2026-05-19 v6: Tuesday after Memorial Day
+                # Monday is NOT "Memorial Day Weekend" — only Sat/Sun in the
+                # ±2 window earn the weekend tag.
+                proximity = _classify_holiday_proximity(cd, chosen.get("observed_date") or "")
+                if proximity == "day_of":
+                    holiday_by_eid[eid_int] = {"name": hname, "weekend": False}
+                elif proximity == "weekend_of":
+                    holiday_by_eid[eid_int] = {"name": hname, "weekend": True}
+                # else: non-weekend weekday in window → no tag
     except Exception as e:
         print(f"store_movers holiday-window expansion failed: {e}")
 
