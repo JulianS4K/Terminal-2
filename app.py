@@ -5358,7 +5358,7 @@ def _section_specials(candidates: list[dict],
 def _section_featured(candidates: list,
                       holiday_by_eid: dict,
                       rivalry_by_eid: dict,
-                      cap: int = 12) -> list:
+                      cap: int = 20) -> list:
     """Featured rail — operator directive 2026-05-19 v3. Multi-signal
     curation. All branches require `owned_tickets_count > 100`. Tag
     selection: playoff > rivalry > holiday > marquee > premium.
