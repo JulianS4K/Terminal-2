@@ -1091,6 +1091,32 @@ def _classify_playoff(event_name: str | None) -> dict | None:
     return None
 
 
+# Marquee competitions — events that aren't playoffs but carry their own
+# editorial weight (US Open Tennis, F1 Grand Prix, Inter Miami away). Added
+# 2026-05-19 v3 for the Featured rail's narrative-signal branch.
+_MARQUEE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^US\s+Open\s+Tennis\b", re.I),                 "US Open Tennis"),
+    (re.compile(r"\bFormula\s*1\b|\bGrand\s+Prix\b", re.I),      "F1"),
+    # Inter Miami AWAY only — when the matchup is "Inter Miami CF at <home>".
+    # Home games carry less narrative interest (we're not catering to local
+    # Miami buyers in this storefront's scope).
+    (re.compile(r"^Inter\s+Miami\s+CF\s+at\s+", re.I),           "Inter Miami away"),
+]
+
+
+def _classify_marquee_competition(event_name: str | None) -> str | None:
+    """Return a marquee-competition label for the event name, or None.
+    Used by `_section_featured` to flag US Open / F1 / Inter Miami away
+    games into the Featured rail regardless of pricing signals.
+    """
+    if not event_name:
+        return None
+    for pat, label in _MARQUEE_PATTERNS:
+        if pat.search(event_name):
+            return label
+    return None
+
+
 def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
     """Bulk-fetch all six context dimensions a storefront card / detail page
     might surface, in one helper.
@@ -5288,41 +5314,66 @@ def _section_specials(candidates: list[dict],
     return out[:cap]
 
 
-def _section_featured(candidates: list, cap: int = 12) -> list:
-    """Featured rail — operator directive 2026-05-19 (narrowed 2026-05-19 v2).
-    Only two qualifying signals (specials + high-owned dropped — those flow
-    to their own rails via cross-list dedup):
+def _section_featured(candidates: list,
+                      holiday_by_eid: dict,
+                      rivalry_by_eid: dict,
+                      cap: int = 12) -> list:
+    """Featured rail — operator directive 2026-05-19 v3. Multi-signal
+    curation. All branches require `owned_tickets_count > 100`. Tag
+    selection: playoff > rivalry > holiday > marquee > premium.
 
-      1. Playoff games — `_classify_playoff()` regex hit
-      2. Premium-owned market — `owned_median_retail > $50`
+      1. Playoff games           — `_classify_playoff()` regex hit
+      2. Holiday calendar games  — date within holiday window (±2 days
+                                   from observed_date; weekend coverage)
+      3. Rivalry games           — `v_rivalry_events` membership
+      4. Marquee competitions    — US Open Tennis / F1 / Inter Miami away
+      5. Other category          — `owned_median_retail > $50` catch-all
+                                   (concerts, regular-season home games,
+                                   anything not in 1-4)
 
-    Each card gets `_featured_tag` describing the qualifier:
-      playoff label > "" (premium-only events show no tag; section title
-      "Featured" carries the framing). Internal owned-count labels removed
-      per operator directive — those are not consumer-facing.
+    Premium-only events show no tag (section title "Featured" carries the
+    framing). Internal owned-count labels not exposed.
     """
     out = []
     for c in candidates:
         eid = c.get("id")
         if eid is None:
             continue
-        playoff = _classify_playoff(c.get("name") or "")
-        med = c.get("owned_median_retail")
         try:
-            med_f = float(med) if med is not None else None
+            eid_int = int(eid)
         except (TypeError, ValueError):
-            med_f = None
-        is_playoff = bool(playoff)
-        is_premium = (med_f is not None) and (med_f > 50.0)
-        if not (is_playoff or is_premium):
             continue
-        # Consumer-friendly tag only. Playoff label wins; premium-only
-        # events get no tag (no internal owned counts in consumer UI).
-        if is_playoff:
+        owned = c.get("owned_tickets_count") or 0
+        if owned <= 100:
+            # Global gate — every Featured event needs depth
+            continue
+        playoff = _classify_playoff(c.get("name") or "")
+        rivalry = rivalry_by_eid.get(eid_int)
+        holiday = holiday_by_eid.get(eid_int)
+        marquee = _classify_marquee_competition(c.get("name") or "")
+        # Branches 1-4: specific narrative signals (any of) → always Featured
+        if playoff:
             c["_featured_tag"] = (playoff.get("label") or "Playoff")
             c["_featured_kind"] = "playoff"
+        elif rivalry:
+            c["_featured_tag"] = rivalry
+            c["_featured_kind"] = "rivalry"
+        elif holiday:
+            c["_featured_tag"] = holiday
+            c["_featured_kind"] = "holiday"
+        elif marquee:
+            c["_featured_tag"] = marquee
+            c["_featured_kind"] = "marquee"
         else:
-            c["_featured_tag"] = ""
+            # Branch 5: "any other category" — requires median > $50
+            med = c.get("owned_median_retail")
+            try:
+                med_f = float(med) if med is not None else None
+            except (TypeError, ValueError):
+                med_f = None
+            if not (med_f is not None and med_f > 50.0):
+                continue
+            c["_featured_tag"] = ""  # no internal-metric chip on consumer UI
             c["_featured_kind"] = "premium"
         out.append(c)
     out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
@@ -5675,9 +5726,67 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             out.append(c)
         return out
 
-    # Featured = playoff + owned_median_retail > $50 (narrow per operator).
+    # Holiday-window expansion (operator directive 2026-05-19 v3): the base
+    # `v_event_holidays` view does an exact-date join on observed_date,
+    # which misses Memorial Day Saturday/Sunday games etc. Build a wider
+    # ±2 day window map by querying the `holidays` table directly and
+    # matching against candidate event dates. Failures degrade silently.
+    try:
+        cand_dates = sorted({
+            (c.get("occurs_at_local") or "")[:10]
+            for c in candidates if c.get("occurs_at_local")
+        })
+        if cand_dates:
+            from datetime import date as _date_cls
+            win_lo = (_date_cls.fromisoformat(cand_dates[0])  - timedelta(days=2)).isoformat()
+            win_hi = (_date_cls.fromisoformat(cand_dates[-1]) + timedelta(days=2)).isoformat()
+            holiday_rows = (db.table("holidays")
+                              .select("observed_date,holiday_name,country,state,city")
+                              .gte("observed_date", win_lo)
+                              .lte("observed_date", win_hi)
+                              .execute().data) or []
+            date_to_holiday: dict[str, str] = {}
+            for h in holiday_rows:
+                obs = h.get("observed_date")
+                if not obs:
+                    continue
+                # Skip regionally-scoped holidays (city/state) for the window
+                # build — universal/country holidays only (Memorial Day, etc.)
+                if h.get("city") or h.get("state"):
+                    continue
+                try:
+                    obs_d = _date_cls.fromisoformat(obs)
+                except (TypeError, ValueError):
+                    continue
+                # Window: -2 day (Sat) through +1 day after observed Monday
+                # (Tue) — covers Sat-Mon Memorial/Labor Day weekend, plus
+                # the day after for any spillover events.
+                for dd in range(-2, 2):
+                    ds = (obs_d + timedelta(days=dd)).isoformat()
+                    if ds not in date_to_holiday:
+                        date_to_holiday[ds] = h["holiday_name"]
+            # Augment holiday_by_eid for events that didn't get an exact match
+            for c in candidates:
+                eid = c.get("id")
+                if eid is None:
+                    continue
+                try:
+                    eid_int = int(eid)
+                except (TypeError, ValueError):
+                    continue
+                if eid_int in holiday_by_eid:
+                    continue
+                cd = (c.get("occurs_at_local") or "")[:10]
+                tag = date_to_holiday.get(cd)
+                if tag:
+                    holiday_by_eid[eid_int] = tag
+    except Exception as e:
+        print(f"store_movers holiday-window expansion failed: {e}")
+
+    # Featured = playoff OR holiday-weekend OR rivalry OR marquee competition
+    # OR (other category with owned_median > $50). Owned > 100 required globally.
     # Runs FIRST so curated picks win over generic-velocity rails.
-    featured = _consume(_section_featured(candidates))
+    featured = _consume(_section_featured(candidates, holiday_by_eid, rivalry_by_eid))
     moving_fast = _consume(_section_moving_fast(candidates))
     price_drops = _consume(_section_price_drops(candidates))
     climbing = _consume(_section_climbing(candidates))
