@@ -21,6 +21,12 @@
 --     2026-05-19 — longer-horizon inventory is sourcing-actionable too)
 --   * US or Canada venue                 — state/province regex match on
 --     `events.venue_location` (e.g. "Boston, MA" / "Toronto, ON")
+--   * NOT big 5 sports                   — exclude MLB / NBA / NFL / NHL /
+--     MLS via `event_xref.espn_league`. Big 5 events are already heavily
+--     tracked + dominate the broker pool; the detector adds value on
+--     niche sports + concerts + theater where coverage is thinner.
+--     Unmapped events (espn_league IS NULL) stay in the pool — they're
+--     the actual discovery candidates.
 --   * get-in-without-parking >= $50      — recomputed from
 --     `listings_snapshots.retail_price` excluding sections matching
 --     `%park%|%lot%|%garage%|%valet%`. TEvo bible §3 landmine: parking
@@ -117,6 +123,15 @@ WITH base AS (
   FROM public.events e
   JOIN public.latest_event_metrics lem ON lem.event_id = e.id
   LEFT JOIN public.event_lifecycle el  ON el.event_id = e.id
+  -- Two parallel league-mapping sources joined for big-5 exclusion. Both
+  -- are LEFT JOINs so unmapped events stay in the pool — they're the
+  -- actual discovery candidates. Coverage on the current 132-event pool:
+  --   performer_metadata.espn_league via primary_performer_id   126/132
+  --   event_xref.espn_league via tevo_event_id                   96/132
+  -- Union catches ~all big-5 events; remaining holes are speculative
+  -- "TBD" / "If Necessary" rows already filtered by the name rules below.
+  LEFT JOIN public.performer_metadata pm ON pm.performer_id = e.primary_performer_id
+  LEFT JOIN public.event_xref ex         ON ex.tevo_event_id  = e.id
   WHERE
     -- Forward window: 31..365 days out (drop game-time, allow long horizon)
     e.occurs_at_local::date >= CURRENT_DATE + interval '31 days'
@@ -127,6 +142,15 @@ WITH base AS (
     AND lem.tickets_count >= 25
     -- Active lifecycle
     AND (el.is_active IS NULL OR el.is_active = true)
+    -- Big 5 sports already heavily tracked → hard exclude. Either source
+    -- saying big-5 is sufficient grounds for exclusion. Concerts, niche
+    -- sports, theater, and other discovery candidates stay (both fields
+    -- NULL or other-league). Espn league codes are upper-case per
+    -- matcher v3 convention.
+    AND NOT (
+      coalesce(pm.espn_league, '') IN ('MLB','NBA','NFL','NHL','MLS')
+      OR coalesce(ex.espn_league, '') IN ('MLB','NBA','NFL','NHL','MLS')
+    )
     -- Speculative-name filter (mirrors storefront)
     AND e.name NOT ILIKE '%CANCELLED%'
     AND e.name NOT ILIKE '%(If Necessary)%'
