@@ -57,6 +57,7 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from urllib.robotparser import RobotFileParser
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -154,6 +155,39 @@ class Performance:
 
 
 @dataclass
+class BroadwayShowStub:
+    """Minimal show pointer returned by discover_shows().
+
+    Just enough to drive a follow-up discover_performances(slug) call.
+    Full metadata arrives later via fetch_sections payload.show."""
+    slug: str
+    title: str | None = None
+    show_page_url: str | None = None
+
+
+@dataclass
+class SnapshotShowResult:
+    """Structured result from snapshot_show().
+
+    discover_error is set when discover_performances raised; in that
+    case snapshots and fetch_errors are empty. Otherwise both lists
+    are populated per-performance.
+    """
+    slug: str
+    discover_error: "BroadwayError | None" = None
+    snapshots: list["SectionsSnapshot"] = field(default_factory=list)
+    fetch_errors: list[dict] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.discover_error is None
+
+    @property
+    def attempted(self) -> int:
+        return len(self.snapshots) + len(self.fetch_errors)
+
+
+@dataclass
 class SectionsSnapshot:
     slug: str
     show_id: int                     # = show.aristotle_id (URL middle)
@@ -174,6 +208,33 @@ class SectionsSnapshot:
     types: list[SectionListing]
     alerts: list[Any]
     raw_payload: dict[str, Any] | None = None
+
+
+# ---------- idempotency helper ----------
+
+def quantize_capture_time(captured_at: datetime, bucket: str) -> datetime:
+    """Round captured_at to the bucket-appropriate granularity so
+    duplicate cron firings within the same dedup window can't both
+    write to broadway_listings_snapshots (PK collision becomes a
+    feature, not a bug).
+
+    Buckets match supabase/migrations/<ts>_broadway_listings_pipeline.sql:
+      '0-72h' bucket — hourly cron, 50min dedup → round to minute
+      '72h+'  bucket — daily cron, 20h  dedup → round to hour
+
+    The write-through path (future broadway_collect edge function)
+    quantizes before INSERT, so two firings within the same minute
+    (hot) or hour (cold) attempt the same primary key — ON CONFLICT
+    DO NOTHING absorbs the duplicate cleanly.
+    """
+    if bucket == "0-72h":
+        return captured_at.replace(second=0, microsecond=0)
+    if bucket == "72h+":
+        return captured_at.replace(minute=0, second=0, microsecond=0)
+    raise ValueError(
+        f"quantize_capture_time: unknown bucket {bucket!r}, "
+        "expected '0-72h' or '72h+'"
+    )
 
 
 # ---------- client ----------
@@ -222,12 +283,18 @@ class BroadwayClient:
         timeout_s: int = 25,
         user_agent: str | None = None,
         pace_s: float = 1.5,
+        respect_robots: bool = True,
     ):
         self.db = db
         self.timeout_s = timeout_s
         self.pace_s = pace_s
+        self.respect_robots = respect_robots
         self._last_request_at: float = 0.0
         self.session = requests.Session()
+        # Lazy-loaded /robots.txt policy per host base. Populated on
+        # first _check_robots call, then cached for the session.
+        self._robots: dict[str, "RobotFileParser"] = {}
+        self._robots_loaded: bool = False
         _ua = user_agent or os.environ.get(
             "BROADWAY_USER_AGENT",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -250,8 +317,69 @@ class BroadwayClient:
         if elapsed < self.pace_s:
             time.sleep(self.pace_s - elapsed + random.uniform(0, 0.25))
 
+    def _ensure_robots(self) -> None:
+        """Lazy-fetch /robots.txt for www + checkout broadway hosts and
+        cache the parsed policy. Fail-open: if the fetch returns any
+        non-200 (including egress-proxy 403, Fastly bot deny, 404,
+        500) or raises, we treat that host as 'no policy' rather than
+        blocking work.
+
+        We do our own urllib fetch + manual rp.parse() instead of
+        rp.read() because urllib.robotparser.RobotFileParser interprets
+        a 401/403 response as 'everything disallowed' — that's wrong
+        for our context (an egress block or Fastly deny should not
+        translate to 'we have a policy saying no').
+
+        Fetched via urllib stdlib (not requests.Session) to keep the
+        check independent of session cookies / pacing.
+        """
+        if self._robots_loaded:
+            return
+        self._robots_loaded = True
+        import urllib.request
+        ua = self.session.headers.get("User-Agent", "*")
+        for host_base in (WWW_BASE, CHECKOUT_BASE):
+            try:
+                req = urllib.request.Request(
+                    f"{host_base}/robots.txt",
+                    headers={"User-Agent": ua},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if getattr(resp, "status", 200) != 200:
+                        continue
+                    body = resp.read().decode("utf-8", errors="replace")
+            except Exception:
+                # Any failure — network, HTTP error, timeout — fail open.
+                continue
+            rp = RobotFileParser()
+            rp.parse(body.splitlines())
+            self._robots[host_base] = rp
+
+    def _check_robots(self, url: str) -> None:
+        """Raise BroadwayError if /robots.txt disallows this URL for
+        our UA. No-op when respect_robots=False or when robots.txt
+        isn't loadable. Policy compliance only — RULE 2 (GET-only) is
+        the security boundary and is unrelated."""
+        if not self.respect_robots:
+            return
+        self._ensure_robots()
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return
+        host_base = f"{parsed.scheme}://{parsed.netloc}"
+        rp = self._robots.get(host_base)
+        if rp is None:
+            return  # No policy for this host; fail open.
+        ua = self.session.headers.get("User-Agent", "*")
+        if not rp.can_fetch(ua, url):
+            raise BroadwayError(
+                f"robots.txt disallows {url} for UA {ua!r}. "
+                "Pass respect_robots=False to override (RULE 2 still applies)."
+            )
+
     def _get(self, url: str, *, max_retries: int = 3) -> tuple[int, str]:
         _assert_readonly_method("GET")
+        self._check_robots(url)
         attempt = 0
         backoff = 1.5
         while True:
@@ -546,10 +674,24 @@ class BroadwayClient:
 
         # Fallbacks — should rarely fire on a healthy page.
         listings = self._listings_from_html(html)
+        if not listings:
+            # HTTP 200 + no inline payload + no bs4 matches = either Fastly
+            # bot-challenge deflection (real Broadway origin never reached)
+            # or a page redesign. Either way, returning an empty snapshot
+            # is indistinguishable from a legitimately-empty performance,
+            # which silently corrupts downstream drift signals. Raise loud.
+            self._log_pull(
+                "sections", slug=slug, show_id=show_id, event_id=event_id,
+                status=status, rows=0,
+                error="200 OK but no inline payload and no listings — likely Fastly bot challenge or page redesign",
+            )
+            raise BroadwayParseError(
+                f"HTTP 200 but no inline payload and no listings for {url}. "
+                "Likely Fastly bot challenge or page redesign."
+            )
         self._log_pull(
             "sections", slug=slug, show_id=show_id, event_id=event_id,
             status=status, rows=len(listings),
-            error=None if listings else "parser found no listings — selectors may be stale",
         )
         return SectionsSnapshot(
             slug=slug,
@@ -613,22 +755,130 @@ class BroadwayClient:
                 day_of_week=a.get("data-dow"),
                 sections_url=f"{CHECKOUT_BASE}{parsed.path}",
             ))
+        if not out:
+            # Zero sections-URL anchors on a 200 response. Two cases:
+            # (a) real Broadway.com show page but the show legitimately
+            #     has no upcoming performances (closed/dark week);
+            # (b) Fastly bot-challenge or error page deflected as 200,
+            #     so we never hit the real origin.
+            # Distinguish by looking for any Broadway.com brand marker
+            # in the body — challenge pages don't have these. Conservative
+            # fingerprint: the slug itself appears in the HTML, or the
+            # canonical brand string "broadway.com" appears outside of
+            # script/href noise (cheap substring check is fine here).
+            html_lower = html.lower()
+            looks_like_broadway = (
+                slug.lower() in html_lower
+                or "broadway.com" in html_lower
+            )
+            if not looks_like_broadway:
+                self._log_pull(
+                    "show_page", slug=slug, show_id=None, event_id=None,
+                    status=status, rows=0,
+                    error="200 OK but no sections anchors and no Broadway.com markers — likely Fastly bot challenge or page redesign",
+                )
+                raise BroadwayParseError(
+                    f"HTTP 200 but no performances and no Broadway.com markers for {url}. "
+                    "Likely Fastly bot challenge or page redesign."
+                )
         self._log_pull("show_page", slug=slug, show_id=None, event_id=None,
                        status=status, rows=len(out))
         return out
 
-    def snapshot_show(self, slug: str) -> list[SectionsSnapshot]:
+    def discover_shows(self) -> list[BroadwayShowStub]:
+        """Harvest all current show slugs from /shows/.
+
+        Returns one stub per unique slug found on the index page. Cron
+        calls this once daily; results upsert into broadway_shows so
+        the pull queue can enumerate "all current Broadway shows"
+        without an operator-maintained slug list.
+
+        Same drift-detection guards as discover_performances:
+          - non-200 → BroadwayError
+          - 200 with zero anchors AND no Broadway.com markers in body
+            → BroadwayParseError (Fastly challenge / page redesign)
+          - 200 with zero anchors but markers present → returns []
+            (cold-start edge case — should not happen on a real
+            Broadway.com index, but tolerate it without raising)
+        """
+        url = f"{WWW_BASE}/shows/"
+        status, html = self._get(url)
+        if status != 200:
+            self._log_pull("shows_index", slug=None, show_id=None, event_id=None,
+                           status=status, rows=None, error=html[:300])
+            raise BroadwayError(f"shows index fetch returned {status} for {url}")
+        soup = BeautifulSoup(html, "html.parser")
+        seen: dict[str, BroadwayShowStub] = {}
+        # Match /shows/<slug>/ anchors (anywhere on the index). Skip the
+        # bare /shows/ link itself and any anchor whose slug contains
+        # non-slug characters.
+        show_path_re = re.compile(r"^/shows/(?P<slug>[a-z0-9][a-z0-9-]+)/?$", re.I)
+        for a in soup.find_all("a", href=True):
+            parsed = urlparse(a["href"])
+            host_ok = (not parsed.netloc) or parsed.netloc == "www.broadway.com"
+            if not host_ok:
+                continue
+            m = show_path_re.match(parsed.path)
+            if not m:
+                continue
+            slug = m.group("slug").lower()
+            if slug in seen:
+                continue
+            title = a.get_text(" ", strip=True) or None
+            seen[slug] = BroadwayShowStub(
+                slug=slug,
+                title=title,
+                show_page_url=f"{WWW_BASE}/shows/{slug}/",
+            )
+        out = list(seen.values())
+        if not out:
+            html_lower = html.lower()
+            if "broadway.com" not in html_lower:
+                self._log_pull(
+                    "shows_index", slug=None, show_id=None, event_id=None,
+                    status=status, rows=0,
+                    error="200 OK but no show anchors and no Broadway.com markers — likely Fastly bot challenge or page redesign",
+                )
+                raise BroadwayParseError(
+                    f"HTTP 200 but no shows and no Broadway.com markers for {url}. "
+                    "Likely Fastly bot challenge or page redesign."
+                )
+        self._log_pull("shows_index", slug=None, show_id=None, event_id=None,
+                       status=status, rows=len(out))
+        return out
+
+    def snapshot_show(self, slug: str) -> SnapshotShowResult:
         """Pull every performance's sections snapshot for a single show.
-        Intended as the daily-cron unit of work, one show at a time."""
-        perfs = self.discover_performances(slug)
-        snaps: list[SectionsSnapshot] = []
+
+        Returns a SnapshotShowResult that distinguishes:
+          - discover_error (whole-show failure: show page 403, parse error)
+          - per-performance fetch_errors (individual perf failed but
+            others may have succeeded)
+          - snapshots (successful captures)
+
+        Designed for cron use: caller iterates over a list of slugs and
+        aggregates SnapshotShowResults into a run-level summary.
+        """
+        out = SnapshotShowResult(slug=slug)
+        try:
+            perfs = self.discover_performances(slug)
+        except BroadwayError as e:
+            out.discover_error = e
+            return out
         for p in perfs:
             try:
-                snaps.append(self.fetch_sections(p.slug, p.show_id, p.event_id))
+                out.snapshots.append(
+                    self.fetch_sections(p.slug, p.show_id, p.event_id)
+                )
             except BroadwayError as e:
-                print(f"broadway: skipping {p.slug}/{p.show_id}/{p.event_id}: {e}",
-                      file=sys.stderr)
-        return snaps
+                out.fetch_errors.append({
+                    "slug": p.slug,
+                    "show_id": p.show_id,
+                    "event_id": p.event_id,
+                    "error_class": type(e).__name__,
+                    "error_message": str(e),
+                })
+        return out
 
 
 # ---------- CLI for smoke-testing ----------
@@ -647,6 +897,7 @@ def _main(argv: list[str]) -> int:
         print("  python broadway_client.py sections <slug> <show_id> <event_id>")
         print("  python broadway_client.py sections-url <full-url>")
         print("  python broadway_client.py discover <slug>")
+        print("  python broadway_client.py shows")
         print("  python broadway_client.py snapshot <slug>")
         print("  python broadway_client.py dump-raw <url> <out-path>")
         print("  python broadway_client.py parse-file <html-path>")
@@ -661,9 +912,18 @@ def _main(argv: list[str]) -> int:
     elif cmd == "discover":
         for p in cli.discover_performances(argv[2]):
             print(_json.dumps(asdict(p), default=str))
+    elif cmd == "shows":
+        for s in cli.discover_shows():
+            print(_json.dumps(asdict(s), default=str))
     elif cmd == "snapshot":
-        for s in cli.snapshot_show(argv[2]):
+        result = cli.snapshot_show(argv[2])
+        if result.discover_error:
+            print(f"discover failed: {result.discover_error}", file=sys.stderr)
+            return 4
+        for s in result.snapshots:
             _print_snapshot(s)
+        for err in result.fetch_errors:
+            print(_json.dumps({"fetch_error": err}), file=sys.stderr)
     elif cmd == "dump-raw":
         import pathlib as _pl
         url, out_arg = argv[2], argv[3]
