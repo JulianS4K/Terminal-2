@@ -41,8 +41,13 @@
 -- budget + continuing works on this Postgres.
 --
 -- Zone + section live in separate sub-blocks so a section timeout still keeps
--- any zone rows already written. The 7s total budget leaves ~1s under the 8s
+-- any zone rows already written. The 6s budget leaves ~2s under the 8s
 -- ceiling for the EXCEPTION handling + RETURN serialization.
+--
+-- The exception handlers list `query_canceled` EXPLICITLY: a bare WHEN OTHERS
+-- does not trap query_canceled (57014, what statement_timeout raises), so an
+-- OTHERS-only handler would let the cancellation propagate → edge fn still
+-- 502s. Verified live 2026-05-19 against the real heavy event.
 --
 -- ## What this does NOT change
 --
@@ -67,25 +72,36 @@ DECLARE
 BEGIN
   -- Zone step. Self-capped under the 8s authenticator ceiling so a slow
   -- event is caught here, not killed by PostgREST.
+  --
+  -- CRITICAL: the handler MUST list `query_canceled` explicitly. A bare
+  -- `WHEN OTHERS` does NOT trap query_canceled (57014) — that's the code
+  -- statement_timeout raises — so OTHERS-only would let the cancellation
+  -- propagate and the edge fn would still 502. Verified 2026-05-19 against
+  -- the real heavy event (3091452, 1310 rows / 7180 expanded qty): OTHERS
+  -- let it through; explicit query_canceled caught it cleanly.
   BEGIN
-    SET LOCAL statement_timeout = '7000ms';
+    SET LOCAL statement_timeout = '6000ms';
     v_zones := public.compute_event_zone_metrics(p_event_id, p_captured_at);
-  EXCEPTION WHEN OTHERS THEN
-    v_zone_ok := false;
-    RAISE NOTICE 'compute_event_breakdowns: zone soft-fail event %: %', p_event_id, SQLERRM;
+  EXCEPTION
+    WHEN query_canceled THEN v_zone_ok := false;
+    WHEN OTHERS         THEN v_zone_ok := false;
   END;
 
-  -- Section step (the heavy one). Shares the 7s total budget measured from
-  -- RPC start; a timeout here keeps whatever zone rows already landed.
+  -- Section step (the heavy one). Shares the budget measured from RPC start;
+  -- on a heavy event the zone step may have already consumed it, so this
+  -- cancels fast and is caught — both soft-fail, function still returns.
+  -- A timeout here keeps whatever zone rows already landed.
   BEGIN
-    SET LOCAL statement_timeout = '7000ms';
+    SET LOCAL statement_timeout = '6000ms';
     v_sections := public.compute_event_section_metrics(p_event_id, p_captured_at);
-  EXCEPTION WHEN OTHERS THEN
-    v_section_ok := false;
-    RAISE NOTICE 'compute_event_breakdowns: section soft-fail event %: %', p_event_id, SQLERRM;
+  EXCEPTION
+    WHEN query_canceled THEN v_section_ok := false;
+    WHEN OTHERS         THEN v_section_ok := false;
   END;
 
-  -- Restore a normal budget so the trailing RETURN isn't re-cancelled.
+  -- Restore a normal budget so the trailing RETURN isn't re-cancelled
+  -- (a savepoint rollback from the catch reverts the lowered SET LOCAL,
+  -- but be explicit). 6s inner + this leaves ~2s under the 8s ceiling.
   SET LOCAL statement_timeout = '8s';
 
   RETURN jsonb_build_object(
@@ -99,8 +115,9 @@ $fn$;
 
 COMMENT ON FUNCTION public.compute_event_breakdowns(bigint, timestamptz) IS
   'Computes zone + section metrics for one event snapshot. Non-fatal: '
-  'self-caps at 7s (under the 8s authenticator/PostgREST ceiling) and soft-'
-  'fails a slow step rather than erroring, so collect-listings no longer '
+  'self-caps at 6s (under the 8s authenticator/PostgREST ceiling), traps '
+  'query_canceled explicitly, and soft-fails a slow step rather than '
+  'erroring, so collect-listings no longer '
   '502s on heavy events after pricing has already persisted. Returns '
   'zones_written/sections_written + zone_ok/section_ok status flags. '
   'For out-of-band recompute of heavy events, call compute_event_zone_metrics '
