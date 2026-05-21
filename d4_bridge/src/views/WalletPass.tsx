@@ -1,0 +1,300 @@
+// WalletPass — fullscreen, lock-screen-friendly ticket pass.
+//
+// Lives at /wallet/pass/:ticketId. The user opens this when they get
+// to the door: it auto-keeps the screen awake (Wake Lock API), hides
+// the platform chrome (bare layout — see ChromeLayout in App.tsx),
+// and shows a single big QR code plus the minimum information a door
+// scanner / runner needs.
+//
+// We render this regardless of whether the holder added the ticket to
+// Apple/Google Wallet — many users won't, especially on desktop. The
+// native-wallet integrations are an enhancement on top of this.
+//
+// Status semantics — the QR is muted and the page shows a clear stamp
+// when the ticket is:
+//   * status === 'used'      → REDEEMED (already scanned)
+//   * status === 'voided'    → REFUNDED (organizer revoked / refunded)
+//   * pendingTransferId set  → IN TRANSFER (mid-flight to a recipient)
+// The same checks happen server-side at the door scanner — this UI
+// state is for the holder, not enforcement.
+//
+// Live updates — the ticket is re-fetched on a short poll so an
+// organizer-side void / scan / transfer-claim flips this screen within
+// ~15s, even while the holder is mid-stride at the door.
+
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
+import { ArrowLeft, Sun } from 'lucide-react';
+import { motion } from 'motion/react';
+import { getTicket } from '../lib/tickets';
+import { Event, Ticket } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { signBarcode, currentBucket } from '../lib/barcode';
+import { formatInTz } from '../lib/datetime';
+
+export default function WalletPass() {
+  const { ticketId } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [event, setEvent] = useState<Event | null>(null);
+  const [barcode, setBarcode] = useState('');
+  const [timeLeft, setTimeLeft] = useState(30);
+
+  // Ticket + event load, polled every 15s so an organizer-side void / scan /
+  // transfer-claim propagates to the screen the holder is showing the door
+  // staff. Without it a refunded ticket could sit on the holder's lock screen
+  // for minutes. (Replaces the Firestore onSnapshot live subscription; a
+  // Supabase Realtime channel is the eventual upgrade if 15s feels laggy.)
+  // getTicket joins the event, so one call covers both.
+  useEffect(() => {
+    if (!ticketId) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const t = await getTicket(ticketId);
+        if (cancelled) return;
+        setTicket(t);
+        setEvent(t?.event ?? null);
+      } catch {
+        /* transient read error — keep the last good render */
+      }
+    };
+    void load();
+    const poll = setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
+  }, [ticketId]);
+
+  // Rotating barcode refresh — same model as TicketDetail. Re-derives
+  // the signed payload at every bucket boundary using the per-ticket
+  // secret. Falls back to the legacy unsigned format for tickets that
+  // don't carry a secret (organizer scanner tolerates them as legacy).
+  useEffect(() => {
+    if (!ticket || !user) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const secret = ticket.barcodeSecret;
+      const bucket = currentBucket();
+      if (secret) {
+        try {
+          const signed = await signBarcode(ticket.id, user.uid, secret, bucket);
+          if (!cancelled) {
+            setBarcode(signed);
+            setTimeLeft(30);
+          }
+          return;
+        } catch (err) {
+          console.warn('Falling back to legacy unsigned barcode:', err);
+        }
+      }
+      if (!cancelled) {
+        setBarcode(`T-${ticket.id}:${user.uid}:${bucket}`);
+        setTimeLeft(30);
+      }
+    };
+    void refresh();
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          void refresh();
+          return 30;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [ticket, user]);
+
+  // Best-effort screen wake lock. Keeps the screen awake while the
+  // holder is showing this page at the door. Falls through silently
+  // when unsupported (Safari iOS < 16.4, Firefox).
+  useEffect(() => {
+    let lock: { release?: () => Promise<void> } | null = null;
+    void (async () => {
+      try {
+        // Wake Lock API isn't in the default TS lib types yet.
+        const nav = navigator as unknown as {
+          wakeLock?: { request: (type: string) => Promise<{ release: () => Promise<void> }> };
+        };
+        lock = (await nav.wakeLock?.request?.('screen')) ?? null;
+      } catch {
+        /* unsupported / page hidden / user-gesture missing — non-fatal */
+      }
+    })();
+    return () => {
+      try {
+        void lock?.release?.();
+      } catch {
+        /* */
+      }
+    };
+  }, []);
+
+  if (!ticket) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-400 font-bold uppercase tracking-widest text-xs">
+        Loading pass…
+      </div>
+    );
+  }
+
+  // Identity gate — only the owner sees the live barcode. The
+  // Firestore rule already enforces this for the document read,
+  // but the UI guards against rendering a stale-cached pass.
+  if (!user || user.uid !== ticket.ownerId) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-8 text-center">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">
+          Pass not available
+        </p>
+        <p className="text-slate-200 max-w-md">
+          You need to be signed in as the ticket holder to display this pass at the door.
+        </p>
+        <Link to="/my-tickets" className="mt-8 px-6 py-3 bg-white text-slate-900 rounded-2xl text-xs font-bold uppercase tracking-widest">
+          Go to My Tickets
+        </Link>
+      </div>
+    );
+  }
+
+  const isUsed = ticket.status === 'used';
+  const isVoided = ticket.status === 'voided';
+  const isInTransfer = !!(ticket as { pendingTransferId?: string | null }).pendingTransferId;
+  const muted = isUsed || isVoided || isInTransfer;
+  const stamp = isVoided
+    ? {
+        text: 'REFUNDED',
+        sub: ticket.voidedReason || 'Refund issued by organizer',
+        cls: 'bg-rose-600',
+      }
+    : isUsed
+    ? {
+        text: 'REDEEMED',
+        sub:
+          ticket.checkInDate && event
+            ? formatInTz(ticket.checkInDate.toDate(), event.timezone, {
+                hour: '2-digit',
+                minute: '2-digit',
+                month: 'short',
+                day: 'numeric',
+              })
+            : 'SCAN VERIFIED',
+        cls: 'bg-red-600',
+      }
+    : isInTransfer
+    ? {
+        text: 'IN TRANSFER',
+        sub: 'Cancel the transfer to use this ticket again',
+        cls: 'bg-amber-500',
+      }
+    : null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="min-h-screen bg-black text-white flex flex-col"
+    >
+      {/* Top chrome — minimal back link + tiny "max brightness"
+          reminder. Deliberately no navbar — we want every pixel for
+          the QR. */}
+      <div className="flex items-center justify-between px-6 py-4">
+        <button
+          onClick={() => navigate(-1)}
+          className="text-[10px] font-bold uppercase tracking-widest text-white/60 hover:text-white flex items-center gap-2"
+        >
+          <ArrowLeft size={14} aria-hidden="true" /> Back
+        </button>
+        <div className="text-[9px] font-bold uppercase tracking-widest text-white/30 flex items-center gap-2">
+          <Sun size={12} aria-hidden="true" /> Max screen brightness for best scan
+        </div>
+      </div>
+
+      {/* Main pass surface — centered QR with event + tier metadata. */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-12">
+        <div className="bg-white text-black rounded-[2rem] p-8 shadow-2xl max-w-md w-full relative overflow-hidden">
+          <div className="text-center mb-4">
+            <p className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">
+              {event?.title || 'Event'}
+            </p>
+            {event?.date ? (
+              <p className="text-[10px] font-medium text-black/50 uppercase tracking-widest">
+                {formatInTz(event.date.toDate(), event.timezone, {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="relative flex flex-col items-center">
+            <div className={`p-4 bg-white border-2 border-black rounded-2xl ${muted ? 'opacity-20 grayscale' : ''}`}>
+              <QRCodeSVG value={barcode || ticket.id} size={260} level="H" includeMargin={false} fgColor="#000000" />
+            </div>
+
+            {stamp ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <div
+                  className={`${stamp.cls} text-white px-8 py-3 font-black text-2xl uppercase italic tracking-tighter -rotate-12 shadow-2xl skew-x-12`}
+                >
+                  {stamp.text}
+                </div>
+                <p className="text-black font-black text-[10px] uppercase tracking-widest mt-4 bg-white px-3 py-1 text-center max-w-[80%]">
+                  {stamp.sub}
+                </p>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-dashed border-black/20 flex justify-between items-end">
+            <div className="text-left">
+              <p className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">Holder</p>
+              <p className="text-sm font-black uppercase tracking-tighter">
+                {user.displayName || user.email || 'Guest'}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">Tier</p>
+              <p className="text-sm font-black uppercase tracking-tighter">{ticket.tierName || 'GA'}</p>
+            </div>
+          </div>
+
+          {!muted ? (
+            <div className="mt-6 flex flex-col items-center">
+              <p className="text-[9px] text-black/40 font-black uppercase tracking-tighter">Code refreshes in</p>
+              <p className="text-2xl font-black text-black italic tracking-tighter leading-none mt-1">
+                00:{timeLeft.toString().padStart(2, '0')}
+              </p>
+              <div className="w-32 h-[2px] bg-black/5 mt-3">
+                <div
+                  className="h-full bg-brand-primary transition-all duration-1000"
+                  style={{ width: `${(timeLeft / 30) * 100}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-6 text-center">
+            <p className="text-[9px] text-black/30 font-mono break-all">{ticket.id}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-6 pb-6 text-center">
+        <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-white/20">
+          Exos · Scan-Only Pass
+        </p>
+      </div>
+    </motion.div>
+  );
+}

@@ -281,6 +281,14 @@ def test_home_signal_classification(store_home_client):
 
     Order: premium → others, with date asc as the tiebreaker.
     """
+    # Relative dates (not hardcoded) so the fixture events stay comfortably
+    # in the future regardless of when the suite runs — store_home filters to
+    # upcoming events, and a fixed date eventually becomes "today/past" and
+    # silently drops the row (was a time-bomb: failed once real-time hit the
+    # hardcoded 2026-05-20). Ordering preserved: event 2 < 3 < 1 by date.
+    from datetime import date as _date, timedelta as _td
+    def _occurs(days: int) -> str:
+        return f"{(_date.today() + _td(days=days)).isoformat()}T19:00:00-04:00"
     store_home_client.fakedb.tables = {
         "latest_event_metrics": [
             # event 1: premium (expensive)
@@ -292,9 +300,9 @@ def test_home_signal_classification(store_home_client):
             _lem(3, owned=5, retail_min=15.0),
         ],
         "events": [
-            _event(1, occurs="2026-06-15T19:00:00-04:00"),
-            _event(2, occurs="2026-05-20T19:00:00-04:00"),
-            _event(3, occurs="2026-05-25T19:00:00-04:00"),
+            _event(1, occurs=_occurs(26)),  # premium, far future
+            _event(2, occurs=_occurs(2)),   # cheap, earliest non-premium
+            _event(3, occurs=_occurs(7)),   # cheap, later
         ],
         "event_lifecycle": [_lc(i) for i in [1, 2, 3]],
     }
