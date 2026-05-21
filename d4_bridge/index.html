@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!--
+      PWA + brand meta. Theme color matches the manifest's value so
+      Android's status-bar tint and the desktop install-prompt frame
+      both pick up the same shade. The dark background_color in the
+      manifest is what shows during the splash flash on Android.
+    -->
+    <meta name="theme-color" content="#0A0A0A" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="application-name" content="Exos" />
+    <meta name="description" content="Bridge — independent venue ticketing with multi-channel distribution." />
+
+    <!--
+      iOS PWA support. Safari ignores most of the manifest, so we
+      duplicate the relevant bits as <meta>. apple-touch-icon must
+      be same-origin or iOS silently falls back to a screenshot.
+    -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Exos" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+
+    <!-- Manifest + favicon. icon.svg renders crisp at every size. -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="mask-icon" href="/icon.svg" color="#FFE714" />
+
+    <title>Exos | Live the Moment</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

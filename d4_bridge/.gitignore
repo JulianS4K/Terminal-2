@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.npm/
+
+# Build artifacts
+build/
+dist/
+
+# Test/coverage output
+coverage/
+
+# OS / editor metadata
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Environment variables — never commit secrets.
+.env*
+!.env.example
+
+# Firebase service account JSON — used by the Admin SDK admin-grant
+# script (see README). MUST NOT be committed; it has full project
+# access and would let anyone impersonate the platform.
+service-account*.json
+firebase-adminsdk-*.json
+# Catch project-prefixed shape Firebase generates when you click
+# "Generate new private key" — the file lands as
+# `<projectId>-firebase-adminsdk-<...>.json`.
+*firebase-adminsdk*.json
+# Belt-and-suspenders: any json that contains "service" or
+# "credentials" in the name, since service accounts get downloaded
+# under different names depending on which dialog you used.
+*service-account*.json
+*credentials*.json
+
+# Common backup files left by editors / OneDrive sync
+*.bak
+*.fixed
+
+# Temporary build directory we use during development
+/tmp/build/
+
+# Firebase deploy cache
+.firebase/
+
+# Firebase web config (apiKey) — injected via VITE_FIREBASE_* at build, not committed
+firebase-applet-config.json
+firebase-blueprint.json
