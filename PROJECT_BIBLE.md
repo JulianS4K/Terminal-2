@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-17 by A1 (post-PR #237 — chart RPC + espn_team_id cross-league landmine)
+**Last updated**: 2026-05-21 by A1 (D4/Exos onboarding — §2 lane + §3 exos value-landmines + §7 LANGUAGE-sql gotcha + §9 phase-1/2 rows; RLS scoped to own-org reads)
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -43,7 +43,7 @@ A1 (admin · sole prod pusher · Render workspace owner)
     ├── D1 (Consumer Retail · storefront/search)
     ├── D2 (Order Clients · ops dashboard)
     ├── D3 (Broadway Scraper · sub of D2)
-    ├── D4 (Ticketing infra · UNASSIGNED)
+    ├── D4 (Exos/Bridge · primary-market ticketing — greenfield, own exos_* schema)
     └── E1 (Kalshi/markets · future stub)
 ```
 
@@ -61,7 +61,10 @@ Code-dir ownership (per `LANE_DISCIPLINE.md`):
 - D0 → `static/terminal/*` + Terminal FE
 - D1 → `static/store/*` + storefront API
 - D2 → ops dashboard
+- D4 → `d4_bridge/*` (Exos app) + `exos_*` / `bridge_event_xref` migrations (authors; A1 applies)
 - A1 → `supabase/migrations/*`, governance docs, cross-cutting
+
+**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema, migrating Firestore → Supabase + Supabase Auth (same prod project as D0). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Two migrations authored, **NOT yet applied** (B1 RLS review → A1 applies — see §9). Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
 
 ---
 
@@ -91,6 +94,11 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `pg_net.http_get()` inside a loop | `PERFORM pg_sleep(N)` between calls to pace upstream rate limits | **NO-OP for rate limiting** — pg_net is **asynchronous**. The function returns a request_id immediately; HTTP fire happens in a background dispatch worker that doesn't honor function-side `pg_sleep`. Evidence: 50 queued GETs fired with IDENTICAL `_http_response.created` timestamp `02:34:45.137759`. PR #212/#214 pg_sleep stagger never worked. **Right pattern**: cap burst size to ≤ upstream token quota and use cron frequency for throughput. Codified as macro in §7. Discovered via PR #228 / mig 20260519140000. |
 | `espn_team_id` / `espn_event_id` cross-table reads | filter by id alone | **Cross-league collision** — espn_team_id `"28"` maps to BOTH MLB Atlanta Braves AND an NHL team (`28` had 1,400 NHL injury rows vs 3 MLB rows in 7-day window). Always **scope by `espn_league`** when reading `espn_injuries_snapshots` / `espn_event_snapshots` / cross-team joins. `event_xref.espn_league` carries it through from the TEvo side. Discovered via PR #237 / mig 20260519150000. |
 | ESPN team-ID resolution for forward-look events | `espn_event_snapshots` | **Snapshot pipeline is gameday-scope only** (§10 drift). For future events use `espn_event_date_lookup` (forward-look home/away/game_at_utc) first, fall back to snapshots only for past games. |
+| PL/pgSQL `EXCEPTION WHEN OTHERS` to swallow a `statement_timeout` | `WHEN OTHERS THEN ...` | **Does NOT trap `query_canceled` (SQLSTATE 57014)** — that's exactly what `statement_timeout` raises, and `OTHERS` deliberately excludes it (so users can always cancel). A function meant to soft-fail on timeout MUST list `WHEN query_canceled THEN ...` explicitly (then optionally `WHEN OTHERS`). Reset `statement_timeout` to a safe value before any trailing work in the handler or the next statement re-cancels. Discovered live: `compute_event_breakdowns` non-fatal fix (mig 20260520410000) — first cut used `OTHERS`, still 502'd; `query_canceled` caught it cleanly. Exemplar: `backfill_stale_zone_metrics`. |
+| MCP `execute_sql` heavy ad-hoc scans (audit queries) | run unbounded against prod | **MCP runs as `service_role` (NO `statement_timeout` cap); PostgREST anon/auth has 3s/8s.** Heavy seq-scans over `listings_snapshots` (8M rows) / `seatgeek_*_snapshots` compete for shared_buffers + IO and can tip otherwise-fast user-facing RPCs past their 8s ceiling (observed: `/api/broker/movers` 500 while an MCP 7-day scan ran). **Mitigations**: `SET statement_timeout='Ns'` on audit queries; prefer indexed predicates (`WHERE event_id IN (...)`, `event_id + captured_at`) over date-range seq-scans; use `latest_event_metrics` (matview, ~1k rows) instead of scanning `listings_snapshots` for "latest per event". |
+| `exos_events.occurs_at_local` (D4/Exos) | naive wall-clock timestamp | **Offset-bearing TEXT** `"YYYY-MM-DDTHH:MM:SS±HH:MM"` (e.g. `2026-05-21T20:00:00-04:00`) — mirrors `public.events`; derive via `utcToOccursAtLocal()`. The create flow MUST set `occurs_at_local` + `event_type` or they land NULL (shape-consistent ≠ value-consistent). |
+| `exos_events.event_type` (D4/Exos) | fine-grained map / "complete" every row | **Coarse category map only**: Sports→`game`, Music→`concert`, Arts→`show`; Nightlife/Tech/Food→`NULL` (matches the ~60% of TEvo rows that are NULL — don't backfill it). |
+| `exos_tickets` barcode/QR (D4/Exos) | store the barcode or QR payload | **Not stored** — only `barcode_secret` (plaintext HMAC key, RLS-gated to owner/buyer/staff). QR is computed + rotated **client-side** as `HMAC-SHA256(secret, "ticketId:ownerId:bucket")`. |
 
 ---
 
@@ -237,6 +245,9 @@ CREATE OR REPLACE FUNCTION public.your_fn(p_a text, p_b int, p_new int DEFAULT 5
 ```
 If you can't predict the prior signature, query `pg_proc` for `proname` to enumerate overloads before authoring the migration.
 
+### `LANGUAGE sql` function bodies are validated at CREATE (declare after their tables)
+A `LANGUAGE sql` function body is parsed **and its table/column references validated at CREATE time** — unlike `LANGUAGE plpgsql`, whose body is deferred to first call. So a SQL-language helper that reads a table must be declared **after** that table exists in the same migration, or apply fails with `ERROR: relation "..." does not exist`. Caught in D4 mig `20260520130000`: `exos_holds_ticket()` (LANGUAGE sql) was declared before `exos_tickets` and failed apply; fixed by moving it below the table. plpgsql RPCs are immune (deferred validation), which is why they can be defined before the tables they touch.
+
 ### `sg_broker_pending` — drains via 5-min priority cron
 The bounded-drain functions (`sg_broker_listings_process(p_limit=50)` / `sg_broker_sales_process(p_limit=50)`) run from the 5-min priority crons (rebased 1min→5min per mig 20260519120000). The 30-min variants were unscheduled 2026-05-17 (redundant). If you need to drain faster ad-hoc, pass a larger `p_limit`. Pending rows whose `_http_response` has been pruned (>6h old) are housekept by `sweep_all_expired_pg_net_pending` at `:20` hourly.
 
@@ -382,6 +393,11 @@ SELECT public.bot_chat_log(
 | **2026-05-19** | 20260519140000 | **🔥 SG broker burst-size emergency hotfix (PR #228)**: caps burst to 8 events/call on `sg_broker_listings_queue` + `sg_broker_sales_queue` (3+3 polls on `sg_priority_poll_tick`) — under SG's 10-token bucket. Drops broken `PERFORM pg_sleep(0.9)` calls (no-op given pg_net async dispatch — see §3 landmine + §7 macro). New schedules: listings `*/5`, sales `2-57/5`, poll_tick `4-59/5`. pct_429 went 70.7% (02:00 hour) → 0.0% on every firing 02:50 onward. Sustained 0.73 req/sec << 1.25 req/sec quota. |
 | 2026-05-19 | 20260519150000 | **D0 chart expansion RPC (PR #237)**: `get_event_chart_extended(p_event_id, p_chart_hours DEFAULT 168, p_espn_home_team text, p_espn_away_team text)` returns 5 SG-side series (listings_median/owned_median/listings_count/sales_median/sales_count over adaptive 15min..1d buckets) + 2 ESPN annotation arrays (injuries LAG(status) per athlete league-scoped; game_state LAG(status_short) per espn_event_id). Auto-resolves home/away from `espn_event_date_lookup` (forward-look) → `espn_event_snapshots` (gameday) when not passed. SECDEF + email gate. Landmine surfaced: `espn_team_id` collides cross-league (id=28 = MLB + NHL); RPC scopes by `espn_league`. Codified in §3 + §4. Latency 308ms warm @ 7d. |
 | 2026-05-19 | _(app code, no migration)_ | **D1 storefront movers reshape (PR #275)**: `/api/store/movers` response shape changed from `{events, rest}` (single strip + grid + label-bucket round-robin from PR #273/#274) to **4 themed-slider arrays**: `moving_fast` (SG sales ≥10 OR TEvo d24h ≤ -50), `price_drops` (retail_min < 0.7× SG median), `climbing` (TEvo `getin +5%` AND d24h<0, OR SG median +5% AND listings -5%), `specials` (`v_event_holidays` window match OR `v_rivalry_events` match, gated `owned > 100`). First 3 sections gate `owned > 50`. `_compute_movers` builds one candidate pool; each section filter is independent (event can appear in 0-2 sections). Label-bucket helpers (`_movers_compute_labels`, `_round_robin_pop_by_label`, `_LABEL_PRIORITY`, etc.) retired. v_rivalry_events dedupe rule codified in §3. |
+| **2026-05-20** | 20260520400000 | **Featured-pricing 10-min cron (PR #288)**: `collect_listings_featured_refresh(p_max_events int DEFAULT 50)` + cron `collect-listings-featured-10min` (`3-53/10`). Refreshes TEvo `/v9/ticket_groups` for NYC venue + `owned>100` + 24h–90d events (superset of the storefront Featured rail) every 10 min, fixing the ~6h–multi-day pricing staleness from the twice-daily windowed crons. Round-robins oldest-`captured_at`-first, skips <9min-fresh + 0-24h events. Writes land in `event_metrics`; matview `latest_event_metrics_refresh_5min` (@`:2`) makes them visible. ~5,760 extra TEvo calls/day. |
+| 2026-05-20 | 20260520410000 | **`compute_event_breakdowns` non-fatal (PR #289)**: self-caps zone+section steps at 6s (under the 8s `authenticator` ceiling), traps **`query_canceled` explicitly** (bare `WHEN OTHERS` misses 57014 — see §3 landmine), soft-fails a slow step → returns status jsonb instead of erroring. Stops the false 502s on heavy events (`collect-listings` calls this AFTER pricing persists; the RPC timeout was 502-ing pulls whose pricing already succeeded). |
+| 2026-05-20 | 20260520420000 | **Breakdowns backfill re-enable + extend (PR #290)**: re-enables `zone-backfill-isolated-10min` cron + upgrades `backfill_stale_zone_metrics` to recompute BOTH zone+section (was zones only), detect staleness via the `latest_event_metrics` matview (not an 8M-row `listings_snapshots` scan), and trap `query_canceled`. Out-of-band catch-up for heavy events that soft-fail the inline 6s RPC. **Known gap**: the heaviest events (1300+ listings) exceed even the 90s cap — `compute_event_zone_metrics`'s per-row `match_performer_zone()` LATERAL needs dedup optimization (tracked, §10). |
+| 2026-05-20 | 20260520120000 | **D4/Exos phase-1 — AUTHORED, NOT applied to prod** (B1 RLS review → A1 applies). `exos_*` orgs+events schema (profiles/orgs/org_secrets/memberships/invites/events/ticket_tiers/discount_codes + `bridge_event_xref`). Deny-by-default RLS, all 9 tables RLS-enabled; base-table grants REVOKE'd from anon (zero access) + re-GRANT CRUD to authenticated only (closes the platform-default grant leak, B1 bot_chat #381). **Base-table reads are own-org only** (operator 2026-05-21: "read/write only events it creates") — cross-org browse goes through column-narrowed `exos_public_*` owner-run VIEWs (granted anon+authenticated). Org bootstrap via `exos_create_org()` SECDEF. Mirrors `public.events` shapes by value; never writes D0. Don't re-author. |
+| 2026-05-20 | 20260520130000 | **D4/Exos phase-2 — AUTHORED, NOT applied to prod** (B1 RLS review pending). `exos_tickets`/`exos_transfers` + check-in & scan-reject audit logs + write-path SECDEF RPCs (`exos_mint_tickets`/`check_in_ticket`/`create_transfer`/`cancel_transfer`/`claim_transfer`/`void_ticket`). Atomic tier-claim closes oversell; atomic status-flip closes double-scan. **Functionally** validated end-to-end on a throwaway preview branch (create→sell→transfer→claim→scan→double-scan-reject); **RLS/grant security review still pending** (functional ≠ security-cleared). Migration-ordering bug found+fixed there (see §7 `LANGUAGE sql` gotcha). |
 
 ---
 
@@ -396,6 +412,8 @@ SELECT public.bot_chat_log(
 | 29% active TEvo events have no SG bridge | NWSL/USL/AHL/niche real gap | First-class TEvo-only UI state |
 | SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
 | `aq_short_event_id` 0% on `listings_snapshots` | Cron resumed 2026-05-16; firing 04:02 UTC | Use `event_id` for TEvo reads |
+| `compute_event_zone/section_metrics` too slow for heavy events | Open (tracked task) | Per-row `match_performer_zone()` LATERAL exceeds even 90s for 1300+ listing events (Yankees). Their zone/section breakdowns stay stale; non-fatal RPC (mig 410000) just soft-fails them. Fix = dedup zone match (compute once per distinct section/row). 54.7% of DB time per 2026-05-14 audit. |
+| `collect-listings` edge fn: repo ≠ deployed | Open (tracked task) | Deployed v10 (RPC `compute_event_breakdowns` + chat-tracked events) diverges from repo HEAD (TS-computed `section_metrics` + `owned_p25/p75/p90`, no RPC). Repo doesn't reflect prod — reconcile before next deploy. |
 
 ---
 

@@ -661,6 +661,62 @@ def undelivered_landing():
     return FileResponse(os.path.join(STATIC_DIR, "undelivered", "index.html"))
 
 
+# --- D4 / Exos (Bridge) ----------------------------------------------------
+# Serve the d4_bridge Vite SPA in the unified static Render env the same way
+# D0's terminal is served (PR #168 testing-unified architecture): a landing
+# redirect to the trailing slash, an index handler, and a path-catch-all that
+# proxies static/bridge/<asset>. The app is BUILT with Vite base '/bridge/'
+# (vite.config.ts) + <BrowserRouter basename="/bridge">, so its asset refs and
+# client routes resolve under this prefix. Build artifact lives at
+# static/bridge/ (run `npm --prefix d4_bridge run build`, then copy dist →
+# static/bridge/). Returns 404 cleanly until that build is present.
+_BRIDGE_DIR = os.path.join(STATIC_DIR, "bridge")
+
+
+@app.get("/bridge")
+def bridge_landing():
+    """Bounce bare /bridge → /bridge/ so the SPA's relative + basename routing
+    resolves under the directory prefix (same reasoning as /terminal)."""
+    return RedirectResponse(url="/bridge/", status_code=308)
+
+
+@app.get("/bridge/")
+def bridge_index():
+    """Serve the Exos/Bridge SPA shell. 404 (not 500) when the build isn't
+    present yet, so the route is safe to ship ahead of the first dist copy."""
+    index_path = os.path.join(_BRIDGE_DIR, "index.html")
+    if not os.path.isfile(index_path):
+        raise HTTPException(404, "bridge build not present — run `npm --prefix d4_bridge run build` then copy dist → static/bridge/")
+    return FileResponse(index_path)
+
+
+@app.get("/bridge/{page:path}")
+def bridge_static_proxy(page: str):
+    """Proxy /bridge/<anything> → static/bridge/<anything>. SPA deep links
+    (/bridge/event/123 etc.) fall back to index.html for client-side routing.
+    Path-traversal guarded + extension-whitelisted (UI bundle pieces only)."""
+    if not page or page in ("", "/"):
+        index_path = os.path.join(_BRIDGE_DIR, "index.html")
+        if not os.path.isfile(index_path):
+            raise HTTPException(404, "bridge build not present")
+        return FileResponse(index_path)
+    if ".." in page or page.startswith("/") or "\\" in page:
+        raise HTTPException(404, "not found")
+    full_path = os.path.join(_BRIDGE_DIR, page)
+    # Real asset → serve it. Whitelist mirrors the /terminal proxy.
+    if page.lower().endswith((".html", ".css", ".js", ".map", ".json",
+                               ".svg", ".png", ".jpg", ".jpeg", ".ico",
+                               ".woff", ".woff2", ".webp", ".txt")):
+        if not os.path.isfile(full_path):
+            raise HTTPException(404, "not found")
+        return FileResponse(full_path)
+    # Non-asset path (a client route like /bridge/my-tickets) → SPA shell.
+    index_path = os.path.join(_BRIDGE_DIR, "index.html")
+    if not os.path.isfile(index_path):
+        raise HTTPException(404, "bridge build not present")
+    return FileResponse(index_path)
+
+
 @app.get("/version.json")
 def version_json():
     """Public deploy-version endpoint — same _STOREFRONT_VERSION the cache-bust

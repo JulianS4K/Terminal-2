@@ -1,0 +1,7 @@
+{
+  "name": "Exos",
+  "description": "Premiere market access and institutional-grade ticket distribution platform. Includes rotating secure barcodes, peer-to-peer transfers, and multi-channel marketplace distribution.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
