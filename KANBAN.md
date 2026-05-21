@@ -52,6 +52,7 @@
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
 | B1-NEXT-18 | Op | Verify Actions secrets populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). | Operator confirms next session via Settings → Secrets |
 | B1-NEXT-31 | A1 | §6 body guard absent on 7 JWT-gated SECDEF RPCs: `get_broker_event_page` (v1/v2/v3), `get_event_sg_listings_full`, `get_event_evo_listings_full`, `get_event_sg_sales_full`, `get_event_cross_source_metrics`. JWT body check IS primary mitigation; guard is 2nd belt. **BLOCKED on spec clarification** — literal §6 `current_user NOT IN (service_role, postgres, supabase_admin)` would brick these (anon/authenticated callers via PostgREST). bot_chat question pending B1 response. | Wait for B1 spec; verified `public_exec=false` already in place on all 7 |
+| B1-NEXT-52 | B1 | **D4/Exos RLS review — GATES prod apply** (new Supabase Auth surface). Migs `20260520120000` (orgs+events) + `20260520130000` (tickets+transfers) authored, on `main`, **NOT applied**. Review: deny-by-default RLS on all 9 tables; base-table grants REVOKE'd from anon + CRUD-only to authenticated; `exos_create_org`/claim/mint SECDEF write-paths; the public-projection owner-run views. **Re-review the 2026-05-21 policy change** (A1 dropped `exos_events_sel_public`/`exos_tiers_sel_public` → base-table reads now own-org-only; cross-org browse via `exos_public_*` views) per operator "read/write only events it creates". | Review RLS+grants in both migs; sign off in `docs/d4_exos_rls_b1_review.md`; then A1 applies (see Operator-only). Added by A1 (PR #294 follow-up). |
 
 ### SEC-LOW (hygiene)
 
@@ -84,12 +85,15 @@
 | Apply migration `20260516230000_security_release_health_cron_heartbeat.sql` | `apply_migration` via MCP — adds 3 RHC rows (heartbeat, aging_7d, pg_net) |
 | Apply migration `20260515300000_security_secdef_post_pr101_compliance.sql` | `apply_migration` — Phase 1 §6 retrofit on 11 fns + RLS enable on `aq_*_map` |
 | Mass-triage 47 aging bot_chat entries (>2 days old) | Per-lane sweep before PR #176 applies; otherwise `coordination.bot_chat_aging_7d` row will FAIL |
+| Apply D4/Exos migs `20260520120000` (phase-1 orgs+events) + `20260520130000` (phase-2 tickets+transfers) | `apply_migration` via MCP — **only after B1-NEXT-52 RLS sign-off**. Both on `main`, file-only. Creates the `exos_*` schema; until applied, the `/bridge` shell loads but data calls fail. |
 
 ### OPS / product work (per-lane self-populates here)
 
 | ID | Lane | Task | Action |
 |---|---|---|---|
-| _(other lanes — populate your own_) | | | |
+| A1-OPS-1 | A1 | **`collect-listings` repo↔deploy drift.** Deployed edge fn v10 (RPC `compute_event_breakdowns` + `is_chat_tracked` sweep) has diverged from repo HEAD (TS-computed `section_metrics` + `owned_p25/p75/p90`, no RPC). Repo doesn't reflect prod — next deploy from repo would silently change behavior. | Reconcile: bring deployed v10 source into the repo as source-of-truth (or merge both intents), then redeploy from repo. Verify zone/section + owned-percentile coverage both retained. |
+| A1-OPS-2 | A1 | **`compute_event_zone/section_metrics` heavy-event timeout.** Events with 1300+ listings (e.g. Yankees, 7180 expanded qty / 185 sections) exceed even the backfill's 90s cap — root cause is the per-row `match_performer_zone()` LATERAL + `generate_series(1,quantity)` percentile expansion. Non-fatal fix (PR #289) stops the 502s but those events' breakdowns stay stale. | Optimize: dedupe `match_performer_zone` (cache per distinct section/row instead of per listing) and/or quantity-weight percentiles without physical row expansion. |
+| D4-OPS-1 | D4 | **`/bridge` service-worker scope.** `static/bridge/sw.js` was built for Firebase-hosting root (`/`); served under `/bridge/` its cache/scope may misbehave (SW scope is path-bound). Shell renders, but offline/PWA caching is unverified under the prefix. | Verify SW registration scope under `/bridge/`; set `Service-Worker-Allowed` or rebuild SW with `/bridge/` scope, or drop the SW if PWA isn't needed in the unified shell. |
 
 ---
 
