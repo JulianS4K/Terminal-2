@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Exos">
+  <!--
+    Exos app icon.
+
+    Designed to render correctly under both regular and maskable
+    purposes: the safe zone for maskable icons is the inner ~80% of
+    the canvas (a 410px-diameter circle on a 512x512 frame), so the
+    glyph stays inside that radius and the background fills the
+    edges. The bold 'V' wordmark + ticket-stub stroke evokes the
+    brand without burning bridge-specific color into the rendered
+    artifact — when the browser asks for a tinted version (Android
+    adaptive icons, Safari pinned tabs), the brand-yellow background
+    + black mark contrasts cleanly.
+  -->
+  <rect width="512" height="512" rx="96" fill="#FFE714"/>
+  <!-- Ticket stub backdrop for visual anchor. Inset comfortably
+       within the 410px safe radius. -->
+  <rect x="96" y="160" width="320" height="192" rx="24" fill="#0A0A0A"/>
+  <!-- Notch -->
+  <circle cx="256" cy="160" r="20" fill="#FFE714"/>
+  <circle cx="256" cy="352" r="20" fill="#FFE714"/>
+  <!-- 'V' mark -->
+  <path d="M156 200 L256 320 L356 200" stroke="#FFE714" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

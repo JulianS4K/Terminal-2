@@ -1,0 +1,85 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user profiles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "Live events details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "location": { "type": "string" },
+        "price": { "type": "number" },
+        "organizerId": { "type": "string" },
+        "totalTickets": { "type": "integer" },
+        "ticketsSold": { "type": "integer" },
+        "image": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["title", "date", "organizerId", "price"]
+    },
+    "Ticket": {
+      "title": "Ticket",
+      "description": "Event tickets owned by users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "eventId": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "transferred", "used"] },
+        "purchaseDate": { "type": "string", "format": "date-time" },
+        "checkInDate": { "type": "string", "format": "date-time" },
+        "barcodeValue": { "type": "string" },
+        "barcodeSecret": { "type": "string" },
+        "tierName": { "type": "string" }
+      },
+      "required": ["eventId", "ownerId", "status"]
+    },
+    "Transfer": {
+      "title": "Transfer",
+      "description": "Records of ticket transfers between users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "receiverEmail": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "completed", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/events/{eventId}": {
+      "schema": "Event",
+      "description": "Event listings"
+    },
+    "/tickets/{ticketId}": {
+      "schema": "Ticket",
+      "description": "Sold tickets"
+    },
+    "/transfers/{transferId}": {
+      "schema": "Transfer",
+      "description": "Transfer requests"
+    }
+  }
+}
