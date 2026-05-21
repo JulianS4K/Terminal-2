@@ -43,11 +43,16 @@
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
 | B1-NEXT-11 | Op | Leaked `CRON_SECRET` in git history (commit `5297739`). Value rotated but repo is public → internet-readable. | Operator decides: `git filter-repo` + force-push window, OR accept (rotated, contained blast radius). G-1. |
+| B1-NEXT-56 | A1 (B1-authored) | `tevo_blindspot_discovery_enqueue()` — anon-EXECUTE SECDEF, no gate, calls `_cron_invoke_edge_fn` → drives **paid TEvo /v9/events discovery** on demand (anon + public key via `/rest/v1/rpc/`). Cost-amplification. | **Fix authored** mig `20260520230000` (REVOKE EXECUTE FROM anon/auth/PUBLIC). Awaiting operator apply. |
+| B1-NEXT-57 | A1 (B1-authored) | `collect_listings_featured_refresh(integer)` — anon-EXECUTE SECDEF, no gate, drives the collect-listings edge fn (paid listings pulls). Same class as -56. | **Fix authored** mig `20260520230000`. Awaiting operator apply. |
 
 ### SEC-MED (defense-in-depth)
 
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
+| B1-NEXT-53 | A1 (B1-authored) | `tevo_blindspot_discovery_attempts` — RLS never enabled + anon held SELECT/INSERT/UPDATE/DELETE/TRUNCATE. Internal cron telemetry (no PII) but anon could wipe/poison over PostgREST. | **Fix authored** mig `20260520230000` (REVOKE ALL FROM anon/auth + ENABLE RLS + coworker_readonly SELECT policy). Awaiting apply. |
+| B1-NEXT-54 | A1 (B1-authored) | 14 anon-EXECUTE SECDEF write fns (matchers/backfills/ingest/`cron_should_fire`) — no gate, anon-drivable DB churn. Overlaps B1-NEXT-29/30/31 §6 backlog. | **REVOKE authored** in mig `20260520230000` (the load-bearing fix; §6 body-guard retrofit remains separate). Awaiting apply. |
+| B1-NEXT-55 | A1 (B1) | **Systemic**: 140 public tables carry the Supabase default anon/authenticated grant (RLS-gated, so latent not live). Defense-in-depth: blanket `REVOKE ... FROM anon, authenticated` on internal tables + rely on views/RPCs for the intended anon surface. | Batch-REVOKE migration (separate; high row count, low marginal risk since RLS holds). Propose to A1. |
 | B1-NEXT-3 | B1 | Edge function auth-posture inventory (16 fns). Per-function record of `x-cron-secret` vs open vs JWT-gated. | Author `docs/edge_function_auth_inventory.md` |
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
 | B1-NEXT-18 | Op | Verify Actions secrets populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). | Operator confirms next session via Settings → Secrets |
@@ -198,6 +203,19 @@ Plan: [docs/d0_frontend_consolidation_plan.md](docs/d0_frontend_consolidation_pl
 - **D0** — Phase 2 design tokens: author `static/_shared/design-tokens.css`, refactor terminal CSS to reference it. Weeks 1-4.
 - **D0** — `docs/d0_roadmap.md` (rolling Now/Next/Later/Backlog). First version covers D1+D2 outstanding items routed through D0.
 - **D0 sign-off requirement on D1/D2 PRs PAUSED 7 days** (active 2026-05-22). Per operator directive `bot_chat` 170. Claim protocol + token discipline + CI gate still active.
+
+### NEXT (D0) — product backlog (filed 2026-05-19, event-page + chart + landing session sweep)
+
+Pending / incomplete D0 work captured for future cycles. Verified live state before filing — `cost_*`-reader blocker + parking-bridge pollution already cleared by A1, so those are NOT listed.
+
+| ID | Lane | Task | Smallest action to close |
+|---|---|---|---|
+| D0-PROD-1 | D0 | **Landing selector — verify deploy propagated.** PR #278 (static-site root → unified Terminal/Undelivered/Store selector) MERGED to main (`0ab8a53`). As of 2026-05-21 21:49 UTC the live root still returns `301 → /terminal/` (Render static deploy + Cloudflare cache lag). | Re-check `curl -I https://vibepass-terminal-test.onrender.com/` returns `200 text/html`; if still `301` after deploy completes, check Render deploy log + CF `cf-cache-status` purge. |
+| D0-PROD-2 | D0 | **Chart parity on performer + venue pages.** The 2-chart redesign + `get_event_chart_extended` (5 SG series + ESPN annotations, PR #237) live only on `event.html`. Performer + venue detail pages have no price/inventory chart. | New `get_performer_chart` / `get_venue_chart` aggregate RPCs (roll up member events) + reuse the event-page chart renderer. Medium effort. |
+| D0-PROD-3 | D0 | **Chart legend toggle state is session-only.** Hiding a series resets on reload / range-flip. | Persist hidden-series set to `localStorage` keyed by chart id; rehydrate on render. Low effort. |
+| D0-PROD-4 | D2/B1 (affects D0) | **Vivid bridge gap.** `vivid_orders.tevo_event_id` is 0/1169 populated (verified 2026-05-19) → the "Our Orders" tab TP+Vivid section shows zero Vivid rows on every event. D0 RPC bridges via `aq_short_event_id → aq_event_map → seatgeek_event_xref` but no Vivid rows carry it through. Filed `bot_chat` #292. | D2/B1: populate `vivid_orders.tevo_event_id` in the Vivid ingest/match cron (TickPick already at 14% via matcher v3 — same path). |
+| D0-PROD-5 | A1 (bible) | **`espn_team_id` cross-league collision not codified.** `id="28"` = MLB Braves AND an NHL team. Bit the chart RPC during PR #237 smoke (returned 1400 NHL injuries on a Braves game); A1 fixed inline by scoping `espn_league`, but the landmine isn't in PROJECT_BIBLE §3. | A1: add "always filter ESPN team joins by `espn_league`" to PROJECT_BIBLE §3 column-landmines. |
+| D0-PROD-6 | A1 (cleanup) | **Deprecated `cost_*` columns on `seatgeek_event_metrics` now droppable.** D0 removed the last FE reader (SG LISTINGS — COST DISTRIBUTION panel, PR #210) and `compute_alerts_tick` no longer reads `cost_median` (verified 2026-05-19). Columns are dead weight. | A1: confirm no other readers, then `ALTER TABLE … DROP COLUMN cost_min/p25/median/mean/p75/p90/max/sum`. |
 
 ### NEXT (D0 — checkpoint) — Phase 4 service-merge decision · review 2026-08-15
 
