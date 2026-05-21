@@ -43,11 +43,16 @@
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
 | B1-NEXT-11 | Op | Leaked `CRON_SECRET` in git history (commit `5297739`). Value rotated but repo is public → internet-readable. | Operator decides: `git filter-repo` + force-push window, OR accept (rotated, contained blast radius). G-1. |
+| B1-NEXT-51 | A1 (B1-authored) | `tevo_blindspot_discovery_enqueue()` — anon-EXECUTE SECDEF, no gate, calls `_cron_invoke_edge_fn` → drives **paid TEvo /v9/events discovery** on demand (anon + public key via `/rest/v1/rpc/`). Cost-amplification. | **Fix authored** mig `20260520230000` (REVOKE EXECUTE FROM anon/auth/PUBLIC). Awaiting operator apply. |
+| B1-NEXT-52 | A1 (B1-authored) | `collect_listings_featured_refresh(integer)` — anon-EXECUTE SECDEF, no gate, drives the collect-listings edge fn (paid listings pulls). Same class as -51. | **Fix authored** mig `20260520230000`. Awaiting operator apply. |
 
 ### SEC-MED (defense-in-depth)
 
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
+| B1-NEXT-53 | A1 (B1-authored) | `tevo_blindspot_discovery_attempts` — RLS never enabled + anon held SELECT/INSERT/UPDATE/DELETE/TRUNCATE. Internal cron telemetry (no PII) but anon could wipe/poison over PostgREST. | **Fix authored** mig `20260520230000` (REVOKE ALL FROM anon/auth + ENABLE RLS + coworker_readonly SELECT policy). Awaiting apply. |
+| B1-NEXT-54 | A1 (B1-authored) | 14 anon-EXECUTE SECDEF write fns (matchers/backfills/ingest/`cron_should_fire`) — no gate, anon-drivable DB churn. Overlaps B1-NEXT-29/30/31 §6 backlog. | **REVOKE authored** in mig `20260520230000` (the load-bearing fix; §6 body-guard retrofit remains separate). Awaiting apply. |
+| B1-NEXT-55 | A1 (B1) | **Systemic**: 140 public tables carry the Supabase default anon/authenticated grant (RLS-gated, so latent not live). Defense-in-depth: blanket `REVOKE ... FROM anon, authenticated` on internal tables + rely on views/RPCs for the intended anon surface. | Batch-REVOKE migration (separate; high row count, low marginal risk since RLS holds). Propose to A1. |
 | B1-NEXT-3 | B1 | Edge function auth-posture inventory (16 fns). Per-function record of `x-cron-secret` vs open vs JWT-gated. | Author `docs/edge_function_auth_inventory.md` |
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
 | B1-NEXT-18 | Op | Verify Actions secrets populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). | Operator confirms next session via Settings → Secrets |
