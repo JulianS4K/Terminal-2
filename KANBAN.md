@@ -43,8 +43,8 @@
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
 | B1-NEXT-11 | Op | Leaked `CRON_SECRET` in git history (commit `5297739`). Value rotated but repo is public → internet-readable. | Operator decides: `git filter-repo` + force-push window, OR accept (rotated, contained blast radius). G-1. |
-| B1-NEXT-51 | A1 (B1-authored) | `tevo_blindspot_discovery_enqueue()` — anon-EXECUTE SECDEF, no gate, calls `_cron_invoke_edge_fn` → drives **paid TEvo /v9/events discovery** on demand (anon + public key via `/rest/v1/rpc/`). Cost-amplification. | **Fix authored** mig `20260520230000` (REVOKE EXECUTE FROM anon/auth/PUBLIC). Awaiting operator apply. |
-| B1-NEXT-52 | A1 (B1-authored) | `collect_listings_featured_refresh(integer)` — anon-EXECUTE SECDEF, no gate, drives the collect-listings edge fn (paid listings pulls). Same class as -51. | **Fix authored** mig `20260520230000`. Awaiting operator apply. |
+| B1-NEXT-56 | A1 (B1-authored) | `tevo_blindspot_discovery_enqueue()` — anon-EXECUTE SECDEF, no gate, calls `_cron_invoke_edge_fn` → drives **paid TEvo /v9/events discovery** on demand (anon + public key via `/rest/v1/rpc/`). Cost-amplification. | **Fix authored** mig `20260520230000` (REVOKE EXECUTE FROM anon/auth/PUBLIC). Awaiting operator apply. |
+| B1-NEXT-57 | A1 (B1-authored) | `collect_listings_featured_refresh(integer)` — anon-EXECUTE SECDEF, no gate, drives the collect-listings edge fn (paid listings pulls). Same class as -56. | **Fix authored** mig `20260520230000`. Awaiting operator apply. |
 
 ### SEC-MED (defense-in-depth)
 
