@@ -43,21 +43,16 @@
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
 | B1-NEXT-11 | Op | Leaked `CRON_SECRET` in git history (commit `5297739`). Value rotated but repo is public → internet-readable. | Operator decides: `git filter-repo` + force-push window, OR accept (rotated, contained blast radius). G-1. |
-| B1-NEXT-56 | A1 (B1-authored) | `tevo_blindspot_discovery_enqueue()` — anon-EXECUTE SECDEF, no gate, calls `_cron_invoke_edge_fn` → drives **paid TEvo /v9/events discovery** on demand (anon + public key via `/rest/v1/rpc/`). Cost-amplification. | **Fix authored** mig `20260520230000` (REVOKE EXECUTE FROM anon/auth/PUBLIC). Awaiting operator apply. |
-| B1-NEXT-57 | A1 (B1-authored) | `collect_listings_featured_refresh(integer)` — anon-EXECUTE SECDEF, no gate, drives the collect-listings edge fn (paid listings pulls). Same class as -56. | **Fix authored** mig `20260520230000`. Awaiting operator apply. |
 
 ### SEC-MED (defense-in-depth)
 
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
-| B1-NEXT-53 | A1 (B1-authored) | `tevo_blindspot_discovery_attempts` — RLS never enabled + anon held SELECT/INSERT/UPDATE/DELETE/TRUNCATE. Internal cron telemetry (no PII) but anon could wipe/poison over PostgREST. | **Fix authored** mig `20260520230000` (REVOKE ALL FROM anon/auth + ENABLE RLS + coworker_readonly SELECT policy). Awaiting apply. |
-| B1-NEXT-54 | A1 (B1-authored) | 14 anon-EXECUTE SECDEF write fns (matchers/backfills/ingest/`cron_should_fire`) — no gate, anon-drivable DB churn. Overlaps B1-NEXT-29/30/31 §6 backlog. | **REVOKE authored** in mig `20260520230000` (the load-bearing fix; §6 body-guard retrofit remains separate). Awaiting apply. |
 | B1-NEXT-55 | A1 (B1) | **Systemic**: 140 public tables carry the Supabase default anon/authenticated grant (RLS-gated, so latent not live). Defense-in-depth: blanket `REVOKE ... FROM anon, authenticated` on internal tables + rely on views/RPCs for the intended anon surface. | Batch-REVOKE migration (separate; high row count, low marginal risk since RLS holds). Propose to A1. |
 | B1-NEXT-3 | B1 | Edge function auth-posture inventory (16 fns). Per-function record of `x-cron-secret` vs open vs JWT-gated. | Author `docs/edge_function_auth_inventory.md` |
 | B1-NEXT-5 | B1 | Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries unused by any prod fn/cron/edge-fn. | 1 SQL migration adding a new row to `release_health_check()` |
 | B1-NEXT-18 | Op | Verify Actions secrets populated for `sync-check.yml` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). | Operator confirms next session via Settings → Secrets |
 | B1-NEXT-31 | A1 | §6 body guard absent on 7 JWT-gated SECDEF RPCs: `get_broker_event_page` (v1/v2/v3), `get_event_sg_listings_full`, `get_event_evo_listings_full`, `get_event_sg_sales_full`, `get_event_cross_source_metrics`. JWT body check IS primary mitigation; guard is 2nd belt. **BLOCKED on spec clarification** — literal §6 `current_user NOT IN (service_role, postgres, supabase_admin)` would brick these (anon/authenticated callers via PostgREST). bot_chat question pending B1 response. | Wait for B1 spec; verified `public_exec=false` already in place on all 7 |
-| B1-NEXT-52 | B1 | **D4/Exos RLS review — GATES prod apply.** **Phase-1 GO #384** (B1 cleared base-table grants + RLS). D4 subsequently found + fixed SEC-CRITICAL view write-through (anon could UPDATE/DELETE through auto-updatable `exos_public_*` views — REVOKE ALL + GRANT SELECT now in mig `20260520120000`). **A1 2026-05-21**: patched anon-EXECUTE gap on all 10 exos RPCs (2 in phase-1: `exos_create_org`, `exos_claim_invite`; 8 in phase-2: mint/check_in/create_transfer/cancel/claim/void/is_admin/holds_ticket) — Supabase default grants anon=X explicitly; REVOKE FROM PUBLIC alone insufficient. Both migs updated in-place (not yet applied). | **B1 re-probe both migs on throwaway branch** (view write-through + anon-EXECUTE closed; verify anon denied EXECUTE on all 10 RPCs + no write-through via views). Sign off in `docs/d4_exos_rls_b1_review.md`. Then A1 applies (see Operator-only table). |
 
 ### SEC-LOW (hygiene)
 
@@ -90,7 +85,6 @@
 | Apply migration `20260516230000_security_release_health_cron_heartbeat.sql` | `apply_migration` via MCP — adds 3 RHC rows (heartbeat, aging_7d, pg_net) |
 | Apply migration `20260515300000_security_secdef_post_pr101_compliance.sql` | `apply_migration` — Phase 1 §6 retrofit on 11 fns + RLS enable on `aq_*_map` |
 | Mass-triage 47 aging bot_chat entries (>2 days old) | Per-lane sweep before PR #176 applies; otherwise `coordination.bot_chat_aging_7d` row will FAIL |
-| Apply D4/Exos migs `20260520120000` (phase-1 orgs+events) + `20260520130000` (phase-2 tickets+transfers) | `apply_migration` via MCP — **only after B1-NEXT-52 RLS sign-off**. Both on `main`, file-only. Creates the `exos_*` schema; until applied, the `/bridge` shell loads but data calls fail. |
 
 ### OPS / product work (per-lane self-populates here)
 
