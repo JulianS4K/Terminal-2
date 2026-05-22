@@ -12,7 +12,7 @@
 // breakdowns by tier, etc.) we'll evaluate a real chart lib then.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from '../lib/timestamp';
 import { listEventTickets, listMyOrgTickets, listAllTickets } from '../lib/tickets';
 import { Ticket } from '../types';
 

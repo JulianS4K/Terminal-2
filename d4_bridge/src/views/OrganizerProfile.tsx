@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { db } from '../lib/firebase';
-import { doc, getDoc, collection, query, where, getDocs, limit, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Event } from '../types';
+import { getPublicOrg, followOrg, unfollowOrg, isFollowingOrg } from '../lib/orgs';
+import { listPublicEventsForOrg } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'motion/react';
 import { MapPin, Calendar, CheckCircle2, UserPlus } from 'lucide-react';
@@ -19,62 +19,61 @@ export default function OrganizerProfile() {
   const [followersCount, setFollowersCount] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     async function fetchOrganizerAndEvents() {
       if (!id) return;
       try {
-        const orgDoc = await getDoc(doc(db, 'users', id));
-        if (orgDoc.exists()) {
-          const orgData = orgDoc.data();
+        // `id` is an ORG id (org-centric model — events belong to orgs).
+        // Profile + follower count come from the public org projection; events
+        // from the published-events seam (already ordered soonest-first).
+        const [org, evs] = await Promise.all([
+          getPublicOrg(id),
+          listPublicEventsForOrg(id),
+        ]);
+        if (cancelled) return;
+        if (org) {
           setOrganizer({
-            displayName: orgData.displayName || 'Anonymous Organizer',
-            photoURL: orgData.photoURL,
-            description: orgData.description || 'Creating unforgettable experiences.'
+            displayName: org.name || 'Organizer',
+            photoURL: org.theme?.logoUrl,
+            description: org.description || 'Creating unforgettable experiences.',
           });
-          setFollowersCount(orgData.followersCount || 0);
-
-          if (user) {
-            const userDoc = await getDoc(doc(db, 'users', user.uid));
-            if (userDoc.exists() && userDoc.data().followingOrganizers?.includes(id)) {
-              setIsFollowing(true);
-            }
-          }
+          setFollowersCount(org.followersCount ?? 0);
         } else {
-           // Fallback for organizers who haven't set up a profile properly
-           setOrganizer({ displayName: 'Organizer', description: 'Experience creator.' });
+          setOrganizer({ displayName: 'Organizer', description: 'Experience creator.' });
         }
+        setEvents(evs);
 
-        const eventsQ = query(collection(db, 'events'), where('organizerId', '==', id), limit(20));
-        const eventsSnap = await getDocs(eventsQ);
-        const eventsData = eventsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Event));
-        setEvents(eventsData.sort((a,b) => (b.date?.seconds || 0) - (a.date?.seconds || 0)));
+        if (user) {
+          const following = await isFollowingOrg(id).catch(() => false);
+          if (!cancelled) setIsFollowing(following);
+        }
       } catch (err) {
-        console.error("Error fetching organizer details", err);
+        console.error('Error fetching organizer details', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     fetchOrganizerAndEvents();
+    return () => {
+      cancelled = true;
+    };
   }, [id, user]);
 
   const toggleFollow = async () => {
     if (!user || !id) return;
+    const next = !isFollowing;
+    // Optimistic flip; the RPC maintains followers_count atomically server-side
+    // (idempotent — a double follow/unfollow never mis-counts).
+    setIsFollowing(next);
+    setFollowersCount((prev) => Math.max(0, prev + (next ? 1 : -1)));
     try {
-       const userRef = doc(db, 'users', user.uid);
-       const orgRef = doc(db, 'users', id);
-       
-       if (isFollowing) {
-          setIsFollowing(false);
-          setFollowersCount(prev => prev - 1);
-          await updateDoc(userRef, { followingOrganizers: arrayRemove(id) });
-          await updateDoc(orgRef, { followersCount: Math.max(0, followersCount - 1) });
-       } else {
-          setIsFollowing(true);
-          setFollowersCount(prev => prev + 1);
-          await updateDoc(userRef, { followingOrganizers: arrayUnion(id) });
-          await updateDoc(orgRef, { followersCount: followersCount + 1 });
-       }
+      if (next) await followOrg(id);
+      else await unfollowOrg(id);
     } catch (err) {
-       console.error("Failed to follow", err);
+      console.error('Failed to toggle follow', err);
+      // Revert on failure.
+      setIsFollowing(!next);
+      setFollowersCount((prev) => Math.max(0, prev + (next ? -1 : 1)));
     }
   };
 

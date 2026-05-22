@@ -21,10 +21,9 @@ import { Check, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
 import { useToast } from '../context/ToastContext';
-import { auth } from '../lib/firebase';
 import { claimOrgInvite, getOrgInvite, getOrganization } from '../lib/orgs';
 import { Organization, OrgRole } from '../types';
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from '../lib/timestamp';
 
 interface InviteDoc {
   token: string;
@@ -127,9 +126,9 @@ export default function ClaimInvite() {
     }
     setState({ kind: 'claiming' });
     try {
-      // Force-refresh the ID token so request.auth.token.email is fresh
-      // (some sign-in flows can have stale email_verified bits).
-      await auth.currentUser?.getIdToken(true);
+      // Supabase Auth keeps the session JWT fresh on its own; the old Firebase
+      // getIdToken(true) force-refresh is gone. The claim RPC derives
+      // auth.uid()/email + the email_confirmed gate from the current session.
       await claimOrgInvite({
         token: state.invite.token,
         orgId: state.invite.orgId,

@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { auth } from './firebase';
+import { getCurrentAppUser } from './auth';
 import type { ToastOptions } from '../context/ToastContext';
 
 export function cn(...inputs: ClassValue[]) {
@@ -57,10 +57,10 @@ export function handleFirestoreError(
   const info: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      // Intentionally narrowed — no email, displayName, providerData, etc.
-      userId: auth.currentUser?.uid,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
+      // Intentionally narrowed — no email, displayName, etc. Sourced from the
+      // Supabase current-user holder (lib/auth), the app's auth provider.
+      userId: getCurrentAppUser()?.uid,
+      emailVerified: getCurrentAppUser()?.emailVerified,
     },
     operationType,
     path,

@@ -9,7 +9,7 @@
 // `Timestamp` (still imported transitionally) so the existing Organization /
 // OrgMembership shapes in src/types.ts keep working until those are de-Firebased.
 
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from './timestamp';
 import { supabase } from './supabase';
 import { Organization, OrgMembership, OrgRole } from '../types';
 
@@ -47,6 +47,8 @@ function mapOrg(row: any, secrets?: any): Organization {
     ownerUid: row.owner_uid,
     createdAt: toTs(row.created_at),
     updatedAt: row.updated_at ? toTs(row.updated_at) : undefined,
+    description: row.description ?? undefined,
+    followersCount: row.followers_count ?? 0,
     theme: row.theme ?? undefined,
     // payments/distribution live in exos_org_secrets (owner/finance RLS); absent
     // for non-privileged readers.
@@ -115,7 +117,11 @@ export async function getOrganizationBySlug(slug: string): Promise<Organization 
 // owner_uid/secrets). For public surfaces (storefront, embed) where the viewer
 // may be anonymous and can't read the exos_orgs base table.
 function mapPublicOrg(row: any): Organization {
-  return { id: row.id, name: row.name, slug: row.slug, ownerUid: '', createdAt: toTs(null), theme: row.theme ?? undefined };
+  return {
+    id: row.id, name: row.name, slug: row.slug, ownerUid: '', createdAt: toTs(null),
+    description: row.description ?? undefined, followersCount: row.followers_count ?? 0,
+    theme: row.theme ?? undefined,
+  };
 }
 
 export async function getPublicOrg(orgId: string): Promise<Organization | null> {
@@ -128,6 +134,33 @@ export async function getPublicOrgBySlug(slug: string): Promise<Organization | n
   const { data, error } = await supabase.from('exos_public_orgs').select('*').eq('slug', slug).maybeSingle();
   if (error) throw error;
   return data ? mapPublicOrg(data) : null;
+}
+
+// --- Follow graph (org-level; backs OrganizerProfile) ----------------------
+
+/** Follow an org. Idempotent — a double-follow is a server-side no-op and
+ *  never double-counts (the RPC bumps followers_count only on a real insert). */
+export async function followOrg(orgId: string): Promise<void> {
+  const { error } = await supabase.rpc('exos_follow_org', { p_org_id: orgId });
+  if (error) throw error;
+}
+
+/** Unfollow an org. Idempotent (no-op + no under-count if not following). */
+export async function unfollowOrg(orgId: string): Promise<void> {
+  const { error } = await supabase.rpc('exos_unfollow_org', { p_org_id: orgId });
+  if (error) throw error;
+}
+
+/** Whether the current user follows this org. RLS scopes the row to the caller,
+ *  so this only ever returns the caller's own follow edge. */
+export async function isFollowingOrg(orgId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('exos_org_follows')
+    .select('org_id')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
 }
 
 /**

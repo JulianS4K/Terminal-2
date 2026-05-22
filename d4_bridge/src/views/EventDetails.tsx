@@ -572,7 +572,7 @@ export default function EventDetails() {
                     <h3 className="text-2xl font-black italic uppercase tracking-tighter">Event Organizer</h3>
                   </div>
                </div>
-               <Link to={`/organizer/${event.organizerId}`} className="px-6 py-3 bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest group-hover:bg-brand-primary group-hover:text-black transition-all">
+               <Link to={`/organizer/${event.orgId ?? ''}`} className="px-6 py-3 bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest group-hover:bg-brand-primary group-hover:text-black transition-all">
                   View Profile
                </Link>
             </div>

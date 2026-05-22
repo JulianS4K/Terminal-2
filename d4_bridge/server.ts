@@ -215,10 +215,10 @@ async function startServer() {
 
   // -- sitemap.xml ----------------------------------------------------------
   // Generates a sitemap pointing at every published event + every org
-  // storefront. Queries Firestore via the public Firebase JS client
-  // (no Admin SDK needed — published events and orgs are public reads).
+  // storefront. Queries the public Supabase projections (exos_public_events /
+  // exos_public_orgs) with the anon key — both are anon-readable views.
   // Cached in-memory for 10 minutes so a hammering crawler doesn't
-  // burn Firestore reads on every hit.
+  // burn reads on every hit.
   let sitemapCache: { generatedAt: number; xml: string } | null = null;
   const SITEMAP_TTL_MS = 10 * 60 * 1000;
   app.get('/sitemap.xml', async (req, res, next) => {
@@ -230,35 +230,20 @@ async function startServer() {
         res.type('application/xml').send(sitemapCache.xml);
         return;
       }
-      // Lazy-load firebase only when this endpoint fires so dev-mode
-      // boot stays snappy. Same web client we use in the SPA — it
-      // honors the same Firestore rules, which means the query only
-      // returns publicly-readable docs.
-      const { initializeApp, getApps } = await import('firebase/app');
-      const { getFirestore, collection, query, where, getDocs, limit } =
-        await import('firebase/firestore');
-      // Firebase web config from env (VITE_FIREBASE_*), not a committed JSON
-      // (mirrors src/lib/firebase.ts). Absent env → undefined config; the
-      // getDocs below then fails and is caught by this handler's try/catch,
-      // so SSR meta enrichment degrades gracefully instead of crashing.
-      const config = {
-        apiKey:            process.env.VITE_FIREBASE_API_KEY,
-        authDomain:        process.env.VITE_FIREBASE_AUTH_DOMAIN,
-        projectId:         process.env.VITE_FIREBASE_PROJECT_ID,
-        storageBucket:     process.env.VITE_FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-        appId:             process.env.VITE_FIREBASE_APP_ID,
-      };
-      if (getApps().length === 0) initializeApp(config as any);
-      const dbInstance = getFirestore(undefined, process.env.VITE_FIREBASE_FIRESTORE_DB_ID);
-      const eventsSnap = await getDocs(
-        query(
-          collection(dbInstance, 'events'),
-          where('status', '==', 'published'),
-          limit(1000),
-        ),
-      );
-      const orgsSnap = await getDocs(query(collection(dbInstance, 'orgs'), limit(500)));
+      // Read published events + org storefronts from the public Supabase
+      // projections. exos_public_events is already status=published (the view's
+      // WHERE clause) and exos_public_orgs/events are anon-readable, so the
+      // anon key suffices. Lazy-import keeps dev-mode boot snappy. Absent env →
+      // throws, caught below → graceful empty-sitemap stub.
+      const { createClient } = await import('@supabase/supabase-js');
+      const sbUrl = process.env.VITE_SUPABASE_URL;
+      const sbKey = process.env.VITE_SUPABASE_ANON_KEY;
+      if (!sbUrl || !sbKey) throw new Error('Supabase env (VITE_SUPABASE_URL / _ANON_KEY) missing');
+      const sb = createClient(sbUrl, sbKey);
+      const [{ data: events }, { data: orgs }] = await Promise.all([
+        sb.from('exos_public_events').select('id, starts_at').limit(1000),
+        sb.from('exos_public_orgs').select('slug').limit(500),
+      ]);
 
       const host = req.get('host') || 'localhost';
       const proto = (req.get('x-forwarded-proto') || req.protocol || 'https') as string;
@@ -266,20 +251,20 @@ async function startServer() {
       const urls: string[] = [
         `<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`,
       ];
-      for (const d of eventsSnap.docs) {
-        const data = d.data() as { date?: { toDate?: () => Date }; updatedAt?: { toDate?: () => Date } };
-        const lastmod = data.updatedAt?.toDate?.()?.toISOString() ?? data.date?.toDate?.()?.toISOString();
+      for (const e of events ?? []) {
+        const row = e as { id: string; starts_at?: string | null };
+        const lastmod = row.starts_at ? new Date(row.starts_at).toISOString() : null;
         urls.push(
-          `<url><loc>${base}/event/${d.id}</loc>${
+          `<url><loc>${base}/event/${row.id}</loc>${
             lastmod ? `<lastmod>${lastmod}</lastmod>` : ''
           }<changefreq>daily</changefreq><priority>0.8</priority></url>`,
         );
       }
-      for (const d of orgsSnap.docs) {
-        const data = d.data() as { slug?: string };
-        if (!data.slug) continue;
+      for (const o of orgs ?? []) {
+        const slug = (o as { slug?: string }).slug;
+        if (!slug) continue;
         urls.push(
-          `<url><loc>${base}/o/${data.slug}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>`,
+          `<url><loc>${base}/o/${slug}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>`,
         );
       }
       const xml =

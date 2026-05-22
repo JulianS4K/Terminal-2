@@ -84,7 +84,7 @@ export default function App() {
     <ErrorBoundary>
       {/* basename matches vite base '/bridge/' so client routes resolve under
           the unified-shell prefix (app.py /bridge → static/bridge/). */}
-      <Router basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+      <Router basename={((import.meta as any).env?.BASE_URL ?? '/').replace(/\/$/, '')}>
         <ToastProvider>
           <AuthProvider>
             <OrganizationProvider>

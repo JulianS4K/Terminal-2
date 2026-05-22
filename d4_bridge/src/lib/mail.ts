@@ -1,14 +1,14 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { db } from './firebase';
+import { supabase } from './supabase';
+import { getCurrentAppUser } from './auth';
 
-// Thin wrapper around the Firebase Trigger Email extension.
-// https://extensions.dev/extensions/firebase/firestore-send-email
-//
-// Setup: install the extension and point it at the `mail` collection.
-// Until that's done, calls below succeed (they just write a doc); the
-// extension is what actually sends the email. We catch errors so the
-// calling flow doesn't fail when the queue write is rejected — the
-// Firestore rule for `mail` is intentionally narrow.
+// Transactional email queue (Supabase). queueEmail inserts a pending row into
+// public.exos_mail (migration 20260520160000); a downstream drainer — an edge
+// function / cron + an email provider — sends it and flips status. Until that
+// drainer is wired, rows just accumulate as 'pending' (the same decoupling the
+// old Firebase "Trigger Email" extension gave us). We catch errors so the
+// calling flow never fails on a queue-write rejection — the exos_mail RLS is
+// intentionally narrow (authenticated-insert only, template-whitelisted,
+// size-capped via CHECK constraints).
 
 export type MailTemplate = 'transfer-initiated' | 'transfer-claimed' | 'org-invite' | 'event-cancelled' | 'event-updated';
 
@@ -21,32 +21,23 @@ interface QueueOptions {
 
 /**
  * Best-effort enqueue of a transactional email. Never throws — the caller
- * shouldn't have to wrap this in try/catch.
- *
- * Why the wire field is `templateName` (not `template`):
- * The Firebase Trigger Email extension treats a top-level `template` field
- * as template-mode rendering — it expects `template: { name, data }` and
- * looks up the named template in a dedicated Firestore templates
- * collection. Our value was a STRING (e.g. 'transfer-initiated') which
- * the extension would either fail to parse or use to look up a template
- * that doesn't exist, dropping the email on the floor. We keep our
- * own internal label under a different field so the extension only sees
- * `to` + `message: {subject, html}` and runs in direct mode.
+ * shouldn't have to wrap this in try/catch. The row lands as status 'pending';
+ * delivery happens out-of-band (a service-role drainer), so a queue-write here
+ * is decoupled from the actual send.
  */
 export async function queueEmail(opts: QueueOptions): Promise<void> {
   try {
-    await addDoc(collection(db, 'mail'), {
-      to: opts.to.trim().toLowerCase(),
-      templateName: opts.template,
-      message: {
-        subject: opts.subject,
-        html: opts.html,
-      },
-      createdAt: serverTimestamp(),
+    const { error } = await supabase.from('exos_mail').insert({
+      to_email: opts.to.trim().toLowerCase(),
+      template: opts.template,
+      subject: opts.subject,
+      html: opts.html,
+      created_by: getCurrentAppUser()?.uid ?? null,
     });
+    if (error) throw error;
   } catch (err) {
-    // Common when the extension isn't installed yet, when the rule
-    // rejects the write, or in offline mode. We log but never propagate.
+    // Common when the row violates a CHECK/RLS, when offline, or when called
+    // outside an authenticated context. We log but never propagate.
     console.warn('queueEmail failed (non-fatal):', err);
   }
 }
