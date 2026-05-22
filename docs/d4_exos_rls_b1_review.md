@@ -40,3 +40,27 @@ Please confirm:
 - **2026-05-20 — anon surface narrowed (your Q1, done pre-apply):** anon now reads ONLY column-narrowed public views `exos_public_orgs` / `exos_public_events` / `exos_public_tiers` (§7b of the migration); anon has **no base-table grant**. This drops `owner_uid` from public org reads, hides internal event columns (`created_by` / `automatiq_listing_id` / `sync_status` / `distribution_networks` / `exclusivity`), and **excludes hidden tiers** (`visibility <> 'public'`) + unpublished events from the public surface. Views are owner-run (intentional security-definer projection — the view's WHERE is the row gate; same pattern as D1's `*_public`). Authenticated full-row table reads unchanged (lower-risk; narrow later if you want parity).
 - **Probe matrix (your Q2): yes, please run it** against the AMENDED migration. Add these public-view boundary checks to the dirty-dozen: anon CAN read `exos_public_events` but anon SELECT on the `exos_events`/`exos_orgs`/`exos_ticket_tiers` **base tables → denied**; `owner_uid` absent from `exos_public_orgs`; a hidden tier absent from `exos_public_tiers`; an unpublished event absent from `exos_public_events`. Also probe the §9 RPCs: `exos_create_org` — caller becomes owner, cannot forge ownership for another uid, duplicate slug rejected; `exos_claim_invite` — email-mismatch / unverified / expired / non-pending all denied, valid claim creates the membership + completes the invite.
 - **2026-05-20 — B1 live probe (bot_chat #381) found a SEC-HIGH** that the static trace + my structural branch check both missed: Supabase's platform default privileges left `anon` (and `authenticated`) with base-table GRANTs the migration never REVOKEd. **Fixed in §8**: `REVOKE ALL … FROM anon, authenticated`, then re-`GRANT` only CRUD to `authenticated`. Anon now has **zero base-table privilege** (storefront reads via §7b views only); also clears the SEC-LOW (authenticated's broad TRUNCATE/REFERENCES/TRIGGER defaults). The 3 read policies already shipped `TO authenticated` with RLS enabled on all 9, so RLS also denied anon at row level — the REVOKE removes the privilege outright (belt-and-suspenders). **Awaiting B1 re-probe to confirm GO.**
+
+---
+
+## ✅ B1 SIGN-OFF — 2026-05-21 (both phases)
+
+**Verdict: GO for prod apply.** Both exos migrations re-probed live on throwaway Supabase branches (applied → seeded multi-org fixtures → adversarial probe matrix → torn down). Authoritative records: bot_chat **#384** (phase-1) + **#427** (phase-2).
+
+### Phase-1 (`20260520120000`) — GO (bot_chat #384)
+Re-probed the amended artifact (anon narrowed to §7b views + §8 REVOKE). 13/14 clean; the one SEC-HIGH (anon base-table grant) was the live-probe catch, fixed in §8, and the re-probe confirmed: anon base read → denied; anon reads only the 3 owner-run public views; `owner_uid`/internal cols/hidden tiers absent; cross-tenant + secrets isolation hold; `exos_has_org_role` SECDEF no-recursion. `exos_create_org` / `exos_claim_invite` RPC gates (own-org bootstrap, email-match + `email_confirmed_at`) verified.
+
+### Phase-2 (`20260520130000`) — GO (bot_chat #427)
+24 probes, all functional checks pass:
+- **Mint**: owner OK; oversell DENIED (atomic tier claim); scanner/cross-tenant/anon mint DENIED.
+- **SELECT isolation**: owner=own, non-staff buyer=0, org-staff=org, cross-tenant=0.
+- **Check-in**: first OK; double-scan → `used` (atomic `status='active'` flip); non-staff DENIED.
+- **Transfer/claim**: non-owner & to-self create DENIED; wrong-email & UNVERIFIED claim DENIED; receiver verified+match OK; **`barcode_secret` rotates on claim**; ownership moves to receiver.
+- **Void**: scanner DENIED, finance OK, sticky. **scan_rejects**: scanner-own INSERT OK, non-staff/spoof DENIED.
+- **Helpers**: `exos_is_admin` reads `app_metadata` (server-set, unforgeable); `exos_holds_ticket` SECDEF own-tickets-only.
+
+**🟡 SEC-MED (non-exploitable) — recommend fold-in before batch apply:** the 6 write RPCs + 2 helpers still carry `anon` EXECUTE — `REVOKE EXECUTE … FROM PUBLIC` does not strip Supabase's *explicit* anon default-grant (confirmed live: `has_function_privilege('anon', fn)=true` on all 8). NOT exploitable — every write RPC raises on `auth.uid() IS NULL` (anon mint created no row) and the helpers return false for anon. Per convention (and the schema-wide audit, bot_chat 406 / PR #298), change each `REVOKE EXECUTE ON FUNCTION … FROM PUBLIC` → `FROM PUBLIC, anon` (8 functions). Tables are already correctly locked (`REVOKE ALL FROM anon` applied; anon SELECT on tickets/transfers = false). PR #298 does NOT cover these RPCs (not yet in prod), so amend `130000` directly.
+
+### Phase-2 product follow-ups (later review, non-blocking)
+- Real Stripe-webhook mint path (server-side, service_role) when it lands.
+- Retention / export / GDPR posture for buyer + invitee emails.
