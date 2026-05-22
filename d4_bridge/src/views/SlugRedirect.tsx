@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { getPublicEventBySlug } from '../lib/events';
 
 /**
  * Resolves /e/:slug → /event/:eventId.
  *
- * The lookup is a single read against `slugs/{slug}` (publicly readable per
- * the rule). If the slug doesn't exist, we render a "not found" panel
- * instead of bouncing to home, so a typo'd or expired vanity URL gets a
- * helpful message rather than a silent redirect.
+ * The slug now lives directly on `exos_events.slug` (UNIQUE), exposed via the
+ * column-narrowed `exos_public_events` view, so resolution is a single seam
+ * read by slug. If the slug doesn't resolve to a published event we render a
+ * "not found" panel instead of bouncing to home, so a typo'd or draft-only
+ * vanity URL gets a helpful message rather than a silent redirect.
  */
 export default function SlugRedirect() {
   const { slug } = useParams<{ slug: string }>();
@@ -24,18 +24,13 @@ export default function SlugRedirect() {
         return;
       }
       try {
-        const snap = await getDoc(doc(db, 'slugs', slug.toLowerCase()));
+        const ev = await getPublicEventBySlug(slug.toLowerCase());
         if (cancelled) return;
-        if (!snap.exists()) {
+        if (!ev) {
           setState('missing');
           return;
         }
-        const data = snap.data() as { eventId?: string };
-        if (!data.eventId) {
-          setState('missing');
-          return;
-        }
-        setEventId(data.eventId);
+        setEventId(ev.id);
         setState('found');
       } catch (err) {
         console.error('Slug resolution failed', err);

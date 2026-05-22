@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, FormEvent, ChangeEvent } from 'react';
-import { storage } from '../lib/firebase';
 import { createEvent, getEventForEdit } from '../lib/events';
-import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { uploadEventImage, deleteStorageObject } from '../lib/storage';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
@@ -391,29 +390,20 @@ export default function CreateEvent() {
       return;
     }
 
-    // Upload to Firebase Storage. The Storage rule (storage.rules) gates
-    // writes to /event-images/{auth.uid}/* so users can't overwrite each
-    // other's files. Only the download URL ends up in Firestore — the
-    // event doc stays small and listing queries don't drag image bytes.
+    // Upload to Supabase Storage (exos-media bucket). RLS gates writes to
+    // event-images/{auth.uid}/* so users can't overwrite each other's files.
+    // Only the public URL ends up on the event row — the row stays small and
+    // listing queries don't drag image bytes.
     setUploadingImage(true);
     try {
-      const ext = file.name.includes('.') ? file.name.split('.').pop() : 'bin';
-      const path = `event-images/${user.uid}/${crypto.randomUUID()}.${ext}`;
-      const fileRef = storageRef(storage, path);
-      await uploadBytes(fileRef, file, { contentType: file.type });
-      const url = await getDownloadURL(fileRef);
+      const { path, url } = await uploadEventImage(user.uid, file);
 
       // If a previous upload from this session is now orphaned by this
       // replacement, delete it so abandoned drafts don't accumulate
-      // Storage objects. Best-effort — failure to delete (network blip,
-      // already-deleted) is non-fatal.
+      // Storage objects. Best-effort — deleteStorageObject never throws.
       const previous = uploadedImagePathRef.current;
       if (previous && previous !== path) {
-        try {
-          await deleteObject(storageRef(storage, previous));
-        } catch (cleanupErr) {
-          console.warn('Could not delete previous upload:', cleanupErr);
-        }
+        await deleteStorageObject(previous);
       }
       uploadedImagePathRef.current = path;
 
@@ -443,15 +433,10 @@ export default function CreateEvent() {
   const cleanupOrphanedImage = async () => {
     const path = uploadedImagePathRef.current;
     if (!path) return;
-    try {
-      await deleteObject(storageRef(storage, path));
-    } catch (err) {
-      // Most common cause: the file was already deleted, or the user is
-      // offline. We swallow the error — the cleanup is best-effort.
-      console.warn('Could not delete orphaned image:', err);
-    } finally {
-      uploadedImagePathRef.current = null;
-    }
+    // Best-effort — deleteStorageObject swallows errors (already-deleted /
+    // offline are both non-fatal for orphan cleanup).
+    await deleteStorageObject(path);
+    uploadedImagePathRef.current = null;
   };
 
   // Categories + genre chips come from the taxonomy module so adding a

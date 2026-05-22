@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from './lib/timestamp';
 
 export interface UserProfile {
   uid: string;
@@ -53,6 +53,11 @@ export interface Organization {
   ownerUid: string;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
+  // Public bio + denormalized follower count (Sprint 3 — org follow graph).
+  // Surfaced on OrganizerProfile; followersCount is maintained by the
+  // exos_follow_org/unfollow RPCs.
+  description?: string;
+  followersCount?: number;
   // Phase 2 white-label. Filled in by Sprint 2.
   theme?: {
     logoUrl?: string;

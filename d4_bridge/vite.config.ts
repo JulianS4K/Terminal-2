@@ -32,7 +32,6 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks: {
-            firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
             stripe: ['@stripe/stripe-js'],
             qr: ['html5-qrcode', 'qrcode.react'],
             motion: ['motion'],

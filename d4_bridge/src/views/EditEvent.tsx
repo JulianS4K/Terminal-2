@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { storage } from '../lib/firebase';
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from '../lib/timestamp';
+import { uploadEventImage } from '../lib/storage';
 import {
   updateEvent,
   cancelEvent,
@@ -10,7 +10,6 @@ import {
   updateTier as seamUpdateTier,
   deleteTier as seamDeleteTier,
 } from '../lib/events';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useAuth } from '../context/AuthContext';
 import { Event } from '../types';
 import { ArrowLeft, Save, MapPin, Calendar as CalendarIcon, Music, Type, Image as ImageIcon, Palette, Globe, XCircle, ListOrdered, Tag, Plus, Upload, ShieldCheck, Loader2, AlertOctagon } from 'lucide-react';
@@ -18,7 +17,6 @@ import { motion } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import { queueEmail, escapeHtml } from '../lib/mail';
-import { query as fbQuery, where as fbWhere } from 'firebase/firestore';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
 import {
   COMMON_TIMEZONES,
@@ -540,11 +538,7 @@ export default function EditEvent() {
 
     setUploadingImage(true);
     try {
-      const ext = file.name.includes('.') ? file.name.split('.').pop() : 'bin';
-      const path = `event-images/${user.uid}/${crypto.randomUUID()}.${ext}`;
-      const fileRef = storageRef(storage, path);
-      await uploadBytes(fileRef, file, { contentType: file.type });
-      const url = await getDownloadURL(fileRef);
+      const { url } = await uploadEventImage(user.uid, file);
       setEventData({ ...eventData, image: url });
       toast({ kind: 'success', message: 'Image uploaded.' });
     } catch (err) {

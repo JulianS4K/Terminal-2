@@ -14,7 +14,7 @@
 // comp + test-mint path (wired to EventDetails' admin "TEST" button) that makes
 // the whole flow exercisable on Supabase without a payment processor.
 
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from './timestamp';
 import { supabase } from './supabase';
 import { getCurrentAppUser } from './auth';
 import { mapEvent } from './events';
