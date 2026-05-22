@@ -1,5 +1,14 @@
-// Supabase Edge Function: collect-listings
+// Supabase Edge Function: collect-listings (v10)
 //
+// v10: reconcile deployed-v10 (is_chat_tracked sweep, EvoClient.getEvent) with
+//      repo-HEAD (TS-computed section_metrics, owned_p25/p75/p90, fail-closed
+//      requireCronSecret auth). Both feature sets are now in a single source.
+//
+// v9: include events flagged is_chat_tracked=true in every cron sweep so
+//     events the retail chatbot has resolved get the same snapshot cadence
+//     as watchlist-derived events.
+//
+// Earlier versions:
 // Pulls broker-portal ticket_groups per event (via /v9/ticket_groups), inserts
 // into listings_snapshots, and computes event_metrics + section_metrics from
 // the raw data. /v9/ticket_groups returns the same inventory as /v9/listings
@@ -23,6 +32,7 @@
 //   (no params)   -> process the entire watchlist
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCronSecret } from "../_shared/cron-auth.ts";
 
 const API_HOST = "api.ticketevolution.com";
 const API_BASE = `https://${API_HOST}`;
@@ -87,6 +97,11 @@ class EvoClient {
       if (out.length >= (resp.total_entries ?? 0)) break;
     }
     return out;
+  }
+
+  /** Fetch a single event by id (used to hydrate sparse chat-tracked rows). */
+  async getEvent(id: number): Promise<any> {
+    return this.get(`/v9/events/${id}`, {});
   }
 
   /**
@@ -439,7 +454,46 @@ async function resolveS4kBrokerageId(db: any): Promise<number> {
   return DEFAULT_S4K_BROKERAGE_ID;
 }
 
-import { requireCronSecret } from "../_shared/cron-auth.ts";
+// v9: Pull chat-tracked events whose occurs_at_local is in the future, plus an
+// optional window filter. These get added to the per-event sweep alongside
+// watchlist-derived events.
+async function loadChatTrackedEventIds(
+  db: any,
+  evo: EvoClient,
+  window: { minHours: number; maxHours: number | null } | null,
+  log: string[],
+): Promise<{ ids: number[]; hydrated: number }> {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const { data, error } = await db
+    .from("events")
+    .select("id, occurs_at_local, venue_id, primary_performer_id")
+    .eq("is_chat_tracked", true)
+    .gte("occurs_at_local", todayIso);
+  if (error) { log.push(`chat-tracked lookup failed: ${error.message}`); return { ids: [], hydrated: 0 }; }
+  let rows = data ?? [];
+  if (window) {
+    rows = rows.filter((r: any) => r.occurs_at_local && eventInWindow({ occurs_at_local: r.occurs_at_local }, window));
+  }
+
+  // Hydrate sparse rows (no venue/performer yet) by hitting /v9/events/{id}.
+  const sparse = rows.filter((r: any) => !r.venue_id || !r.primary_performer_id);
+  let hydrated = 0;
+  for (const r of sparse) {
+    try {
+      const ev = await evo.getEvent(r.id);
+      if (!ev?.id) continue;
+      const pp = primaryPerformer(ev);
+      await db.from("events").upsert({
+        id: ev.id, name: ev.name ?? null, occurs_at_local: ev.occurs_at_local ?? null, state: ev.state ?? null,
+        venue_id: ev.venue?.id ?? null, venue_name: ev.venue?.name ?? null, venue_location: ev.venue?.location ?? null,
+        primary_performer_id: pp.id, primary_performer_name: pp.name, performer_ids: allPerformerIds(ev),
+      }, { onConflict: "id" });
+      hydrated++;
+    } catch (e) { log.push(`hydrate failed event ${r.id}: ${(e as Error).message}`); }
+  }
+  log.push(`chat-tracked: ${rows.length} eligible, ${hydrated} hydrated metadata`);
+  return { ids: rows.map((r: any) => r.id), hydrated };
+}
 
 Deno.serve(async (req) => {
   const authErr = requireCronSecret(req);
@@ -470,7 +524,7 @@ Deno.serve(async (req) => {
     const { data: existing, error: evErr } = await db
       .from("events").select("id,name").eq("id", eid).maybeSingle();
     if (evErr) return json({ error: "events lookup failed", details: evErr }, 500);
-    if (!existing) return json({ error: `event ${eid} not in events table — run watchlist collect first` }, 404);
+    if (!existing) return json({ error: `event ${eid} not in events table — mark_event_chat_tracked first or run watchlist collect` }, 404);
 
     const capturedAt = new Date().toISOString();
     let listingRowsCount = 0;
@@ -574,46 +628,36 @@ Deno.serve(async (req) => {
       log.push(`${w.kind} ${w.ext_id} ERROR: ${(e as Error).message}`);
     }
   }
+  log.push(`${byEvent.size} unique events from watchlist`);
 
-  const total = byEvent.size;
-  log.push(`${total} unique events after dedup`);
+  // Upsert watchlist events before merging chat-tracked (avoids a missing-row
+  // edge case where a chat-tracked id appears in watchlist too).
+  const capturedAt = new Date().toISOString();
+  if (byEvent.size > 0) {
+    const eventRows = [...byEvent.values()].map((ev) => {
+      const pp = primaryPerformer(ev);
+      return {
+        id: ev.id, name: ev.name ?? null, occurs_at_local: ev.occurs_at_local ?? null, state: ev.state ?? null,
+        venue_id: ev.venue?.id ?? null, venue_name: ev.venue?.name ?? null, venue_location: ev.venue?.location ?? null,
+        primary_performer_id: pp.id, primary_performer_name: pp.name, performer_ids: allPerformerIds(ev), last_seen: capturedAt,
+      };
+    });
+    { const { error } = await db.from("events").upsert(eventRows, { onConflict: "id" }); if (error) log.push(`events upsert error: ${error.message}`); }
+    { const { error } = await db.from("watch_sources").upsert(sources.map((s) => ({ ...s, first_seen: capturedAt })), { onConflict: "event_id,source_type,source_id", ignoreDuplicates: true }); if (error) log.push(`watch_sources upsert error: ${error.message}`); }
+  }
 
-  if (total === 0) {
+  // v9: union in chat-tracked events (auto-tracked from chatbot pings).
+  const { ids: chatIds } = await loadChatTrackedEventIds(db, evo, window, log);
+  const allEventIds = new Set<number>([...byEvent.keys(), ...chatIds]);
+  let eventIds = [...allEventIds];
+  const totalUnique = eventIds.length;
+  log.push(`${totalUnique} unique events total (watchlist ∪ chat-tracked)`);
+
+  if (totalUnique === 0) {
     await db.from("runs").update({ finished_at: new Date().toISOString(), events_collected: 0, stats_errors: 0 }).eq("id", runId);
     return json({ run_id: runId, log, events_collected: 0 });
   }
 
-  const capturedAt = new Date().toISOString();
-  const eventRows = [...byEvent.values()].map((ev) => {
-    const pp = primaryPerformer(ev);
-    return {
-      id: ev.id,
-      name: ev.name ?? null,
-      occurs_at_local: ev.occurs_at_local ?? null,
-      state: ev.state ?? null,
-      venue_id: ev.venue?.id ?? null,
-      venue_name: ev.venue?.name ?? null,
-      venue_location: ev.venue?.location ?? null,
-      primary_performer_id: pp.id,
-      primary_performer_name: pp.name,
-      performer_ids: allPerformerIds(ev),
-      last_seen: capturedAt,
-    };
-  });
-
-  {
-    const { error } = await db.from("events").upsert(eventRows, { onConflict: "id" });
-    if (error) log.push(`events upsert error: ${error.message}`);
-  }
-  {
-    const { error } = await db.from("watch_sources").upsert(
-      sources.map((s) => ({ ...s, first_seen: capturedAt })),
-      { onConflict: "event_id,source_type,source_id", ignoreDuplicates: true },
-    );
-    if (error) log.push(`watch_sources upsert error: ${error.message}`);
-  }
-
-  let eventIds = [...byEvent.keys()];
   let skippedFresh = 0;
   if (minAgeSeconds && minAgeSeconds > 0 && eventIds.length > 0) {
     const cutoffIso = new Date(Date.now() - minAgeSeconds * 1000).toISOString();
@@ -681,16 +725,17 @@ Deno.serve(async (req) => {
 
   const finishedAt = new Date().toISOString();
   await db.from("runs").update({
-    finished_at: finishedAt, events_collected: total, stats_errors: errors.length,
+    finished_at: finishedAt, events_collected: totalUnique, stats_errors: errors.length,
   }).eq("id", runId);
 
   return json({
     run_id: runId,
     window: windowParam ?? null,
     min_age_seconds: minAgeSeconds,
-    events_in_window: total,
+    events_in_window: totalUnique,
     events_skipped_fresh: skippedFresh,
     events_collected: eventIds.length,
+    chat_tracked_in_sweep: chatIds.length,
     listing_rows_written: totalListingRows,
     owned_rows_written: totalOwnedRows,
     errors: errors.length,
