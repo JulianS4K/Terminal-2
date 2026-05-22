@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-21 by A1 (D4/Exos onboarding — §2 lane + §3 exos value-landmines + §7 LANGUAGE-sql gotcha + §9 phase-1/2 rows; RLS scoped to own-org reads)
+**Last updated**: 2026-05-22 by A1 (D4 migration state — §2 D4 status + §8 D4 write-path recipe + §9 phase-1/2 marked applied + §10 collect-listings drift closed)
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -64,7 +64,32 @@ Code-dir ownership (per `LANE_DISCIPLINE.md`):
 - D4 → `d4_bridge/*` (Exos app) + `exos_*` / `bridge_event_xref` migrations (authors; A1 applies)
 - A1 → `supabase/migrations/*`, governance docs, cross-cutting
 
-**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema, migrating Firestore → Supabase + Supabase Auth (same prod project as D0). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Two migrations authored, **NOT yet applied** (B1 RLS review → A1 applies — see §9). Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
+**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema (Firestore → Supabase migration **in progress**). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
+
+**D4 migration state (2026-05-22):**
+
+✅ **Schema live** — both migrations applied 2026-05-22, B1 sign-off PR #304, all tables RLS-on, anon-EXECUTE revoked on all 10 write-path RPCs. 0 rows — clean slate, not yet used.
+
+✅ **Supabase Auth** — `lib/auth.ts` + `AuthContext.tsx` fully on Supabase Auth. No Firebase Auth anywhere. `AppUser` shape maps from `SupabaseUser`; `isAdminUser()` checks `app_metadata.admin` (server-set, unforgeable).
+
+✅ **Data libs wired** — `lib/events.ts`, `lib/orgs.ts`, `lib/tickets.ts` all read/write via `supabase-js` against `exos_*` tables. A transitional `Timestamp` shim (`import { Timestamp } from 'firebase/firestore'`) remains in these files purely for type-compat with `src/types.ts` — it converts Postgres timestamptz strings to the old Firestore `Timestamp` shape so existing views stay drop-in. Safe to remove after the `src/types.ts` type sweep in step 4 below.
+
+❌ **`lib/orgLogo.ts`** — still uses Firebase Storage for logo uploads. Replace with:
+```typescript
+const { data, error } = await supabase.storage
+  .from('org-logos')                           // bucket: org-logos (create in Supabase dashboard)
+  .upload(`${orgId}/logo-${Date.now()}.${ext}`, file, { contentType: file.type, upsert: true });
+const { data: { publicUrl } } = supabase.storage.from('org-logos').getPublicUrl(data.path);
+```
+Bucket policy: authenticated upload to own-org path; public read. 2 MB cap + image MIME enforce in upload options (same constraints as the Firebase Storage rule).
+
+❌ **`lib/mail.ts`** — still queues to Firestore + Firebase Trigger Email extension. Options: (a) Supabase Edge Function wrapping Resend/SendGrid, (b) `mail_queue` table + pg_net POST cron. Until replaced, email notifications (transfer-initiated, org-invite, etc.) are silently dropped post-cut-over. Replace before running the data migration.
+
+❌ **Data cut-over** — `scripts/migrate-to-orgs.ts` exists but has NOT been run. All exos_* tables have 0 rows; actual data lives in Firestore. **Run after** `orgLogo.ts` + `mail.ts` are migrated and the app is validated against the Supabase backend on a test org.
+
+❌ **`src/types.ts` Timestamp shim** — `Timestamp` type from `firebase/firestore` used as the shape for date fields in `Event`/`Ticket`/`Transfer`. After cut-over, replace with `Date | string`; remove the transitional `toTs()` helpers in `events.ts`, `orgs.ts`, `tickets.ts`.
+
+❌ **SW scope** — `static/bridge/sw.js` was built for root scope (`/`), served under `/bridge/`. PWA offline may misbehave. Add `Service-Worker-Allowed: /bridge/` response header or rebuild the SW with the `/bridge/` scope prefix (D4-OPS-1).
 
 ---
 
@@ -352,6 +377,33 @@ SELECT public.bot_chat_log(
 4. `cron.schedule('jobname', '*/X * * * *', $body$ ... $body$)`
 5. Verify firings via `cron.job_run_details` + `cron_gate_decisions`
 
+### "I am D4 — how do I call a write RPC?"
+All D4 mutations go through SECURITY DEFINER RPCs — **never raw `.insert()`/`.update()` on base tables** (anon-EXECUTE revoked on all 10 write-path RPCs; mig 20260520230000). Authenticated callers invoke via `supabase.rpc()`.
+```typescript
+// ✅ Correct — SECDEF RPC (requires authenticated Supabase session)
+const { data, error } = await supabase.rpc('exos_create_org', {
+  p_name: 'My Org', p_slug: 'my-org', p_description: null,
+});
+
+// ❌ Wrong — authenticated base-table writes are REVOKED on write tables
+await supabase.from('exos_orgs').insert({ name: 'My Org' });
+```
+**Available write RPCs** (migs 20260520120000 + 20260520130000):
+| RPC | Purpose |
+|---|---|
+| `exos_create_org(p_name, p_slug, p_description)` | Bootstrap org + auto-profile + add caller as owner |
+| `exos_claim_invite(p_invite_id uuid)` | Accept an org invite (joins org at invited role) |
+| `exos_mint_tickets(p_tier_id, p_qty, p_buyer_profile_id)` | Staff/admin comp-ticket path |
+| `exos_check_in_ticket(p_ticket_id, p_secret)` | Scan-in (atomic double-scan guard → `exos_scan_rejects`) |
+| `exos_create_transfer(p_ticket_id, p_recipient_email)` | Initiate ticket transfer |
+| `exos_cancel_transfer(p_transfer_id uuid)` | Cancel pending transfer |
+| `exos_claim_transfer(p_transfer_id uuid)` | Recipient accepts transfer |
+| `exos_void_ticket(p_ticket_id uuid, p_reason text)` | Void ticket (admin/staff) |
+
+**Read access**: `lib/events.ts`, `lib/orgs.ts`, `lib/tickets.ts` read the base tables directly (RLS enforces own-org scoping). Public/cross-org reads go through `exos_public_*` VIEWs (anon + authenticated).
+
+**Auth pattern**: `supabase.auth.signInWithOtp()` / `supabase.auth.signInWithOAuth()` — NOT Firebase Auth. Session persists via `localStorage` (configured in `lib/supabase.ts`).
+
 ---
 
 ## 9. Recent landmark migrations (don't re-do these)
@@ -396,8 +448,8 @@ SELECT public.bot_chat_log(
 | **2026-05-20** | 20260520400000 | **Featured-pricing 10-min cron (PR #288)**: `collect_listings_featured_refresh(p_max_events int DEFAULT 50)` + cron `collect-listings-featured-10min` (`3-53/10`). Refreshes TEvo `/v9/ticket_groups` for NYC venue + `owned>100` + 24h–90d events (superset of the storefront Featured rail) every 10 min, fixing the ~6h–multi-day pricing staleness from the twice-daily windowed crons. Round-robins oldest-`captured_at`-first, skips <9min-fresh + 0-24h events. Writes land in `event_metrics`; matview `latest_event_metrics_refresh_5min` (@`:2`) makes them visible. ~5,760 extra TEvo calls/day. |
 | 2026-05-20 | 20260520410000 | **`compute_event_breakdowns` non-fatal (PR #289)**: self-caps zone+section steps at 6s (under the 8s `authenticator` ceiling), traps **`query_canceled` explicitly** (bare `WHEN OTHERS` misses 57014 — see §3 landmine), soft-fails a slow step → returns status jsonb instead of erroring. Stops the false 502s on heavy events (`collect-listings` calls this AFTER pricing persists; the RPC timeout was 502-ing pulls whose pricing already succeeded). |
 | 2026-05-20 | 20260520420000 | **Breakdowns backfill re-enable + extend (PR #290)**: re-enables `zone-backfill-isolated-10min` cron + upgrades `backfill_stale_zone_metrics` to recompute BOTH zone+section (was zones only), detect staleness via the `latest_event_metrics` matview (not an 8M-row `listings_snapshots` scan), and trap `query_canceled`. Out-of-band catch-up for heavy events that soft-fail the inline 6s RPC. **Known gap**: the heaviest events (1300+ listings) exceed even the 90s cap — `compute_event_zone_metrics`'s per-row `match_performer_zone()` LATERAL needs dedup optimization (tracked, §10). |
-| 2026-05-20 | 20260520120000 | **D4/Exos phase-1 — AUTHORED, NOT applied to prod** (B1 RLS review → A1 applies). `exos_*` orgs+events schema (profiles/orgs/org_secrets/memberships/invites/events/ticket_tiers/discount_codes + `bridge_event_xref`). Deny-by-default RLS, all 9 tables RLS-enabled; base-table grants REVOKE'd from anon (zero access) + re-GRANT CRUD to authenticated only (closes the platform-default grant leak, B1 bot_chat #381). **Base-table reads are own-org only** (operator 2026-05-21: "read/write only events it creates") — cross-org browse goes through column-narrowed `exos_public_*` owner-run VIEWs (granted anon+authenticated). Org bootstrap via `exos_create_org()` SECDEF. Mirrors `public.events` shapes by value; never writes D0. Don't re-author. |
-| 2026-05-20 | 20260520130000 | **D4/Exos phase-2 — AUTHORED, NOT applied to prod** (B1 RLS review pending). `exos_tickets`/`exos_transfers` + check-in & scan-reject audit logs + write-path SECDEF RPCs (`exos_mint_tickets`/`check_in_ticket`/`create_transfer`/`cancel_transfer`/`claim_transfer`/`void_ticket`). Atomic tier-claim closes oversell; atomic status-flip closes double-scan. **Functionally** validated end-to-end on a throwaway preview branch (create→sell→transfer→claim→scan→double-scan-reject); **RLS/grant security review still pending** (functional ≠ security-cleared). Migration-ordering bug found+fixed there (see §7 `LANGUAGE sql` gotcha). |
+| **2026-05-22** | 20260520120000 | **D4/Exos phase-1 — APPLIED to prod 2026-05-22** (B1 sign-off PR #304). `exos_*` orgs+events schema (profiles/orgs/org_secrets/memberships/invites/events/ticket_tiers/discount_codes + `bridge_event_xref`). Deny-by-default RLS, all 9 tables RLS-enabled; base-table grants REVOKE'd from anon + re-GRANT CRUD to authenticated (own-org only per RLS). Cross-org browse via `exos_public_*` VIEWs. Org bootstrap via `exos_create_org()` SECDEF. 0 rows — schema ready, data cut-over pending. |
+| **2026-05-22** | 20260520130000 | **D4/Exos phase-2 — APPLIED to prod 2026-05-22** (B1 sign-off PR #304). `exos_tickets`/`exos_transfers` + check-in + scan-reject audit logs + 6 write-path SECDEF RPCs (mint/check-in/transfer/cancel/claim/void). Atomic tier-claim closes oversell; atomic status-flip closes double-scan. All 8 write-path RPCs: anon-EXECUTE revoked (mig 20260520230000 same day). 0 rows — ready for first mint. See §8 D4 write-path recipe. |
 
 ---
 
@@ -413,7 +465,7 @@ SELECT public.bot_chat_log(
 | SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
 | `aq_short_event_id` 0% on `listings_snapshots` | Cron resumed 2026-05-16; firing 04:02 UTC | Use `event_id` for TEvo reads |
 | `compute_event_zone/section_metrics` too slow for heavy events | Open (tracked task) | Per-row `match_performer_zone()` LATERAL exceeds even 90s for 1300+ listing events (Yankees). Their zone/section breakdowns stay stale; non-fatal RPC (mig 410000) just soft-fails them. Fix = dedup zone match (compute once per distinct section/row). 54.7% of DB time per 2026-05-14 audit. |
-| `collect-listings` edge fn: repo ≠ deployed | Open (tracked task) | Deployed v10 (RPC `compute_event_breakdowns` + chat-tracked events) diverges from repo HEAD (TS-computed `section_metrics` + `owned_p25/p75/p90`, no RPC). Repo doesn't reflect prod — reconcile before next deploy. |
+| D4 Firestore → Supabase cut-over | Open (D4 task) | Schema live 2026-05-22, 0 rows. `orgLogo.ts` (Firebase Storage) + `mail.ts` (Trigger Email) still need replacing before `scripts/migrate-to-orgs.ts` can run. See §2 D4 migration state for the full checklist. |
 
 ---
 
