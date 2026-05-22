@@ -459,6 +459,7 @@ BEGIN
   RETURN v_org_id;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_create_org(text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_create_org(text, text) FROM anon;  -- pg_default_acl grants anon=X explicitly; REVOKE FROM PUBLIC doesn't remove it
 GRANT  EXECUTE ON FUNCTION public.exos_create_org(text, text) TO authenticated;
 
 -- Accept a pending org invite addressed to the caller's CONFIRMED email.
@@ -506,4 +507,5 @@ BEGIN
   RETURN v_inv.org_id;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_claim_invite(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_claim_invite(uuid) FROM anon;  -- pg_default_acl grants anon=X explicitly; REVOKE FROM PUBLIC doesn't remove it
 GRANT  EXECUTE ON FUNCTION public.exos_claim_invite(uuid) TO authenticated;

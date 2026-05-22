@@ -57,6 +57,7 @@ AS $$
   SELECT coalesce((auth.jwt() -> 'app_metadata' ->> 'admin') = 'true', false);
 $$;
 REVOKE EXECUTE ON FUNCTION public.exos_is_admin() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_is_admin() FROM anon;  -- Supabase default grants anon=X; PUBLIC revoke doesn't cover it
 GRANT  EXECUTE ON FUNCTION public.exos_is_admin() TO authenticated, service_role;
 
 -- (exos_holds_ticket is defined in §5b, AFTER exos_tickets exists — a
@@ -209,6 +210,7 @@ AS $$
   );
 $$;
 REVOKE EXECUTE ON FUNCTION public.exos_holds_ticket(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_holds_ticket(uuid) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.exos_holds_ticket(uuid) TO authenticated, service_role;
 
 -- ===========================================================================
@@ -347,6 +349,7 @@ BEGIN
   RETURN v_ids;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_mint_tickets(uuid, uuid, int, text, numeric, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_mint_tickets(uuid, uuid, int, text, numeric, text) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.exos_mint_tickets(uuid, uuid, int, text, numeric, text) TO authenticated;
 
 -- 7b. Check in a ticket. Atomic flip (status must still be 'active') = the
@@ -413,6 +416,7 @@ BEGIN
   RETURN jsonb_build_object('ok', true, 'reason', 'checked-in');
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_check_in_ticket(uuid, text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_check_in_ticket(uuid, text, text) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.exos_check_in_ticket(uuid, text, text) TO authenticated;
 
 -- 7c. Create a transfer + lock the ticket, atomically. Owner only; refuses
@@ -477,6 +481,7 @@ BEGIN
   RETURN v_transfer_id;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_create_transfer(uuid, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_create_transfer(uuid, text) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.exos_create_transfer(uuid, text) TO authenticated;
 
 -- 7d. Cancel a pending transfer + clear the ticket lock. Sender only.
@@ -509,6 +514,7 @@ BEGIN
    WHERE id = tr.ticket_id AND pending_transfer_id = p_transfer_id;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_cancel_transfer(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_cancel_transfer(uuid) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.exos_cancel_transfer(uuid) TO authenticated;
 
 -- 7e. Claim a transfer: take ownership + ROTATE the barcode secret (so the
@@ -565,6 +571,7 @@ BEGIN
   RETURN tr.ticket_id;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_claim_transfer(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_claim_transfer(uuid) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.exos_claim_transfer(uuid) TO authenticated;
 
 -- 7f. Void (refund) a ticket. Sticky once flipped. Owner/manager/finance staff
@@ -599,4 +606,5 @@ BEGIN
    WHERE id = p_ticket_id;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.exos_void_ticket(uuid, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.exos_void_ticket(uuid, text) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.exos_void_ticket(uuid, text) TO authenticated;
