@@ -205,9 +205,13 @@ Verification:
 
 ## NEXT
 
-### NEXT (D4) — Production-readiness roadmap for a 1000-person event (filed 2026-05-23 from comprehensive test; resequenced 2026-05-23 — payments-last per operator)
+### NEXT (D4) — state + backlog (free-first; updated 2026-05-23)
 
-Core loop (mint → in-app access → scan → double-scan/void/transfer/oversell guards → barcode HMAC → offline registry) is **verified working + B1-secured**. Build order is deliberately **everything-else-first, payments-last** (operator 2026-05-23): prove the event / door / delivery machinery in production via free/comp events, then bolt on Stripe as the final layer right before commercial go-live — it's the highest integration + legal/compliance friction and **nothing upstream depends on it**. Effort key: **S** <1d · **M** 1-3d · **L** week+. Cross-lane: A1 applies migrations + deploys edge fns; D0/A1 own the Railway header for D4-OPS-1. Sequence + dependencies, not calendar dates.
+**Decision (operator 2026-05-23):** D4 runs **free-first** — a primary ticketing system that owns the ticket (issue → wallet/QR → transfer → scan). **Stripe payments + EVO distribution are DEFERRED** (scaffolded, dormant). Architecture + full plan: `docs/d_tier_unification_map.md` + `docs/d_tier_unification_plan.md`.
+
+**✅ Built this session (PR #323) — pending A1 apply + deploy:** apply migs `120000`(realtime, PR#321) / `130000`(mail drainer) / `150000`(event cap) / `160000`(scan-verify) / `180000`(buy limits) / `200000`(growth primitives) / `210000`(ticket-issued mail); **skip** `170000`(Stripe) + `190000`(distribution) — dormant. Rebuild Bridge → `static/bridge/`; deploy `exos-mail-drain` + 2-min cron. Per-item detail: rows D4-OPS-1/3/4/5/6/8/10/12/14/15 + the phases below. Effort key: **S** <1d · **M** 1-3d · **L** week+.
+
+**🟢 Free-first go-live punch list (the immediate path):** ① A1 applies the migrations + B1 reviews `exos_check_in_ticket`; ② A1/D0 rebuild+deploy Bridge + deploy `exos-mail-drain`+cron; ③ Operator sets `RESEND_API_KEY`/`EXOS_MAIL_FROM` + Auth SMTP (D4-OPS-9); ④ **door rehearsal (D4-OPS-11)** = go/no-go → free-event go-live.
 
 **Phase 1 — Door-ready (free / RSVP event)** — organizer mints, attendees access in-app, staffed manual fallback:
 1. **D4-OPS-1** SW scope fix (**M**) — ✅ source-fixed (PR #321; turns out **no** `Service-Worker-Allowed` header is needed — scope = script dir), **deploy-pending** (rebuild w/ Supabase keys → `static/bridge/`). Restores offline cold-boot + PWA install.
@@ -223,11 +227,18 @@ Core loop (mint → in-app access → scan → double-scan/void/transfer/oversel
 8. **D4-OPS-6** server-side check-in HMAC verification (**M**) — ✅ built in source (PR #323: mig `20260523160000` + client wiring). Pending A1 apply + B1 review.
 → **Exit gate:** fully-featured free events at scale; product proven end-to-end.
 
-**Phase 3 — Payments (the FINAL layer → commercial go-live)**:
-9. **D4-OPS-7** Stripe Connect checkout + webhook-driven mint (**L**) — 🟡 SCAFFOLD built in source (PR #323: ledger + idempotent fulfillment migration + `exos-checkout`/`stripe-webhook`/`exos-connect-onboard` + client seam). Pending: operator Stripe decisions + keys, A1 deploy, B1 review, refund-on-race flow, UI buttons. Deliberately last: pre-go-live flip, gates nothing upstream.
-→ **Exit gate:** paid 1000-person go-live.
+**Phase 3 — Payments (⏸️ DEFERRED — free-first excludes this)**:
+9. **D4-OPS-7** Stripe Connect checkout + webhook-driven mint (**L**) — 🟡 SCAFFOLD built (PR #323), DORMANT. Resume only when paid sales are wanted: operator Stripe keys/decisions, A1 deploy, B1 review, refund-on-race flow, UI buttons, ticket-issued mail on fulfill, legal gate (D1-OPS-5).
 
-Order-of-magnitude: Phase 1 ≈ one focused sprint; Phase 2 ≈ a few days–1 week; Phase 3 (Stripe) ≈ the multi-week pre-launch push.
+### ⏸️ D4 LATER / BACKLOG (deferred — scoped, not lost)
+
+- **D4-OPS-16** — `event-cancelled`/`event-updated` holder notifications: build `exos_notify_event_holders(event_id, template)` (per-holder loop, like the follower announce) + wire EditEvent's cancel/update. Mail-system gap (templates exist, unwired).
+- **Consumer D1↔D4 flow** (held) — surface D4 events on D1 (`exos_public_events`, no EVO needed) + buy + use D1 as the wallet for the D4 scanner. **Open decision:** FE stack (reuse the D4 React wallet vs port to D1 vanilla). The two asks imply D4 owns the ticket; EVO-as-checkout was dropped (it conflicts with the D1-wallet/D4-scanner).
+- **Growth/Marketing — gated parts of D4-OPS-14:** SEO/JSON-LD + 3rd-party pixels on public pages (CSP + cookie consent → **B1**); publish to **Bandsintown** / Google Events / social (upstream WRITE → Hard-Rule-2 + creds → `exos-distribute` channels already modeled); per-event OG/SEO on the React SPA needs meta-injection/SSR. Org marketing config (`exos_orgs.marketing`) already stores socials + pixel IDs.
+- **D4-OPS-13 distribution** — Automatiq → EVO outbound (extra reach). Scaffold dormant.
+- **Cleanups:** `src/types.ts` Firebase `Timestamp` shim → `Date|string`; **inventory hold/reservation** at checkout (closes the two-tab `maxPerAccount` race + the Stripe charged-but-sold-out race).
+
+Order-of-magnitude: free-first go-live ≈ apply + deploy + a door rehearsal (code's built); the backlog is post-go-live, mostly gated on operator creds (Stripe/Automatiq/Bandsintown) + B1 (CSP/pixels) + the held FE-stack decision.
 
 ### NEXT (D0) — Consolidated frontend lane post row 157 reorg
 
