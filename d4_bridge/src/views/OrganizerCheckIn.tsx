@@ -276,7 +276,7 @@ export default function OrganizerCheckIn() {
       // `Object.entries` widens our typed Record values to `unknown`; cast
       // back to the row shape we put in.
       const e = raw as OfflineTicketEntry;
-      return [id, e.name, e.tier, e.used ? 'used' : 'active', e.promoterId || ''];
+      return [id, e.name, e.tier, e.voided ? 'voided' : e.used ? 'used' : 'active', e.promoterId || ''];
     });
     const csv = [header, ...rows]
       .map((row) => row.map(escape).join(','))
