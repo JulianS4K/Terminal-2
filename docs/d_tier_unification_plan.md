@@ -4,6 +4,7 @@
 **Companion:** architecture + audience matrix in [`docs/d_tier_unification_map.md`](d_tier_unification_map.md).
 **Author:** D4 · **Date:** 2026-05-23.
 **Reviewers:** **C1** (architecture/continuity), **B1** (data-access scoping §3 + payments/distribution surfaces), **D0/A1** (lane re-carve, Render, prod applies), **Operator** (Stripe/Automatiq/SMTP creds + Hard-Rule-2 sign-off).
+**Review log:** B1 — **APPROVED** (planning; no code to gate) with 3 build-time bake-ins (bot_chat #474), incorporated below in A.2, §3, C.1, C.4.
 
 ---
 
@@ -53,7 +54,7 @@ Each phase lists work items, owner-lane, dependencies, and acceptance. "DONE" = 
 | # | Work | Lane | Dep | Acceptance |
 |---|---|---|---|---|
 | A.1 | Source-tag the order model: generalize `exos_checkout_sessions` line items with `source ∈ {exos_primary, tevo_secondary,…}` + canonical `aq_short_event_id` | D4 | 0.1 | a checkout records source + canonical key |
-| A.2 | Land fulfilled **primary** orders into `unified_orders` (source=`exos_primary`) using D2's canonical status vocab | D4 + D2 | A.1 | a primary purchase shows in `unified_orders` next to broker orders |
+| A.2 | Land fulfilled **primary** orders into `unified_orders` (source=`exos_primary`) using D2's canonical status vocab. **B1 #474: `unified_orders` ALSO holds broker orders — sellers read it ONLY via an org-scoped SECDEF RPC (C.3), never a raw SELECT. Confirm `unified_orders` has no `anon`/`authenticated` SELECT grant** (one stray grant leaks every broker order to every seller) | D4 + D2 + B1 | A.1 | primary purchase shows in `unified_orders`; no direct seller SELECT on the table |
 | A.3 | Reporting reads one model: confirm `d2_metrics_*` (or org-scoped variants, §C.1) can aggregate primary + secondary | D2 | A.2 | one sales model across direct + distributed |
 | A.4 | Disallow mixed-source carts (one order = one merchant) | D4 | A.1 | validation enforced |
 
@@ -71,10 +72,10 @@ Each phase lists work items, owner-lane, dependencies, and acceptance. "DONE" = 
 ### Phase C — Seller analytics & console (SCOPED — G1)
 | # | Work | Lane | Dep | Acceptance |
 |---|---|---|---|---|
-| C.1 | Build **org-scoped analytics RPCs** (`exos_org_sales_metrics`, `exos_event_checkin_stats`, `exos_org_orders`, sales-velocity/tickets-sold curve, channel breakdown) — SECDEF + `exos_has_org_role`, **own-org only, zero broker data** | D4 | A.2 | RPC returns only caller's org data |
+| C.1 | Build **org-scoped analytics RPCs** (`exos_org_sales_metrics`, `exos_event_checkin_stats`, `exos_org_orders`, sales-velocity/tickets-sold curve, channel breakdown) — SECDEF + `exos_has_org_role`, **own-org only, zero broker data**. **B1 #474: ship each with `REVOKE EXECUTE … FROM PUBLIC, anon` from day one** (Supabase grants `anon` EXECUTE explicitly; `FROM PUBLIC` alone leaves it — the phase-2 mail lesson). NOT email-gated (sellers aren't `@s4kent`) | D4 | A.2 | RPC returns only caller's org data; `anon` EXECUTE revoked |
 | C.2 | Seller dashboard in the D4 console: **reuse D0 uPlot chart + KPI widgets** (wrap in React) + D2 metric patterns, **fed only by C.1 RPCs** | D4 (+D0 widgets) | C.1 | charts render org sales; no broker RPC imported |
 | C.3 | Seller orders/fulfillment view from `unified_orders`, org-scoped | D4 (+D2) | A.2 | seller sees own orders, not others' |
-| C.4 | **B1 audit**: confirm no seller/consumer surface can reach broker intelligence; cross-org isolation holds | B1 | C.2 | sign-off |
+| C.4 | **B1 audit (both halves, #474)**: (a) broker RPCs stay `@s4kent.com` email-gated; (b) `exos_org_*` RPCs are org-scoped + `anon`-revoked; (c) `unified_orders` has no raw seller SELECT; (d) cross-org isolation holds | B1 | C.2 | sign-off on all four |
 
 **Phase C milestone = a seller sees their event's sales curve, tickets-sold, check-in rate, and order list — and provably cannot see ESPN/arbitrage data or any other org's data.**
 
@@ -104,7 +105,7 @@ Reuse widgets; scope sources. Build + verify these source boundaries:
 | Audience | Allowed sources | Forbidden | Enforcement |
 |---|---|---|---|
 | Consumer | `exos_public_*` views; own wallet (`exos_tickets` owner/buyer RLS); sanitized public price series | seller internals, broker RPCs, other fans' tickets | RLS + public views |
-| **Seller** | own-org `exos_*` (RLS `exos_has_org_role`); **new `exos_org_*` metrics RPCs**; `unified_orders` filtered to own org | **broker intelligence RPCs (`get_broker_event_page_v2`, ESPN/SG firehose, arbitrage)**; other orgs | RLS own-org + SECDEF org-scoped RPCs + **FE may not import broker RPCs** |
+| **Seller** | own-org `exos_*` (RLS `exos_has_org_role`); **new `exos_org_*` metrics RPCs**; own-org orders via an org-scoped SECDEF RPC over `unified_orders` (never a raw table SELECT) | **broker intelligence RPCs (`get_broker_event_page_v2`, ESPN/SG firehose, arbitrage)**; other orgs | RLS own-org + SECDEF org-scoped RPCs. **Load-bearing wall = the broker RPCs' `@s4kent.com` email-gate** (a seller's non-`@s4kent` JWT is rejected in the RPC body); the FE "don't import broker RPCs" convention is secondary defense-in-depth (B1 #474) |
 | Door (scanner) | check-in RPC + own-event scan data (scanner role) | sales $, other events | role-gated RLS |
 | Operator/broker | full broker terminal | — | email-gate `@s4kent.com` (existing) |
 
