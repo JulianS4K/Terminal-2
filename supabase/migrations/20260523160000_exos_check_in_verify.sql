@@ -90,6 +90,10 @@ BEGIN
         IF v_exp <> v_parts[4] THEN
           RETURN jsonb_build_object('ok', false, 'reason', 'barcode-rejected');
         END IF;
+      ELSIF array_length(v_parts, 1) <> 3 THEN
+        -- neither signed (4-seg) nor legacy (3-seg) shape => malformed; reject
+        -- (matches lib/barcode.ts, which returns reason:'malformed' for these).
+        RETURN jsonb_build_object('ok', false, 'reason', 'barcode-rejected');
       END IF;
     EXCEPTION WHEN others THEN
       RETURN jsonb_build_object('ok', false, 'reason', 'barcode-rejected');

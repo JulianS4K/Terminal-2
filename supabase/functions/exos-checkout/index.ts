@@ -57,6 +57,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ error: "not enough tickets in this tier" }, 409);
   }
 
+  // Per-person buy limit (maxPerOrder + cumulative maxPerAccount). Same check as
+  // the comp path; counts tickets this buyer already holds, so a SECOND purchase
+  // that would exceed the limit is refused before a Stripe session is created.
+  const { error: limitErr } = await sb.rpc("exos_assert_purchase_limit", {
+    p_event_id: event_id,
+    p_buyer: user.id,
+    p_qty: quantity,
+  });
+  if (limitErr) {
+    return json({ error: limitErr.message || "purchase limit exceeded" }, 409);
+  }
+
   const { data: secrets } = await sb.from("exos_org_secrets").select("payments").eq("org_id", ev.org_id).maybeSingle();
   const payments = (secrets?.payments ?? {}) as { connectedAccountId?: string; chargesEnabled?: boolean };
   if (!payments.connectedAccountId || !payments.chargesEnabled) {
