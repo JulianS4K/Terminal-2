@@ -106,6 +106,8 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 **Charter expansion 2026-05-15** (operator directive, bot_chat 139): C1 owns **token monitor + minimization** alongside drift monitoring. Scope: migration header audit (≤15 lines), bot_chat length audit (≤1500 chars), token-discipline rulebook (`docs/token-discipline-rules.md`), quarterly efficiency report. Runbook Step 9 added.
 
+**Charter expansion 2026-05-17** (operator directive): C1 owns **Quality & Continuity** — 6 previously-unowned duties, all monitor+surface+route (no new mutate authority): (1) data-quality / semantic validation, (2) cost / burn-rate, (3) DR / backup posture, (4) operator-action queue ledger, (5) credential lifecycle, (6) end-to-end product validation. Full spec: `docs/c1_quality_continuity_charter.md`. Runbook Steps 10-12 added (daily); cost/cred/DR are weekly. C1 detects + routes; fix/execution stays with A1 (apply), operator (rotate/approve), or lane owners (code).
+
 ### D0 — Consolidated Frontend Lane (2026-05-15 reorg)
 
 **Role**: lane owner for all customer + operator frontend surfaces. Reviews + signs off on subordinate (D1, D2) PRs before A1 merges. Owns Render write authority on all three frontend services. Authors `static/terminal/*` directly.

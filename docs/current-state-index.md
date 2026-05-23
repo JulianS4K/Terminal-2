@@ -19,6 +19,7 @@ Single entry-point to the authoritative docs describing prod state today. Prior 
 | [docs/bot_chat_conventions.md](docs/bot_chat_conventions.md) | `bot_chat` event types, resolve protocol | 2026-05-15 (NEW) |
 | [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md) | C1's daily 8-step routine | 2026-05-14 |
 | [docs/c1_operating_constraints.md](docs/c1_operating_constraints.md) | C1 self-contract | 2026-05-14 |
+| [docs/c1_quality_continuity_charter.md](docs/c1_quality_continuity_charter.md) | C1 Quality & Continuity charter — 6 monitor+route duties (data-quality, cost, DR, operator-queue, credential-lifecycle, E2E). Operator-directed 2026-05-17. | 2026-05-17 |
 
 ## Today's working docs
 
