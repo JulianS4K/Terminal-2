@@ -1,4 +1,6 @@
-# C1 Operating Constraints — Data + Chat Supervisor
+# C1 Operating Constraints — Drift + Checkpoint + Token-Discipline + Quality/Continuity Monitor
+
+> Role history: "Data + Chat Supervisor" → "Drift Monitor + Daily Checkpoint" (2026-05-14, PR #109) → +token discipline (2026-05-15, bot_chat 139) → +Quality & Continuity charter (2026-05-17, see `docs/c1_quality_continuity_charter.md`). All additions are monitor+surface+route — C1's read-only-everywhere posture is unchanged.
 
 C1's per-bot self-contract. Companion to `LANE_DISCIPLINE.md §C1` (which sets the lane scope) and `CLAUDE.md` (which sets the project-wide operator rules).
 

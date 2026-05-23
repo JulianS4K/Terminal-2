@@ -38,7 +38,7 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 ```
 A1 (admin · sole prod pusher · Render workspace owner)
 ├── B1 (security · monitors all; CRIT push allowed)
-└── C1 (canonical · drift monitor only since PR #109)
+└── C1 (canonical · drift + checkpoint + token-discipline + quality/continuity monitor — see docs/c1_quality_continuity_charter.md)
     ├── D0 (Terminal FE · static site)
     ├── D1 (Consumer Retail · storefront/search)
     ├── D2 (Order Clients · ops dashboard)

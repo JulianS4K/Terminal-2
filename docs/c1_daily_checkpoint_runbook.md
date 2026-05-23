@@ -206,6 +206,61 @@ done
 
 Flag findings in `bot_chat` as `event_type='flag'`. Original author re-compresses on next post; old entries are tracked but not retroactively edited.
 
+### Step 10 — Data-quality / semantic validation (3 min)
+
+Added 2026-05-17 (Quality & Continuity charter, Duty 1). Catches *semantically wrong but running* pipelines that structural checks miss.
+
+```sql
+-- Succeeded-but-empty: crons green but no downstream rows in window (the silent-success class)
+-- Coverage floor: active SG events lacking an xref bridge
+SELECT 'sg_xref_coverage' AS check,
+       round(100.0 * count(*) FILTER (WHERE x.sg_event_id IS NOT NULL) / nullif(count(*),0), 1) AS pct_bridged
+FROM public.sg_events_canonical c
+LEFT JOIN public.seatgeek_event_xref x ON x.sg_event_id = c.sg_event_id
+WHERE c.sg_event_date >= current_date;
+-- Outlier sanity: listings beyond p99.9 price bound (suite/dataquality class)
+-- Distribution drift: metric medians shifting >Nσ day-over-day without volume change
+```
+
+Flag anomalies to the data-owning lane; `severity=high` if a pipeline is silently producing wrong/empty output. **C1 detects; fix is A1/D2/owning lane.**
+
+### Step 11 — End-to-end product validation (2 min)
+
+Charter Duty 6. Read-only synthetic smoke across the funnel.
+
+```bash
+# Service liveness + sane shape (read-only GETs)
+curl -fsS https://vibepass-storefront-test.onrender.com/healthz
+curl -fsS "https://vibepass-storefront-test.onrender.com/api/store/events?limit=5" | head -c 200
+# Funnel freshness: ingest → match → metric → display (latest snapshot age per stage)
+```
+
+Flag breakage to owning FE/data lane.
+
+### Step 12 — Operator-action queue (1 min)
+
+Charter Duty 4. Track everything gated on operator action so nothing rots.
+
+```sql
+SELECT id, created_at::timestamp(0), left(message, 100) AS item,
+       round(extract(epoch FROM now() - created_at)/3600, 1) AS hours_open
+FROM public.bot_chat
+WHERE resolved_at IS NULL
+  AND (message ILIKE '%@operator%' OR message ILIKE '%operator action%'
+       OR message ILIKE '%operator approv%' OR message ILIKE '%rotat%')
+ORDER BY created_at;
+```
+
+Surface as checkpoint "Operator action queue" section. Escalate items >48h via `flag` `severity=high`.
+
+### Weekly (not daily) — Duties 2, 3, 5
+
+- **Cost** (Duty 2): `docs/c1-cost-YYYY-WW.md` — `pg_total_relation_size` trend, row-growth, cron + paid-API call volume. Flag anomalous growth.
+- **DR posture** (Duty 3): verify Supabase PITR on + recent; maintain `docs/disaster_recovery_playbook.md`. Pre-flight before high-risk applies.
+- **Credential lifecycle** (Duty 5): maintain `docs/credential_lifecycle.md` register; flag approaching expiry/rotation-due.
+
+Full spec: `docs/c1_quality_continuity_charter.md`.
+
 ---
 
 ## Escalation rules
