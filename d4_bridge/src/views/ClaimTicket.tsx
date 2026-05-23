@@ -5,7 +5,7 @@ import { getPublicEvent } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { Event, Transfer } from '../types';
 import { ShieldCheck, ArrowRight, XCircle, CheckCircle2 } from 'lucide-react';
-import { queueEmail } from '../lib/mail';
+import { queueEmail, queueTicketIssued } from '../lib/mail';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 
@@ -88,11 +88,14 @@ export default function ClaimTicket() {
       // transferId, and clears the pending-transfer lock. It re-verifies the
       // caller's confirmed email matches the transfer and refuses if the
       // ticket was used/voided in the meantime.
-      await claimTransfer(transfer.id);
+      const claimedTicketId = await claimTransfer(transfer.id);
 
       // Notify the sender that their transfer was claimed. Recipient + body
       // are server-derived by the exos_queue_mail RPC (mig 20260520160000).
       void queueEmail({ template: 'transfer-claimed', refId: transfer.id });
+      // Confirm to the new owner that the ticket is now in their wallet
+      // (server-derived recipient; mig 20260523210000).
+      void queueTicketIssued(claimedTicketId);
 
       toast({ kind: 'success', message: 'Ticket claimed.' });
       navigate('/my-tickets');

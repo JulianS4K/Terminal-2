@@ -51,6 +51,20 @@ export async function queueEmail(opts: QueueOptions): Promise<void> {
 }
 
 /**
+ * Queue a "your ticket is ready" confirmation for an issued / claimed /
+ * purchased ticket. Recipient + body are server-derived from the ticket's
+ * owner by the exos_queue_ticket_issued RPC (no open relay). Best-effort.
+ */
+export async function queueTicketIssued(ticketId: string): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('exos_queue_ticket_issued', { p_ticket_id: ticketId });
+    if (error) console.warn('queueTicketIssued failed (non-fatal):', error.message);
+  } catch (err) {
+    console.warn('queueTicketIssued failed (non-fatal):', err);
+  }
+}
+
+/**
  * Light HTML escaper for user-provided strings in UI copy.
  * Mail bodies are now server-rendered; this is kept for any UI contexts
  * that still need it (e.g. toast messages with user-supplied content).
