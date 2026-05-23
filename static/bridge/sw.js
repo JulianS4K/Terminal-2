@@ -1,33 +1,39 @@
 // Exos service worker.
 //
 // Goals:
-//   * Make the app installable as a PWA.
+//   * Make the app installable as a PWA (served under /bridge/).
 //   * Survive flaky/no connectivity for the static shell.
 //   * NEVER serve a cached response for API or auth/database traffic — that
-//     would let stale Stripe sessions, stale Firestore reads, or stale auth
+//     would let stale Stripe sessions, stale Supabase reads, or stale auth
 //     state leak through after the network came back.
 //
 // Strategy:
 //   * Static assets: stale-while-revalidate.
 //   * Navigations (HTML): network-first with the offline shell as fallback.
-//   * Everything else (API, Firestore, Stripe, Identity Toolkit, etc.):
+//   * Everything else (Supabase auth/REST/storage, Stripe, same-origin /api):
 //     pass straight through to the network — no caching.
 
 // Bumped when the cache-eligible static set changes shape, so a
 // previous-version SW correctly purges its cache on activate.
-const VERSION = 'vibepass-v4-pwa';
+const VERSION = 'vibepass-v5-pwa';
 const STATIC_CACHE = `${VERSION}-static`;
-const SHELL = ['/', '/index.html', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
-// Hosts whose responses must NEVER be cached. Includes our own /api routes
-// and the Firebase / Stripe surfaces the SPA talks to.
+// The app is mounted under a path prefix (Vite base '/bridge/'). Derive the
+// scope prefix from the worker's OWN url rather than hardcoding root, so the
+// precached shell + offline nav fallback resolve under the prefix instead of
+// at the origin root (which is a different app — the hub). A SW served from
+// /bridge/sw.js also has a default scope of /bridge/, so no
+// Service-Worker-Allowed header is required.
+const BASE = new URL('./', self.location.href).pathname; // e.g. "/bridge/"
+const SHELL = [
+  BASE, BASE + 'index.html', BASE + 'manifest.json',
+  BASE + 'icon.svg', BASE + 'icon-192.png', BASE + 'icon-512.png',
+];
+
+// Hosts whose responses must NEVER be cached: Stripe + the Supabase project
+// (auth + REST + storage). Firebase was fully removed in the Supabase
+// migration (2026-05); any *.supabase.co host is matched dynamically below.
 const NEVER_CACHE_HOSTS = [
-  'firestore.googleapis.com',
-  'firebase.googleapis.com',
-  'firebaseinstallations.googleapis.com',
-  'identitytoolkit.googleapis.com',
-  'securetoken.googleapis.com',
-  'firebaseio.com',
   'api.stripe.com',
   'js.stripe.com',
 ];
@@ -67,6 +73,8 @@ self.addEventListener('activate', (event) => {
 
 function isNeverCached(url) {
   if (NEVER_CACHE_HOSTS.includes(url.hostname)) return true;
+  // Any Supabase project host (auth / REST / storage live on *.supabase.co).
+  if (url.hostname.endsWith('.supabase.co')) return true;
   // Same-origin API routes.
   if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) {
     return true;
@@ -82,7 +90,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // 1) Hard pass-through for API / Firestore / Stripe / auth.
+  // 1) Hard pass-through for same-origin /api, Supabase, and Stripe.
   if (isNeverCached(url)) return; // Don't call respondWith — default network fetch.
 
   // 2) Navigations: network-first, fall back to cached shell when offline.
@@ -90,15 +98,16 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          // Cache a copy of index.html for offline boot.
+          // Cache a copy of the app shell (under the /bridge/ prefix) for
+          // offline boot.
           if (res.ok && url.origin === self.location.origin) {
             const copy = res.clone();
-            caches.open(STATIC_CACHE).then((c) => c.put('/index.html', copy));
+            caches.open(STATIC_CACHE).then((c) => c.put(BASE + 'index.html', copy));
           }
           return res;
         })
         .catch(() =>
-          caches.match('/index.html').then((cached) => cached || Response.error())
+          caches.match(BASE + 'index.html').then((cached) => cached || Response.error())
         )
     );
     return;
