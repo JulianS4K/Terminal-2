@@ -337,7 +337,7 @@ const DEFAULT_INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 export async function createOrgInvite(
   input: CreateInviteInput,
-): Promise<{ token: string; inviteUrl: string }> {
+): Promise<{ id: string; token: string; inviteUrl: string }> {
   const { orgId, email, role, createdBy } = input;
   if (role === 'owner') {
     throw new Error('Owner role cannot be granted via invite — use admin tooling.');
@@ -351,13 +351,13 @@ export async function createOrgInvite(
   const { data, error } = await supabase
     .from('exos_org_invites')
     .insert({ org_id: orgId, email: lowered, role, created_by: createdBy, expires_at: expiresAt, status: 'pending' })
-    .select('token')
+    .select('id, token')
     .single();
   if (error) throw error;
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const inviteUrl = `${origin}/invite/${data.token}`;
-  return { token: data.token as string, inviteUrl };
+  return { id: data.id as string, token: data.token as string, inviteUrl };
 }
 
 export async function listOrgInvites(orgId: string): Promise<

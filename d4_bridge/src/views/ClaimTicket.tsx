@@ -5,7 +5,7 @@ import { getPublicEvent } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { Event, Transfer } from '../types';
 import { ShieldCheck, ArrowRight, XCircle, CheckCircle2 } from 'lucide-react';
-import { queueEmail, escapeHtml } from '../lib/mail';
+import { queueEmail } from '../lib/mail';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 
@@ -90,24 +90,9 @@ export default function ClaimTicket() {
       // ticket was used/voided in the meantime.
       await claimTransfer(transfer.id);
 
-      // Notify the sender that their transfer was claimed. Best-effort —
-      // we have their email denormalised on the transfer doc so we don't
-      // need to read their profile. Still routed through the Firestore
-      // Trigger Email queue (mail transport is a separate migration).
-      if (transfer.senderEmail) {
-        const eventTitle = escapeHtml(transfer.eventTitle ?? 'your event');
-        const claimer = escapeHtml(user.email ?? 'A Exos user');
-        void queueEmail({
-          to: transfer.senderEmail,
-          template: 'transfer-claimed',
-          subject: `${claimer} claimed the ticket you sent for ${eventTitle}`,
-          html: `
-            <p>Good news — ${claimer} just claimed the ticket you transferred for <strong>${eventTitle}</strong>.</p>
-            <p>The ticket has been transferred and the new barcode is now active.</p>
-            <p style="color:#666;font-size:12px;">If this wasn't expected, contact the event organizer.</p>
-          `,
-        });
-      }
+      // Notify the sender that their transfer was claimed. Recipient + body
+      // are server-derived by the exos_queue_mail RPC (mig 20260520160000).
+      void queueEmail({ template: 'transfer-claimed', refId: transfer.id });
 
       toast({ kind: 'success', message: 'Ticket claimed.' });
       navigate('/my-tickets');

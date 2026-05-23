@@ -4,7 +4,7 @@ import { getTicket, createTransfer } from '../lib/tickets';
 import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, UserPlus, ShieldAlert, Send, Check, Copy } from 'lucide-react';
-import { queueEmail, escapeHtml } from '../lib/mail';
+import { queueEmail } from '../lib/mail';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 
@@ -74,23 +74,9 @@ export default function TransferTicket() {
       // separate "lock" write (and its failure-handling) is gone.
       const transferId = await createTransfer(ticket.id, normalisedEmail);
 
-      // Best-effort: enqueue an email to the receiver with the claim link.
-      // Still routed through the Firestore Trigger Email queue (mail
-      // transport is a separate migration). queueEmail never throws.
-      const claimUrl = `${window.location.origin}/claim/${transferId}`;
-      const safeEvent = escapeHtml(event?.title ?? 'an event');
-      const safeSender = escapeHtml(user.email ?? 'A Exos user');
-      void queueEmail({
-        to: normalisedEmail,
-        template: 'transfer-initiated',
-        subject: `${safeSender} sent you a ticket to ${safeEvent}`,
-        html: `
-          <p>${safeSender} just transferred you a ticket to <strong>${safeEvent}</strong>.</p>
-          <p>Click the link below to claim it. You'll need to sign in with this email address.</p>
-          <p><a href="${claimUrl}">Claim your ticket</a></p>
-          <p style="color:#666;font-size:12px;">If you weren't expecting this email, you can safely ignore it.</p>
-        `,
-      });
+      // Best-effort: notify the receiver. Recipient + body are server-derived
+      // by the exos_queue_mail RPC (mig 20260520160000). queueEmail never throws.
+      void queueEmail({ template: 'transfer-initiated', refId: transferId });
 
       // Switch into the share-link success state instead of bouncing
       // straight to /my-tickets. The sender can stay on the page,

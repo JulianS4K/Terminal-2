@@ -1,52 +1,59 @@
 import { supabase } from './supabase';
-import { getCurrentAppUser } from './auth';
 
-// Transactional email queue (Supabase). queueEmail inserts a pending row into
-// public.exos_mail (migration 20260520160000); a downstream drainer — an edge
-// function / cron + an email provider — sends it and flips status. Until that
-// drainer is wired, rows just accumulate as 'pending' (the same decoupling the
-// old Firebase "Trigger Email" extension gave us). We catch errors so the
-// calling flow never fails on a queue-write rejection — the exos_mail RLS is
-// intentionally narrow (authenticated-insert only, template-whitelisted,
-// size-capped via CHECK constraints).
+// Thin wrapper around the Supabase exos_queue_mail() SECDEF RPC.
+//
+// The RPC SERVER-DERIVES to_email, subject, and html from the related
+// record (transfer / invite / ticket) — the client only supplies the
+// template name and the UUID of the related record. This closes the open
+// mail-relay risk (B1 SEC-HIGH, bot_chat #438, mig 20260520160000).
+//
+// Best-effort (never throws). Until the exos_mail schema migration lands,
+// calls fail silently — same behaviour as the previous Firebase Trigger
+// Email queue when the extension wasn't wired.
+//
+// Template → refId mapping:
+//   transfer-initiated  refId = exos_transfers.id   (caller = sender)
+//   transfer-claimed    refId = exos_transfers.id   (caller = receiver; notifies sender)
+//   org-invite          refId = exos_org_invites.id (caller = inviter)
+//   event-cancelled     refId = exos_tickets.id     (caller = org staff)
+//   event-updated       refId = exos_tickets.id     (caller = org staff)
 
-export type MailTemplate = 'transfer-initiated' | 'transfer-claimed' | 'org-invite' | 'event-cancelled' | 'event-updated';
+export type MailTemplate =
+  | 'transfer-initiated'
+  | 'transfer-claimed'
+  | 'org-invite'
+  | 'event-cancelled'
+  | 'event-updated';
 
 interface QueueOptions {
-  to: string;
-  subject: string;
-  html: string;
   template: MailTemplate;
+  /** UUID of the related record (transfer / invite / ticket). */
+  refId?: string | null;
 }
 
 /**
- * Best-effort enqueue of a transactional email. Never throws — the caller
- * shouldn't have to wrap this in try/catch. The row lands as status 'pending';
- * delivery happens out-of-band (a service-role drainer), so a queue-write here
- * is decoupled from the actual send.
+ * Best-effort enqueue of a transactional email via the exos_queue_mail RPC.
+ * Never throws — the caller shouldn't wrap this in try/catch.
  */
 export async function queueEmail(opts: QueueOptions): Promise<void> {
   try {
-    const { error } = await supabase.from('exos_mail').insert({
-      to_email: opts.to.trim().toLowerCase(),
-      template: opts.template,
-      subject: opts.subject,
-      html: opts.html,
-      created_by: getCurrentAppUser()?.uid ?? null,
+    const { error } = await supabase.rpc('exos_queue_mail', {
+      p_template: opts.template,
+      p_ref_id:   opts.refId ?? null,
     });
-    if (error) throw error;
+    if (error) {
+      // Non-fatal: migration may not be applied yet, or ref lookup failed.
+      console.warn('queueEmail failed (non-fatal):', error.message);
+    }
   } catch (err) {
-    // Common when the row violates a CHECK/RLS, when offline, or when called
-    // outside an authenticated context. We log but never propagate.
     console.warn('queueEmail failed (non-fatal):', err);
   }
 }
 
 /**
- * Light HTML escaper for inserting user-provided strings into our
- * template bodies. This isn't a substitute for a real templating system
- * but keeps the queued email payload safe from accidental injection
- * when the recipient mail client renders the HTML.
+ * Light HTML escaper for user-provided strings in UI copy.
+ * Mail bodies are now server-rendered; this is kept for any UI contexts
+ * that still need it (e.g. toast messages with user-supplied content).
  */
 export function escapeHtml(s: string): string {
   return s
