@@ -1,0 +1,1 @@
+import{ac as l}from"./index-_aPs-rIh.js";async function n(a){try{const{error:e}=await l.rpc("exos_queue_mail",{p_template:a.template,p_ref_id:a.refId??null});e&&console.warn("queueEmail failed (non-fatal):",e.message)}catch(e){console.warn("queueEmail failed (non-fatal):",e)}}export{n as q};
