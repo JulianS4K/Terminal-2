@@ -200,11 +200,11 @@ Verification:
 
 ## NEXT
 
-### NEXT (D4) — Production-readiness roadmap for a 1000-person event (filed 2026-05-23 from comprehensive test)
+### NEXT (D4) — Production-readiness roadmap for a 1000-person event (filed 2026-05-23 from comprehensive test; resequenced 2026-05-23 — payments-last per operator)
 
-Core loop (mint → in-app access → scan → double-scan/void/transfer/oversell guards → barcode HMAC → offline registry) is **verified working + B1-secured**. The gaps below gate a real 1000-person event. Two milestone gates. Effort key: **S** <1d · **M** 1-3d · **L** week+. Cross-lane: A1 applies migrations + deploys edge fns; D0/A1 own the Railway header for D4-OPS-1. Calendar dates are operator/A1-set per capacity — this is sequence + dependencies, not dates.
+Core loop (mint → in-app access → scan → double-scan/void/transfer/oversell guards → barcode HMAC → offline registry) is **verified working + B1-secured**. Build order is deliberately **everything-else-first, payments-last** (operator 2026-05-23): prove the event / door / delivery machinery in production via free/comp events, then bolt on Stripe as the final layer right before commercial go-live — it's the highest integration + legal/compliance friction and **nothing upstream depends on it**. Effort key: **S** <1d · **M** 1-3d · **L** week+. Cross-lane: A1 applies migrations + deploys edge fns; D0/A1 own the Railway header for D4-OPS-1. Sequence + dependencies, not calendar dates.
 
-**Milestone 1 — FREE / RSVP event ready** (no money path; organizer mints, attendees access in-app; staffed manual fallback). Sequence:
+**Phase 1 — Door-ready (free / RSVP event)** — organizer mints, attendees access in-app, staffed manual fallback:
 1. **D4-OPS-1** SW scope fix (**M**) — offline cold-boot + PWA install. Needs D0/A1 for the `Service-Worker-Allowed: /bridge/` header. *Blocks reliable offline.*
 2. **D4-OPS-10** offline multi-lane double-admit policy (**M**, design + impl) — depends on the D4-OPS-1 decision (online-only door vs shared-lock channel).
 3. **D4-OPS-9** Auth SMTP at scale (**S**, operator config) — independent; do early so day-of sign-ins don't throttle.
@@ -212,14 +212,17 @@ Core loop (mint → in-app access → scan → double-scan/void/transfer/oversel
 5. **D4-OPS-11** load + door rehearsal (**M**) — depends on 1+2 landing; this is the go/no-go gate.
 → **Exit gate:** green door rehearsal → free 1000-person go-live.
 
-**Milestone 2 — PAID event ready** (adds money + delivery; depends on Milestone 1 door-readiness). Sequence:
-6. **D4-OPS-8** `exos_mail` drainer (**M**) — ticket delivery / receipts / transfer notices. Needs provider key (op) + A1 edge-fn deploy.
-7. **D4-OPS-7** Stripe Connect checkout + webhook mint (**L**) — the largest workstream. Needs Stripe keys (op) + A1 edge-fn deploy; **D1-OPS-5** counsel-reviewed Terms/Privacy is a launch gate.
-8. **D4-OPS-5** event-level oversell enforcement (**S**, operator-gated migration) — matters once selling against `total_tickets`.
-9. **D4-OPS-6** server-side check-in HMAC verification (**M**, optional) — only if the threat model tightens.
+**Phase 2 — Full-featured + hardened (still free; adds delivery + receipts)**:
+6. **D4-OPS-8** `exos_mail` drainer (**M**) — ticket delivery / receipts / transfer notices (NOT payments — useful on free events too; shares the email provider with D4-OPS-9). Needs provider key (op) + A1 edge-fn deploy.
+7. **D4-OPS-5** event-level oversell enforcement (**S**, operator-gated migration) — tighten the house cap before money is ever involved.
+8. **D4-OPS-6** server-side check-in HMAC verification (**M**, optional) — only if the threat model tightens.
+→ **Exit gate:** fully-featured free events at scale; product proven end-to-end.
+
+**Phase 3 — Payments (the FINAL layer → commercial go-live)**:
+9. **D4-OPS-7** Stripe Connect checkout + webhook-driven mint (**L**) — Connect onboarding + Checkout sessions + idempotent `stripe-webhook` edge fn. Needs Stripe keys (op) + A1 edge-fn deploy; **D1-OPS-5** counsel-reviewed Terms/Privacy is the launch gate. Deliberately last: pre-go-live flip, gates nothing upstream.
 → **Exit gate:** paid 1000-person go-live.
 
-Order-of-magnitude: Milestone 1 ≈ one focused sprint; Milestone 2 ≈ several weeks (Stripe + email are net-new server-side surfaces, both needing operator secrets + A1 deploys).
+Order-of-magnitude: Phase 1 ≈ one focused sprint; Phase 2 ≈ a few days–1 week; Phase 3 (Stripe) ≈ the multi-week pre-launch push.
 
 ### NEXT (D0) — Consolidated frontend lane post row 157 reorg
 
