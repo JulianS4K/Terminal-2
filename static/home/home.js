@@ -1,12 +1,17 @@
-// VibePass unified homescreen. Auth-aware: signed-in @s4kent.com sees all 3
-// cards; everyone else sees the Store card unlocked and the two operator
+// VibePass unified homescreen. Auth-aware: signed-in @s4kent.com sees all 4
+// cards; everyone else sees Store + Bridge unlocked and the two operator
 // cards gated. localhost dev is treated as authed (parity with terminal).
+// Bridge is always accessible — it runs on a separate Render origin and
+// manages its own Supabase auth internally (same project, different domain,
+// so localStorage sessions are not shared).
 
 (function () {
   'use strict';
 
   const cardTerminal    = document.getElementById('cardTerminal');
   const cardUndelivered = document.getElementById('cardUndelivered');
+  const cardBridge      = document.getElementById('cardBridge');
+  const bridgeNote      = document.getElementById('bridgeNote');
   const authCtrl        = document.getElementById('auth-ctrl');
   const footStatus      = document.getElementById('footStatus');
 
@@ -39,10 +44,17 @@
     if (footStatus) footStatus.textContent = text;
   }
 
+  // Bridge is always accessible — never lock it. Show a soft note when no
+  // hub session exists so the user knows Bridge has its own sign-in.
+  function setBridgeNote(signedIn) {
+    if (bridgeNote) bridgeNote.hidden = signedIn;
+  }
+
   if (!window.TerminalAuth) {
     // supabase-js or auth.js failed to load — treat as not signed in.
     lockCard(cardTerminal);
     lockCard(cardUndelivered);
+    setBridgeNote(false);
     setFootStatus('auth offline');
     renderAuth(null);
     return;
@@ -54,10 +66,12 @@
 
     if (allowed || isLocalhost()) {
       renderAuth(email || (isLocalhost() ? 'dev (localhost)' : null));
+      setBridgeNote(true);
       setFootStatus('all surfaces unlocked');
     } else {
       lockCard(cardTerminal);
       lockCard(cardUndelivered);
+      setBridgeNote(!!email);
       renderAuth(email);
       setFootStatus(email ? 'not on @s4kent.com — operator surfaces gated' : 'sign in to unlock operator surfaces');
     }
@@ -65,6 +79,7 @@
     console.error('auth ready failed', err);
     lockCard(cardTerminal);
     lockCard(cardUndelivered);
+    setBridgeNote(false);
     setFootStatus('auth init failed');
   });
 
