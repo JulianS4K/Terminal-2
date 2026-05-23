@@ -1,9 +1,8 @@
 // VibePass unified homescreen. Auth-aware: signed-in @s4kent.com sees all 4
 // cards; everyone else sees Store + Bridge unlocked and the two operator
 // cards gated. localhost dev is treated as authed (parity with terminal).
-// Bridge is always accessible — it runs on a separate Render origin and
-// manages its own Supabase auth internally (same project, different domain,
-// so localStorage sessions are not shared).
+// Bridge runs at /bridge/ on the same Railway origin — same localStorage,
+// so the Supabase session from the hub carries over to Bridge automatically.
 
 (function () {
   'use strict';
@@ -44,8 +43,10 @@
     if (footStatus) footStatus.textContent = text;
   }
 
-  // Bridge is always accessible — never lock it. Show a soft note when no
-  // hub session exists so the user knows Bridge has its own sign-in.
+  // Bridge is always accessible — never lock it. Same-origin means the hub's
+  // Supabase session (localStorage) is shared with Bridge automatically.
+  // Show a soft note only when signed out so the user knows signing in here
+  // will carry over. Hide it once any session exists.
   function setBridgeNote(signedIn) {
     if (bridgeNote) bridgeNote.hidden = signedIn;
   }
