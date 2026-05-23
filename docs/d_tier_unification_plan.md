@@ -17,6 +17,33 @@ Build one platform — **consumer (discover→buy→wallet)** + **seller/venue b
 
 ---
 
+## 0.5 START SCOPE (v1) — D1 ↔ D4 sync ONLY  ← begin here
+
+Scaled-back first deliverable (operator 2026-05-23): just the minimal consumer↔seller
+loop. **No D0 charts, no D2 order-model unification, no Automatiq distribution, no broker
+data.** The full phased plan (§2+) is the post-v1 target.
+
+**The loop:**
+1. **D4 (seller)** creates + publishes a primary event — *exists*.
+2. **D1 (consumer)** discovers it — reads `exos_public_events` / `exos_public_tiers` (anon views, already published-only + column-narrowed) deduped by canonical key — *build*.
+3. **D1 buy** — an authenticated fan buys → mints `exos_tickets` (free/comp path first; Stripe is the gated paid add later) — *build*.
+4. **Wallet** — fan holds the ticket with the rotating QR (consumer surface) — *build (FE decision below)*.
+5. **D4 scanner** verifies the QR — *exists*.
+
+**The "sync" needs no new infra** — both sides read/write the same Supabase `exos_*` tables under RLS; the shared DB + canonical key + barcode contract *is* the sync.
+
+| In scope (build) | Already done | Deferred (post-v1) |
+|---|---|---|
+| D1 reads/renders `exos_public_*`; D1 authed buy→mint; consumer wallet+QR; Supabase auth in D1 | D4 seller console, scanner, `exos_*` core, barcode contract, public views, buy-limits/caps | D0 chart reuse + seller analytics (Phase C); `unified_orders` carrying primary (A.2); Automatiq/EVO distribution; secondary aggregation; broad/paid payments |
+
+**Data scoping (B1 #474):** v1 touches **no broker data and no cross-source** — D1 reads only anon-safe public views + the fan's own tickets (owner RLS). So the `unified_orders` lockdown / broker-email-gate / org-RPC-revoke bake-ins **do not trigger in v1**; they re-enter when the deferred D2/D0 pieces land. v1 is the lowest-risk slice.
+
+**v1 Definition of done:** a fan signs into D1, finds a D4-published event, gets a ticket (free), sees a live rotating QR in their wallet, and the D4 scanner admits it — with per-person limits + caps enforced.
+
+**Open decision (gates v1 build):** wallet/QR front-end — (a) port `signBarcode`+QR into D1's vanilla JS, or (b) reuse D4's React wallet components as the consumer wallet. (Recommend (b) — don't rebuild the security-correct rotating-QR.)
+
+---
+
 ## 1. Current state (starting line)
 
 **Already built this session — PR #323 (pending A1 apply + deploy + operator creds):**
