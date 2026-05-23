@@ -343,11 +343,14 @@ export async function checkInTicket(
   ticketId: string,
   source: 'camera' | 'manual',
   verification: 'verified' | 'legacy' | 'manual',
+  barcodePayload?: string,
 ): Promise<CheckInResult> {
   const { data, error } = await supabase.rpc('exos_check_in_ticket', {
     p_ticket_id: ticketId,
     p_source: source,
     p_verification: verification,
+    // Server re-verifies the HMAC for signed payloads (D4-OPS-6); NULL = manual.
+    p_barcode_payload: barcodePayload ?? null,
   });
   if (error) throw error;
   return (data ?? { ok: false, reason: 'not-found' }) as CheckInResult;

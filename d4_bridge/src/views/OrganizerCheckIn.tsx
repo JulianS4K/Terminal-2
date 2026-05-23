@@ -539,11 +539,32 @@ export default function OrganizerCheckIn() {
       // Fully offline → always queue.
       if (!isOffline) {
         try {
-          await checkInTicket(
+          const result = await checkInTicket(
             docId,
             scanning ? 'camera' : 'manual',
             offlineTicket.barcodeSecret ? 'verified' : 'manual',
+            probeValue,
           );
+          // Honor a server-side barcode rejection (e.g. the secret rotated via a
+          // transfer since this registry was synced) — do NOT admit locally.
+          if (!result.ok && (result.reason === 'barcode-rejected' || result.reason === 'barcode-expired')) {
+            setStatus('invalid-barcode');
+            setInvalidReason(
+              result.reason === 'barcode-expired'
+                ? 'This code expired. Ask the attendee to refresh their ticket and rescan.'
+                : "Signature didn't match this ticket (server check) — it may have been transferred since the offline registry was synced. Re-sync and retry.",
+            );
+            setBuyerName(offlineTicket.name);
+            setRecentScans((prev) =>
+              [{ id: docId.slice(0, 8), name: offlineTicket.name, time: new Date(), status: 'DENIED' }, ...prev].slice(0, 5),
+            );
+            void writeScanReject(
+              result.reason === 'barcode-expired' ? 'expired-code' : 'invalid-barcode',
+              scanning ? 'camera' : 'manual',
+              { ticketIdAttempted: docId, reasonDetail: result.reason },
+            );
+            return;
+          }
         } catch (err) {
           console.error('Server check-in failed; admitting on offline registry and queuing replay.', err);
           const newPending = [...pendingUpdates, docId];
@@ -669,7 +690,7 @@ export default function OrganizerCheckIn() {
         return;
       }
 
-      await processTicket(scanTicket, verify.legacy ? 'legacy' : 'verified');
+      await processTicket(scanTicket, verify.legacy ? 'legacy' : 'verified', probeValue);
     } catch (error) {
       console.error(error);
       setStatus('not-found');
@@ -679,6 +700,7 @@ export default function OrganizerCheckIn() {
   const processTicket = async (
     scanTicket: ScanTicket,
     verification: 'verified' | 'legacy' | 'manual',
+    barcodePayload?: string,
   ) => {
     const name = scanTicket.ownerName || 'Anonymous attendee';
     setBuyerName(name);
@@ -691,15 +713,32 @@ export default function OrganizerCheckIn() {
       );
 
     // The RPC does the atomic status flip (only if still 'active' — the
-    // double-scan guard) AND writes the append-only check-in audit row. It
-    // returns the prior state so we can message the door correctly; the
-    // pending-transfer / voided / used / not-found checks all live there now.
-    const result = await checkInTicket(scanTicket.id, src, verification);
+    // double-scan guard) AND writes the append-only check-in audit row. For a
+    // signed payload it also RE-VERIFIES the HMAC server-side (D4-OPS-6), so a
+    // forged/replayed code is rejected even if the client check was bypassed.
+    const result = await checkInTicket(scanTicket.id, src, verification, barcodePayload);
 
     if (result.ok) {
       setStatus('success');
       pushScan('SUCCESS');
       setSearchId('');
+      return;
+    }
+
+    // Server-side barcode rejection (forged / stale / wrong-owner code).
+    if (result.reason === 'barcode-rejected' || result.reason === 'barcode-expired') {
+      setStatus('invalid-barcode');
+      setInvalidReason(
+        result.reason === 'barcode-expired'
+          ? 'This code expired. Ask the attendee to refresh their ticket and rescan.'
+          : "Signature didn't match this ticket (server check). Possible screenshot or tampered code.",
+      );
+      pushScan('DENIED');
+      void writeScanReject(
+        result.reason === 'barcode-expired' ? 'expired-code' : 'invalid-barcode',
+        src,
+        { ticketIdAttempted: scanTicket.id, reasonDetail: result.reason },
+      );
       return;
     }
 
