@@ -662,14 +662,16 @@ def undelivered_landing():
 
 
 # --- D4 / Exos (Bridge) ----------------------------------------------------
-# Serve the d4_bridge Vite SPA in the unified static Render env the same way
-# D0's terminal is served (PR #168 testing-unified architecture): a landing
-# redirect to the trailing slash, an index handler, and a path-catch-all that
-# proxies static/bridge/<asset>. The app is BUILT with Vite base '/bridge/'
-# (vite.config.ts) + <BrowserRouter basename="/bridge">, so its asset refs and
-# client routes resolve under this prefix. Build artifact lives at
-# static/bridge/ (run `npm --prefix d4_bridge run build`, then copy dist →
-# static/bridge/). Returns 404 cleanly until that build is present.
+# Serve the d4_bridge Vite SPA from this Railway app — same origin as the hub,
+# Terminal, Store, and Undelivered (PR #318 — Railway is now the primary host).
+# Landing redirect, index handler, path-catch-all for assets + SPA deep links.
+# App is built with Vite base '/bridge/' (vite.config.ts) and
+# <BrowserRouter basename="/bridge">, so asset refs + client routes resolve
+# under this prefix. Build artifact: static/bridge/ (rebuild via
+# `npm --prefix d4_bridge run build` then copy dist → static/bridge/).
+# Same-origin means the Supabase session in localStorage is shared with the
+# hub — a user signed in on the home page is automatically signed into Bridge.
+# Returns 404 cleanly until the build artifact is present.
 _BRIDGE_DIR = os.path.join(STATIC_DIR, "bridge")
 
 
