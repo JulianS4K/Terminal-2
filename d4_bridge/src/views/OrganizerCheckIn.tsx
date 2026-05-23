@@ -15,6 +15,7 @@ import { Html5QrcodeScanner } from 'html5-qrcode';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { verifyBarcode, extractTicketIdFromAny } from '../lib/barcode';
+import { joinCheckinChannel } from '../lib/checkinChannel';
 
 // Anything older than this is dropped from localStorage when the page mounts.
 // Set to a generous 7 days so a multi-day festival is still cached on day 3.
@@ -100,6 +101,7 @@ export default function OrganizerCheckIn() {
   const [pendingUpdates, setPendingUpdates] = useState<string[]>([]);
   const [recentScans, setRecentScans] = useState<{ id: string, name: string, time: Date, status: string }[]>([]);
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const wasOfflineRef = useRef(isOffline);
 
   useEffect(() => {
     async function fetchEvent() {
@@ -298,9 +300,10 @@ export default function OrganizerCheckIn() {
     toast({ kind: 'success', message: `Exported ${rows.length} attendee(s).` });
   };
 
-  const downloadRegistry = async () => {
+  const downloadRegistry = async (opts: { silent?: boolean } = {}) => {
     if (!eventId || !user) return;
-    setDownloading(true);
+    const silent = opts.silent === true;
+    if (!silent) setDownloading(true);
     try {
       // listEventTicketsForRegistry resolves owner display names + carries the
       // per-ticket barcode_secret (staff RLS) so the offline HMAC check works.
@@ -321,17 +324,45 @@ export default function OrganizerCheckIn() {
 
       setOfflineRegistry(registry);
       saveRegistry(eventId, registry);
-      toast({
-        kind: 'success',
-        message: `Synced ${entries.length} ticket(s) for offline check-in.`,
-      });
+      if (!silent) {
+        toast({
+          kind: 'success',
+          message: `Synced ${entries.length} ticket(s) for offline check-in.`,
+        });
+      }
     } catch (err) {
       console.error(err);
-      toast({ kind: 'error', message: 'Failed to sync offline registry.' });
+      if (!silent) toast({ kind: 'error', message: 'Failed to sync offline registry.' });
     } finally {
-      setDownloading(false);
+      if (!silent) setDownloading(false);
     }
   };
+
+  // Shared-lock (D4-OPS-10): subscribe to other lanes' check-ins for this event
+  // and mark those tickets used locally, so a near-simultaneous scan here is
+  // refused. Authoritative + RLS-gated (org staff only) via postgres_changes.
+  useEffect(() => {
+    if (!eventId) return;
+    const ch = joinCheckinChannel(eventId, (ticketId) => {
+      setOfflineRegistry((prev) => {
+        const entry = prev[ticketId];
+        if (!entry || entry.used) return prev; // unknown ticket or already used
+        const next = { ...prev, [ticketId]: { ...entry, used: true } };
+        saveRegistry(eventId, next);
+        return next;
+      });
+    });
+    return () => ch.leave();
+  }, [eventId]);
+
+  // On reconnect, re-pull the registry: Realtime doesn't replay check-ins other
+  // lanes made while we were offline, so catch up silently once links return.
+  useEffect(() => {
+    if (wasOfflineRef.current && !isOffline) {
+      void downloadRegistry({ silent: true });
+    }
+    wasOfflineRef.current = isOffline;
+  }, [isOffline]);
 
   // Write an audit entry every time we refuse a scan. Organizers
   // see these on the event report — useful for door-staff debugging
@@ -724,7 +755,7 @@ export default function OrganizerCheckIn() {
               <span>{isOffline ? 'Offline' : 'Online'}</span>
            </div>
            <button
-             onClick={downloadRegistry}
+             onClick={() => downloadRegistry()}
              disabled={downloading}
              className="flex items-center space-x-2 px-3 py-1 bg-slate-900 text-white rounded-full text-[9px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all disabled:opacity-50"
            >
