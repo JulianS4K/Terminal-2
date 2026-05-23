@@ -50,6 +50,7 @@ function mapOrg(row: any, secrets?: any): Organization {
     description: row.description ?? undefined,
     followersCount: row.followers_count ?? 0,
     theme: row.theme ?? undefined,
+    marketing: row.marketing ?? undefined,
     // payments/distribution live in exos_org_secrets (owner/finance RLS); absent
     // for non-privileged readers.
     payments: secrets?.payments ?? undefined,
@@ -245,6 +246,7 @@ export async function enableOrgMember(orgId: string, uid: string): Promise<void>
 export interface OrgUpdatePatch {
   name?: string;
   theme?: Organization['theme'];
+  marketing?: Organization['marketing'];
   payments?: Organization['payments'];
   distribution?: Organization['distribution'];
 }
@@ -253,6 +255,7 @@ export async function updateOrganization(orgId: string, patch: OrgUpdatePatch): 
   const orgFields: Record<string, unknown> = {};
   if (patch.name !== undefined) orgFields.name = patch.name;
   if (patch.theme !== undefined) orgFields.theme = stripUndefined(patch.theme);
+  if (patch.marketing !== undefined) orgFields.marketing = stripUndefined(patch.marketing);
   if (Object.keys(orgFields).length > 0) {
     const { error } = await supabase.from('exos_orgs').update(orgFields).eq('id', orgId);
     if (error) throw error;
