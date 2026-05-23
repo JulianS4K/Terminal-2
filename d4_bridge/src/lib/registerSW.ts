@@ -1,6 +1,7 @@
 // Service worker registration + update flow.
 //
-// Registers /sw.js on first load and dispatches a custom DOM event
+// Registers the service worker (at the app's base path) on first load
+// and dispatches a custom DOM event
 // when a new SW version takes over so the app can render an inline
 // "Update available — Reload" banner. We dispatch an event rather
 // than calling toast() directly because the toast queue may not be
@@ -28,7 +29,16 @@ export function registerServiceWorker(): void {
   // for network or main-thread bandwidth.
   window.addEventListener('load', async () => {
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js');
+      // The app is served under a path prefix (Vite base, e.g. '/bridge/').
+      // Register the worker at that prefix — NOT the origin root, where the
+      // file 404s (or binds the hub's root SW). A worker served from
+      // '/bridge/sw.js' has a default scope of '/bridge/', so no
+      // Service-Worker-Allowed header is needed.
+      // Env access mirrors App.tsx / lib/supabase.ts: `(import.meta as any).env`.
+      const base = ((import.meta as any).env?.BASE_URL ?? '/') as string;
+      const registration = await navigator.serviceWorker.register(`${base}sw.js`, {
+        scope: base,
+      });
 
       // Track updates. When a new SW is found and starts installing,
       // wait until it reaches the 'installed' state, then signal.
