@@ -22,7 +22,7 @@ import {
   listOrgMembers,
   updateOrgMemberRole,
 } from '../lib/orgs';
-import { queueEmail, escapeHtml } from '../lib/mail';
+import { queueEmail } from '../lib/mail';
 import { OrgMembership, OrgRole } from '../types';
 
 const ROLE_OPTIONS: OrgRole[] = ['manager', 'finance', 'content', 'scanner'];
@@ -92,28 +92,17 @@ export default function OrgMembers() {
     }
     setInviting(true);
     try {
-      const { inviteUrl } = await createOrgInvite({
+      const { id: inviteId, inviteUrl } = await createOrgInvite({
         orgId,
         email,
         role: inviteRole,
         createdBy: user.uid,
       });
-      // Best-effort enqueue of the invite email. queueEmail is fail-
-      // safe — if the Trigger Email extension isn't configured we
-      // still create the invite doc and the owner can copy the URL
-      // manually from a future "view link" affordance.
-      await queueEmail({
-        to: email,
-        subject: 'You\'re invited to join an org on Exos',
-        template: 'org-invite',
-        html: `
-          <p>You've been invited to join an organization on Exos as
-          <strong>${escapeHtml(inviteRole)}</strong>.</p>
-          <p>Sign in with this email and visit the link below to accept:</p>
-          <p><a href="${escapeHtml(inviteUrl)}">${escapeHtml(inviteUrl)}</a></p>
-          <p>If you didn't expect this invite, ignore this email — the link expires in 14 days.</p>
-        `,
-      });
+      // Best-effort enqueue of the invite email. Recipient + body are
+      // server-derived by the exos_queue_mail RPC (mig 20260520160000).
+      // If the migration isn't applied yet, the call fails silently —
+      // the owner can copy inviteUrl manually from a future "view link" affordance.
+      await queueEmail({ template: 'org-invite', refId: inviteId });
       toast({ kind: 'success', message: `Invite sent to ${email}.` });
       setInviteEmail('');
       await refresh();

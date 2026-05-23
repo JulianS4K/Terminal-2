@@ -16,7 +16,6 @@ import { ArrowLeft, Save, MapPin, Calendar as CalendarIcon, Music, Type, Image a
 import { motion } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
-import { queueEmail, escapeHtml } from '../lib/mail';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
 import {
   COMMON_TIMEZONES,

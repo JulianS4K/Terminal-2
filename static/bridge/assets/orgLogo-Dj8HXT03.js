@@ -1,0 +1,1 @@
+import{a as n}from"./storage-DzOUDL1M.js";const r=2*1024*1024,s=/^image\/(png|jpe?g|webp|svg\+xml)$/;async function g(t,o){if(!s.test(o.type))throw new Error("Logo must be a PNG, JPG, WebP, or SVG.");if(o.size>r)throw new Error(`Logo must be under ${r/1024/1024} MB.`);const{url:e}=await n(t,o);return e}export{g as u};
