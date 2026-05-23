@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-22 by A1 (D4 migration state — §2 D4 status + §8 D4 write-path recipe + §9 phase-1/2 marked applied + §10 collect-listings drift closed)
+**Last updated**: 2026-05-23 by A1 (D4 Firebase fully removed — §2 state + §4 exos RPCs + §9 phase-3/4/5 + 60d+ polling + §10 D4 drift updated)
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -64,32 +64,25 @@ Code-dir ownership (per `LANE_DISCIPLINE.md`):
 - D4 → `d4_bridge/*` (Exos app) + `exos_*` / `bridge_event_xref` migrations (authors; A1 applies)
 - A1 → `supabase/migrations/*`, governance docs, cross-cutting
 
-**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema (Firestore → Supabase migration **in progress**). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
+**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema (Firestore → Supabase migration **complete** 2026-05-23 — Firebase fully removed). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
 
-**D4 migration state (2026-05-22):**
+**D4 migration state (2026-05-23):**
 
-✅ **Schema live** — both migrations applied 2026-05-22, B1 sign-off PR #304, all tables RLS-on, anon-EXECUTE revoked on all 10 write-path RPCs. 0 rows — clean slate, not yet used.
+✅ **Schema live — all 5 phases applied to prod.** PR #305 → phase-1 (orgs/events) + phase-2 (tickets/transfers); PR #308 → phase-3 (follows) + phase-4 (storage) + phase-5 (mail). All B1-cleared. 12 `exos_*` tables + `bridge_event_xref` RLS-on; anon-EXECUTE revoked on all write-path RPCs. 0 rows — data cut-over pending.
 
 ✅ **Supabase Auth** — `lib/auth.ts` + `AuthContext.tsx` fully on Supabase Auth. No Firebase Auth anywhere. `AppUser` shape maps from `SupabaseUser`; `isAdminUser()` checks `app_metadata.admin` (server-set, unforgeable).
 
-✅ **Data libs wired** — `lib/events.ts`, `lib/orgs.ts`, `lib/tickets.ts` all read/write via `supabase-js` against `exos_*` tables. A transitional `Timestamp` shim (`import { Timestamp } from 'firebase/firestore'`) remains in these files purely for type-compat with `src/types.ts` — it converts Postgres timestamptz strings to the old Firestore `Timestamp` shape so existing views stay drop-in. Safe to remove after the `src/types.ts` type sweep in step 4 below.
+✅ **Data libs wired** — `lib/events.ts`, `lib/orgs.ts`, `lib/tickets.ts` all read/write via `supabase-js` against `exos_*` tables. A transitional `Timestamp` shim remains purely for type-compat with `src/types.ts` — converts Postgres timestamptz strings to the old Firestore `Timestamp` shape so views stay drop-in. Safe to remove after the `src/types.ts` type sweep.
 
-❌ **`lib/orgLogo.ts`** — still uses Firebase Storage for logo uploads. Replace with:
-```typescript
-const { data, error } = await supabase.storage
-  .from('org-logos')                           // bucket: org-logos (create in Supabase dashboard)
-  .upload(`${orgId}/logo-${Date.now()}.${ext}`, file, { contentType: file.type, upsert: true });
-const { data: { publicUrl } } = supabase.storage.from('org-logos').getPublicUrl(data.path);
-```
-Bucket policy: authenticated upload to own-org path; public read. 2 MB cap + image MIME enforce in upload options (same constraints as the Firebase Storage rule).
+✅ **`lib/storage.ts`** — Supabase Storage replaces Firebase Storage. `exos-media` bucket live (mig 20260520150000), path-scoped RLS (`event-images/{uid}/` + `org-logos/{orgId}/`), 5 MB cap, SVG excluded (hosted XSS risk on public bucket). `lib/orgLogo.ts` migrated.
 
-❌ **`lib/mail.ts`** — still queues to Firestore + Firebase Trigger Email extension. Options: (a) Supabase Edge Function wrapping Resend/SendGrid, (b) `mail_queue` table + pg_net POST cron. Until replaced, email notifications (transfer-initiated, org-invite, etc.) are silently dropped post-cut-over. Replace before running the data migration.
+✅ **`lib/mail.ts`** — `queueEmail()` calls `supabase.rpc('exos_queue_mail', { p_template, p_ref_id })`. The SECDEF RPC (mig 20260520160000) server-derives recipient from the related record — no open relay (B1 SEC-HIGH closed bot_chat #438). Mail rows accumulate as `status='pending'`; drainer (edge fn + email provider) TBD.
 
-❌ **Data cut-over** — `scripts/migrate-to-orgs.ts` exists but has NOT been run. All exos_* tables have 0 rows; actual data lives in Firestore. **Run after** `orgLogo.ts` + `mail.ts` are migrated and the app is validated against the Supabase backend on a test org.
+❌ **Data cut-over** — `scripts/migrate-to-orgs.ts` has NOT been run. All `exos_*` tables have 0 rows; actual data still in Firestore. **All blocking items resolved** — run when ready to cut over prod data.
 
-❌ **`src/types.ts` Timestamp shim** — `Timestamp` type from `firebase/firestore` used as the shape for date fields in `Event`/`Ticket`/`Transfer`. After cut-over, replace with `Date | string`; remove the transitional `toTs()` helpers in `events.ts`, `orgs.ts`, `tickets.ts`.
+❌ **`src/types.ts` Timestamp shim** — `Timestamp` type from `firebase/firestore` still used for date fields in `Event`/`Ticket`/`Transfer`. After cut-over, replace with `Date | string`; remove `toTs()` helpers.
 
-❌ **SW scope** — `static/bridge/sw.js` was built for root scope (`/`), served under `/bridge/`. PWA offline may misbehave. Add `Service-Worker-Allowed: /bridge/` response header or rebuild the SW with the `/bridge/` scope prefix (D4-OPS-1).
+❌ **SW scope** — `static/bridge/sw.js` built for root scope (`/`), served under `/bridge/`. PWA offline may misbehave. Add `Service-Worker-Allowed: /bridge/` header or rebuild SW with `/bridge/` scope (D4-OPS-1).
 
 ---
 
@@ -155,6 +148,9 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `cross_source_venue_resolve(name, city, state)` | text, [text], [text] | Returns `tevo_venue_id` from any-source venue name via 3-tier match (canonical / aliases array / prefix). Driven by `cross_source_venue_map` (391 TEvo rows + 129 SG / 94 TickPick / 85 Vivid aliases as of 2026-05-16). |
 | `refresh_cross_source_venue_map()` | — | Rebuilds `cross_source_venue_map` from events/sg_events_canonical/tickpick_orders.raw/vivid_orders.raw. Idempotent. |
 | `release_health_check()` | — | All-checks rollup |
+| `exos_queue_mail(p_template, p_ref_id)` | text, uuid (default NULL) | **D4 transactional mail** (mig 20260520160000). Server-derives `to_email` + body from the related record — no open relay. Templates: `transfer-initiated` (refId=transfer.id, sender→receiver), `transfer-claimed` (refId=transfer.id, receiver→sender), `org-invite` (refId=invite.token), `event-cancelled`/`event-updated` (refId=ticket.id, org staff only). SECDEF + auth check. Rows land in `exos_mail` as `status='pending'`; drainer TBD. |
+| `exos_follow_org(p_org_id)` / `exos_unfollow_org(p_org_id)` | uuid | **D4 org follows** (mig 20260520140000). Idempotent (`ON CONFLICT DO NOTHING`); `followers_count` counter updated atomically only on actual insert/delete — cannot drift. SECDEF. |
+| `exos_create_org(p_name, p_slug)` | text, text | **D4 org bootstrap** (mig 20260520120000). Only path to create an org; seeds owner membership. Validates slug uniqueness. SECDEF. |
 
 For the full RPC list + arg detail + composition relationships → `RESOURCES_BIBLE.md §3` and the migration headers.
 
@@ -450,6 +446,10 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 | 2026-05-20 | 20260520420000 | **Breakdowns backfill re-enable + extend (PR #290)**: re-enables `zone-backfill-isolated-10min` cron + upgrades `backfill_stale_zone_metrics` to recompute BOTH zone+section (was zones only), detect staleness via the `latest_event_metrics` matview (not an 8M-row `listings_snapshots` scan), and trap `query_canceled`. Out-of-band catch-up for heavy events that soft-fail the inline 6s RPC. **Known gap**: the heaviest events (1300+ listings) exceed even the 90s cap — `compute_event_zone_metrics`'s per-row `match_performer_zone()` LATERAL needs dedup optimization (tracked, §10). |
 | **2026-05-22** | 20260520120000 | **D4/Exos phase-1 — APPLIED to prod 2026-05-22** (B1 sign-off PR #304). `exos_*` orgs+events schema (profiles/orgs/org_secrets/memberships/invites/events/ticket_tiers/discount_codes + `bridge_event_xref`). Deny-by-default RLS, all 9 tables RLS-enabled; base-table grants REVOKE'd from anon + re-GRANT CRUD to authenticated (own-org only per RLS). Cross-org browse via `exos_public_*` VIEWs. Org bootstrap via `exos_create_org()` SECDEF. 0 rows — schema ready, data cut-over pending. |
 | **2026-05-22** | 20260520130000 | **D4/Exos phase-2 — APPLIED to prod 2026-05-22** (B1 sign-off PR #304). `exos_tickets`/`exos_transfers` + check-in + scan-reject audit logs + 6 write-path SECDEF RPCs (mint/check-in/transfer/cancel/claim/void). Atomic tier-claim closes oversell; atomic status-flip closes double-scan. All 8 write-path RPCs: anon-EXECUTE revoked (mig 20260520230000 same day). 0 rows — ready for first mint. See §8 D4 write-path recipe. |
+| **2026-05-22** | 20260520200000 | **SG broker 60d+ polling — APPLIED (PR #251)**. `sg_events_canonical.last_60d_pulled_at` column + `sg_broker_60d_plus_{listings,sales}_queue(p_max_events int DEFAULT 8)`. 4 crons: `sg_60d_listings_morning` / `sg_60d_sales_morning` (UTC 4-9, ~576 events/day each) + `sg_60d_listings_afternoon` / `sg_60d_sales_afternoon` (UTC 17-19, ~288 events/day each). Round-robins oldest-`last_60d_pulled_at`-first; drains via existing priority process crons. Closes the 60d+ gap: Yankees-Mets/Dodgers/Red Sox (35 games had 0 SG data before). 98.8% event coverage within 24h. |
+| **2026-05-23** | 20260520140000 | **D4/Exos phase-3 — org follow graph — APPLIED (PR #308, B1-cleared)**. `exos_org_follows(follower_uid, org_id)` PK + `exos_orgs.{description, followers_count}` + `exos_public_orgs` view refresh (adds bio + count). `exos_follow_org` / `exos_unfollow_org` SECDEF RPCs — idempotent `ON CONFLICT DO NOTHING`, counter updated atomically only on real change. anon REVOKE'd from table; SELECT granted to authenticated. |
+| 2026-05-23 | 20260520150000 | **D4/Exos phase-4 — media storage bucket — APPLIED (PR #308, B1-cleared)**. `exos-media` public bucket (5 MB cap). SVG excluded — SVG carries executable script; on a public bucket a direct object URL executes in the storage origin (hosted XSS, B1 SEC-MED bot_chat #438). Path-scoped RLS: `event-images/{uid}/…` → own-uid gate; `org-logos/{orgId}/…` → org-membership gate. Update/delete limited to object owner. |
+| 2026-05-23 | 20260520160000 | **D4/Exos phase-5 — transactional mail queue — APPLIED (PR #308, B1-cleared)**. `exos_mail` table (RLS on, zero client policies — service_role drainer only). `exos_queue_mail(p_template, p_ref_id)` SECDEF RPC server-derives `to_email` + body from the related record — open relay closed (B1 SEC-HIGH bot_chat #438, commit 3dc943f fixed 5 column/role refs). 5 templates: transfer-initiated/claimed, org-invite, event-cancelled/updated. Mail rows land as `status='pending'`; drainer (edge fn + email provider) is the next D4 milestone. |
 
 ---
 
@@ -465,7 +465,7 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 | SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
 | `aq_short_event_id` 0% on `listings_snapshots` | Cron resumed 2026-05-16; firing 04:02 UTC | Use `event_id` for TEvo reads |
 | `compute_event_zone/section_metrics` too slow for heavy events | Open (tracked task) | Per-row `match_performer_zone()` LATERAL exceeds even 90s for 1300+ listing events (Yankees). Their zone/section breakdowns stay stale; non-fatal RPC (mig 410000) just soft-fails them. Fix = dedup zone match (compute once per distinct section/row). 54.7% of DB time per 2026-05-14 audit. |
-| D4 Firestore → Supabase cut-over | Open (D4 task) | Schema live 2026-05-22, 0 rows. `orgLogo.ts` (Firebase Storage) + `mail.ts` (Trigger Email) still need replacing before `scripts/migrate-to-orgs.ts` can run. See §2 D4 migration state for the full checklist. |
+| D4 Firestore → Supabase cut-over | **Unblocked** — run `scripts/migrate-to-orgs.ts` | All 5 migration phases applied (PR #305 + #308). `lib/storage.ts` + `lib/mail.ts` migrated to Supabase. 0 rows in `exos_*`; Firestore still source-of-truth. `src/types.ts` Timestamp shim + SW scope (D4-OPS-1) are the only remaining open items. |
 
 ---
 
