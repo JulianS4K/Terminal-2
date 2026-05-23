@@ -1,6 +1,6 @@
 # Terminal-2
 
-Ticket-trading intelligence + retail platform. FastAPI on Render + Supabase Postgres + 18 edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Multi-bot orchestrated — see [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).
+Ticket-trading intelligence + retail platform. FastAPI on Railway (primary) + Render (secondary/CDN) + Supabase Postgres + 18 edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Multi-bot orchestrated — see [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).
 
 ## Quick links for bots starting a session
 
@@ -17,8 +17,10 @@ Ticket-trading intelligence + retail platform. FastAPI on Render + Supabase Post
 ## Architecture
 
 ```
-Browser ─► Render (FastAPI + static)  ─► Supabase (Postgres + Auth + Edge Functions)
-                  │                                   ▲
+Browser ─► Railway (FastAPI + static)  ─► Supabase (Postgres + Auth + Edge Functions)
+                  │          │                        ▲
+                  │          │  /bridge/ (D4 Bridge)  │
+                  │          └─ same-origin session ──┘
                   ├─► TEvo / SG / TickPick / Vivid    │
                   │   (read-only — no writes per      │
                   │    CLAUDE.md §1 rule 2)           │
@@ -33,10 +35,11 @@ Browser ─► Render (FastAPI + static)  ─► Supabase (Postgres + Auth + Edg
                               via public.bot_chat
 ```
 
-**Hosted services** (Render):
-- `vibepass-storefront-test` — unified shell hosting D0 terminal + D1 storefront + D2 dashboard (testing-unified architecture, PR #168 2026-05-16)
-- `vibepass-terminal-test` — static CDN for D0 frontend assets
-- `d2-orders-dashboard` — beta-time placeholder, no live traffic
+**Hosted services:**
+- **Railway** (primary) — `glorious-appreciation-production-a6ce.up.railway.app` — unified FastAPI shell hosting all 4 surfaces: D0 Terminal (`/terminal`), D1 Store (`/store`), D2 Undelivered (`/undelivered`), D4 Bridge (`/bridge/`). Same-origin for all — single Supabase session covers all surfaces.
+- **Render** `vibepass-storefront-test` — secondary/CDN. Also serves `/bridge/` as a backup URL. Was the unified shell before Railway became primary.
+- **Render** `vibepass-terminal-test` — static CDN for D0 frontend assets
+- **Render** `d2-orders-dashboard` — beta-time placeholder, no live traffic
 
 ## Repo layout
 
@@ -46,10 +49,12 @@ Browser ─► Render (FastAPI + static)  ─► Supabase (Postgres + Auth + Edg
 ├── evo_client.py                     TEvo v9 API client
 ├── *_client.py                       SeatGeek, TickPick, Vivid, SeatData clients (read-only)
 ├── d2_dashboard/                     D2 orders dashboard + APIRouter (mounted on app.py)
+├── d4_bridge/                        D4 — Exos/Bridge React SPA (Vite; build → static/bridge/)
 ├── static/
 │   ├── terminal/                     D0 — broker terminal (event/performer/venue pages)
 │   ├── store/                        D1 — consumer retail storefront
-│   ├── home/                         D0 home page
+│   ├── home/                         D0 home page (4-surface hub — Terminal/Store/Undelivered/Bridge)
+│   ├── bridge/                       D4 — Exos Bridge SPA build artifact (Vite dist, committed)
 │   ├── undelivered/                  D2 undelivered-orders surface
 │   └── _shared/                      Cross-surface utilities
 ├── supabase/
@@ -90,7 +95,13 @@ Browser at `http://localhost:8765` lands on the home page. `/static/terminal/eve
 
 ## Production deploys
 
-Auto-deploys on `main` push via Render. See `render.yaml` + `render-d2-dashboard.yaml` for IaC. A1 is sole pusher to `main`; subordinate bots open PRs against `main`.
+**Railway** (primary): auto-deploys on `main` push via `Procfile` (`uvicorn app:app`). All 4 surfaces live at `glorious-appreciation-production-a6ce.up.railway.app`.
+
+**Render** (secondary): also auto-deploys on `main` push via `render.yaml` + `render-d2-dashboard.yaml`. `vibepass-storefront-test` continues to serve all surfaces as a hot-standby.
+
+A1 is sole pusher to `main`; subordinate bots open PRs against `main`.
+
+**Bridge rebuild**: when `d4_bridge/` source changes, rebuild with `npm --prefix d4_bridge run build` (requires `d4_bridge/.env.local` with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`), then `cp -r d4_bridge/dist static/bridge` and commit the artifact.
 
 ## Bot orchestration (the short version)
 
