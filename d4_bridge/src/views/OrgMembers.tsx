@@ -92,7 +92,7 @@ export default function OrgMembers() {
     }
     setInviting(true);
     try {
-      const { id: inviteId, inviteUrl } = await createOrgInvite({
+      const { token: inviteToken, inviteUrl } = await createOrgInvite({
         orgId,
         email,
         role: inviteRole,
@@ -100,9 +100,10 @@ export default function OrgMembers() {
       });
       // Best-effort enqueue of the invite email. Recipient + body are
       // server-derived by the exos_queue_mail RPC (mig 20260520160000).
-      // If the migration isn't applied yet, the call fails silently —
-      // the owner can copy inviteUrl manually from a future "view link" affordance.
-      await queueEmail({ template: 'org-invite', refId: inviteId });
+      // exos_org_invites PK is `token`; pass it as refId so the RPC can
+      // look up the invite row. If the migration isn't applied yet the
+      // call fails silently — the owner can copy inviteUrl manually.
+      await queueEmail({ template: 'org-invite', refId: inviteToken });
       toast({ kind: 'success', message: `Invite sent to ${email}.` });
       setInviteEmail('');
       await refresh();
