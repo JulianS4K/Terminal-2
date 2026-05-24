@@ -5,6 +5,7 @@ import { uploadEventImage } from '../lib/storage';
 import {
   updateEvent,
   cancelEvent,
+  notifyEventHolders,
   getEventForEdit,
   addTier as seamAddTier,
   updateTier as seamUpdateTier,
@@ -12,7 +13,7 @@ import {
 } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { Event } from '../types';
-import { ArrowLeft, Save, MapPin, Calendar as CalendarIcon, Music, Type, Image as ImageIcon, Palette, Globe, XCircle, ListOrdered, Tag, Plus, Upload, ShieldCheck, Loader2, AlertOctagon } from 'lucide-react';
+import { ArrowLeft, Save, MapPin, Calendar as CalendarIcon, Music, Type, Image as ImageIcon, Palette, Globe, XCircle, ListOrdered, Tag, Plus, Upload, ShieldCheck, Loader2, AlertOctagon, Send } from 'lucide-react';
 import { motion } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
@@ -115,6 +116,7 @@ export default function EditEvent() {
   const [cancelling, setCancelling] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [notifying, setNotifying] = useState(false);
   const [promoUsesState, setPromoUsesState] = useState<
     Record<string, { usedCount: number; usageLimit: number | null; expiresAt: Timestamp | null }>
   >({});
@@ -378,12 +380,12 @@ export default function EditEvent() {
     setCancelling(true);
     try {
       await cancelEvent(eventId, cancelReason.trim());
-      // Ticket-holder notification emails read the tickets table — phase-2.
-      // The cancellation banner on EventDetails still carries the message.
+      // cancelEvent queues an 'event-cancelled' email to every holder
+      // (exos_notify_event_holders, server-derived recipients).
       toast({
         kind: 'success',
         title: 'Event cancelled',
-        message: 'Sales stopped. Ticket-holder email notifications land in phase-2.',
+        message: 'Sales stopped and ticket holders have been emailed.',
       });
       setShowCancelModal(false);
       navigate('/dashboard');
@@ -391,6 +393,32 @@ export default function EditEvent() {
       toast({ kind: 'error', message: err instanceof Error ? err.message : 'Cancel failed' });
     } finally {
       setCancelling(false);
+    }
+  };
+
+  /**
+   * Email every current (non-voided) ticket holder that this event's details
+   * changed (exos_notify_event_holders, 'event-updated' template — recipients
+   * server-derived). Explicit action so a typo-fix save doesn't blast holders.
+   */
+  const handleNotifyUpdate = async () => {
+    if (!eventId || notifying) return;
+    setNotifying(true);
+    try {
+      const n = await notifyEventHolders(eventId, 'event-updated');
+      if (n === null) {
+        toast({ kind: 'error', message: 'Could not queue update emails — try again.' });
+      } else if (n === 0) {
+        toast({ kind: 'info', message: 'No ticket holders to notify yet.' });
+      } else {
+        toast({
+          kind: 'success',
+          title: 'Attendees notified',
+          message: `Queued an update email to ${n} ticket holder${n === 1 ? '' : 's'}.`,
+        });
+      }
+    } finally {
+      setNotifying(false);
     }
   };
 
@@ -1557,6 +1585,36 @@ export default function EditEvent() {
         >
           {saving ? 'Synchronizing Manifest...' : 'Commit Changes to Ledger'}
         </button>
+
+        {/*
+          Notify attendees of an update. Published-only; explicit (not
+          auto-fired on save) so a minor edit doesn't email every holder.
+        */}
+        {eventData.status === 'published' && (
+          <section className="mt-8 bg-white p-8 rounded-[2.5rem] border-2 border-slate-100">
+            <div className="flex items-start gap-3 mb-4">
+              <Send className="text-slate-500 w-5 h-5 flex-shrink-0 mt-1" />
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-tighter italic text-slate-800 mb-1">
+                  Notify attendees
+                </h3>
+                <p className="text-xs text-slate-500 max-w-prose">
+                  Email every current ticket holder that this event's details
+                  changed. Save your edits first, then send. Recipients are
+                  derived server-side — no list to manage.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleNotifyUpdate}
+              disabled={notifying}
+              className="px-6 py-3 bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-white font-black uppercase tracking-tighter italic text-xs transition-all"
+            >
+              {notifying ? 'Sending…' : 'Email ticket holders about an update'}
+            </button>
+          </section>
+        )}
 
         {/*
           Danger zone — cancellation. Only surfaced for published

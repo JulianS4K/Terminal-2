@@ -319,15 +319,20 @@ export async function cancelEvent(eventId: string, reason?: string): Promise<voi
 export async function notifyEventHolders(
   eventId: string,
   template: 'event-cancelled' | 'event-updated',
-): Promise<void> {
+): Promise<number | null> {
   try {
-    const { error } = await supabase.rpc('exos_notify_event_holders', {
+    const { data, error } = await supabase.rpc('exos_notify_event_holders', {
       p_event_id: eventId,
       p_template: template,
     });
-    if (error) console.warn('notifyEventHolders failed (non-fatal):', error.message);
+    if (error) {
+      console.warn('notifyEventHolders failed (non-fatal):', error.message);
+      return null;
+    }
+    return typeof data === 'number' ? data : null;
   } catch (err) {
     console.warn('notifyEventHolders failed (non-fatal):', err);
+    return null;
   }
 }
 
