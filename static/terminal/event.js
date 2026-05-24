@@ -595,7 +595,7 @@
       cursor: { drag: { x: true, y: false } },
       scales: {
         x: { time: true, range: xRange ? (() => xRange) : undefined },
-        y: {},
+        y: { range: robustYRange },
       },
       axes: [
         X_AXIS,
@@ -638,6 +638,30 @@
     }
   }
 
+  // Robust Y-axis range. uPlot's default auto-scale spans data min→max, so a
+  // single outlier (e.g. a $500+ suite sale spiking a median bucket) blows the
+  // axis out and compresses the $4-60 trading band into an unreadable sliver.
+  // This clips the top to ~p95 ONLY when a real outlier exists (real max > 1.5×
+  // p95); otherwise it shows the full range. Lines above the cap clip off-top.
+  function robustYRange(u, initMin, initMax) {
+    var fallback = [0, (initMax == null || !isFinite(initMax)) ? 1 : initMax];
+    if (!u || !u.series || !u.data) return fallback;
+    var vals = [];
+    for (var i = 1; i < u.series.length; i++) {
+      if (u.series[i] && u.series[i].show === false) continue;
+      var d = u.data[i]; if (!d) continue;
+      for (var j = 0; j < d.length; j++) {
+        var v = d[j]; if (v != null && isFinite(v)) vals.push(v);
+      }
+    }
+    if (!vals.length) return fallback;
+    vals.sort(function (a, b) { return a - b; });
+    var p95 = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))];
+    var realMax = vals[vals.length - 1];
+    var top = (realMax <= p95 * 1.5) ? realMax * 1.08 : Math.max(p95 * 1.1, 1);
+    return [0, top > 0 ? top : 1];
+  }
+
   // ---------- INVENTORY CHART ----------
   // 3 line series on left Y-axis (integer ticket counts) + 1 bar series on
   // right Y-axis (SG sale count). uPlot supports per-series scales natively;
@@ -672,7 +696,7 @@
       cursor: { drag: { x: true, y: false } },
       scales: {
         x:  { time: true, range: xRange ? (() => xRange) : undefined },
-        y:  {},
+        y:  { range: robustYRange },
         yr: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] },
       },
       axes: [
