@@ -6381,7 +6381,8 @@ def store_events_near(
                 per_page=min(cap, 100),
             )
         except RuntimeError as e:
-            raise HTTPException(502, f"TEvo geo lookup failed: {e}")
+            print(f"[store_events_near] TEvo geo lookup failed: {e!r}")
+            raise HTTPException(502, "geo lookup failed")
         evs = tevo_resp.get("events") or []
         return {
             "count": len(evs),
@@ -6809,7 +6810,8 @@ def _fetch_owned_ticket_groups(
     try:
         live = client.get_ticket_groups(event_id, owned=True)
     except RuntimeError as e:
-        raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+        print(f"[ticket_groups] TEvo ticket_groups failed for {event_id}: {e!r}")
+        raise HTTPException(502, "ticket listings fetch failed")
     groups = live.get("ticket_groups", []) or []
     if sb is not None:
         try:
@@ -7342,7 +7344,8 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
         try:
             tg_resp = client.get_ticket_groups(event_id, owned=True)
         except RuntimeError as e:
-            raise HTTPException(502, f"TEvo ticket_groups failed: {e}")
+            print(f"[store_reserve] TEvo ticket_groups failed for {event_id}: {e!r}")
+            raise HTTPException(502, "ticket listings fetch failed")
         match = next(
             (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
             None,
