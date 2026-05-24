@@ -7,6 +7,55 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+  // ---- Modal focus trap (a11y: WCAG 2.4.3 + dialog pattern) ----
+  // The shared #modal (reserve + share) re-renders #modalBody on each open,
+  // so focusables are queried live. trapModalFocus() records the opener,
+  // moves focus into the dialog, and cycles Tab / Shift+Tab within it;
+  // releaseModalFocus() restores focus to the opener on close.
+  let _modalReturnFocus = null;
+  function _modalFocusables() {
+    const modal = document.getElementById("modal");
+    if (!modal) return [];
+    return $$(
+      'a[href], button:not([disabled]), input:not([disabled]),' +
+      ' select:not([disabled]), textarea:not([disabled]),' +
+      ' [tabindex]:not([tabindex="-1"])',
+      modal,
+    ).filter((el) => el.offsetParent !== null);  // visible only
+  }
+  function _onModalKeydown(e) {
+    if (e.key !== "Tab") return;
+    const modal = document.getElementById("modal");
+    if (!modal || modal.hidden) return;
+    const f = _modalFocusables();
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+  function trapModalFocus() {
+    const modal = document.getElementById("modal");
+    if (!modal) return;
+    _modalReturnFocus = document.activeElement;
+    document.addEventListener("keydown", _onModalKeydown, true);
+    const closeBtn = $("#closeModal", modal);
+    const f = _modalFocusables();
+    (closeBtn || f[0] || modal).focus();
+  }
+  function releaseModalFocus() {
+    document.removeEventListener("keydown", _onModalKeydown, true);
+    if (_modalReturnFocus && typeof _modalReturnFocus.focus === "function") {
+      try { _modalReturnFocus.focus(); } catch (_e) { /* opener gone */ }
+    }
+    _modalReturnFocus = null;
+  }
+
   // Section sort key — mirrors the server's _section_sort_key. Letter-prefixed
   // sections (Floor, Courtside, GA) come before numeric (100, 101). Numeric
   // sections sort naturally (1, 2, 10, 100 — not lex 1, 10, 100, 2).
@@ -1585,6 +1634,7 @@
       });
 
       modal.hidden = false;
+      trapModalFocus();
     }
 
     function renderReceipt(mb, res) {
@@ -1628,6 +1678,7 @@
 
     function closeModal() {
       $("#modal").hidden = true;
+      releaseModalFocus();
     }
 
     $("#closeModal").addEventListener("click", closeModal);
@@ -2176,6 +2227,7 @@
       });
 
       modal.hidden = false;
+      trapModalFocus();
     }
 
     // ---- Bootstrap ----
