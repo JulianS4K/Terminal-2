@@ -202,8 +202,17 @@
       // X-axis afterward; no v3 re-fetch on window flips.
       let res = await Auth.client
         .rpc('get_broker_event_page_v3', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
-      if (res.error && (res.error.code === '42883' || /does not exist/i.test(res.error.message || ''))) {
-        // v3 not applied yet — fall back to v2
+      // Fall back to the lighter/faster v2 when v3 is either (a) not applied on
+      // this project (42883 / "does not exist") OR (b) times out (57014 /
+      // "statement timeout"/"canceling statement"). v3 (~5.8s on heavy events
+      // like Yankees) can exceed PostgREST's 8s cap under concurrent load and
+      // blank the whole header; v2 (~185ms) still fills the core page and the
+      // 9 v3-only enrichment panels just render their empty states. (QA 2026-05-24.)
+      if (res.error && (
+            res.error.code === '42883' ||
+            res.error.code === '57014' ||
+            /does not exist|statement timeout|canceling statement/i.test(res.error.message || '')
+          )) {
         res = await Auth.client
           .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
       }
