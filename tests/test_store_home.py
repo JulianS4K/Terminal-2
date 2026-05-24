@@ -656,6 +656,29 @@ def test_all_storefront_html_routes_revalidate(store_home_client):
         )
 
 
+def test_static_store_asset_versioned_is_immutable(store_home_client):
+    """D1-OPS-2: a versioned (?v=<sha>) /static/store asset request gets a
+    1-year immutable Cache-Control so browsers stop revalidating every load.
+    The ?v= query is what makes immutable safe — a new deploy serves a new
+    URL."""
+    r = store_home_client.get("/static/store/style.css?v=abc1234")
+    assert r.status_code == 200, r.text
+    cc = r.headers.get("cache-control", "").lower()
+    assert "max-age=31536000" in cc and "immutable" in cc, (
+        f"versioned static asset should be immutable-cached; got: {cc!r}"
+    )
+
+
+def test_static_store_asset_unversioned_short_ttl(store_home_client):
+    """An unversioned /static/store hit (rare — crawler/manual) gets a short
+    TTL, NOT immutable, so a deploy isn't masked forever for those callers."""
+    r = store_home_client.get("/static/store/style.css")
+    assert r.status_code == 200
+    cc = r.headers.get("cache-control", "").lower()
+    assert "immutable" not in cc, f"unversioned asset must not be immutable; got: {cc!r}"
+    assert "max-age=600" in cc, f"expected short TTL; got: {cc!r}"
+
+
 # ---------- /api/store/movers stale-while-revalidate cache ----------
 #
 # The movers route refactor in PR #144 wraps the ~1s compute path in a
