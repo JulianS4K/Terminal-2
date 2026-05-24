@@ -615,6 +615,27 @@ def test_legal_pages_render(monkeypatch):
         )
 
 
+def test_legal_pages_have_seo_head(monkeypatch):
+    """Legal pages reached SEO parity with index.html — favicon link, a
+    meta description, and an og:title. Guards against the D1-OPS-4 gap
+    where about/privacy/terms shipped (PR #164) before the SEO scaffold
+    (PR #166) and had only a bare <title>."""
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        body = client.get(path).text
+        assert 'rel="icon"' in body, f"{path} missing favicon link"
+        assert 'name="description"' in body, f"{path} missing meta description"
+        assert 'property="og:title"' in body, f"{path} missing og:title"
+
+
+def test_event_page_has_canonical_link(monkeypatch):
+    """event.html carries a <link rel='canonical'> element (store.js fills
+    href at mount to the filter-less URL, deduping ?zones= filter variants)."""
+    client = TestClient(app_module.app)
+    body = client.get("/store/event/3346001").text
+    assert 'rel="canonical"' in body, "event page missing canonical link element"
+
+
 def test_legal_pages_have_no_cache_revalidate_header(store_home_client):
     """Legal pages route through _render_storefront_page so they inherit
     the same Cache-Control: no-cache, must-revalidate header. Guards
