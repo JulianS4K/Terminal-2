@@ -516,6 +516,31 @@ def test_or_ilike_clause_escapes_embedded_double_quote():
     assert out == 'name.ilike."%He said ""yes"",%"'
 
 
+def test_csp_frame_ancestors_header_only_not_meta(store_home_client):
+    """frame-ancestors is honored ONLY as an HTTP header, never in a <meta>
+    CSP — browsers ignore it there and log a console error on every page
+    load. So: the served HTML's <meta> CSP must NOT contain frame-ancestors,
+    while the HTTP response header CSP MUST (clickjacking protection
+    preserved). Guards against re-adding it to the meta tag."""
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    body = r.text
+    # The meta CSP line must be present but without frame-ancestors.
+    assert 'http-equiv="Content-Security-Policy"' in body
+    # Isolate the meta tag content to avoid matching anything else.
+    meta_idx = body.find('http-equiv="Content-Security-Policy"')
+    meta_tag = body[meta_idx:body.find(">", meta_idx)]
+    assert "frame-ancestors" not in meta_tag, (
+        "frame-ancestors must not appear in the <meta> CSP (browsers ignore "
+        "it there + log a console error)"
+    )
+    # HTTP-header CSP still enforces it.
+    hdr_csp = r.headers.get("content-security-policy", "")
+    assert "frame-ancestors 'none'" in hdr_csp, (
+        "frame-ancestors 'none' must remain in the HTTP-header CSP"
+    )
+
+
 # ---------- Storefront cache-bust helper ----------
 
 def test_store_home_html_includes_version_query_string(store_home_client, monkeypatch):
