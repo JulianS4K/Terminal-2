@@ -81,8 +81,8 @@ export interface Organization {
     enabled?: boolean;
   };
   // Growth/marketing config (D4-OPS-14, mig 20260523200000). Public IDs/handles
-  // only (no secrets). Rendering pixels/JSON-LD on public pages is CSP/consent-
-  // gated (B1) — this just stores the config.
+  // only (no secrets). Socials render on the storefront; pixels load on public
+  // pages behind the consent gate (lib/consent.ts + lib/pixels.ts).
   marketing?: {
     socials?: { instagram?: string; facebook?: string; tiktok?: string; x?: string; website?: string };
     pixels?: { meta?: string; ga4?: string; tiktok?: string };

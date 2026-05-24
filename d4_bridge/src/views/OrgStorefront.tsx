@@ -19,7 +19,7 @@ import { listPublicEventsForOrg } from '../lib/events';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
 import { formatInTz } from '../lib/datetime';
 import { applyMeta } from '../lib/meta';
-import { initOrgPixels, trackPixelEvent } from '../lib/pixels';
+import { initOrgPixels } from '../lib/pixels';
 import SocialLinks from '../components/SocialLinks';
 
 interface ResolvedOrg {
@@ -148,9 +148,9 @@ export default function OrgStorefront() {
         } catch {
           /* non-fatal */
         }
-        // Marketing: load the org's pixels (consent-gated) + fire a PageView.
+        // Marketing: load the org's pixels (consent-gated). The loaders emit
+        // their own PageView, so we don't fire one here.
         initOrgPixels(org.marketing?.pixels);
-        trackPixelEvent('PageView');
       } catch (err) {
         console.error('Org slug lookup failed:', err);
         if (!cancelled) setState({ status: 'not-found' });

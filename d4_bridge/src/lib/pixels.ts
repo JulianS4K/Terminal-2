@@ -40,6 +40,13 @@ declare global {
 const loaded = new Set<string>();
 let pending: PixelConfig | null = null;
 let subscribed = false;
+let ready = false;
+
+// Events fired before consent/load are queued here and replayed once the
+// providers are live, so a first-visit ViewContent isn't lost to the consent
+// gate. Capped so a denied visitor can't grow it unbounded.
+const deferred: { name: string; params?: Record<string, unknown> }[] = [];
+const MAX_DEFERRED = 20;
 
 // Register an org's pixels. Loads immediately if consent is granted, else
 // queues until the visitor opts in.
@@ -61,20 +68,35 @@ export function initOrgPixels(pixels?: PixelConfig): void {
 function flush(): void {
   if (!pending) return;
   const p = pending;
+  // Each loader fires the vendor's own PageView on init, so callers don't
+  // (and must not) also fire one — that would double-count.
   if (p.meta) loadMeta(p.meta);
   if (p.ga4) loadGa4(p.ga4);
   if (p.tiktok) loadTikTok(p.tiktok);
+  ready = true;
+  const queued = deferred.splice(0, deferred.length);
+  for (const e of queued) fire(e.name, e.params);
 }
 
-// Fire a conversion/interaction event across whichever providers are loaded.
-// `name` is the canonical event (e.g. 'PageView', 'ViewContent', 'Purchase');
-// it's translated to each vendor's nearest equivalent.
-export function trackPixelEvent(name: string, params?: Record<string, unknown>): void {
-  if (typeof window === 'undefined' || getConsent() !== 'granted') return;
+function fire(name: string, params?: Record<string, unknown>): void {
   if (window.fbq) window.fbq('track', name, params);
   if (window.ttq) window.ttq.track(name, params);
   // GA4 has no fixed event taxonomy; lowercase the canonical name.
   if (window.gtag) window.gtag('event', name.toLowerCase(), params);
+}
+
+// Fire a conversion/interaction event across whichever providers are loaded.
+// `name` is the canonical event (e.g. 'ViewContent', 'Purchase'); it's
+// translated to each vendor's nearest equivalent. Calls made before consent
+// or before the providers finish loading are queued and replayed on flush.
+// Do NOT pass 'PageView' here — the loaders emit that themselves.
+export function trackPixelEvent(name: string, params?: Record<string, unknown>): void {
+  if (typeof window === 'undefined') return;
+  if (getConsent() !== 'granted' || !ready) {
+    if (deferred.length < MAX_DEFERRED) deferred.push({ name, params });
+    return;
+  }
+  fire(name, params);
 }
 
 function inject(src: string): void {

@@ -340,7 +340,8 @@ window.addEventListener('message', function(e) {
           </legend>
           <p className="text-white/50 text-xs">
             Social handles + tracking pixel IDs (public IDs only — no secrets).
-            Pixel/tag rendering on public pages is pending a CSP + consent review.
+            Handles show on your storefront; pixels load on your public pages
+            after a visitor accepts cookies.
           </p>
           <div className="grid grid-cols-2 gap-3">
             {(([['Instagram','instagram'],['Facebook','facebook'],['TikTok','tiktok'],['X','x'],['Website','website']]) as readonly (readonly ['Instagram'|'Facebook'|'TikTok'|'X'|'Website', 'instagram'|'facebook'|'tiktok'|'x'|'website'])[]).map(([label, key]) => (
@@ -358,7 +359,7 @@ window.addEventListener('message', function(e) {
             ))}
           </div>
           <div className="grid grid-cols-3 gap-3">
-            {(([['Meta Pixel','meta'],['GA4','ga4'],['TikTok Pixel','tiktok']]) as readonly (readonly [string, 'meta'|'ga4'|'tiktok'])[]).map(([label, key]) => (
+            {(([['Meta Pixel','meta','000000000000000'],['GA4','ga4','G-XXXXXXXXXX'],['TikTok Pixel','tiktok','CXXXXXXXXXXXXXXXXXXX']]) as readonly (readonly [string, 'meta'|'ga4'|'tiktok', string])[]).map(([label, key, hint]) => (
               <label key={key} className="block">
                 <span className="text-[10px] text-white/40 uppercase tracking-widest">{label}</span>
                 <input
@@ -367,7 +368,7 @@ window.addEventListener('message', function(e) {
                   value={marketing.pixels?.[key] ?? ''}
                   onChange={(e) => setMarketing((m) => ({ ...m, pixels: { ...m.pixels, [key]: e.target.value } }))}
                   disabled={!canEdit}
-                  placeholder={`${label} ID`}
+                  placeholder={hint}
                 />
               </label>
             ))}
