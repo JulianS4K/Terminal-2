@@ -7,6 +7,7 @@ import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
 import PwaShell from './components/PwaShell';
+import ConsentBanner from './components/ConsentBanner';
 
 // Home is the landing page — keep it eagerly loaded so the first paint is
 // fast. Every other route is split out so we don't ship CreateEvent / the
@@ -75,6 +76,7 @@ function ChromeLayout({ children }: { children: ReactNode }) {
       </main>
       <Footer />
       <PwaShell />
+      <ConsentBanner />
     </div>
   );
 }

@@ -11,6 +11,8 @@ import { formatInTz } from '../lib/datetime';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 import { applyMeta } from '../lib/meta';
+import { getPublicOrg } from '../lib/orgs';
+import { initOrgPixels, trackPixelEvent } from '../lib/pixels';
 import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
 
@@ -93,6 +95,17 @@ export default function EventDetails() {
         } catch (err) {
           // Meta-tag failures are non-fatal — they don't block render.
           console.warn('Meta apply failed:', err);
+        }
+        // Marketing: load the hosting org's pixels (consent-gated) and fire a
+        // ViewContent for this event. The public event row carries only
+        // orgId, so fetch the public org for its marketing config.
+        if (data.orgId) {
+          getPublicOrg(data.orgId)
+            .then((org) => {
+              initOrgPixels(org?.marketing?.pixels);
+              trackPixelEvent('ViewContent', { content_name: data.title, content_ids: [data.id] });
+            })
+            .catch(() => {/* non-fatal */});
         }
       }
       setLoading(false);

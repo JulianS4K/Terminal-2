@@ -122,6 +122,7 @@ function mapPublicOrg(row: any): Organization {
     id: row.id, name: row.name, slug: row.slug, ownerUid: '', createdAt: toTs(null),
     description: row.description ?? undefined, followersCount: row.followers_count ?? 0,
     theme: row.theme ?? undefined,
+    marketing: row.marketing ?? undefined,
   };
 }
 
