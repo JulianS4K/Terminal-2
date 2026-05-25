@@ -257,3 +257,28 @@ def test_503_when_client_unconfigured(client, monkeypatch):
     r = client.get("/api/store/events?limit=5")
     assert r.status_code == 503
     assert "TEvo client not configured" in r.json().get("detail", "")
+
+
+# ---------- error-message scrubbing (no upstream details leak to public) ----------
+
+def test_reserve_upstream_error_does_not_leak_tevo(client, monkeypatch):
+    """When the upstream ticket_groups fetch raises, the public 502 must NOT
+    echo 'TEvo' or the raw exception text (which can carry tokens / URLs /
+    stack fragments). The full error is logged server-side only."""
+    class _BoomFake:
+        def get_ticket_groups(self, *_, **__):
+            raise RuntimeError("TEvo API 500 https://api.tevo/x?token=SECRET")
+    monkeypatch.setattr(app_module, "client", _BoomFake())
+    r = client.post("/api/store/reserve", json={
+        "event_id": 3346000, "ticket_group_id": 12345, "quantity": 2,
+    })
+    assert r.status_code == 502, r.text
+    detail = r.json().get("detail", "")
+    assert "TEvo" not in detail
+    assert "SECRET" not in detail
+    assert "token" not in detail.lower()
+    # The same scrub pattern (log {e!r} server-side, return generic public
+    # message) is applied at all 3 storefront TEvo-error sites: this reserve
+    # path (app.py:7345), the cached ticket_groups helper (6812), and
+    # /api/store/events/near (6384). reserve is the representative public
+    # case; the other two are identical scrubs.
