@@ -5701,15 +5701,23 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     perf_assets = _bulk_performer_assets(db, list(perf_ids_set)) if perf_ids_set else {}
 
     # Freshness gate for velocity signals. v_event_velocity_windows computes
-    # d1h/d24h via subqueries that fall back to the most recent sample <= now-Xh,
-    # so when the collector hasn't fired in the relevant window (known gap
-    # for collect-listings-1-7d + 60d+ per PROJECT_BIBLE.md §9) both subqueries
-    # resolve to the SAME ancient row → d1h == d24h, mis-attributing "N sold
-    # today" when reality is "N sold over multiple days". When the latest TEvo
-    # capture is older than this many hours, treat the velocity row as
-    # suspect and don't surface d24h/d1h numbers. premium (price-based) still
-    # works since it doesn't depend on cadence.
-    _VELOCITY_FRESH_MAX_AGE_SEC = 3 * 3600  # 3 hours
+    # the d24h ticket delta from the latest event_metrics sample vs the one
+    # ~24h before it. If the latest sample is itself ancient, that delta is a
+    # stale read, so we bound how old it can be before we stop trusting it for
+    # rail membership (moving_fast / climbing).
+    #
+    # Window sizing (revised 2026-05-25 — was 3h, which silently emptied the
+    # moving_fast/price_drops/climbing rails): the storefront's owned MLB/NBA
+    # events are re-polled on a ~24-48h cadence (the featured playoff events
+    # poll faster, but the long-tail regular-season games — exactly the ones
+    # that trend "moving fast" — refresh daily-ish). A 3h gate excluded EVERY
+    # qualifying event (samples were 21-141h old) so the rails rendered empty.
+    # 48h admits the freshest-available sample for the typical cadence while
+    # still excluding genuinely cold data (e.g. a 6-day-old sample). The d24h
+    # value is NOT displayed on the mover card (which shows only "from $X"),
+    # so a lagged-but-bounded delta is fine here — it only governs which
+    # events qualify as a discovery-rail signal, not a precise live count.
+    _VELOCITY_FRESH_MAX_AGE_SEC = 48 * 3600  # 48 hours — matches collector cadence
 
     def _is_velocity_fresh(v: dict) -> bool:
         ts = v.get("tevo_now_at")
