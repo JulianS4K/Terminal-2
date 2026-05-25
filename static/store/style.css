@@ -207,6 +207,18 @@ a { color: inherit; }
 
 /* ----- Catalog grid ----- */
 .results { margin-top: 8px; }
+/* Section header above the grid — delineates the "All events" / "Search
+   results" grid from the themed NYC rails above it (which each carry their
+   own title). Matches the rails' uppercase-muted treatment for visual
+   rhythm. */
+.grid-heading {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 18px 0 10px;
+}
 .status, .empty {
   padding: 24px;
   text-align: center;

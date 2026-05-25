@@ -351,6 +351,7 @@
     const input = $("#q");
     const status = $("#status");
     const grid = $("#grid");
+    const gridHeading = $("#gridHeading");
     const empty = $("#empty");
     // Suggest dropdown DOM + state — declared early so functions that
     // reference them (hideSuggest/wireSuggestDropdown/scheduleSuggest)
@@ -385,6 +386,7 @@
       status.hidden = true;
       if (!events.length) {
         grid.hidden = true;
+        if (gridHeading) gridHeading.hidden = true;
         empty.hidden = false;
         empty.textContent = mode === "search"
           ? "No events match. Try a broader search, or clear the box to see all."
@@ -393,6 +395,13 @@
       }
       empty.hidden = true;
       grid.hidden = false;
+      // Section header so the grid reads as distinct from the themed NYC
+      // rails above it (which carry their own titles). "Search results"
+      // when the grid is showing a query's matches, "All events" otherwise.
+      if (gridHeading) {
+        gridHeading.textContent = mode === "search" ? "Search results" : "All events";
+        gridHeading.hidden = false;
+      }
 
       for (const ev of events) {
         const a = document.createElement("a");
