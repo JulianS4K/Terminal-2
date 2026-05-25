@@ -481,7 +481,17 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        # Permissions-Policy: deny powerful features by default. The Bridge
+        # surface (/bridge/*) hosts the organizer door scanner, which needs
+        # getUserMedia — without camera=(self) here the browser blocks the
+        # camera and never even prompts for permission. Scope the allowance to
+        # /bridge only; storefront/terminal stay camera=().
+        if request.url.path.startswith("/bridge"):
+            response.headers.setdefault(
+                "Permissions-Policy", "geolocation=(), microphone=(), camera=(self)")
+        else:
+            response.headers.setdefault(
+                "Permissions-Policy", "geolocation=(), microphone=(), camera=()")
         # HSTS: tell browsers to upgrade to HTTPS for this host for 2y +
         # include subdomains. Render terminates TLS at the proxy so the
         # response is always HTTPS-served regardless of how we send it.
