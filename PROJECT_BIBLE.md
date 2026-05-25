@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-23 by A1 (D4 Supabase keys baked in (PR #316) + Bridge as 4th hub surface (PR #318) + Railway primary host for Bridge (PR #319) — §2 state + §9 + §10 updated)
+**Last updated**: 2026-05-25 by A1 (D4 free-first batch applied to prod + exos-mail-drain deployed + static/bridge rebuilt current + branch cleanup — §2 + §4 + §9 + §10 updated)
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -64,11 +64,11 @@ Code-dir ownership (per `LANE_DISCIPLINE.md`):
 - D4 → `d4_bridge/*` (Exos app) + `exos_*` / `bridge_event_xref` migrations (authors; A1 applies)
 - A1 → `supabase/migrations/*`, governance docs, cross-cutting
 
-**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema (Firestore → Supabase migration **complete** 2026-05-23 — Firebase fully removed). Served at `/bridge/` on Railway (same origin as the hub) — same-origin `localStorage` means the hub's Supabase session carries over automatically (no double sign-in). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Build: `npm --prefix d4_bridge run build` then copy `dist/ → static/bridge/`; Supabase keys must be in `d4_bridge/.env.local` (gitignored) at build time. Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
+**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema (Firestore → Supabase migration **complete** 2026-05-23 — Firebase fully removed). Served at `/bridge/` via the unified Render service (`static/bridge/` — last rebuilt **2026-05-25** picking up PRs #336/#338/#339). Railway was the primary host (PR #319) but is now redundant — `static/bridge/` is current and Railway can be decommissioned. Same-origin `localStorage` means the hub's Supabase session carries over automatically (no double sign-in). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Build: `npm --prefix d4_bridge run build` then copy `dist/ → static/bridge/`; Supabase keys must be in `d4_bridge/.env.local` (gitignored) at build time. **Always commit `static/bridge/` after a source change or Render serves the stale bundle.** Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
 
-**D4 migration state (2026-05-23):**
+**D4 migration state (updated 2026-05-25):**
 
-✅ **Schema live — all 5 phases applied to prod.** PR #305 → phase-1 (orgs/events) + phase-2 (tickets/transfers); PR #308 → phase-3 (follows) + phase-4 (storage) + phase-5 (mail). All B1-cleared. 12 `exos_*` tables + `bridge_event_xref` RLS-on; anon-EXECUTE revoked on all write-path RPCs. 0 rows — data cut-over pending.
+✅ **Schema live — all 5 phases + free-first batch applied to prod.** Phase-1/2 (PR #305) + phase-3/4/5 (PR #308) B1-cleared. Free-first batch (migs 20260523130000–20260524160000) applied A1-session 2026-05-25 — adds drainer schema, oversell cap, server HMAC verify, purchase limits, growth RPCs, mail templates, security hardening. 12 `exos_*` tables + `bridge_event_xref` RLS-on; anon-EXECUTE revoked on all write-path RPCs. 0 rows — data populates via normal UI flows.
 
 ✅ **Supabase Auth** — `lib/auth.ts` + `AuthContext.tsx` fully on Supabase Auth. No Firebase Auth anywhere. `AppUser` shape maps from `SupabaseUser`; `isAdminUser()` checks `app_metadata.admin` (server-set, unforgeable).
 
@@ -76,13 +76,13 @@ Code-dir ownership (per `LANE_DISCIPLINE.md`):
 
 ✅ **`lib/storage.ts`** — Supabase Storage replaces Firebase Storage. `exos-media` bucket live (mig 20260520150000), path-scoped RLS (`event-images/{uid}/` + `org-logos/{orgId}/`), 5 MB cap, SVG excluded (hosted XSS risk on public bucket). `lib/orgLogo.ts` migrated.
 
-✅ **`lib/mail.ts`** — `queueEmail()` calls `supabase.rpc('exos_queue_mail', { p_template, p_ref_id })`. The SECDEF RPC (mig 20260520160000) server-derives recipient from the related record — no open relay (B1 SEC-HIGH closed bot_chat #438). Mail rows accumulate as `status='pending'`; drainer (edge fn + email provider) TBD.
+✅ **`lib/mail.ts`** — `queueEmail()` calls `supabase.rpc('exos_queue_mail', { p_template, p_ref_id })`. The SECDEF RPC (mig 20260520160000) server-derives recipient from the related record — no open relay (B1 SEC-HIGH closed bot_chat #438). Mail rows accumulate as `status='pending'`; **drainer deployed** (`exos-mail-drain` edge fn, 2026-05-24, cron `exos-mail-drain-2min` `*/2 * * * *` work-check-gated). ⚠️ **`RESEND_API_KEY` + `EXOS_MAIL_FROM` not yet set** — operator must set these Supabase edge-fn secrets in the dashboard before mail actually sends.
 
 ✅ **Data cut-over resolved** — operator confirmed all Firestore data is test-only; no migration needed. `exos_*` tables start fresh at 0 rows and populate via normal UI flows (org create → events → tickets). `scripts/migrate-to-orgs.ts` was a Firestore-internal restructuring pass and is not applicable to the Supabase path. D4-OPS-2 closed 2026-05-23.
 
 ❌ **`src/types.ts` Timestamp shim** — `Timestamp` type from `firebase/firestore` still used for date fields in `Event`/`Ticket`/`Transfer`. After cut-over, replace with `Date | string`; remove `toTs()` helpers.
 
-❌ **SW scope** — `static/bridge/sw.js` built for root scope (`/`), served under `/bridge/`. PWA offline may misbehave. Add `Service-Worker-Allowed: /bridge/` header or rebuild SW with `/bridge/` scope (D4-OPS-1).
+✅ **SW scope** — fixed PR #322 (2026-05-23): `BASE` derived from `self.location.href`; all manifest.json paths prefixed `/bridge/`. D4-OPS-1 closed.
 
 ---
 
@@ -148,7 +148,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `cross_source_venue_resolve(name, city, state)` | text, [text], [text] | Returns `tevo_venue_id` from any-source venue name via 3-tier match (canonical / aliases array / prefix). Driven by `cross_source_venue_map` (391 TEvo rows + 129 SG / 94 TickPick / 85 Vivid aliases as of 2026-05-16). |
 | `refresh_cross_source_venue_map()` | — | Rebuilds `cross_source_venue_map` from events/sg_events_canonical/tickpick_orders.raw/vivid_orders.raw. Idempotent. |
 | `release_health_check()` | — | All-checks rollup |
-| `exos_queue_mail(p_template, p_ref_id)` | text, uuid (default NULL) | **D4 transactional mail** (mig 20260520160000). Server-derives `to_email` + body from the related record — no open relay. Templates: `transfer-initiated` (refId=transfer.id, sender→receiver), `transfer-claimed` (refId=transfer.id, receiver→sender), `org-invite` (refId=invite.token), `event-cancelled`/`event-updated` (refId=ticket.id, org staff only). SECDEF + auth check. Rows land in `exos_mail` as `status='pending'`; drainer TBD. |
+| `exos_queue_mail(p_template, p_ref_id)` | text, uuid (default NULL) | **D4 transactional mail** (mig 20260520160000). Server-derives `to_email` + body from the related record — no open relay. Templates: `transfer-initiated`/`transfer-claimed` (refId=transfer.id), `org-invite` (refId=invite.token), `event-cancelled`/`event-updated` (refId=ticket.id, staff only), `event-announce` (refId=event.id, followers, via `exos_announce_to_followers`), `ticket-issued` (refId=ticket.id, via `exos_queue_ticket_issued`). SECDEF + auth check. Rows land in `exos_mail` as `status='pending'`; drained by `exos-mail-drain` edge fn (deployed 2026-05-24). |
 | `exos_follow_org(p_org_id)` / `exos_unfollow_org(p_org_id)` | uuid | **D4 org follows** (mig 20260520140000). Idempotent (`ON CONFLICT DO NOTHING`); `followers_count` counter updated atomically only on actual insert/delete — cannot drift. SECDEF. |
 | `exos_create_org(p_name, p_slug)` | text, text | **D4 org bootstrap** (mig 20260520120000). Only path to create an org; seeds owner membership. Validates slug uniqueness. SECDEF. |
 
@@ -389,12 +389,18 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 |---|---|
 | `exos_create_org(p_name, p_slug, p_description)` | Bootstrap org + auto-profile + add caller as owner |
 | `exos_claim_invite(p_invite_id uuid)` | Accept an org invite (joins org at invited role) |
-| `exos_mint_tickets(p_tier_id, p_qty, p_buyer_profile_id)` | Staff/admin comp-ticket path |
-| `exos_check_in_ticket(p_ticket_id, p_secret)` | Scan-in (atomic double-scan guard → `exos_scan_rejects`) |
+| `exos_mint_tickets(p_tier_id, p_qty, p_buyer_profile_id)` | Staff/admin comp-ticket path — enforces tier cap + event cap + purchase limit (mig 20260523180000); admin bypasses all |
+| `exos_check_in_ticket(p_ticket_id, p_event_id, p_barcode_payload, p_secret)` | Scan-in — 4-arg (mig 20260523160000): server HMAC verify + ±2-bucket tolerance via `extensions.hmac()`. Atomic double-scan guard → `exos_scan_rejects` |
 | `exos_create_transfer(p_ticket_id, p_recipient_email)` | Initiate ticket transfer |
 | `exos_cancel_transfer(p_transfer_id uuid)` | Cancel pending transfer |
 | `exos_claim_transfer(p_transfer_id uuid)` | Recipient accepts transfer |
 | `exos_void_ticket(p_ticket_id uuid, p_reason text)` | Void ticket (admin/staff) |
+| `exos_assert_purchase_limit(p_event_id, p_buyer, p_qty)` | Pre-check purchase limit (raises on breach) — call before mint in paid path |
+| `exos_queue_ticket_issued(p_ticket_id uuid)` | Queue `ticket-issued` confirmation mail to ticket owner (mig 20260523210000) |
+| `exos_notify_event_holders(p_event_id uuid, p_template text)` | Bulk-queue `event-cancelled`/`event-updated` to all non-voided holders (staff/admin) |
+| `exos_issue_ticket_to_email(p_event_id, p_tier_id, p_recipient_email, p_qty, p_order_ref)` | Look up/create user by email → mint tickets → queue confirmation. Idempotent on `order_ref` |
+| `exos_redeem_discount_code(p_event_id uuid, p_code text)` | Validate promo/access code → `{valid, type, value, unlocks_tier_ids, remaining}` (read-only; consumption at mint) |
+| `exos_announce_to_followers(p_event_id uuid)` | Bulk-queue `event-announce` to all org followers (staff/admin, published events only) |
 
 **Read access**: `lib/events.ts`, `lib/orgs.ts`, `lib/tickets.ts` read the base tables directly (RLS enforces own-org scoping). Public/cross-org reads go through `exos_public_*` VIEWs (anon + authenticated).
 
@@ -454,6 +460,19 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 | 2026-05-23 | _(app code, no migration)_ | **Bridge as 4th hub surface (PR #318)**: `static/home/index.html` gets a Bridge card (violet `#c084fc`, always unlocked — Bridge handles own auth). Grid updated 3-col → 2×2. `static/home/home.js` shows a soft note when signed out; hides it when any session exists. |
 | 2026-05-23 | _(app code, no migration)_ | **Railway as Bridge primary host (PR #319)**: Bridge card now links to `/bridge/` (same Railway origin) instead of the external Render URL. Same-origin `localStorage` means the hub's Supabase session auto-carries-over to Bridge — one sign-in for all four surfaces. `app.py` route comment updated. |
 | 2026-05-23 | 20260523120000 | **D4/Bridge Realtime multi-lane check-in + SW scope fix (PR #322)**: `exos_event_checkins` added to `supabase_realtime` publication (idempotent). `OrganizerCheckIn` subscribes to `postgres_changes` INSERT — remote check-ins propagate to all door lanes in ~1s (RLS-gated to org staff, closes double-admit race D4-OPS-10). Reconnect re-pull (offline→online) closes offline gap. SW `BASE` now derived from `self.location.href` — `/bridge/` prefix handled correctly. manifest.json paths all prefixed. CSV voided label fixed. Load harness validated: 6-lane stampede on 50 tickets → 0 double-admits. |
+| **2026-05-24/25** | 20260523130000–20260524160000 | **D4 free-first batch — APPLIED to prod (A1 session 2026-05-25).** 10 migrations in dependency order: |
+| | 20260523130000 | **Mail drainer schema**: `exos_mail` adds `sending` status + `attempts`/`claimed_at`/`last_attempt_at` cols + `exos_mail_claimable_idx`. `exos_mail_claim_batch(p_limit, p_max_attempts)` + `exos_mail_mark(p_id, p_ok, p_error, p_max_attempts)` — service_role-only, FOR UPDATE SKIP LOCKED for concurrent-safe drain. |
+| | 20260523150000 | **Event-level oversell cap**: `exos_events.total_tickets` int (0 = uncapped). `exos_mint_tickets` enforces cap before minting. |
+| | 20260523160000 | **Server HMAC barcode verify**: `exos_check_in_ticket` upgraded to 4 args (adds `p_event_id uuid`, `p_barcode_payload text DEFAULT NULL`). When payload present, verifies rotating-QR HMAC server-side via `extensions.hmac()` with ±2-bucket tolerance — rejects forged/expired QRs before the DB write. |
+| | 20260523180000 | **Per-person purchase limits**: `exos_assert_purchase_limit(p_event_id, p_buyer, p_qty)` pre-check (raises on breach). `exos_mint_tickets` superset: enforces tier cap + event cap + purchase limit atomically; admin/service-role bypasses all caps. |
+| | 20260523200000 | **Growth primitives** (applied modified — `exos_distribution_listings` ALTER skipped, dormant table): `exos_orgs.marketing jsonb` (social handles, pixels, shareImageUrl); `exos_redeem_discount_code(p_event_id, p_code)` → validity + type + unlock tier IDs; `exos_announce_to_followers(p_event_id)` → bulk-queues `event-announce` mail to all org followers (staff-gated, published events only). |
+| | 20260523210000 | **Ticket-issued mail**: `exos_queue_ticket_issued(p_ticket_id uuid)` → queues purchase-confirmation `ticket-issued` mail to owner. Extends `exos_mail_template_check` with `ticket-issued`. Caller must be owner OR org staff. |
+| | 20260523220000 | **Notify holders**: `exos_notify_event_holders(p_event_id, p_template)` → bulk-queues `event-cancelled` or `event-updated` to all non-voided ticket holders (org staff / admin only). |
+| | 20260523230000 | **Issue to email**: `exos_issue_ticket_to_email(p_event_id, p_tier_id, p_recipient_email, p_qty, p_order_ref)` → looks up or creates Supabase user by email, mints `p_qty` tickets, queues confirmation. Idempotent on `order_ref`. Admin / org staff only. |
+| | 20260524150000 | **Public marketing view**: `exos_public_orgs` refreshed to expose `marketing` jsonb (social handles + pixel IDs + shareImageUrl). Anon-readable. |
+| | 20260524160000 | **Security hardening**: `exos_touch_updated_at()` trigger fn pinned `search_path = public, pg_temp` (Supabase advisor: `function_search_path_mutable`). `exos_has_org_role` anon-EXECUTE revoked via `REVOKE FROM anon, PUBLIC` (Supabase advisor: `anon_security_definer_function_executable`). Internal RLS/SECDEF callers unaffected. |
+| 2026-05-24/25 | _(edge fn)_ | **`exos-mail-drain` deployed** (v1, ACTIVE, `verify_jwt=false`): reads `exos_mail` claim batch → Resend API → `exos_mail_mark`. Cron `exos-mail-drain-2min` (`*/2 * * * *`) work-check-gated via `cron_policy.work_check_sql`. ⚠️ Awaiting operator: `RESEND_API_KEY` + `EXOS_MAIL_FROM` secrets in Supabase edge-fn dashboard. |
+| 2026-05-25 | _(app code, no migration)_ | **static/bridge rebuild**: `d4_bridge/` rebuilt locally and synced to `static/bridge/` — captures PRs #336 (consent banner basename + spinner), #338 (CreateEvent doors→show/end auto-fill), #339 (back-camera scanner + wallet QR timer). Render now serves current bundle; Railway redundant. |
 
 ---
 
@@ -469,7 +488,10 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 | SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
 | `aq_short_event_id` 0% on `listings_snapshots` | Cron resumed 2026-05-16; firing 04:02 UTC | Use `event_id` for TEvo reads |
 | `compute_event_zone/section_metrics` too slow for heavy events | Open (tracked task) | Per-row `match_performer_zone()` LATERAL exceeds even 90s for 1300+ listing events (Yankees). Their zone/section breakdowns stay stale; non-fatal RPC (mig 410000) just soft-fails them. Fix = dedup zone match (compute once per distinct section/row). 54.7% of DB time per 2026-05-14 audit. |
-| D4 Firestore → Supabase cut-over | **CLOSED 2026-05-23** — no migration needed | Operator confirmed all Firestore data was test-only. `exos_*` tables start at 0 rows and populate via normal UI flows. Remaining open items: `src/types.ts` Timestamp shim + SW scope mismatch (D4-OPS-1). |
+| D4 Firestore → Supabase cut-over | **CLOSED 2026-05-23** — no migration needed | Operator confirmed all Firestore data was test-only. `exos_*` tables start at 0 rows. Remaining: `src/types.ts` Timestamp shim. |
+| D4 SW scope mismatch (D4-OPS-1) | **CLOSED 2026-05-23** — PR #322 | SW `BASE` derived from `self.location.href`; all manifest.json paths `/bridge/`-prefixed. |
+| D4 `exos-mail-drain` — RESEND creds unset | **Open — awaiting operator** | `RESEND_API_KEY` + `EXOS_MAIL_FROM` must be set in Supabase edge-fn secrets dashboard. Cron work-check-gated (silent until pending rows exist). |
+| D4 Railway decommission | **Open** | `static/bridge/` current as of 2026-05-25 rebuild. Railway service can be deleted once confirmed healthy on Render. |
 
 ---
 
