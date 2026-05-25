@@ -306,6 +306,34 @@ export async function cancelEvent(eventId: string, reason?: string): Promise<voi
     .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancel_reason: reason ?? null })
     .eq('id', eventId);
   if (error) throw error;
+  // Notify ticket-holders (best-effort; recipients server-derived by the RPC).
+  // Cancellation already succeeded — a mail-queue hiccup must not undo it.
+  await notifyEventHolders(eventId, 'event-cancelled');
+}
+
+/**
+ * Queue a cancel/update notification to every (non-voided) ticket-holder of an
+ * event via exos_notify_event_holders (mig 20260523220000). Recipients + body
+ * are server-derived (no open relay). Best-effort — never throws.
+ */
+export async function notifyEventHolders(
+  eventId: string,
+  template: 'event-cancelled' | 'event-updated',
+): Promise<number | null> {
+  try {
+    const { data, error } = await supabase.rpc('exos_notify_event_holders', {
+      p_event_id: eventId,
+      p_template: template,
+    });
+    if (error) {
+      console.warn('notifyEventHolders failed (non-fatal):', error.message);
+      return null;
+    }
+    return typeof data === 'number' ? data : null;
+  } catch (err) {
+    console.warn('notifyEventHolders failed (non-fatal):', err);
+    return null;
+  }
 }
 
 // --- Tier CRUD (editor) ----------------------------------------------------

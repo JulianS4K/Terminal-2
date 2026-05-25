@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Event } from '../types';
+import { Event, Organization } from '../types';
 import { getPublicOrg, followOrg, unfollowOrg, isFollowingOrg } from '../lib/orgs';
+import SocialLinks from '../components/SocialLinks';
 import { listPublicEventsForOrg } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'motion/react';
@@ -12,7 +13,8 @@ import { formatInTz } from '../lib/datetime';
 export default function OrganizerProfile() {
   const { id } = useParams();
   const { user } = useAuth();
-  const [organizer, setOrganizer] = useState<{ displayName: string; photoURL?: string; description?: string } | null>(null);
+  type Socials = NonNullable<Organization['marketing']>['socials'];
+  const [organizer, setOrganizer] = useState<{ displayName: string; photoURL?: string; description?: string; socials?: Socials } | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFollowing, setIsFollowing] = useState(false);
@@ -36,6 +38,7 @@ export default function OrganizerProfile() {
             displayName: org.name || 'Organizer',
             photoURL: org.theme?.logoUrl,
             description: org.description || 'Creating unforgettable experiences.',
+            socials: org.marketing?.socials,
           });
           setFollowersCount(org.followersCount ?? 0);
         } else {
@@ -114,6 +117,7 @@ export default function OrganizerProfile() {
              <div>
                 <h3 className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-2">About Organizer</h3>
                 <p className="text-sm font-medium italic text-slate-300">{organizer?.description}</p>
+                <SocialLinks socials={organizer?.socials} className="flex items-center gap-4 mt-4" />
              </div>
              <div className="w-full h-px bg-white/10"></div>
              <div>

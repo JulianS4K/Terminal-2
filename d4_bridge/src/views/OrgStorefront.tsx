@@ -19,6 +19,8 @@ import { listPublicEventsForOrg } from '../lib/events';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
 import { formatInTz } from '../lib/datetime';
 import { applyMeta } from '../lib/meta';
+import { initOrgPixels } from '../lib/pixels';
+import SocialLinks from '../components/SocialLinks';
 
 interface ResolvedOrg {
   org: Organization;
@@ -77,6 +79,7 @@ function StorefrontInner({ org }: ResolvedOrg) {
           <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest mt-1">
             /o/{org.slug}
           </p>
+          <SocialLinks socials={org.marketing?.socials} className="flex items-center gap-4 mt-3" />
         </div>
       </div>
 
@@ -139,12 +142,15 @@ export default function OrgStorefront() {
           applyMeta({
             title: org.name,
             description: `Upcoming events from ${org.name}.`,
-            imageUrl: org.theme?.logoUrl,
+            imageUrl: org.marketing?.shareImageUrl || org.theme?.logoUrl,
             canonicalUrl: `${window.location.origin}/o/${org.slug}`,
           });
         } catch {
           /* non-fatal */
         }
+        // Marketing: load the org's pixels (consent-gated). The loaders emit
+        // their own PageView, so we don't fire one here.
+        initOrgPixels(org.marketing?.pixels);
       } catch (err) {
         console.error('Org slug lookup failed:', err);
         if (!cancelled) setState({ status: 'not-found' });

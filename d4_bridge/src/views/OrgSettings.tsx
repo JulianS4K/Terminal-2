@@ -36,6 +36,7 @@ export default function OrgSettings() {
   const [primaryColor, setPrimaryColor] = useState('');
   const [accentColor, setAccentColor] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [marketing, setMarketing] = useState<NonNullable<Organization['marketing']>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -54,6 +55,7 @@ export default function OrgSettings() {
         setPrimaryColor(o?.theme?.primaryColor ?? '');
         setAccentColor(o?.theme?.accentColor ?? '');
         setLogoUrl(o?.theme?.logoUrl ?? null);
+        setMarketing(o?.marketing ?? {});
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -121,6 +123,7 @@ export default function OrgSettings() {
       await updateOrganization(org.id, {
         name: name.trim(),
         theme,
+        marketing,
       });
       toast({ kind: 'success', message: 'Saved.' });
     } catch (err) {
@@ -329,6 +332,47 @@ window.addEventListener('message', function(e) {
             Theme applies on storefront pages (/o/{org.slug}) and event pages
             for events under this org. Platform shell stays neutral.
           </p>
+        </fieldset>
+
+        <fieldset className="border border-white/10 p-5 space-y-3">
+          <legend className="text-[10px] text-white/60 font-black uppercase tracking-widest px-2">
+            Marketing &amp; socials
+          </legend>
+          <p className="text-white/50 text-xs">
+            Social handles + tracking pixel IDs (public IDs only — no secrets).
+            Handles show on your storefront; pixels load on your public pages
+            after a visitor accepts cookies.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {(([['Instagram','instagram'],['Facebook','facebook'],['TikTok','tiktok'],['X','x'],['Website','website']]) as readonly (readonly ['Instagram'|'Facebook'|'TikTok'|'X'|'Website', 'instagram'|'facebook'|'tiktok'|'x'|'website'])[]).map(([label, key]) => (
+              <label key={key} className="block">
+                <span className="text-[10px] text-white/40 uppercase tracking-widest">{label}</span>
+                <input
+                  type="text"
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-white text-sm"
+                  value={marketing.socials?.[key] ?? ''}
+                  onChange={(e) => setMarketing((m) => ({ ...m, socials: { ...m.socials, [key]: e.target.value } }))}
+                  disabled={!canEdit}
+                  placeholder={label}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {(([['Meta Pixel','meta','000000000000000'],['GA4','ga4','G-XXXXXXXXXX'],['TikTok Pixel','tiktok','CXXXXXXXXXXXXXXXXXXX']]) as readonly (readonly [string, 'meta'|'ga4'|'tiktok', string])[]).map(([label, key, hint]) => (
+              <label key={key} className="block">
+                <span className="text-[10px] text-white/40 uppercase tracking-widest">{label}</span>
+                <input
+                  type="text"
+                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-white text-sm"
+                  value={marketing.pixels?.[key] ?? ''}
+                  onChange={(e) => setMarketing((m) => ({ ...m, pixels: { ...m.pixels, [key]: e.target.value } }))}
+                  disabled={!canEdit}
+                  placeholder={hint}
+                />
+              </label>
+            ))}
+          </div>
         </fieldset>
 
         {/*
