@@ -87,6 +87,45 @@ class EvoClient:
         ).digest()
         return base64.b64encode(digest).decode("utf-8")
 
+    # ---------- barcode decryption (read-side; /v9/orders, /v9/listings) ----------
+
+    def decrypt_barcode(self, encrypted_barcode: str) -> str:
+        """Decrypt a TEvo Fernet-encrypted ``encrypted_barcode`` field.
+
+        Per the TEvo docs, the barcode is Fernet-encrypted and the key is the
+        first 32 chars of the API-credential secret, base64url-encoded. This is
+        purely a READ-side decode of data we already fetched — no upstream
+        write — so it's within the read-only-upstream rule.
+
+        ``cryptography`` is imported lazily so this module still loads (and the
+        rest of the read pipeline keeps working) on a host where the optional
+        dependency isn't installed; only calling this method requires it.
+
+        Raises ValueError on a malformed/forged token or a too-short secret,
+        RuntimeError if the dependency is missing.
+        """
+        try:
+            from cryptography.fernet import Fernet, InvalidToken
+        except ImportError as e:  # pragma: no cover - dep-present in deploy
+            raise RuntimeError(
+                "decrypt_barcode requires the 'cryptography' package "
+                "(add it to requirements.txt / the deploy image)"
+            ) from e
+        if len(self._secret) < 32:
+            raise ValueError(
+                "API secret is shorter than 32 bytes — cannot derive the Fernet key"
+            )
+        # Key = base64url(first 32 bytes of the secret). self._secret is the
+        # raw secret bytes (set in __init__).
+        key = base64.urlsafe_b64encode(self._secret[:32])
+        try:
+            token = encrypted_barcode.encode("utf-8") if isinstance(encrypted_barcode, str) else encrypted_barcode
+            # ttl=None: these tokens are issued by TEvo, not us, and don't expire
+            # on a clock we control — verify integrity, not freshness.
+            return Fernet(key).decrypt(token).decode("utf-8")
+        except InvalidToken as e:
+            raise ValueError("invalid or forged encrypted_barcode (Fernet verification failed)") from e
+
     @staticmethod
     def _normalize(params: dict | None) -> dict:
         """Drop None values, stringify bools to TEvo's 'true'/'false'."""
