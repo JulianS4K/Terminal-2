@@ -5,12 +5,15 @@
 **Author:** D4 · **Date:** 2026-05-23.
 **Reviewers:** **C1** (architecture/continuity), **B1** (data-access scoping §3 + payments/distribution surfaces), **D0/A1** (lane re-carve, Render, prod applies), **Operator** (Stripe/Automatiq/SMTP creds + Hard-Rule-2 sign-off).
 **Review log:** B1 — **APPROVED** (planning; no code to gate) with 3 build-time bake-ins (bot_chat #474), incorporated below in A.2, §3, C.1, C.4.
+**Updated:** B1 2026-05-24 — aligned to operator-ratified [`docs/d_tier_goals.md`](d_tier_goals.md): endgame named (§0), all-six-lane trajectories added (§0.6), D2's real role clarified (Phase A), ⚠ D1-sequencing reconcile flagged (§0.5).
 
 ---
 
 ## 0. Goal & guardrails
 
-Build one platform — **consumer (discover→buy→wallet)** + **seller/venue backend (manage→analytics→scan)** — by **composing existing D-tier layers**, not rebuilding. Two non-negotiables:
+**Endgame (operator-ratified — see [`docs/d_tier_goals.md`](d_tier_goals.md)): an open-distribution Ticketmaster.** Own primary ticketing (D4), distribute that inventory openly to every channel instead of walling it in, run a consumer storefront (D1) on top, steer it all with a live market-intelligence brain (D0, fed by D2/D3) — and eventually trade the secondary market (D0) and run a ticket-price betting pool (E1). Sell like Ticketmaster, trade like nobody else, distribute everywhere.
+
+**This plan is the route for the consumer↔seller core** — one platform: **consumer (discover→buy→wallet)** + **seller/venue backend (manage→analytics→scan)** — by **composing existing D-tier layers**, not rebuilding. D0's trading layer and E1's betting pool are later layers on the mature platform (sketched in §0.6); this plan drives M0–M5. Two non-negotiables:
 
 - **G1 — Reuse components, scope the data per audience.** Sellers see only their own org's operational data; **broker market intelligence (ESPN/team "Knicks" stats, SG/TEvo firehose, arbitrage) stays operator-only + email-gated** and is never wired to a seller/consumer surface. Cross-org isolation always. (Matrix: map §4.)
 - **G2 — Respect the hard rules.** Upstream APIs read-only (secondary distribution + Stripe = gated writes needing operator auth); migrations A1-applied; B1 reviews new auth/data surfaces.
@@ -22,6 +25,8 @@ Build one platform — **consumer (discover→buy→wallet)** + **seller/venue b
 Scaled-back first deliverable (operator 2026-05-23): just the minimal consumer↔seller
 loop. **No D0 charts, no D2 order-model unification, no Automatiq distribution, no broker
 data.** The full phased plan (§2+) is the post-v1 target.
+
+> **⚠ RECONCILE (B1 2026-05-24) — D1 sequencing.** The ratified goals ([`d_tier_goals.md`](d_tier_goals.md)) put D1's **next** step as *purely secondary*, with **D1-as-D4-discovery-engine as the *eventual*** goal — i.e. a secondary storefront ships first, primary-discovery later. This §0.5 v1 (2026-05-23) instead **starts** with the D1↔D4 primary-discovery loop. Both came from the operator, a day apart. **Operator to confirm which sequence is current:** (a) the newer goals supersede — build D1 secondary first, defer the D1↔D4 loop; or (b) the v1 loop is a thin end-to-end *proof* that runs alongside D1's secondary core. Until told, the plan keeps the v1 loop as written ("begin here") — it's the smaller, lower-risk slice and doesn't block a later secondary build.
 
 **The loop:**
 1. **D4 (seller)** creates + publishes a primary event — *exists*.
@@ -41,6 +46,23 @@ data.** The full phased plan (§2+) is the post-v1 target.
 **v1 Definition of done:** a fan signs into D1, finds a D4-published event, gets a ticket (free), sees a live rotating QR in their wallet, and the D4 scanner admits it — with per-person limits + caps enforced.
 
 **Open decision (gates v1 build):** wallet/QR front-end — (a) port `signBarcode`+QR into D1's vanilla JS, or (b) reuse D4's React wallet components as the consumer wallet. (Recommend (b) — don't rebuild the security-correct rotating-QR.)
+
+---
+
+## 0.6 Lane trajectories (per [`docs/d_tier_goals.md`](d_tier_goals.md))
+
+This plan's phases (§2) cover the **consumer↔seller core** (D1/D4 + the D2 backend that feeds it). For completeness, here's where every lane sits relative to its ratified north-star, so the plan reflects all six — not just the two it builds:
+
+| Lane | North-star (goals) | This plan covers | Beyond this plan |
+|---|---|---|---|
+| **D0** | broker brain → trading desk | reused widgets feed the seller console (C.2) | **analytics + discovery next, trading after** — D0's own roadmap, not driven here |
+| **D1** | secondary now → D4-discovery eventual | the D4-discovery surface (Phase B / v1) | the secondary storefront itself (D1's bread-and-butter; see §0.5 reconcile) |
+| **D2** | sales-data backend (feeds D0) + sales-API status test + day-day sales + CS logistics | primary orders landing in its model (Phase A) | the status-test view, day-day tracking, CS fulfillment tooling — D2's own backend work |
+| **D3** | a data source feeding D0 | — | broaden scrape → normalize → pipe into D0 (via D2); not in the consumer↔seller spine |
+| **D4** | venue arm + **ticket infra for the storefront** | the whole free→paid ticketing core + powering D1's primary sales | — (this plan is largely D4's) |
+| **E1** | ticket-price betting pool (options on the metrics) | — | long-horizon; rides on the mature D0 metrics brain |
+
+**Takeaway:** the unification plan = D4 core + D1 discovery + D2's primary-order feed. D0-trading, D2's status/CS tooling, D3's data widening, and E1's betting pool are **adjacent roadmaps** that converge on the same endgame but aren't sequenced by M0–M5 below.
 
 ---
 
@@ -78,6 +100,9 @@ Each phase lists work items, owner-lane, dependencies, and acceptance. "DONE" = 
 | 0.4 | Operator: `RESEND_API_KEY`+`EXOS_MAIL_FROM`, Auth SMTP; (Stripe/Automatiq creds when those phases activate) | Operator | mail sends; sign-ins scale |
 
 ### Phase A — Shared order/commerce core (backend, low-risk)
+
+> **D2's role (per [`docs/d_tier_goals.md`](d_tier_goals.md)):** D2 is the **backend sales-data layer** — it feeds D0, is the broker's sales-API up/down status test, tracks day-over-day sales, and is CS's order-fill/logistics tool. It is **not** a customer-facing "order command" product. Phase A simply makes **primary** orders show up in that backend (so day-day sales + reporting include D4); it builds no new order UI. D2's own status-test / CS-tooling work is an adjacent roadmap (§0.6), not gated by these rows.
+
 | # | Work | Lane | Dep | Acceptance |
 |---|---|---|---|---|
 | A.1 | Source-tag the order model: generalize `exos_checkout_sessions` line items with `source ∈ {exos_primary, tevo_secondary,…}` + canonical `aq_short_event_id` | D4 | 0.1 | a checkout records source + canonical key |
