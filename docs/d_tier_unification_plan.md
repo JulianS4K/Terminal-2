@@ -1,6 +1,6 @@
 # D-Tier Unification — Implementation Plan (for review)
 
-**Status:** plan for review (no code shipped by this doc).
+**Status:** B1-reviewed + aligned to operator-ratified D-tier goals (2026-05-25, PR #348). See §0.5 for open D1-sequencing reconcile (secondary-first vs v1 D1↔D4 loop — pending operator confirm). No code shipped by this doc.
 **Companion:** architecture + audience matrix in [`docs/d_tier_unification_map.md`](d_tier_unification_map.md).
 **Author:** D4 · **Date:** 2026-05-23.
 **Reviewers:** **C1** (architecture/continuity), **B1** (data-access scoping §3 + payments/distribution surfaces), **D0/A1** (lane re-carve, Render, prod applies), **Operator** (Stripe/Automatiq/SMTP creds + Hard-Rule-2 sign-off).
