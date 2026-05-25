@@ -71,9 +71,14 @@
     return Array.from(seen.values());
   }
 
-  // Blind spots — calls get_blind_spots_sg_selling RPC (mig 20260520370000).
-  // Same RPC + render shape as home.js. See home.js comment block for design.
-  const BLIND_SPOT_MIN_SCORE = 3;
+  // Blind spots — calls get_blind_spots_sg_selling RPC (mig 20260520370000;
+  // perf-fixed via matview mig 20260524120000). Same RPC + render shape as
+  // home.js. See home.js comment block for design.
+  // selling_score is a 0-4 composite (listings drop + price rise + sales accel
+  // + sales above ask). Default 2 = "two independent signals agree" — a real
+  // blind-spot, not single-signal noise. Lowered from 3 (audit 2026-05-24:
+  // score>=3 essentially never reached given the live signal distribution).
+  const BLIND_SPOT_MIN_SCORE = 2;
   const BLIND_SPOT_MAX_ROWS  = 20;
   // Threshold for the row-level "blindspot" highlight: SG sales activity
   // above this level with zero owned tickets flags the row warn-color.

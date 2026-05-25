@@ -202,8 +202,17 @@
       // X-axis afterward; no v3 re-fetch on window flips.
       let res = await Auth.client
         .rpc('get_broker_event_page_v3', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
-      if (res.error && (res.error.code === '42883' || /does not exist/i.test(res.error.message || ''))) {
-        // v3 not applied yet — fall back to v2
+      // Fall back to the lighter/faster v2 when v3 is either (a) not applied on
+      // this project (42883 / "does not exist") OR (b) times out (57014 /
+      // "statement timeout"/"canceling statement"). v3 (~5.8s on heavy events
+      // like Yankees) can exceed PostgREST's 8s cap under concurrent load and
+      // blank the whole header; v2 (~185ms) still fills the core page and the
+      // 9 v3-only enrichment panels just render their empty states. (QA 2026-05-24.)
+      if (res.error && (
+            res.error.code === '42883' ||
+            res.error.code === '57014' ||
+            /does not exist|statement timeout|canceling statement/i.test(res.error.message || '')
+          )) {
         res = await Auth.client
           .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
       }
@@ -586,7 +595,7 @@
       cursor: { drag: { x: true, y: false } },
       scales: {
         x: { time: true, range: xRange ? (() => xRange) : undefined },
-        y: {},
+        y: { range: robustYRange },
       },
       axes: [
         X_AXIS,
@@ -629,6 +638,30 @@
     }
   }
 
+  // Robust Y-axis range. uPlot's default auto-scale spans data min→max, so a
+  // single outlier (e.g. a $500+ suite sale spiking a median bucket) blows the
+  // axis out and compresses the $4-60 trading band into an unreadable sliver.
+  // This clips the top to ~p95 ONLY when a real outlier exists (real max > 1.5×
+  // p95); otherwise it shows the full range. Lines above the cap clip off-top.
+  function robustYRange(u, initMin, initMax) {
+    var fallback = [0, (initMax == null || !isFinite(initMax)) ? 1 : initMax];
+    if (!u || !u.series || !u.data) return fallback;
+    var vals = [];
+    for (var i = 1; i < u.series.length; i++) {
+      if (u.series[i] && u.series[i].show === false) continue;
+      var d = u.data[i]; if (!d) continue;
+      for (var j = 0; j < d.length; j++) {
+        var v = d[j]; if (v != null && isFinite(v)) vals.push(v);
+      }
+    }
+    if (!vals.length) return fallback;
+    vals.sort(function (a, b) { return a - b; });
+    var p95 = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))];
+    var realMax = vals[vals.length - 1];
+    var top = (realMax <= p95 * 1.5) ? realMax * 1.08 : Math.max(p95 * 1.1, 1);
+    return [0, top > 0 ? top : 1];
+  }
+
   // ---------- INVENTORY CHART ----------
   // 3 line series on left Y-axis (integer ticket counts) + 1 bar series on
   // right Y-axis (SG sale count). uPlot supports per-series scales natively;
@@ -663,7 +696,7 @@
       cursor: { drag: { x: true, y: false } },
       scales: {
         x:  { time: true, range: xRange ? (() => xRange) : undefined },
-        y:  {},
+        y:  { range: robustYRange },
         yr: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] },
       },
       axes: [
