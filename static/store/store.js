@@ -1172,6 +1172,32 @@
       }
     }
 
+    // TEvo Hosted Checkout config — DORMANT unless the server has
+    // STOREFRONT_CHECKOUT_DOMAIN set. When checkout_domain is present the
+    // Reserve button redirects the buyer to TEvo's hosted checkout (TEvo =
+    // merchant-of-record) instead of the MVP mock. Fetched once here;
+    // openModal (a user click) always runs well after this resolves, and
+    // if it somehow hasn't, the default below keeps the safe mock path.
+    let purchaseConfig = { checkout_domain: null, purchase_enabled: false };
+    api("/api/public/config")
+      .then((cfg) => {
+        if (cfg && cfg.checkout_domain) {
+          purchaseConfig = {
+            checkout_domain: String(cfg.checkout_domain),
+            purchase_enabled: !!cfg.purchase_enabled,
+          };
+        }
+      })
+      .catch(() => { /* dormant default stays → mock reserve */ });
+
+    // Build TEvo's hosted-checkout URL per their spec:
+    //   https://<domain>/checkout/payment/<event_id>/<ticket_group_id>?quantity=N
+    function hostedCheckoutUrl(domain, evId, tgId, qty) {
+      const d = String(domain).replace(/^https?:\/\//, "").replace(/\/+$/, "");
+      const q = Math.max(1, Number(qty) || 1);
+      return `https://${d}/checkout/payment/${Number(evId)}/${Number(tgId)}?quantity=${q}`;
+    }
+
     // DOM refs (ALL pulled here so the helpers below don't re-query).
     const status = $("#status");
     const head = $("#header");
@@ -1658,15 +1684,19 @@
       const totV = document.createElement("span"); totV.className = "v total"; totV.id = "rcTotal"; totV.textContent = fmtMoney(Number(listing.retail_price) * defaultQ);
       receipt.append(totK, totV);
 
+      const checkoutLive = !!purchaseConfig.purchase_enabled && !!purchaseConfig.checkout_domain;
+
       const confirm = document.createElement("button");
       confirm.className = "btn";
       confirm.id = "confirmReserve";
       confirm.style.width = "100%";
-      confirm.textContent = "Reserve (mock)";
+      confirm.textContent = checkoutLive ? "Continue to checkout" : "Reserve (mock)";
 
       const disc = document.createElement("p");
       disc.className = "disclaimer";
-      disc.textContent = "MVP demo only — no payment will be processed and no order will be sent to Ticket Evolution. This shows what the confirmation flow would look like once checkout is wired up.";
+      disc.textContent = checkoutLive
+        ? "You'll complete payment securely on Ticket Evolution, our ticketing partner. Apple Pay and Google Pay supported."
+        : "MVP demo only — no payment will be processed and no order will be sent to Ticket Evolution. This shows what the confirmation flow would look like once checkout is wired up.";
 
       mb.append(h3, sub, label, receipt, confirm, disc);
 
@@ -1679,6 +1709,19 @@
       qSel.addEventListener("change", recompute);
 
       confirm.addEventListener("click", async () => {
+        // Live path: hand off to TEvo's hosted checkout (TEvo = MOR). This
+        // is a top-level navigation to TEvo's domain — no backend write, no
+        // payment handled here. Not blocked by our CSP (form-action only
+        // gates form POSTs, not JS navigations).
+        if (checkoutLive) {
+          confirm.disabled = true;
+          confirm.textContent = "Redirecting to checkout…";
+          window.location.assign(
+            hostedCheckoutUrl(purchaseConfig.checkout_domain, eventId, listing.id, qSel.value),
+          );
+          return;
+        }
+        // Dormant path (default): MVP mock — validate availability only.
         confirm.disabled = true;
         confirm.textContent = "Validating with TEvo…";
         try {

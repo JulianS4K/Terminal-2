@@ -306,3 +306,29 @@ def test_clean_opt_url_coerces_null_sentinels():
     assert f("https://s3.amazonaws.com/chart/medium.jpg") == "https://s3.amazonaws.com/chart/medium.jpg"
     # a string that merely contains "null" is NOT a sentinel
     assert f("https://x/nullsville.jpg") == "https://x/nullsville.jpg"
+
+
+# ---------- TEvo Hosted Checkout config flag (dormant by default) ----------
+
+def test_public_config_checkout_dormant_by_default(client):
+    """Hosted checkout is OFF unless STOREFRONT_CHECKOUT_DOMAIN is set.
+    /api/public/config must report checkout_domain=null + purchase_enabled
+    =false so store.js keeps the MVP mock reserve (no real purchases)."""
+    r = client.get("/api/public/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["checkout_domain"] is None
+    assert body["purchase_enabled"] is False
+
+
+def test_public_config_checkout_enabled_when_domain_set(client, monkeypatch):
+    """When the operator sets STOREFRONT_CHECKOUT_DOMAIN the config flips to
+    purchase_enabled=true and surfaces the domain so store.js redirects
+    Reserve to TEvo's hosted checkout. (This is the ENABLE switch — left
+    unset in prod until provisioning + legal land.)"""
+    monkeypatch.setattr(app_module, "STOREFRONT_CHECKOUT_DOMAIN", "checkout.example.com")
+    r = client.get("/api/public/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["checkout_domain"] == "checkout.example.com"
+    assert body["purchase_enabled"] is True
