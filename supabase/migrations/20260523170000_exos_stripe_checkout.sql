@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS public.exos_checkout_sessions (
   amount_cents  int  NOT NULL CHECK (amount_cents >= 0),
   currency      text NOT NULL DEFAULT 'usd',
   status        text NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending','fulfilled','failed','expired')),
+                  CHECK (status IN ('pending','fulfilled','failed','expired','refunded')),
   ticket_ids    uuid[],
   payment_intent text,
   failure_reason text,
@@ -76,6 +76,8 @@ DECLARE
   v_updated  int;
   v_ids      uuid[] := '{}';
   v_id       uuid;
+  v_evname   text;
+  v_safe     text;
   i          int;
 BEGIN
   -- Lock the session row so concurrent webhook retries serialize.
@@ -140,6 +142,33 @@ BEGIN
      SET status='fulfilled', ticket_ids=v_ids, fulfilled_at=now()
    WHERE session_id = p_session_id;
 
+  -- Notify the buyer their paid tickets are ready. Recipient is server-derived
+  -- from the session (no client-supplied address); body is tag-escaped. Uses
+  -- the same 'ticket-issued' template the comp/issue path queues. Best-effort —
+  -- the drainer sends it; a mail hiccup must not unwind a paid fulfillment.
+  IF coalesce(s.buyer_email, '') <> '' THEN
+    SELECT name INTO v_evname FROM public.exos_events WHERE id = s.event_id;
+    v_safe := replace(replace(coalesce(v_evname, 'your event'), '<', '&lt;'), '>', '&gt;');
+    BEGIN
+      INSERT INTO public.exos_mail (template, to_email, subject, html, created_by, status)
+      VALUES (
+        'ticket-issued', lower(s.buyer_email),
+        left('Your ticket' || CASE WHEN s.quantity > 1 THEN 's' ELSE '' END ||
+             ' for ' || v_safe || ' ' || CASE WHEN s.quantity > 1 THEN 'are' ELSE 'is' END || ' ready', 200),
+        '<p>Payment received — your ' || s.quantity::text || ' ticket' ||
+          CASE WHEN s.quantity > 1 THEN 's' ELSE '' END ||
+          ' for <strong>' || v_safe ||
+          '</strong> ' || CASE WHEN s.quantity > 1 THEN 'are' ELSE 'is' END ||
+          ' in your wallet. Open the app to show your QR at the door.</p>',
+        s.buyer_uid, 'pending'
+      );
+    EXCEPTION WHEN others THEN
+      -- e.g. the 'ticket-issued' template predates this on a partial schema;
+      -- never fail a paid mint over a confirmation email.
+      NULL;
+    END;
+  END IF;
+
   RETURN v_ids;
 END $$;
 REVOKE ALL ON FUNCTION public.exos_fulfill_checkout(text) FROM PUBLIC, anon, authenticated;
@@ -175,3 +204,60 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.exos_record_org_stripe(uuid, text, boolean, boolean) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.exos_record_org_stripe(uuid, text, boolean, boolean) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- 4. Refund a fulfilled checkout. Called by the webhook (service_role) on
+--    charge.refunded. Voids the session's still-ACTIVE tickets and frees their
+--    inventory back (decrements tier.sold + event.tickets_sold by the number
+--    actually voided). Idempotent: a second call after the session is already
+--    'refunded' is a no-op. Already-USED (scanned-in) tickets are left as-is —
+--    a holder who entered isn't auto-voided by a refund event; that's a manual
+--    decision. Partial refunds (a subset of a multi-ticket order) are out of
+--    scope for v1 — a full charge refund voids the whole order.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.exos_refund_checkout(
+  p_session_id text,
+  p_reason     text DEFAULT 'refunded'
+) RETURNS int
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  s     public.exos_checkout_sessions%ROWTYPE;
+  v_n   int := 0;
+  r     record;
+BEGIN
+  SELECT * INTO s FROM public.exos_checkout_sessions WHERE session_id = p_session_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'exos_refund_checkout: unknown session %', p_session_id;
+  END IF;
+  IF s.status = 'refunded' THEN
+    RETURN 0;  -- already refunded (webhook retry / double event)
+  END IF;
+
+  -- Void the session's active tickets; free inventory per voided ticket.
+  FOR r IN
+    UPDATE public.exos_tickets
+       SET status = 'voided', voided_at = now(),
+           voided_reason = left(coalesce(p_reason, 'refunded'), 500)
+     WHERE order_ref = p_session_id AND status = 'active'
+    RETURNING tier_id
+  LOOP
+    v_n := v_n + 1;
+    IF r.tier_id IS NOT NULL THEN
+      UPDATE public.exos_ticket_tiers SET sold = greatest(0, sold - 1) WHERE id = r.tier_id;
+    END IF;
+  END LOOP;
+
+  IF v_n > 0 THEN
+    UPDATE public.exos_events SET tickets_sold = greatest(0, tickets_sold - v_n) WHERE id = s.event_id;
+  END IF;
+
+  UPDATE public.exos_checkout_sessions
+     SET status = 'refunded', failure_reason = left(coalesce(p_reason, 'refunded'), 500)
+   WHERE session_id = p_session_id;
+
+  RETURN v_n;
+END $$;
+REVOKE ALL ON FUNCTION public.exos_refund_checkout(text, text) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.exos_refund_checkout(text, text) TO service_role;

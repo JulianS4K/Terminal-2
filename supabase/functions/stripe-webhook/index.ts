@@ -84,6 +84,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
         }
         break;
       }
+      case "charge.refunded": {
+        // Full refund of a paid order -> void its tickets + free inventory.
+        // Map the charge back to our session via the stored payment_intent.
+        const charge = event.data.object as Stripe.Charge;
+        const pi = typeof charge.payment_intent === "string"
+          ? charge.payment_intent
+          : charge.payment_intent?.id;
+        if (pi) {
+          const { data: sess } = await sb.from("exos_checkout_sessions")
+            .select("session_id").eq("payment_intent", pi).maybeSingle();
+          if (sess?.session_id) {
+            const { error } = await sb.rpc("exos_refund_checkout", {
+              p_session_id: sess.session_id,
+              p_reason: "stripe refund",
+            });
+            if (error) {
+              // 500 -> Stripe retries; exos_refund_checkout is idempotent.
+              console.error(`stripe-webhook: refund handling failed for ${sess.session_id}`, error);
+              return new Response("refund handling error", { status: 500 });
+            }
+          }
+        }
+        break;
+      }
       default:
         break; // ignore unhandled event types
     }
