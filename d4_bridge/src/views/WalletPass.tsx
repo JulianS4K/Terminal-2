@@ -12,7 +12,7 @@
 //
 // Status semantics — the QR is muted and the page shows a clear stamp
 // when the ticket is:
-//   * status === 'used'      → REDEEMED (already scanned)
+//   * status === 'used'      → ENTERED (scanned in at the door)
 //   * status === 'voided'    → REFUNDED (organizer revoked / refunded)
 //   * pendingTransferId set  → IN TRANSFER (mid-flight to a recipient)
 // The same checks happen server-side at the door scanner — this UI
@@ -190,16 +190,16 @@ export default function WalletPass() {
       }
     : isUsed
     ? {
-        text: 'REDEEMED',
+        text: 'ENTERED',
         sub:
           ticket.checkInDate && event
-            ? formatInTz(ticket.checkInDate.toDate(), event.timezone, {
+            ? `Scanned ${formatInTz(ticket.checkInDate.toDate(), event.timezone, {
                 hour: '2-digit',
                 minute: '2-digit',
                 month: 'short',
                 day: 'numeric',
-              })
-            : 'SCAN VERIFIED',
+              })}`
+            : 'SCANNED',
         cls: 'bg-red-600',
       }
     : isInTransfer
