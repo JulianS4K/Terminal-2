@@ -358,13 +358,37 @@ export default function TicketDetail() {
                         <Share2 className="w-4 h-4 text-brand-primary" />
                         <span>SHARE</span>
                       </button>
-                      <Link
-                        to={`/transfer/${currentTicket.id}`}
-                        className="bg-white/5 border border-white/10 text-white/50 py-5 font-black uppercase tracking-tighter italic text-xs flex items-center justify-center space-x-3 hover:border-white hover:text-white transition-all"
-                      >
-                        <Send className="w-4 h-4 text-brand-primary" />
-                        <span>TRANSFER</span>
-                      </Link>
+                      {currentTicket.status === 'active' && !(currentTicket as any).pendingTransferId ? (
+                        <Link
+                          to={`/transfer/${currentTicket.id}`}
+                          className="bg-white/5 border border-white/10 text-white/50 py-5 font-black uppercase tracking-tighter italic text-xs flex items-center justify-center space-x-3 hover:border-white hover:text-white transition-all"
+                        >
+                          <Send className="w-4 h-4 text-brand-primary" />
+                          <span>TRANSFER</span>
+                        </Link>
+                      ) : (
+                        // Only an unused, unlocked ticket can be transferred —
+                        // a scanned-in (used), refunded (voided), or already-
+                        // pending ticket shows TRANSFER disabled with the reason.
+                        // The server enforces the same (exos_create_transfer
+                        // requires status='active'); this is the UX mirror.
+                        <button
+                          type="button"
+                          disabled
+                          aria-disabled="true"
+                          title={
+                            currentTicket.status === 'used'
+                              ? "Already scanned in — used tickets can't be transferred"
+                              : currentTicket.status === 'voided'
+                              ? "Refunded tickets can't be transferred"
+                              : 'A transfer is already pending for this ticket'
+                          }
+                          className="bg-white/[0.02] border border-white/5 text-white/20 py-5 font-black uppercase tracking-tighter italic text-xs flex items-center justify-center space-x-3 cursor-not-allowed"
+                        >
+                          <Send className="w-4 h-4 text-white/20" />
+                          <span>TRANSFER</span>
+                        </button>
+                      )}
                     </div>
                  </div>
               </div>

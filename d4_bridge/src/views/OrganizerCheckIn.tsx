@@ -6,6 +6,7 @@ import {
   listEventTicketsForRegistry,
   checkInTicket,
   recordScanReject,
+  countEventCheckins,
   type ScanTicket,
 } from '../lib/tickets';
 import { Ticket, Event } from '../types';
@@ -100,6 +101,10 @@ export default function OrganizerCheckIn() {
   const [syncing, setSyncing] = useState(false);
   const [pendingUpdates, setPendingUpdates] = useState<string[]>([]);
   const [recentScans, setRecentScans] = useState<{ id: string, name: string, time: Date, status: string }[]>([]);
+  // "Inside venue" = tickets actually scanned in (exos_event_checkins count),
+  // NOT tickets sold. Seeded on mount; refreshed by the realtime channel below
+  // as scans land (this lane + others).
+  const [insideVenue, setInsideVenue] = useState(0);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const wasOfflineRef = useRef(isOffline);
 
@@ -381,8 +386,20 @@ export default function OrganizerCheckIn() {
         saveRegistry(eventId, next);
         return next;
       });
+      // A check-in landed (this lane or another) — refresh the attendance count.
+      countEventCheckins(eventId).then(setInsideVenue).catch(() => {});
     });
     return () => ch.leave();
+  }, [eventId]);
+
+  // Seed "inside venue" on mount (the realtime channel keeps it live after).
+  useEffect(() => {
+    if (!eventId) return;
+    let cancelled = false;
+    countEventCheckins(eventId)
+      .then((n) => { if (!cancelled) setInsideVenue(n); })
+      .catch(() => {/* non-fatal */});
+    return () => { cancelled = true; };
   }, [eventId]);
 
   // On reconnect, re-pull the registry: Realtime doesn't replay check-ins other
@@ -1022,7 +1039,7 @@ export default function OrganizerCheckIn() {
       <div className="grid grid-cols-2 gap-4 mb-12">
          <div className="bg-slate-900 p-6 rounded-3xl text-center">
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Inside Venue</p>
-            <p className="text-2xl font-bold text-white">{event.ticketsSold}</p>
+            <p className="text-2xl font-bold text-white">{insideVenue}</p>
          </div>
          <div className="bg-slate-50 p-6 rounded-3xl text-center border border-slate-100">
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Total Authorized</p>
