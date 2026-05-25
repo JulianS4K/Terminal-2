@@ -4976,6 +4976,23 @@ def _is_tbd(name: str | None) -> bool:
     )
 
 
+def _clean_opt_url(v) -> str | None:
+    """Coerce sentinel non-URLs to real None.
+
+    `v_event_seating_chart` (and occasionally TEvo's inline config) carry the
+    literal string "null" / "None" / "" for an absent seat-map URL. Passed
+    through verbatim, the frontend treats the truthy string "null" as a URL
+    and renders a broken <img> whose src resolves to /store/event/null. Coerce
+    those sentinels to None so the no-chart placeholder path is taken.
+    """
+    if v is None:
+        return None
+    s = str(v).strip()
+    if s.lower() in ("null", "none", ""):
+        return None
+    return v
+
+
 def _search_cache_get(key: str) -> dict | None:
     hit = _search_cache.get(key)
     if not hit:
@@ -7096,11 +7113,15 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
                 # /v9/events/:id response.
                 "id": asset_bundle.get("configuration_id") or config.get("id"),
                 "name": asset_bundle.get("configuration_name") or config.get("name"),
+                # _clean_opt_url BEFORE the `or` so a sentinel "null" in
+                # asset_bundle doesn't shadow a real URL from the live config.
                 "seating_chart_medium": (
-                    asset_bundle.get("seating_chart_medium") or seating.get("medium")
+                    _clean_opt_url(asset_bundle.get("seating_chart_medium"))
+                    or _clean_opt_url(seating.get("medium"))
                 ),
                 "seating_chart_large": (
-                    asset_bundle.get("seating_chart_large") or seating.get("large")
+                    _clean_opt_url(asset_bundle.get("seating_chart_large"))
+                    or _clean_opt_url(seating.get("large"))
                 ),
                 # fanvenues_key — opaque ID for TEvo's seatmaps-client.js
                 # interactive seat picker. Surfaced so a future enhancement
