@@ -388,7 +388,7 @@
         empty.hidden = false;
         empty.textContent = mode === "search"
           ? "No events match. Try a broader search, or clear the box to see all."
-          : "No events with available inventory right now. Check back after the next collector run.";
+          : "No events available right now. Check back soon — we add inventory daily.";
         return;
       }
       empty.hidden = true;
