@@ -1009,6 +1009,10 @@
     setMeta('meta[property="og:url"]', location.href);
     setMeta('meta[name="twitter:title"]', titleText);
     setMeta('meta[name="twitter:description"]', descText);
+    // Canonical = filter-less event URL (drop ?zones=&min_price= etc.) so
+    // the filter variants don't fragment into duplicate-content pages.
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical) canonical.setAttribute("href", location.origin + location.pathname);
   }
 
   function mountEvent() {

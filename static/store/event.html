@@ -26,6 +26,10 @@
   <meta name="twitter:title" content="VibePass — event tickets" />
   <meta name="twitter:description" content="Direct-inventory tickets for this event." />
 
+  <!-- Canonical points at the filter-less event URL so the ?zones=&min_price=
+       filter variants don't fragment into duplicate-content pages. store.js
+       rewrites href to location.origin + location.pathname once it mounts. -->
+  <link rel="canonical" href="" />
   <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
