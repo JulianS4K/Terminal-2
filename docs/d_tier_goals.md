@@ -1,90 +1,91 @@
-# D-Tier Goals — the destination per lane (DRAFT for operator/lane ratification)
+# D-Tier Goals — the destination per lane
 
-**Author:** B1 (librarian) · **Date:** 2026-05-24 · **Status:** DRAFT — north-stars need operator sign-off; D3 + E1 flagged for owner input.
+**Author:** B1 (librarian) · **Ratified:** operator 2026-05-24 · **Status:** ratified (lane owners may refine specifics).
 
-`PROJECT_BIBLE.md` tracks the project in its **current** form (what exists, who owns it, the rules). This companion answers the other question: **where is each D-lane going, and how do we know when it's arrived?** Goals here are synthesized from [`docs/d_tier_unification_plan.md`](d_tier_unification_plan.md) (milestones M0–M5), the bible's lane scopes, and this session's exos/storefront work — not invented. Correct anything that doesn't match your vision; this is meant to be edited.
-
----
-
-## The one Jesus moment (what all the lanes converge to)
-
-> **One platform: a fan discovers an event, buys a ticket, and walks through the door with it — while the operator sees the entire market and their position in it, and a venue manages its own event end-to-end — all on the same Supabase core, with each audience seeing only what it should.**
-
-The D-tier isn't six products; it's **layers of one platform**. The unification plan's spine is the path: `land core → shared order model → consumer surface → seller analytics → door → free go-live → paid + distribution`. Each lane below is a layer of that single moment, with its own "you've arrived" test.
-
-The non-negotiable that spans all of them (**G1**): *reuse the components, scope the data per audience.* Brokers see market intelligence; sellers see only their own org; fans see only public + their own wallet. That boundary is what lets one codebase serve all three without leaking across them.
+`PROJECT_BIBLE.md` tracks the project in its **current** form. This companion answers: **where is each D-lane going, and how do we know when it's arrived?** Operator-ratified 2026-05-24.
 
 ---
 
-## D0 — Terminal FE · the broker's command center
+## The endgame: an open-distribution Ticketmaster
+
+> **Combine every lane into one thing: a Ticketmaster you don't have to be locked inside.** We own **primary ticketing** (venue → event → sale → door, via D4), **distribute that inventory openly** to every channel instead of walling it in, run a **consumer storefront** (D1) on top of it, and steer the whole thing with a **live market-intelligence brain** (D0, fed by D2/D3) — eventually even **trading** the secondary market and **running a betting pool on ticket prices** (E1). Sell like Ticketmaster, trade like nobody else, distribute everywhere.
+
+The six lanes are **layers of that one endgame**, not separate products. The near-term spine (per the unification plan) is D2's sales-data backend + D4's free-first launch; D1 consumer and D0 actions ride on top; D3 + E1 extend it. The non-negotiable across all of it (**G1**): reuse the components, **scope the data per audience** — brokers get market intelligence, sellers get only their own org, fans get only public + their own wallet.
+
+---
+
+## D0 — Terminal FE · analytics & discovery now, the trading desk next
 
 | | |
 |---|---|
-| **North star** | The operator opens one screen and sees the **whole secondary market** — every event across SeatGeek / TEvo / TickPick / Vivid with live pricing, demand velocity, weather, ESPN/sports context, arbitrage, and blind spots — plus their own position, with pricing actions one click away. The bridge from "we have data" to "we make the call." |
-| **Today** | Event / performer / venue pages; `get_broker_event_page_v3` (9 enrichment panels); movers, blind-spots, cross-source metrics; SG sales windows. Email-gated `@s4kent.com`. Consolidated frontend lead (hosts D1/D2 surfaces during test). |
-| **Path to there** | Wire pricing **actions** (not just intelligence) → alerting on movers/blind-spots → richer per-event decision surface. (Mostly incremental panel + action work; the data spine exists.) |
-| **You've arrived when** | A broker runs their entire trading day from D0 — discovery → decision → action — without dropping to SQL or another tool. |
+| **North star** | The market-intelligence brain that becomes a **trading desk** — see any event across all sources with live pricing/demand/context, discover what to act on, and **eventually trade the secondary market from the same screen.** |
+| **Today** | Event/performer/venue pages; `get_broker_event_page_v3` (9 panels); movers, blind-spots, cross-source metrics. Email-gated `@s4kent.com`. |
+| **Path to there** | **NEXT = analytics + event discovery** (deepen the intelligence + surface what's worth acting on). **THEN = trading** (pricing actions / execution from D0) — trading comes *after* the analytics+discovery layer is solid. |
+| **You've arrived when** | *(near)* a broker discovers and fully analyzes any event from D0; *(later)* a broker **trades** from it without leaving the screen. |
 
-## D1 — Consumer Retail · the storefront ("DICE-consumer" front door)
-
-| | |
-|---|---|
-| **North star** | A public, SEO-fronted ticket **storefront** where a fan discovers an event — **primary (our own D4 events) and secondary (TEvo/EVO), deduped by canonical key** — buys, and holds the ticket. The consumer face of the platform. |
-| **Today** | Storefront discovery over TEvo/EVO; `/api/store/*`; SEO/discovery front door. Secondary only; no real checkout yet. |
-| **Path to there** | Unification-plan **Phase B**: surface primary `exos_public_*` alongside secondary (deduped) → real checkout-from-D1 into the shared core → re-home the wallet + rotating QR → Supabase Auth → primary-vs-secondary CTAs. |
-| **You've arrived when** | A fan finds a **D4 event in the storefront**, buys it, and the ticket lands in a wallet whose QR the D4 door scanner accepts. (Free events first; paid when Stripe lands.) |
-
-## D2 — Orders / Ops · the unified order command
+## D1 — Consumer Retail · secondary storefront now, D4's discovery engine eventually
 
 | | |
 |---|---|
-| **North star** | **One model and one dashboard for every order** — broker secondary, our primary, and distributed — with canonical status, fulfillment, reconciliation, and undelivered-order triage. The single source of "what sold, what shipped, what's owed." |
-| **Today** | `unified_orders` + canonical status vocab + metrics RPCs + order clients + `/undelivered` + the ops dashboard. Secondary/broker orders today. |
-| **Path to there** | Unification-plan **Phase A**: source-tag the order model, land fulfilled **primary** orders into `unified_orders` (`source=exos_primary`), confirm one reporting model aggregates primary + secondary + distributed. |
-| **You've arrived when** | Every order, regardless of source, lands in one model with canonical status — sales reporting + reconciliation + undelivered all read it, and a primary purchase shows up next to a broker order automatically. |
+| **North star** | The public **storefront** — near-term **purely secondary**; eventually the **discovery engine for D4** (our own primary inventory), deduped against secondary. |
+| **Today** | Storefront discovery over TEvo/EVO; `/api/store/*`; SEO front door. Secondary only. |
+| **Path to there** | **NEXT = purely secondary** (discovery + buy on secondary inventory). **EVENTUAL = the discovery engine for D4** — surface and sell D4 primary events alongside secondary (unification-plan Phase B: dedupe by canonical key, real checkout, wallet + rotating QR). |
+| **You've arrived when** | *(near)* a fan discovers + buys a secondary ticket; *(eventual)* a fan discovers a **D4 primary event** in the storefront and buys it, ticket landing in a wallet the D4 scanner accepts. |
 
-## D3 — Broadway scraper · the niche-market data edge *(owner input needed)*
-
-| | |
-|---|---|
-| **North star** | *(inferred — confirm)* Comprehensive **Broadway + adjacent live-entertainment** inventory/sales coverage feeding the broker model, so D0 has an edge in markets the big firehoses cover poorly. The data-collection arm under D2. |
-| **Today** | Scraper, sub-lane of D2. *(B1 has limited visibility into D3's current state — D2/operator to fill in.)* |
-| **Path to there** | **TBD — needs D2/operator definition.** Likely: broaden coverage → normalize into the canonical event/sales model → feed D0 intelligence. |
-| **You've arrived when** | *(draft)* The Broadway market is fully represented in the canonical model and surfaces in D0 alongside the major sources. **Operator/D2: please refine this lane's goal — it's the one I'm least sure of.** |
-
-## D4 — Exos / Bridge · the primary-market ticketing platform
+## D2 — Orders / Ops · the sales-data backend (feeds D0) + broker status test + CS logistics
 
 | | |
 |---|---|
-| **North star** | A full **primary-market ticketing platform** — a venue/promoter creates an org, builds an event, sells tickets, manages staff, and scans at the door; a fan buys, holds a wallet ticket with a rotating QR, and transfers it safely. Our own "DICE/Eventbrite," off Firebase, on the shared Supabase core. |
-| **Today** | Orgs / events / tickets / transfers / check-in / follows / mail on Supabase — **Firebase fully cut over**. Free-first hardening batch (event caps, per-account limits, server-side barcode verify, mail drainer, box-office issuance, follower announce, holder notify) authored + B1-reviewed, **pending A1 apply**. Stripe + distribution scaffolds **dormant by design**. |
-| **Path to there** | Unification-plan **Phase 0 → B → C → D**, then the paid/distribution tracks: land the free-first batch → consumer buy-from-D1 → **org-scoped** seller analytics (B1-gated) → physical door rehearsal → **free go-live**; then Stripe (paid) + Automatiq/EVO distribution (each operator-cred + Hard-Rule-2 gated) → **paid go-live**. |
-| **You've arrived when** | **M2 (free):** a fan discovers a D4 event, claims a free ticket, the wallet shows a live rotating QR, and the D4 scanner admits it — caps + limits enforced. **M5 (paid):** the same with Stripe checkout + refunds + legal, and inventory distributed to secondary channels. |
+| **North star** | The **backend sales/order layer**: (a) **feeds D0** the sales data behind the broker brain; (b) a **status test** brokers glance at to confirm the **sales APIs are up**; (c) **day-over-day sales tracking**; (d) the tool **customer service uses to fill + track order logistics**. Mostly backend — not a customer-facing product. |
+| **Today** | `unified_orders` + canonical status vocab + metrics RPCs + order clients + `/undelivered` + the ops dashboard. |
+| **Path to there** | Keep feeding D0; sharpen the **sales-API health/up-or-down view**; solidify **day-day sales tracking**; build out **CS fulfillment/logistics** tooling (fill orders, track delivery). Land primary orders into the shared model so day-day sales include D4 (unification-plan Phase A). |
+| **You've arrived when** | A broker opens D2 to confirm the sales integrations are live + read day-over-day sales; CS fills + tracks order logistics from it; and D0's intelligence reads D2's data underneath. |
 
-## E1 — External Markets · *(future, stub — owner input needed)*
+## D3 — Broadway scraper · a data source feeding D0
 
 | | |
 |---|---|
-| **North star** | *(inferred — confirm)* Turn the demand/pricing intelligence into **tradeable positions** — a Kalshi-style event-contract / prediction-market integration layered on the market data the platform already produces. |
+| **North star** | A **data-collection source that feeds D0** — extending the broker brain's coverage into markets the big firehoses miss (current focus: Broadway). |
+| **Today** | Scraper, sub-lane of D2. |
+| **Path to there** | Broaden coverage → normalize into the canonical event/sales model → pipe into D0's intelligence (likely via D2's backend). |
+| **You've arrived when** | D3's data shows up in D0 alongside the major sources — the broker sees the niche markets too. |
+
+## D4 — Exos / Bridge · the venue arm + the ticket infrastructure for the storefront
+
+| | |
+|---|---|
+| **North star** | The **venue/primary arm** *and* the **ticket infrastructure that powers the storefront** — venues/promoters create orgs, build events, sell, manage staff, and scan at the door; the same ticket infra (issue/wallet/rotating-QR/transfer/check-in) backs D1's primary sales. Our own primary-ticketing core, off Firebase, on Supabase. |
+| **Today** | Orgs/events/tickets/transfers/check-in/follows/mail on Supabase — **Firebase fully cut over**. Free-first hardening batch (caps, per-account limits, server-side barcode verify, mail drainer, box-office issuance, announce/notify) authored + B1-reviewed, **pending A1 apply**. Stripe + distribution scaffolds **dormant by design**. |
+| **Path to there** | Unification-plan **Phase 0 → B → C → D** then paid/distribution: land free-first → **power D1's primary checkout** (D4 infra behind the storefront) → org-scoped seller analytics (B1-gated) → door rehearsal → **free go-live**; then Stripe (paid) + Automatiq/EVO distribution (operator-cred + Hard-Rule-2 gated) → **paid go-live** → **open distribution** (inventory flows to every channel). |
+| **You've arrived when** | A venue runs its event on D4, the storefront sells that event's tickets on D4's infra, and the scanner admits the buyer's wallet QR — first free (M2), then paid + distributed everywhere (M5). |
+
+## E1 — External Markets · a ticket-price betting pool (options for tickets)
+
+| | |
+|---|---|
+| **North star** | Feed the platform's demand/pricing **metrics into a betting market** — a **ticket-price betting pool**: take positions on where ticket prices go. **Options, for tickets.** The market-intelligence brain (D0) becomes tradeable beyond the tickets themselves. |
 | **Today** | Stub lane; not started. |
-| **Path to there** | **TBD — future phase.** Gated behind the core platform shipping; depends on the D0 intelligence layer being mature. |
-| **You've arrived when** | *(draft)* TBD with operator. |
+| **Path to there** | Future — depends on the D0 intelligence layer + a clean metrics pipeline being mature enough to price/settle contracts. Likely a Kalshi-style integration or a self-hosted pool. |
+| **You've arrived when** | A ticket-price options/betting pool runs off the platform's live metrics — someone takes a position on a ticket price and the pool settles against real data. |
 
 ---
 
-## How to read this with the bible + the plan
+## How the lanes converge to the endgame
 
-- **`PROJECT_BIBLE.md`** = current form (what exists, rules, ownership). Read first, every session.
-- **This doc** = destination per lane (the "why" / the moment). Read when you need to know *which direction* a lane's work should push.
-- **[`docs/d_tier_unification_plan.md`](d_tier_unification_plan.md)** = the route (phases, milestones M0–M5, dependencies, acceptance). Read when you need *the next concrete step*.
+```
+D3 ─┐
+    ├─► D2 (sales-data backend, status, CS logistics) ─► D0 (analytics → discovery → trading)
+D4 ─┤                                                         │
+    └─► D1 (storefront: secondary now → D4 discovery)         └─► E1 (ticket-price betting pool)
+         ▲                                                         (options on the metrics)
+    D4 ticket infra powers D1 primary sales
+                    │
+   all of it = OPEN-DISTRIBUTION TICKETMASTER
+   (own primary + trade secondary + distribute everywhere)
+```
 
-Sequencing reality (from the plan): **D2's order core (Phase A) and D4's free-first launch are the near-term spine; D1 consumer + D0 actions ride on top; D3 + E1 are later.** The whole thing converges on the one Jesus moment above.
+- **`PROJECT_BIBLE.md`** = current form (what exists, rules). Read first, every session.
+- **This doc** = destination per lane + the endgame. Read to know *which direction* a lane pushes.
+- **[`docs/d_tier_unification_plan.md`](d_tier_unification_plan.md)** = the route (phases, M0–M5, acceptance). Read for *the next concrete step*.
 
----
-
-## Open for ratification
-
-1. **North-star wording per lane** — operator: edit any that don't match your vision.
-2. **D3** — its goal is my weakest inference; D2/operator should define it.
-3. **E1** — confirm the Kalshi/prediction-market framing + when it activates.
-4. Once ratified, B1 adds a one-line pointer from `PROJECT_BIBLE.md §2` to this doc (A1 merges, per the bible refresh policy).
+**Near-term spine:** D2 sales-data backend + D4 free-first launch are the foundation; D1 (secondary → D4 discovery) and D0 (analytics → trading) build on top; D3 widens D0's data; E1 is the long-horizon layer on the mature metrics brain.
