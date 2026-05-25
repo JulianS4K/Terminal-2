@@ -75,6 +75,7 @@ Catalogue of every tracked `.md` file in the repo, grouped by audience/purpose. 
 | [`docs/security-runbook-2026-05-11.md`](security-runbook-2026-05-11.md) | Security incident response playbook | When new playbook step is added |
 | [`docs/war_games_playbook.md`](war_games_playbook.md) | 10 adversarial scenarios (W-1..W-10) with read-only probe templates for idle-time rotation | When new scenario surface emerges; rotate scenarios per sweep step 19 |
 | [`docs/github_features_plan.md`](github_features_plan.md) | Roadmap for utilizing all GitHub surfaces (Security tab, Discussions, Projects, Wiki, Issues, Actions, Releases, Insights). Phase 1 files in this PR; Phase 2/3 wait on operator enable | Quarterly review + when operator enables a Phase 2 item |
+| [`docs/d_tier_goals.md`](d_tier_goals.md) | North-star/destination per D-lane (D0–D4, E1) — the "where it's going" companion to the bible's "what is" and the unification plan's "route". DRAFT pending operator ratification | When a lane's vision changes; ratify D3/E1 |
 
 ## §5 — Active operational state 📋
 
