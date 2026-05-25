@@ -12,6 +12,7 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 | **What's open right now? (all lanes, severity-sorted)** | **`KANBAN.md §🟢 OPEN WORK` — single source of truth, populate-as-you-go, delete-when-fixed** |
 | What can I do? Hard rules, hierarchy, macros, recipes | **This file** |
 | What exists? Tables/views/crons/edge-fn inventory | `RESOURCES_BIBLE.md` |
+| Where's each lane going? (north-star + endgame) | `docs/d_tier_goals.md` |
 | Who can push to where? | `BOT_HIERARCHY.md` |
 | How do I apply a migration? | `MIGRATION_CONVENTIONS.md` |
 | Security rules + lockdown invariants | `CLAUDE.md` |
