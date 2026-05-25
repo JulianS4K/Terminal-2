@@ -90,3 +90,26 @@ For the **single-operator phase (below)** this is trivial — it's your own sess
 4. **BYO-chat via MCP** — power users plug their own chat client into the same tool surface.
 
 Built once, the tool surface powers the in-app panel *and* the BYO-chat path.
+
+---
+
+## 8. Write / action layer — OFF now, explicit future goal
+
+**Today: read-only, period.** The skill, every tool, and the whole terminal are read-only
+(lockdown rule #2). No writes to terminal data; no writes/holds/orders to any upstream
+marketplace (TEvo / SG / Vivid / TickPick). The LLM *proposes*; the human acts in the POS.
+
+**Future goal (operator directive 2026-05-24):** a write / action layer — e.g. the **Pricing
+Queue** (draft a price change here → human approves → push back to the marketplace) — *is* the
+eventual goal. Deliberately off now; recorded so it isn't lost.
+
+**Gates to flip it on (all required):**
+- Explicit **operator authorization** to open a write path (lockdown rule #2).
+- **Human approves every write.** The LLM may *draft* a change; it never auto-executes —
+  per-action confirmation, never bulk-auto.
+- Full **audit log** (who / what / when / old→new) + **reversibility / undo**.
+- Per-user scope + rate limits; writes use the user's identity, never a shared elevated key.
+- **Force-multiplier preserved:** even with write on, the human stays the decision-maker —
+  the layer makes *execution* faster, never *autonomous*.
+
+Until every gate is met, read-only stands.
