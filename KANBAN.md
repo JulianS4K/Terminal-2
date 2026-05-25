@@ -241,6 +241,28 @@ Verification:
 
 Order-of-magnitude: free-first go-live ≈ apply + deploy + a door rehearsal (code's built); the backlog is post-go-live, mostly gated on operator creds (Stripe/Automatiq/Bandsintown) + B1 (CSP/pixels) + the held FE-stack decision.
 
+### 🧭 D4 — standard-customer expectations backlog (gap analysis 2026-05-25)
+
+What a standard organizer/attendee expects vs. what we ship today. Grouped **free-first (no payments) vs paid-gated (needs Stripe)**. Effort: **S** <1d · **M** 1-3d · **L** week+.
+
+**🔜 Confirmed for next run**
+- **D4-OPS-18 — event-scoped check-in RPC (S).** `exos_check_in_ticket` is org-scoped server-side; the event match is FE-only (`OrganizerCheckIn` wrong-event check). Add `p_event_id` + verify `ticket.event_id = p_event_id` in the RPC (defense-in-depth for multi-event orgs at velocity). Wire the FE to pass `eventId`. Barcode/hash scheme itself is collision-safe (UUID PK namespaces globally; HMAC is per-ticket, not a global key) — no prefix needed.
+
+**🟢 Free-first wins (do without payments) — priority order**
+- **D4-OPS-19 — turn on transactional email delivery (S, operator).** Drainer + cron deployed; idle until `RESEND_API_KEY` + `EXOS_MAIL_FROM` are set. Until then confirmation/transfer/issue/announce emails queue but never send — a baseline trust gap. Operator action only.
+- **D4-OPS-20 — Apple/Google Wallet passes (M-L).** We render a web rotating-QR pass; native "Add to Apple/Google Wallet" is table stakes. Needs PassKit/Google Wallet signing (operator certs) + a pass-generation surface; the rotating-HMAC model maps to a barcode pass.
+- **D4-OPS-21 — event reminders (S-M).** Add-to-calendar `.ics` already exists (`lib/calendarUtils.downloadIcsFile` in TicketDetail) — verify coverage; the gap is scheduled reminder emails ("your event is tomorrow") via the mail queue + a cron.
+- **D4-OPS-22 — waitlist + self-serve RSVP release (M).** When a free tier hits capacity, let attendees join a waitlist (auto-offer on release); let a holder cancel/release a free RSVP to free capacity. New table + RPCs + UI.
+- **D4-OPS-23 — attendee info capture at registration (M).** Per-ticket name/email + organizer-defined custom questions, surfaced on the guest list / check-in + CSV. Schema (per-ticket attendee fields / answers jsonb) + CreateEvent question builder + claim/checkout capture.
+- **D4-OPS-24 — organizer analytics/reporting (M-L).** RSVP/sales over time, scan-in & no-show rate, promoter/channel attribution, exportable. Extends the existing event report + `exos_event_checkins`/`exos_scan_rejects`.
+- **D4-OPS-25 — reserved/assigned seating + seat map (L).** Only if any venues are seated (theaters); today we're GA-tiers only. Large: seat inventory model, map builder, seat-level hold/sell, seat on the pass.
+- **D4-OPS-26 — inventory hold/reservation at checkout (M).** Already noted under Cleanups — closes the two-tab `maxPerAccount` race; also a prereq for the Stripe sold-out race. Time-boxed hold table + claim/expire.
+- **D4-OPS-27 — add-ons + multi-day/recurring/series (L).** Non-ticket add-ons (parking/VIP/merch) beyond tiers; recurring/series events sharing a template.
+- **D4-OPS-28 — custom storefront domain (M).** White-label `/o/:slug` on the org's own domain (deferred from Sprint 2.5).
+
+**🔴 Paid-gated (needs Stripe — extends the deferred D4-OPS-7)**
+- The day you sell a paid ticket: card checkout + **organizer payouts** (Connect), receipts/invoices, **card refunds** + chargeback handling, service/platform fees & tax, paid box-office (Terminal/tap-to-pay, D4-OPS-17). Scaffolded + dormant by the free-first decision; this is the single biggest customer expectation once events aren't free.
+
 ### NEXT (D0) — Consolidated frontend lane post row 157 reorg
 
 Plan: [docs/d0_frontend_consolidation_plan.md](docs/d0_frontend_consolidation_plan.md). Self-contract: [docs/d0_operating_constraints.md](docs/d0_operating_constraints.md). Coordination: [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md). 5 D0-tracked rows:
