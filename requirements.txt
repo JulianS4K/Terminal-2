@@ -13,3 +13,7 @@ defusedxml>=0.7.1,<1.0
 # (Windows dev, slim Docker images). Needed by d2_dashboard's metrics endpoint
 # for the "today" window which anchors on America/New_York. Tiny (~330 KB).
 tzdata>=2026.2,<2027.0
+# cryptography — Fernet decryption of TEvo encrypted_barcode fields
+# (/v9/orders, /v9/listings) in evo_client.decrypt_barcode. Imported lazily so
+# the broker read-pipeline still loads if the dep is absent on a given host.
+cryptography>=46.0.5,<49.0  # >=46.0.5 clears GHSA-r6ph-v2qm-q3c2 (SECT curve subgroup attack, HIGH)
