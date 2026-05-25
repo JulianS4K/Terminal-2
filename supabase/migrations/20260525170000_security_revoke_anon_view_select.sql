@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Migration 20260525170000 · level:security · lane:Security
--- writes: REVOKE ALL ... FROM anon on 12 security-definer views
+-- writes: REVOKE ALL ... FROM anon on 12 security-definer views + 2 matviews
 -- reads:  pg_class, information_schema (audit only)
 -- pre:    none (idempotent REVOKE; authenticated/service_role untouched)
 --
@@ -13,31 +13,50 @@
 --
 -- ROOT CAUSE — the same Supabase default-grant gotcha as #298, on VIEWS:
 -- every new public view is auto-GRANTed ALL privileges to anon + authenticated.
--- These 12 are SECURITY DEFINER (no security_invoker=true), so a read runs as
+-- These 14 are SECURITY DEFINER (no security_invoker=true), so a read runs as
 -- the view OWNER and BYPASSES underlying-table RLS — anon (the publishable key,
 -- shipped in frontend JS, no login required) reads the full result set over
 -- PostgREST: GET /rest/v1/<view>.  anon also has schema USAGE on public.
 --
--- FINDINGS CLOSED HERE
+-- EMPIRICALLY CONFIRMED (SET ROLE anon; SELECT ...): all 14 objects below are
+-- owned by `postgres` (rolbypassrls=true) and are SECURITY DEFINER
+-- (security_invoker is NOT set), so an anon read runs as postgres and BYPASSES
+-- underlying-table RLS — anon sees every row. Live counts at audit time:
+--   v_event_price_arbitrage = 3681 anon rows; latest_event_metrics = 1411.
+-- (By contrast, all 140 anon-readable BASE TABLES have RLS ON, and the ~130
+--  security_invoker=true views evaluate anon's RLS against them — those do NOT
+--  leak. The definer objects below are the bounded leak surface.)
+--
+-- FINDINGS CLOSED HERE  (14 objects = 12 views + 2 matviews)
 -- -------------------------------------------------------------------------
--- SEC-HIGH (3 order views) — PII + financials readable by anyone with the
---   public anon key, no login:
---     * unified_orders          — buyer_name, seller_name, client_name,
---                                  gross_value, quantity, event_name/date ...
---     * unified_orders_by_event — per-event order rollups (sale counts/values)
---     * order_status_coverage   — order volume/recency by source+status
--- SEC-MED (9 broker-intelligence views) — competitive market intel that the
---   §D1 wall reserves for brokers (authenticated @s4kent), leaking to anon:
+-- SEC-MED, LIVE — broker market-intelligence the §D1 wall reserves for
+--   authenticated brokers (@s4kent), readable by anyone with the public anon
+--   key, no login. Confirmed returning thousands of rows:
 --     v_event_price_arbitrage, v_event_velocity_windows, v_returning_entities,
 --     v_aq_match_quality, v_orphan_seatgeek_data, v_sg_blindspot_movers,
 --     v_tevo_blindspot_movers, v_sg_broker_429_health,
---     v_sg_broker_429_starved_events
+--     v_sg_broker_429_starved_events,
+--     latest_event_metrics (matview, 1411 rows), v_dashboard_writes_24h (matview)
+-- SEC-HIGH, LATENT — order views: PII-bearing (buyer_name, seller_name,
+--   client_name, gross_value, quantity) and anon-readable, but currently yield
+--   0 rows (source order tables empty/filtered at audit time). Re-activates to
+--   a live PII leak the moment orders flow — fix now:
+--     unified_orders, unified_orders_by_event, order_status_coverage
 --
--- The inherited write grants (INSERT/UPDATE/DELETE/TRUNCATE) are inert today —
--- all 12 are non-updatable views (UNION / aggregate / join / DISTINCT ON / WITH)
--- so writes error — but REVOKE ALL clears them anyway (defense-in-depth).
+-- The 2 matviews (latest_event_metrics, v_dashboard_writes_24h) are flagged by
+-- NEITHER release_health_check category (security_definer_views is relkind='v';
+-- the table-RLS check skips matviews) — found via a full anon-readable-surface
+-- enumeration, not the harness.  mv_sg_blindspot_movers already has anon=false.
 --
--- SAFE — no anon-key frontend consumes any of these 12:
+-- The inherited write grants (INSERT/UPDATE/DELETE/TRUNCATE) are inert — all 12
+-- views are non-updatable (is_updatable=NO, verified) and matview writes need
+-- privilege anon lacks — but REVOKE ALL clears them anyway (defense-in-depth).
+--
+-- NOTE: this REVOKE does NOT change release_health_check.security_definer_views
+-- (that counts security_invoker absence, not anon grants; these views are
+-- INTENTIONALLY owner-run). Verify via the anon-read probe below, not that row.
+--
+-- SAFE — no anon-key frontend consumes any of these 14:
 --   * D2 ops dashboard (d2_dashboard/static/dashboard.js) initialises supabase-js
 --     with the anon key as the apikey header but REQUIRES login and sends
 --     Authorization: Bearer <user access_token> — its reads execute as
@@ -64,8 +83,8 @@
 -- ## Regression risk
 -- cron.failed_jobs_90min — none (no function/cron touched).
 -- PostgREST authenticated/service_role callers — unaffected (grants retained).
--- PostgREST anon callers — intentionally lose access to these 12 views.
---   Re-probe after apply: SET ROLE anon; SELECT FROM public.unified_orders LIMIT 1; -> permission denied.
+-- PostgREST anon callers — intentionally lose access to these 14 objects.
+--   Re-probe after apply: SET ROLE anon; SELECT FROM public.v_event_price_arbitrage LIMIT 1; -> permission denied.
 --
 -- ## Already applied to prod
 -- NOT YET. Operator authorizes prod apply (2026-05-13 lockdown). Some views are
@@ -73,13 +92,13 @@
 -- or authenticated-access change) — owning lanes flagged in the PR for sign-off.
 -- ============================================================================
 
--- --- SEC-HIGH: order views (PII + financials) -------------------------------
+-- --- SEC-HIGH (latent: 0 rows now, PII-bearing): order views ----------------
 REVOKE ALL ON public.unified_orders          FROM anon;
 REVOKE ALL ON public.unified_orders_by_event FROM anon;
 REVOKE ALL ON public.order_status_coverage   FROM anon;
 
--- --- SEC-MED: broker market-intelligence views (§D1 wall: broker-only) -------
-REVOKE ALL ON public.v_event_price_arbitrage        FROM anon;
+-- --- SEC-MED (LIVE): broker market-intelligence views (§D1 wall: broker-only) -
+REVOKE ALL ON public.v_event_price_arbitrage        FROM anon;  -- 3681 anon rows @ audit
 REVOKE ALL ON public.v_event_velocity_windows       FROM anon;
 REVOKE ALL ON public.v_returning_entities           FROM anon;
 REVOKE ALL ON public.v_aq_match_quality             FROM anon;
@@ -88,6 +107,11 @@ REVOKE ALL ON public.v_sg_blindspot_movers          FROM anon;
 REVOKE ALL ON public.v_tevo_blindspot_movers        FROM anon;
 REVOKE ALL ON public.v_sg_broker_429_health         FROM anon;
 REVOKE ALL ON public.v_sg_broker_429_starved_events FROM anon;
+
+-- --- SEC-MED (LIVE): materialized views — uncovered by both health-check
+--     categories (relkind='m'); found via full anon-surface enumeration --------
+REVOKE ALL ON public.latest_event_metrics   FROM anon;  -- 1411 anon rows @ audit
+REVOKE ALL ON public.v_dashboard_writes_24h FROM anon;
 
 -- --- Tier-2 (event metadata) — DO NOT UNCOMMENT until D0/D1 confirm no anon
 --     public/SEO event page reads these. Fully reversible (GRANT SELECT TO anon).
