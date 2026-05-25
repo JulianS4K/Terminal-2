@@ -1,4 +1,7 @@
--- 20260524160000_v2_sales_tape_7d_window.sql
+-- 20260525130000_v2_sales_tape_7d_window.sql
+--   (renamed from 20260524160000 → 20260525130000 on 2026-05-25: D4's
+--    20260524160000_exos_security_hardening landed on main first; rebased to a
+--    post-main slot to avoid a duplicate migration-sequence collision.)
 --
 -- ## Already applied to prod — applied live via MCP execute_sql 2026-05-24
 --   (operator-directed hotfix for an ACTIVE user-facing timeout: "issue with

@@ -1,4 +1,7 @@
--- 20260524150000_venue_mlb_resilience.sql
+-- 20260525120000_venue_mlb_resilience.sql
+--   (renamed from 20260524150000 → 20260525120000 on 2026-05-25: D4's
+--    20260524150000_exos_public_marketing landed on main first; rebased to a
+--    post-main slot to avoid a duplicate migration-sequence collision.)
 --
 -- ## Already applied to prod — applied via MCP apply_migration 2026-05-24.
 --
