@@ -1,6 +1,6 @@
 # Terminal-2
 
-Ticket-trading intelligence + retail platform. FastAPI on Railway (primary) + Render (secondary/CDN) + Supabase Postgres + 18 edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Multi-bot orchestrated — see [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).
+Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + 18 edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Multi-bot orchestrated — see [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).
 
 ## Quick links for bots starting a session
 
@@ -17,7 +17,7 @@ Ticket-trading intelligence + retail platform. FastAPI on Railway (primary) + Re
 ## Architecture
 
 ```
-Browser ─► Railway (FastAPI + static)  ─► Supabase (Postgres + Auth + Edge Functions)
+Browser ─► Render  (FastAPI + static)   ─► Supabase (Postgres + Auth + Edge Functions)
                   │          │                        ▲
                   │          │  /bridge/ (D4 Bridge)  │
                   │          └─ same-origin session ──┘
@@ -36,10 +36,10 @@ Browser ─► Railway (FastAPI + static)  ─► Supabase (Postgres + Auth + Ed
 ```
 
 **Hosted services:**
-- **Railway** (primary) — `glorious-appreciation-production-a6ce.up.railway.app` — unified FastAPI shell hosting all 4 surfaces: D0 Terminal (`/terminal`), D1 Store (`/store`), D2 Undelivered (`/undelivered`), D4 Bridge (`/bridge/`). Same-origin for all — single Supabase session covers all surfaces.
-- **Render** `vibepass-storefront-test` — secondary/CDN. Also serves `/bridge/` as a backup URL. Was the unified shell before Railway became primary.
+- **Render** `vibepass-storefront-test` **(primary)** — unified FastAPI shell hosting all 4 surfaces: D0 Terminal (`/terminal`), D1 Store (`/store`), D2 Undelivered (`/undelivered`), D4 Bridge (`/bridge/`). Auto-deploys on `main` push. Same-origin for all — single Supabase session covers all surfaces.
 - **Render** `vibepass-terminal-test` — static CDN for D0 frontend assets
 - **Render** `d2-orders-dashboard` — beta-time placeholder, no live traffic
+- **Railway** `glorious-appreciation-production-a6ce.up.railway.app` — **decommission pending** (was primary prior to 2026-05-25; `static/bridge/` on Render is now current)
 
 ## Repo layout
 
@@ -95,9 +95,9 @@ Browser at `http://localhost:8765` lands on the home page. `/static/terminal/eve
 
 ## Production deploys
 
-**Railway** (primary): auto-deploys on `main` push via `Procfile` (`uvicorn app:app`). All 4 surfaces live at `glorious-appreciation-production-a6ce.up.railway.app`.
+**Render** (primary): auto-deploys on `main` push via `render.yaml` + `render-d2-dashboard.yaml`. `vibepass-storefront-test` serves all 4 surfaces.
 
-**Render** (secondary): also auto-deploys on `main` push via `render.yaml` + `render-d2-dashboard.yaml`. `vibepass-storefront-test` continues to serve all surfaces as a hot-standby.
+**Railway** (decommission pending): `Procfile` present for compatibility but no longer the primary host.
 
 A1 is sole pusher to `main`; subordinate bots open PRs against `main`.
 
