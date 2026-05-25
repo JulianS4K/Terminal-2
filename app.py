@@ -288,6 +288,21 @@ STOREFRONT_RESERVE_REQUIRES_AUTH = (
 if not STOREFRONT_RESERVE_REQUIRES_AUTH:
     print("STOREFRONT_RESERVE_REQUIRES_AUTH=false — /api/store/reserve is UNAUTHENTICATED (MVP demo mode).")
 
+# TEvo Hosted Checkout — DORMANT until the operator provisions the domain.
+# When set (e.g. "checkout.vibepass.com"), the storefront Reserve button
+# redirects the buyer to TEvo's hosted checkout at
+#   https://<domain>/checkout/payment/<event_id>/<ticket_group_id>?quantity=N
+# where TEvo is the merchant-of-record and handles payment, Apple/Google
+# Pay, and fraud. When empty (the default) the Reserve flow stays the MVP
+# mock — NO real purchases, NO redirect. This is a pure browser redirect:
+# our backend never writes to TEvo, so the RULE 2 read-only wall is not
+# involved. Enabling is operator-gated: provision the hosted-checkout
+# subdomain with the TEvo rep + point DNS (CNAME -> cname.vercel-dns.com),
+# land real legal copy (D1-OPS-5), THEN set this env var.
+STOREFRONT_CHECKOUT_DOMAIN = os.environ.get("STOREFRONT_CHECKOUT_DOMAIN", "").strip()
+if STOREFRONT_CHECKOUT_DOMAIN:
+    print(f"STOREFRONT_CHECKOUT_DOMAIN={STOREFRONT_CHECKOUT_DOMAIN} — Reserve redirects to TEvo Hosted Checkout (real purchases ENABLED).")
+
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
@@ -826,6 +841,11 @@ def public_config():
         # a 'demo · sql snapshot' pill so users know what they're seeing.
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "storefront_search_sql_only": STOREFRONT_SEARCH_SQL_ONLY,
+        # TEvo Hosted Checkout: domain is null while dormant (Reserve stays
+        # the MVP mock); when the operator sets STOREFRONT_CHECKOUT_DOMAIN,
+        # store.js redirects Reserve to the hosted checkout URL.
+        "checkout_domain": STOREFRONT_CHECKOUT_DOMAIN or None,
+        "purchase_enabled": bool(STOREFRONT_CHECKOUT_DOMAIN),
     }
 
 # ---------- Protected routes ----------
