@@ -1,6 +1,6 @@
 # D-Tier Unification Map — "Toast / DICE for tickets"
 
-**Status:** design / planning (no code shipped by this doc).
+**Status:** design / planning — architecture companion to `d_tier_unification_plan.md` (B1-reviewed, goals-aligned per PR #348). No code shipped by this doc.
 **Author:** D4. **Review needed:** C1 (architecture/continuity), **B1 (data-access scoping — §4)**, D0/A1 (lane re-carve + Render).
 **Date:** 2026-05-23.
 
