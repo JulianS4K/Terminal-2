@@ -266,6 +266,33 @@ a { color: inherit; }
   gap: 12px;
   align-items: flex-start;
 }
+
+/* ----- Skeleton loading cards -----
+   Shown in the grid while the catalog loads (replaces the plain
+   "Loading…" text). Shimmer keyframe sweeps a light band across each bar
+   so the wait reads as "loading" not "broken". Respects reduced-motion. */
+.skeleton-card {
+  pointer-events: none;
+  gap: 10px;
+}
+.sk-bar {
+  background: linear-gradient(90deg, var(--panel-2) 25%, var(--line) 37%, var(--panel-2) 63%);
+  background-size: 400% 100%;
+  border-radius: 6px;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+.sk-logo { width: 40px; height: 40px; border-radius: 6px; }
+.sk-when { width: 45%; height: 10px; margin-top: 4px; }
+.sk-name { width: 85%; height: 16px; }
+.sk-where { width: 60%; height: 12px; }
+.sk-meta { width: 100%; height: 28px; margin-top: 10px; }
+@keyframes sk-shimmer {
+  0%   { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sk-bar { animation: none; }
+}
 .card-logo {
   width: 40px;
   height: 40px;

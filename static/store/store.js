@@ -380,6 +380,42 @@
     // produced silent no-op because the gate at searchAndRender bailed).
     let userHasSearched = false;
 
+    // Shimmer placeholder cards shown while the catalog loads. Static
+    // markup (no user data); aria-hidden so screen readers ignore them —
+    // the grid's aria-busy attr carries the loading semantics.
+    function renderSkeleton(n) {
+      grid.replaceChildren();
+      if (gridHeading) gridHeading.hidden = true;
+      empty.hidden = true;
+      for (let i = 0; i < n; i++) {
+        const sk = document.createElement("div");
+        sk.className = "card skeleton-card";
+        sk.setAttribute("aria-hidden", "true");
+        for (const c of ["sk-logo", "sk-when", "sk-name", "sk-where", "sk-meta"]) {
+          const bar = document.createElement("div");
+          bar.className = `sk-bar ${c}`;
+          sk.append(bar);
+        }
+        grid.append(sk);
+      }
+      grid.hidden = false;
+    }
+
+    // Stable partition that floats NYC-area events to the front while
+    // preserving the server's within-group order. Keeps the home grid
+    // coherent with the "…in NYC" rails without dropping national
+    // inventory (non-NYC events still follow). Word-boundary \bny\b also
+    // catches "…, NY"; "new york"/borough names cover the rest.
+    function nycFirst(events) {
+      const isNyc = (e) => {
+        const loc = String(e.venue_location || "").toLowerCase();
+        return /\bny\b|new york|bronx|brooklyn|flushing|queens|manhattan|staten island/.test(loc);
+      };
+      const nyc = [], rest = [];
+      for (const e of events) (isNyc(e) ? nyc : rest).push(e);
+      return nyc.concat(rest);
+    }
+
     function render(events, mode) {
       // mode: "all" (initial load) or "search" (after a query)
       grid.innerHTML = "";
@@ -669,15 +705,28 @@
       : `/api/store/events?${qs.toString()}`;
 
     function loadCatalog() {
-      status.textContent = "Loading available events…";
-      status.style.color = "";
-      status.hidden = false;
+      // Skeleton cards ARE the loading affordance now (replaces the plain
+      // "Loading…" text pill). On a cold Render dyno first paint can take
+      // ~12s; shimmer placeholders make that wait feel responsive instead
+      // of blank. aria-busy on the grid announces the load to screen
+      // readers; the skeleton cards themselves are aria-hidden.
+      status.hidden = true;
+      grid.setAttribute("aria-busy", "true");
+      renderSkeleton(8);
       // Reset gate — Retry re-fires this and we want the same race
       // protection on the second attempt.
       loadComplete = false;
       api(catalogEndpoint)
         .then((res) => {
+          grid.removeAttribute("aria-busy");
           allEvents = res.events || [];
+          // NYC-first ordering on the home view so the grid coheres with the
+          // "…in NYC" rails above it (the home endpoint returns owned events
+          // nationwide; without this the grid leads with Baltimore/Toronto/
+          // KC games while the rails say NYC). Stable partition — preserves
+          // the endpoint's within-group order. Filtered views keep server
+          // order. H2, 2026-05-25 UX audit.
+          if (isHomeView) allEvents = nycFirst(allEvents);
           loadComplete = true;
           renderCatalogFilterBanner(performerId, venueId, allEvents);
           // Don't clobber a backend search the user submitted while home
@@ -702,6 +751,10 @@
           // loadComplete stays false — filter() correctly bails out so a
           // user typing during error state doesn't see "No events match"
           // on top of the Retry-button error UI.
+          grid.removeAttribute("aria-busy");
+          grid.replaceChildren();   // clear skeleton cards
+          grid.hidden = true;
+          if (gridHeading) gridHeading.hidden = true;
           status.replaceChildren();
           status.style.color = "var(--bad)";
           status.hidden = false;
