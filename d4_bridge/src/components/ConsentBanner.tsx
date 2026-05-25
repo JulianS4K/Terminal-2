@@ -6,6 +6,7 @@
 // "Decline" is sticky so the banner doesn't nag.
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { getConsent, setConsent } from '../lib/consent';
 
 export default function ConsentBanner() {
@@ -32,7 +33,7 @@ export default function ConsentBanner() {
         <p className="text-xs text-white/60 leading-relaxed flex-grow">
           We use analytics and marketing cookies to measure event reach. They
           load only if you accept. See our{' '}
-          <a href="/privacy" className="underline hover:text-white">privacy policy</a>.
+          <Link to="/privacy" className="underline hover:text-white">privacy policy</Link>.
         </p>
         <div className="flex gap-2 flex-shrink-0">
           <button
