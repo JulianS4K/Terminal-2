@@ -46,7 +46,7 @@ export default function EventDetails() {
 
   useEffect(() => {
     async function fetchEvent() {
-      if (!id) return;
+      if (!id) { setLoading(false); return; }
       // Published events via the public view; fall back to the staff read so an
       // organizer can preview their own draft (RLS gates that to org staff).
       let data = await getPublicEvent(id);
@@ -110,7 +110,12 @@ export default function EventDetails() {
       }
       setLoading(false);
     }
-    fetchEvent();
+    // A thrown fetch (network/Supabase error) must still clear the spinner so
+    // the "Event not found" state renders instead of an infinite loader.
+    fetchEvent().catch((err) => {
+      console.warn('Event load failed:', err);
+      setLoading(false);
+    });
   }, [id, user]);
 
   // (Live per-tier sold/capacity subscription removed — phase-1 reads
