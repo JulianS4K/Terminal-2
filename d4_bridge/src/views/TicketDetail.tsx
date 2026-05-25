@@ -80,57 +80,63 @@ export default function TicketDetail() {
     fetchData();
   }, [id, user]);
 
+  // Depend on the current ticket's PRIMITIVE fields, not the whole array, so a
+  // refetch that replaces `tickets` with equal-id objects doesn't re-run this
+  // and reset the countdown. The QR is always valid (derived from wall-clock),
+  // but the visible timer was misleadingly resetting.
+  const td_id = tickets[currentIndex]?.id;
+  const td_secret = tickets[currentIndex]?.barcodeSecret;
+  const td_uid = user?.uid;
   useEffect(() => {
-    const currentTicket = tickets[currentIndex];
-    if (!currentTicket || !user) return;
-
+    if (!td_id || !td_uid) return;
     let cancelled = false;
+    let lastBucket = -1;
 
     // Sign the barcode for the current 30-second bucket. The HMAC binds
-    // ticketId + ownerId + bucket against the per-ticket secret stored
-    // on the ticket doc — see lib/barcode.ts. Without a per-ticket
-    // secret (legacy tickets created before this rollout), we fall back
-    // to the unsigned 3-segment shape and the organizer-side verifier
-    // tolerates it as `legacy: true`.
+    // ticketId + ownerId + bucket against the per-ticket secret (lib/barcode.ts).
+    // Legacy tickets without a secret fall back to the unsigned 3-segment shape.
     const refresh = async () => {
-      const secret = currentTicket.barcodeSecret;
       const bucket = currentBucket();
-      if (secret) {
+      lastBucket = bucket;
+      if (td_secret) {
         try {
-          const signed = await signBarcode(currentTicket.id, user.uid, secret, bucket);
-          if (!cancelled) {
-            setBarcode(signed);
-            setTimeLeft(30);
-          }
+          const signed = await signBarcode(td_id, td_uid, td_secret, bucket);
+          if (!cancelled) setBarcode(signed);
           return;
         } catch (err) {
-          // SubtleCrypto only fails in pathological browser configs.
           console.warn('Falling back to legacy unsigned barcode:', err);
         }
       }
-      // Legacy / fallback path.
-      if (!cancelled) {
-        setBarcode(`T-${currentTicket.id}:${user.uid}:${bucket}`);
-        setTimeLeft(30);
-      }
+      if (!cancelled) setBarcode(`T-${td_id}:${td_uid}:${bucket}`);
     };
 
-    refresh();
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          refresh();
-          return 30;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    const tick = () => {
+      if (cancelled) return;
+      // Wall-clock countdown — accurate across re-renders + background-tab
+      // timer throttling (a naive decrement drifts when the tab is hidden).
+      const secs = 30 - (Math.floor(Date.now() / 1000) % 30);
+      setTimeLeft(secs === 0 ? 30 : secs);
+      if (currentBucket() !== lastBucket) void refresh();
+    };
+
+    void refresh();
+    const interval = setInterval(tick, 1000);
+    // Re-issue immediately on tab-return so a throttled background timer never
+    // leaves a stale (expired-bucket) QR on screen at the door.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh();
+        tick();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [tickets, currentIndex, user]);
+  }, [td_id, td_secret, td_uid]);
 
   const nextTicket = () => {
     if (currentIndex < tickets.length - 1) {
