@@ -83,17 +83,15 @@ WHERE routine_name='exos_has_org_role' AND privilege_type='EXECUTE';
 
 ## 5. Edge function deploy + cron (mail delivery)
 
-No `exos-*` edge function is deployed. Without the drainer, every queued mail (ticket-issued, transfer, announce, holder-notify) sits `pending` forever.
+**✅ DONE (2026-05-24):** `exos-mail-drain` v1 deployed (`verify_jwt=false`, cron-secret gated) **and** the 2-min cron is scheduled (`exos-mail-drain-2min`, jobid 253, `cron_policy` work-check-gated so it stays silent until mail is claimable). Verified live: a manual `_cron_invoke_edge_fn` returns `500 {"error":"server misconfigured: RESEND_API_KEY / EXOS_MAIL_FROM unset"}` — i.e. cron-secret auth passes, only the provider secrets remain. The drainer 500s **before** claiming any row, so nothing gets stuck in `sending`.
 
-**A1 — deploy:** `supabase/functions/exos-mail-drain/index.ts` (cron-secret gated, service-role; mirrors `sg-seller-webhook`).
-
-**Operator — edge-function secrets:**
+**🟠 SOLE REMAINING STEP — Operator sets two edge-function secrets** (Supabase dashboard → Edge Functions → `exos-mail-drain` → Secrets, or `supabase secrets set`). The instant these land, queued mail auto-delivers within 2 min:
 - `RESEND_API_KEY` — Resend key (swap providers by editing `sendEmail()`)
 - `EXOS_MAIL_FROM` — verified sender, e.g. `Bridge <tickets@yourdomain>`
-- `CRON_SECRET` — already used repo-wide
+- `CRON_SECRET` — already set repo-wide (confirmed: auth passes)
 - (`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` injected by the platform)
 
-**A1/operator — cron (`cron.*` is operator-gated):** the 2-min schedule snippet is in the function header:
+**(Reference) the cron that was scheduled** — `cron.*` is operator-gated; this was run via `execute_sql` under the explicit "do it" directive:
 ```sql
 select cron.schedule('exos-mail-drain-2min', '*/2 * * * *', $cron$
   do $b$ begin
