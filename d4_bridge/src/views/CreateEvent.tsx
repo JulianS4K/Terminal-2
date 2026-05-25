@@ -31,6 +31,25 @@ const SUBGENRE_MAX_LEN = 40;
 const SLUG_MAX = 80;
 const LOCATION_MAX = 200;
 
+// Doors→show and show→end default gaps used to auto-fill the show/end times
+// when the organizer sets doors first (both happen after doors open). These
+// are only applied to EMPTY fields, so a value the organizer typed is never
+// overwritten.
+const DOORS_TO_SHOW_MIN = 30;
+const SHOW_TO_END_MIN = 120;
+
+// Shift a `datetime-local` wall-clock string ('YYYY-MM-DDTHH:mm') by N minutes,
+// keeping it in the same local/wall-clock representation (the timezone
+// conversion to UTC happens later at submit via zonedWallClockToUtc). Returns
+// '' if the input can't be parsed.
+function shiftLocalDatetime(value: string, minutes: number): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setMinutes(d.getMinutes() + minutes);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // Optional Automatiq integration. The endpoint is not implemented yet, so we
 // gate the call behind an env flag — otherwise every event creation 404s and
 // writes a misleading `syncStatus: 'failed'` to the doc.
@@ -1065,7 +1084,30 @@ export default function CreateEvent() {
                       try { el.showPicker(); } catch { /* user-gesture errors are non-fatal */ }
                     }
                   }}
-                  onChange={(e) => setFormData({ ...formData, timing: { ...formData.timing, doorsOpen: e.target.value } })}
+                  onChange={(e) => {
+                    const doorsOpen = e.target.value;
+                    setFormData((prev) => {
+                      const next = { ...prev, timing: { ...prev.timing, doorsOpen } };
+                      // Auto-fill show + end (both happen after doors open), but
+                      // only when those fields are still empty — never clobber a
+                      // time the organizer already entered.
+                      if (doorsOpen) {
+                        if (!prev.timing.startTime && !prev.date) {
+                          const show = shiftLocalDatetime(doorsOpen, DOORS_TO_SHOW_MIN);
+                          if (show) {
+                            next.date = show;
+                            next.timing.startTime = show;
+                          }
+                        }
+                        const show = next.timing.startTime || next.date;
+                        if (!prev.timing.endTime && show) {
+                          const end = shiftLocalDatetime(show, SHOW_TO_END_MIN);
+                          if (end) next.timing.endTime = end;
+                        }
+                      }
+                      return next;
+                    });
+                  }}
                 />
               </div>
             </div>
