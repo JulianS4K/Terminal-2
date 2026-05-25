@@ -2027,7 +2027,18 @@
       // 2-column event-body grid keeps its left column (without the placeholder
       // the listings reflow into the empty space, jumping content around at
       // the 760px breakpoint). Per D1 UX audit 2026-05-12 fix #3.
-      const map = event.configuration?.seating_chart_medium || event.configuration?.seating_chart_large;
+      // Defensive: v_event_seating_chart / TEvo sometimes carry the literal
+      // string "null" (or "none"/"") for an absent chart. Treat those as no
+      // map so we don't set <img src="null"> (a broken image resolving to
+      // /store/event/null). Backend also coerces these, but guard here too
+      // in case a stale-cached payload slips through.
+      const cleanMapUrl = (v) => {
+        if (!v) return null;
+        const s = String(v).trim().toLowerCase();
+        return (s === "null" || s === "none" || s === "undefined" || s === "") ? null : v;
+      };
+      const map = cleanMapUrl(event.configuration?.seating_chart_medium)
+        || cleanMapUrl(event.configuration?.seating_chart_large);
       const mapHost = seatMap.parentElement; // the <aside class="map">
       if (map) {
         seatMap.src = map;

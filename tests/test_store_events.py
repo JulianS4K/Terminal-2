@@ -282,3 +282,27 @@ def test_reserve_upstream_error_does_not_leak_tevo(client, monkeypatch):
     # path (app.py:7345), the cached ticket_groups helper (6812), and
     # /api/store/events/near (6384). reserve is the representative public
     # case; the other two are identical scrubs.
+
+
+# ---------- seat-map "null"-string coercion (broken-image bug) ----------
+
+def test_clean_opt_url_coerces_null_sentinels():
+    """v_event_seating_chart / TEvo carry the literal string 'null' for an
+    absent seat-map URL. _clean_opt_url must coerce 'null'/'none'/'' (any
+    case, with whitespace) to real None so the frontend takes the no-chart
+    placeholder path instead of rendering <img src="null"> (a broken image
+    resolving to /store/event/null). Found live on event 3091432
+    (Tigers @ Yankees): configuration.seating_chart_medium == 'null'."""
+    f = app_module._clean_opt_url
+    # sentinels → None
+    assert f("null") is None
+    assert f("NULL") is None
+    assert f("  null  ") is None
+    assert f("none") is None
+    assert f("") is None
+    assert f("   ") is None
+    assert f(None) is None
+    # real URLs pass through untouched
+    assert f("https://s3.amazonaws.com/chart/medium.jpg") == "https://s3.amazonaws.com/chart/medium.jpg"
+    # a string that merely contains "null" is NOT a sentinel
+    assert f("https://x/nullsville.jpg") == "https://x/nullsville.jpg"
