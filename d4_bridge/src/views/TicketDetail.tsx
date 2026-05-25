@@ -229,10 +229,10 @@ export default function TicketDetail() {
                     {currentTicket.status === 'used' ? (
                        <div className="absolute inset-0 flex flex-col items-center justify-center z-30">
                           <div className="bg-red-600 text-white px-8 py-3 font-black text-2xl uppercase italic tracking-tighter -rotate-12 shadow-2xl skew-x-12">
-                             REDEEMED
+                             ENTERED
                           </div>
                           <p className="text-black font-black text-[10px] uppercase tracking-widest mt-4 bg-white px-3 py-1">
-                             {currentTicket.checkInDate ? formatInTz(currentTicket.checkInDate.toDate(), event.timezone, { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }) : 'SCAN VERIFIED'}
+                             {currentTicket.checkInDate ? `Scanned ${formatInTz(currentTicket.checkInDate.toDate(), event.timezone, { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })}` : 'SCANNED'}
                           </p>
                        </div>
                     ) : currentTicket.status === 'voided' ? (
