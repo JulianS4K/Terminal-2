@@ -113,3 +113,50 @@ eventual goal. Deliberately off now; recorded so it isn't lost.
   the layer makes *execution* faster, never *autonomous*.
 
 Until every gate is met, read-only stands.
+
+---
+
+## 8.1 Worked example — TEvo Buy Order ("autobuy") · **DISABLED, reference only**
+
+> **Status: NOT ENABLED.** This is the concrete contract for the eventual *autobuy* arm of
+> the §8 write layer, recorded so it isn't lost. It is **off**: no `POST /orders` to TEvo (or
+> any marketplace) happens until **every §8 gate is met AND the operator explicitly authorizes
+> the write path** (lockdown rule #2). Captured 2026-05-25 from operator-supplied TEvo docs.
+> No order-creation code exists in this repo; this is design reference only.
+
+**What it is.** A TEvo *Buy Order* = our office purchasing `ticket_group`s into our **own
+inventory** (no downstream client sale) via `POST /orders`. It is the action side of Discovery:
+a blind-spot / mover surfaces a `ticket_group_id` → **human approves a buy** → this would commit it.
+
+**Request shape.** `orders[].shipped_items[]` carries `{ ticket_group_id, quantity, price }` + a
+delivery `type`; order-level: `buyer_id` (our office), `payments:[{type:'evopay'}]`,
+`tax_signature`, `service_fee`, `tax`, `buyer_reference_number`, `external_notes`/`internal_notes`.
+
+| Delivery `type` | Extra shipped_item fields |
+|---|---|
+| `TMMobile` (TM Mobile Entry e-transfer) | `ship_to_name`, `email_address_attributes.address` |
+| `FlashSeats` (AXS e-transfer) | `ship_to_name`, `email_address_attributes.address` |
+| `Eticket` (Print-at-Home PDF; also Mobile screencap/PDF) | `ship_to_name`, `email_address_attributes.address` |
+| `FedEx` (physical ship) | `service_type`, `signature_type`, `residential`, `ship_to_*`, full `address_attributes`, `phone_number_attributes` |
+| `LocalPickup` (too late to ship) | `ship_to_name`, `notes`, `phone_number_attributes` |
+
+**Mechanics that shape the build**
+- **Two-step commit.** `tax_signature` is a *server-issued* token (from a prior tax quote) — not ours to mint. Flow is **quote → commit**; price/availability can move between the two → re-validate the ticket_group immediately before commit (TOCTOU).
+- **`payments: evopay`** = real funds via the EvoPay balance — the money boundary, hardest gate.
+- **`buyer_id`** = our office id. **`1937` = TEvo's TEST office** → sandbox-first for all testing.
+- **`ticket_group_id`** is the join from Discovery; inventory is live (re-fetch before buying). We already cache TEvo ticket groups via the `sweep_tevo_ticket_groups_cache` cron.
+- **`buyer_reference_number`** = our idempotency / reconciliation key — prevents double-buys on retry.
+
+**Autobuy-specific gates (on top of §8's gates — all required before live)**
+- **Human approves every order** — no bulk-auto, no autonomous commit.
+- Hard **per-order + per-day spend ceilings**, server-enforced (not UI-only).
+- **Idempotency** (`buyer_reference_number`) + dedupe.
+- **Re-validate** availability/price right before commit.
+- **Sandbox-first**: office 1937 behind a flag; live office behind a *separate*, explicitly-authorized flag.
+- Global **kill switch**; full **audit log** (quote + order + outcome); **reconciliation** vs TEvo order status.
+
+**Lane.** Order client (`POST /orders`) = D2/backend; D0 owns the terminal UI that presents the
+opportunity + captures the per-order human approval; cron/migration = A1; opening the write path =
+operator authorization. Spans lanes by design.
+
+**Until enabled:** Discovery *proposes* a buy; the human executes it in the TEvo POS.
