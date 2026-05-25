@@ -953,14 +953,6 @@ def _fetch_evo(per_page: int, page: int = 1) -> dict:
     return _fetch_one_source("evo", per_page, page)
 
 
-def _fetch_sg(per_page: int, page: int = 1) -> dict:
-    # SG source on the orders feed is the broker firehose post-2026-05-16
-    # rewire — see _SQL_BACKED_SOURCES comment. Helper is currently
-    # unreferenced; kept for symmetry with the other per-source fetchers in
-    # case the bundled orders feed is ever decomposed.
-    return _fetch_one_source("seatgeek_sales", per_page, page)
-
-
 def _fetch_tickpick(per_page: int, page: int = 1) -> dict:
     return _fetch_one_source("tickpick", per_page, page)
 
@@ -985,10 +977,45 @@ def _fetch_one_source(source: str, per_page: int, page: int = 1) -> dict:
 
 @app.get("/healthz")
 def healthz():
-    """Public health check. Stripped to a minimal shape — operator can still
-    confirm the service is up, but no fingerprintable detail is exposed.
-    Use /healthz?detail=1 with a valid Bearer token for the full diagnostic."""
+    """Public LIVENESS check. Stripped to a minimal shape — operator can still
+    confirm the process is up, but no fingerprintable detail is exposed.
+    Use /healthz/detail with a valid Bearer token for the full diagnostic,
+    or /readyz for a Supabase-connectivity readiness probe.
+
+    Render's health-check path points HERE (liveness) on purpose — a transient
+    Supabase blip must NOT mark the process unhealthy and trigger a restart."""
     return {"ok": True, "service": "d2_dashboard"}
+
+
+@app.get("/readyz")
+def readyz():
+    """Public READINESS probe — verifies the dashboard can actually reach
+    Supabase and read its serving view (`unified_orders`), not just that the
+    process is up. Catches the failure mode /healthz can't see: a present-but-
+    wrong/unreachable SUPABASE_URL passes liveness but 503s on the first data
+    hit. Operators + uptime monitors curl this post-deploy.
+
+    Leaks only a reachability enum (no error detail to the client; the full
+    exception goes to stderr). One cheap LIMIT-1 read per hit. Do NOT wire
+    Render's health-check path to this — keep that on /healthz (see above)."""
+    sb = _sb()
+    if sb is None:
+        return JSONResponse(
+            {"ok": False, "service": "d2_dashboard", "supabase": "not_configured"},
+            status_code=503,
+        )
+    try:
+        # Probe the exact surface the dashboard serves. UNION-ALL view + LIMIT 1
+        # short-circuits after the first branch's first row — cheap.
+        sb.table("unified_orders").select("source").limit(1).execute()
+        return {"ok": True, "service": "d2_dashboard", "supabase": "reachable"}
+    except Exception as e:
+        import sys as _sys
+        print(f"[d2_dashboard] /readyz supabase probe failed: {e!r}", file=_sys.stderr, flush=True)
+        return JSONResponse(
+            {"ok": False, "service": "d2_dashboard", "supabase": "unreachable"},
+            status_code=503,
+        )
 
 
 @app.get("/healthz/detail")

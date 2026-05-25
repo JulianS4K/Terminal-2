@@ -42,8 +42,8 @@ Apply **in this order** (it is the dependency order). Apply one at a time; **sto
 | 6 | `20260523210000_exos_mail_ticket_issued.sql` | `ticket-issued` template + `exos_queue_ticket_issued()` | #1, #5 |
 | 7 | `20260523220000_exos_notify_holders.sql` | `exos_notify_event_holders()` | #1 |
 | 8 | `20260523230000_exos_issue_to_email.sql` | `exos_issue_ticket_to_email()` (box-office comp to a named account) | #2, #6 |
-| 9 | `20260524120000_exos_public_marketing.sql` | `exos_public_orgs` view + `marketing` (public-safe socials/pixel-ids) | #5 |
-| 10 | `20260524130000_exos_security_hardening.sql` | pin `exos_touch_updated_at` search_path; revoke anon EXECUTE on `exos_has_org_role` | phase-1 (live) |
+| 9 | `20260524150000_exos_public_marketing.sql` | `exos_public_orgs` view + `marketing` (public-safe socials/pixel-ids) | #5 |
+| 10 | `20260524160000_exos_security_hardening.sql` | pin `exos_touch_updated_at` search_path; revoke anon EXECUTE on `exos_has_org_role` | phase-1 (live) |
 
 ### ⛔ Do NOT apply (dormant by design — free-first excludes payments/distribution)
 - `20260523170000_exos_stripe_checkout.sql`

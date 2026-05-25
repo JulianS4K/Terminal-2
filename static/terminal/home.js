@@ -87,14 +87,15 @@
   //   2. price rising       >= 10% over 48h
   //   3. sales accelerating >= 30% (last 24h vs prior 24h)
   //   4. sales clearing at/above current ask
-  // Surfaces events scoring >= 3/4. Pool: ~3,150 unmatched US SG events
-  // polled at 12h cadence (TRACK_BLINDSPOT tier).
+  // Surfaces events scoring >= 2/4 (two independent signals agreeing). Pool:
+  // ~2,930 unmatched US SG events polled at 12h cadence (TRACK_BLINDSPOT tier).
+  // RPC perf-fixed via matview mig 20260524120000 (was timing out >11s).
   //
   // Replaces the prior heuristic (sg_sales_window >= 5 AND cur_owned_tix == 0
   // pulled from /api/broker/movers) — that surfaced matched events with SG
   // activity but doesn't cover the unmatched-US cohort the new tracker targets.
 
-  const BLIND_SPOT_MIN_SCORE = 3;
+  const BLIND_SPOT_MIN_SCORE = 2;  // was 3; audit 2026-05-24 found score>=3 ~never reached
   const BLIND_SPOT_MAX_ROWS  = 20;
   // Threshold for the table-row "blindspot" highlight: SG sales activity
   // above this level with zero owned tickets flags the row warn-color.

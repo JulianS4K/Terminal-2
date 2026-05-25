@@ -94,6 +94,51 @@ def test_healthz_public_minimal(client):
     assert body == {"ok": True, "service": "d2_dashboard"}
 
 
+class _ReadyzQuery:
+    """Minimal chainable stub for sb.table(...).select(...).limit(...).execute()."""
+    def __init__(self, raises=False):
+        self._raises = raises
+    def select(self, *a, **k): return self
+    def limit(self, *a, **k): return self
+    def execute(self):
+        if self._raises:
+            raise RuntimeError("connection refused to db.internal:5432")
+        return type("R", (), {"data": [{"source": "evo"}]})()
+
+
+def test_readyz_reachable_when_supabase_responds(monkeypatch, client):
+    """/readyz does a real LIMIT-1 read against unified_orders. When Supabase
+    answers, it returns 200 + supabase=reachable — the readiness signal that
+    /healthz (liveness only) can't give."""
+    sb = type("Sb", (), {"table": lambda self, *a, **k: _ReadyzQuery()})()
+    monkeypatch.setattr(d2_main, "_sb", lambda: sb)
+    r = client.get("/readyz")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "service": "d2_dashboard", "supabase": "reachable"}
+
+
+def test_readyz_503_when_supabase_not_configured(monkeypatch, client):
+    """No Supabase client (unset/missing env) → 503 + supabase=not_configured.
+    This is the failure mode /healthz can't see (process is up, DB isn't)."""
+    monkeypatch.setattr(d2_main, "_sb", lambda: None)
+    r = client.get("/readyz")
+    assert r.status_code == 503
+    assert r.json()["supabase"] == "not_configured"
+
+
+def test_readyz_503_when_supabase_unreachable_without_leaking_detail(monkeypatch, client):
+    """Client present but the probe read raises (wrong URL / DB down) → 503 +
+    supabase=unreachable. The exception detail must NOT leak into the client
+    body (it goes to stderr); only the reachability enum is exposed."""
+    sb = type("Sb", (), {"table": lambda self, *a, **k: _ReadyzQuery(raises=True)})()
+    monkeypatch.setattr(d2_main, "_sb", lambda: sb)
+    r = client.get("/readyz")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["supabase"] == "unreachable"
+    assert "connection refused" not in str(body)  # no internal detail leaks
+
+
 def test_cors_storefront_origin_allowed(client):
     """D0's /undelivered scaffold on vibepass-storefront-test.onrender.com
     must be able to fetch /api/d2/* cross-origin per the unified architecture

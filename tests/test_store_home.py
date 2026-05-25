@@ -516,6 +516,31 @@ def test_or_ilike_clause_escapes_embedded_double_quote():
     assert out == 'name.ilike."%He said ""yes"",%"'
 
 
+def test_csp_frame_ancestors_header_only_not_meta(store_home_client):
+    """frame-ancestors is honored ONLY as an HTTP header, never in a <meta>
+    CSP — browsers ignore it there and log a console error on every page
+    load. So: the served HTML's <meta> CSP must NOT contain frame-ancestors,
+    while the HTTP response header CSP MUST (clickjacking protection
+    preserved). Guards against re-adding it to the meta tag."""
+    r = store_home_client.get("/store")
+    assert r.status_code == 200
+    body = r.text
+    # The meta CSP line must be present but without frame-ancestors.
+    assert 'http-equiv="Content-Security-Policy"' in body
+    # Isolate the meta tag content to avoid matching anything else.
+    meta_idx = body.find('http-equiv="Content-Security-Policy"')
+    meta_tag = body[meta_idx:body.find(">", meta_idx)]
+    assert "frame-ancestors" not in meta_tag, (
+        "frame-ancestors must not appear in the <meta> CSP (browsers ignore "
+        "it there + log a console error)"
+    )
+    # HTTP-header CSP still enforces it.
+    hdr_csp = r.headers.get("content-security-policy", "")
+    assert "frame-ancestors 'none'" in hdr_csp, (
+        "frame-ancestors 'none' must remain in the HTTP-header CSP"
+    )
+
+
 # ---------- Storefront cache-bust helper ----------
 
 def test_store_home_html_includes_version_query_string(store_home_client, monkeypatch):
@@ -615,6 +640,27 @@ def test_legal_pages_render(monkeypatch):
         )
 
 
+def test_legal_pages_have_seo_head(monkeypatch):
+    """Legal pages reached SEO parity with index.html — favicon link, a
+    meta description, and an og:title. Guards against the D1-OPS-4 gap
+    where about/privacy/terms shipped (PR #164) before the SEO scaffold
+    (PR #166) and had only a bare <title>."""
+    client = TestClient(app_module.app)
+    for path in ("/store/about", "/store/privacy", "/store/terms"):
+        body = client.get(path).text
+        assert 'rel="icon"' in body, f"{path} missing favicon link"
+        assert 'name="description"' in body, f"{path} missing meta description"
+        assert 'property="og:title"' in body, f"{path} missing og:title"
+
+
+def test_event_page_has_canonical_link(monkeypatch):
+    """event.html carries a <link rel='canonical'> element (store.js fills
+    href at mount to the filter-less URL, deduping ?zones= filter variants)."""
+    client = TestClient(app_module.app)
+    body = client.get("/store/event/3346001").text
+    assert 'rel="canonical"' in body, "event page missing canonical link element"
+
+
 def test_legal_pages_have_no_cache_revalidate_header(store_home_client):
     """Legal pages route through _render_storefront_page so they inherit
     the same Cache-Control: no-cache, must-revalidate header. Guards
@@ -654,6 +700,29 @@ def test_all_storefront_html_routes_revalidate(store_home_client):
         assert "no-cache" in cc.lower(), (
             f"{path}: Cache-Control missing no-cache; got: {cc!r}"
         )
+
+
+def test_static_store_asset_versioned_is_immutable(store_home_client):
+    """D1-OPS-2: a versioned (?v=<sha>) /static/store asset request gets a
+    1-year immutable Cache-Control so browsers stop revalidating every load.
+    The ?v= query is what makes immutable safe — a new deploy serves a new
+    URL."""
+    r = store_home_client.get("/static/store/style.css?v=abc1234")
+    assert r.status_code == 200, r.text
+    cc = r.headers.get("cache-control", "").lower()
+    assert "max-age=31536000" in cc and "immutable" in cc, (
+        f"versioned static asset should be immutable-cached; got: {cc!r}"
+    )
+
+
+def test_static_store_asset_unversioned_short_ttl(store_home_client):
+    """An unversioned /static/store hit (rare — crawler/manual) gets a short
+    TTL, NOT immutable, so a deploy isn't masked forever for those callers."""
+    r = store_home_client.get("/static/store/style.css")
+    assert r.status_code == 200
+    cc = r.headers.get("cache-control", "").lower()
+    assert "immutable" not in cc, f"unversioned asset must not be immutable; got: {cc!r}"
+    assert "max-age=600" in cc, f"expected short TTL; got: {cc!r}"
 
 
 # ---------- /api/store/movers stale-while-revalidate cache ----------
