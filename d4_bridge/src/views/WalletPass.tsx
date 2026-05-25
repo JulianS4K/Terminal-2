@@ -73,44 +73,58 @@ export default function WalletPass() {
   // the signed payload at every bucket boundary using the per-ticket
   // secret. Falls back to the legacy unsigned format for tickets that
   // don't carry a secret (organizer scanner tolerates them as legacy).
+  // Depend on the primitive ticket fields, NOT the whole `ticket` object: the
+  // 15s poll above replaces `ticket` with a fresh (equal-id) object every tick,
+  // which previously re-ran this effect and reset the countdown to 30 — the
+  // "switching tabs / waiting resets the timer" behavior. The QR was always
+  // valid (it's derived from wall-clock), but the visible timer was misleading.
+  const ticketId2 = ticket?.id;
+  const barcodeSecret = ticket?.barcodeSecret;
+  const uid = user?.uid;
   useEffect(() => {
-    if (!ticket || !user) return;
+    if (!ticketId2 || !uid) return;
     let cancelled = false;
+    let lastBucket = -1;
     const refresh = async () => {
-      const secret = ticket.barcodeSecret;
       const bucket = currentBucket();
-      if (secret) {
+      lastBucket = bucket;
+      if (barcodeSecret) {
         try {
-          const signed = await signBarcode(ticket.id, user.uid, secret, bucket);
-          if (!cancelled) {
-            setBarcode(signed);
-            setTimeLeft(30);
-          }
+          const signed = await signBarcode(ticketId2, uid, barcodeSecret, bucket);
+          if (!cancelled) setBarcode(signed);
           return;
         } catch (err) {
           console.warn('Falling back to legacy unsigned barcode:', err);
         }
       }
-      if (!cancelled) {
-        setBarcode(`T-${ticket.id}:${user.uid}:${bucket}`);
-        setTimeLeft(30);
-      }
+      if (!cancelled) setBarcode(`T-${ticketId2}:${uid}:${bucket}`);
+    };
+    const tick = () => {
+      if (cancelled) return;
+      // Wall-clock countdown — accurate across re-renders and background-tab
+      // timer throttling (a naive decrement drifts when the tab is hidden).
+      const secs = 30 - (Math.floor(Date.now() / 1000) % 30);
+      setTimeLeft(secs === 0 ? 30 : secs);
+      // Re-sign when the 30s bucket actually rolls over.
+      if (currentBucket() !== lastBucket) void refresh();
     };
     void refresh();
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          void refresh();
-          return 30;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    const interval = setInterval(tick, 1000);
+    // Re-issue immediately on return to the tab: a throttled background timer
+    // can otherwise leave a stale (expired-bucket) QR on screen at the door.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh();
+        tick();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [ticket, user]);
+  }, [ticketId2, barcodeSecret, uid]);
 
   // Best-effort screen wake lock. Keeps the screen awake while the
   // holder is showing this page at the door. Falls through silently

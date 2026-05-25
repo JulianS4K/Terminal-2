@@ -11,7 +11,7 @@ import {
 import { Ticket, Event } from '../types';
 import { Search, CheckCircle2, XCircle, ArrowLeft, Loader2, User, Camera, ScanLine, Download, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { verifyBarcode, extractTicketIdFromAny } from '../lib/barcode';
@@ -100,7 +100,7 @@ export default function OrganizerCheckIn() {
   const [syncing, setSyncing] = useState(false);
   const [pendingUpdates, setPendingUpdates] = useState<string[]>([]);
   const [recentScans, setRecentScans] = useState<{ id: string, name: string, time: Date, status: string }[]>([]);
-  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
   const wasOfflineRef = useRef(isOffline);
 
   useEffect(() => {
@@ -159,9 +159,7 @@ export default function OrganizerCheckIn() {
     return () => {
       window.removeEventListener('online', handleSyncStatus);
       window.removeEventListener('offline', handleSyncStatus);
-      if (scannerRef.current) {
-        scannerRef.current.clear().catch(console.error);
-      }
+      void stopScanner();
     };
   }, [eventId]);
 
@@ -194,37 +192,69 @@ export default function OrganizerCheckIn() {
     }
   };
 
+  // Tear down the live camera scanner safely. stop() rejects if the camera
+  // isn't actively running, so guard on state and swallow that case.
+  const stopScanner = async () => {
+    const s = scannerRef.current;
+    scannerRef.current = null;
+    if (!s) return;
+    try {
+      if (s.isScanning) await s.stop();
+    } catch {
+      /* not scanning / already stopped */
+    }
+    try {
+      s.clear();
+    } catch {
+      /* element already torn down */
+    }
+  };
+
   const startScanner = () => {
     setScanning(true);
     setStatus('idle');
-    
-    // Use a small delay to ensure the container is rendered
-    setTimeout(() => {
-      const scanner = new Html5QrcodeScanner(
-        "reader",
-        {
-          fps: 10,
-          qrbox: { width: 250, height: 250 },
-          // Show the device's flashlight toggle when the camera supports
-          // it — invaluable at dim-lit doors. Same with the zoom slider
-          // for far-away wallet QR codes.
-          showTorchButtonIfSupported: true,
-          showZoomSliderIfSupported: true,
-        },
-        /* verbose= */ false
-      );
-      
-      scanner.render((decodedText) => {
-        setSearchId(decodedText);
-        handleCheckIn(undefined, decodedText);
-        scanner.clear().catch(console.error);
+
+    // Defer one tick so the #reader container is in the DOM, then open the
+    // back camera DIRECTLY (facingMode: environment). The previous
+    // Html5QrcodeScanner widget required a second "Request Camera / Start"
+    // tap that often never activated the camera on phones, and its fixed
+    // 250px qrbox threw on narrow viewports (video < box) — both fixed here.
+    setTimeout(async () => {
+      try {
+        const html5Qr = new Html5Qrcode('reader');
+        scannerRef.current = html5Qr;
+        await html5Qr.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            // Responsive box: 70% of the smaller video dimension, so it
+            // never exceeds the camera frame on small phones.
+            qrbox: (vw: number, vh: number) => {
+              const m = Math.floor(Math.min(vw, vh) * 0.7);
+              return { width: m, height: m };
+            },
+          },
+          (decodedText: string) => {
+            setSearchId(decodedText);
+            handleCheckIn(undefined, decodedText);
+            void stopScanner();
+            setScanning(false);
+          },
+          () => {
+            /* per-frame decode miss — ignore */
+          },
+        );
+      } catch (err) {
+        console.error('Camera start failed:', err);
+        toast({
+          kind: 'error',
+          message:
+            'Could not open the camera. Allow camera access for this site in your browser settings, or type the ticket ID below to check in.',
+        });
+        scannerRef.current = null;
         setScanning(false);
-      }, (error) => {
-        // Silently fail on non-detection
-      });
-      
-      scannerRef.current = scanner;
-    }, 100);
+      }
+    }, 50);
   };
 
   /**
@@ -837,8 +867,8 @@ export default function OrganizerCheckIn() {
               <div id="reader" className="w-full rounded-2xl border-2 border-indigo-100 overflow-hidden"></div>
               <button
                 onClick={() => {
+                  void stopScanner();
                   setScanning(false);
-                  if (scannerRef.current) scannerRef.current.clear();
                 }}
                 aria-label="Stop the QR code scanner"
                 className="mt-4 w-full py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors"
