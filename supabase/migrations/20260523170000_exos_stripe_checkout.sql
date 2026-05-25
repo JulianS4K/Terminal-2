@@ -90,8 +90,11 @@ BEGIN
   IF s.status = 'fulfilled' THEN
     RETURN coalesce(s.ticket_ids, '{}');
   END IF;
+  -- Any other terminal state (failed / refunded / expired) — idempotent no-op,
+  -- so a DUPLICATE webhook delivery of an already-terminal session doesn't
+  -- raise → 500 → Stripe-retry-loop. Only 'pending' proceeds to mint.
   IF s.status <> 'pending' THEN
-    RAISE EXCEPTION 'exos_fulfill_checkout: session % is % (not fulfillable)', p_session_id, s.status;
+    RETURN '{}'::uuid[];
   END IF;
 
   -- Tier capacity claim (atomic). NULL tier = no per-tier cap.
@@ -105,8 +108,12 @@ BEGIN
       UPDATE public.exos_checkout_sessions
          SET status='failed', failure_reason='tier sold out at fulfillment'
        WHERE session_id = p_session_id;
-      -- Buyer was charged but tickets unavailable -> caller must refund.
-      RAISE EXCEPTION 'exos_fulfill_checkout: tier sold out (session %)', p_session_id;
+      -- Sold out is TERMINAL — retrying can't help. RETURN (not RAISE) so the
+      -- 'failed' mark COMMITS: a RAISE would roll back this whole function,
+      -- undoing the mark, leaving the session 'pending' and making the webhook
+      -- 500 → Stripe retry forever. The buyer was charged but no inventory —
+      -- the 'failed' session is the refund signal (operator / refund sweep).
+      RETURN '{}'::uuid[];
     END IF;
   END IF;
 
@@ -120,7 +127,8 @@ BEGIN
     UPDATE public.exos_checkout_sessions
        SET status='failed', failure_reason='event sold out at fulfillment'
      WHERE session_id = p_session_id;
-    RAISE EXCEPTION 'exos_fulfill_checkout: event sold out (session %)', p_session_id;
+    -- Terminal (see tier branch above): mark failed + RETURN so it commits.
+    RETURN '{}'::uuid[];
   END IF;
 
   -- Mint to the buyer.
