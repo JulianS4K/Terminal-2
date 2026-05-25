@@ -209,24 +209,24 @@ Verification:
 
 **Decision (operator 2026-05-23):** D4 runs **free-first** — a primary ticketing system that owns the ticket (issue → wallet/QR → transfer → scan). **Stripe payments + EVO distribution are DEFERRED** (scaffolded, dormant). Architecture + full plan: `docs/d_tier_unification_map.md` + `docs/d_tier_unification_plan.md`.
 
-**✅ Built (PR #323) — B1 ✅ cleared (2026-05-24, bot_chat #508). Pending A1 merge + apply. Apply runbook: [`docs/d4_prod_apply_handoff.md`](docs/d4_prod_apply_handoff.md).** Apply migs `130000`(mail drainer) / `150000`(event cap) / `160000`(scan-verify) / `180000`(buy limits) / `200000`(growth primitives) / `210000`(ticket-issued mail) / `220000`(holder notify) / `230000`(issue-to-email, box-office comp) / `20260524150000`(public marketing view) / `20260524160000`(security hardening); **skip** `170000`(Stripe) + `190000`(distribution) — dormant. Rebuild Bridge → `static/bridge/`; deploy `exos-mail-drain` + 2-min cron. Per-item detail: rows D4-OPS-1/3/4/5/6/8/10/12/14/15/16 + the phases below. Effort key: **S** <1d · **M** 1-3d · **L** week+.
+**✅ Built (PR #323) — B1 ✅ cleared — PR #323 merged to main (2026-05-24) — free-first batch applied to prod (2026-05-24) — `exos-mail-drain` v1 deployed (2026-05-24).** All 10 migs applied: `130000`(mail drainer) / `150000`(event cap) / `160000`(scan-verify) / `180000`(buy limits) / `200000`(growth primitives) / `210000`(ticket-issued mail) / `220000`(holder notify) / `230000`(issue-to-email) / `20260524150000`(public marketing) / `20260524160000`(security hardening). Skipped `170000`(Stripe) + `190000`(distribution) — dormant. Smoke checks: 8/8 new RPCs ✅; 4-arg check_in ✅; marketing col + public view ✅; anon EXECUTE revoked ✅. **Remaining operator actions:** set `RESEND_API_KEY` + `EXOS_MAIL_FROM` edge-fn secrets; schedule 2-min cron (snippet in handoff doc §5). Apply runbook: [`docs/d4_prod_apply_handoff.md`](docs/d4_prod_apply_handoff.md). Effort key: **S** <1d · **M** 1-3d · **L** week+.
 
 **🧪 Backend branch-verified end-to-end (2026-05-24): 41/41 scenarios green** on a throwaway Supabase branch. Covered: buy-limits incl. cumulative second-buy + admin bypass + tier/event caps (12/12); HMAC check-in valid/forged/expired/malformed/wrong-owner/replay + full transfer lifecycle incl. secret rotation killing a pre-transfer screenshot (15/15); issue-to-email + discount redeem + announce-to-followers + public marketing view + hardening (14/14). FE: `tsc`+`vite build` green; anon read-path validated at DB level.
 
-**🟢 Free-first go-live punch list:** ① A1 merges PR #323 + applies free-first batch; ② A1/D0 rebuild+deploy Bridge + deploy `exos-mail-drain`+cron; ③ Operator sets `RESEND_API_KEY`/`EXOS_MAIL_FROM` + Auth SMTP (D4-OPS-9); ④ **door rehearsal (D4-OPS-11)** = go/no-go → free-event go-live.
+**🟢 Free-first go-live punch list:** ① ✅ PR #323 merged + free-first batch applied (2026-05-24); ② ✅ Bridge rebuilt+deployed (PR #322) + `exos-mail-drain` deployed (v1, 2026-05-24) — **cron pending** (operator step); ③ 🟠 Operator: set `RESEND_API_KEY`/`EXOS_MAIL_FROM` secrets + schedule 2-min cron + Auth SMTP (D4-OPS-9); ④ **door rehearsal (D4-OPS-11)** = go/no-go → free-event go-live.
 
 **Phase 1 — Door-ready (free / RSVP event)** — organizer mints, attendees access in-app, staffed manual fallback:
-1. **D4-OPS-1** SW scope fix (**M**) — ✅ source-fixed (PR #321; turns out **no** `Service-Worker-Allowed` header is needed — scope = script dir), **deploy-pending** (rebuild w/ Supabase keys → `static/bridge/`). Restores offline cold-boot + PWA install.
-2. **D4-OPS-10** offline multi-lane double-admit (**M**) — ✅ source-fixed (PR #321): shared-lock via Realtime `postgres_changes` on `exos_event_checkins`. **A1 applies** mig `20260523120000`; deploy-pending; 2-lane convergence verified at the rehearsal.
-3. **D4-OPS-9** Auth SMTP at scale (**S**, operator config) — independent; do early so day-of sign-ins don't throttle.
-4. **D4-OPS-4** CSV voided-label fix (**S**) — ✅ source-fixed (PR #321), deploy-pending.
-5. **D4-OPS-11** load + door rehearsal (**M**) — 🟡 DB-side validated on a branch (PR #321: 8-lane concurrent check-in clean, 0 double-admits; harness committed). Remaining go/no-go gate = physical/device + Realtime + Auth-spike rehearsal on the deployed app.
+1. **D4-OPS-1** SW scope fix (**M**) — ✅ **DEPLOYED** (PR #321 + PR #322: built → `static/bridge/` synced 2026-05-24). Restores offline cold-boot + PWA install.
+2. **D4-OPS-10** offline multi-lane double-admit (**M**) — ✅ **DEPLOYED** (PR #321 source + PR #322 deploy; mig `20260523120000` applied to prod). Realtime `postgres_changes` on `exos_event_checkins` live.
+3. **D4-OPS-9** Auth SMTP at scale (**S**, operator config) — 🟠 operator action required; do early so day-of sign-ins don't throttle.
+4. **D4-OPS-4** CSV voided-label fix (**S**) — ✅ **DEPLOYED** (PR #321 + PR #322: `static/bridge/` synced 2026-05-24).
+5. **D4-OPS-11** load + door rehearsal (**M**) — 🟡 DB-side validated (8-lane concurrent check-in, 0 double-admits). **GATE:** physical device rehearsal on deployed app = go/no-go for free-event launch.
 → **Exit gate:** green door rehearsal → free 1000-person go-live.
 
 **Phase 2 — Full-featured + hardened (still free; adds delivery + receipts)**:
-6. **D4-OPS-8** `exos_mail` drainer (**M**) — ✅ built in source (PR #323: edge fn + claim/mark migration `20260523130000`). B1 ✅ cleared. Pending: A1 apply mig + deploy fn; Op set `RESEND_API_KEY`/`EXOS_MAIL_FROM` + schedule the 2-min cron.
-7. **D4-OPS-5** event-level oversell enforcement (**S**) — ✅ built in source (PR #323: mig `20260523150000`). B1 ✅ cleared. Pending A1 apply.
-8. **D4-OPS-6** server-side check-in HMAC verification (**M**) — ✅ built in source (PR #323: mig `20260523160000`). B1 ✅ cleared. Pending A1 apply.
+6. **D4-OPS-8** `exos_mail` drainer (**M**) — ✅ **APPLIED + DEPLOYED** (mig `20260523130000` + `exos-mail-drain` v1 live 2026-05-24). 🟠 **Operator:** set `RESEND_API_KEY` + `EXOS_MAIL_FROM` edge-fn secrets; schedule 2-min cron (snippet in handoff doc §5).
+7. **D4-OPS-5** event-level oversell enforcement (**S**) — ✅ **APPLIED** to prod (mig `20260523150000`, 2026-05-24).
+8. **D4-OPS-6** server-side check-in HMAC verification (**M**) — ✅ **APPLIED** to prod (mig `20260523160000`, 2026-05-24). 4-arg `exos_check_in_ticket` with server HMAC live.
 → **Exit gate:** fully-featured free events at scale; product proven end-to-end.
 
 **Phase 3 — Payments (⏸️ DEFERRED — free-first excludes this)**:
