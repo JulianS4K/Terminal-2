@@ -161,7 +161,7 @@
   <!-- Reserve modal — appears when user clicks Reserve on a listing.
        MVP only: confirms server-side that the ticket group is still
        available and shows what a real receipt would look like. -->
-  <div id="modal" class="modal" hidden>
+  <div id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-label="Dialog">
     <div class="modal-card">
       <button class="close" aria-label="close" id="closeModal">×</button>
       <div id="modalBody"></div>
