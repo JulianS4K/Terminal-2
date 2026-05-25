@@ -105,6 +105,9 @@
 
     wireTabs(performerId);
     T.setStatus(`Loading performer ${performerId}…`);
+    // Eager-load ESPN so the Form & Availability strip + full ESPN tab are ready
+    // on open — demand context up-front, not a tab-click away.
+    loadEspnContext(performerId).catch(e => console.error('espn-eager', e));
 
     Promise.all([
       T.api(`/api/broker/performer/${performerId}/assets`).catch(e => ({ __err: e })),
@@ -145,10 +148,8 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     const paneIds = {
-      overview:   'paneOverview',
-      upcoming:   'paneUpcoming',
-      blindspots: 'paneBlindspots',
-      espn:       'paneEspn',
+      overview: 'paneOverview',
+      espn:     'paneEspn',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -351,6 +352,7 @@
     }
     _tabState.loaded.espn = true;
     renderEspnContext(res.data || {}, performance.now() - t0);
+    try { renderEspnSummary(res.data || {}); } catch (e) { console.error('espnSummary', e); }
   }
 
   function renderEspnContext(d, ms) {
@@ -420,6 +422,33 @@
         <div class="espn-col"><div class="espn-col-hdr">INJURY REPORT</div>${injHtml}</div>
         <div class="espn-col espn-col-wide"><div class="espn-col-hdr">RECENT — last 5</div>${recHtml}</div>
       </div>`;
+  }
+
+  // ---------- ESPN summary strip (Overview — compact form + availability) ----------
+  function renderEspnSummary(d) {
+    const strip = document.getElementById('poEspnStrip');
+    const sec   = document.getElementById('perf-espn-summary');
+    const meta  = document.getElementById('poEspnMeta');
+    if (!strip || !sec) return;
+    if (!d || d.hidden) { sec.setAttribute('hidden', ''); return; }
+    const s = d.standings || {};
+    const inj = d.injuries || [];
+    const cells = [];
+    if (s.wins != null || s.losses != null) cells.push(['record', `${s.wins ?? '—'}-${s.losses ?? '—'}${s.ties ? '-' + s.ties : ''}`]);
+    if (s.win_pct != null) cells.push(['win %', T.fmtPct(Number(s.win_pct) * 100, 1)]);
+    if (s.streak) cells.push(['streak', String(s.streak)]);
+    if (s.playoff_seed != null) cells.push(['seed', String(s.playoff_seed)]);
+    else if (s.division_rank != null) cells.push(['div rank', String(s.division_rank)]);
+    cells.push(['injuries', String(inj.length)]);
+    strip.className = 'rollup-grid';
+    strip.innerHTML = cells.map(c =>
+      `<div class="ru-cell"><span class="ru-num">${escapeHtml(String(c[1]))}</span><span class="ru-lbl">${escapeHtml(c[0])}</span></div>`
+    ).join('');
+    if (meta) {
+      const out = inj.slice(0, 3).map(i => escapeHtml(i.athlete_name || '')).filter(Boolean).join(', ');
+      meta.textContent = [d.espn_league || '', out ? 'out: ' + out : ''].filter(Boolean).join(' · ');
+    }
+    sec.removeAttribute('hidden');
   }
 
   // ---------- Util ----------
