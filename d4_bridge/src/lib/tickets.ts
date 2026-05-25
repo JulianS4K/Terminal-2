@@ -296,6 +296,18 @@ export async function listEventCheckins(eventId: string): Promise<CheckinRow[]> 
   }));
 }
 
+// Count of tickets scanned in (checked in) for an event = "inside venue".
+// One row per check-in in exos_event_checkins (the flip is one-shot), so a
+// head count is the authoritative attendance number. Org-staff RLS gated.
+export async function countEventCheckins(eventId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('exos_event_checkins')
+    .select('*', { count: 'exact', head: true })
+    .eq('event_id', eventId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 export interface ScanRejectRow {
   id: string;
   reason: string;
