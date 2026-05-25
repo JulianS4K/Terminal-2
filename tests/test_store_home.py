@@ -871,22 +871,31 @@ def test_movers_cache_failed_compute_doesnt_poison(monkeypatch):
 # ---------- /api/store/movers velocity-freshness gate ----------
 
 def test_movers_drops_tix_d24h_when_velocity_stale(monkeypatch):
-    """When v_event_velocity_windows.tevo_now_at is older than the
-    freshness threshold (3h), tix_d24h is dropped from the candidate
-    row. This guards against the collector-cadence gap where d1h and
-    d24h subqueries both fall back to the same ancient sample and
-    surface a misleading 'N sold today' badge."""
+    """The velocity freshness gate bounds how old a v_event_velocity_windows
+    sample can be before its d24h is dropped for rail membership. The window
+    is 48h (revised 2026-05-25 from 3h — the 3h gate silently emptied the
+    rails because owned MLB/NBA events re-poll on a ~24-48h cadence, so every
+    qualifying event's sample was 21-141h old).
+
+    Three events exercise the boundary:
+      1001  72h-old sample  → STALE  → dropped from moving_fast
+      1002  30min-old       → FRESH  → in moving_fast
+      1003  24h-old         → FRESH (within 48h) → in moving_fast
+             (1003 is the regression guard: under the old 3h gate it would
+              have been wrongly dropped — exactly the bug this fix closes.)
+    """
     from datetime import datetime, timezone, timedelta
 
-    stale_ts = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    stale_ts = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
     fresh_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    day_old_ts = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
-    # Two events: one with stale velocity, one with fresh velocity.
-    # Both should NOT be classified premium (price < $500) so the only
-    # path to a "selling_fast" signal is via fresh velocity.
+    # All priced < $500 so premium never fires — the ONLY path to a rail is
+    # via velocity, which is what the freshness gate governs.
     fake_metrics = [
         {"event_id": 1001, "owned_tickets_count": 100, "owned_groups_count": 10, "retail_min": 25.0},
         {"event_id": 1002, "owned_tickets_count": 100, "owned_groups_count": 10, "retail_min": 25.0},
+        {"event_id": 1003, "owned_tickets_count": 100, "owned_groups_count": 10, "retail_min": 25.0},
     ]
     fake_events = [
         {"id": 1001, "name": "Stale event", "occurs_at_local": "2026-06-01T19:00:00-04:00",
@@ -895,16 +904,22 @@ def test_movers_drops_tix_d24h_when_velocity_stale(monkeypatch):
         {"id": 1002, "name": "Fresh event", "occurs_at_local": "2026-06-02T19:00:00-04:00",
          "venue_name": "MSG", "venue_location": "New York, NY",
          "primary_performer_id": 16303, "primary_performer_name": "Yankees"},
+        {"id": 1003, "name": "Day-old event", "occurs_at_local": "2026-06-03T19:00:00-04:00",
+         "venue_name": "MSG", "venue_location": "New York, NY",
+         "primary_performer_id": 16303, "primary_performer_name": "Yankees"},
     ]
     fake_velocity = [
         {"tevo_event_id": 1001, "tevo_tix_now": 100, "tevo_tix_d24h": -500,
          "tevo_getin_now": 10.0, "tevo_getin_d24h_pct": -20.0, "tevo_now_at": stale_ts},
         {"tevo_event_id": 1002, "tevo_tix_now": 100, "tevo_tix_d24h": -500,
          "tevo_getin_now": 10.0, "tevo_getin_d24h_pct": -20.0, "tevo_now_at": fresh_ts},
+        {"tevo_event_id": 1003, "tevo_tix_now": 100, "tevo_tix_d24h": -500,
+         "tevo_getin_now": 10.0, "tevo_getin_d24h_pct": -20.0, "tevo_now_at": day_old_ts},
     ]
     fake_lifecycle = [
         {"event_id": 1001, "is_active": True},
         {"event_id": 1002, "is_active": True},
+        {"event_id": 1003, "is_active": True},
     ]
 
     table_map = {
@@ -954,17 +969,24 @@ def test_movers_drops_tix_d24h_when_velocity_stale(monkeypatch):
     body = r.json()
     moving_fast_by_id = {e["id"]: e for e in body.get("moving_fast", [])}
 
-    # Stale event (1001): velocity-suspect → tix_d24h dropped → no
-    # qualification for moving_fast (no d24h, no SG sales stubbed).
+    # Stale event (1001, 72h > 48h): velocity-suspect → tix_d24h dropped →
+    # no qualification for moving_fast (no d24h, no SG sales stubbed).
     assert 1001 not in moving_fast_by_id, (
-        "stale-velocity event must NOT surface — tix_d24h suppressed"
+        "72h-stale velocity must NOT surface — tix_d24h suppressed"
     )
 
-    # Fresh event (1002): velocity trusted; -500 ticket drop qualifies it
-    # for the moving_fast section via the TEvo path. SG sales not stubbed
-    # here, so SG path doesn't fire — TEvo path is sufficient.
+    # Fresh event (1002, 30min): velocity trusted; -500 drop → moving_fast.
     assert 1002 in moving_fast_by_id, "fresh-velocity event should make moving_fast"
     assert moving_fast_by_id[1002]["tix_d24h"] == -500
+
+    # Day-old event (1003, 24h ≤ 48h): the regression guard. Under the old
+    # 3h gate this was wrongly dropped, emptying the rail; the 48h window
+    # admits it.
+    assert 1003 in moving_fast_by_id, (
+        "24h-old velocity is within the 48h window and MUST surface "
+        "(regression guard for the 3h→48h fix)"
+    )
+    assert moving_fast_by_id[1003]["tix_d24h"] == -500
 
 
 def test_movers_response_no_longer_includes_tix_d1h(monkeypatch):
