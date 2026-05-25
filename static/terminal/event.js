@@ -208,13 +208,28 @@
       // like Yankees) can exceed PostgREST's 8s cap under concurrent load and
       // blank the whole header; v2 (~185ms) still fills the core page and the
       // 9 v3-only enrichment panels just render their empty states. (QA 2026-05-24.)
-      if (res.error && (
-            res.error.code === '42883' ||
-            res.error.code === '57014' ||
-            /does not exist|statement timeout|canceling statement/i.test(res.error.message || '')
-          )) {
+      const isTimeout = (r) => !!(r && r.error && (
+        r.error.code === '57014' ||
+        /statement timeout|canceling statement/i.test(r.error.message || '')
+      ));
+      const isMissing = (r) => !!(r && r.error && (
+        r.error.code === '42883' ||
+        /does not exist/i.test(r.error.message || '')
+      ));
+      if (res.error && (isMissing(res) || isTimeout(res))) {
         res = await Auth.client
           .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
+        // Cold-cache hardening (2026-05-25): a first open after cache eviction /
+        // long idle can time out BOTH v3 and v2 — Postgres reads ~8 tables incl. the
+        // SG/listings firehoses (10.5GB) but shared_buffers is only 256MB, so the cold
+        // first-hit blows PostgREST's 8s cap. The v3+v2 attempts warm those pages, so
+        // ONE immediate v2 retry then completes (warm v2 is sub-second; measured
+        // steady-state event-page reads ≤2.7s). Root-cause fix (event-page matview,
+        // hot path stops scanning the firehoses) is queued for the next checkpoint.
+        if (isTimeout(res)) {
+          res = await Auth.client
+            .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
+        }
       }
       if (res.error) {
         const err = new Error(res.error.message || 'RPC error');
