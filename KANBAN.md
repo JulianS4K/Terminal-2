@@ -248,12 +248,32 @@ Verification:
 
 Order-of-magnitude: free-first go-live ≈ apply + deploy + a door rehearsal (code's built); the backlog is post-go-live, mostly gated on operator creds (Stripe/Automatiq/Bandsintown) + B1 (CSP/pixels) + the held FE-stack decision.
 
+### 📈 D4 — scaling backlog (next sprints — full RFC: `docs/d4_scaling_rfc.md`)
+
+In-DB correctness under load is proven (D4-OPS-11: 8-lane concurrent check-in, 0 double-admits). The walls are at the **PostgREST/connection layer, the global counter, and shared infra** — not in-DB. PR #375 shipped two cheap wins (incremental door count; free-claim idempotency).
+
+**Sprint 1 — cheap throughput wins (D4 authors · A1 apply)**
+- **D4-OPS-29 — server-side report aggregation (M).** `OrganizerEventReport`/dashboard aggregate in-browser; add `exos_event_sales_summary` RPC + paginate `listOrgEvents` before tens-of-thousands of tickets.
+- **D4-OPS-30 — mail drainer throughput (S, gated on keys).** `*/2` single-batch won't absorb an onsale burst; raise `exos_mail_claim_batch` limit + Resend-rate-aware drain.
+- **D4-OPS-31 — per-event metrics rollup (S-M).** matview/counter for sold + inside-venue so dashboards/door don't scan `exos_tickets`/`exos_event_checkins`.
+
+**Sprint 2 — onsale concurrency = the wall (D4 design · A1 apply)**
+- **D4-OPS-32 — onsale admission control / waiting-room (L).** Hot tier-row + 8s PostgREST ceiling = slow/timeout onsale (not bad data). Virtual queue (`pgmq` / admit-cron / edge token-bucket); reuse for the paid checkout path.
+- **D4-OPS-33 — decouple the global house-cap counter (M).** Every claim hot-writes `exos_events.tickets_sold` → serializes all tiers on one row. Derive `tickets_sold = Σ tier.sold` (view/matview) + enforce the cap on the sum, or shard the counter.
+- **D4-OPS-34 — connection-pool + PostgREST-layer load test (S).** `statement_timeout` on the claim RPC; verify txn-mode pooling; load-test real concurrent sessions (the layer D4-OPS-11 didn't cover).
+
+**Sprint 3 — infra isolation (operator-led)**
+- **D4-OPS-35 — dedicated Supabase project for D4 (L).** De-couple from the broker 8M-row firehose + ~75 crons (noisy-neighbor; documented to tip RPCs past 8s). Provision → replay `exos_*` → repoint env/secrets → cutover window.
+- **D4-OPS-36 — per-surface Render service (S, planned).** Un-mount `/bridge` from the unified app at the beta DNS split.
+
+**Open for operator:** dedicated DB (yes/when?); peak onsale concurrency target (queue sizing); Stripe timeline (sequence with D4-OPS-32/33).
+
 ### 🧭 D4 — standard-customer expectations backlog (gap analysis 2026-05-25)
 
 What a standard organizer/attendee expects vs. what we ship today. Grouped **free-first (no payments) vs paid-gated (needs Stripe)**. Effort: **S** <1d · **M** 1-3d · **L** week+.
 
 **🔜 Confirmed for next run**
-- **D4-OPS-18 — event-scoped check-in RPC (S).** `exos_check_in_ticket` is org-scoped server-side; the event match is FE-only (`OrganizerCheckIn` wrong-event check). Add `p_event_id` + verify `ticket.event_id = p_event_id` in the RPC (defense-in-depth for multi-event orgs at velocity). Wire the FE to pass `eventId`. Barcode/hash scheme itself is collision-safe (UUID PK namespaces globally; HMAC is per-ticket, not a global key) — no prefix needed.
+- **D4-OPS-18 — event-scoped check-in RPC (S).** ✅ **BUILT IN SOURCE (PR #375) — A1 apply pending.** Mig `20260526080000` DROPs the 4-arg `exos_check_in_ticket` + CREATEs a 5-arg with optional `p_event_id` → server rejects a cross-event scan (`wrong-event`); also stamps `scanned_by_email` (B1-NEXT-62, mig `20260526070000`). FE passes the door's `eventId` at all 3 `checkInTicket` call sites. Backward-compatible (NULL = unchanged); co-deploy with the keyed `static/bridge` rebuild. **A1:** apply `…070000`+`…080000` (B1: door-security surface).
 
 **🟢 Free-first wins (do without payments) — priority order**
 - **D4-OPS-19 — turn on transactional email delivery (S, operator).** Drainer + cron deployed; idle until `RESEND_API_KEY` + `EXOS_MAIL_FROM` are set. Until then confirmation/transfer/issue/announce emails queue but never send — a baseline trust gap. Operator action only.
