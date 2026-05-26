@@ -76,6 +76,23 @@ services:
         source: /
         destination: /home/index.html
 
+    # Security response headers — clickjacking protection. The terminal HTML
+    # sets `frame-ancestors 'none'` in a <meta> CSP, but browsers IGNORE
+    # frame-ancestors in <meta> (it only works as a response header). These
+    # provide real protection on the static CDN.
+    # ⚠ NOTE (D0 UX/security review 2026-05-24): this blueprint is not yet the
+    # active Render config (the dashboard is source-of-truth today, same reason
+    # the root rewrite above isn't live). Until the blueprint is linked — OR the
+    # operator adds these in Render → static site → Headers — they do NOT take
+    # effect. Tracked as the clickjacking fix.
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Content-Security-Policy
+        value: "frame-ancestors 'none'"
+
     # No env vars needed for static frontend. If D0 wires up
     # client-side config (Supabase anon key for read-only data fetch),
     # add them here with `sync: false` so they prompt on provisioning.

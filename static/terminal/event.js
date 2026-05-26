@@ -208,13 +208,28 @@
       // like Yankees) can exceed PostgREST's 8s cap under concurrent load and
       // blank the whole header; v2 (~185ms) still fills the core page and the
       // 9 v3-only enrichment panels just render their empty states. (QA 2026-05-24.)
-      if (res.error && (
-            res.error.code === '42883' ||
-            res.error.code === '57014' ||
-            /does not exist|statement timeout|canceling statement/i.test(res.error.message || '')
-          )) {
+      const isTimeout = (r) => !!(r && r.error && (
+        r.error.code === '57014' ||
+        /statement timeout|canceling statement/i.test(r.error.message || '')
+      ));
+      const isMissing = (r) => !!(r && r.error && (
+        r.error.code === '42883' ||
+        /does not exist/i.test(r.error.message || '')
+      ));
+      if (res.error && (isMissing(res) || isTimeout(res))) {
         res = await Auth.client
           .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
+        // Cold-cache hardening (2026-05-25): a first open after cache eviction /
+        // long idle can time out BOTH v3 and v2 — Postgres reads ~8 tables incl. the
+        // SG/listings firehoses (10.5GB) but shared_buffers is only 256MB, so the cold
+        // first-hit blows PostgREST's 8s cap. The v3+v2 attempts warm those pages, so
+        // ONE immediate v2 retry then completes (warm v2 is sub-second; measured
+        // steady-state event-page reads ≤2.7s). Root-cause fix (event-page matview,
+        // hot path stops scanning the firehoses) is queued for the next checkpoint.
+        if (isTimeout(res)) {
+          res = await Auth.client
+            .rpc('get_broker_event_page_v2', { p_event_id: eventId, p_chart_hours: V3_LOAD_HOURS });
+        }
       }
       if (res.error) {
         const err = new Error(res.error.message || 'RPC error');
@@ -400,11 +415,31 @@
     if (!el) return;
     el.innerHTML = '';
     if (!bridge) return;
+    const chips = [];
     if (bridge.sg_event_id == null) {
-      el.innerHTML = '<span class="mode-chip warn">TEvo-only · no SG bridge</span>';
+      chips.push('<span class="mode-chip warn">TEvo-only · no SG bridge</span>');
     } else if (data && data.v === 'v1-fallback') {
-      el.innerHTML = '<span class="mode-chip dim">v1 fallback (localhost)</span>';
+      chips.push('<span class="mode-chip dim">v1 fallback (localhost)</span>');
     }
+    // Honest empty-state: no TEvo listings pulled for this event yet (common for
+    // far-out events — freshness.tevo_listings_latest is null). Explains why the
+    // TEvo KPI cells read "—" instead of leaving the page looking broken/blank.
+    const fr = (data && data.freshness) || {};
+    if (fr.tevo_listings_latest == null) {
+      chips.push('<span class="mode-chip warn" title="No TEvo listings pulled for this event yet (common for far-out events). TEvo market metrics populate after the first pull; SeatGeek data shown where available.">No TEvo market yet · pull pending</span>');
+    }
+    // SG staleness flag: the SG side-by-side summary lags the raw SG feed when the
+    // SG metrics-refresh is behind. Surface its as-of date when >24h stale.
+    const sgCur = (data && data.sg_side_by_side && !data.sg_side_by_side.hidden)
+      ? data.sg_side_by_side.current : null;
+    if (sgCur && sgCur.captured_at) {
+      const ageDays = (Date.now() - new Date(sgCur.captured_at).getTime()) / 86400000;
+      if (ageDays >= 1) {
+        const asOf = new Date(sgCur.captured_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        chips.push('<span class="mode-chip dim" title="SeatGeek side-by-side metrics are stale; the raw SG feed may be newer.">SG as of ' + asOf + ' · ' + Math.round(ageDays) + 'd stale</span>');
+      }
+    }
+    el.innerHTML = chips.join(' ');
   }
 
   // ---------- KPI grid (8 cells, TEvo + SG side-by-side where applicable) ----------
@@ -436,11 +471,11 @@
 
     // Retail Median  (TEvo retail_median + SG cost_median)
     setKpi('kpiRetailMedianVal', market != null ? '$' + T.fmtNum(market, { max: 0 }) : '—');
-    setKpiSg('kpiRetailMedianSG', sg && sg.cost_median, sgPrev && sgPrev.cost_median, '$', 0, sgHidden);
+    setKpiSg('kpiRetailMedianSG', sgVal(sg, 'listings_all_median', 'cost_median'), sgVal(sgPrev, 'listings_all_median', 'cost_median'), '$', 0, sgHidden);
 
     // Qty Available  (TEvo counts_market + SG listings_count)
     setKpi('kpiQtyAvailableVal', qtyMkt != null ? T.fmtNum(qtyMkt) : '—');
-    setKpiSg('kpiQtyAvailableSG', sg && sg.tickets_count, sgPrev && sgPrev.tickets_count, '', 0, sgHidden);
+    setKpiSg('kpiQtyAvailableSG', sgVal(sg, 'listings_all_tickets', 'tickets_count'), sgVal(sgPrev, 'listings_all_tickets', 'tickets_count'), '', 0, sgHidden);
 
     // Qty Owned  (counts_owned + share)
     setKpi('kpiQtyOwnedVal', qtyOwn != null ? T.fmtNum(qtyOwn) : '—');
@@ -450,8 +485,8 @@
     // Get-in (cheapest available ticket): prefer SG cost_min, fall back to TEvo
     // splits.market.singles.min_px (smallest 1-tix market lot). Keeps the cell
     // populated for TEvo-only events instead of "—".
-    let getinVal = sg && sg.cost_min != null ? sg.cost_min : null;
-    let getinSrc = sg && sg.cost_min != null ? 'SG' : null;
+    let getinVal = sgVal(sg, 'listings_all_min', 'cost_min');
+    let getinSrc = getinVal != null ? 'SG' : null;
     if (getinVal == null && _lastPayload && _lastPayload.splits) {
       const marketSingles = _lastPayload.splits.market && _lastPayload.splits.market.singles;
       if (marketSingles && marketSingles.min_px != null) {
@@ -499,6 +534,16 @@
       el.className = 'kpi-sg';
     }
     el.textContent = `SG ${v}${delta}`;
+  }
+
+  // SG side-by-side columns were renamed server-side (cost_*→listings_all_*); read
+  // the current name first, fall back to the legacy one, so the SG cells populate
+  // regardless of payload vintage. (Prior code read only the dropped cost_* names,
+  // so the SG side-by-side cells were silently blank on every event.)
+  function sgVal(o, primary, legacy) {
+    if (!o) return null;
+    if (o[primary] != null) return o[primary];
+    return (legacy && o[legacy] != null) ? o[legacy] : null;
   }
 
   function colorBucket(pct) {

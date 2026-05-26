@@ -94,9 +94,7 @@
   // ============================================================
   async function showDetailMode(venueId) {
     document.getElementById('venue-hero').removeAttribute('hidden');
-    document.getElementById('venueTabs').removeAttribute('hidden');
     document.getElementById('vPaneOverview').removeAttribute('hidden');
-    wireTabs();
     T.setStatus(`Loading venue ${venueId}…`);
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client || !Auth.getAccessToken()) {

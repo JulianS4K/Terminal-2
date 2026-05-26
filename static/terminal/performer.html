@@ -46,10 +46,8 @@
     </section>
 
     <nav class="event-tabs" id="perfTabs" role="tablist" hidden>
-      <button class="event-tab active" data-tab="overview"  role="tab" aria-selected="true">Overview</button>
-      <button class="event-tab" data-tab="upcoming"  role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountUpcoming"></span></button>
-      <button class="event-tab" data-tab="blindspots" role="tab" aria-selected="false">Blind Spots <span class="tab-count" id="tabCountBlindspots"></span></button>
-      <button class="event-tab" data-tab="espn" role="tab" aria-selected="false">ESPN Context</button>
+      <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+      <button class="event-tab" data-tab="espn" role="tab" aria-selected="false">ESPN — Full</button>
     </nav>
 
     <div class="tab-pane active" id="paneOverview" role="tabpanel" hidden>
@@ -64,19 +62,12 @@
           <div class="ru-cell"><span class="ru-num" id="ruEventsWithOwned">—</span><span class="ru-lbl">events with position</span></div>
         </div>
       </section>
-    </div>
 
-    <div class="tab-pane" id="paneUpcoming" role="tabpanel" hidden>
-      <section id="perf-events">
-        <div class="panel-title row">
-          <span>UPCOMING EVENTS</span>
-          <span class="muted small" id="phEventCount"></span>
-        </div>
-        <div id="phEventsBody"></div>
+      <section id="perf-espn-summary" hidden>
+        <div class="panel-title row"><span>FORM &amp; AVAILABILITY</span><span class="muted small" id="poEspnMeta"></span></div>
+        <div id="poEspnStrip"></div>
       </section>
-    </div>
 
-    <div class="tab-pane" id="paneBlindspots" role="tabpanel" hidden>
       <section id="perf-blind-spots">
         <div class="panel-title row">
           <span>BLIND SPOTS — UPCOMING GAMES WE DON'T OWN</span>
@@ -86,6 +77,14 @@
           Games where this performer has &gt;50 tix on market but our owned_tix = 0. Sorted by approx market notional (qty × median).
         </div>
         <div id="phBlindSpotsBody"></div>
+      </section>
+
+      <section id="perf-events">
+        <div class="panel-title row">
+          <span>UPCOMING SLATE</span>
+          <span class="muted small" id="phEventCount"></span>
+        </div>
+        <div id="phEventsBody"></div>
       </section>
     </div>
 

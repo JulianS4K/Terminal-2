@@ -47,13 +47,6 @@
       </div>
     </section>
 
-    <nav class="event-tabs" id="venueTabs" role="tablist" hidden>
-      <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
-      <button class="event-tab" data-tab="events" role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountVenueEvents"></span></button>
-      <button class="event-tab" data-tab="owned"  role="tab" aria-selected="false">Owned Inventory</button>
-      <button class="event-tab" data-tab="sg"     role="tab" aria-selected="false">SG Activity</button>
-    </nav>
-
     <div class="tab-pane active" id="vPaneOverview" role="tabpanel" hidden>
       <section id="venue-rollup">
         <div class="panel-title">VENUE ROLLUP — NEXT 90D</div>
@@ -65,32 +58,26 @@
           <div class="ru-cell"><span class="ru-num" id="vrOwnedNotional">—</span><span class="ru-lbl">owned notional</span></div>
         </div>
       </section>
-    </div>
 
-    <div class="tab-pane" id="vPaneEvents" role="tabpanel" hidden>
-      <section id="venue-events">
-        <div class="panel-title row">
-          <span>UPCOMING EVENTS — NEXT 90D</span>
-          <span class="muted small" id="vEventCount"></span>
-        </div>
-        <div id="vEventsBody"></div>
-      </section>
-    </div>
-
-    <div class="tab-pane" id="vPaneOwned" role="tabpanel" hidden>
-      <section id="venue-owned">
-        <div class="panel-title">OWNED INVENTORY — AT THIS VENUE</div>
-        <div id="vOwnedBody"></div>
-      </section>
-    </div>
-
-    <div class="tab-pane" id="vPaneSg" role="tabpanel" hidden>
       <section id="venue-sg">
         <div class="panel-title row">
           <span>SG ACTIVITY — last 24h aggregate</span>
           <span class="muted small" id="vSgMeta"></span>
         </div>
         <div id="vSgBody"></div>
+      </section>
+
+      <section id="venue-owned">
+        <div class="panel-title">OWNED INVENTORY — AT THIS VENUE</div>
+        <div id="vOwnedBody"></div>
+      </section>
+
+      <section id="venue-events">
+        <div class="panel-title row">
+          <span>UPCOMING EVENTS — NEXT 90D</span>
+          <span class="muted small" id="vEventCount"></span>
+        </div>
+        <div id="vEventsBody"></div>
       </section>
     </div>
 
