@@ -5,11 +5,12 @@ import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
 import { publicUrl } from '../lib/utils';
-import { ArrowLeft, Share2, ShieldCheck, RefreshCw, Ticket as TicketIcon, Calendar, Download, PlusCircle, Instagram, Send, ChevronLeft, ChevronRight, Smartphone } from 'lucide-react';
-import { formatInTz } from '../lib/datetime';
+import { ArrowLeft, Share2, ShieldCheck, RefreshCw, Ticket as TicketIcon, Calendar, Download, PlusCircle, Instagram, Send, ChevronLeft, ChevronRight, Smartphone, Lock } from 'lucide-react';
+import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
 import { signBarcode, currentBucket } from '../lib/barcode';
 import { motion, AnimatePresence } from 'motion/react';
 import { downloadIcsFile } from '../lib/calendarUtils';
+import { shareEventToStory } from '../lib/poster';
 import { useToast } from '../context/ToastContext';
 import ShareModal from '../components/ShareModal';
 
@@ -157,14 +158,14 @@ export default function TicketDetail() {
   }
 
   const currentTicket = tickets[currentIndex];
+  // Gate the scannable entry QR to within 24h of the event — before that the
+  // code is useless at the door and showing it early only invites screenshots.
+  const qrUnlocked = isWithinHoursBefore(event.date?.toDate?.(), 24);
   const handleInstagramStory = async () => {
-    try {
-      await navigator.clipboard.writeText(publicUrl(`event/${event.id}`));
-      toast({ kind: 'success', message: 'Event link copied — paste it into your Story.' });
-    } catch (err) {
-      console.error('Story share failed:', err);
-      toast({ kind: 'error', message: 'Could not copy link.' });
-    }
+    await shareEventToStory(
+      { title: event.title, url: publicUrl(`event/${event.id}`), imageUrl: event.image },
+      toast,
+    );
   };
 
   const handleSMSShare = () => {
@@ -205,7 +206,17 @@ export default function TicketDetail() {
               <div className="-mt-12 px-10 relative z-20">
                  <div className="bg-white p-10 shadow-2xl flex flex-col items-center justify-center group mb-12 relative">
                     <div className={`relative p-6 bg-white border-2 border-black transition-transform duration-500 flex flex-col items-center ${currentTicket.status === 'used' || currentTicket.status === 'voided' || (currentTicket as any).pendingTransferId ? 'opacity-20 grayscale' : 'group-hover:scale-[1.02]'}`}>
-                      <QRCodeSVG value={barcode} size={220} level="H" includeMargin={false} fgColor="#000000" />
+                      {qrUnlocked ? (
+                        <QRCodeSVG value={barcode} size={220} level="H" includeMargin={false} fgColor="#000000" />
+                      ) : (
+                        <div className="w-[220px] h-[220px] flex flex-col items-center justify-center text-center px-4 bg-slate-50 border border-dashed border-black/20">
+                          <Lock className="w-8 h-8 text-black/30 mb-3" aria-hidden="true" />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-black/50">Entry code locked</p>
+                          <p className="text-[10px] font-medium text-black/40 mt-1">
+                            Unlocks 24h before{event.date ? ` · ${formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ' the event'}
+                          </p>
+                        </div>
+                      )}
                       <div className="mt-6 w-full text-center border-t-2 border-dashed border-black/20 pt-6 space-y-2">
                         <div>
                           <p className="text-[9px] font-black uppercase tracking-widest text-black/40">Event</p>

@@ -27,6 +27,16 @@ export function getBrowserTimezone(): string {
   }
 }
 
+/**
+ * True once we're within `hours` of `date` (i.e. now >= date − hours).
+ * A missing date returns true so we never lock a holder out when the event
+ * time is unknown. Used to gate the scannable entry QR to ~24h before doors.
+ */
+export function isWithinHoursBefore(date: Date | null | undefined, hours: number): boolean {
+  if (!date) return true;
+  return Date.now() >= date.getTime() - hours * 60 * 60 * 1000;
+}
+
 /** Cheap structural check on an IANA timezone string. */
 export function isValidTimezone(tz: string): boolean {
   if (!tz) return false;

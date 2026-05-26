@@ -111,7 +111,16 @@ export default function OrganizerDashboard() {
             </p>
           </div>
           <div className="flex space-x-3">
-            <Link 
+            {orgs.length > 0 && (
+              <Link
+                to={orgs.length === 1 ? `/orgs/${orgs[0].org.id}/promote` : '/orgs'}
+                className="bg-white text-slate-900 border border-slate-200 px-6 py-3 rounded flex items-center space-x-2 font-bold hover:bg-slate-50 shadow-sm transition-all text-sm"
+              >
+                <Megaphone className="w-4 h-4" />
+                <span>Promote</span>
+              </Link>
+            )}
+            <Link
               to="/create-event"
               className="bg-[#026cdf] text-white px-6 py-3 rounded flex items-center space-x-2 font-bold hover:bg-[#015bbd] shadow-sm transition-all text-sm"
             >

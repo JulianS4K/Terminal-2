@@ -25,13 +25,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { ArrowLeft, Sun } from 'lucide-react';
+import { ArrowLeft, Sun, Lock } from 'lucide-react';
 import { motion } from 'motion/react';
 import { getTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { signBarcode, currentBucket } from '../lib/barcode';
-import { formatInTz } from '../lib/datetime';
+import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
 
 export default function WalletPass() {
   const { ticketId } = useParams();
@@ -182,6 +182,8 @@ export default function WalletPass() {
   const isVoided = ticket.status === 'voided';
   const isInTransfer = !!(ticket as { pendingTransferId?: string | null }).pendingTransferId;
   const muted = isUsed || isVoided || isInTransfer;
+  // Entry QR only renders within 24h of the event (unknown date → unlocked).
+  const qrUnlocked = isWithinHoursBefore(event?.date?.toDate?.(), 24);
   const stamp = isVoided
     ? {
         text: 'REFUNDED',
@@ -253,7 +255,17 @@ export default function WalletPass() {
 
           <div className="relative flex flex-col items-center">
             <div className={`p-4 bg-white border-2 border-black rounded-2xl ${muted ? 'opacity-20 grayscale' : ''}`}>
-              <QRCodeSVG value={barcode || ticket.id} size={260} level="H" includeMargin={false} fgColor="#000000" />
+              {qrUnlocked ? (
+                <QRCodeSVG value={barcode || ticket.id} size={260} level="H" includeMargin={false} fgColor="#000000" />
+              ) : (
+                <div className="w-[260px] h-[260px] flex flex-col items-center justify-center text-center px-6">
+                  <Lock className="w-10 h-10 text-black/30 mb-4" aria-hidden="true" />
+                  <p className="text-[11px] font-black uppercase tracking-widest text-black/50">Entry code locked</p>
+                  <p className="text-[11px] font-medium text-black/40 mt-1">
+                    Unlocks 24h before{event?.date ? ` · ${formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ' the event'}
+                  </p>
+                </div>
+              )}
             </div>
 
             {stamp ? (
@@ -283,7 +295,7 @@ export default function WalletPass() {
             </div>
           </div>
 
-          {!muted ? (
+          {!muted && qrUnlocked ? (
             <div className="mt-6 flex flex-col items-center">
               <p className="text-[9px] text-black/40 font-black uppercase tracking-tighter">Code refreshes in</p>
               <p className="text-2xl font-black text-black italic tracking-tighter leading-none mt-1">
