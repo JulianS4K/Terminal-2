@@ -406,8 +406,12 @@ export default function OrganizerCheckIn() {
         saveRegistry(eventId, next);
         return next;
       });
-      // A check-in landed (this lane or another) — refresh the attendance count.
-      countEventCheckins(eventId).then(setInsideVenue).catch(() => {});
+      // A check-in landed (this lane or another) — bump the live count by one
+      // rather than re-running a count(*) per scan. A count(*) per realtime tick
+      // per lane doesn't scale at a busy multi-lane gate; postgres_changes emits
+      // exactly one event per check-in row (incl. our own), so +1 is accurate.
+      // Reconciled against the authoritative head-count on reconnect below.
+      setInsideVenue((n) => n + 1);
     });
     return () => ch.leave();
   }, [eventId]);
@@ -427,6 +431,10 @@ export default function OrganizerCheckIn() {
   useEffect(() => {
     if (wasOfflineRef.current && !isOffline) {
       void downloadRegistry({ silent: true });
+      // Realtime doesn't replay check-ins that landed while we were
+      // disconnected, so reconcile the live count against the authoritative
+      // head-count once (the only count(*) on this path — not per scan).
+      if (eventId) countEventCheckins(eventId).then(setInsideVenue).catch(() => {});
     }
     wasOfflineRef.current = isOffline;
   }, [isOffline]);

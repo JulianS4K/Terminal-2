@@ -234,6 +234,9 @@ export default function EventDetails() {
         quantity,
         promoterId: params.get('promoter'),
         channel: params.get('utm_source'),
+        // Idempotency key for this claim attempt — a network retry returns the
+        // same tickets instead of minting twice (button is disabled meanwhile).
+        orderRef: crypto.randomUUID(),
       });
       trackPixelEvent('Purchase', {
         content_name: event.title,

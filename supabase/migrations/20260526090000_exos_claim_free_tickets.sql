@@ -27,7 +27,8 @@ CREATE OR REPLACE FUNCTION public.exos_claim_free_tickets(
   p_tier_id     uuid,
   p_quantity    int  DEFAULT 1,
   p_promoter_id text DEFAULT NULL,
-  p_channel     text DEFAULT NULL
+  p_channel     text DEFAULT NULL,
+  p_order_ref   text DEFAULT NULL
 ) RETURNS uuid[]
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -82,6 +83,19 @@ BEGIN
     RAISE EXCEPTION 'exos_claim_free_tickets: sales have ended' USING ERRCODE = '42501';
   END IF;
 
+  -- Idempotency: a retry carrying the same order_ref returns the tickets already
+  -- minted for it instead of minting again (guards double-submit / network retry;
+  -- the maxPerAccount limit + the client's disabled button cover the concurrent case).
+  IF nullif(p_order_ref, '') IS NOT NULL THEN
+    SELECT array_agg(id) INTO v_ids
+      FROM public.exos_tickets
+     WHERE event_id = p_event_id AND owner_id = v_uid AND order_ref = p_order_ref;
+    IF v_ids IS NOT NULL AND array_length(v_ids, 1) > 0 THEN
+      RETURN v_ids;
+    END IF;
+    v_ids := '{}';
+  END IF;
+
   -- Per-person limit (cumulative; no admin bypass on the self-serve path).
   PERFORM public.exos_assert_purchase_limit(p_event_id, v_uid, p_quantity);
 
@@ -112,7 +126,7 @@ BEGIN
       p_event_id, v_org, p_tier_id, v_tier_name, v_uid, v_uid,
       lower(coalesce(auth.jwt() ->> 'email', '')),
       'active', gen_random_uuid()::text, 0,
-      'free_' || gen_random_uuid()::text,
+      coalesce(nullif(p_order_ref, ''), 'free_' || gen_random_uuid()::text),
       coalesce(nullif(p_channel, ''), 'vibepass'), nullif(p_promoter_id, '')
     ) RETURNING id INTO v_id;
     v_ids := array_append(v_ids, v_id);
@@ -127,7 +141,7 @@ BEGIN
   RETURN v_ids;
 END $$;
 
-REVOKE ALL ON FUNCTION public.exos_claim_free_tickets(uuid, uuid, int, text, text) FROM PUBLIC, anon;
-GRANT  EXECUTE ON FUNCTION public.exos_claim_free_tickets(uuid, uuid, int, text, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.exos_claim_free_tickets(uuid, uuid, int, text, text, text) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.exos_claim_free_tickets(uuid, uuid, int, text, text, text) TO authenticated;
 
--- ROLLBACK: DROP FUNCTION IF EXISTS public.exos_claim_free_tickets(uuid, uuid, int, text, text);
+-- ROLLBACK: DROP FUNCTION IF EXISTS public.exos_claim_free_tickets(uuid, uuid, int, text, text, text);

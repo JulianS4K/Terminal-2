@@ -464,6 +464,7 @@ export async function claimFreeTickets(input: {
   quantity?: number;
   promoterId?: string | null;
   channel?: string | null;
+  orderRef?: string | null;
 }): Promise<string[]> {
   const { data, error } = await supabase.rpc('exos_claim_free_tickets', {
     p_event_id: input.eventId,
@@ -471,6 +472,7 @@ export async function claimFreeTickets(input: {
     p_quantity: input.quantity ?? 1,
     p_promoter_id: input.promoterId ?? null,
     p_channel: input.channel ?? null,
+    p_order_ref: input.orderRef ?? null,
   });
   if (error) throw error;
   return (data ?? []) as string[];
