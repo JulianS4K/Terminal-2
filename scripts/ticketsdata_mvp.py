@@ -83,6 +83,21 @@ class Budget:
             self.last_quota_remaining = quota_remaining
 
 
+def _maybe_supabase():
+    """Best-effort service-role Supabase client for the Vault credential
+    fallback. Returns None if env/lib unavailable (then env creds are used)."""
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not (url and key):
+        return None
+    try:
+        from supabase import create_client
+        return create_client(url, key)
+    except Exception as e:
+        print(f"(supabase client unavailable, using env creds: {e})", file=sys.stderr)
+        return None
+
+
 def _q(env: dict) -> int | None:
     v = env.get("quota_remaining")
     return v if isinstance(v, int) else None
@@ -200,7 +215,9 @@ def main() -> int:
         return 0
 
     try:
-        client = TicketsDataClient.from_env()
+        # Pass a service-role db (if Supabase env is set) so creds can resolve
+        # from Vault; otherwise TICKETSDATA_* env vars are used directly.
+        client = TicketsDataClient(db=_maybe_supabase())
     except TicketsDataError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2

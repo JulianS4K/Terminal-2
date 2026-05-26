@@ -24,9 +24,50 @@ def test_assert_readonly_raises_on_writes():
 
 # ---------- construction / validation ----------
 
-def test_requires_credentials():
+def test_requires_credentials(monkeypatch):
+    monkeypatch.delenv("TICKETSDATA_USERNAME", raising=False)
+    monkeypatch.delenv("TICKETSDATA_PASSWORD", raising=False)
     with pytest.raises(td.TicketsDataError):
-        td.TicketsDataClient("", "")
+        td.TicketsDataClient()
+
+
+class _FakeRpcResult:
+    def __init__(self, data):
+        self.data = data
+
+
+class _FakeDB:
+    """Stands in for a service-role Supabase client: rpc(get_app_secret)."""
+    def __init__(self, secrets):
+        self._secrets = secrets
+
+    def rpc(self, name, params):
+        assert name == "get_app_secret"
+        self._pending = self._secrets.get(params["p_name"])
+        return self
+
+    def execute(self):
+        return _FakeRpcResult(self._pending)
+
+
+def test_credentials_resolve_from_vault(monkeypatch):
+    monkeypatch.delenv("TICKETSDATA_USERNAME", raising=False)
+    monkeypatch.delenv("TICKETSDATA_PASSWORD", raising=False)
+    db = _FakeDB({
+        "TICKETSDATA_USERNAME": "vault-user@example.com",
+        "TICKETSDATA_PASSWORD": "vault-pw",
+    })
+    c = td.TicketsDataClient(db=db)
+    assert c._username == "vault-user@example.com"
+    assert c._password == "vault-pw"
+
+
+def test_env_takes_precedence_over_vault(monkeypatch):
+    monkeypatch.setenv("TICKETSDATA_USERNAME", "env-user@example.com")
+    monkeypatch.setenv("TICKETSDATA_PASSWORD", "env-pw")
+    db = _FakeDB({"TICKETSDATA_USERNAME": "vault-user", "TICKETSDATA_PASSWORD": "vault-pw"})
+    c = td.TicketsDataClient(db=db)
+    assert c._username == "env-user@example.com"
 
 
 def test_fetch_rejects_unsupported_platform():

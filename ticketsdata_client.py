@@ -68,26 +68,55 @@ def _assert_readonly_method(method: str) -> None:
         )
 
 
+def _vault_secret(db: Any, name: str) -> str | None:
+    """Read a secret from Supabase Vault via the get_app_secret RPC (the same
+    bridge seatgeek_client uses). Requires a service-role db client."""
+    if db is None:
+        return None
+    try:
+        res = db.rpc("get_app_secret", {"p_name": name}).execute()
+        return getattr(res, "data", None) or None
+    except Exception as e:  # never surface the value; only the failure
+        print(f"ticketsdata: vault lookup for {name} failed: {e}")
+        return None
+
+
 class TicketsDataClient:
     BASE_URL = "https://ticketsdata.com"
 
-    def __init__(self, username: str, password: str, *, timeout: int = 30):
-        if not username or not password:
+    def __init__(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+        *,
+        db: Any = None,
+        timeout: int = 30,
+    ):
+        # Resolution order mirrors seatgeek_client: explicit arg -> env var ->
+        # Supabase Vault (get_app_secret). Pass db (a service-role client) to
+        # enable the Vault fallback.
+        u = username or os.environ.get("TICKETSDATA_USERNAME") or _vault_secret(db, "TICKETSDATA_USERNAME")
+        p = password or os.environ.get("TICKETSDATA_PASSWORD") or _vault_secret(db, "TICKETSDATA_PASSWORD")
+        if not u or not p:
             raise TicketsDataError(
-                "TicketsData credentials are required "
-                "(set TICKETSDATA_USERNAME / TICKETSDATA_PASSWORD)"
+                "TicketsData credentials required. Set TICKETSDATA_USERNAME / "
+                "TICKETSDATA_PASSWORD env, or store them in Vault: "
+                "SELECT public.upsert_app_secret('TICKETSDATA_USERNAME', '<email>'); "
+                "SELECT public.upsert_app_secret('TICKETSDATA_PASSWORD', '<password>');"
             )
-        self._username = username.strip()
-        self._password = password  # never stripped/logged; sent verbatim
+        self._username = u.strip()
+        self._password = p  # never stripped/logged; sent verbatim
         self.timeout = timeout
 
     @classmethod
     def from_env(cls, *, timeout: int = 30) -> "TicketsDataClient":
-        return cls(
-            os.environ.get("TICKETSDATA_USERNAME", ""),
-            os.environ.get("TICKETSDATA_PASSWORD", ""),
-            timeout=timeout,
-        )
+        return cls(timeout=timeout)
+
+    @classmethod
+    def from_vault(cls, db: Any, *, timeout: int = 30) -> "TicketsDataClient":
+        """Build a client resolving creds from Supabase Vault (db = service-role
+        client). Falls back to env vars if those are set too."""
+        return cls(db=db, timeout=timeout)
 
     # ---------- transport ----------
 
