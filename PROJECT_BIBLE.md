@@ -506,6 +506,16 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 | D1 TEvo Hosted Checkout dormant (PR #353) | **Open — env-gated** | Code merged; fires when `TEVO_CHECKOUT_ENABLED=true` on `vibepass-storefront-test`. Set env var to activate. |
 | D4 `static/bridge/` needs rebuild for PRs #341/#342 | **Open — FE-only** | PRs #341 (ENTERED stamp) + #342 (transfer gate + inside-venue counter) merged but `static/bridge/` bundle not yet rebuilt. Run `npm --prefix d4_bridge run build` + `cp -r d4_bridge/dist static/bridge` + commit. |
 | B1 anon-SECDEF surface (PR #352 harness) | **Ongoing — harness live** | `anon_secdef_relation_audit()` now runs in CI; any new SECDEF view/matview auto-granted to anon will surface. Zero findings post-PRs #350/#354. |
+| **Cron: `midnight-catchup-sweep` broken** | `SELECT public.midnight_catchup_sweep()` in DO block should be `PERFORM` — function returns a result set, SELECT has no destination. Fails every run since creation. Fix: replace SELECT with PERFORM in cron body. | A1 |
+| **Cron: `weather_climatology_weekly` broken** | Syntax error: two `SELECT` calls inside DO block have no destination. Change to `PERFORM`. Has never succeeded. | A1 |
+| **Cron: `listings_aq_backfill_overnight` timeout** | `match_unmatched_listings_chunked(100, true)` always hits 120s statement_timeout. Reduce chunk size or add SET LOCAL statement_timeout='5min' inside the function. | A1 |
+| **SG 429 rate CRITICAL** | 59.4% sales / 55.9% listings rate-limited across all hours on 2026-05-25. ~1200 chronically-starved events. Cron burst rate exceeds SG token bucket even at off-peak. Reduce p_max_events from 8→4 or reduce cron frequency. | A1/operator |
+| **D4 Bridge README stale** | d4_bridge/README.md still described Firebase stack. Updated 2026-05-25 to reflect Supabase migration. | ✓ CLOSED |
+| **GitHub: ~60 stale remote branches** | delete_branch_on_merge enabled 2026-05-18 but ~60 pre-May-18 bot branches remain on remote. Run `git fetch --prune origin` then bulk-delete. | A1 |
+| **GitHub: no repo description or topics** | Repo shows blank description. Add: "Multi-bot ticket-trading intelligence + retail platform — FastAPI, Supabase, Render". Topics: ticket-trading, fastapi, supabase, multi-bot, claude-code | operator |
+| **GitHub: no releases/tags ever cut** | No version tags exist. Hard to answer "what was in prod on date X". Cut v0.1.0-beta after next stable deploy. | A1 |
+| **Movers endpoint all-empty** | /api/store/movers returns empty arrays for all sections. City defaulting null. Velocity data may not be qualifying. Investigate featured-section trigger logic. | D0/D1 |
+| **/health endpoint doesn't exist** | Health check is /healthz not /health. Fix any docs/monitoring that reference /health. | A1 |
 
 ---
 
