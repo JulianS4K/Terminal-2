@@ -64,7 +64,7 @@ AS $function$
               WHEN count(*) <= 5 THEN 'warn'
               ELSE 'fail' END,
          count(*)::numeric,
-         coalesce(string_agg(relkind || ':' || relname, ', ' ORDER BY relname), 'none')
+         coalesce(string_agg(relkind::text || ':' || relname, ', ' ORDER BY relname), 'none')
     FROM bad;
 $function$;
 
