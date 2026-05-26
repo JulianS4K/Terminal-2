@@ -229,12 +229,6 @@ export default function OrganizerDashboard() {
         <div className="bg-white rounded border border-slate-200 shadow-sm overflow-hidden mb-8">
           <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-white">
             <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Your Events</h2>
-            <div className="flex space-x-2">
-               <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3 h-3" />
-                  <input type="text" placeholder="Search events..." className="pl-8 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-[#026cdf]" />
-               </div>
-            </div>
           </div>
 
           {loading ? (
@@ -307,27 +301,6 @@ export default function OrganizerDashboard() {
           )}
         </div>
 
-        <div className="mb-12">
-            <div className="bg-white p-8 rounded border border-slate-200 shadow-sm relative w-full">
-                <div className="flex items-center space-x-2 mb-6">
-                    <BarChart3 className="w-4 h-4 text-[#026cdf]" />
-                    <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em]">Sales Activity</h3>
-                </div>
-                <div className="h-48 flex items-end justify-between space-x-2">
-                    {[40, 70, 45, 90, 65, 85, 30, 60, 75, 50, 80, 95].map((h, i) => (
-                        <div key={i} className="flex-grow bg-slate-100 hover:bg-[#026cdf] transition-all rounded-t-sm" style={{ height: `${h}%` }}></div>
-                    ))}
-                </div>
-                <div className="flex justify-between mt-4 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                    <span>MAY</span>
-                    <span>JUN</span>
-                    <span>JUL</span>
-                    <span>AUG</span>
-                    <span>SEP</span>
-                    <span>OCT</span>
-                </div>
-            </div>
-        </div>
       </div>
     </div>
   );

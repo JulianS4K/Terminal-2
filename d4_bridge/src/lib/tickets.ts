@@ -356,6 +356,7 @@ export async function checkInTicket(
   source: 'camera' | 'manual',
   verification: 'verified' | 'legacy' | 'manual',
   barcodePayload?: string,
+  eventId?: string,
 ): Promise<CheckInResult> {
   const { data, error } = await supabase.rpc('exos_check_in_ticket', {
     p_ticket_id: ticketId,
@@ -363,6 +364,8 @@ export async function checkInTicket(
     p_verification: verification,
     // Server re-verifies the HMAC for signed payloads (D4-OPS-6); NULL = manual.
     p_barcode_payload: barcodePayload ?? null,
+    // Event scoping (D4-OPS-18): server rejects a cross-event scan. NULL = skip.
+    p_event_id: eventId ?? null,
   });
   if (error) throw error;
   return (data ?? { ok: false, reason: 'not-found' }) as CheckInResult;
@@ -446,6 +449,28 @@ export async function mintTickets(input: {
     p_order_ref: input.orderRef ?? null,
     p_price_paid: input.pricePaid ?? null,
     p_promoter_id: input.promoterId ?? null,
+  });
+  if (error) throw error;
+  return (data ?? []) as string[];
+}
+
+/** Self-serve claim of FREE tickets for the signed-in user. Returns new ticket
+ *  ids. Server enforces free-tier-only + published + sales window + per-person
+ *  limit + capacity (exos_claim_free_tickets). Paid tiers route through Stripe.
+ *  promoterId/channel come from the landing URL for campaign attribution. */
+export async function claimFreeTickets(input: {
+  eventId: string;
+  tierId: string;
+  quantity?: number;
+  promoterId?: string | null;
+  channel?: string | null;
+}): Promise<string[]> {
+  const { data, error } = await supabase.rpc('exos_claim_free_tickets', {
+    p_event_id: input.eventId,
+    p_tier_id: input.tierId,
+    p_quantity: input.quantity ?? 1,
+    p_promoter_id: input.promoterId ?? null,
+    p_channel: input.channel ?? null,
   });
   if (error) throw error;
   return (data ?? []) as string[];

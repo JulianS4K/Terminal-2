@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Event, Organization } from '../types';
 import { getPublicEvent, getEventForEdit } from '../lib/events';
-import { mintTickets } from '../lib/tickets';
+import { mintTickets, claimFreeTickets } from '../lib/tickets';
 import SocialLinks from '../components/SocialLinks';
 import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
@@ -204,14 +204,52 @@ export default function EventDetails() {
   const maxPerAccount = event?.purchaseLimits?.maxPerAccount || 8;
 
   const handlePurchase = async () => {
-    // Checkout (Stripe Checkout + server-side ticket minting) lands in phase-2 —
-    // it needs the exos_tickets table + a Stripe webhook fulfillment path.
     if (!user) {
-      toast({ kind: 'info', message: 'Sign in to be ready when ticketing opens.' });
+      toast({ kind: 'info', message: 'Sign in to grab your ticket.' });
       await signIn();
       return;
     }
-    toast({ kind: 'info', title: 'Coming soon', message: 'Ticket purchase is being wired up (phase-2).' });
+    if (!event) return;
+    const tier = event.ticketTiers?.find((t) => t.id === selectedTierId) || event.ticketTiers?.[0];
+    const unitPrice = tier?.price ?? event.price ?? 0;
+
+    // Paid tiers route through Stripe checkout (dormant) — keep the hold state.
+    if (unitPrice > 0) {
+      toast({ kind: 'info', title: 'Coming soon', message: 'Paid checkout is being wired up.' });
+      return;
+    }
+    if (!tier?.id) {
+      toast({ kind: 'error', message: 'No ticket tier available for this event yet.' });
+      return;
+    }
+
+    // Free claim — mint to the buyer, capturing campaign attribution off the URL
+    // (?promoter / ?utm_source) so it lands in the event's Sales report.
+    setPurchasing(true);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const ids = await claimFreeTickets({
+        eventId: event.id,
+        tierId: tier.id,
+        quantity,
+        promoterId: params.get('promoter'),
+        channel: params.get('utm_source'),
+      });
+      trackPixelEvent('Purchase', {
+        content_name: event.title,
+        content_ids: [event.id],
+        value: 0,
+        currency: event.currency || 'USD',
+        num_items: ids.length,
+      });
+      toast({ kind: 'success', title: "You're in!", message: `${ids.length} ticket(s) reserved — find them in My Tickets.` });
+      navigate('/my-tickets');
+    } catch (err: any) {
+      console.error('Free claim failed:', err);
+      toast({ kind: 'error', message: err?.message || 'Could not reserve tickets. Please try again.' });
+    } finally {
+      setPurchasing(false);
+    }
   };
 
   const handleShare = async () => {
