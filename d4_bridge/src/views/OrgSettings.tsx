@@ -14,6 +14,7 @@ import { motion } from 'motion/react';
 import { ArrowLeft, Upload } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
+import { publicUrl } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import { getOrganization, updateOrganization } from '../lib/orgs';
 import { uploadOrgLogo } from '../lib/orgLogo';
@@ -172,7 +173,7 @@ export default function OrgSettings() {
   function buildEmbedSnippet(orgIdValue: string): string {
     const origin = window.location.origin;
     return `<!-- Exos embed for ${orgIdValue}. Replace EVENT_ID with your event id. -->
-<iframe id="vibepass-embed" src="${origin}/embed/event/EVENT_ID" style="width:100%;border:0;min-height:200px" loading="lazy" title="Tickets"></iframe>
+<iframe id="vibepass-embed" src="${publicUrl('embed/event/EVENT_ID')}" style="width:100%;border:0;min-height:200px" loading="lazy" title="Tickets"></iframe>
 <script>
 window.addEventListener('message', function(e) {
   if (e.origin !== '${origin}') return;

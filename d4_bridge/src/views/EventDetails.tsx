@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Event } from '../types';
+import { Event, Organization } from '../types';
 import { getPublicEvent, getEventForEdit } from '../lib/events';
 import { mintTickets } from '../lib/tickets';
+import SocialLinks from '../components/SocialLinks';
 import { useAuth } from '../context/AuthContext';
 import { Calendar, MapPin, Ticket, ShieldCheck, Share2, ArrowLeft, CheckCircle2, Copy, Send, Instagram, Minus, Plus, Tag } from 'lucide-react';
-import { formatCurrency, generateBarcodeContent, handleFirestoreError, OperationType } from '../lib/utils';
+import { formatCurrency, generateBarcodeContent, handleFirestoreError, OperationType, publicUrl } from '../lib/utils';
 import { getStripe } from '../lib/stripe';
 import { formatInTz } from '../lib/datetime';
 import { motion } from 'motion/react';
@@ -22,6 +23,7 @@ export default function EventDetails() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [event, setEvent] = useState<Event | null>(null);
+  const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
   const [selectedTierId, setSelectedTierId] = useState<string | null>(null);
@@ -67,7 +69,7 @@ export default function EventDetails() {
             title: data.title,
             description: (data.description || '').slice(0, 200),
             imageUrl: data.image || undefined,
-            canonicalUrl: `${window.location.origin}/event/${data.id}`,
+            canonicalUrl: publicUrl(`event/${data.id}`),
             event: startIso
               ? {
                   name: data.title,
@@ -87,7 +89,7 @@ export default function EventDetails() {
                     price: data.price,
                     currency: data.currency || 'USD',
                     availability: remaining > 0 ? 'InStock' : 'SoldOut',
-                    url: `${window.location.origin}/event/${data.id}`,
+                    url: publicUrl(`event/${data.id}`),
                   },
                 }
               : undefined,
@@ -101,8 +103,9 @@ export default function EventDetails() {
         // orgId, so fetch the public org for its marketing config.
         if (data.orgId) {
           getPublicOrg(data.orgId)
-            .then((org) => {
-              initOrgPixels(org?.marketing?.pixels);
+            .then((o) => {
+              setOrg(o ?? null);
+              initOrgPixels(o?.marketing?.pixels);
               trackPixelEvent('ViewContent', { content_name: data.title, content_ids: [data.id] });
             })
             .catch(() => {/* non-fatal */});
@@ -583,11 +586,14 @@ export default function EventDetails() {
             <div className="mb-16 bg-[#111111] border border-white/10 p-8 flex items-center justify-between group">
                <div className="flex items-center space-x-6">
                   <div className="w-16 h-16 bg-brand-primary flex items-center justify-center text-2xl font-black text-black italic">
-                    {event.organizerId ? 'O' : '?'}
+                    {(org?.name || 'O').charAt(0).toUpperCase()}
                   </div>
                   <div>
                     <p className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-1">Presented By</p>
-                    <h3 className="text-2xl font-black italic uppercase tracking-tighter">Event Organizer</h3>
+                    <h3 className="text-2xl font-black italic uppercase tracking-tighter">{org?.name || 'Event Organizer'}</h3>
+                    {org?.marketing?.socials && Object.values(org.marketing.socials).some(Boolean) ? (
+                      <SocialLinks socials={org.marketing.socials} className="flex items-center gap-3 mt-2" />
+                    ) : null}
                   </div>
                </div>
                <Link to={`/organizer/${event.orgId ?? ''}`} className="px-6 py-3 bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest group-hover:bg-brand-primary group-hover:text-black transition-all">

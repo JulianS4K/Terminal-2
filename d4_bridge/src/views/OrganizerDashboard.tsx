@@ -282,6 +282,7 @@ export default function OrganizerDashboard() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end space-x-2">
+                           <Link to={`/dashboard/event/${event.id}/promote`} aria-label="Promote event" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><Megaphone className="w-4 h-4" /></Link>
                            <Link to={`/dashboard/event/${event.id}`} aria-label="Sales report" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><BarChart3 className="w-4 h-4" /></Link>
                            <Link to={`/edit-event/${event.id}`} aria-label="Edit event" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><Settings className="w-4 h-4" /></Link>
                            <Link to={`/create-event?clone=${event.id}`} aria-label="Duplicate event as a new draft" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors text-[10px] font-black uppercase tracking-widest">CLONE</Link>

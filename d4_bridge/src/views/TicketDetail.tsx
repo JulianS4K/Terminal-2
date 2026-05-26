@@ -4,6 +4,7 @@ import { getTicket, listMyTicketsForEvent } from '../lib/tickets';
 import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
+import { publicUrl } from '../lib/utils';
 import { ArrowLeft, Share2, ShieldCheck, RefreshCw, Ticket as TicketIcon, Calendar, Download, PlusCircle, Instagram, Send, ChevronLeft, ChevronRight, Smartphone } from 'lucide-react';
 import { formatInTz } from '../lib/datetime';
 import { signBarcode, currentBucket } from '../lib/barcode';
@@ -158,7 +159,7 @@ export default function TicketDetail() {
   const currentTicket = tickets[currentIndex];
   const handleInstagramStory = async () => {
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/event/${event.id}`);
+      await navigator.clipboard.writeText(publicUrl(`event/${event.id}`));
       toast({ kind: 'success', message: 'Event link copied — paste it into your Story.' });
     } catch (err) {
       console.error('Story share failed:', err);
@@ -167,7 +168,7 @@ export default function TicketDetail() {
   };
 
   const handleSMSShare = () => {
-    const text = `I just secured tickets for ${event.title}! Join me: ${window.location.origin}/event/${event.id}`;
+    const text = `I just secured tickets for ${event.title}! Join me: ${publicUrl(`event/${event.id}`)}`;
     window.location.href = `sms:?&body=${encodeURIComponent(text)}`;
   };
 
@@ -434,7 +435,7 @@ export default function TicketDetail() {
           open={showShare}
           onClose={() => setShowShare(false)}
           title={event.title}
-          url={`${window.location.origin}/event/${event.id}`}
+          url={publicUrl(`event/${event.id}`)}
           text={`I'm going to ${event.title}!`}
         />
       )}
