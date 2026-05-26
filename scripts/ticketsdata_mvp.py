@@ -16,22 +16,24 @@ below its floor. /match is OFF unless you pass --allow-match.
 
 Credentials come from TICKETSDATA_USERNAME / TICKETSDATA_PASSWORD env vars.
 
+Note: seatgeek is excluded (sourced natively) — fetch/events reject it.
+
 Examples:
   # dry run — print the plan + projected cost, make zero calls
-  python scripts/ticketsdata_mvp.py --platform seatgeek \\
-      --event-url https://seatgeek.com/concert/17762666 --dry-run
+  python scripts/ticketsdata_mvp.py --platform stubhub \\
+      --event-url https://www.stubhub.com/x/event/159756853/ --dry-run
 
   # one /fetch (1 credit)
-  python scripts/ticketsdata_mvp.py --platform seatgeek \\
-      --event-url https://seatgeek.com/concert/17762666
+  python scripts/ticketsdata_mvp.py --platform stubhub \\
+      --event-url https://www.stubhub.com/x/event/159756853/
 
   # one /events discovery + one /fetch on the first result (<= 2 credits)
-  python scripts/ticketsdata_mvp.py --platform seatgeek \\
-      --performer-url https://seatgeek.com/cardi-b-tickets --then-fetch
+  python scripts/ticketsdata_mvp.py --platform stubhub \\
+      --performer-url https://www.stubhub.com/morgan-wallen-tickets/performer/123/ --then-fetch
 
   # cross-market report (12 credits + 1 report) — must opt in AND raise cap
   python scripts/ticketsdata_mvp.py --allow-match --max-credits 12 \\
-      --match-url https://seatgeek.com/concert/17762666
+      --match-url https://www.stubhub.com/x/event/159756853/
 """
 from __future__ import annotations
 

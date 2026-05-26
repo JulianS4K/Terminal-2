@@ -38,6 +38,12 @@ SUPPORTED_PLATFORMS = frozenset({
     "tickpick", "viagogo", "dice", "eventbrite",
 })
 
+# Marketplaces we already source natively (SeatGeek via seatgeek_client + the SG
+# broker crons), so we must NOT pay TicketsData to re-fetch them. fetch()/events()
+# reject these — use the native pipeline instead. (/match is unaffected: its value
+# is the cross-market comparison, which legitimately includes SeatGeek.)
+EXCLUDED_PLATFORMS = frozenset({"seatgeek"})
+
 # Credit cost per endpoint, per the TicketsData docs. Used by callers and the
 # MVP budget guard to project spend BEFORE making a call.
 CREDIT_COST = {"fetch": 1, "events": 1, "match": 12}
@@ -66,6 +72,20 @@ def _assert_readonly_method(method: str) -> None:
             "TicketsData client is read-only by design (CLAUDE.md §2). "
             "Pulling data only — never write back to ticketsdata.com."
         )
+
+
+def _validate_platform(platform: str) -> str:
+    plat = (platform or "").strip().lower()
+    if plat not in SUPPORTED_PLATFORMS:
+        raise TicketsDataError(
+            f"unsupported platform {platform!r}; one of {sorted(SUPPORTED_PLATFORMS)}"
+        )
+    if plat in EXCLUDED_PLATFORMS:
+        raise TicketsDataError(
+            f"{plat} is sourced natively, not via TicketsData — excluded to avoid "
+            "duplicate paid fetches. Use the native pipeline (seatgeek_client)."
+        )
+    return plat
 
 
 def _vault_secret(db: Any, name: str) -> str | None:
@@ -162,11 +182,7 @@ class TicketsDataClient:
     def fetch(self, platform: str, event_url: str, *, mode: str | None = None) -> dict[str, Any]:
         """GET /fetch — full live inventory for one event on one platform.
         Cost: 1 credit. `mode` is platform-specific (see docs mode matrix)."""
-        plat = (platform or "").strip().lower()
-        if plat not in SUPPORTED_PLATFORMS:
-            raise TicketsDataError(
-                f"unsupported platform {platform!r}; one of {sorted(SUPPORTED_PLATFORMS)}"
-            )
+        plat = _validate_platform(platform)
         if not event_url:
             raise TicketsDataError("event_url is required for /fetch")
         return self._get("/fetch", {"platform": plat, "event_url": event_url, "mode": mode})
@@ -180,11 +196,7 @@ class TicketsDataClient:
     ) -> dict[str, Any]:
         """GET /events — upcoming events for a performer/venue/organizer page.
         Cost: 1 credit. Dice.fm venue/promoter pages use venue_url."""
-        plat = (platform or "").strip().lower()
-        if plat not in SUPPORTED_PLATFORMS:
-            raise TicketsDataError(
-                f"unsupported platform {platform!r}; one of {sorted(SUPPORTED_PLATFORMS)}"
-            )
+        plat = _validate_platform(platform)
         if not performer_url and not venue_url:
             raise TicketsDataError("one of performer_url / venue_url is required for /events")
         return self._get(

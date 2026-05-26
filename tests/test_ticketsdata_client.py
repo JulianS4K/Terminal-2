@@ -76,10 +76,19 @@ def test_fetch_rejects_unsupported_platform():
         c.fetch("nope", "https://x")
 
 
+def test_fetch_rejects_seatgeek_sourced_natively():
+    c = td.TicketsDataClient("u@example.com", "pw")
+    with pytest.raises(td.TicketsDataError) as exc:
+        c.fetch("seatgeek", "https://seatgeek.com/concert/1")
+    assert "natively" in str(exc.value)
+    with pytest.raises(td.TicketsDataError):
+        c.events("seatgeek", performer_url="https://seatgeek.com/x")
+
+
 def test_events_requires_a_page_url():
     c = td.TicketsDataClient("u@example.com", "pw")
     with pytest.raises(td.TicketsDataError):
-        c.events("seatgeek")
+        c.events("stubhub")
 
 
 def test_credit_costs():
@@ -106,12 +115,13 @@ def test_fetch_parses_and_passes_creds(monkeypatch):
     def fake_get(url, params=None, timeout=None):
         captured["url"] = url
         captured["params"] = params
-        return _FakeResp(200, {"status": 200, "platform": "seatgeek",
-                               "body": {"offers": [1, 2, 3]}, "quota_remaining": 9999})
+        return _FakeResp(200, {"status_code": 200, "event_id": "159756853",
+                               "items": {"totalListings": 3, "offers": [1, 2, 3]},
+                               "quota_remaining": 9999})
 
     monkeypatch.setattr(td.requests, "get", fake_get)
     c = td.TicketsDataClient("u@example.com", "secret-pw")
-    env = c.fetch("seatgeek", "https://seatgeek.com/concert/1")
+    env = c.fetch("stubhub", "https://www.stubhub.com/x/event/159756853/")
     assert env["quota_remaining"] == 9999
     # creds travel in params, never baked into the URL string
     assert "secret-pw" not in captured["url"]
@@ -123,7 +133,7 @@ def test_auth_error_does_not_leak_credentials(monkeypatch):
     monkeypatch.setattr(td.requests, "get", lambda *a, **k: _FakeResp(401))
     c = td.TicketsDataClient("u@example.com", "secret-pw")
     with pytest.raises(td.TicketsDataAuthError) as exc:
-        c.fetch("seatgeek", "https://seatgeek.com/concert/1")
+        c.fetch("stubhub", "https://www.stubhub.com/x/event/1/")
     assert "secret-pw" not in str(exc.value)
 
 
@@ -131,7 +141,7 @@ def test_quota_exhausted_maps_to_402(monkeypatch):
     monkeypatch.setattr(td.requests, "get", lambda *a, **k: _FakeResp(402))
     c = td.TicketsDataClient("u@example.com", "pw")
     with pytest.raises(td.TicketsDataQuotaError):
-        c.events("seatgeek", performer_url="https://seatgeek.com/x")
+        c.events("stubhub", performer_url="https://www.stubhub.com/x")
 
 
 # ---------- MVP budget guard ----------
