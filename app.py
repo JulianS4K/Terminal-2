@@ -427,7 +427,11 @@ def require_auth(authorization: str | None = Header(None)):
             timeout=5,
         )
     except Exception as e:
-        raise HTTPException(502, f"auth check failed: {e}")
+        # Don't surface internal exception detail externally — may expose
+        # Supabase hostnames, connection error strings, or timeout messages
+        # that are useful to an attacker mapping our internal topology.
+        logging.getLogger(__name__).error("Auth check against Supabase failed: %s", e)
+        raise HTTPException(502, "auth check failed — upstream auth service unreachable")
     if not r.ok:
         raise HTTPException(401, "invalid session")
     user = r.json()
