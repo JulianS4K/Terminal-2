@@ -96,7 +96,7 @@ def _build_storefront_base_url() -> str:
         return render_url.rstrip("/")
     railway_dom = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
     if railway_dom:
-        dom = railway_dom.strip().lstrip("https://").lstrip("http://")
+        dom = railway_dom.strip().removeprefix("https://").removeprefix("http://")
         return f"https://{dom}"
     return "https://vibepass-storefront-test.onrender.com"
 

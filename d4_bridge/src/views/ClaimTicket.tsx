@@ -28,7 +28,7 @@ import { useToast } from '../context/ToastContext';
 
 export default function ClaimTicket() {
   const { transferId } = useParams();
-  const { user } = useAuth();
+  const { user, logout, openAuthModal } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [transfer, setTransfer] = useState<Transfer | null>(null);
@@ -211,7 +211,13 @@ export default function ClaimTicket() {
                 This asset is registered for <strong>{transfer.receiverEmail}</strong>, but you are
                 identified as <strong>{user.email}</strong>.
               </p>
-              <button className="text-red-900 font-bold text-xs uppercase tracking-widest hover:underline">
+              <button
+                className="text-red-900 font-bold text-xs uppercase tracking-widest hover:underline"
+                onClick={async () => {
+                  await logout();
+                  openAuthModal();
+                }}
+              >
                 Switch Profile
               </button>
             </div>
