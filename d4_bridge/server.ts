@@ -74,7 +74,7 @@ function rateLimit(opts: { capacity: number; refillPerMinute: number; keyPrefix:
       return res.status(429).json({ error: 'Too many requests' });
     }
     bucket.tokens -= 1;
-    next();
+    return next();
   };
 }
 
@@ -111,7 +111,7 @@ async function startServer() {
       // correct behaviour.
       return res.status(origin && corsAllowlist.has(origin) ? 204 : 403).end();
     }
-    next();
+    return next();
   });
 
   // Lazy Stripe client: only instantiated on the first request that needs it,
@@ -361,9 +361,9 @@ async function startServer() {
         },
       });
 
-      res.json({ id: session.id });
+      return res.json({ id: session.id });
     } catch (err) {
-      next(err);
+      return next(err);
     }
   });
 
@@ -379,12 +379,12 @@ async function startServer() {
         session_id as string
       );
       if (session.payment_status === "paid") {
-        res.json({ status: "paid", metadata: session.metadata });
+        return res.json({ status: "paid", metadata: session.metadata });
       } else {
-        res.json({ status: session.payment_status });
+        return res.json({ status: session.payment_status });
       }
     } catch (err) {
-      next(err);
+      return next(err);
     }
   });
 

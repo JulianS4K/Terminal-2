@@ -88,7 +88,7 @@ export default function TicketDetail() {
   const td_secret = tickets[currentIndex]?.barcodeSecret;
   const td_uid = user?.uid;
   useEffect(() => {
-    if (!td_id || !td_uid) return;
+    if (!td_id || !td_uid) return undefined;
     let cancelled = false;
     let lastBucket = -1;
 

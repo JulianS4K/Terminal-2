@@ -21,7 +21,15 @@
       ]
     },
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+
+    // Safety flags — catch bugs without requiring a full strict-mode migration.
+    // strict: true (strictNullChecks + noImplicitAny) deferred: needs a sweep pass.
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "forceConsistentCasingInFileNames": true
   },
   "exclude": [
     "node_modules",
