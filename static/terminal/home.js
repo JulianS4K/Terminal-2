@@ -1,7 +1,8 @@
 // D0 Terminal — Home page.
-// One fetch: /api/broker/movers?window_hours=<window>. Derives coverage band,
-// blind spots panel, full movers table (with window/segment controls), and
-// the owned-events list from the single mover response.
+// One fetch: get_broker_movers_home(p_window_hours) (email-gated SECDEF RPC,
+// same client-side pattern as the blind-spots panel). Derives coverage band,
+// full movers table (window/segment controls), and the owned-events list from
+// the returned event set. Blind spots panel fires its own RPC in parallel.
 //
 // Movers table mirrors the standalone movers.html page — operator can change
 // the window or segment from home without page-hopping.
@@ -26,36 +27,32 @@
     load();
   }
 
-  function load() {
+  // The RPC returns the full lifecycle-active event set already enriched with
+  // deltas + value moves — not the top-10-per-bucket slice the old
+  // /api/broker/movers backend hop returned, so the coverage band now counts
+  // every tracked event. Email gate is satisfied by the @s4kent.com user JWT.
+  async function load() {
     T.setStatus(`Loading home · ${state.window}h…`);
-    T.api(`/api/broker/movers?window_hours=${state.window}`)
-      .then(data => {
-        T.setStatus('Loaded', 'ok');
-        const events = (data && data.events) || {};
-        state.rows = unionRows([
-          events.owned_winners, events.owned_losers,
-          events.market_winners, events.market_losers,
-          events.value_winners, events.value_losers,
-          events.owned_value_winners, events.owned_value_losers,
-        ]);
-        renderCoverage(state.rows);
-        renderMovers();
-        renderOwnedEvents(state.rows);
-      })
-      .catch(e => {
-        T.setStatus(e.message, 'err');
-        const body = document.getElementById('moversBody');
-        if (body) body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
-      });
-  }
-
-  function unionRows(lists) {
-    const seen = new Map();
-    lists.forEach(list => (list || []).forEach(r => {
-      const id = r.event_id;
-      if (id && !seen.has(id)) seen.set(id, r);
-    }));
-    return Array.from(seen.values());
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      T.setStatus('not signed in', 'err');
+      const body = document.getElementById('moversBody');
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    try {
+      const res = await Auth.client.rpc('get_broker_movers_home', { p_window_hours: state.window });
+      if (res.error) throw new Error(res.error.message || 'RPC error');
+      state.rows = res.data || [];
+      T.setStatus('Loaded', 'ok');
+      renderCoverage(state.rows);
+      renderMovers();
+      renderOwnedEvents(state.rows);
+    } catch (e) {
+      T.setStatus(e.message, 'err');
+      const body = document.getElementById('moversBody');
+      if (body) body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
   }
 
   // ---------- Coverage band ----------

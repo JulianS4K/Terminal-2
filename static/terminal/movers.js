@@ -1,7 +1,8 @@
 // D0 Terminal — Movers page.
-// Calls /api/broker/movers?window_hours=<w>. Unions winner+loser lists into a
-// single sortable table. Window selector + owned/all segment toggle.
-// 5-bucket classifier is Phase 2 (not in endpoint yet).
+// Reads get_broker_movers_home(p_window_hours) directly (email-gated SECDEF
+// RPC, same client-side pattern as the blind-spots panel). Renders a single
+// sortable table. Window selector + owned/all segment toggle. 5-bucket
+// classifier is Phase 2.
 
 (function () {
   'use strict';
@@ -42,33 +43,28 @@
     });
   }
 
-  function load() {
+  // The RPC returns the full lifecycle-active event set already enriched with
+  // deltas + value moves — not the top-10-per-bucket slice the old
+  // /api/broker/movers backend hop returned, so the table sees every tracked
+  // event. Email gate is satisfied by the signed-in @s4kent.com user JWT.
+  async function load() {
     T.setStatus(`Loading movers · ${state.window}h…`);
-    T.api(`/api/broker/movers?window_hours=${state.window}`)
-      .then(data => {
-        T.setStatus('Loaded', 'ok');
-        const events = (data && data.events) || {};
-        state.rows = unionRows([
-          events.owned_winners, events.owned_losers,
-          events.market_winners, events.market_losers,
-          events.value_winners, events.value_losers,
-          events.owned_value_winners, events.owned_value_losers,
-        ]);
-        render();
-      })
-      .catch(e => {
-        T.setStatus(e.message, 'err');
-        document.getElementById('moversBody').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
-      });
-  }
-
-  function unionRows(lists) {
-    const seen = new Map();
-    lists.forEach(list => (list || []).forEach(r => {
-      const id = r.event_id;
-      if (id && !seen.has(id)) seen.set(id, r);
-    }));
-    return Array.from(seen.values());
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      T.setStatus('not signed in', 'err');
+      document.getElementById('moversBody').innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    try {
+      const res = await Auth.client.rpc('get_broker_movers_home', { p_window_hours: state.window });
+      if (res.error) throw new Error(res.error.message || 'RPC error');
+      state.rows = res.data || [];
+      T.setStatus('Loaded', 'ok');
+      render();
+    } catch (e) {
+      T.setStatus(e.message, 'err');
+      document.getElementById('moversBody').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
   }
 
   // Blind spots — calls get_blind_spots_sg_selling RPC (mig 20260520370000;
