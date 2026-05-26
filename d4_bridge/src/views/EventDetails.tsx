@@ -4,6 +4,7 @@ import { Event, Organization } from '../types';
 import { getPublicEvent, getEventForEdit } from '../lib/events';
 import { mintTickets } from '../lib/tickets';
 import SocialLinks from '../components/SocialLinks';
+import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
 import { Calendar, MapPin, Ticket, ShieldCheck, Share2, ArrowLeft, CheckCircle2, Copy, Send, Instagram, Minus, Plus, Tag } from 'lucide-react';
 import { formatCurrency, generateBarcodeContent, handleFirestoreError, OperationType, publicUrl } from '../lib/utils';
@@ -282,92 +283,13 @@ export default function EventDetails() {
   };
 
   const handleInstagramStory = async () => {
-    // Goal: get the event poster image into Instagram's story camera
-    // with the URL preloaded on clipboard so the user can paste a link
-    // sticker. Implementation:
-    //   1. Fetch the event image as a Blob (Firebase Storage download
-    //      URLs are CORS-friendly).
-    //   2. Wrap as a File and pass to navigator.share with the file
-    //      array. On mobile this opens the OS share sheet — picking
-    //      Instagram lands the image directly in a Story draft.
-    //   3. Copy the event URL to clipboard in parallel so the user can
-    //      paste it into the Link Sticker UI inside Instagram.
-    //   4. Toast with the next step ("Add a link sticker and paste").
-    //
-    // Falls back to the old copy-link behaviour on:
-    //   * desktop browsers that don't support file-share
-    //   * events without an image
-    //   * fetch / blob errors (CORS, missing image, etc.)
-    //
-    // Why we can't auto-attach the link as a Story link sticker:
-    // Instagram's Story sticker UI is closed — only Meta's Sharing
-    // API for verified Business accounts can attach stickers from
-    // outside the IG app, and that's beyond the scope of a buyer-side
-    // share flow. The clipboard hand-off is the realistic path.
     if (!event) return;
-    const eventUrl = window.location.href;
-    const imageUrl = event.image;
-
-    // Always copy URL — that's the link-sticker hand-off, regardless
-    // of which path the share takes.
-    try {
-      await navigator.clipboard.writeText(eventUrl);
-    } catch {
-      /* clipboard may be unavailable in some contexts; non-fatal */
-    }
-
-    // Try the file-share path when both the OS share sheet supports
-    // files and we have an image to share.
-    if (
-      imageUrl &&
-      typeof navigator !== 'undefined' &&
-      'share' in navigator &&
-      typeof (navigator as any).canShare === 'function'
-    ) {
-      try {
-        const res = await fetch(imageUrl);
-        if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-        const blob = await res.blob();
-        // Pick a sensible filename + extension from the blob type.
-        const ext = blob.type === 'image/png' ? 'png'
-          : blob.type === 'image/webp' ? 'webp'
-          : blob.type === 'image/svg+xml' ? 'svg'
-          : 'jpg';
-        const file = new File([blob], `${event.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}.${ext}`, {
-          type: blob.type || 'image/jpeg',
-        });
-        const shareData: any = { files: [file], title: event.title, text: `${event.title} — get tickets`, url: eventUrl };
-        if ((navigator as any).canShare(shareData)) {
-          await (navigator as any).share(shareData);
-          toast({
-            kind: 'success',
-            title: 'Image ready to post',
-            message: 'In Instagram: pick this image, then add a link sticker and paste — the URL is on your clipboard.',
-            duration: 8000,
-          });
-          return;
-        }
-      } catch (err) {
-        // fetch / canShare / share errors all fall through to the
-        // link-only path below. AbortError = user cancelled — quiet.
-        const msg = err instanceof Error ? err.message : '';
-        if (!/abort/i.test(msg)) {
-          console.warn('Story image share failed, falling back to link copy:', err);
-        } else {
-          // User dismissed — don't toast.
-          return;
-        }
-      }
-    }
-
-    // Fallback: link copied (already done above), tell the user.
-    toast({
-      kind: 'success',
-      message: imageUrl
-        ? 'Link copied. On mobile, long-press the event image to save it, then paste the link into your Story.'
-        : 'Link copied — paste it into your Story.',
-      duration: 7000,
-    });
+    // Share the event POSTER image to the OS share sheet (→ Instagram Story),
+    // with the URL copied for the link sticker. Shared impl in lib/poster.ts.
+    await shareEventToStory(
+      { title: event.title, url: publicUrl(`event/${event.id}`), imageUrl: event.image },
+      toast,
+    );
   };
 
   const handleSMSShare = () => {
