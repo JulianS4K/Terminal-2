@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Event, Organization } from '../types';
 import { getPublicEvent, getEventForEdit } from '../lib/events';
 import { mintTickets, claimFreeTickets } from '../lib/tickets';
+import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
 import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
@@ -202,6 +203,10 @@ export default function EventDetails() {
 
   const maxPerOrder = event?.purchaseLimits?.maxPerOrder || 8;
   const maxPerAccount = event?.purchaseLimits?.maxPerAccount || 8;
+  // Paid checkout is gated on the Stripe publishable key — the backend
+  // (exos-checkout + exos_fulfill_checkout) is built but stays dormant until
+  // payments are switched on. No key → paid tiers show "Coming soon".
+  const stripeEnabled = !!(import.meta as { env?: { VITE_STRIPE_PUBLISHABLE_KEY?: string } }).env?.VITE_STRIPE_PUBLISHABLE_KEY;
 
   const handlePurchase = async () => {
     if (!user) {
@@ -211,15 +216,34 @@ export default function EventDetails() {
     }
     if (!event) return;
     const tier = event.ticketTiers?.find((t) => t.id === selectedTierId) || event.ticketTiers?.[0];
-    const unitPrice = tier?.price ?? event.price ?? 0;
-
-    // Paid tiers route through Stripe checkout (dormant) — keep the hold state.
-    if (unitPrice > 0) {
-      toast({ kind: 'info', title: 'Coming soon', message: 'Paid checkout is being wired up.' });
-      return;
-    }
     if (!tier?.id) {
       toast({ kind: 'error', message: 'No ticket tier available for this event yet.' });
+      return;
+    }
+    const unitPrice = tier.price ?? event.price ?? 0;
+
+    // Paid tiers → Stripe Checkout (edge fn + webhook fulfillment built; dormant
+    // until the publishable key is set). Free tiers fall through to claim below.
+    if (unitPrice > 0) {
+      if (!stripeEnabled) {
+        toast({ kind: 'info', title: 'Coming soon', message: 'Paid checkout is being wired up.' });
+        return;
+      }
+      setPurchasing(true);
+      try {
+        const url = await startCheckout({
+          eventId: event.id,
+          tierId: tier.id,
+          quantity,
+          successUrl: publicUrl('my-tickets?checkout=success'),
+          cancelUrl: publicUrl(`event/${event.id}`),
+        });
+        window.location.href = url; // leave the SPA for Stripe-hosted checkout
+      } catch (err: any) {
+        console.error('Checkout failed:', err);
+        toast({ kind: 'error', message: err?.message || 'Could not start checkout.' });
+        setPurchasing(false);
+      }
       return;
     }
 

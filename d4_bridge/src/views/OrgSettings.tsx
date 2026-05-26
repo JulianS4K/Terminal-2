@@ -17,6 +17,7 @@ import { useOrganization } from '../context/OrganizationContext';
 import { publicUrl } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import { getOrganization, updateOrganization } from '../lib/orgs';
+import { startStripeOnboarding } from '../lib/checkout';
 import { uploadOrgLogo } from '../lib/orgLogo';
 import { Organization } from '../types';
 
@@ -40,6 +41,7 @@ export default function OrgSettings() {
   const [marketing, setMarketing] = useState<NonNullable<Organization['marketing']>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [paymentsBusy, setPaymentsBusy] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -94,6 +96,27 @@ export default function OrgSettings() {
   // who can already see the org — but the form is only enabled for
   // owners.
   const canEdit = isAdmin || activeRole === 'owner';
+  // Paid ticketing is gated on the Stripe publishable key — the Connect
+  // onboarding backend (exos-connect-onboard) is built but dormant until set.
+  const stripeEnabled = !!(import.meta as { env?: { VITE_STRIPE_PUBLISHABLE_KEY?: string } }).env?.VITE_STRIPE_PUBLISHABLE_KEY;
+
+  const handleSetupPayments = async () => {
+    if (!orgId || !canEdit) return;
+    setPaymentsBusy(true);
+    try {
+      const url = await startStripeOnboarding({
+        orgId,
+        returnUrl: publicUrl(`orgs/${orgId}/settings`),
+        refreshUrl: publicUrl(`orgs/${orgId}/settings`),
+      });
+      window.location.href = url;
+    } catch (err: unknown) {
+      console.error('Stripe onboarding failed:', err);
+      toast({ kind: 'error', message: err instanceof Error ? err.message : 'Payments are not enabled yet.' });
+    } finally {
+      setPaymentsBusy(false);
+    }
+  };
 
   async function handleSave() {
     if (!org) return;
@@ -374,6 +397,30 @@ window.addEventListener('message', function(e) {
               </label>
             ))}
           </div>
+        </fieldset>
+
+        <fieldset className="border border-white/10 p-5 space-y-3">
+          <legend className="text-[10px] text-white/60 font-black uppercase tracking-widest px-2">
+            Payments
+          </legend>
+          <p className="text-white/50 text-xs">
+            Connect Stripe to sell paid tickets — payouts go to your account and the
+            platform takes a fee. Free events need nothing here.
+          </p>
+          {stripeEnabled ? (
+            <button
+              type="button"
+              onClick={handleSetupPayments}
+              disabled={!canEdit || paymentsBusy}
+              className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50"
+            >
+              {paymentsBusy ? 'Opening Stripe…' : 'Set up payments'}
+            </button>
+          ) : (
+            <p className="text-[10px] text-white/30 uppercase tracking-widest">
+              Paid ticketing isn't enabled yet — coming soon.
+            </p>
+          )}
         </fieldset>
 
         {/*

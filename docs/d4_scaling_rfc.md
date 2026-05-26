@@ -18,6 +18,33 @@ infrastructure** with the broker lane. This RFC sequences fixes across sprints.
 
 ---
 
+## Capacity estimate (measured + modeled — 2026-05-26)
+
+**Measured (prod, read-only):** `max_connections = 60`, **shared** with the broker lane
+(~39 already in use at idle); `shared_buffers = 256MB` (broker snapshot tables ~10.5GB →
+cold-cache misses); PostgREST role request cap **8s**. In-DB harness (D4-OPS-11): 1000
+mints in ~14ms (~14µs/mint), 8-lane concurrent check-in of 1000 with **0 double-admits**.
+→ The DB *compute* is µs-scale and not the bottleneck; the limits are **the shared
+60-connection pool, per-event write serialization, and the 8s cap**.
+
+**Modeled ceilings (current shared setup):**
+| Path | Estimate | Bound by |
+|---|---|---|
+| Browsing / reads | ~few hundred concurrent | shared pool + 256MB cache; static assets are CDN, not DB |
+| Claims on **one** event | ~200–500 successful/sec | tier row + global `tickets_sold` row serialization (~1–5ms lock-hold) |
+| Door check-in | ~hundreds/sec across lanes | distinct rows (low contention); per-scan RPC latency |
+| Simultaneous onsale (one event) | clears to ~**1–2k**; **>~2–4k → tail timeouts** | hot-row queue × lock-hold vs the 8s cap, on a pool shared with the broker |
+
+**Headline:** comfortable today at **a few hundred concurrent users / low-hundreds of
+claims-per-sec-per-event / hundreds of check-ins-per-sec**. The risk zone is a **single
+hot event onsale above ~1–2k simultaneous buyers** — that's where D4-OPS-32 (waiting-room)
++ D4-OPS-33 (decouple the counter) need to be in place. Also note the **Auth OTP sign-in
+spike (D4-OPS-9)** can throttle *before* any of the above at a mass door arrival.
+
+**Confidence: LOW–MEDIUM.** This is modeled from measured DB limits + the in-DB harness;
+the PostgREST/RLS/network layer and shared-pool behavior under real concurrency are
+**unmeasured** — `D4-OPS-34` (real concurrent-session load test) is required to confirm.
+
 ## Sprint 1 — cheap, self-contained throughput wins (D4 authors · A1 applies)
 
 These need no infra change and remove known traps before they bite.
@@ -59,7 +86,10 @@ These need no infra change and remove known traps before they bite.
 
 ## Sprint 3 — infrastructure isolation (operator-led)
 
-- **D4-OPS-35 — Dedicated Supabase project for D4 (L, operator).** D4 shares the DB with
+- **D4-OPS-35 — Dedicated Supabase project for D4 (L, operator).** **Decision (operator
+  2026-05-26): stay on the SHARED project for now; move to its own surface eventually.**
+  So this is explicitly deferred — accept the noisy-neighbor risk at current volume and
+  revisit before a high-demand paid onsale. D4 shares the DB with
   the broker lane's 8M-row `listings_snapshots` firehose + ~75 crons + service_role
   scans — documented to tip user-facing RPCs past 8s. No code change fixes noisy-neighbor
   contention; D4 wants its **own project**. Cutover plan: provision project → replay
@@ -84,7 +114,8 @@ These need no infra change and remove known traps before they bite.
 
 ## Open decisions for operator
 
-1. **Dedicated D4 Supabase project** — yes, and when? (Gates D4-OPS-35; biggest lever.)
+1. **Dedicated D4 Supabase project** — ✅ DECIDED (2026-05-26): **shared now, own surface
+   eventually** (D4-OPS-35 deferred). Revisit trigger: before a high-demand paid onsale.
 2. **Peak onsale concurrency target** — size the waiting-room (1k? 10k simultaneous?).
 3. **Paid (Stripe) timeline** — checkout should reuse the D4-OPS-32 queue + D4-OPS-33
    counter work, so sequence them together if payments are near.
