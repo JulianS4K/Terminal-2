@@ -455,7 +455,9 @@ class EvoClient:
     ) -> dict[str, Any]:
         """GET /v9/performers/:id — Show. include_opponents=True adds
         a list of opponent teams (sports only)."""
-        params = {"include": True} if include_opponents else None
+        # TEvo array-style param: include[]=opponents (Python True would serialize
+        # as "True" which the API ignores; bracket notation is the correct form)
+        params = {"include[]": "opponents"} if include_opponents else None
         return self._get(f"/v9/performers/{performer_id}", params)
 
     # ========== Venues ==========
