@@ -145,10 +145,20 @@ Deno.serve(async (req) => {
                                     : otherCandidates.slice(0, limit);
 
   const venueMap = new Map<number, number | null>();
-  for (const c of filtered) {
-    const { data } = await sb.rpc("cross_source_venue_resolve", { p_venue_name: c.sg_venue_name, p_city: c.sg_venue_city, p_state: c.sg_venue_state });
-    venueMap.set(c.sg_event_id, data ?? null);
-  }
+  // Parallel venue lookups — these are independent read RPCs so there's no
+  // benefit to serialising them. Sequential await-in-loop added latency
+  // proportional to `limit` (up to 20 round trips before the first TEvo
+  // search could start). Promise.all keeps all in flight at once.
+  await Promise.all(
+    filtered.map(async (c: any) => {
+      const { data } = await sb.rpc("cross_source_venue_resolve", {
+        p_venue_name: c.sg_venue_name,
+        p_city: c.sg_venue_city,
+        p_state: c.sg_venue_state,
+      });
+      venueMap.set(c.sg_event_id, data ?? null);
+    }),
+  );
 
   const samples: any[] = [];
   let matched = 0, noResults = 0, errored = 0, ownedAttempted = 0;
