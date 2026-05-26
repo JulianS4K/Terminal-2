@@ -106,6 +106,12 @@ export default function OrganizerCheckIn() {
   // as scans land (this lane + others).
   const [insideVenue, setInsideVenue] = useState(0);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  // Holds the setTimeout ID for the deferred camera start so stopScanner()
+  // can cancel a pending start that hasn't fired yet. Without this, if
+  // stopScanner is called within the 50ms window, scannerRef.current is still
+  // null (timeout hasn't run) so stopScanner is a no-op, then the timeout
+  // fires and starts the camera with no owner to shut it down.
+  const startScannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasOfflineRef = useRef(isOffline);
 
   useEffect(() => {
@@ -179,16 +185,22 @@ export default function OrganizerCheckIn() {
     setSyncing(true);
     const successfulSyncs: string[] = [];
     try {
+      // Per-item try/catch so one failing replay doesn't abort the rest of the
+      // queue. With a single outer catch the first failure silently skipped
+      // all subsequent IDs (they'd also miss the successfulSyncs push so they'd
+      // stay queued indefinitely even though they hadn't been tried yet).
       for (const tId of pendingUpdates) {
-        // Replay an offline check-in. checkInTicket is forgiving on replay:
-        // a second flip of an already-used ticket returns {ok:false,
-        // reason:'used'} (no throw), so we still drop it from the queue.
-        // Only a real network/auth error throws and keeps it queued.
-        await checkInTicket(tId, 'manual', 'manual');
-        successfulSyncs.push(tId);
+        try {
+          // Replay an offline check-in. checkInTicket is forgiving on replay:
+          // a second flip of an already-used ticket returns {ok:false,
+          // reason:'used'} (no throw), so we still drop it from the queue.
+          // Only a real network/auth error throws and keeps it queued.
+          await checkInTicket(tId, 'manual', 'manual');
+          successfulSyncs.push(tId);
+        } catch (err) {
+          console.error(`Error syncing pending update ${tId}:`, err);
+        }
       }
-    } catch (err) {
-      console.error("Error syncing some pending updates", err);
     } finally {
       const remainingUpdates = pendingUpdates.filter(id => !successfulSyncs.includes(id));
       setPendingUpdates(remainingUpdates);
@@ -200,6 +212,13 @@ export default function OrganizerCheckIn() {
   // Tear down the live camera scanner safely. stop() rejects if the camera
   // isn't actively running, so guard on state and swallow that case.
   const stopScanner = async () => {
+    // Cancel any pending deferred start so the camera doesn't open after we
+    // shut down (the 50ms timeout may not have fired yet when stopScanner is
+    // called, e.g. on unmount or stop-button tap).
+    if (startScannerTimeoutRef.current !== null) {
+      clearTimeout(startScannerTimeoutRef.current);
+      startScannerTimeoutRef.current = null;
+    }
     const s = scannerRef.current;
     scannerRef.current = null;
     if (!s) return;
@@ -224,7 +243,8 @@ export default function OrganizerCheckIn() {
     // Html5QrcodeScanner widget required a second "Request Camera / Start"
     // tap that often never activated the camera on phones, and its fixed
     // 250px qrbox threw on narrow viewports (video < box) — both fixed here.
-    setTimeout(async () => {
+    startScannerTimeoutRef.current = setTimeout(async () => {
+      startScannerTimeoutRef.current = null;
       try {
         const html5Qr = new Html5Qrcode('reader');
         scannerRef.current = html5Qr;

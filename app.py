@@ -599,7 +599,14 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         xff = request.headers.get("x-forwarded-for") or ""
         ip = (xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")) or "unknown"
         n, w = self._bucket(path)
-        if not _ip_limiter.check(f"{ip}|{path}", n, w):
+        # Key is ip + bucket-prefix, NOT the full path. Using the raw path lets
+        # a bot cycle resource IDs (e.g. /api/store/events/1, /2, …) to get a
+        # fresh bucket per resource and bypass the per-IP cap entirely.
+        bucket_key = next(
+            (pfx for pfx, _, _ in self._BUCKETS if path.startswith(pfx)),
+            "*",
+        )
+        if not _ip_limiter.check(f"{ip}|{bucket_key}", n, w):
             return JSONResponse(
                 {"error": "rate limited", "retry_after_seconds": int(w)},
                 status_code=429,

@@ -192,12 +192,19 @@ export default function CreateEvent() {
   // don't want the empty initial state to immediately overwrite a saved
   // draft on mount.
   const [autosaveReady, setAutosaveReady] = useState(false);
-  const restoredRef = useRef(false);
+  // Two separate refs instead of one:
+  //   draftCheckDoneRef — "have we run the draft check?" (prevents double run)
+  //   draftAppliedRef   — "did the user actually restore a saved draft?"
+  // Using a single ref for both purposes caused clone hydration to always be
+  // skipped: the draft-check effect set restoredRef=true unconditionally (even
+  // when no draft was found), so the clone condition always bailed early.
+  const draftCheckDoneRef = useRef(false);
+  const draftAppliedRef = useRef(false);
 
   // Restore-or-discard prompt on first paint.
   useEffect(() => {
-    if (restoredRef.current) return;
-    restoredRef.current = true;
+    if (draftCheckDoneRef.current) return;
+    draftCheckDoneRef.current = true;
     try {
       const raw = localStorage.getItem(draftKey);
       if (!raw) {
@@ -217,6 +224,7 @@ export default function CreateEvent() {
           setFormData((prev) => ({ ...prev, ...saved.formData }));
           setTicketTiers(saved.ticketTiers);
           if (Array.isArray(saved.promoCodes)) setPromoCodes(saved.promoCodes);
+          draftAppliedRef.current = true;  // only set when user confirmed
         } else {
           localStorage.removeItem(draftKey);
         }
@@ -252,7 +260,9 @@ export default function CreateEvent() {
   //     for published / cancelled events) — admins can clone drafts they
   //     have access to via the same rule.
   useEffect(() => {
-    if (!cloneFromId || restoredRef.current) return;
+    // Wait for draft check to complete (autosaveReady flips in its finally).
+    // Skip clone if user already restored a draft — draft takes precedence.
+    if (!cloneFromId || !autosaveReady || draftAppliedRef.current) return;
     let cancelled = false;
     (async () => {
       try {
@@ -335,10 +345,11 @@ export default function CreateEvent() {
     return () => {
       cancelled = true;
     };
-    // We deliberately run this only when cloneFromId is first read; the
-    // restored-from-localStorage flow takes precedence if there's a draft.
+    // Re-run when autosaveReady flips so clone hydration starts AFTER the
+    // draft check completes. draftAppliedRef is a ref so it doesn't need to
+    // be in deps; checking it inside prevents double hydration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cloneFromId]);
+  }, [cloneFromId, autosaveReady]);
 
   useEffect(() => {
     if (!autosaveReady) return;
@@ -578,21 +589,26 @@ export default function CreateEvent() {
     }
 
     // Timing: parse all three potential dates and verify ordering.
+    // Use zonedWallClockToUtc (same as submit) so the future-check is done in
+    // the EVENT's timezone, not the browser's. Without this a Tokyo organizer
+    // validating an 8pm NY show would compare against 8pm Tokyo time.
+    const tz = formData.timezone || getBrowserTimezone();
     const startTimeStr = formData.timing.startTime || formData.date;
     if (!startTimeStr) return 'Please set the show start time.';
-    const startMs = new Date(startTimeStr).getTime();
-    if (!Number.isFinite(startMs)) return 'Show start time is invalid.';
+    const startUtcDate = zonedWallClockToUtc(startTimeStr, tz);
+    if (!startUtcDate) return 'Show start time is invalid.';
+    const startMs = startUtcDate.getTime();
     if (startMs < Date.now()) return 'Show start time must be in the future.';
 
     if (formData.timing.doorsOpen) {
-      const doorsMs = new Date(formData.timing.doorsOpen).getTime();
-      if (!Number.isFinite(doorsMs)) return 'Doors-open time is invalid.';
-      if (doorsMs > startMs) return 'Doors must open before the show starts.';
+      const doorsUtcDate = zonedWallClockToUtc(formData.timing.doorsOpen, tz);
+      if (!doorsUtcDate) return 'Doors-open time is invalid.';
+      if (doorsUtcDate.getTime() > startMs) return 'Doors must open before the show starts.';
     }
     if (formData.timing.endTime) {
-      const endMs = new Date(formData.timing.endTime).getTime();
-      if (!Number.isFinite(endMs)) return 'Show end time is invalid.';
-      if (endMs <= startMs) return 'Show end must be after the show start.';
+      const endUtcDate = zonedWallClockToUtc(formData.timing.endTime, tz);
+      if (!endUtcDate) return 'Show end time is invalid.';
+      if (endUtcDate.getTime() <= startMs) return 'Show end must be after the show start.';
     }
 
     // Tier validations.
