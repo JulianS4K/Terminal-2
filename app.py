@@ -5585,10 +5585,13 @@ def _section_featured(candidates: list,
         except (TypeError, ValueError):
             continue
         owned = c.get("owned_tickets_count") or 0
-        if owned <= 100:
-            # Global gate — every Featured event needs depth
-            continue
         playoff = _classify_playoff(c.get("name") or "")
+        if owned <= 100 and not playoff:
+            # Global depth gate for non-playoff events. Playoff games are
+            # exempt (operator directive 2026-05-26) — they're the highest-
+            # value NYC inventory even at thin owned counts (e.g. Knicks
+            # Game 7 sits at owned ~60, well under the regular-season bar).
+            continue
         rivalry = rivalry_by_eid.get(eid_int)
         holiday = holiday_by_eid.get(eid_int)
         marquee = _classify_marquee_competition(c.get("name") or "")
@@ -5679,12 +5682,19 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
 
     if not events_rows:
         return {"city": city, "days": day_cap, "count": 0, "events": []}
-    # Drop speculative names (CANCELLED / (If Necessary) / (Date TBD)) —
-    # playoff "may not happen" placeholders shouldn't surface to consumers
-    # via the movers strip. event_lifecycle.is_active stays true for these
-    # because the game *could* happen, so the name-string filter is the
-    # right layer. Mirrors search + home behavior.
-    events_rows = [e for e in events_rows if not _is_speculative_event_name(e.get("name"))]
+    # Drop speculative names (CANCELLED / (If Necessary)) — playoff "may not
+    # happen" placeholders normally shouldn't surface to consumers. EXCEPTION
+    # (operator directive 2026-05-26): playoff games keep their "(If Necessary)"
+    # slot in the movers strip — they're the highest-value NYC inventory (e.g.
+    # Knicks Game 7, $5,880 median) and are exactly what the Featured rail is
+    # for. Genuine CANCELLED games still drop, even playoff ones. This relaxes
+    # the filter ONLY for the movers strip; search + home still hide these.
+    events_rows = [
+        e for e in events_rows
+        if not _is_speculative_event_name(e.get("name"))
+        or (_classify_playoff(e.get("name"))
+            and "CANCELLED" not in (e.get("name") or "").upper())
+    ]
     if not events_rows:
         return {"city": city, "days": day_cap, "count": 0, "events": []}
     events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
@@ -5875,7 +5885,11 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     # Every owned (>=1) event lands in `candidates` with its full signal
     # payload. Each section helper below filters this pool independently;
     # an event can qualify for 0, 1, or multiple sections.
+    # `all_owned_cards` collects EVERY owned event (incl. owned<=50) so the
+    # empty-rail fallback below has a pool to draw from when nothing clears
+    # the curation gates (operator directive 2026-05-26).
     candidates: list[dict] = []
+    all_owned_cards: list[dict] = []
     for eid, m in metrics_by_id.items():
         if eid in inactive:
             continue
@@ -5937,11 +5951,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             break
         b = perf_assets.get(away_pid) if away_pid else None
         owned_tickets = m.get("owned_tickets_count") or 0
-        if owned_tickets <= 50:
-            # Sections (except holidays) require owned > 50 for inventory depth;
-            # holidays is even tighter at > 100, applied in the section helper.
-            continue
-        candidates.append({
+        card = {
             "id": ev.get("id"),
             "name": ev.get("name"),
             "occurs_at_local": ev.get("occurs_at_local"),
@@ -5968,7 +5978,14 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "owned_tickets_count": owned_tickets,
             "owned_median_retail": m.get("owned_median_retail"),
             "owned_share": m.get("owned_share"),
-        })
+        }
+        all_owned_cards.append(card)
+        if owned_tickets > 50:
+            # Sections (except holidays) require owned > 50 for inventory depth;
+            # holidays/specials are tighter at > 100, applied in the section
+            # helpers. Playoff games additionally bypass the owned>100 Featured
+            # gate (see _section_featured).
+            candidates.append(card)
 
     # ----- Specials enrichment: pull holiday-window matches + rivalry
     # tags. Both wrapped in try/except so a view-side failure degrades
@@ -6153,6 +6170,20 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     # other lists we have"). Holiday/rivalry events with owned > 100 that
     # don't qualify for Featured land here.
     specials = _consume(_section_specials(candidates, holiday_by_eid, rivalry_by_eid))
+
+    # Empty-rail fallback (operator directive 2026-05-26): never render a blank
+    # homepage. When nothing clears the curation gates — common in thin-
+    # inventory windows (offseason, between playoff rounds) — surface the
+    # soonest upcoming owned NYC events in the Featured rail so it always has
+    # something bookable. These qualify on recency + owned inventory alone, so
+    # they carry no curation chip (_featured_tag = "").
+    if not (featured or moving_fast or price_drops or climbing or specials):
+        fallback = sorted(all_owned_cards,
+                          key=lambda c: c.get("occurs_at_local") or "9999")[:cap]
+        for fc in fallback:
+            fc.setdefault("_featured_tag", "")
+            fc["_featured_kind"] = "fallback"
+        featured = fallback
 
     return {
         "city": city,
