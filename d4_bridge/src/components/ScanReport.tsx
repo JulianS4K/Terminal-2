@@ -66,7 +66,7 @@ export default function ScanReport({ eventId, totalSold }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId) return undefined;
     let cancelled = false;
     setLoading(true);
     setError(null);

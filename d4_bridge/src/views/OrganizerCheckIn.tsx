@@ -397,7 +397,7 @@ export default function OrganizerCheckIn() {
   // and mark those tickets used locally, so a near-simultaneous scan here is
   // refused. Authoritative + RLS-gated (org staff only) via postgres_changes.
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId) return undefined;
     const ch = joinCheckinChannel(eventId, (ticketId) => {
       setOfflineRegistry((prev) => {
         const entry = prev[ticketId];
@@ -414,7 +414,7 @@ export default function OrganizerCheckIn() {
 
   // Seed "inside venue" on mount (the realtime channel keeps it live after).
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId) return undefined;
     let cancelled = false;
     countEventCheckins(eventId)
       .then((n) => { if (!cancelled) setInsideVenue(n); })

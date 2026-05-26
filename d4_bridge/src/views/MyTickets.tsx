@@ -61,7 +61,7 @@ export default function MyTickets() {
   }, [location, user, navigate, toast]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) return undefined;
     let cancelled = false;
 
     const load = async () => {

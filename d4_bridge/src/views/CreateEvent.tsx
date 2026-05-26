@@ -262,7 +262,7 @@ export default function CreateEvent() {
   useEffect(() => {
     // Wait for draft check to complete (autosaveReady flips in its finally).
     // Skip clone if user already restored a draft — draft takes precedence.
-    if (!cloneFromId || !autosaveReady || draftAppliedRef.current) return;
+    if (!cloneFromId || !autosaveReady || draftAppliedRef.current) return undefined;
     let cancelled = false;
     (async () => {
       try {
@@ -352,7 +352,7 @@ export default function CreateEvent() {
   }, [cloneFromId, autosaveReady]);
 
   useEffect(() => {
-    if (!autosaveReady) return;
+    if (!autosaveReady) return undefined;
     const t = setTimeout(() => {
       try {
         localStorage.setItem(

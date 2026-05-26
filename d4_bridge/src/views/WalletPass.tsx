@@ -49,7 +49,7 @@ export default function WalletPass() {
   // Supabase Realtime channel is the eventual upgrade if 15s feels laggy.)
   // getTicket joins the event, so one call covers both.
   useEffect(() => {
-    if (!ticketId) return;
+    if (!ticketId) return undefined;
     let cancelled = false;
     const load = async () => {
       try {
@@ -82,7 +82,7 @@ export default function WalletPass() {
   const barcodeSecret = ticket?.barcodeSecret;
   const uid = user?.uid;
   useEffect(() => {
-    if (!ticketId2 || !uid) return;
+    if (!ticketId2 || !uid) return undefined;
     let cancelled = false;
     let lastBucket = -1;
     const refresh = async () => {

@@ -1,9 +1,12 @@
 name: tests
 
-# Backend test gate (added 2026-05-15 per operator directive).
-# Runs pytest on every PR + push to main. A1 must NOT merge to main
-# until this workflow is green. Render auto-deploy fires on push to main,
-# so a green CI is the implicit gate on deploys.
+# CI gate — runs on every PR + push to main.
+# Jobs: pytest (backend) · typescript (D4 bridge type-check + build) · mypy (Python types)
+#
+# A1 must NOT merge to main until all jobs are green.
+# Render auto-deploys on push to main — green CI is the implicit deploy gate.
+#
+# Added 2026-05-15 (pytest). TypeScript + mypy added 2026-05-26.
 
 on:
   pull_request:
@@ -13,6 +16,7 @@ on:
 
 jobs:
   pytest:
+    name: pytest (Python)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,3 +44,46 @@ jobs:
           # them to sys.path; PYTHONPATH=. is the canonical fix.
           PYTHONPATH: "."
         run: pytest tests/ -q --maxfail=1
+
+      - name: mypy type check (warn-only)
+        # Informational until the codebase is mypy-clean. Set
+        # continue-on-error: false once all type errors are resolved.
+        continue-on-error: true
+        run: |
+          pip install mypy --quiet
+          mypy app.py evo_client.py \
+            --ignore-missing-imports \
+            --no-error-summary \
+            --pretty \
+            || true
+          echo "mypy complete (warn-only)"
+
+  typescript:
+    name: TypeScript (D4 bridge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: d4_bridge
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: d4_bridge/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type check (tsc --noEmit)
+        run: npm run lint
+
+      - name: Build (Vite)
+        # Validates no missing imports / dead references. Uses placeholder
+        # Supabase keys — the build succeeds without a live connection.
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
+        run: npm run build

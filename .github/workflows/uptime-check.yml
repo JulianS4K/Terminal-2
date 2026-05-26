@@ -1,0 +1,111 @@
+name: uptime-check
+
+# Pings vibepass-storefront-test /healthz every 5 minutes from GitHub Actions.
+# On failure: marks the run failed (GitHub emails owner) AND opens a GitHub
+# issue tagged "bug" so it surfaces in the issue tracker.
+# Optional Slack alert: set SLACK_BOT_TOKEN + SLACK_ALERTS_CHANNEL_ID secrets
+# in Settings → Secrets → Actions to also post to #terminal-2-alerts.
+#
+# Note: GitHub scheduled workflows may fire up to ~5 min late under load.
+# For sub-minute alerting, add an external monitor (Better Uptime / UptimeRobot)
+# pointing to the same /healthz endpoint.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # every 5 minutes
+  workflow_dispatch:          # manual trigger for testing
+
+concurrency:
+  group: uptime-check
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Ping /healthz
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Check health endpoint
+        id: health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 15 \
+            --retry 2 --retry-delay 3 \
+            https://vibepass-storefront-test.onrender.com/healthz)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Health check returned HTTP $STATUS (expected 200)"
+            exit 1
+          fi
+          echo "✅ /healthz OK ($STATUS)"
+
+      - name: Open GitHub issue on failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATUS: ${{ steps.health.outputs.status }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          # Avoid duplicate issues: skip if an open uptime-failure issue was
+          # created in the last 30 minutes.
+          RECENT=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --label "uptime-failure" \
+            --state open \
+            --limit 1 \
+            --json createdAt \
+            --jq '.[0].createdAt // ""')
+          if [ -n "$RECENT" ]; then
+            CREATED_EPOCH=$(date -d "$RECENT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$RECENT" +%s)
+            NOW_EPOCH=$(date +%s)
+            DIFF=$(( NOW_EPOCH - CREATED_EPOCH ))
+            if [ "$DIFF" -lt 1800 ]; then
+              echo "Open uptime-failure issue already exists (created ${DIFF}s ago). Skipping duplicate."
+              exit 0
+            fi
+          fi
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "🔴 Uptime: vibepass-storefront-test unhealthy ($TIMESTAMP)" \
+            --body "$(cat <<EOF
+          ## Health check failure
+
+          **Time**: $TIMESTAMP
+          **Endpoint**: https://vibepass-storefront-test.onrender.com/healthz
+          **HTTP status**: ${STATUS:-unknown}
+          **Workflow run**: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          ### Next steps
+          1. Check [Render dashboard](https://dashboard.render.com) for service status
+          2. Review recent deploys on \`main\`
+          3. Check Supabase project health at https://supabase.com/dashboard/project/hzrizjeaxlqcxfrtczpq
+          4. Once resolved, close this issue
+
+          *Auto-opened by uptime-check workflow*
+          EOF
+          )" \
+            --label "bug,uptime-failure"
+
+      - name: Notify Slack on failure (optional)
+        if: failure() && env.SLACK_BOT_TOKEN != ''
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ALERTS_CHANNEL_ID: ${{ secrets.SLACK_ALERTS_CHANNEL_ID }}
+          STATUS: ${{ steps.health.outputs.status }}
+        run: |
+          curl -s -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"channel\": \"${SLACK_ALERTS_CHANNEL_ID}\",
+              \"text\": \"🔴 *vibepass-storefront-test* health check failed\",
+              \"blocks\": [{
+                \"type\": \"section\",
+                \"text\": {
+                  \"type\": \"mrkdwn\",
+                  \"text\": \"🔴 *Health check failed* — HTTP ${STATUS:-unknown}\\n<https://dashboard.render.com|Render dashboard> · <$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|Workflow run>\"
+                }
+              }]
+            }"

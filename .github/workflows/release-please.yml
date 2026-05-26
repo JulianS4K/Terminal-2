@@ -1,0 +1,37 @@
+name: release-please
+
+# Auto-generates CHANGELOG.md entries and GitHub Releases from conventional
+# commit titles. On every push to main, release-please opens (or updates) a
+# "Release PR" that bumps version.txt and CHANGELOG.md. Merging that PR cuts
+# a GitHub Release + git tag automatically.
+#
+# Commit type → CHANGELOG section mapping (from release-please-config.json):
+#   feat     → Features      (bumps minor)
+#   fix      → Bug Fixes     (bumps patch)
+#   security → Security      (bumps patch)
+#   chore    → Chores        (no bump unless release-as override)
+#   docs     → Documentation (no bump)
+#   refactor → Refactoring   (no bump)
+#
+# BREAKING CHANGE footer or feat! / fix! → bumps major.
+#
+# Docs: https://github.com/googleapis/release-please-action
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          release-type: simple
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
