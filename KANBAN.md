@@ -43,7 +43,6 @@
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
 | B1-NEXT-11 | Op | Leaked `CRON_SECRET` in git history (commit `5297739`). Value rotated but repo is public → internet-readable. | Operator decides: `git filter-repo` + force-push window, OR accept (rotated, contained blast radius). G-1. |
-| B1-NEXT-56 | A1 (B1) | **Anon-readable definer views/matviews leak** (B1 sweep 2026-05-25). 14 `security_invoker=false` + anon-granted objects (postgres-owned, bypass RLS): broker-intel LIVE (`v_event_price_arbitrage` 3681 anon rows) + 2 matviews uncovered by the harness + latent order-PII (`unified_orders`). Same default-grant gotcha as #298, on views. | **PR #350** (REVOKE 14 FROM anon). Awaiting A1 merge + operator apply. |
 
 ### SEC-MED (defense-in-depth)
 
@@ -63,6 +62,8 @@
 
 | ID | Lane | Finding/Task | Action |
 |---|---|---|---|
+| B1-NEXT-61 | A1 | `listings_aq_backfill_overnight` cron (mig `20260526000000` FIX-3) omits the `cron_should_fire()` policy gate PROJECT_BIBLE §7 mandates (the other 2 fixes in that migration have it). Runs as postgres + self-unschedules → convention, not security. | A1 add the gate on next reschedule. B1 review F3 (`docs/security-review-2026-05-26-post-pr369.md`). |
+| B1-NEXT-62 | D4 | `exos_event_checkins.scanned_by` now nullable (mig `20260526020000`) — correct fix, but scanner attribution is lost if the scanner's `auth.users` row is later deleted. | Optional: denormalize a `scanned_by_email` text snapshot at scan time for a durable door-audit. B1 review F4. |
 | B1-NEXT-4 | B1 | Evaluate CodeQL / SAST for FastAPI + edge functions. | Research + decision doc |
 | B1-NEXT-6 | B1 | Egress payload review on `*_public` / `/api/store/*` RPCs. (Partial pass via war-games W-3 2026-05-17; rotational.) | Quarterly sweep against war_games_playbook W-3 + W-4 |
 | B1-NEXT-10 | A1 | Migration slot collisions: `20260515300000` (3 files), `20260515320000` (2 files), `20260515340000` (2 files — caught 2026-05-18, kanban missed it). None applied via `apply_migration` (`schema_migrations` empty for all). | Rename to next free slots in a future cleanup PR. **Risk-check first**: some may have been applied via direct `execute_sql` — verify via function/object presence before rename. |
@@ -490,7 +491,7 @@ Defense-in-depth follow-ups identified during the Phase-2 monitoring sweep. Each
 - **[B1-NEXT-4] [SEC-LOW]** Evaluate CodeQL / SAST for FastAPI + edge functions. Decide whether to add as a CI workflow.
 - **[B1-NEXT-5] [SEC-MED]** Vault orphans check — `release_health_check()` row for `get_app_secret` allowlist entries not actually referenced in any prod fn / cron / edge-fn. Punch-list item from [docs/release-discipline.md](docs/release-discipline.md) §7.
 - **[B1-NEXT-6] [SEC-LOW]** Egress payload review — sample anon-callable RPC responses for accidental wholesale/broker field exposure ([LANE_DISCIPLINE.md §D1](LANE_DISCIPLINE.md) wall rules). Periodically review `*_public` RPCs.
-- **[B1-NEXT-7] [SEC-HIGH]** RLS gap on 3 tables — `cron_pause_state_20260514`, `sg_event_priority_state`, `sg_priority_policy` have `rowsecurity=false`, 0 policies, anon SELECT GRANT. Same pattern as Phase-1 `aq_venue_map`/`aq_performer_map` gap (fixed in PR #110). Author fix migration `<ts>_security_rls_gap_close_3_tables.sql`. Cross-lane: 1st table is C1's (cron pause snapshot), other 2 are A1's (SG pipeline).
+- **[B1-NEXT-7] [SEC-HIGH] ✅ CLOSED** (B1 verified 2026-05-26 via Phase-2 anon-permissive-policy sweep — **0** anon-readable tables have `rowsecurity=false`; these 3 have since had RLS enabled, no fix migration needed). Original: RLS gap on `cron_pause_state_20260514`, `sg_event_priority_state`, `sg_priority_policy`.
 - **[B1-NEXT-8] [SEC-MED]** §6 retrofit on `_health_check_pg_net_errors()` (A1's, added by PR #115). File PR comment to A1 per cross-lane patch protocol. Read-only diagnostic but defense-in-depth retrofit warranted.
 - **[B1-NEXT-9] [SEC-MED]** §6 retrofit on `get_broker_event_page(integer, integer)` (A1's, added by PR #115). Body is already gated by `auth.jwt()->>'email'`; §6 guard is belt-and-suspenders. File PR comment to A1.
 - **[B1-NEXT-10] [SEC-LOW]** Migration slot collision audit — `20260515300000` (3 files), `20260515320000` (2 files) collide. MIGRATION_CONVENTIONS.md §3 bump-by-30-or-50 rule not followed. Not security-class but flags discipline drift; recommend filenames be renamed to next free slots in a future cleanup PR.

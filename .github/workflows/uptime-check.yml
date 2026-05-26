@@ -15,6 +15,13 @@ on:
     - cron: '*/5 * * * *'   # every 5 minutes
   workflow_dispatch:          # manual trigger for testing
 
+# Least-privilege GITHUB_TOKEN (B1 security review 2026-05-26, PR #369 follow-up).
+# The failure path opens an issue (needs issues:write); nothing writes code.
+# Without this block the token inherits the repo-wide default permission set.
+permissions:
+  contents: read
+  issues: write
+
 concurrency:
   group: uptime-check
   cancel-in-progress: true
