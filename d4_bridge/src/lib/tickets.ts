@@ -51,7 +51,7 @@ export function mapTicket(row: any): Ticket {
     voidedAt: row.voided_at ? toTs(row.voided_at) : undefined,
     voidedBy: row.voided_by ?? undefined,
     voidedReason: row.voided_reason ?? undefined,
-    purchaseDate: toTs(row.created_at),
+    purchaseDate: row.created_at ? toTs(row.created_at) : undefined,
     lastReissueDate: row.last_reissue_at ? toTs(row.last_reissue_at) : undefined,
     checkInDate: row.check_in_at ? toTs(row.check_in_at) : undefined,
   };
