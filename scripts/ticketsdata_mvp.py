@@ -104,21 +104,32 @@ def _q(env: dict) -> int | None:
 
 
 def _summarize_fetch(env: dict) -> str:
-    plat = env.get("platform", "?")
-    body = env.get("body")
+    # Real /fetch envelope (confirmed live 2026-05-26): top-level status_code +
+    # event_id, listings under items.{totalListings,offers}. The docs' nested
+    # body._embedded/listings shape is kept as a fallback.
+    status = env.get("status_code", env.get("status"))
     n = None
-    if isinstance(body, list):
-        n = len(body)
-    elif isinstance(body, dict):
-        emb = body.get("_embedded")
-        if isinstance(emb, dict) and isinstance(emb.get("offer"), list):
-            n = len(emb["offer"])
-        elif isinstance(body.get("listings"), list):
-            n = len(body["listings"])
-        elif isinstance(body.get("offers"), list):
-            n = len(body["offers"])
+    items = env.get("items")
+    if isinstance(items, dict):
+        if isinstance(items.get("totalListings"), int):
+            n = items["totalListings"]
+        elif isinstance(items.get("offers"), list):
+            n = len(items["offers"])
+    if n is None:
+        body = env.get("body")
+        if isinstance(body, list):
+            n = len(body)
+        elif isinstance(body, dict):
+            emb = body.get("_embedded")
+            if isinstance(emb, dict) and isinstance(emb.get("offer"), list):
+                n = len(emb["offer"])
+            elif isinstance(body.get("listings"), list):
+                n = len(body["listings"])
+            elif isinstance(body.get("offers"), list):
+                n = len(body["offers"])
     listings = f"{n} listings" if n is not None else "listings (shape varies)"
-    return f"  /fetch {plat}: status={env.get('status')} {listings} in {env.get('response_s')}s"
+    return (f"  /fetch: status={status} event={env.get('event_id', '?')} "
+            f"{listings} in {env.get('response_s')}s")
 
 
 def _summarize_match(env: dict) -> str:
