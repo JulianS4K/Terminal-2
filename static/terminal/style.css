@@ -1450,6 +1450,12 @@ body[data-page="login"] {
 .cross-src-tbl .neg { color: var(--neg); }
 .cross-src-tbl .dim { color: var(--dim); }
 
+/* TD Market column + per-platform breakdown */
+.cross-src-tbl .td-mkt-col { color: var(--accent, #4a9eff); }
+.td-platform-bar { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.td-platform-chip { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--shade); padding: 2px 8px; border-radius: 3px; }
+.td-platform-chip b { color: var(--text); }
+
 /* ---------- Full-list tabs (SG Listings / EVO Listings / SG Sales) ---------- */
 .full-list-tbl {
   width: 100%;
