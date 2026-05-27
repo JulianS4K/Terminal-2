@@ -1039,6 +1039,21 @@ UI surfaces:
 
 ## DONE (last 10)
 
+### DONE — `7413ede` · feat(d0): multi-source data model — movers v2, market carpet, discovery gaps, TD freshness
+- **Migrations (4)**:
+  - `20260527200000` — TD owned-tickets fix + reschedule cron 4×/day
+  - `20260527240000` — `sg_classify_events()` rewritten to use `event_listing_snapshot_daily` instead of 12.7M-row `listings_snapshots` scan; was timing out every 5 min since 08:40 UTC
+  - `20260527250000` — `event_movers_index` + `event_movers_index_history` tables; TD columns on `event_listing_snapshot_daily`; `compute_event_movers_index_all()` (30 source×window combos); `discovery_gap_alerts` table + `evo_sg_discovery_gaps()` populate function; crons at 35 13,19,3 + 9am
+  - `20260527260000` — `get_event_movers_v2` RPC (28 cols, cross-source medians + spreads); `get_event_movers_index_summary` RPC; `/api/broker/movers` v2 path in `app.py` (`?window_days=N&source=X[&category=Y]`)
+- **Terminal UI (7 files)**:
+  - `event.html/js` — TD Markets tab (SH/GT/VD snapshot history table); `#data-freshness` section (9-source per-row age/status/listings/median table); TD fr-chips (SH/GT/VD) in hero; `loadTdFreshness()` + `renderDataFreshness()` added
+  - `performer.html/js` — Market Carpet tab (cross-source medians + movers index + discovery gap signals per upcoming event)
+  - `venue.html/js` — Market Carpet tab (same as performer, + Performer column)
+  - `movers.html/js` — Index v2 mode (default): SOURCE × HORIZON × CATEGORY selectors; legacy mode toggle; v2 calls `/api/broker/movers?window_days=`; `renderV2Summary()` / `renderV2Events()` / `buildV2Table()`
+  - `discovery.html/js` — Discovery Gaps panel (first panel): queries `discovery_gap_alerts`, 10 gap types, type filter chips, priority sort
+- **Docs**: `PROJECT_BIBLE.md` landmark migs + landmines; `RESOURCES_BIBLE.md` 5 new tables, D0 tab matrix, v2 API path
+- by: D0 · landed: 2026-05-27
+
 ### DONE — D4-OPS-2 · D4 data cut-over — no migration (test data, fresh Supabase start)
 - Operator confirmed all Firestore data is test-only. No Firestore→Supabase copy needed. `exos_*` tables start at 0 rows and populate via normal UI use (org create → events → tickets). `scripts/migrate-to-orgs.ts` was a Firestore-internal restructuring pass (stamps `orgId` on Firestore docs) — not applicable to the Supabase cut-over. All 5 D4 migration phases are live on prod (PRs #305 + #308).
 - by: D4 · closed: 2026-05-23 · bot_chat #454
