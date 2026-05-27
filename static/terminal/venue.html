@@ -52,6 +52,7 @@
       <button class="event-tab" data-tab="events" role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountVenueEvents"></span></button>
       <button class="event-tab" data-tab="owned"  role="tab" aria-selected="false">Owned Inventory</button>
       <button class="event-tab" data-tab="sg"     role="tab" aria-selected="false">SG Activity</button>
+      <button class="event-tab" data-tab="market" role="tab" aria-selected="false">Market Carpet <span class="tab-count" id="tabCountVenueMarket"></span></button>
     </nav>
 
     <div class="tab-pane active" id="vPaneOverview" role="tabpanel" hidden>
@@ -91,6 +92,25 @@
           <span class="muted small" id="vSgMeta"></span>
         </div>
         <div id="vSgBody"></div>
+      </section>
+    </div>
+
+    <!-- Market Carpet — cross-source medians for every upcoming event at this venue.
+         Lazy-loaded on first click. Queries event_listing_snapshot_daily + event_movers_index
+         + discovery_gap_alerts client-side using event IDs from the venue page payload. -->
+    <div class="tab-pane" id="vPaneMarket" role="tabpanel" hidden>
+      <section id="venue-market-carpet">
+        <div class="panel-title row">
+          <span>MARKET CARPET — cross-source medians + signals per event</span>
+          <span class="muted small" id="vMarketMeta">tap tab to load</span>
+        </div>
+        <div class="muted small" style="margin-bottom:8px">
+          EVO/SG/SH/GT/VD medians from latest <code>event_listing_snapshot_daily</code> row per event.
+          Movers column shows active index signals (source · category · Δ).
+          Gap column shows active <code>discovery_gap_alerts</code>.
+          TD data started 2026-05-27 — sparse until ~June 3.
+        </div>
+        <div id="vMarketBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 

@@ -3483,8 +3483,40 @@ def broker_event_chart_data(
     }
 
 
+def _broker_movers_v2(source: str, window_days: int, category=None, include_inactive: bool = False):
+    """v2 movers path: reads from event_movers_index (SMA-based signal scoring).
+    Returns events grouped by category with cross-source spread data.
+    Index is seeded 3×/day by compute_movers_index_post_snapshot cron.
+    """
+    db = require_sb()
+    rows = db.rpc("get_event_movers_v2", {
+        "p_source":      source,
+        "p_window_days": window_days,
+        "p_category":    category,   # None → all categories (SQL NULL)
+        "p_limit":       200,        # 6 cat × 25 events = 150 max; 200 gives headroom
+    }).execute().data or []
+    summary = db.rpc("get_event_movers_index_summary", {
+        "p_source":      source,
+        "p_window_days": window_days,
+    }).execute().data or []
+    by_cat: dict = {}
+    for r in rows:
+        cat = r.get("category") or "unknown"
+        by_cat.setdefault(cat, []).append(r)
+    return {
+        "v":                  2,
+        "source":             source,
+        "window_days":        window_days,
+        "category":           category,
+        "event_count":        len(rows),
+        "events_by_category": by_cat,
+        "summary":            summary,
+    }
+
+
 @app.get("/api/broker/movers")
-def broker_movers(window_hours: int = 24, include_inactive: bool = False, _=Depends(require_auth)):
+def broker_movers(window_hours: int = 24, source: str = "merged", window_days: int = None,
+                  category: str = None, include_inactive: bool = False, _=Depends(require_auth)):
     """Top 10 winners + losers at event / performer / venue level, owned vs market.
     Window: compare latest event_metrics row vs latest row from `window_hours` ago.
 
@@ -3495,7 +3527,14 @@ def broker_movers(window_hours: int = 24, include_inactive: bool = False, _=Depe
     `include_inactive`: by default we exclude ghost / completed / cancelled events
     (lifecycle.is_active=false) so a Raptors playoff bracket that won't happen
     doesn't pollute the movers list. Pass true to see everything raw.
+
+    v2 path (window_days set): uses event_movers_index (SMA-based, source×window×category).
+    source defaults to "merged"; category=None returns all categories grouped by key.
     """
+    # v2 path: index-backed SMA signals, source×window×category
+    if window_days is not None:
+        return _broker_movers_v2(source, window_days, category, include_inactive)
+
     window_hours = max(1, min(int(window_hours), 168))
     db = require_sb()
 

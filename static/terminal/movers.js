@@ -15,15 +15,61 @@
     sortDir: 'desc',
   };
 
+  // V2 index mode state
+  const v2State = {
+    source: 'merged',
+    windowDays: 7,
+    category: null, // null = all categories
+    data: null,
+  };
+
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireControls();
     // Blind spots is independent of /api/broker/movers — fires its own RPC.
     renderBlindSpots().catch(e => console.error('[blindSpots]', e));
-    load();
+    // Default to v2 index mode; switchMode triggers loadV2().
+    switchMode('v2');
   }
 
   function wireControls() {
+    // Mode toggle
+    document.querySelectorAll('[data-mode]').forEach(btn => {
+      btn.addEventListener('click', () => switchMode(btn.dataset.mode));
+    });
+
+    // V2 — source
+    document.querySelectorAll('[data-source]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-source]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        v2State.source = btn.dataset.source;
+        v2State.data = null; // force reload
+        loadV2();
+      });
+    });
+    // V2 — window (days horizon)
+    document.querySelectorAll('[data-wdays]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-wdays]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        v2State.windowDays = parseInt(btn.dataset.wdays, 10);
+        v2State.data = null;
+        loadV2();
+      });
+    });
+    // V2 — category
+    document.querySelectorAll('[data-cat]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-cat]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        v2State.category = btn.dataset.cat || null;
+        v2State.data = null;
+        loadV2();
+      });
+    });
+
+    // Legacy — window (hours)
     document.querySelectorAll('[data-window]').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('[data-window]').forEach(b => b.classList.remove('is-active'));
@@ -32,6 +78,7 @@
         load();
       });
     });
+    // Legacy — segment
     document.querySelectorAll('[data-segment]').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('[data-segment]').forEach(b => b.classList.remove('is-active'));
@@ -40,6 +87,154 @@
         render();
       });
     });
+  }
+
+  // ============================================================
+  // Mode switching — v2 / legacy
+  // ============================================================
+  function switchMode(mode) {
+    document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('is-active', b.dataset.mode === mode));
+    const v2Ctrl    = document.getElementById('v2Controls');
+    const legCtrl   = document.getElementById('legacyControls');
+    const v2Sec     = document.getElementById('movers-v2');
+    const legSec    = document.getElementById('legacyResults');
+    if (mode === 'v2') {
+      if (v2Ctrl)  v2Ctrl.removeAttribute('hidden');
+      if (legCtrl) legCtrl.setAttribute('hidden', '');
+      if (v2Sec)   v2Sec.removeAttribute('hidden');
+      if (legSec)  legSec.setAttribute('hidden', '');
+      if (!v2State.data) loadV2();
+    } else {
+      if (v2Ctrl)  v2Ctrl.setAttribute('hidden', '');
+      if (legCtrl) legCtrl.removeAttribute('hidden');
+      if (v2Sec)   v2Sec.setAttribute('hidden', '');
+      if (legSec)  legSec.removeAttribute('hidden');
+      load(); // fire legacy load
+    }
+  }
+
+  // ============================================================
+  // V2 — load + render
+  // ============================================================
+  async function loadV2() {
+    const body    = document.getElementById('v2Body');
+    const countEl = document.getElementById('v2Count');
+    if (body) body.innerHTML = '<div class="empty">loading…</div>';
+    const stripEl = document.getElementById('v2SummaryStrip');
+    if (stripEl) stripEl.innerHTML = '';
+
+    T.setStatus(`Loading v2 movers · ${v2State.source} · ${v2State.windowDays}d…`);
+    const params = new URLSearchParams({ window_days: String(v2State.windowDays), source: v2State.source });
+    if (v2State.category) params.set('category', v2State.category);
+
+    try {
+      const data = await T.api('/api/broker/movers?' + params.toString());
+      T.setStatus('Loaded', 'ok');
+      v2State.data = data;
+      if (countEl) countEl.textContent = data.event_count ? `${data.event_count} events` : '';
+      renderV2Summary(data.summary || []);
+      renderV2Events(data);
+    } catch (e) {
+      T.setStatus(e.message, 'err');
+      if (body) body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function renderV2Summary(summary) {
+    const strip = document.getElementById('v2SummaryStrip');
+    if (!strip || !summary.length) { if (strip) strip.innerHTML = ''; return; }
+    strip.innerHTML = summary.map(s => {
+      const sz  = s.index_size || 0;
+      const cov = s.data_coverage_pct != null ? ` · ${Math.round(s.data_coverage_pct)}% cov` : '';
+      const turn = ((s.entries_24h || 0) + (s.exits_24h || 0));
+      const turnStr = turn ? ` · ${turn} Δ/24h` : '';
+      return `<span class="badge" title="source=${s.source} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category||'')}: ${sz}${cov}${turnStr}</span>`;
+    }).join(' ');
+  }
+
+  function renderV2Events(data) {
+    const body = document.getElementById('v2Body');
+    if (!body) return;
+    const byCategory = (data && data.events_by_category) || {};
+    const categories = Object.keys(byCategory).sort();
+    if (!categories.length) {
+      body.innerHTML = '<div class="empty">no events in index for this source + window — data still accumulating</div>';
+      return;
+    }
+    body.innerHTML = '';
+    categories.forEach(cat => {
+      const events = byCategory[cat] || [];
+      if (!events.length) return;
+      const section = document.createElement('div');
+      section.className = 'v2-category-section';
+      const hdr = document.createElement('div');
+      hdr.className = 'panel-title row';
+      hdr.innerHTML = `<span>${escapeHtml(cat.toUpperCase().replace(/_/g,' '))} <span class="tab-count">${events.length}</span></span>`;
+      section.appendChild(hdr);
+      section.appendChild(buildV2Table(events));
+      body.appendChild(section);
+    });
+  }
+
+  function buildV2Table(events) {
+    const $p = v => v != null ? '$' + T.fmtNum(Math.round(+v)) : '—';
+    const $spread = v => {
+      if (v == null) return '';
+      const n = +v;
+      return `<span class="${n > 2 ? 'pos' : n < -2 ? 'neg' : 'muted small'}">${n > 0 ? '+' : ''}${n.toFixed(0)}%</span>`;
+    };
+    const $dpct = v => {
+      if (v == null || !Number.isFinite(+v)) return '—';
+      const n = +v;
+      return `<span class="${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}">${n > 0 ? '+' : ''}${n.toFixed(1)}%</span>`;
+    };
+
+    const tbl = document.createElement('table');
+    tbl.className = 'movers-v2-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th class="num">#</th>
+        <th>Event</th>
+        <th class="num">T</th>
+        <th class="num">EVO</th>
+        <th class="num">SG</th>
+        <th class="num">SH</th>
+        <th class="num">GT</th>
+        <th class="num">VD</th>
+        <th class="num">SH/EVO</th>
+        <th class="num">GT/SH</th>
+        <th class="num">VD/SH</th>
+        <th class="num">Cur $</th>
+        <th class="num">Δ%</th>
+        <th class="num">Own</th>
+        <th class="num">Score</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+
+    [...events].sort((a, b) => (+a.rank || 99) - (+b.rank || 99)).forEach(r => {
+      const tr = document.createElement('tr');
+      tr.classList.add('clickable');
+      tr.addEventListener('click', () => { window.location.href = 'event.html?event=' + r.event_id; });
+      const ownedTix = +r.cur_owned || 0;
+      tr.innerHTML = `
+        <td class="num muted small">${r.rank}</td>
+        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a></td>
+        <td class="num">${r.days_to_event != null ? r.days_to_event : '—'}</td>
+        <td class="num">${$p(r.evo_median)}</td>
+        <td class="num">${$p(r.sg_median)}</td>
+        <td class="num">${$p(r.td_sh_median)}</td>
+        <td class="num">${$p(r.td_gt_median)}</td>
+        <td class="num">${$p(r.td_vd_median)}</td>
+        <td class="num">${$spread(r.sh_vs_evo_spread)}</td>
+        <td class="num">${$spread(r.gt_vs_sh_spread)}</td>
+        <td class="num">${$spread(r.vd_vs_sh_spread)}</td>
+        <td class="num">${$p(r.cur_price)}</td>
+        <td class="num">${$dpct(r.price_delta_pct)}</td>
+        <td class="num ${ownedTix > 0 ? 'ours' : ''}">${T.fmtNum(ownedTix)}</td>
+        <td class="num muted small">${r.signal_score != null ? (+r.signal_score).toFixed(2) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+    return tbl;
   }
 
   function load() {
