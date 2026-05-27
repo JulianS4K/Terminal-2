@@ -122,6 +122,8 @@
       // Cross-source panel: re-render now that we have v3's sg_broker_sales
       // available (overrides sold_price_median for "Realized sale median" row).
       safe('crossSourceRerender', () => rerenderCrossSourceWithV3(data));
+      // TD freshness + data-freshness table (fire-and-forget; non-blocking)
+      loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
     } catch (e) {
       handleRpcError(e);
     }
@@ -1641,16 +1643,132 @@
     return fc.reduce((acc, f) => maxTs(acc, f.observed_at), null);
   }
   function chipLabel(src) {
-    return { tevo: 'TEvo', 'sg-lst': 'SG L', 'sg-sales': 'SG S', weather: 'Wx', espn: 'ESPN' }[src] || src;
+    return {
+      tevo: 'TEvo', 'sg-lst': 'SG L', 'sg-sales': 'SG S',
+      weather: 'Wx', espn: 'ESPN',
+      'td-sh': 'SH', 'td-gt': 'GT', 'td-vd': 'VD',
+    }[src] || src;
   }
   function staleLimit(src) {
-    return { tevo: 180, 'sg-lst': 60, 'sg-sales': 30, weather: 360, espn: 1440 }[src] || 360;
+    return {
+      tevo: 180, 'sg-lst': 60, 'sg-sales': 30, weather: 360, espn: 1440,
+      'td-sh': 1440, 'td-gt': 1440, 'td-vd': 1440,
+    }[src] || 360;
   }
   function formatAge(min) {
     if (min < 1)   return 'now';
     if (min < 60)  return `${min}m`;
     if (min < 1440) return `${Math.round(min / 60)}h`;
     return `${Math.round(min / 1440)}d`;
+  }
+
+  // ---------- TD per-source freshness (event_listing_snapshot_daily) ----------
+
+  async function loadTdFreshness(eventId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    // Fetch the latest snapshot row for this event (most recent date + slot)
+    const { data: rows, error } = await Auth.client
+      .from('event_listing_snapshot_daily')
+      .select('snapshot_date,snapshot_slot,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median')
+      .eq('event_id', eventId)
+      .order('snapshot_date', { ascending: false })
+      .order('snapshot_slot', { ascending: false })
+      .limit(1);
+    if (error) { console.error('[td-freshness] sb', error); return; }
+    const snap = rows && rows.length ? rows[0] : null;
+    // Convert snapshot_date + slot to approx UTC timestamp for age calc
+    // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC
+    let snapTs = null;
+    if (snap) {
+      const slotHour = { morning: 9, midday: 14, evening: 19 }[snap.snapshot_slot] ?? 12;
+      snapTs = `${snap.snapshot_date}T${String(slotHour).padStart(2, '0')}:00:00Z`;
+    }
+    // Update the TD fr-chips in the hero
+    const tdMap = { 'td-sh': snap?.td_sh_listings, 'td-gt': snap?.td_gt_listings, 'td-vd': snap?.td_vd_listings };
+    for (const [src, listings] of Object.entries(tdMap)) {
+      const el = document.querySelector(`.fr-chip[data-src="${src}"]`);
+      if (!el) continue;
+      const label = chipLabel(src);
+      el.classList.remove('fresh', 'stale', 'dim');
+      if (!snapTs) {
+        el.textContent = `${label} —`;
+        el.classList.add('dim');
+        continue;
+      }
+      const ageMin = Math.round((Date.now() - new Date(snapTs).getTime()) / 60000);
+      const noData = listings == null || listings === 0;
+      el.textContent = `${label} ${formatAge(ageMin)}${noData ? ' ∅' : ''}`;
+      el.classList.add(ageMin > staleLimit(src) ? 'stale' : 'fresh');
+      el.title = `${label}: snapshot ${snap.snapshot_date} ${snap.snapshot_slot}${noData ? ' (no listings)' : ` — ${listings} listings`}`;
+    }
+    // Render full per-source freshness table
+    renderDataFreshness(snap, snapTs);
+  }
+
+  function renderDataFreshness(tdSnap, tdTs) {
+    const body = document.getElementById('dataFreshnessBody');
+    if (!body) return;
+    const fr = (_lastPayload && _lastPayload.freshness) || {};
+    // Weather: prefer obs, fall back to latest forecast
+    const weatherTs = fr.weather_latest || latestForecastTs();
+    const espnTs    = maxTs(fr.espn_team_latest, fr.espn_inj_latest);
+    const rows = [
+      { src: 'tevo',     label: 'TEvo listings',  ts: fr.tevo_listings_latest,  listings: null, median: null },
+      { src: 'sg-lst',   label: 'SG listings',    ts: fr.sg_listings_latest,    listings: null, median: null },
+      { src: 'sg-sales', label: 'SG sales',       ts: fr.sg_sales_latest,       listings: null, median: null },
+      { src: 'espn',     label: 'ESPN / team',    ts: fr.espn_team_latest,      listings: null, median: null },
+      { src: 'espn',     label: 'ESPN / injuries',ts: fr.espn_inj_latest,       listings: null, median: null },
+      { src: 'weather',  label: 'Weather',        ts: weatherTs,                listings: null, median: null },
+      {
+        src: 'td-sh', label: 'StubHub (SH)',
+        ts: tdTs,
+        listings: tdSnap ? tdSnap.td_sh_listings : null,
+        median:   tdSnap ? tdSnap.td_sh_median   : null,
+      },
+      {
+        src: 'td-gt', label: 'GameTime (GT)',
+        ts: tdTs,
+        listings: tdSnap ? tdSnap.td_gt_listings : null,
+        median:   tdSnap ? tdSnap.td_gt_median   : null,
+      },
+      {
+        src: 'td-vd', label: 'VividSeats (VD)',
+        ts: tdTs,
+        listings: tdSnap ? tdSnap.td_vd_listings : null,
+        median:   tdSnap ? tdSnap.td_vd_median   : null,
+      },
+    ];
+    const meta = document.getElementById('dataFreshnessMeta');
+    const freshCount = rows.filter(r => r.ts && Math.round((Date.now() - new Date(r.ts).getTime()) / 60000) <= staleLimit(r.src)).length;
+    const staleCount = rows.filter(r => r.ts && Math.round((Date.now() - new Date(r.ts).getTime()) / 60000) > staleLimit(r.src)).length;
+    const missingCount = rows.filter(r => !r.ts).length;
+    if (meta) meta.textContent = `${freshCount} fresh · ${staleCount} stale · ${missingCount} missing`;
+    const cols = ['Source', 'Last updated', 'Age', 'Status', 'Listings', 'Median'];
+    let html = `<table class="data-freshness-tbl"><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>`;
+    for (const row of rows) {
+      let ageMin = null, status = 'dim', statusLabel = '—';
+      if (row.ts) {
+        ageMin = Math.round((Date.now() - new Date(row.ts).getTime()) / 60000);
+        const isStale = ageMin > staleLimit(row.src);
+        status = isStale ? 'stale' : 'fresh';
+        statusLabel = isStale ? 'stale' : 'fresh';
+      }
+      const lastUpdated = row.ts ? T.fmtDate(row.ts) : '—';
+      const ageStr      = ageMin != null ? formatAge(ageMin) : '—';
+      const listStr     = row.listings != null ? row.listings.toLocaleString() : (row.ts ? '—' : '');
+      const medStr      = row.median != null ? `$${Number(row.median).toFixed(0)}` : (row.ts ? '—' : '');
+      html += `<tr>
+        <td>${row.label}</td>
+        <td class="muted small">${lastUpdated}</td>
+        <td>${ageStr}</td>
+        <td><span class="fr-status ${status}">${statusLabel}</span></td>
+        <td class="muted">${listStr}</td>
+        <td>${medStr}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
   }
 
   // ---------- Event alerts list ----------
@@ -1948,6 +2066,8 @@
         await loadEvoListingsFull(eventId);
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
+      } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
+        await loadTdMarketsFull(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
         // Merged tab — fire all 3 broker-order RPCs in parallel, render each
         // into its own stacked sub-section inside #paneOurOrders.
@@ -1973,6 +2093,7 @@
       'sg-listings':  'paneSgListings',
       'evo-listings': 'paneEvoListings',
       'sg-sales':     'paneSgSales',
+      'td-markets':   'paneTdMarkets',
       'our-orders':   'paneOurOrders',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
@@ -2727,6 +2848,103 @@
   }
 
   // ---------- Util ----------
+
+  // ---------- TD Markets (full) ----------
+  // Reads event_listing_snapshot_daily for this event (event_id = tevo_event_id).
+  // Shows: (a) latest snapshot KPI strip with cross-source medians + spreads,
+  //        (b) full history table ordered newest-first.
+  // TD data started 2026-05-27 — table will be sparse initially.
+  async function loadTdMarketsFull(eventId) {
+    _tabState.loaded['td-markets'] = true;
+    const snapBody   = document.getElementById('tdMarketsSnapshotBody');
+    const latestBody = document.getElementById('tdMarketsLatestBody');
+    const meta       = document.getElementById('tdMarketsSnapshotMeta');
+    const countEl    = document.getElementById('tabCountTdMarkets');
+    if (snapBody)   snapBody.innerHTML   = '<div class="empty">Loading…</div>';
+    if (latestBody) latestBody.innerHTML = '<div class="empty">Loading…</div>';
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (snapBody) snapBody.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    const res = await Auth.client
+      .from('event_listing_snapshot_daily')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_combined_median,captured_at')
+      .eq('event_id', eventId)
+      .order('snapshot_date', { ascending: false })
+      .order('snapshot_slot', { ascending: false })
+      .limit(30);
+    if (res.error) {
+      if (snapBody) snapBody.innerHTML = '<div class="empty">error: ' + escapeHtml(res.error.message) + '</div>';
+      return;
+    }
+    const rows = res.data || [];
+    if (meta) meta.textContent = rows.length ? rows.length + ' snapshot rows' : 'no data yet';
+    if (countEl) countEl.textContent = rows.length ? String(rows.length) : '';
+    if (!rows.length) {
+      const msg = '<div class="empty">No TD market snapshots yet — data started 2026-05-27, accumulating daily.</div>';
+      if (snapBody)   snapBody.innerHTML   = msg;
+      if (latestBody) latestBody.innerHTML = msg;
+      return;
+    }
+    // Latest row KPI strip
+    const lat = rows[0];
+    const $p  = v => (v != null ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    const $n  = v => (v != null ? T.fmtNum(+v) : '—');
+    const spread = (a, b) => {
+      if (a == null || b == null || +b === 0) return '—';
+      return (((+a - +b) / +b) * 100).toFixed(1) + '%';
+    };
+    if (latestBody) latestBody.innerHTML = `
+      <div class="kpi-strip">
+        <div class="kpi-strip-cell"><span class="kpi-lbl">EVO RETAIL</span><span class="kpi-val">${$p(lat.evo_retail_median)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">SG ALL</span><span class="kpi-val">${$p(lat.sg_all_median)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">SH MEDIAN</span><span class="kpi-val">${$p(lat.td_sh_median)}<br><span class="muted small">${$n(lat.td_sh_listings)} listings</span></span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">GT MEDIAN</span><span class="kpi-val">${$p(lat.td_gt_median)}<br><span class="muted small">${$n(lat.td_gt_listings)} listings</span></span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">VD MEDIAN</span><span class="kpi-val">${$p(lat.td_vd_median)}<br><span class="muted small">${$n(lat.td_vd_listings)} listings</span></span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">TD BEST</span><span class="kpi-val">${$p(lat.td_combined_median)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">SH÷EVO</span><span class="kpi-val">${spread(lat.td_sh_median, lat.evo_retail_median)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">GT÷SH</span><span class="kpi-val">${spread(lat.td_gt_median, lat.td_sh_median)}</span></div>
+        <div class="kpi-strip-cell"><span class="kpi-lbl">VD÷SH</span><span class="kpi-val">${spread(lat.td_vd_median, lat.td_sh_median)}</span></div>
+      </div>
+      <div class="muted small" style="margin-top:4px">Snapshot: ${escapeHtml(lat.snapshot_date)} ${escapeHtml(lat.snapshot_slot)}</div>`;
+    // History table
+    const tbl = document.createElement('table');
+    tbl.className = 'td-markets-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Date</th><th>Slot</th>
+        <th class="num">EVO</th><th class="num">SG</th>
+        <th class="num">SH L</th><th class="num">SH $</th>
+        <th class="num">GT L</th><th class="num">GT $</th>
+        <th class="num">VD L</th><th class="num">VD $</th>
+        <th class="num">TD Best</th>
+        <th class="num">SH÷EVO%</th><th class="num">GT÷SH%</th><th class="num">VD÷SH%</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const spd = (a, b) => {
+        if (a == null || b == null || +b === 0) return '—';
+        const v = ((+a - +b) / +b) * 100;
+        return '<span class="' + (v > 0 ? 'pos' : v < 0 ? 'neg' : '') + '">' + v.toFixed(1) + '%</span>';
+      };
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(r.snapshot_date)}</td>
+        <td>${escapeHtml(r.snapshot_slot)}</td>
+        <td class="num">${$p(r.evo_retail_median)}</td>
+        <td class="num">${$p(r.sg_all_median)}</td>
+        <td class="num">${$n(r.td_sh_listings)}</td><td class="num">${$p(r.td_sh_median)}</td>
+        <td class="num">${$n(r.td_gt_listings)}</td><td class="num">${$p(r.td_gt_median)}</td>
+        <td class="num">${$n(r.td_vd_listings)}</td><td class="num">${$p(r.td_vd_median)}</td>
+        <td class="num">${$p(r.td_combined_median)}</td>
+        <td class="num">${spd(r.td_sh_median, r.evo_retail_median)}</td>
+        <td class="num">${spd(r.td_gt_median, r.td_sh_median)}</td>
+        <td class="num">${spd(r.td_vd_median, r.td_sh_median)}</td>`;
+      tb.appendChild(tr);
+    });
+    if (snapBody) { snapBody.innerHTML = ''; snapBody.appendChild(tbl); }
+  }
 
   function escapeHtml(s) {
     if (s === null || s === undefined) return '';

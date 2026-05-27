@@ -116,6 +116,8 @@
       const firstErr = [assets, portfolio].find(r => r && r.__err);
       if (firstErr) T.setStatus(firstErr.__err.message, 'err');
       else T.setStatus('Loaded', 'ok');
+      // Stash portfolio for lazy-loaded Market Carpet tab
+      _tabState.portfolio = (portfolio && !portfolio.__err) ? portfolio : null;
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
@@ -124,7 +126,7 @@
   }
 
   // ---------- Tab nav ----------
-  const _tabState = { loaded: { espn: false }, performerId: null };
+  const _tabState = { loaded: { espn: false, market: false }, performerId: null, portfolio: null };
 
   function wireTabs(performerId) {
     _tabState.performerId = performerId;
@@ -137,6 +139,8 @@
       activateTab(tabId);
       if (tabId === 'espn' && !_tabState.loaded.espn) {
         await loadEspnContext(performerId);
+      } else if (tabId === 'market' && !_tabState.loaded.market) {
+        await loadMarketCarpet();
       }
     });
   }
@@ -148,8 +152,11 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     const paneIds = {
-      overview: 'paneOverview',
-      espn:     'paneEspn',
+      overview:   'paneOverview',
+      upcoming:   'paneUpcoming',
+      blindspots: 'paneBlindspots',
+      market:     'paneMarket',
+      espn:       'paneEspn',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -449,6 +456,143 @@
       meta.textContent = [d.espn_league || '', out ? 'out: ' + out : ''].filter(Boolean).join(' · ');
     }
     sec.removeAttribute('hidden');
+  }
+
+  // ---------- Market Carpet (lazy tab) ----------
+  // Builds a cross-source comparison table for all upcoming events of this performer.
+  // Queries three tables via Supabase client using the event IDs from the portfolio:
+  //   • event_listing_snapshot_daily  — latest snapshot per event (JS dedup)
+  //   • event_movers_index            — any active movers signals per event
+  //   • discovery_gap_alerts          — active cross-platform gap flags per event
+  async function loadMarketCarpet() {
+    _tabState.loaded.market = true;
+    const body   = document.getElementById('perfMarketBody');
+    const meta   = document.getElementById('perfMarketMeta');
+    const countEl = document.getElementById('tabCountMarket');
+    if (body) body.innerHTML = '<div class="empty">Loading market data…</div>';
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    const portfolio = _tabState.portfolio;
+    const events = (portfolio && portfolio.events) || [];
+    if (!events.length) {
+      if (body) body.innerHTML = '<div class="empty">no events to analyze</div>';
+      return;
+    }
+    const eventIds = events.map(e => e.id).filter(Boolean);
+    if (!eventIds.length) {
+      if (body) body.innerHTML = '<div class="empty">no mapped event IDs</div>';
+      return;
+    }
+
+    // Parallel fetch: snapshots + movers + gaps
+    const [snapRes, moversRes, gapsRes] = await Promise.all([
+      Auth.client
+        .from('event_listing_snapshot_daily')
+        .select('event_id,snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_combined_median')
+        .in('event_id', eventIds)
+        .order('snapshot_date', { ascending: false })
+        .order('snapshot_slot', { ascending: false }),
+      Auth.client
+        .from('event_movers_index')
+        .select('event_id,source,window_days,category,rank,price_delta_pct,signal_score')
+        .in('event_id', eventIds)
+        .order('signal_score', { ascending: false }),
+      Auth.client
+        .from('discovery_gap_alerts')
+        .select('event_id,gap_type,detail,signal_score')
+        .in('event_id', eventIds)
+        .is('resolved_at', null),
+    ]);
+
+    // JS-dedup snapshots: keep first (latest) per event_id
+    const snapByEvent = {};
+    for (const r of (snapRes.data || [])) {
+      if (!snapByEvent[r.event_id]) snapByEvent[r.event_id] = r;
+    }
+
+    // Group movers by event
+    const moversByEvent = {};
+    for (const r of (moversRes.data || [])) {
+      (moversByEvent[r.event_id] = moversByEvent[r.event_id] || []).push(r);
+    }
+
+    // Group gaps by event
+    const gapsByEvent = {};
+    for (const r of (gapsRes.data || [])) {
+      (gapsByEvent[r.event_id] = gapsByEvent[r.event_id] || []).push(r);
+    }
+
+    if (meta) meta.textContent = `${events.length} events · ${Object.keys(snapByEvent).length} with snapshots`;
+    if (countEl) countEl.textContent = String(events.length);
+
+    const $p = v => (v != null ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    const spread = (a, b) => {
+      if (a == null || b == null || +b === 0) return '';
+      const v = ((+a - +b) / +b) * 100;
+      return `<span class="${v > 2 ? 'pos' : v < -2 ? 'neg' : 'muted small'}">${v > 0 ? '+' : ''}${v.toFixed(0)}%</span>`;
+    };
+
+    const tbl = document.createElement('table');
+    tbl.className = 'market-carpet-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Event</th>
+        <th class="num">T-days</th>
+        <th class="num">EVO</th>
+        <th class="num">SG</th>
+        <th class="num">SH</th>
+        <th class="num">GT</th>
+        <th class="num">VD</th>
+        <th class="num">SH÷EVO</th>
+        <th class="num">GT÷SH</th>
+        <th class="num">VD÷SH</th>
+        <th>Movers</th>
+        <th>Gaps</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+
+    events.forEach(e => {
+      const sn  = snapByEvent[e.id]  || {};
+      const mvs = moversByEvent[e.id] || [];
+      const gps = gapsByEvent[e.id]  || [];
+      const d   = T.daysUntil(e.occurs_at_local);
+      const hasSn = !!snapByEvent[e.id];
+
+      // Movers badges: top 3 by signal_score
+      const moverHtml = mvs.slice(0, 3).map(m => {
+        const pct = m.price_delta_pct != null ? (m.price_delta_pct > 0 ? '+' : '') + (+m.price_delta_pct).toFixed(0) + '%' : '';
+        const cls = m.category === 'price_up' ? 'pos' : m.category === 'price_down' ? 'neg' : 'muted small';
+        return `<span class="badge ${cls}" title="${escapeHtml(m.source + ' ' + m.window_days + 'd')}">${escapeHtml(m.category.replace('_',' '))}${pct ? ' ' + pct : ''}</span>`;
+      }).join(' ') || '—';
+
+      // Gap badges: distinct gap_types
+      const gapHtml = gps.slice(0, 4).map(g =>
+        `<span class="badge" title="${escapeHtml(g.detail || '')}">${escapeHtml(g.gap_type.replace(/_/g,' '))}</span>`
+      ).join(' ') || '—';
+
+      const tr = document.createElement('tr');
+      tr.className = hasSn ? '' : 'muted';
+      tr.innerHTML = `
+        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a></td>
+        <td class="num">${d === null ? '—' : d}</td>
+        <td class="num">${$p(sn.evo_retail_median)}</td>
+        <td class="num">${$p(sn.sg_all_median)}</td>
+        <td class="num">${$p(sn.td_sh_median)}</td>
+        <td class="num">${$p(sn.td_gt_median)}</td>
+        <td class="num">${$p(sn.td_vd_median)}</td>
+        <td class="num">${spread(sn.td_sh_median, sn.evo_retail_median)}</td>
+        <td class="num">${spread(sn.td_gt_median, sn.td_sh_median)}</td>
+        <td class="num">${spread(sn.td_vd_median, sn.td_sh_median)}</td>
+        <td>${moverHtml}</td>
+        <td>${gapHtml}</td>`;
+      tb.appendChild(tr);
+    });
+
+    if (body) { body.innerHTML = ''; body.appendChild(tbl); }
   }
 
   // ---------- Util ----------

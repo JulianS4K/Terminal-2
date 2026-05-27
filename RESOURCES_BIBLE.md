@@ -39,13 +39,19 @@
 | `seatdata_sales_snapshots` | 0 | **STALE** (last 2026-05-09) | SeatData wholesale-channel sales. Pipeline dormant. |
 | `seatdata_listings_snapshots` | 0 | **EMPTY** | SeatData mirror. Pipeline dormant. |
 | `snapshots` (legacy) | 0 | **LEGACY** (last 2026-04-23) | Pre-history per-event aggregate. Superseded by `event_metrics`. Do not write. |
+| `ticketsdata_listings_snapshots` | growing (1 day since 2026-05-27) | **LIVE** — TD cross-platform snapshots (SH/GT/VD). Started 2026-05-27. Used by `event_movers_index` SMA for `td_sh/gt/vd` sources. Meaningful signal quality ~late June (30+ days). |
+| `event_listing_snapshot_daily` | growing (~3 rows/event/day since 2026-05-27) | **LIVE** — 3 slots/day (morning/midday/evening). Cross-source medians: EVO + SG + TD(SH/GT/VD). Feeds Market Carpet tabs + TD Markets tab + `event_movers_index` compute. |
 
 ### D0 tab option matrix — what surfaces are wired vs available
 
-**Already shipped (PR #196 + #197 — event-page tabs)**:
+**Already shipped (PR #196 + #197 + 2026-05-27 UI rewire)**:
 - `get_event_sg_listings_full(p_event_id, p_limit)` → SG listings from firehose, DISTINCT ON `sglid`, last 7d, cap 500
 - `get_event_evo_listings_full(p_event_id, p_limit)` → TEvo listings, DISTINCT ON `tevo_ticket_group_id`, owned-first sort, cap 500
 - `get_event_sg_sales_full(p_event_id, p_limit, p_window_days)` → SG broker sales, DISTINCT ON `sg_sale_id`, window 1-90d, cap 500
+- **TD Markets tab** (event.html) → client queries `event_listing_snapshot_daily` directly (mig 20260527230000); KPI strip + history table (EVO/SG/SH/GT/VD medians + spreads)
+- **Market Carpet tab** (performer.html + venue.html) → parallel client queries: `event_listing_snapshot_daily` + `event_movers_index` + `discovery_gap_alerts`; cross-source table with movers badges + gap badges per event
+- **Movers v2 Index** (movers.html) → calls `/api/broker/movers?window_days=N&source=X` via `get_event_movers_v2` RPC; source/horizon/category selectors; 6 sources × 5 windows × 7 category filters
+- **Discovery Gaps panel** (discovery.html) → client queries `discovery_gap_alerts` + `sg_events_canonical`; groups by gap_type with priority sort; 7 filter buttons
 
 **Available next surfaces (D0 options — pattern: copy the v3 RPC mold, email-gated, REVOKE PUBLIC + GRANT anon/authenticated)**:
 
@@ -179,6 +185,7 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 | `seatgeek_seller_listings` | 1.2 MB | Our own listings on the SG marketplace (broker view) | D2 | pre-history |
 | `seatdata_listings_snapshots` | 32 kB | SeatData mirror | D2 | pre-history |
 | `listing_xref` | 80 kB | Per-listing cross-source resolution (TEvo ticket_group ↔ SG listing) | A1 (matcher), C1 (schema) | PR #66 matcher; C1 owns the table |
+| `ticketsdata_listings_snapshots` | growing | Cross-platform listings snapshots: SH (StubHub), GT (GameTime), VD (VividSeats). `platform` + `event_id` + `snapshot_ts` + `listing_count`, `median_price`, `getin_price`. Collected by edge function, sweeps via `sweep_old_ticketsdata_snapshots`. Started 2026-05-27. | A1 | mig 20260527000000-20260527220000 |
 | `tevo_ticket_groups_cache` | 320 kB | Short-lived TEvo ticket_groups cache (5-min TTL) for storefront reads | D1 | pre-history |
 
 ### 2.3 Sales (order tables — **never swept, forever retention**)
@@ -209,6 +216,7 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 | `v_dashboard_writes_24h` (matview) | 56 kB | 24h write velocity matview (refreshed every 60s — see advisor flag) | C1 | pre-history |
 | `performer_baselines`, `venue_baselines` | 32 kB each | Pre-computed performer/venue baselines for delta calculations | C1 | pre-history |
 | `seatdata_event_stats` | 32 kB | SD-side event stats | D2 | pre-history |
+| `event_listing_snapshot_daily` | growing | Per-event daily cross-source snapshot: `evo_owned_tickets`, `evo_tickets_count`, `evo_retail_median`, `sg_all_tickets`, `sg_all_median`, `td_sh/gt/vd_listings`, `td_sh/gt/vd_median`, `td_combined_median`. Key: `(event_id, snapshot_date, snapshot_slot)`. 3 slots/day (morning/midday/evening). TD columns started 2026-05-27. Queried directly from client for Market Carpet + TD Markets tabs. | A1 | mig 20260527230000 |
 
 ### 2.5 Canonical / cross-source
 
@@ -308,7 +316,15 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 | `macro_series_config` | 32 kB | FRED series to track + pull schedule | A1 | PR #53 |
 | `fred_pending` | 48 kB | FRED queue table | A1 | PR #53 |
 
-### 2.13 Pending / queue tables (the `*_pending` pattern)
+### 2.13 Signals / movers (mig 20260527250000)
+
+| Table | Purpose | Owner | Notes |
+|---|---|---|---|
+| `event_movers_index` | Per-(source, window_days, category, event_id) signal index. 6 sources × 5 windows × 6 categories = up to 30 sub-indices, top 25 events each. PK: (source, window_days, category, event_id). Sources: `evo \| sg \| td_sh \| td_gt \| td_vd \| merged`. Windows: 7/15/30/180/365 (event HORIZON, not lookback). Categories: price_up/down, selling_fast, accumulating, value_gap, cross_gap. Upserted by `compute_event_movers_index_all()`, cron `35 13,19,3 * * *`. | A1 | mig 20260527250000 |
+| `event_movers_index_history` | Composition audit trail — enter/exit/rank_change events per index slot. Used for turnover rate in `get_event_movers_index_summary`. Indexed on (source, window_days, category, event_id, recorded_at DESC). | A1 | mig 20260527250000 |
+| `discovery_gap_alerts` | Active cross-platform gap signals (resolved_at IS NULL = active). 10 gap types: sg_no_evo, td_sh/gt/vd_no_evo, td_sh_no_gt, td_gt/vd_premium, evo_no_sg, value_gap_large, fill_rate_spike. ON CONFLICT (event_id, gap_type) DO UPDATE to refresh signal_score. Populated by `evo_sg_discovery_gaps()` cron (daily 9am UTC). Read by discovery.html Discovery Gaps panel. | A1 | mig 20260527250000 |
+
+### 2.14 Pending / queue tables (the `*_pending` pattern)
 
 | Pattern | Used by | Purpose |
 |---|---|---|
@@ -594,7 +610,7 @@ Backend = `app.py` (FastAPI on Render). Two surfaces:
 
 40+ endpoints. Catalog: `Grep '@app\.(get\|post\|delete\|put)' app.py`. Includes:
 - `/api/broker/event/{id}/overview`, `/section-zones`, `/zones`, `/section-metrics`, `/raw-tevo`, `/chart-data`, `/cadences`, `/espn`
-- `/api/broker/watchlist-movers`, `/api/broker/movers`, `/api/broker/news`, `/api/broker/leagues`
+- `/api/broker/watchlist-movers`, `/api/broker/movers` (v1: `?window_hours=N`; **v2: `?window_days=N&source=X&category=Y`** → `get_event_movers_v2` + `get_event_movers_index_summary` RPCs, mig 20260527260000), `/api/broker/news`, `/api/broker/leagues`
 - `/api/broker/performers/by-league/{league}`, `/api/broker/performer/{id}/assets`, `/espn`
 - `/api/portfolio`, `/api/watchlist` (GET/POST/DELETE)
 - `/api/events`, `/api/events/{id}`, `/api/events/{id}/series`, `/sections/series`
