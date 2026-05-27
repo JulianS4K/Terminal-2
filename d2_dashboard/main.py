@@ -199,6 +199,24 @@ def require_auth(authorization: str | None = Header(None)):
 
 # ---------- Client factories (lazy — only init when called) ----------
 
+def _vault_secret(name: str) -> str | None:
+    """Fetch a secret from Supabase Vault via get_app_secret RPC.
+    Returns None when Supabase is unavailable or the secret is unset."""
+    sb = _sb()
+    if sb is None:
+        return None
+    try:
+        res = sb.rpc("get_app_secret", {"p_name": name}).execute()
+        data = res.data
+        if isinstance(data, str):
+            return data or None
+        if isinstance(data, dict):
+            return data.get("get_app_secret") or data.get("value") or None
+    except Exception:
+        pass
+    return None
+
+
 def _env_first(*names: str) -> str | None:
     """Return the first set env var from `names`. Lets us accept either the
     vault-canonical key (TEVO_API_TOKEN) or the legacy storefront key
@@ -284,24 +302,24 @@ def _tickpick_client():
 
 def _vivid_client():
     from vivid_client import VividClient
-    token = os.environ.get("VIVID_API_TOKEN")
+    token = os.environ.get("VIVID_API_TOKEN") or _vault_secret("VIVID_API_TOKEN")
     if not token:
         return None
     return VividClient(token)
 
 
 def _seatdata_client():
-    from seatdata_client import SeatDataClient
-    api_key = os.environ.get("SEATDATA_API_KEY")
-    if not api_key:
+    from seatdata_client import SeatDataClient, SeatDataError
+    try:
+        return SeatDataClient(db=_sb())
+    except SeatDataError:
         return None
-    return SeatDataClient(api_key=api_key)
 
 
 def _gotickets_client():
     from gotickets_client import GoTicketsClient
-    access_id = os.environ.get("GOTICKETS_ACCESS_ID")
-    api_secret = os.environ.get("GOTICKETS_API_SECRET")
+    access_id = os.environ.get("GOTICKETS_ACCESS_ID") or _vault_secret("GOTICKETS_ACCESS_ID")
+    api_secret = os.environ.get("GOTICKETS_API_SECRET") or _vault_secret("GOTICKETS_API_SECRET")
     if not (access_id and api_secret):
         return None
     return GoTicketsClient(access_id, api_secret)

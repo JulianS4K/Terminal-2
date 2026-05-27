@@ -3743,16 +3743,18 @@ def broker_event_cadences(event_id: int, _=Depends(require_auth)):
 # migration 20260509060000. Going over those caps requires bumping BOTH the
 # DB defaults AND the seatdata_client.py constants.
 #
-# Auth: requires SEATDATA_API_KEY env var. Set it in Railway:
-#   railway variables --set SEATDATA_API_KEY=<key>
-# Routes return 503 if the key is missing rather than crashing the app.
+# Auth: SEATDATA_API_KEY resolved via SeatDataClient's chain:
+#   1. SEATDATA_API_KEY env var (Railway / Render)
+#   2. Supabase Vault via get_app_secret('SEATDATA_API_KEY')
+# Routes return 503 if the key is missing from both env and vault.
 
 def _get_seatdata_client():
-    """Lazy import + instantiation. Returns None if SEATDATA_API_KEY is missing."""
-    if not os.environ.get("SEATDATA_API_KEY"):
+    """Lazy import + instantiation. Returns None if SEATDATA_API_KEY not found anywhere."""
+    from seatdata_client import SeatDataClient, SeatDataError
+    try:
+        return SeatDataClient(db=require_sb())
+    except SeatDataError:
         return None
-    from seatdata_client import SeatDataClient
-    return SeatDataClient(db=require_sb())
 
 
 @app.get("/api/seatdata/account")
