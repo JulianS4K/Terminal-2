@@ -3515,8 +3515,8 @@ def _broker_movers_v2(source: str, window_days: int, category=None, include_inac
 
 
 @app.get("/api/broker/movers")
-def broker_movers(window_hours: int = 24, source: str = "merged", window_days: int = None,
-                  category: str = None, include_inactive: bool = False, _=Depends(require_auth)):
+def broker_movers(window_hours: int = 24, source: str = "merged", window_days: int | None = None,
+                  category: str | None = None, include_inactive: bool = False, _=Depends(require_auth)):
     """Top 10 winners + losers at event / performer / venue level, owned vs market.
     Window: compare latest event_metrics row vs latest row from `window_hours` ago.
 
@@ -3950,8 +3950,7 @@ def seatdata_auto_search(event_id: int, _=Depends(require_auth)):
 # expected in env var CRON_SECRET on Railway. Hardened 2026-05-11:
 # fail-closed if unset (was: defaulted to a known placeholder string),
 # constant-time compare to avoid timing-leak.
-
-CRON_SECRET = os.environ.get("CRON_SECRET")
+# CRON_SECRET is declared once at module top (line ~216) — no re-declaration.
 
 
 def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
