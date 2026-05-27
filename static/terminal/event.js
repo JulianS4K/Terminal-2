@@ -2494,11 +2494,22 @@
     const meta = document.getElementById('crossSourceMeta');
     if (!body) return;
     const rows = (d && d.rows) || [];
-    const hasSg = d && d.sg_event_id != null;
+    const hasSg  = d && d.sg_event_id != null;
+    // hasTd: TD data present when at least one platform has listings in last 24h
+    const hasTd  = !!(d && d.td_agg && Number(d.td_agg.listing_count) > 0);
+    const tdPlatforms = (d && d.td) ? Object.keys(d.td).filter(p => Number((d.td[p] || {}).listing_count) > 0) : [];
+
     if (meta) {
-      const parts = [`${ms != null ? ms.toFixed(0) + 'ms' : ''}`];
-      if (hasSg) parts.unshift(`sg_event_id ${d.sg_event_id}`);
-      else parts.unshift('no SG bridge — TEvo-only event');
+      const parts = [];
+      if (hasSg) parts.push(`sg_event_id ${d.sg_event_id}`);
+      else        parts.push('no SG bridge — TEvo-only event');
+      if (hasTd && tdPlatforms.length) {
+        parts.push('TD: ' + tdPlatforms.map(p => {
+          const s = d.td[p];
+          return `${p} ${T.fmtNum(Number(s.listing_count))}`;
+        }).join(' · '));
+      }
+      if (ms != null) parts.push(ms.toFixed(0) + 'ms');
       meta.textContent = parts.filter(Boolean).join(' · ');
     }
     if (!rows.length) {
@@ -2535,6 +2546,7 @@
         <th class="num">TEvo</th>
         <th class="num">SG</th>
         <th class="num">Δ SG vs TEvo</th>
+        ${hasTd ? '<th class="num td-mkt-col">TD Market</th>' : ''}
       </tr></thead>
       <tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
@@ -2545,12 +2557,26 @@
       tr.innerHTML = `
         <td>${escapeHtml(r.label || '')}</td>
         <td class="num">${fmtVal(r.tevo, r.is_money)}</td>
-        <td class="num">${fmtVal(sgVal, r.is_money)}</td>
-        <td class="num">${deltaCell(r.tevo, sgVal)}</td>`;
+        <td class="num">${fmtVal(sgVal,  r.is_money)}</td>
+        <td class="num">${deltaCell(r.tevo, sgVal)}</td>
+        ${hasTd ? `<td class="num td-mkt-col">${fmtVal(r.td, r.is_money)}</td>` : ''}`;
       tb.appendChild(tr);
     });
     body.innerHTML = '';
     body.appendChild(tbl);
+
+    // Per-platform TD breakdown row below the table
+    if (hasTd && tdPlatforms.length) {
+      const bar = document.createElement('div');
+      bar.className = 'td-platform-bar';
+      bar.innerHTML = tdPlatforms.map(p => {
+        const s = d.td[p];
+        const minStr = s.min_price != null ? ` · min $${Math.round(Number(s.min_price))}` : '';
+        const medStr = s.median_price != null ? ` · med $${Math.round(Number(s.median_price))}` : '';
+        return `<span class="td-platform-chip">${p} <b>${T.fmtNum(Number(s.listing_count))}</b>${minStr}${medStr}</span>`;
+      }).join('');
+      body.appendChild(bar);
+    }
   }
 
   // Called after v3 RPC payload arrives — re-renders the cross-source panel
