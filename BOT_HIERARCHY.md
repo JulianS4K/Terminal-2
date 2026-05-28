@@ -1,152 +1,169 @@
 # BOT_HIERARCHY.md
 
-**Quick-reference chart for who-does-what and who-can-push-where. Updated 2026-05-13.**
-
-If the chart in this doc disagrees with `docs/bot-hierarchy.mermaid` or `DOCUMENTATION_INDEX.md` — this doc wins (DOCUMENTATION_INDEX was last refreshed 2026-05-10 with the old `code/canonical/broadway/storefront` naming and is partially stale; the lane reassignments in `bot_chat` rows 50-58 superseded it).
+**Quick-reference chart for who-does-what and who-can-push-where.**
+**Reorg 2026-05-28 — new mandate split, D1-E1 paused until D0 is working.**
 
 ---
 
 ## 1. Hierarchy at a glance
 
 ```
-                     ┌──────────────────────────────┐
-                     │            A1                │  admin
-                     │  Audit / Push (Admin)        │  sole prod pusher
-                     └──────────────┬───────────────┘
-                                    │ delegates security audits to
+                     ┌──────────────────────────────────────┐
+                     │               A1                     │  ops + infra
+                     │  SQL Monitor / DB Ops / Git / Connectors │
+                     │  (sole prod pusher)                  │
+                     └──────────────┬───────────────────────┘
+                                    │ security audits →
                                     ▼
-                     ┌──────────────────────────────┐
-                     │            B1                │  security
-                     │  Security Manager            │  prod push only for CRIT patches
-                     └──────────────┬───────────────┘
-                                    │ oversees data + sales lanes via
+                     ┌──────────────────────────────────────┐
+                     │               B1                     │  security + governance
+                     │  Security + Bibles / Git / Bot Notes │
+                     └──────────────┬───────────────────────┘
+                                    │ D-tier coordination →
                                     ▼
-                     ┌──────────────────────────────┐
-                     │            C1                │  supervisor
-                     │  Canonical (Data + Chat)     │  preview branches only
-                     └──┬──────┬──────┬──────┬──────┘
-                        │      │      │      │
-       ┌────────────────┘      │      │      └─────────────────┐
-       ▼                       ▼      ▼                        ▼
-  ┌────────┐            ┌─────────┐ ┌─────────┐         ┌────────────┐
-  │  D0    │            │   D1    │ │   D2    │         │     D4     │
-  │ Term FE│            │ Consumer│ │  Order  │         │ Ticketing  │
-  │ (RO    │            │  Retail │ │ Clients │         │ infra      │
-  │  ref)  │            │  + Rndr │ │         │         │ UNASSIGNED │
-  └────────┘            └─────────┘ └────┬────┘         └────────────┘
-                                         │
-                                         │ sub
-                                         ▼
-                                    ┌─────────┐
-                                    │   D3    │
-                                    │Broadway │
-                                    │Scraper  │
-                                    └─────────┘
+                     ┌──────────────────────────────────────┐
+                     │               C1                     │  project coordinator
+                     │  D0-D4 Monitor + Code Drift Prevention │
+                     └──────────────┬───────────────────────┘
+                                    │ primary product surface ↓
+                                    ▼
+                     ┌──────────────────────────────────────┐
+                     │               D0  ← PRIORITY         │  user visual layer
+                     │  Terminal FE — visual of A1 for user │
+                     │  All data flows here. Build this first│
+                     └──────────────────────────────────────┘
+
+     ┌──────────────────────────────────────────────────────────┐
+     │  D1 · D2 · D3 · D4 · E1  ─── PAUSED until D0 working   │
+     └──────────────────────────────────────────────────────────┘
 ```
 
-All D-tier lanes use `bot_level = data-collection` in `bot_chat`. The hierarchy ranks
-the sub-relationships within that level.
+---
+
+## 2. Lane roster
+
+| Lane | Role | Mandate (2026-05-28) | Status |
+|---|---|---|---|
+| **A1** | SQL Monitor / DB Ops | Monitor + fix SQL; Supabase alerts; all data sources (TEvo/SG/TD/etc.); crons; tables; git + syncs; Jira/Asana + connector health. Sole prod pusher. | **ACTIVE** |
+| **B1** | Security + Governance | Security (RLS, SECDEF, CRIT patches); monitor Jira/Asana, git, bibles (governance docs), other bot notes/changelogs. | **ACTIVE** |
+| **C1** | D-tier Project Coordinator | Monitor + assist D0-D4 related projects and docs; prevent code drift; daily checkpoint cadence. | **ACTIVE** |
+| **D0** | Terminal FE — User Visual Layer | Primary user interface for project progress. Visual representation of everything A1 monitors. All data flows through D0. Build this first — D1-E1 paused until D0 is working. Render workspace-wide perms parity with A1. | **ACTIVE — PRIORITY** |
+| **D1** | Consumer Retail | Storefront (`static/store/*`, `/api/store/*`). Reports to D0. | **PAUSED** |
+| **D2** | Order Clients | 5 order-client SDKs + dashboard. Reports to D0. | **PAUSED** |
+| **D3** | Broadway Scraper (sub-D2) | `broadway_client.py`, `broadway_*` tables + crons. | **PAUSED** |
+| **D4** | Our Ticketing Infra | Exos schema live (phases 1–5), zero data. BLOCKED: RESEND + Stripe creds. | **PAUSED** |
+| **E1** | Integration / Automation | Zapier, WhatsApp/Telegram ops, Slack alerts, webhooks. (Rebrand from Kalshi placeholder.) | **PAUSED** |
 
 ---
 
-## 2. Lane roster (current state)
+## 3. Bot mandates in detail
 
-| Lane | Identity / role | Worktree branch | bot_level | Status |
-|---|---|---|---|---|
-| **A1** | Audit / Push (Admin) | `mystifying-lederberg-ea407b` | `admin` | ACTIVE |
-| **B1** | Security Manager | `review-supabase-access-v8Dtl` | `security` | ACTIVE (SECURITY BACKLOG drain) |
-| **C1** | Canonical (Data + Chat supervisor) | `audit-datasets-schemas-auoc3` | `supervisor` | ACTIVE (PR #51 phase 13) |
-| **D0** | Terminal FE / read-only reference + prediction guide | `audit-datasets-schemas-auoc3` (reassigned) | `data-collection` | ACTIVE |
-| **D1** | Consumer Retail (storefront + search + share-links) | `eloquent-chatterjee-aaedf0` | `data-collection` | ACTIVE (PR #54 merged) |
-| **D2** | Order Clients (seatdata + evo + sg + tickpick + vivid ORDERS, no listings) | `review-unified-order-suite-FA0qA` | `data-collection` | ACTIVE (PR #56) |
-| **D3** | Broadway Scraper (sub of D2) | `broadway-scraper-eChQ6` | `data-collection` | ACTIVE (PR #52) |
-| **D4** | Our ticketing infra (AR codes, custom ticketing) | — | — | UNASSIGNED |
+### A1 — SQL Monitor / DB Ops / Git / Connectors
+- **Monitor**: Supabase alerts, cron job_run_details (failures/timeouts), table sizes + growth rates, data source freshness (TEvo/SG/TD pipelines), `v_sg_broker_429_health`, `bot_chat` unresolved flags
+- **Fix**: broken crons, SQL errors, migration drift, function overload/ambiguity (§3 landmines)
+- **Git**: sync `main` ↔ prod; sole pusher to `main`; PR review per `MIGRATION_CONVENTIONS.md §9`
+- **Connectors**: monitor Jira/Asana task status, escalate stale items to operator
+- **Author + apply**: all foundation + ops migrations; ESPN/FRED ingest; event_xref; sweep functions; cron schedules
+
+### B1 — Security + Governance Monitor
+- **Security**: RLS coverage, SECURITY DEFINER audit, CRIT/HIGH patches, anon-exposure harness
+- **Governance**: monitor bibles (PROJECT_BIBLE, LANE_DISCIPLINE, BOT_HIERARCHY, AGENTS.md) for drift vs actual state; flag discrepancies
+- **Git**: review security-sensitive PRs; monitor repo for secret leaks, insecure patterns
+- **Bot notes**: read + audit `bot_chat` aging items; flag stale unresolved threads to A1
+- **Jira/Asana**: track security + governance tickets; surface blockers to A1
+
+### C1 — D-tier Project Coordinator + Code Drift Prevention
+- **Monitor D0-D4**: track open PRs, task progress, bot_chat items addressed to D-tier bots
+- **Docs**: keep D-tier design docs, wireframes, runbooks current with actual implementation
+- **Code drift**: daily checkpoint — compare prod vs repo migrations; surface drift to A1
+- **Assist**: unblock D-tier bots on cross-lane coordination questions; route to A1/B1 as needed
+- **NO** connector integrations (moved to E1 when E1 activates)
+- **NO** PR management authority (that's D0's lane)
+
+### D0 — Terminal FE — User Visual Layer (PRIORITY)
+**Mission: be the user's single window into project health and trading intelligence.**
+
+D0 renders two kinds of surfaces:
+1. **Ops health** — visual of everything A1 monitors: cron status, 429 rates, table freshness, bot_chat feed, data source pipeline status, sync state. User sees at a glance if infra is healthy.
+2. **Trading intelligence** — event detail pages, movers index, discovery gaps, performer/venue pages with all multi-source data (EVO/SG/TD).
+
+When D0 is "working" = operator can open the terminal and immediately see:
+- Whether all pipelines are running (cron health dashboard)
+- Whether 429 rates are in budget
+- Which data sources are fresh vs stale
+- Recent bot_chat activity
+- And navigate to any event/mover/discovery surface with live data
+
+**Render**: workspace-wide permissions parity with A1. Full write authority on all services.
+
+### D1–E1 — PAUSED
+All paused until D0 is working. No new work in these lanes. Existing code stays deployed but no new PRs.
 
 ---
 
-## 3. Push restrictions matrix
+## 4. Push restrictions matrix
 
-| | Prod DB (Supabase main project) | Prod git (`main` branch) | Render workspace | Edge functions | Vault / secrets |
+| | Prod DB (Supabase) | Prod git (`main`) | Render workspace | Edge functions | Vault / secrets |
 |---|---|---|---|---|---|
-| **A1** | ✅ via MCP | ✅ merge any PR | ✅ (until D1 takes over) | ✅ deploy | ✅ rotate/set |
-| **B1** | ✅ **CRIT security only** | ✅ for sec PRs | ❌ | ✅ for sec | ✅ |
-| **C1** | ❌ preview only; A1 applies | ❌ A1 merges | ❌ | ❌ A1 deploys | ❌ |
-| **D0** | ❌ preview only | ❌ A1 merges | ❌ | ❌ | ❌ |
-| **D1** | ❌ preview only | ❌ A1 merges | ✅ **sole owner** | ❌ A1 deploys | ❌ |
-| **D2** | ❌ preview only | ❌ A1 merges | ❌ | ❌ | ❌ |
-| **D3** | ❌ preview only | ❌ A1 merges | ❌ | ❌ | ❌ |
+| **A1** | ✅ via MCP | ✅ sole merger | ✅ workspace-wide | ✅ deploy | ✅ rotate/set |
+| **B1** | ✅ CRIT security only | ✅ sec PRs only | ❌ | ✅ sec only | ✅ |
+| **C1** | ❌ (author files only; A1 applies) | ❌ (A1 merges) | ❌ | ❌ | ❌ |
+| **D0** | ❌ (author files only; A1 applies) | ❌ (A1 merges) | ✅ **workspace-wide parity with A1** | ❌ | ❌ |
+| **D1–D4, E1** | ❌ (PAUSED) | ❌ (PAUSED) | ❌ (PAUSED) | ❌ | ❌ |
 
-**Two hard rules surface from this:**
-- **Only A1 pushes prod DB and merges to `main`.** B1 is the exception for CRIT security only.
-- **Only D1 touches Render.** D0/D2/D3/D4 may NOT push to Render, provision services there, modify env vars, or configure crons in the Render workspace.
+**Hard rules (immutable, per CLAUDE.md):**
+- A1 is sole pusher to `main`
+- B1's prod-DB write is CRIT security only — no routine ops
+
+**D0 Render note (2026-05-16 directive, confirmed 2026-05-28 reorg):**
+D0 has full workspace-wide Render permissions: all `mcp__render__*` tools, `create_*`, `select_workspace`, provisioning/deletion/ownership. No per-call operator approval required (but post a `bot_chat` flag event for transparency on customer-facing service changes).
 
 ---
 
-## 4. Single-writer table ownership (writes)
+## 5. Single-writer table ownership
 
-Single-writer rule: the lane that created a table owns its writes. Others can read or call write-RPCs.
-
-| Lane | Tables they write (illustrative — not exhaustive) |
+| Lane | Tables they write |
 |---|---|
-| **A1** | `event_xref`, `*_xref`, performance crons, audit views, sweep functions (`sweep_old_listings`, `sweep_duplicate_listings`, etc.), `latest_event_metrics` matview, FRED macro tables |
-| **B1** | `pg_policies` (via migrations), `secrets`-related, RLS configs |
-| **C1** | `events`, `*_canonical`, `*_resolved` sidecars (e.g. `seatgeek_orders_resolved`), `bot_chat`, dashboard matviews, `seatgeek_event_xref` (canonical authority — D2's sidecar is the canonical write path, not parallel writes on `seatgeek_orders.tevo_event_id`) |
-| **D0** | (read-only reference) |
-| **D1** | `share_links`, storefront `app.py` (no DB tables directly) |
-| **D2** | `evo_orders`, `evo_order_items`, `seatgeek_orders` (raw), `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots`. **Sidecar pattern**: D2 writes to `*_orders` raw, C1 resolves into `*_resolved` sidecar. D2 will NOT add parallel `tevo_event_id` write paths — sidecar is canonical (2026-05-12 decision). |
-| **D3** | `broadway_*` tables |
-
-When in doubt, post a `question` in `bot_chat` and A1 / C1 will adjudicate.
+| **A1** | `event_xref`, `*_xref`, `event_listing_snapshot_daily`, sweep functions, `latest_event_metrics` matview, FRED macro, ESPN tables, `event_movers_index`, `event_movers_index_history`, `discovery_gap_alerts` |
+| **B1** | `pg_policies` (via migrations), RLS configs |
+| **C1** | `bot_chat`, `*_canonical`, `*_resolved` sidecars, `seatgeek_event_xref` |
+| **D0** | `static/terminal/*` UI files (read-only from DB perspective) |
+| **D1** | `share_links` (PAUSED) |
+| **D2** | `evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots` (PAUSED) |
+| **D3** | `broadway_*` tables (PAUSED) |
 
 ---
 
-## 5. Code-review + push workflow (the fast path)
+## 6. Code-review + push workflow
 
-For any change a lane wants in prod:
+1. **Branch** off `main`: `claude/<lane>-<purpose>-<id>`
+2. **Migration header** (required): `-- Migration <ts> · level:<X> · lane:<Y> · writes:<...> · reads:<...>`
+3. **PR** — use `.github/PULL_REQUEST_TEMPLATE.md`
+4. **Apply to preview branch** via MCP — never directly to main project_id without operator OK
+5. **bot_chat log** — `change_log` event with PR# linked
+6. **A1 review + push** — applies migration to prod via MCP, merges PR
 
-1. **Branch** — `claude/<lane>-<purpose>-<id>`, off `main`.
-2. **Migration header** (required, one line, see `MIGRATION_CONVENTIONS.md` §3):
-   `-- Migration <ts> · level:<X> · lane:<Y> · writes:<...> · reads:<...> · pre:<...>`
-3. **PR** — use `.github/PULL_REQUEST_TEMPLATE.md` (declares Level + Lane + Tables + Pre-reqs + Test plan).
-4. **Apply to preview branch** via MCP, never to the main project_id.
-5. **bot_chat log** — `change_log` event with PR# linked.
-6. **Hand to A1 for review + push** — A1 reviews, applies migration to prod via MCP, merges PR, posts close-out `change_log`.
-
-Critical security patches: B1 may apply directly with `event_type='p0_security'` and a post-mortem in the same `bot_chat` row.
+**Exception**: D0 may apply migrations directly when explicitly authorized per session by operator (per current working pattern).
 
 ---
 
-## 6. SECURITY DEFINER function convention (PR #67/#68 — adopted 2026-05-13)
+## 7. Deploy infrastructure ownership
 
-Every SECURITY DEFINER function ships in **one migration** with three lines together, every time:
-
-```sql
-CREATE OR REPLACE FUNCTION public.my_function(...)
-RETURNS ... LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$ BEGIN
-  IF current_user NOT IN ('service_role', 'postgres', 'supabase_admin') THEN
-    RAISE EXCEPTION 'my_function: caller % not authorized', current_user;
-  END IF;
-  -- function body
-END $$;
-
-REVOKE EXECUTE ON FUNCTION public.my_function(...) FROM PUBLIC;
-GRANT  EXECUTE ON FUNCTION public.my_function(...) TO service_role;
-```
-
-Belt-and-suspenders: grant gate (primary) + body assertion (defense-in-depth). To be folded into `MIGRATION_CONVENTIONS.md` §6/§12 next pass.
+| Render service | Lane owner | Sub-implementer | Source code | IaC |
+|---|---|---|---|---|
+| `vibepass-terminal-test` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
+| `vibepass-storefront-test` | **D0** | D1 (PAUSED) | `app.py`, `static/store/*` | `render.yaml` |
+| `d2-orders-dashboard` | **D0** | D2 (PAUSED) | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
 
 ---
 
-## 7. Quick links
+## 8. Quick links
 
-- `MIGRATION_CONVENTIONS.md` — the full rules (13 sections, the canonical reference)
-- `START_HERE.md` — 2-min bootstrap, hard rules
-- `DOCUMENTATION_INDEX.md` — full doc map (note: 2026-05-10 vintage, partial drift on lane names)
-- `docs/bot-hierarchy.mermaid` — visual diagram (refreshed 2026-05-13)
-- `bot_chat` rows 50-58 — lane-assignment broadcasts that established this hierarchy
-- `bot_chat` row 57 — INFRA OWNERSHIP RULE (D1 Render-exclusive)
-- `bot_chat` row 64 — sidecar-canonical decision (D2 will not add parallel writes)
+- `LANE_DISCIPLINE.md` — per-lane write/read/never-write rules (detail)
+- `MIGRATION_CONVENTIONS.md` — migration + commit rules (13 sections)
+- `PROJECT_BIBLE.md` — canonical playbook (read first per session)
+- `CLAUDE.md` — immutable security + lockdown rules
+- `docs/bot-hierarchy.mermaid` — visual diagram (needs refresh to match 2026-05-28 reorg)
 
-Owner: A1. Update when a lane assignment changes or a new bot is rostered.
+Owner: A1. Update when lane assignment changes or new bot is rostered.
+Last updated: 2026-05-28 reorg (operator directive).

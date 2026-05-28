@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-27 by D0 (migs 240000–260000: sg_classify_events emergency fix, event_movers_index_v2 infra, movers v2 RPCs; Terminal UI: TD Markets tab, Market Carpet, movers v2 source/window views, discovery gaps — §9 + §10 updated) | prior: 2026-05-26 by A1 — **v1.0.0-beta checkpoint** (PRs #369–#370: CI automation [TypeScript gate + D4 build + mypy + uptime monitor + release-please], 6 prod migrations applied [security REVOKE sweep + 3 broken crons fixed + SG 429 rate mitigation + scanned_by nullable], static/bridge rebuilt for PRs #341/#342, 13 TypeScript bugs fixed by noImplicitReturns, §9 + §10 updated)
+**Last updated**: 2026-05-28 by D0 — **bot reorg** (A1=SQL monitor/ops, B1=security+governance, C1=D-tier coordinator, D0=user visual layer; D1-E1 paused until D0 working; §2 + BOT_HIERARCHY.md + LANE_DISCIPLINE.md updated) + 3 prod fixes applied (350000 SG burst, 360000 sweep functions, 370000 movers horizon dedup) + §9 landmarks 270000–370000 added | prior: 2026-05-27 by D0 (migs 240000–260000, Terminal UI: TD Markets tab, Market Carpet, movers v2, discovery gaps)
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -36,27 +36,32 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
 ## 2. Bot hierarchy + Render service ownership
 
+**Reorg 2026-05-28** — new mandate split; D1-E1 paused until D0 is working.
+
 ```
-A1 (admin · sole prod pusher · Render workspace owner)
-├── B1 (security · monitors all; CRIT push allowed)
-└── C1 (canonical · drift + checkpoint + token-discipline + quality/continuity monitor — see docs/c1_quality_continuity_charter.md)
-    ├── D0 (Terminal FE · static site)
-    ├── D1 (Consumer Retail · storefront/search)
-    ├── D2 (Order Clients · ops dashboard)
-    ├── D3 (Broadway Scraper · sub of D2)
-    ├── D4 (Exos/Bridge · primary-market ticketing — greenfield, own exos_* schema)
-    └── E1 (Kalshi/markets · future stub)
+A1 (SQL monitor + DB ops + git + connectors · sole prod pusher)
+└── B1 (security + governance monitor · bibles/git/bot-notes)
+    └── C1 (D-tier project coordinator + drift prevention)
+        └── D0 ← PRIORITY (Terminal FE · user visual layer · visual of A1 for user)
+
+⏸  D1 (Consumer Retail) · D2 (Order Clients) · D3 (Broadway)
+⏸  D4 (Exos/Ticketing) · E1 (Integration/Automation)
+    — all paused until D0 is working —
 ```
 
-| Bot | Render service | Service ID | Scope |
+| Bot | Mandate | Status | Render scope |
 |---|---|---|---|
-| A1 | workspace-wide | — | full (read + write + provisioning + delete) |
-| **D0** | **workspace-wide** | — | **full Render parity with A1 (2026-05-16)** — read + write + provisioning + delete across all services |
-| D1 | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | code author only; Render MCP read-only (writes route through D0 + A1) |
-| D2 | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | code author only; Render MCP read-only (writes route through D0 + A1) |
-| B1, C1, D3, D4, E1 | (all services) | — | read only |
+| **A1** | Monitor + fix SQL; Supabase alerts; all data sources; crons; tables; git + syncs; Jira/Asana. Sole prod pusher. | ACTIVE | workspace-wide |
+| **B1** | Security (RLS/SECDEF/patches) + governance (bibles, git, bot notes, Jira/Asana) | ACTIVE | read-only |
+| **C1** | Monitor D0-D4 projects + docs; prevent code drift; daily checkpoint | ACTIVE | read-only |
+| **D0** | Terminal FE — user's visual window into project health and trading intelligence | **ACTIVE — PRIORITY** | **workspace-wide parity with A1** |
+| D1 | Consumer Retail storefront | **PAUSED** | — |
+| D2 | Order clients + dashboard | **PAUSED** | — |
+| D3 | Broadway scraper (sub-D2) | **PAUSED** | — |
+| D4 | Exos ticketing (schema live, data dormant, creds needed) | **PAUSED** | — |
+| E1 | Integration/Automation (Zapier, WhatsApp, Slack, webhooks) | **PAUSED** | — |
 
-**Testing-unified architecture (2026-05-16, PR #168)**: All runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold starts). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts. `vibepass-terminal-test` continues to serve as a CDN for D0 static files; `d2-orders-dashboard` stays alive as a beta-time placeholder but has no live traffic. At beta, each surface migrates back to its own service via dedicated DNS + un-mounting from `app.py`.
+**Testing-unified architecture (2026-05-16, PR #168)**: All runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold starts). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts. `vibepass-terminal-test` continues to serve as a CDN for D0 static files. At beta, each surface migrates back to its own service.
 
 Code-dir ownership (per `LANE_DISCIPLINE.md`):
 - D0 → `static/terminal/*` + Terminal FE
