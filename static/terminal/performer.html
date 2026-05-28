@@ -45,15 +45,17 @@
       </div>
     </section>
 
+    <!-- Default active tab: Market Carpet — the performer as its own "stock ticker" -->
     <nav class="event-tabs" id="perfTabs" role="tablist" hidden>
-      <button class="event-tab active" data-tab="overview"  role="tab" aria-selected="true">Overview</button>
-      <button class="event-tab" data-tab="upcoming"  role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountUpcoming"></span></button>
+      <button class="event-tab" data-tab="overview"   role="tab" aria-selected="false">Overview</button>
+      <button class="event-tab" data-tab="upcoming"   role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountUpcoming"></span></button>
       <button class="event-tab" data-tab="blindspots" role="tab" aria-selected="false">Blind Spots <span class="tab-count" id="tabCountBlindspots"></span></button>
-      <button class="event-tab" data-tab="market" role="tab" aria-selected="false">Market Carpet <span class="tab-count" id="tabCountMarket"></span></button>
-      <button class="event-tab" data-tab="espn" role="tab" aria-selected="false">ESPN Context</button>
+      <button class="event-tab active" data-tab="market" role="tab" aria-selected="true">Market Carpet <span class="tab-count" id="tabCountMarket"></span></button>
+      <button class="event-tab" data-tab="espn"       role="tab" aria-selected="false">ESPN Context</button>
     </nav>
 
-    <div class="tab-pane active" id="paneOverview" role="tabpanel" hidden>
+    <!-- Overview pane: rollup KPIs + ESPN form strip -->
+    <div class="tab-pane" id="paneOverview" role="tabpanel" hidden>
       <section id="perf-rollup">
         <div class="panel-title">PORTFOLIO ROLLUP</div>
         <div class="rollup-grid">
@@ -70,7 +72,21 @@
         <div class="panel-title row"><span>FORM &amp; AVAILABILITY</span><span class="muted small" id="poEspnMeta"></span></div>
         <div id="poEspnStrip"></div>
       </section>
+    </div>
 
+    <!-- Upcoming Events pane -->
+    <div class="tab-pane" id="paneUpcoming" role="tabpanel" hidden>
+      <section id="perf-events">
+        <div class="panel-title row">
+          <span>UPCOMING SLATE</span>
+          <span class="muted small" id="phEventCount"></span>
+        </div>
+        <div id="phEventsBody"></div>
+      </section>
+    </div>
+
+    <!-- Blind Spots pane -->
+    <div class="tab-pane" id="paneBlindspots" role="tabpanel" hidden>
       <section id="perf-blind-spots">
         <div class="panel-title row">
           <span>BLIND SPOTS — UPCOMING GAMES WE DON'T OWN</span>
@@ -81,36 +97,29 @@
         </div>
         <div id="phBlindSpotsBody"></div>
       </section>
-
-      <section id="perf-events">
-        <div class="panel-title row">
-          <span>UPCOMING SLATE</span>
-          <span class="muted small" id="phEventCount"></span>
-        </div>
-        <div id="phEventsBody"></div>
-      </section>
     </div>
 
-    <!-- Market Carpet — cross-source medians for every upcoming event of this performer.
-         Lazy-loaded on first click. Queries event_listing_snapshot_daily + event_movers_index
-         + discovery_gap_alerts client-side using event IDs from the portfolio payload. -->
-    <div class="tab-pane" id="paneMarket" role="tabpanel" hidden>
+    <!-- Market Carpet pane — default view. Treats performer as a stock ticker.
+         Aggregated portfolio view + per-event cross-source medians.
+         Lazy-loaded automatically on page open. -->
+    <div class="tab-pane active" id="paneMarket" role="tabpanel">
+      <section id="perf-market-ticker">
+        <div id="perfMarketTickerBody"><div class="empty">loading…</div></div>
+      </section>
       <section id="perf-market-carpet">
         <div class="panel-title row">
           <span>MARKET CARPET — cross-source medians + signals per event</span>
-          <span class="muted small" id="perfMarketMeta">tap tab to load</span>
+          <span class="muted small" id="perfMarketMeta">loading…</span>
         </div>
         <div class="muted small" style="margin-bottom:8px">
           EVO/SG/SH/GT/VD medians from latest <code>event_listing_snapshot_daily</code> row per event.
-          Platform spreads show how each market prices relative to EVO retail.
-          Movers column shows active index signals (source · category · Δ).
-          Gap column shows active <code>discovery_gap_alerts</code>.
-          TD data started 2026-05-27 — sparse until ~June 3.
+          Spreads = each platform relative to EVO retail. TD data started 2026-05-27.
         </div>
-        <div id="perfMarketBody"><div class="empty">Click the tab to load.</div></div>
+        <div id="perfMarketBody"><div class="empty">loading…</div></div>
       </section>
     </div>
 
+    <!-- ESPN Context pane (lazy-loaded on tab click) -->
     <div class="tab-pane" id="paneEspn" role="tabpanel" hidden>
       <section id="perf-context">
         <div class="panel-title row">

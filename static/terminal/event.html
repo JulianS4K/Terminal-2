@@ -119,14 +119,6 @@
       <div id="lastSnapshotBody"></div>
     </section>
 
-    <section id="data-freshness">
-      <div class="panel-title row">
-        <span>DATA FRESHNESS — per-source last update</span>
-        <span class="muted small" id="dataFreshnessMeta"></span>
-      </div>
-      <div id="dataFreshnessBody"><div class="empty">loading…</div></div>
-    </section>
-
     <section id="cross-source-metrics">
       <div class="panel-title row">
         <span>CROSS-SOURCE METRICS — TEvo vs SG</span>
@@ -290,18 +282,32 @@
       </section>
     </div>
 
-    <!-- TD Markets — event_listing_snapshot_daily with TD columns. Lazy-load on first click. -->
+    <!-- TD Markets — data freshness + cross-platform listing data. Lazy-load on first click. -->
     <div class="tab-pane" id="paneTdMarkets" role="tabpanel" hidden>
-      <section id="td-markets-snapshot">
+      <section id="data-freshness">
         <div class="panel-title row">
-          <span>TD MARKETS — cross-platform snapshot history (SH · GT · VD)</span>
-          <span class="muted small" id="tdMarketsSnapshotMeta">tap tab to load</span>
+          <span>DATA FRESHNESS — per-source last update</span>
+          <span class="muted small" id="dataFreshnessMeta"></span>
         </div>
-        <div id="tdMarketsSnapshotBody"><div class="empty">Click the tab to load.</div></div>
+        <div id="dataFreshnessBody"><div class="empty">loading…</div></div>
       </section>
       <section id="td-markets-latest">
         <div class="panel-title">LATEST SNAPSHOT — cross-source medians + spreads</div>
         <div id="tdMarketsLatestBody"><div class="empty">loading…</div></div>
+      </section>
+      <section id="td-markets-listings">
+        <div class="panel-title row">
+          <span>TD LISTINGS — latest per platform (SH · GT · VD, non-parking, last 24h)</span>
+          <span class="muted small" id="tdMarketsListingsMeta">tap tab to load</span>
+        </div>
+        <div id="tdMarketsListingsBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+      <section id="td-markets-snapshot">
+        <div class="panel-title row">
+          <span>SNAPSHOT HISTORY — daily aggregate (SH · GT · VD medians)</span>
+          <span class="muted small" id="tdMarketsSnapshotMeta">tap tab to load</span>
+        </div>
+        <div id="tdMarketsSnapshotBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 

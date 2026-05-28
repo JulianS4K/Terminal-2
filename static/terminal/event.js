@@ -41,6 +41,10 @@
   // Per-chart build caches so each tooltip can read its own series at cursor.idx.
   let _chartLastBuildPrice = null;
   let _chartLastBuildInv   = null;
+  // TD per-source snapshot series for price chart overlay.
+  // Populated by loadTdFreshness() (fire-and-forget after main load).
+  // Shape: { sh: [{t,v}], gt: [{t,v}], vd: [{t,v}] }
+  let _tdChartSeries = null;
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
@@ -623,6 +627,7 @@
     const ext = _chartExtStatePrice.payload || null;
     const extSeries = (ext && ext.series) || {};
 
+    const tdS = _tdChartSeries || {};
     const specs = [
       { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', width: 2,   dash: null,   data: chart.prices_owned },
       { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', width: 1.5, dash: [4, 4], data: chart.prices_market },
@@ -630,6 +635,9 @@
       { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', width: 1.5, dash: null,   data: extSeries.sg_listings_median       || [] },
       { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', width: 1.5, dash: [3, 3], data: extSeries.sg_listings_owned_median || [] },
       { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', width: 1.5, dash: [5, 2], data: extSeries.sg_sales_median          || [] },
+      { key: 'td_sh_med',       label: 'SH median',      color: '#f97316', width: 1.5, dash: [8, 3], data: tdS.sh || [] },
+      { key: 'td_gt_med',       label: 'GT median',      color: '#34d399', width: 1.5, dash: [8, 3], data: tdS.gt || [] },
+      { key: 'td_vd_med',       label: 'VD median',      color: '#c084fc', width: 1.5, dash: [8, 3], data: tdS.vd || [] },
     ];
     const { xs } = buildSeriesData(specs);
     _chartLastBuildPrice = { specs, xs };
@@ -1667,23 +1675,26 @@
   async function loadTdFreshness(eventId) {
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client) return;
-    // Fetch the latest snapshot row for this event (most recent date + slot)
+    // Fetch full snapshot history for this event (up to 90 rows = ~30 days × 3 slots)
+    // Used for: (a) fr-chips freshness, (b) data-freshness table, (c) price chart TD overlay
     const { data: rows, error } = await Auth.client
       .from('event_listing_snapshot_daily')
-      .select('snapshot_date,snapshot_slot,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median')
       .eq('event_id', eventId)
       .order('snapshot_date', { ascending: false })
       .order('snapshot_slot', { ascending: false })
-      .limit(1);
+      .limit(90);
     if (error) { console.error('[td-freshness] sb', error); return; }
+    // Latest row for chips + freshness table
     const snap = rows && rows.length ? rows[0] : null;
     // Convert snapshot_date + slot to approx UTC timestamp for age calc
     // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC
-    let snapTs = null;
-    if (snap) {
-      const slotHour = { morning: 9, midday: 14, evening: 19 }[snap.snapshot_slot] ?? 12;
-      snapTs = `${snap.snapshot_date}T${String(slotHour).padStart(2, '0')}:00:00Z`;
-    }
+    const slotHourMap = { morning: 9, midday: 14, evening: 19 };
+    const rowTs = (r) => {
+      const h = slotHourMap[r.snapshot_slot] ?? 12;
+      return `${r.snapshot_date}T${String(h).padStart(2, '0')}:00:00Z`;
+    };
+    const snapTs = snap ? rowTs(snap) : null;
     // Update the TD fr-chips in the hero
     const tdMap = { 'td-sh': snap?.td_sh_listings, 'td-gt': snap?.td_gt_listings, 'td-vd': snap?.td_vd_listings };
     for (const [src, listings] of Object.entries(tdMap)) {
@@ -1702,8 +1713,28 @@
       el.classList.add(ageMin > staleLimit(src) ? 'stale' : 'fresh');
       el.title = `${label}: snapshot ${snap.snapshot_date} ${snap.snapshot_slot}${noData ? ' (no listings)' : ` — ${listings} listings`}`;
     }
-    // Render full per-source freshness table
+    // Render full per-source freshness table (into #data-freshness inside TD Markets pane)
     renderDataFreshness(snap, snapTs);
+    // Build price-chart TD series from full history
+    if (rows && rows.length > 1) {
+      const sh = [], gt = [], vd = [];
+      for (const r of rows) {
+        const ts = rowTs(r);
+        if (r.td_sh_median != null) sh.push({ t: ts, v: +r.td_sh_median });
+        if (r.td_gt_median != null) gt.push({ t: ts, v: +r.td_gt_median });
+        if (r.td_vd_median != null) vd.push({ t: ts, v: +r.td_vd_median });
+      }
+      // Reverse so series are chronological (we fetched newest-first)
+      _tdChartSeries = { sh: sh.reverse(), gt: gt.reverse(), vd: vd.reverse() };
+      // Re-render price chart to include TD overlay (only if chart exists)
+      if (_lastPayload && _lastPayload.chart_data) {
+        try {
+          const chart = adaptChart(_lastPayload.chart_data);
+          renderChartPrice(chart, _chartExtAlerts);
+          renderChartLegendPrice();
+        } catch (e) { console.error('[td-chart-overlay]', e); }
+      }
+    }
   }
 
   function renderDataFreshness(tdSnap, tdTs) {
@@ -2847,6 +2878,80 @@
       <div class="last-snap-meta">snapshot fields fall back to the most recent non-null value across the loaded window (${rows.length} pulls)</div>`;
   }
 
+  // ---------- TD Markets — raw per-listing data from ticketsdata_listings_snapshots ----------
+  // Shows the latest fetch window of individual listing rows per platform (SH · GT · VD),
+  // mirroring the EVO Listings and SG Listings tabs. Non-parking only.
+  async function loadTdMarketsListings(eventId) {
+    const body  = document.getElementById('tdMarketsListingsBody');
+    const meta  = document.getElementById('tdMarketsListingsMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading TD listings…</div>';
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    // Fetch the last 24h of listing rows (non-parking), newest first, limit 500
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const res = await Auth.client
+      .from('ticketsdata_listings_snapshots')
+      .select('platform,section,row,quantity,list_price,price_with_fees,captured_at,is_parking')
+      .eq('event_id', eventId)
+      .eq('is_parking', false)
+      .gte('captured_at', since)
+      .order('captured_at', { ascending: false })
+      .order('platform')
+      .order('list_price')
+      .limit(500);
+    if (res.error) {
+      if (body) body.innerHTML = `<div class="empty">error: ${escapeHtml(res.error.message)}</div>`;
+      if (meta) meta.textContent = 'error';
+      return;
+    }
+    const rows = res.data || [];
+    if (!rows.length) {
+      if (body) body.innerHTML = '<div class="empty">No TD listing rows in the last 24h for this event. Data started 2026-05-27 — sparse initially.</div>';
+      if (meta) meta.textContent = '0 rows';
+      return;
+    }
+    // Group by platform for summary header
+    const byPlatform = {};
+    for (const r of rows) {
+      (byPlatform[r.platform] = byPlatform[r.platform] || []).push(r);
+    }
+    const platforms = Object.keys(byPlatform).sort();
+    const summaryParts = platforms.map(p => {
+      const ps = byPlatform[p];
+      const prices = ps.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+      const median = prices.length ? prices[Math.floor(prices.length / 2)] : null;
+      return `${p}: ${ps.length} listings${median ? ' · $' + Math.round(median) + ' median' : ''}`;
+    });
+    if (meta) meta.textContent = `${rows.length} rows · ${summaryParts.join(' · ')}`;
+    const $p  = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    const tbl = document.createElement('table');
+    tbl.className = 'td-listings-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Platform</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        <th>Captured</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const platCls = r.platform === 'SH' ? 'td-sh' : r.platform === 'GT' ? 'td-gt' : r.platform === 'VD' ? 'td-vd' : '';
+      tr.innerHTML = `
+        <td><span class="badge ${platCls}">${escapeHtml(r.platform)}</span></td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${r.quantity != null ? T.fmtNum(+r.quantity) : '—'}</td>
+        <td class="num">${$p(r.list_price)}</td>
+        <td class="num">${$p(r.price_with_fees)}</td>
+        <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
+      tb.appendChild(tr);
+    });
+    if (body) { body.innerHTML = ''; body.appendChild(tbl); }
+  }
+
   // ---------- Util ----------
 
   // ---------- TD Markets (full) ----------
@@ -2862,6 +2967,8 @@
     const countEl    = document.getElementById('tabCountTdMarkets');
     if (snapBody)   snapBody.innerHTML   = '<div class="empty">Loading…</div>';
     if (latestBody) latestBody.innerHTML = '<div class="empty">Loading…</div>';
+    // Fire listings fetch in parallel (separate table, separate auth check)
+    loadTdMarketsListings(eventId).catch(e => console.error('[td-listings]', e));
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client || !Auth.getAccessToken()) {
       if (snapBody) snapBody.innerHTML = '<div class="empty">not signed in</div>';

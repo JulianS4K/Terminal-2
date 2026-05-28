@@ -95,18 +95,16 @@
   }
 
   // ============================================================
-  // DETAIL mode — hero + rollup + 4 tabs
+  // DETAIL mode — hero + rollup + tabs (Market Carpet default)
   // ============================================================
   function showDetailMode(performerId) {
-    // Unhide DETAIL chrome
+    // Unhide DETAIL chrome; Market Carpet pane is already active in HTML
     document.getElementById('perf-hero').removeAttribute('hidden');
     document.getElementById('perfTabs').removeAttribute('hidden');
-    document.getElementById('paneOverview').removeAttribute('hidden');
 
     wireTabs(performerId);
     T.setStatus(`Loading performer ${performerId}…`);
-    // Eager-load ESPN so the Form & Availability strip + full ESPN tab are ready
-    // on open — demand context up-front, not a tab-click away.
+    // Eager-load ESPN for form strip (non-blocking)
     loadEspnContext(performerId).catch(e => console.error('espn-eager', e));
 
     Promise.all([
@@ -116,12 +114,14 @@
       const firstErr = [assets, portfolio].find(r => r && r.__err);
       if (firstErr) T.setStatus(firstErr.__err.message, 'err');
       else T.setStatus('Loaded', 'ok');
-      // Stash portfolio for lazy-loaded Market Carpet tab
+      // Stash portfolio
       _tabState.portfolio = (portfolio && !portfolio.__err) ? portfolio : null;
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
       try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
+      // Auto-load Market Carpet (default view) now that portfolio is available
+      loadMarketCarpet().catch(e => console.error('marketCarpet', e));
     });
   }
 
@@ -145,20 +145,21 @@
     });
   }
 
+  const PERF_PANE_IDS = {
+    overview:   'paneOverview',
+    upcoming:   'paneUpcoming',
+    blindspots: 'paneBlindspots',
+    market:     'paneMarket',
+    espn:       'paneEspn',
+  };
+
   function activateTab(tabId) {
     document.querySelectorAll('#perfTabs .event-tab').forEach(b => {
       const on = b.dataset.tab === tabId;
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    const paneIds = {
-      overview:   'paneOverview',
-      upcoming:   'paneUpcoming',
-      blindspots: 'paneBlindspots',
-      market:     'paneMarket',
-      espn:       'paneEspn',
-    };
-    Object.entries(paneIds).forEach(([id, paneId]) => {
+    Object.entries(PERF_PANE_IDS).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
       if (!pane) return;
       if (id === tabId) { pane.removeAttribute('hidden'); pane.classList.add('active'); }
@@ -458,35 +459,33 @@
     sec.removeAttribute('hidden');
   }
 
-  // ---------- Market Carpet (lazy tab) ----------
-  // Builds a cross-source comparison table for all upcoming events of this performer.
-  // Queries three tables via Supabase client using the event IDs from the portfolio:
-  //   • event_listing_snapshot_daily  — latest snapshot per event (JS dedup)
-  //   • event_movers_index            — any active movers signals per event
-  //   • discovery_gap_alerts          — active cross-platform gap flags per event
+  // ---------- Market Carpet — performer as stock ticker ----------
+  // Auto-loaded on page open (default tab). Builds:
+  //   1. Stock-ticker KPI strip: aggregate price, owned position, signals
+  //   2. Per-event cross-source medians table
   async function loadMarketCarpet() {
     _tabState.loaded.market = true;
-    const body   = document.getElementById('perfMarketBody');
-    const meta   = document.getElementById('perfMarketMeta');
-    const countEl = document.getElementById('tabCountMarket');
-    if (body) body.innerHTML = '<div class="empty">Loading market data…</div>';
+    const tickerBody = document.getElementById('perfMarketTickerBody');
+    const body       = document.getElementById('perfMarketBody');
+    const meta       = document.getElementById('perfMarketMeta');
+    const countEl    = document.getElementById('tabCountMarket');
+    if (tickerBody) tickerBody.innerHTML = '<div class="empty">loading…</div>';
+    if (body)       body.innerHTML       = '<div class="empty">Loading market data…</div>';
 
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      if (tickerBody) tickerBody.innerHTML = '<div class="empty">not signed in</div>';
+      if (body)       body.innerHTML       = '<div class="empty">not signed in</div>';
       return;
     }
     const portfolio = _tabState.portfolio;
     const events = (portfolio && portfolio.events) || [];
     if (!events.length) {
-      if (body) body.innerHTML = '<div class="empty">no events to analyze</div>';
+      if (tickerBody) tickerBody.innerHTML = '<div class="empty">no events to analyze</div>';
+      if (body)       body.innerHTML       = '<div class="empty">no events to analyze</div>';
       return;
     }
     const eventIds = events.map(e => e.id).filter(Boolean);
-    if (!eventIds.length) {
-      if (body) body.innerHTML = '<div class="empty">no mapped event IDs</div>';
-      return;
-    }
 
     // Parallel fetch: snapshots + movers + gaps
     const [snapRes, moversRes, gapsRes] = await Promise.all([
@@ -514,22 +513,82 @@
       if (!snapByEvent[r.event_id]) snapByEvent[r.event_id] = r;
     }
 
-    // Group movers by event
+    // Group movers + gaps by event
     const moversByEvent = {};
     for (const r of (moversRes.data || [])) {
       (moversByEvent[r.event_id] = moversByEvent[r.event_id] || []).push(r);
     }
-
-    // Group gaps by event
     const gapsByEvent = {};
     for (const r of (gapsRes.data || [])) {
       (gapsByEvent[r.event_id] = gapsByEvent[r.event_id] || []).push(r);
     }
 
-    if (meta) meta.textContent = `${events.length} events · ${Object.keys(snapByEvent).length} with snapshots`;
+    const snapCount = Object.keys(snapByEvent).length;
+    if (meta) meta.textContent = `${events.length} events · ${snapCount} with snapshots`;
     if (countEl) countEl.textContent = String(events.length);
 
-    const $p = v => (v != null ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    // ── Stock Ticker: aggregate metrics ──────────────────────────────────────
+    const ag = (portfolio && portfolio.aggregate) || {};
+    // Weighted-avg medians across events that have snapshots
+    let sumEvo = 0, sumSg = 0, sumSh = 0, sumGt = 0, sumVd = 0, wCount = 0;
+    events.forEach(e => {
+      const sn = snapByEvent[e.id];
+      if (!sn) return;
+      const w = 1; // equal weight per event; can weight by owned_qty if preferred
+      if (sn.evo_retail_median != null) sumEvo += +sn.evo_retail_median * w;
+      if (sn.sg_all_median    != null) sumSg  += +sn.sg_all_median    * w;
+      if (sn.td_sh_median     != null) sumSh  += +sn.td_sh_median     * w;
+      if (sn.td_gt_median     != null) sumGt  += +sn.td_gt_median     * w;
+      if (sn.td_vd_median     != null) sumVd  += +sn.td_vd_median     * w;
+      wCount += w;
+    });
+    const wavg = (sum) => wCount > 0 ? Math.round(sum / wCount) : null;
+    const avgEvo = wavg(sumEvo), avgSg = wavg(sumSg);
+    const avgSh  = wavg(sumSh),  avgGt = wavg(sumGt), avgVd = wavg(sumVd);
+
+    // Signal counts
+    const allMovers = Object.values(moversByEvent).flat();
+    const priceUp   = allMovers.filter(m => m.category === 'price_up').length;
+    const priceDown = allMovers.filter(m => m.category === 'price_down').length;
+    const allGaps   = Object.values(gapsByEvent).flat();
+    const gapCount  = allGaps.length;
+
+    const sgSpreadPct = (avgEvo && avgSg) ? ((avgSg - avgEvo) / avgEvo * 100) : null;
+    const $p = v => (v != null ? '$' + T.fmtNum(v) : '—');
+    const pct = (v, decimals=0) => v != null ? (v >= 0 ? '+' : '') + v.toFixed(decimals) + '%' : '';
+
+    if (tickerBody) {
+      tickerBody.innerHTML = `
+        <div class="market-ticker-strip">
+          <div class="ticker-cell ticker-price">
+            <span class="ticker-lbl">EVO MEDIAN</span>
+            <span class="ticker-val">${$p(avgEvo)}</span>
+            ${avgSg ? `<span class="ticker-sub ${sgSpreadPct && sgSpreadPct > 0 ? 'pos' : sgSpreadPct && sgSpreadPct < 0 ? 'neg' : ''}">${pct(sgSpreadPct, 1)} vs SG</span>` : ''}
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">PLATFORM MED</span>
+            <span class="ticker-val">${$p(avgSg)}<span class="ticker-src"> SG</span></span>
+            <span class="ticker-sub">${avgSh ? $p(avgSh) + ' SH' : '—'} · ${avgGt ? $p(avgGt) + ' GT' : '—'} · ${avgVd ? $p(avgVd) + ' VD' : '—'}</span>
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">POSITION</span>
+            <span class="ticker-val">${ag.owned_tickets_total ? T.fmtNum(ag.owned_tickets_total) + ' tix' : '—'}</span>
+            <span class="ticker-sub">${ag.owned_retail_value_total ? '$' + T.fmtNum(Math.round(+ag.owned_retail_value_total)) + ' notional' : ''}</span>
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">MARKET DEPTH</span>
+            <span class="ticker-val">${events.length} events</span>
+            <span class="ticker-sub">${ag.events_with_owned ? ag.events_with_owned + ' with position' : 'no positions'}</span>
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">SIGNALS</span>
+            <span class="ticker-val ${priceUp > priceDown ? 'pos' : priceDown > priceUp ? 'neg' : ''}">${priceUp > 0 ? '↑' + priceUp : ''}${priceDown > 0 ? ' ↓' + priceDown : ''}${!priceUp && !priceDown ? '—' : ''}</span>
+            <span class="ticker-sub">${gapCount ? gapCount + ' gap' + (gapCount > 1 ? 's' : '') : 'no gaps'}</span>
+          </div>
+        </div>`;
+    }
+
+    // ── Per-event table ───────────────────────────────────────────────────────
     const spread = (a, b) => {
       if (a == null || b == null || +b === 0) return '';
       const v = ((+a - +b) / +b) * 100;
@@ -562,14 +621,12 @@
       const d   = T.daysUntil(e.occurs_at_local);
       const hasSn = !!snapByEvent[e.id];
 
-      // Movers badges: top 3 by signal_score
       const moverHtml = mvs.slice(0, 3).map(m => {
-        const pct = m.price_delta_pct != null ? (m.price_delta_pct > 0 ? '+' : '') + (+m.price_delta_pct).toFixed(0) + '%' : '';
+        const mPct = m.price_delta_pct != null ? (m.price_delta_pct > 0 ? '+' : '') + (+m.price_delta_pct).toFixed(0) + '%' : '';
         const cls = m.category === 'price_up' ? 'pos' : m.category === 'price_down' ? 'neg' : 'muted small';
-        return `<span class="badge ${cls}" title="${escapeHtml(m.source + ' ' + m.window_days + 'd')}">${escapeHtml(m.category.replace('_',' '))}${pct ? ' ' + pct : ''}</span>`;
+        return `<span class="badge ${cls}" title="${escapeHtml(m.source + ' ' + m.window_days + 'd')}">${escapeHtml(m.category.replace('_',' '))}${mPct ? ' ' + mPct : ''}</span>`;
       }).join(' ') || '—';
 
-      // Gap badges: distinct gap_types
       const gapHtml = gps.slice(0, 4).map(g =>
         `<span class="badge" title="${escapeHtml(g.detail || '')}">${escapeHtml(g.gap_type.replace(/_/g,' '))}</span>`
       ).join(' ') || '—';

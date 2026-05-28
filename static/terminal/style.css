@@ -1703,6 +1703,43 @@ body[data-page="login"] {
 #perfMarketMeta, #vMarketMeta, #v2SummaryStrip,
 #discoveryGapsSummary { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 
+/* ---------- Market Carpet — stock ticker strip (performer/venue) ---------- */
+.market-ticker-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 16px;
+  background: #111;
+  overflow: hidden;
+}
+.ticker-cell {
+  flex: 1 1 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 16px;
+  border-right: 1px solid var(--border);
+}
+.ticker-cell:last-child { border-right: none; }
+.ticker-cell.ticker-price { border-left: 3px solid var(--accent); }
+.ticker-lbl { font-size: 0.7em; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
+.ticker-val { font-size: 1.35em; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); line-height: 1.2; }
+.ticker-src { font-size: 0.65em; font-weight: 400; color: var(--muted); letter-spacing: 0.05em; }
+.ticker-sub { font-size: 0.78em; color: var(--muted); }
+
+/* ---------- TD listings table (TD Markets tab) ---------- */
+.td-listings-tbl { width: 100%; border-collapse: collapse; font-size: 0.84em; }
+.td-listings-tbl th { text-align: left; padding: 4px 8px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 500; }
+.td-listings-tbl th.num, .td-listings-tbl td.num { text-align: right; }
+.td-listings-tbl td { padding: 3px 8px; border-bottom: 1px solid var(--border-faint, #1f2937); }
+.td-listings-tbl tr:last-child td { border-bottom: none; }
+/* Platform badges */
+.badge.td-sh { background: rgba(249,115,22,.18); color: #fb923c; }
+.badge.td-gt { background: rgba(52,211,153,.15); color: #34d399; }
+.badge.td-vd { background: rgba(192,132,252,.15); color: #c084fc; }
+
 /* ---------- Data freshness table (#data-freshness section) ---------- */
 .data-freshness-tbl { width: 100%; border-collapse: collapse; font-size: 0.83em; }
 .data-freshness-tbl th { text-align: left; padding: 4px 8px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 500; }

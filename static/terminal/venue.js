@@ -13,7 +13,7 @@
   const T = window.Terminal;
 
   // State for lazy-loaded tabs
-  const _vTabState = { marketLoaded: false, venueEvents: null };
+  const _vTabState = { marketLoaded: false, venueEvents: null, venueAggregate: {} };
 
   function getVenueId() {
     const v = new URLSearchParams(location.search).get('venue');
@@ -93,11 +93,12 @@
   }
 
   // ============================================================
-  // DETAIL mode — hero + rollup + 4 tabs
+  // DETAIL mode — hero + tabs (Market Carpet default)
   // ============================================================
   async function showDetailMode(venueId) {
     document.getElementById('venue-hero').removeAttribute('hidden');
-    document.getElementById('vPaneOverview').removeAttribute('hidden');
+    // Wire tabs early so nav works immediately (Market Carpet pane is already active in HTML)
+    wireTabs();
     T.setStatus(`Loading venue ${venueId}…`);
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client || !Auth.getAccessToken()) {
@@ -115,20 +116,33 @@
       document.getElementById('vhName').textContent = 'venue not found';
       return;
     }
-    safe('hero', () => renderHero(d.venue));
+    safe('hero',   () => renderHero(d.venue));
     safe('rollup', () => renderRollup(d.aggregate));
     safe('events', () => renderEvents(d.events));
-    safe('owned', () => renderOwned(d.events, d.aggregate));
-    safe('sg', () => renderSg(d.sg_activity));
-    // Stash events for lazy-loaded Market Carpet tab
-    _vTabState.venueEvents = d.events || [];
+    safe('owned',  () => renderOwned(d.events, d.aggregate));
+    safe('sg',     () => renderSg(d.sg_activity));
+    // Stash events and auto-load Market Carpet (default view)
+    _vTabState.venueEvents   = d.events || [];
+    _vTabState.venueAggregate = d.aggregate || {};
+    loadVenueMarketCarpet().catch(e => console.error('venueMarket', e));
   }
 
   function safe(label, fn) { try { fn(); } catch (e) { console.error('[' + label + ']', e); } }
 
+  const VENUE_PANE_IDS = {
+    overview: 'vPaneOverview',
+    events:   'vPaneEvents',
+    owned:    'vPaneOwned',
+    sg:       'vPaneSg',
+    market:   'vPaneMarket',
+  };
+
   function wireTabs() {
     const nav = document.getElementById('venueTabs');
     if (!nav) return;
+    // Guard against double-wiring
+    if (nav.__wired) return;
+    nav.__wired = true;
     nav.addEventListener('click', async (e) => {
       const btn = e.target.closest('.event-tab');
       if (!btn) return;
@@ -138,6 +152,7 @@
         await loadVenueMarketCarpet();
       }
     });
+    document.getElementById('venueTabs').removeAttribute('hidden');
   }
 
   function activateTab(tabId) {
@@ -146,14 +161,7 @@
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    const paneIds = {
-      overview: 'vPaneOverview',
-      events:   'vPaneEvents',
-      owned:    'vPaneOwned',
-      sg:       'vPaneSg',
-      market:   'vPaneMarket',
-    };
-    Object.entries(paneIds).forEach(([id, paneId]) => {
+    Object.entries(VENUE_PANE_IDS).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
       if (!pane) return;
       if (id === tabId) { pane.removeAttribute('hidden'); pane.classList.add('active'); }
@@ -293,34 +301,32 @@
       </div>`;
   }
 
-  // ---------- Market Carpet (lazy tab) ----------
-  // Builds a cross-source comparison table for all upcoming events at this venue.
-  // Queries three tables via Supabase client using the event IDs from the venue page payload:
-  //   • event_listing_snapshot_daily  — latest snapshot per event (JS dedup)
-  //   • event_movers_index            — any active movers signals per event
-  //   • discovery_gap_alerts          — active cross-platform gap flags per event
+  // ---------- Market Carpet — venue as stock ticker ----------
+  // Auto-loaded on page open (default tab). Builds:
+  //   1. Stock-ticker KPI strip: aggregate price, owned position, signals
+  //   2. Per-event cross-source medians table
   async function loadVenueMarketCarpet() {
     _vTabState.marketLoaded = true;
-    const body    = document.getElementById('vMarketBody');
-    const meta    = document.getElementById('vMarketMeta');
-    const countEl = document.getElementById('tabCountVenueMarket');
-    if (body) body.innerHTML = '<div class="empty">Loading market data…</div>';
+    const tickerBody = document.getElementById('vMarketTickerBody');
+    const body       = document.getElementById('vMarketBody');
+    const meta       = document.getElementById('vMarketMeta');
+    const countEl    = document.getElementById('tabCountVenueMarket');
+    if (tickerBody) tickerBody.innerHTML = '<div class="empty">loading…</div>';
+    if (body)       body.innerHTML       = '<div class="empty">Loading market data…</div>';
 
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      if (tickerBody) tickerBody.innerHTML = '<div class="empty">not signed in</div>';
+      if (body)       body.innerHTML       = '<div class="empty">not signed in</div>';
       return;
     }
     const events = _vTabState.venueEvents || [];
     if (!events.length) {
-      if (body) body.innerHTML = '<div class="empty">no events to analyze</div>';
+      if (tickerBody) tickerBody.innerHTML = '<div class="empty">no events to analyze</div>';
+      if (body)       body.innerHTML       = '<div class="empty">no events to analyze</div>';
       return;
     }
     const eventIds = events.map(e => e.id).filter(Boolean);
-    if (!eventIds.length) {
-      if (body) body.innerHTML = '<div class="empty">no mapped event IDs</div>';
-      return;
-    }
 
     // Parallel fetch: snapshots + movers + gaps
     const [snapRes, moversRes, gapsRes] = await Promise.all([
@@ -348,22 +354,78 @@
       if (!snapByEvent[r.event_id]) snapByEvent[r.event_id] = r;
     }
 
-    // Group movers by event
+    // Group movers + gaps by event
     const moversByEvent = {};
     for (const r of (moversRes.data || [])) {
       (moversByEvent[r.event_id] = moversByEvent[r.event_id] || []).push(r);
     }
-
-    // Group gaps by event
     const gapsByEvent = {};
     for (const r of (gapsRes.data || [])) {
       (gapsByEvent[r.event_id] = gapsByEvent[r.event_id] || []).push(r);
     }
 
-    if (meta) meta.textContent = `${events.length} events · ${Object.keys(snapByEvent).length} with snapshots`;
+    const snapCount = Object.keys(snapByEvent).length;
+    if (meta)    meta.textContent    = `${events.length} events · ${snapCount} with snapshots`;
     if (countEl) countEl.textContent = String(events.length);
 
-    const $p = v => (v != null ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    // ── Stock Ticker: aggregate metrics ──────────────────────────────────────
+    const ag = _vTabState.venueAggregate || {};
+    let sumEvo = 0, sumSg = 0, sumSh = 0, sumGt = 0, sumVd = 0, wCount = 0;
+    events.forEach(e => {
+      const sn = snapByEvent[e.id];
+      if (!sn) return;
+      if (sn.evo_retail_median != null) sumEvo += +sn.evo_retail_median;
+      if (sn.sg_all_median    != null) sumSg  += +sn.sg_all_median;
+      if (sn.td_sh_median     != null) sumSh  += +sn.td_sh_median;
+      if (sn.td_gt_median     != null) sumGt  += +sn.td_gt_median;
+      if (sn.td_vd_median     != null) sumVd  += +sn.td_vd_median;
+      wCount++;
+    });
+    const wavg = (sum) => wCount > 0 ? Math.round(sum / wCount) : null;
+    const avgEvo = wavg(sumEvo), avgSg = wavg(sumSg);
+    const avgSh  = wavg(sumSh),  avgGt = wavg(sumGt), avgVd = wavg(sumVd);
+
+    const allMovers = Object.values(moversByEvent).flat();
+    const priceUp   = allMovers.filter(m => m.category === 'price_up').length;
+    const priceDown = allMovers.filter(m => m.category === 'price_down').length;
+    const allGaps   = Object.values(gapsByEvent).flat();
+    const gapCount  = allGaps.length;
+
+    const sgSpreadPct = (avgEvo && avgSg) ? ((avgSg - avgEvo) / avgEvo * 100) : null;
+    const $p = v => (v != null ? '$' + T.fmtNum(v) : '—');
+
+    if (tickerBody) {
+      tickerBody.innerHTML = `
+        <div class="market-ticker-strip">
+          <div class="ticker-cell ticker-price">
+            <span class="ticker-lbl">EVO MEDIAN</span>
+            <span class="ticker-val">${$p(avgEvo)}</span>
+            ${avgSg ? `<span class="ticker-sub ${sgSpreadPct && sgSpreadPct > 0 ? 'pos' : sgSpreadPct && sgSpreadPct < 0 ? 'neg' : ''}">${sgSpreadPct != null ? (sgSpreadPct >= 0 ? '+' : '') + sgSpreadPct.toFixed(1) + '% vs SG' : ''}</span>` : ''}
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">PLATFORM MED</span>
+            <span class="ticker-val">${$p(avgSg)}<span class="ticker-src"> SG</span></span>
+            <span class="ticker-sub">${avgSh ? $p(avgSh) + ' SH' : '—'} · ${avgGt ? $p(avgGt) + ' GT' : '—'} · ${avgVd ? $p(avgVd) + ' VD' : '—'}</span>
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">POSITION</span>
+            <span class="ticker-val">${ag.owned_tickets_total ? T.fmtNum(ag.owned_tickets_total) + ' tix' : '—'}</span>
+            <span class="ticker-sub">${ag.owned_notional ? '$' + T.fmtNum(Math.round(+ag.owned_notional)) + ' notional' : ''}</span>
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">MARKET DEPTH</span>
+            <span class="ticker-val">${events.length} events</span>
+            <span class="ticker-sub">${ag.distinct_performers ? ag.distinct_performers + ' performers' : ''}</span>
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">SIGNALS</span>
+            <span class="ticker-val ${priceUp > priceDown ? 'pos' : priceDown > priceUp ? 'neg' : ''}">${priceUp > 0 ? '↑' + priceUp : ''}${priceDown > 0 ? ' ↓' + priceDown : ''}${!priceUp && !priceDown ? '—' : ''}</span>
+            <span class="ticker-sub">${gapCount ? gapCount + ' gap' + (gapCount > 1 ? 's' : '') : 'no gaps'}</span>
+          </div>
+        </div>`;
+    }
+
+    // ── Per-event table ───────────────────────────────────────────────────────
     const spread = (a, b) => {
       if (a == null || b == null || +b === 0) return '';
       const v = ((+a - +b) / +b) * 100;
@@ -397,14 +459,12 @@
       const d   = T.daysUntil(e.occurs_at_local);
       const hasSn = !!snapByEvent[e.id];
 
-      // Movers badges: top 3 by signal_score
       const moverHtml = mvs.slice(0, 3).map(m => {
-        const pct = m.price_delta_pct != null ? (m.price_delta_pct > 0 ? '+' : '') + (+m.price_delta_pct).toFixed(0) + '%' : '';
+        const mPct = m.price_delta_pct != null ? (m.price_delta_pct > 0 ? '+' : '') + (+m.price_delta_pct).toFixed(0) + '%' : '';
         const cls = m.category === 'price_up' ? 'pos' : m.category === 'price_down' ? 'neg' : 'muted small';
-        return `<span class="badge ${cls}" title="${escapeHtml(m.source + ' ' + m.window_days + 'd')}">${escapeHtml(m.category.replace('_',' '))}${pct ? ' ' + pct : ''}</span>`;
+        return `<span class="badge ${cls}" title="${escapeHtml(m.source + ' ' + m.window_days + 'd')}">${escapeHtml(m.category.replace('_',' '))}${mPct ? ' ' + mPct : ''}</span>`;
       }).join(' ') || '—';
 
-      // Gap badges: distinct gap_types
       const gapHtml = gps.slice(0, 4).map(g =>
         `<span class="badge" title="${escapeHtml(g.detail || '')}">${escapeHtml(g.gap_type.replace(/_/g,' '))}</span>`
       ).join(' ') || '—';
