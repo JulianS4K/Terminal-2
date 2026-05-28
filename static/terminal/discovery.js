@@ -82,16 +82,31 @@
       if (gapsRes.error) throw new Error(gapsRes.error.message);
       const gaps = gapsRes.data || [];
 
-      // Enrich with event names from sg_events_canonical
+      // Enrich with event names + dates from sg_events_canonical
       const eventIds = [...new Set(gaps.map(g => g.event_id).filter(Boolean))];
       const eventMeta = {};
       if (eventIds.length) {
-        const metaRes = await Auth.client
-          .from('sg_events_canonical')
-          .select('tevo_event_id,sg_event_name,sg_datetime_utc')
-          .in('tevo_event_id', eventIds);
-        if (!metaRes.error) {
-          (metaRes.data || []).forEach(e => { eventMeta[e.tevo_event_id] = e; });
+        const [sgRes, evoRes] = await Promise.all([
+          Auth.client
+            .from('sg_events_canonical')
+            .select('tevo_event_id,sg_event_name,sg_datetime_utc')
+            .in('tevo_event_id', eventIds),
+          // Fallback: TEvo events table for evo_no_sg gaps (no SG canonical match)
+          Auth.client
+            .from('events')
+            .select('id,name,occurs_at_local')
+            .in('id', eventIds),
+        ]);
+        if (!sgRes.error) {
+          (sgRes.data || []).forEach(e => { eventMeta[e.tevo_event_id] = e; });
+        }
+        if (!evoRes.error) {
+          (evoRes.data || []).forEach(e => {
+            if (!eventMeta[e.id]) {
+              // Only use TEvo fallback when no SG canonical row exists
+              eventMeta[e.id] = { sg_event_name: e.name, sg_datetime_utc: e.occurs_at_local };
+            }
+          });
         }
       }
 
@@ -141,9 +156,18 @@
         const section = document.createElement('div');
         section.className = 'v2-category-section';
 
+        // Count only future/undated items (past events are skipped in the tbody loop)
+        const futureCount = items.filter(g => {
+          const m = eventMeta[g.event_id] || {};
+          if (!m.sg_datetime_utc) return true; // no date = keep (e.g. evo_no_sg)
+          const d = T.daysUntil(m.sg_datetime_utc);
+          return d == null || d >= 0;
+        }).length;
+        if (!futureCount) return; // skip section entirely if all items are past
+
         const hdr = document.createElement('div');
         hdr.className = 'panel-title row';
-        hdr.innerHTML = `<span>${escapeHtml(gapType.toUpperCase().replace(/_/g,' '))} <span class="tab-count">${items.length}</span></span>`;
+        hdr.innerHTML = `<span>${escapeHtml(gapType.toUpperCase().replace(/_/g,' '))} <span class="tab-count">${futureCount}</span></span>`;
         section.appendChild(hdr);
 
         const tbl = document.createElement('table');
@@ -159,19 +183,25 @@
         const tb = tbl.querySelector('tbody');
 
         items.forEach(g => {
-          const meta     = eventMeta[g.event_id] || {};
+          const meta      = eventMeta[g.event_id] || {};
           const eventName = meta.sg_event_name || ('Event ' + g.event_id);
           const eventLink = g.event_id
             ? `<a href="event.html?event=${g.event_id}">${escapeHtml(eventName)}</a>`
             : escapeHtml(eventName);
           const daysUntil = meta.sg_datetime_utc ? (T.daysUntil(meta.sg_datetime_utc) ?? '—') : '—';
 
+          // Skip past events (T-days < 0) — stale rows not yet swept by daily cron
+          if (typeof daysUntil === 'number' && daysUntil < 0) return;
+
+          // Fix SQL double-percent escape: format() in PG uses %% for literal %, so strip one
+          const detail = (g.detail || '').replace(/%%/g, '%');
+
           const tr = document.createElement('tr');
           tr.innerHTML = `
             <td>${eventLink}</td>
             <td class="num">${daysUntil}</td>
             <td class="num">${g.signal_score != null ? (+g.signal_score).toFixed(2) : '—'}</td>
-            <td class="muted small">${escapeHtml(g.detail || '')}</td>
+            <td class="muted small">${escapeHtml(detail)}</td>
             <td class="num muted small">${fmtDateShort(g.detected_at)}</td>`;
           tb.appendChild(tr);
         });
