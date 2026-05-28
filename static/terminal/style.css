@@ -1610,7 +1610,7 @@ body[data-page="login"] {
 /* Dual-source side-by-side container (used by Splits + Zones panels) */
 .dual-src {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
 }
 .dual-src-col {
@@ -1753,3 +1753,34 @@ body[data-page="login"] {
 .fr-status.dim    { background: rgba(148,163,184,.12); color: var(--muted); }
 
 #dataFreshnessMeta { color: var(--muted); font-size: 0.8em; }
+
+/* ---------- Last Snapshot — TD section divider ---------- */
+.last-snap-divider {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 10px 0 4px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- Cross-Platform Sales panel ---------- */
+.cross-sales-tbl .csale-platform {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* .cross-sales-tbl inherits all .cross-src-tbl rules; no extra layout needed */
+
+/* ---------- TD Listings tab — per-platform sections ---------- */
+.td-platform-section {
+  border-left: 3px solid var(--line);
+  padding-left: 12px;
+  margin-bottom: 24px;
+}
+.td-sh-section { border-left-color: #f97316; }   /* SH — orange */
+.td-gt-section { border-left-color: #2dd4bf; }   /* GT — teal  */
+.td-vd-section { border-left-color: #a855f7; }   /* VD — purple */
