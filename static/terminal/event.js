@@ -2562,14 +2562,15 @@
         .order('captured_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
-      // SG: latest seatgeek_event_metrics row (fill_rate, sold_quantity, sold_gross, sold_price_median)
+      // SG: top-20 rows — listings and sales are separate INSERT rows so we merge best-available
+      // from each: listings_all_count from the most-recent listings row, sold_quantity from
+      // the most-recent sales row. .limit(20) ensures we span both row types.
       Auth.client
         .from('seatgeek_event_metrics')
         .select('fill_rate,sold_quantity,sold_gross,sold_price_median,tickets_count,listings_all_count,captured_at')
         .eq('tevo_event_id', eventId)
         .order('captured_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+        .limit(20),
       // TD: last 2 snapshot rows to compute listing-count delta (proxy for sales velocity)
       Auth.client
         .from('event_listing_snapshot_daily')
@@ -2581,9 +2582,21 @@
       // TP + Vivid: via SECURITY DEFINER RPC (tickpick_orders + vivid_orders are service_role only)
       rpcOrNull('get_event_cross_broker_orders_full', { p_event_id: eventId, p_limit: 500 }),
     ]);
+    // Merge split SG rows: listings and sales are inserted separately by different cron functions.
+    // Pick the most-recent non-null value for each field across all returned rows.
+    const sgRows = sgRes.data || [];
+    function sgBest(field) { return (sgRows.find(r => r[field] != null) || {})[field] ?? null; }
+    const sgMerged = sgRows.length ? {
+      fill_rate:         sgBest('fill_rate'),
+      sold_quantity:     sgBest('sold_quantity'),
+      sold_gross:        sgBest('sold_gross'),
+      sold_price_median: sgBest('sold_price_median'),
+      listings_all_count:sgBest('listings_all_count'),
+      captured_at:       sgRows[0]?.captured_at ?? null,
+    } : null;
     renderCrossPlatformSales({
       evo:    evoRes.data  || null,
-      sg:     sgRes.data   || null,
+      sg:     sgMerged,
       tdSnap: tdSnapRes.data || [],
       xb:     xbRes.error ? null : (xbRes.data || null),
     }, meta);
