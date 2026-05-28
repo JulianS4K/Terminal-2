@@ -2416,8 +2416,10 @@
   }
 
   // ---------- TD Listings per-platform (full) ----------
-  // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD), last 7d.
-  // Each platform renders into its own sub-section in #paneTdListings.
+  // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD), last 26h ordered
+  // newest-first so the limit captures the most-recent collection batch. Client-side filter
+  // keeps only rows within 15 minutes of max(captured_at) for that platform — timing-agnostic
+  // so both the 03:00 UTC and 16:20 UTC SH batches work correctly regardless of query time.
   async function loadTdPlatformListings(eventId, platform) {
     const platLower = platform.toLowerCase();
     const body = document.getElementById('tdListings' + platform + 'Body');
@@ -2430,35 +2432,42 @@
       return;
     }
     const t0 = performance.now();
-    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
     const res = await Auth.client
       .from('ticketsdata_listings_snapshots')
       .select('section,row,quantity,list_price,price_with_fees,captured_at')
       .eq('event_id', eventId)
       .eq('platform', platform)
       .eq('is_parking', false)
-      .gte('captured_at', since)
+      .gte('captured_at', since26)
       .order('captured_at', { ascending: false })
       .order('list_price')
-      .limit(1000);
+      .limit(3000);
     const elapsed = performance.now() - t0;
     if (res.error) {
       if (body) body.innerHTML = `<div class="empty">error: ${escapeHtml(res.error.message)}</div>`;
       if (meta) meta.textContent = 'error';
       return;
     }
-    const rows = res.data || [];
-    if (!rows.length) {
-      if (body) body.innerHTML = `<div class="empty">No ${escapeHtml(platform)} listings in last 7 days. Data started 2026-05-27 — sparse initially.</div>`;
+    const allRows = res.data || [];
+    if (!allRows.length) {
+      if (body) body.innerHTML = `<div class="empty">No ${escapeHtml(platform)} listings in last 26 hours. Data started 2026-05-27 — sparse initially.</div>`;
       if (meta) meta.textContent = '0 rows';
       return;
     }
+    // Latest-batch filter: keep only rows within 15 min of the most-recent captured_at.
+    // This ensures we show the current collection batch, not a stale earlier batch that
+    // would otherwise dominate when the limit was reached on a busy event.
+    const maxAt = allRows[0].captured_at; // already sorted DESC
+    const cutoff = new Date(new Date(maxAt).getTime() - 15 * 60 * 1000).toISOString();
+    const rows = allRows.filter(r => r.captured_at >= cutoff);
+    const batchDate = T.fmtDate ? T.fmtDate(maxAt) : maxAt.slice(0, 16).replace('T', ' ') + ' UTC';
     // Compute summary stats
     const prices = rows.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
     const med = prices.length ? prices[Math.floor(prices.length / 2)] : null;
     const getIn = prices.length ? prices[0] : null;
     if (meta) meta.textContent =
-      `${rows.length} rows · get-in ${getIn != null ? '$' + Math.round(getIn) : '—'} · med ${med != null ? '$' + Math.round(med) : '—'} · ${elapsed.toFixed(0)}ms`;
+      `${rows.length} rows · get-in ${getIn != null ? '$' + Math.round(getIn) : '—'} · med ${med != null ? '$' + Math.round(med) : '—'} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
 
     const host = document.createElement('div');
     host.className = 'full-list-host';
@@ -2502,21 +2511,37 @@
     chip.textContent = total ? String(total) : '';
   }
 
-  // ---------- TD Splits (last 24h, grouped by platform + section) ----------
+  // ---------- TD Splits (latest batch per platform, grouped by platform + section) ----------
+  // Uses 26h window ordered newest-first to capture the most-recent collection run, then
+  // filters client-side to rows within 15 min of max(captured_at) per platform. This is
+  // timing-agnostic: SH 03:00 UTC or 16:20 UTC batches are both handled correctly.
   async function loadTdSplits(eventId) {
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client) return;
     setSplitsTd(undefined); // show loading
-    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
     const { data, error } = await Auth.client
       .from('ticketsdata_listings_snapshots')
-      .select('platform,section,list_price')
+      .select('platform,section,list_price,captured_at')
       .eq('event_id', eventId)
       .eq('is_parking', false)
-      .gte('captured_at', since)
-      .limit(2000);
+      .gte('captured_at', since26)
+      .order('captured_at', { ascending: false })
+      .limit(3000);
     if (error) { setSplitsTd(null); return; }
-    const rows = data || [];
+    const allRows = data || [];
+    if (!allRows.length) { setSplitsTd(null); return; }
+    // Latest-batch filter: keep only rows within 15 min of max(captured_at) per platform.
+    const maxAtByPlatform = {};
+    for (const r of allRows) {
+      if (!maxAtByPlatform[r.platform] || r.captured_at > maxAtByPlatform[r.platform]) {
+        maxAtByPlatform[r.platform] = r.captured_at;
+      }
+    }
+    const rows = allRows.filter(r => {
+      const maxAt = maxAtByPlatform[r.platform];
+      return maxAt && (new Date(maxAt) - new Date(r.captured_at)) < 15 * 60 * 1000;
+    });
     if (!rows.length) { setSplitsTd(null); return; }
     // Group by platform + section
     const groups = new Map();
