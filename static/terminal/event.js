@@ -45,6 +45,14 @@
   // Populated by loadTdFreshness() (fire-and-forget after main load).
   // Shape: { sh: [{t,v}], gt: [{t,v}], vd: [{t,v}] }
   let _tdChartSeries = null;
+  // Latest event_listing_snapshot_daily row — set by loadTdFreshness(),
+  // used by renderLastSnapshot() to append a TD MARKETS section.
+  let _lastTdSnap = null;
+  // TD listing-count time series for the inventory chart overlay.
+  // Shape: { sh: [{t,v}], gt: [{t,v}], vd: [{t,v}] } — counts not medians.
+  let _tdInvCountSeries = null;
+  // Initialize TD inv series as hidden by default (user-togglable in legend).
+  ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
@@ -70,6 +78,8 @@
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
     loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
+    loadTdSplits(eventId).catch(e => console.error('[tdSplits]', e));
+    loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
@@ -736,6 +746,15 @@
       { key: 'sg_list_ct',    label: 'SG list qty',    color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: extSeries.sg_listings_count || [] },
       { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.sg_sales_count || [] },
     ];
+    // Overlay TD listing-count series (dashed, hidden by default — user-togglable)
+    if (_tdInvCountSeries) {
+      if (_tdInvCountSeries.sh.length) specs.push(
+        { key: 'td-sh-cnt', label: 'SH listings', color: '#f97316', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.sh });
+      if (_tdInvCountSeries.gt.length) specs.push(
+        { key: 'td-gt-cnt', label: 'GT listings', color: '#2dd4bf', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.gt });
+      if (_tdInvCountSeries.vd.length) specs.push(
+        { key: 'td-vd-cnt', label: 'VD listings', color: '#a855f7', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.vd });
+    }
     const { xs } = buildSeriesData(specs);
     _chartLastBuildInv = { specs, xs };
 
@@ -1021,18 +1040,19 @@
   // sources (v3 fetchPayload for TEvo + get_event_sg_zones_splits for SG)
   // can update independently without clobbering each other on re-render.
   // Each setter writes its side then triggers a unified render reading both.
-  const _splitsState = { tevo: undefined, sg: undefined };
+  const _splitsState = { tevo: undefined, sg: undefined, td: undefined };
   const _zonesState  = { tevo: undefined, deltas: undefined, sg: undefined };
 
   function setSplitsTevo(splits)   { _splitsState.tevo = splits; renderSplits(); }
   function setSplitsSg(sgSplits)   { _splitsState.sg   = sgSplits; renderSplits(); }
+  function setSplitsTd(tdSplits)   { _splitsState.td   = tdSplits; renderSplits(); }
   function setZonesTevo(zones, deltas) {
     _zonesState.tevo = zones; _zonesState.deltas = deltas; renderZones();
   }
   function setZonesSg(sgZones)     { _zonesState.sg   = sgZones; renderZones(); }
 
-  // Renders TEvo splits + SG splits side-by-side from the module state cache.
-  // Either or both sides may still be `undefined` (loading) when this fires.
+  // Renders TEvo splits + SG splits + TD splits side-by-side from the module state cache.
+  // Any side may still be `undefined` (loading) when this fires.
   function renderSplits() {
     const body = document.getElementById('splitsBody');
     if (!body) return;
@@ -1045,8 +1065,13 @@
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG</div>';
     right.appendChild(buildSgSplitsTable(_splitsState.sg));
+    const tdCol = document.createElement('div');
+    tdCol.className = 'dual-src-col';
+    tdCol.innerHTML = '<div class="dual-src-hdr">TD (SH · GT · VD)</div>';
+    tdCol.appendChild(buildTdSplitsTable(_splitsState.td));
     body.appendChild(left);
     body.appendChild(right);
+    body.appendChild(tdCol);
   }
 
   function buildTevoSplitsTable(splits) {
@@ -1127,6 +1152,39 @@
     return wrap;
   }
 
+  // TD splits: array of {platform, section, listing_count, min_price, median_price}
+  function buildTdSplitsTable(tdSplits) {
+    const wrap = document.createElement('div');
+    if (tdSplits === undefined) { wrap.innerHTML = '<div class="empty">loading TD…</div>'; return wrap; }
+    if (!tdSplits || !tdSplits.length) {
+      wrap.innerHTML = '<div class="empty">no TD listings in last 24h</div>'; return wrap;
+    }
+    const tbl = document.createElement('table');
+    tbl.className = 'splits-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Platform</th>
+        <th>Section</th>
+        <th class="num">Listings</th>
+        <th class="num">Min $</th>
+        <th class="num">Median $</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    tdSplits.slice(0, 50).forEach(r => {
+      const tr = document.createElement('tr');
+      const platCls = r.platform === 'SH' ? 'td-sh' : r.platform === 'GT' ? 'td-gt' : r.platform === 'VD' ? 'td-vd' : '';
+      tr.innerHTML = `
+        <td><span class="badge ${platCls}">${escapeHtml(r.platform)}</span></td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td class="num">${T.fmtNum(r.listing_count)}</td>
+        <td class="num">${r.min_price    != null ? '$' + T.fmtNum(Math.round(r.min_price))    : '—'}</td>
+        <td class="num">${r.median_price != null ? '$' + T.fmtNum(Math.round(r.median_price)) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+    wrap.appendChild(tbl);
+    return wrap;
+  }
+
   function labelForBucket(b) {
     return { singles: 'singles (1)', pairs: 'pairs (2)', triples: 'triples (3)',
              quads: 'quads (4)', five_plus: '5+ pack' }[b] || b;
@@ -1154,8 +1212,13 @@
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG (sections)</div>';
     right.appendChild(buildSgZonesTable(_zonesState.sg));
+    const tdCol = document.createElement('div');
+    tdCol.className = 'dual-src-col';
+    tdCol.innerHTML = '<div class="dual-src-hdr">TD (sections)</div>' +
+      '<div class="empty muted small" style="padding:8px">TD section-level data available in TD Listings tab<br>Zone xref mapping pending</div>';
     body.appendChild(left);
     body.appendChild(right);
+    body.appendChild(tdCol);
   }
 
   function buildTevoZonesTable(zones, deltas) {
@@ -1715,25 +1778,44 @@
     }
     // Render full per-source freshness table (into #data-freshness inside TD Markets pane)
     renderDataFreshness(snap, snapTs);
-    // Build price-chart TD series from full history
+    // Store latest snapshot row for renderLastSnapshot() TD section
+    _lastTdSnap = snap;
+
+    // Build chart series from full history (both price medians and listing counts)
     if (rows && rows.length > 1) {
       const sh = [], gt = [], vd = [];
+      const ish = [], igt = [], ivd = [];
       for (const r of rows) {
         const ts = rowTs(r);
-        if (r.td_sh_median != null) sh.push({ t: ts, v: +r.td_sh_median });
-        if (r.td_gt_median != null) gt.push({ t: ts, v: +r.td_gt_median });
-        if (r.td_vd_median != null) vd.push({ t: ts, v: +r.td_vd_median });
+        if (r.td_sh_median   != null) sh.push({ t: ts, v: +r.td_sh_median });
+        if (r.td_gt_median   != null) gt.push({ t: ts, v: +r.td_gt_median });
+        if (r.td_vd_median   != null) vd.push({ t: ts, v: +r.td_vd_median });
+        if (r.td_sh_listings != null) ish.push({ t: ts, v: +r.td_sh_listings });
+        if (r.td_gt_listings != null) igt.push({ t: ts, v: +r.td_gt_listings });
+        if (r.td_vd_listings != null) ivd.push({ t: ts, v: +r.td_vd_listings });
       }
       // Reverse so series are chronological (we fetched newest-first)
-      _tdChartSeries = { sh: sh.reverse(), gt: gt.reverse(), vd: vd.reverse() };
-      // Re-render price chart to include TD overlay (only if chart exists)
+      _tdChartSeries    = { sh: sh.reverse(),  gt: gt.reverse(),  vd: vd.reverse() };
+      _tdInvCountSeries = { sh: ish.reverse(), gt: igt.reverse(), vd: ivd.reverse() };
+
       if (_lastPayload && _lastPayload.chart_data) {
         try {
           const chart = adaptChart(_lastPayload.chart_data);
+          // Re-render price chart with TD median overlay
           renderChartPrice(chart, _chartExtAlerts);
           renderChartLegendPrice();
+          // Re-render inventory chart with TD listing-count overlay
+          renderChartInventory(chart);
+          renderChartLegendInv();
         } catch (e) { console.error('[td-chart-overlay]', e); }
       }
+    }
+
+    // Re-render last snapshot to show TD MARKETS section now that snap is cached
+    if (_lastPayload && _lastPayload.chart_data) {
+      try {
+        renderLastSnapshot(adaptChart(_lastPayload.chart_data));
+      } catch (e) { console.error('[td-snap-rerender]', e); }
     }
   }
 
@@ -2079,8 +2161,8 @@
   // Tab navigation + lazy-load (Phase 2a Tabs — mig 20260517180000)
   // ============================================================
   const _tabState = { loaded: {
-    'sg-listings': false, 'evo-listings': false, 'sg-sales': false,
-    'our-orders': false,
+    'sg-listings': false, 'evo-listings': false, 'td-listings': false,
+    'sg-sales': false, 'our-orders': false,
   } };
 
   function wireTabs(eventId) {
@@ -2095,6 +2177,14 @@
         await loadSgListingsFull(eventId);
       } else if (tabId === 'evo-listings' && !_tabState.loaded['evo-listings']) {
         await loadEvoListingsFull(eventId);
+      } else if (tabId === 'td-listings' && !_tabState.loaded['td-listings']) {
+        _tabState.loaded['td-listings'] = true;
+        await Promise.all([
+          loadTdPlatformListings(eventId, 'SH'),
+          loadTdPlatformListings(eventId, 'GT'),
+          loadTdPlatformListings(eventId, 'VD'),
+        ]);
+        updateTdListingsTabCount();
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
@@ -2123,6 +2213,7 @@
       'overview':     'paneOverview',
       'sg-listings':  'paneSgListings',
       'evo-listings': 'paneEvoListings',
+      'td-listings':  'paneTdListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
       'our-orders':   'paneOurOrders',
@@ -2322,6 +2413,309 @@
     body.innerHTML = '';
     body.appendChild(host);
     if (meta) meta.textContent = `${rows.length} rows (${ownedCount} ours) · ${ms.toFixed(0)}ms`;
+  }
+
+  // ---------- TD Listings per-platform (full) ----------
+  // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD), last 26h ordered
+  // newest-first so the limit captures the most-recent collection batch. Client-side filter
+  // keeps only rows within 15 minutes of max(captured_at) for that platform — timing-agnostic
+  // so both the 03:00 UTC and 16:20 UTC SH batches work correctly regardless of query time.
+  async function loadTdPlatformListings(eventId, platform) {
+    const platLower = platform.toLowerCase();
+    const body = document.getElementById('tdListings' + platform + 'Body');
+    const meta = document.getElementById('tdListings' + platform + 'Meta');
+    if (body) body.innerHTML = '<div class="empty">Loading ' + escapeHtml(platform) + ' listings…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    const t0 = performance.now();
+    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
+    const res = await Auth.client
+      .from('ticketsdata_listings_snapshots')
+      .select('section,row,quantity,list_price,price_with_fees,captured_at')
+      .eq('event_id', eventId)
+      .eq('platform', platform)
+      .eq('is_parking', false)
+      .gte('captured_at', since26)
+      .order('captured_at', { ascending: false })
+      .order('list_price')
+      .limit(3000);
+    const elapsed = performance.now() - t0;
+    if (res.error) {
+      if (body) body.innerHTML = `<div class="empty">error: ${escapeHtml(res.error.message)}</div>`;
+      if (meta) meta.textContent = 'error';
+      return;
+    }
+    const allRows = res.data || [];
+    if (!allRows.length) {
+      if (body) body.innerHTML = `<div class="empty">No ${escapeHtml(platform)} listings in last 26 hours. Data started 2026-05-27 — sparse initially.</div>`;
+      if (meta) meta.textContent = '0 rows';
+      return;
+    }
+    // Latest-batch filter: keep only rows within 15 min of the most-recent captured_at.
+    // This ensures we show the current collection batch, not a stale earlier batch that
+    // would otherwise dominate when the limit was reached on a busy event.
+    const maxAt = allRows[0].captured_at; // already sorted DESC
+    const cutoff = new Date(new Date(maxAt).getTime() - 15 * 60 * 1000).toISOString();
+    const rows = allRows.filter(r => r.captured_at >= cutoff);
+    const batchDate = T.fmtDate ? T.fmtDate(maxAt) : maxAt.slice(0, 16).replace('T', ' ') + ' UTC';
+    // Compute summary stats
+    const prices = rows.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+    const med = prices.length ? prices[Math.floor(prices.length / 2)] : null;
+    const getIn = prices.length ? prices[0] : null;
+    if (meta) meta.textContent =
+      `${rows.length} rows · get-in ${getIn != null ? '$' + Math.round(getIn) : '—'} · med ${med != null ? '$' + Math.round(med) : '—'} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl td-listings-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        <th>Captured</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    const $p = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${r.quantity != null ? T.fmtNum(+r.quantity) : '—'}</td>
+        <td class="num">${$p(r.list_price)}</td>
+        <td class="num">${$p(r.price_with_fees)}</td>
+        <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    if (body) { body.innerHTML = ''; body.appendChild(host); }
+  }
+
+  function updateTdListingsTabCount() {
+    const chip = document.getElementById('tabCountTdListings');
+    if (!chip) return;
+    // Sum visible row counts from all three sub-section metas
+    let total = 0;
+    for (const plat of ['SH', 'GT', 'VD']) {
+      const meta = document.getElementById('tdListings' + plat + 'Meta');
+      if (meta) {
+        const m = meta.textContent.match(/^(\d+)\s+rows/);
+        if (m) total += parseInt(m[1], 10);
+      }
+    }
+    chip.textContent = total ? String(total) : '';
+  }
+
+  // ---------- TD Splits (latest batch per platform, grouped by platform + section) ----------
+  // Uses 26h window ordered newest-first to capture the most-recent collection run, then
+  // filters client-side to rows within 15 min of max(captured_at) per platform. This is
+  // timing-agnostic: SH 03:00 UTC or 16:20 UTC batches are both handled correctly.
+  async function loadTdSplits(eventId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    setSplitsTd(undefined); // show loading
+    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
+    const { data, error } = await Auth.client
+      .from('ticketsdata_listings_snapshots')
+      .select('platform,section,list_price,captured_at')
+      .eq('event_id', eventId)
+      .eq('is_parking', false)
+      .gte('captured_at', since26)
+      .order('captured_at', { ascending: false })
+      .limit(3000);
+    if (error) { setSplitsTd(null); return; }
+    const allRows = data || [];
+    if (!allRows.length) { setSplitsTd(null); return; }
+    // Latest-batch filter: keep only rows within 15 min of max(captured_at) per platform.
+    const maxAtByPlatform = {};
+    for (const r of allRows) {
+      if (!maxAtByPlatform[r.platform] || r.captured_at > maxAtByPlatform[r.platform]) {
+        maxAtByPlatform[r.platform] = r.captured_at;
+      }
+    }
+    const rows = allRows.filter(r => {
+      const maxAt = maxAtByPlatform[r.platform];
+      return maxAt && (new Date(maxAt) - new Date(r.captured_at)) < 15 * 60 * 1000;
+    });
+    if (!rows.length) { setSplitsTd(null); return; }
+    // Group by platform + section
+    const groups = new Map();
+    for (const r of rows) {
+      const k = (r.platform || '') + '|||' + (r.section || '');
+      if (!groups.has(k)) groups.set(k, { platform: r.platform || '?', section: r.section || '', prices: [] });
+      const p = +r.list_price;
+      if (isFinite(p) && p > 0) groups.get(k).prices.push(p);
+    }
+    const result = [...groups.values()].map(g => {
+      const ps = g.prices.sort((a, b) => a - b);
+      return {
+        platform:     g.platform,
+        section:      g.section,
+        listing_count: ps.length,
+        min_price:    ps.length ? ps[0] : null,
+        median_price: ps.length ? ps[Math.floor(ps.length / 2)] : null,
+      };
+    }).sort((a, b) =>
+      a.platform.localeCompare(b.platform) || b.listing_count - a.listing_count
+    );
+    setSplitsTd(result);
+  }
+
+  // ---------- Cross-Platform Sales panel (Overview tab) ----------
+  // Aggregates: EVO sold metrics + SG fill_rate/sold + TD listing velocity + TP/Vivid order counts
+  async function loadCrossPlatformSales(eventId) {
+    const body = document.getElementById('crossSalesBody');
+    const meta = document.getElementById('crossSalesMeta');
+    if (body) body.innerHTML = '<div class="empty">loading…</div>';
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    // Fire 4 queries in parallel
+    const [evoRes, sgRes, tdSnapRes, xbRes] = await Promise.all([
+      // EVO: latest event_metrics row (sold_quantity, sold_gross, sold_price_median, owned_tickets_count)
+      Auth.client
+        .from('event_metrics')
+        .select('sold_quantity,sold_gross,sold_price_median,owned_tickets_count,tickets_count,captured_at')
+        .eq('event_id', eventId)
+        .order('captured_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      // SG: top-20 rows — listings and sales are separate INSERT rows so we merge best-available
+      // from each: listings_all_count from the most-recent listings row, sold_quantity from
+      // the most-recent sales row. .limit(20) ensures we span both row types.
+      Auth.client
+        .from('seatgeek_event_metrics')
+        .select('fill_rate,sold_quantity,sold_gross,sold_price_median,tickets_count,listings_all_count,captured_at')
+        .eq('tevo_event_id', eventId)
+        .order('captured_at', { ascending: false })
+        .limit(20),
+      // TD: last 2 snapshot rows to compute listing-count delta (proxy for sales velocity)
+      Auth.client
+        .from('event_listing_snapshot_daily')
+        .select('snapshot_date,snapshot_slot,td_sh_listings,td_gt_listings,td_vd_listings')
+        .eq('event_id', eventId)
+        .order('snapshot_date', { ascending: false })
+        .order('snapshot_slot', { ascending: false })
+        .limit(2),
+      // TP + Vivid: via SECURITY DEFINER RPC (tickpick_orders + vivid_orders are service_role only)
+      rpcOrNull('get_event_cross_broker_orders_full', { p_event_id: eventId, p_limit: 500 }),
+    ]);
+    // Merge split SG rows: listings and sales are inserted separately by different cron functions.
+    // Pick the most-recent non-null value for each field across all returned rows.
+    const sgRows = sgRes.data || [];
+    function sgBest(field) { return (sgRows.find(r => r[field] != null) || {})[field] ?? null; }
+    const sgMerged = sgRows.length ? {
+      fill_rate:         sgBest('fill_rate'),
+      sold_quantity:     sgBest('sold_quantity'),
+      sold_gross:        sgBest('sold_gross'),
+      sold_price_median: sgBest('sold_price_median'),
+      listings_all_count:sgBest('listings_all_count'),
+      captured_at:       sgRows[0]?.captured_at ?? null,
+    } : null;
+    renderCrossPlatformSales({
+      evo:    evoRes.data  || null,
+      sg:     sgMerged,
+      tdSnap: tdSnapRes.data || [],
+      xb:     xbRes.error ? null : (xbRes.data || null),
+    }, meta);
+  }
+
+  function renderCrossPlatformSales(d, metaEl) {
+    const body = document.getElementById('crossSalesBody');
+    if (!body) return;
+
+    const evo    = d.evo    || {};
+    const sg     = d.sg     || {};
+    const tdSnap = d.tdSnap || [];
+    const xbRows = (d.xb && d.xb.rows) ? d.xb.rows : [];
+
+    // TD listing-count delta: newest minus prior snapshot = positive means new listings (buying opportunity),
+    // negative means listings disappeared (likely sold).
+    const tdLatest = tdSnap[0] || null;
+    const tdPrior  = tdSnap[1] || null;
+    function tdDelta(platform) {
+      const col = `td_${platform.toLowerCase()}_listings`;
+      if (!tdLatest || tdLatest[col] == null || !tdPrior || tdPrior[col] == null) return null;
+      return tdLatest[col] - tdPrior[col];
+    }
+    function fmtDelta(val) {
+      if (val == null) return '<span class="dim">—</span>';
+      const cls = val < 0 ? 'pos' : val > 0 ? 'neg' : '';  // negative = sold = good (green)
+      return `<span class="${cls}">${val >= 0 ? '+' : ''}${T.fmtNum(val)}</span>`;
+    }
+
+    // Count TP/Vivid orders by source
+    const tpOrders = xbRows.filter(r => (r.source || '').toLowerCase() === 'tickpick');
+    const vvOrders = xbRows.filter(r => (r.source || '').toLowerCase() === 'vivid');
+
+    // Build rows
+    const tableRows = [];
+    function row(platform, metric, val, isMoney, note) {
+      const vStr = val == null
+        ? '<span class="dim">—</span>'
+        : (isMoney ? '$' + T.fmtNum(Math.round(+val)) : T.fmtNum(+val || 0));
+      return `<tr><td class="csale-platform">${escapeHtml(platform)}</td>` +
+        `<td>${escapeHtml(metric)}</td>` +
+        `<td class="num">${vStr}</td>` +
+        `<td class="muted small">${escapeHtml(note || '')}</td></tr>`;
+    }
+
+    if (evo.sold_quantity != null || evo.owned_tickets_count != null) {
+      tableRows.push(row('EVO', 'Sold qty (inferred)', evo.sold_quantity, false, 'event_metrics'));
+      tableRows.push(row('EVO', 'Sold gross (inferred)', evo.sold_gross, true, ''));
+      tableRows.push(row('EVO', 'Sold median $', evo.sold_price_median, true, ''));
+      tableRows.push(row('EVO', 'Owned remaining', evo.owned_tickets_count, false, ''));
+    }
+    if (sg.fill_rate != null || sg.sold_quantity != null) {
+      tableRows.push(row('SG', 'Fill rate', sg.fill_rate != null ? (+(sg.fill_rate) * 100).toFixed(1) + '%' : null, false, 'seatgeek_event_metrics'));
+      tableRows.push(row('SG', 'Sold qty', sg.sold_quantity, false, ''));
+      tableRows.push(row('SG', 'Sold median $', sg.sold_price_median, true, ''));
+      tableRows.push(row('SG', 'Market listings', sg.listings_all_count, false, ''));
+    }
+    for (const plat of ['SH', 'GT', 'VD']) {
+      const delta = tdDelta(plat);
+      const label = plat === 'SH' ? 'StubHub' : plat === 'GT' ? 'GameTime' : 'VividSeats';
+      const deltaCell = `<td class="num">${fmtDelta(delta)}</td>`;
+      const note = delta == null
+        ? 'need 2+ snapshots'
+        : (delta < 0 ? `${Math.abs(delta)} listings removed (velocity proxy)` : delta > 0 ? `${delta} new listings` : 'no change');
+      tableRows.push(
+        `<tr><td class="csale-platform"><span class="badge td-${plat.toLowerCase()}">${escapeHtml(plat)}</span> ${escapeHtml(label)}</td>` +
+        `<td>Listing Δ (${(tdLatest && tdPrior) ? `${tdLatest.snapshot_date} vs ${tdPrior.snapshot_date}` : '—'})</td>` +
+        `${deltaCell}<td class="muted small">${escapeHtml(note)}</td></tr>`
+      );
+    }
+    if (d.xb !== null) {
+      tableRows.push(row('TP', 'Our orders', tpOrders.length || null, false, tpOrders.length ? tpOrders.map(r => r.status || '').filter(Boolean).join(', ') : 'none'));
+      tableRows.push(row('Vivid', 'Our orders', vvOrders.length || null, false, vvOrders.length ? vvOrders.map(r => r.status || '').filter(Boolean).join(', ') : 'none'));
+    }
+
+    if (!tableRows.length) {
+      body.innerHTML = '<div class="empty">no cross-platform sales data available</div>';
+      return;
+    }
+
+    const tbl = document.createElement('table');
+    tbl.className = 'cross-src-tbl cross-sales-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Platform</th><th>Metric</th><th class="num">Value</th><th>Note</th>
+      </tr></thead><tbody>${tableRows.join('')}</tbody>`;
+    body.innerHTML = '';
+    body.appendChild(tbl);
+
+    const parts = [];
+    if (evo.captured_at) parts.push(`EVO as of ${T.fmtDate(evo.captured_at)}`);
+    if (sg.captured_at)  parts.push(`SG as of ${T.fmtDate(sg.captured_at)}`);
+    if (tdLatest)        parts.push(`TD snapshot ${tdLatest.snapshot_date} ${tdLatest.snapshot_slot}`);
+    if (metaEl) metaEl.textContent = parts.join(' · ');
   }
 
   // ---------- SG Sales (full) ----------
@@ -2725,7 +3119,7 @@
         const s = d.td[p];
         const minStr = s.min_price != null ? ` · min $${Math.round(Number(s.min_price))}` : '';
         const medStr = s.median_price != null ? ` · med $${Math.round(Number(s.median_price))}` : '';
-        return `<span class="td-platform-chip">${p} <b>${T.fmtNum(Number(s.listing_count))}</b>${minStr}${medStr}</span>`;
+        return `<span class="td-platform-chip">${escapeHtml(p)} <b>${T.fmtNum(Number(s.listing_count))}</b>${minStr}${medStr}</span>`;
       }).join('');
       body.appendChild(bar);
     }
@@ -2876,6 +3270,32 @@
     }).join('');
     body.innerHTML = `<div class="last-snap-grid">${cells}</div>
       <div class="last-snap-meta">snapshot fields fall back to the most recent non-null value across the loaded window (${rows.length} pulls)</div>`;
+
+    // Append TD MARKETS section if snapshot data is already loaded
+    if (_lastTdSnap) {
+      const tdSnap = _lastTdSnap;
+      const tdFields = [
+        ['td_sh_listings',    'SH LISTINGS', null],
+        ['td_sh_median',      'SH MED',      '$'],
+        ['td_gt_listings',    'GT LISTINGS', null],
+        ['td_gt_median',      'GT MED',      '$'],
+        ['td_vd_listings',    'VD LISTINGS', null],
+        ['td_vd_median',      'VD MED',      '$'],
+        ['td_combined_median','TD COMBINED', '$'],
+      ];
+      const tdCells = tdFields.map(([col, label, prefix]) => {
+        const v = tdSnap[col];
+        const valHtml = (v != null)
+          ? `<span class="last-snap-val">${prefix === '$' ? '$' : ''}${T.fmtNum(Math.round(+v))}</span>`
+          : `<span class="last-snap-val dim">—</span>`;
+        return `<div class="last-snap-cell"><span class="last-snap-lbl">${label}</span>${valHtml}</div>`;
+      }).join('');
+      const tdSection = document.createElement('div');
+      tdSection.innerHTML =
+        `<div class="last-snap-divider">TD MARKETS — ${escapeHtml(tdSnap.snapshot_date || '')} ${escapeHtml(tdSnap.snapshot_slot || '')}</div>` +
+        `<div class="last-snap-grid">${tdCells}</div>`;
+      body.appendChild(tdSection);
+    }
   }
 
   // ---------- TD Markets — raw per-listing data from ticketsdata_listings_snapshots ----------

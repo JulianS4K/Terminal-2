@@ -60,6 +60,7 @@
       <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
       <button class="event-tab" data-tab="sg-listings" role="tab" aria-selected="false">SG Listings <span class="tab-count" id="tabCountSgListings"></span></button>
       <button class="event-tab" data-tab="evo-listings" role="tab" aria-selected="false">EVO Listings <span class="tab-count" id="tabCountEvoListings"></span></button>
+      <button class="event-tab" data-tab="td-listings" role="tab" aria-selected="false">TD Listings <span class="tab-count" id="tabCountTdListings"></span></button>
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
@@ -121,10 +122,18 @@
 
     <section id="cross-source-metrics">
       <div class="panel-title row">
-        <span>CROSS-SOURCE METRICS — TEvo vs SG</span>
+        <span>CROSS-SOURCE METRICS — TEvo · SG · TD</span>
         <span class="muted small" id="crossSourceMeta"></span>
       </div>
       <div id="crossSourceBody"><div class="empty">loading…</div></div>
+    </section>
+
+    <section id="cross-platform-sales">
+      <div class="panel-title row">
+        <span>CROSS-PLATFORM SALES — EVO · SG · SeatData · TP · Vivid · TD velocity</span>
+        <span class="muted small" id="crossSalesMeta"></span>
+      </div>
+      <div id="crossSalesBody"><div class="empty">loading…</div></div>
     </section>
 
     <!-- 2 fully independent chart sections (PR redesign 2026-05-18, v2).
@@ -260,6 +269,35 @@
         </div>
         <div id="evoListingsFullBody"><div class="empty">Click the tab to load.</div></div>
       </section>
+    </div>
+
+    <!-- TD Listings — three sub-sections (SH · GT · VD), parallel load on first click -->
+    <div class="tab-pane" id="paneTdListings" role="tabpanel" hidden>
+
+      <section id="td-listings-sh" class="td-platform-section td-sh-section">
+        <div class="panel-title row">
+          <span><span class="badge td-sh">SH</span> LISTINGS — StubHub (non-parking, last 7d)</span>
+          <span class="muted small" id="tdListingsShMeta">tap tab to load</span>
+        </div>
+        <div id="tdListingsShBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+
+      <section id="td-listings-gt" class="td-platform-section td-gt-section">
+        <div class="panel-title row">
+          <span><span class="badge td-gt">GT</span> LISTINGS — GameTime (non-parking, last 7d)</span>
+          <span class="muted small" id="tdListingsGtMeta">tap tab to load</span>
+        </div>
+        <div id="tdListingsGtBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+
+      <section id="td-listings-vd" class="td-platform-section td-vd-section">
+        <div class="panel-title row">
+          <span><span class="badge td-vd">VD</span> LISTINGS — VividSeats (non-parking, last 7d)</span>
+          <span class="muted small" id="tdListingsVdMeta">tap tab to load</span>
+        </div>
+        <div id="tdListingsVdBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+
     </div>
 
     <div class="tab-pane" id="paneSgSales" role="tabpanel" hidden>
