@@ -3119,7 +3119,7 @@
         const s = d.td[p];
         const minStr = s.min_price != null ? ` · min $${Math.round(Number(s.min_price))}` : '';
         const medStr = s.median_price != null ? ` · med $${Math.round(Number(s.median_price))}` : '';
-        return `<span class="td-platform-chip">${p} <b>${T.fmtNum(Number(s.listing_count))}</b>${minStr}${medStr}</span>`;
+        return `<span class="td-platform-chip">${escapeHtml(p)} <b>${T.fmtNum(Number(s.listing_count))}</b>${minStr}${medStr}</span>`;
       }).join('');
       body.appendChild(bar);
     }
