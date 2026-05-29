@@ -32,6 +32,7 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 6. **Cross-lane file edits require coordination** via `bot_chat` `question` or PR comment to the lane owner.
 7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
 8. **Check `KANBAN.md §🟢 OPEN WORK` before claiming new work.** It is the single-source-of-truth for what's currently actionable across all lanes — severity-sorted, with the smallest fix for each finding. **Fixing bot DELETES its row from that section in the same PR as the fix** (row's absence IS the closure signal; archive sections below preserve the historical detail). Populate as you go — anyone can add a row; B1 maintains for security findings, each lane for its own. Broadcast: bot_chat 311 (2026-05-17).
+9. **Work in your OWN git worktree — never the shared root checkout.** Sessions share the clone at `C:\VibeCode\terminal-2`; a `git checkout` / branch-switch / `reset` there rewrites the working tree under every other session = **stranded work** (and git blocks checking out a branch already open in another worktree). Each session has its own worktree under `.claude/worktrees/<session>/` — author files + run **all** git there (`git -C <your-worktree>`), on a per-session branch cut from `origin/main`. A1 lands to `main` by pushing that branch (`git push origin <branch>:main`), **not** by switching the shared root. Never `checkout`/`switch`/`reset` the shared root or another session's worktree. (Codified 2026-05-29 after a shared-root branch-switch stranded an in-flight task mid-session — and recurred live while writing this rule.)
 
 When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
@@ -411,6 +412,7 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 8. ☐ Is my work already shipped per `MIGRATION_CONVENTIONS.md §14` (don't re-do)?
 9. ☐ Is my "discovery" a known gap in `KANBAN.md` (don't waste cycles)?
 10. ☐ **About to create a new doc?** STOP — the canonical doc set is CLOSED (see the README registry). Add the fact to its owning doc; never create a new root/governance `.md`; never state one fact in two places — link instead.
+11. ☐ **Am I working in my own worktree, not the shared root?** A `git checkout`/branch-switch in the shared `C:\VibeCode\terminal-2` clone strands other sessions (§1 rule 9) — use `git -C <your-worktree>` on a per-session branch.
 
 If YES to all → proceed. Else fall back to `RESOURCES_BIBLE.md` for inventory or `CLAUDE.md` for security rules.
 
