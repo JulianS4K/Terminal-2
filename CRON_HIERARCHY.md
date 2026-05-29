@@ -173,6 +173,8 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 | `sg_broker_listings_metrics_refresh_hourly` · `sg_canonical_v2_pull_refresh_30min` · `sweep-old-sg-listings` · `sg_seller_*` · `sg_sales_*` | various | metrics / reconcile / sweep / seller(owned) / sales | ACTIVE (unchanged) |
 | **`td_tp_discover` / `td_tp_discover_drain`** | **`25 9` / `30 9`** | TickPick event discovery (Yankees/Knicks performer allowlist) | **ACTIVE (new 05-29)** |
 | **`td_enqueue_peak_tp`** | **`0 16,22,4`** | enqueue TP focus events → `td_pull_queue` (mirrors SH/VD/GT) | **ACTIVE (new 05-29)** |
+| **`td_tm_discover` / `td_tm_discover_drain`** | **`45 9` / `50 9`** | Ticketmaster event discovery (NYY/NYK artist allowlist; parses ISMDS EventFacets) | **ACTIVE (new 05-29)** |
+| **`td_enqueue_peak_tm`** | **`30 16,22,4`** | enqueue TM focus events → `td_pull_queue` (mirrors TP, +30min offset) | **ACTIVE (new 05-29)** |
 
 **Shared-token note:** all SG broker crons **+ a separate external prod program** draw on ONE SeatGeek token (~10 req/8s). 429s appear at low volume from burst collisions. Watch `v_sg_token_budget` + `v_sg_broker_429_health`; `sg-floor-sweep-watch` (scheduled task) posts hourly to `#terminal-2-alerts`. Floor-sweep is conservative (`*/2 × 4` ≈ 2,880/day); ramp to `*/1 × 5` only once the watch confirms headroom.
 
