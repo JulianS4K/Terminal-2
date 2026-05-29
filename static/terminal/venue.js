@@ -234,7 +234,7 @@
       const d = T.daysUntil(e.occurs_at_local);
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a> ${T.moversChipHtml(e.id)}</td>
+        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a> ${T.moversChipHtml(e.id)} ${T.temporalChipHtml(e.occurs_at_local)}</td>
         <td>${escapeHtml(e.primary_performer_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${T.fmtNum(e.tickets_count || 0)}</td>

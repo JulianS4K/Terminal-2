@@ -363,7 +363,7 @@
       const ownedTix = +r.cur_owned_tix || 0;
       const score = r.signal_score != null ? (+r.signal_score).toFixed(2) : '—';
       tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a></td>
+        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a> ${T.temporalChipHtml(r.occurs_at_local || r.occurs_at)}</td>
         <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num ${ownedTix > 0 ? 'ours' : ''}">${T.fmtNum(ownedTix)}</td>

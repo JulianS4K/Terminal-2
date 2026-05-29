@@ -137,6 +137,36 @@
     return null;
   }
 
+  // ---------- TemporalChip (Phase 3) ----------
+  //
+  // Returns a coloured day-of-week + bucket chip for any ISO event date.
+  // Phase 3 degraded: pure FE date math (day-of-week + T-days bucket).
+  // Holiday / school-break / MLB-branded-series enrichment deferred to Phase 3b
+  // pending A1 migration (those lore tables are admin_only RLS).
+  //
+  // Classes map to existing .badge CSS:
+  //   urgent = T≤1d (red/orange tint)
+  //   near   = T 2-7d (yellow tint)
+  //   (none) = T 8-30d (neutral)
+  //   muted  = T>30d or past
+  function temporalChipHtml(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime())) return '';
+    const now = Date.now();
+    const days = Math.ceil((d.getTime() - now) / 86400000);
+    const dow  = d.toLocaleDateString(undefined, { weekday: 'short' }); // "Mon"
+    const full = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    let label, cls;
+    if (days < -1)       { label = Math.abs(days) + 'd ago'; cls = 'muted'; }
+    else if (days <= 0)  { label = 'TODAY';                  cls = 'urgent pos'; }
+    else if (days === 1) { label = 'TMRW · ' + dow;          cls = 'urgent'; }
+    else if (days <= 7)  { label = dow + ' +' + days + 'd';  cls = 'near'; }
+    else if (days <= 30) { label = '+' + days + 'd';          cls = ''; }
+    else                 { label = '+' + days + 'd';          cls = 'muted'; }
+    return `<span class="badge temporal ${cls.trim()}" title="${_esc(full)}">${_esc(label)}</span>`;
+  }
+
   // ---------- Movers-index cache (Phase 1b: <MoverChip>) ----------
   //
   // One shared lookup of get_event_movers_v2 (mig 20260527260000) per page.
@@ -209,6 +239,7 @@
   window.Terminal = {
     setStatus, getAuthHeader, api, getEventId,
     fmtDate, fmtNum, fmtPct, daysUntil, latestNonNull,
+    temporalChipHtml,
     moversPreloadIndex, moversChipHtml,
   };
 })();

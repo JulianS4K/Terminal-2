@@ -405,13 +405,9 @@
     const badges = document.getElementById('evBadges');
     badges.innerHTML = '';
 
-    const days = T.daysUntil(ev.occurs_at_local || ev.occurs_at);
-    if (days !== null) {
-      const b = document.createElement('span');
-      b.className = 'badge countdown';
-      b.textContent = days <= 0 ? 'TODAY' : days === 1 ? 'TOMORROW' : `T-${days}d`;
-      badges.appendChild(b);
-    }
+    // Phase 3: TemporalChip — richer than the old "T-Xd" badge
+    const tempChip = T.temporalChipHtml(ev.occurs_at_local || ev.occurs_at);
+    if (tempChip) badges.insertAdjacentHTML('beforeend', tempChip);
     const lc = overview.lifecycle;
     if (lc) {
       const status = lc.status || lc.classification;
