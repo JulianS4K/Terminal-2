@@ -27,6 +27,7 @@
     rows: [],
     sortKey: 'delta_market_pct',
     sortDir: 'desc',
+    gapMap: new Map(),        // event_id → [{ gap_type, detail, signal_score }]
   };
 
   async function init() {
@@ -74,12 +75,16 @@
       // renderCoverage / renderOwnedEvents consume. Fields not in v2 become null
       // and render as "—".
       state.rows = rawRows.map(reshapeV2Row);
+      state.gapMap = new Map();   // reset on each load
 
       T.setStatus('Loaded', 'ok');
       renderSummaryStrip(summary);
       renderCoverage(state.rows);
       renderMovers();
       renderOwnedEvents(state.rows);
+      // Phase 2: batch-load gap alerts for all mover event_ids, then re-render
+      // so GapChips appear in the table without blocking the initial paint.
+      loadGapMap(state.rows).catch(e => console.error('[gapMap]', e));
     } catch (e) {
       T.setStatus(e.message, 'err');
       if (body) body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
@@ -117,6 +122,42 @@
       const turnStr = turn ? ` · ${turn} Δ/24h` : '';
       return `<span class="badge" title="source=${s.source} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category || '')}: ${sz}${cov}${turnStr}</span>`;
     }).join(' ');
+  }
+
+  // ---------- Phase 2: GapChip batch loader ----------
+  // discovery_gap_alerts has no RLS (relrowsecurity=false) — direct read OK.
+  // Queries all active gaps for the current mover rows in one round-trip, then
+  // re-renders the movers table so gap badges appear in event name cells.
+
+  async function loadGapMap(rows) {
+    if (!rows || !rows.length) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const ids = [...new Set(rows.map(r => r.event_id).filter(Boolean))];
+    if (!ids.length) return;
+    const { data, error } = await Auth.client
+      .from('discovery_gap_alerts')
+      .select('event_id,gap_type,detail,signal_score')
+      .in('event_id', ids)
+      .is('resolved_at', null)
+      .order('signal_score', { ascending: false });
+    if (error || !data) return;
+    const m = new Map();
+    data.forEach(g => {
+      if (!m.has(g.event_id)) m.set(g.event_id, []);
+      m.get(g.event_id).push(g);
+    });
+    state.gapMap = m;
+    renderMovers();  // re-render now that gap badges are available
+  }
+
+  // Returns HTML for up to 2 gap chips for an event (compact — avoid badge overflow).
+  function gapBadgesHtml(eventId) {
+    const gaps = state.gapMap.get(eventId);
+    if (!gaps || !gaps.length) return '';
+    return gaps.slice(0, 2).map(g =>
+      `<span class="badge gap-chip" title="${escapeHtml(g.detail || '')}">${escapeHtml((g.gap_type || '').replace(/_/g, ' '))}</span>`
+    ).join(' ');
   }
 
   // ---------- Coverage band ----------
@@ -363,7 +404,7 @@
       const ownedTix = +r.cur_owned_tix || 0;
       const score = r.signal_score != null ? (+r.signal_score).toFixed(2) : '—';
       tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a> ${T.temporalChipHtml(r.occurs_at_local || r.occurs_at)}</td>
+        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a> ${T.temporalChipHtml(r.occurs_at_local || r.occurs_at)} ${gapBadgesHtml(r.event_id)}</td>
         <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num ${ownedTix > 0 ? 'ours' : ''}">${T.fmtNum(ownedTix)}</td>
