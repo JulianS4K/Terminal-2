@@ -2716,35 +2716,25 @@
       return;
     }
     const t0 = performance.now();
-    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
-    const res = await Auth.client
-      .from('ticketsdata_listings_snapshots')
-      .select('section,row,quantity,list_price,price_with_fees,captured_at')
-      .eq('event_id', eventId)
-      .eq('platform', platform)
-      .eq('is_parking', false)
-      .gte('captured_at', since26)
-      .order('captured_at', { ascending: false })
-      .order('list_price')
-      .limit(3000);
+    // ticketsdata_listings_snapshots is keyed by each platform's OWN TD event id, not tevo.
+    // RPC maps tevo -> TD-event-id (ticketsdata_event_xref <- aq_event_map <- sg_events_canonical)
+    // and returns the latest 15-min batch, non-parking, price-sorted. (RPC get_event_td_listings)
+    const res = await Auth.client.rpc('get_event_td_listings', {
+      p_tevo_event_id: eventId, p_platform: platform, p_hours: 26
+    });
     const elapsed = performance.now() - t0;
     if (res.error) {
       if (body) body.innerHTML = `<div class="empty">error: ${escapeHtml(res.error.message)}</div>`;
       if (meta) meta.textContent = 'error';
       return;
     }
-    const allRows = res.data || [];
-    if (!allRows.length) {
-      if (body) body.innerHTML = `<div class="empty">No ${escapeHtml(platform)} listings in last 26 hours. Data started 2026-05-27 — sparse initially.</div>`;
+    const rows = res.data || [];
+    if (!rows.length) {
+      if (body) body.innerHTML = `<div class="empty">No ${escapeHtml(platform)} listings in the latest collection batch (last 26h).</div>`;
       if (meta) meta.textContent = '0 rows';
       return;
     }
-    // Latest-batch filter: keep only rows within 15 min of the most-recent captured_at.
-    // This ensures we show the current collection batch, not a stale earlier batch that
-    // would otherwise dominate when the limit was reached on a busy event.
-    const maxAt = allRows[0].captured_at; // already sorted DESC
-    const cutoff = new Date(new Date(maxAt).getTime() - 15 * 60 * 1000).toISOString();
-    const rows = allRows.filter(r => r.captured_at >= cutoff);
+    const maxAt = rows.reduce((m, r) => (r.captured_at > m ? r.captured_at : m), rows[0].captured_at);
     const batchDate = T.fmtDate ? T.fmtDate(maxAt) : maxAt.slice(0, 16).replace('T', ' ') + ' UTC';
     // Compute summary stats
     const prices = rows.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
