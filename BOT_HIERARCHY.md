@@ -4,7 +4,7 @@
 **Owner: A1.** Reorg 2026-05-28 — new mandate split, D1–E1 paused until D0 is working.
 **Absorbs former `LANE_DISCIPLINE.md`** (merged 2026-05-28; that file is now in `docs/archive/`).
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 > **This doc owns:** bot roster · push authority · Render service scope · per-bot lane scope (writes / never-writes / reads / authority) · cross-cutting lane rules.
 > Migration mechanics → `MIGRATION_CONVENTIONS.md`. Immutable security invariants → `CLAUDE.md`. Per-session playbook → `PROJECT_BIBLE.md`.
@@ -147,7 +147,7 @@ Each table has exactly one owning lane that writes; all others read. (Full mecha
 
 ---
 
-## 6. Code-review + push workflow
+## 6. Code-review + push workflow *(v1.1 · A1 · 2026-05-28)*
 
 1. **Branch** off `main`: `claude/<lane>-<purpose>-<id>`
 2. **Migration header** (required): `-- Migration <ts> · level:<X> · lane:<Y> · writes:<...> · reads:<...>`
@@ -156,7 +156,7 @@ Each table has exactly one owning lane that writes; all others read. (Full mecha
 5. **`bot_chat` log** — `change_log` event with PR# linked
 6. **A1 review + push** — applies migration to prod via MCP, merges PR
 
-**Exception:** D0 may apply migrations directly when explicitly authorized per session by the operator (current working pattern).
+**No exception.** D-tier lanes (D0–D4, E1) have **zero Supabase mutation authority — including emergency apply**. A DB change discovered by D0 is filed as a migration file + `bot_chat` to A1 → A1 applies → A1 pushes (matches the §4 push matrix: D0 Prod DB ❌, and `PROJECT_BIBLE.md §1` rule 1 + `CLAUDE.md §1` lockdown). Per operator clarification 2026-05-28; supersedes the prior per-session-authorization carve-out and the `bot_chat` #740/742/745 D0 apply pattern.
 
 **Deploy gating (2026-05-15):** backend test workflow (`.github/workflows/tests.yml`) must pass on a PR before A1 merges to `main`. Auto-deploy fires only after green CI lands on `main`. No exceptions.
 
