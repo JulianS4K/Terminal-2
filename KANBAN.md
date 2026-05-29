@@ -128,6 +128,10 @@
 | A1-OPS-5 | A1 | **`/health` endpoint doesn't exist** — the live health check is `/healthz`, not `/health`. | Fix any docs/monitoring that reference `/health`. (migrated from PROJECT_BIBLE §10) |
 | A1-OPS-6 | A1 / Op | **D4 Railway service decommission.** `static/bridge/` is current as of the 2026-05-25 rebuild and served from Render; the Railway host is now redundant. | Delete the Railway service once confirmed healthy on Render. (migrated from PROJECT_BIBLE §10) |
 | D4-OPS-29 | A1 / B1 | **`exos-media` owner-scoped read policy missing (62h+).** Storage DDL not yet applied: `CREATE POLICY … ON storage.objects WHERE bucket_id='exos-media' AND owner=auth.uid()`. Flagged by D4 in bot_chat #562. | A1 apply the storage policy; B1 review. (migrated from PROJECT_BIBLE §10) |
+| A1-OPS-7 | A1 / Op | **SG floor-sweep ramp pending.** `sg_listings_floor_sweep` shipped 2026-05-29 at a conservative `*/2 × 4` (~2,880/day — just under the ~3,526/day full floor) because the SG token is shared with an external prod program (listings 429 was ~37% at the time). | After `sg-floor-sweep-watch` (hourly → `#terminal-2-alerts`) shows 429 <15% + `v_sg_token_budget.avg_rem` healthy for ~a day, ramp to `*/1 × 5` (~7,200/day) via one `cron.schedule`. |
+| A1-OPS-8 | D0 | **TickPick FE not wired.** TD now pulls TickPick listings for the focus events (`platform='TP'`, 22 events live 2026-05-29) into `ticketsdata_listings_snapshots`, but `event.js` TD panels (`loadTdPlatformListings()` / Market Carpet) don't surface the `TP` source. | D0: add `TP`/TickPick to the TD Listings tab + Market Carpet source list (same pattern as SH/VD/GT). Data live; FE-only. |
+| A1-OPS-9 | A1 | **`td_pull_drain` re-fires soft-cancelled rows.** Drain selects `WHERE fired_at IS NULL` only — a row with `resolved_at` set but `fired_at` NULL stays fireable + gets re-fetched (normalize skips it = wasted upstream call). The 23 existing stale rows were neutralized 2026-05-29; the function gap remains. | Add `AND resolved_at IS NULL` to `td_pull_drain`'s SELECT (one-line migration). Low urgency — won't regrow under the focused watchlist. |
+| A1-OPS-10 | A1 / Op | **2026-05-29 `main` pushes bypassed branch protection.** The 4 TD/SG migration commits (TD-focus, floor-sweep, TickPick ×2) were pushed to `main` with A1 bypass rights — remote reported "Bypassed rule violations: 3 of 3 required status checks expected." Migrations were prod-validated first, but CI wasn't a merge gate. | Confirm A1 direct-push-with-bypass is the intended `main` promotion mechanism (vs PR + CI). If not, route future A1 promotions via PR. |
 
 ### Known data-architecture gaps (workarounds, not bugs — don't rediscover)
 
@@ -142,6 +146,9 @@
 | ESPN snapshot pipeline = gameday-scope only | Specced, not built | Forward-look ESPN panels empty by design; use `espn_event_date_lookup` for forward-look team IDs / `game_at_utc` |
 | ~29% active TEvo events have no SG bridge | NWSL/USL/AHL/niche — real coverage gap | First-class TEvo-only UI state |
 | SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
+| SG broker `/v2/listings` (all-marketplace) OFF since ~2026-05-14 | Superseded by broker `/listings` (now `sg_listings_floor_sweep`); empirically `/v2` ≈ identical data to `/listings` | Use `/listings` (floor-sweep) for marketplace depth. The legacy `sg_listings_*` (jobids 53–58) `/v2` crons stay disabled; re-enable only if full-competitor visibility beyond `/listings` is ever needed. |
+| SG listings = 3 feeds, one shared token (w/ external prod program) | Architecture fact (PROJECT_BIBLE §3) | broker `/listings` (market) + `/v2/listings` (off) + seller `/listings` (owned). Burst ≈10 req/8s shared; watch `v_sg_token_budget`. |
+| `TRACK_BLINDSPOT` tier ≠ unmapped | 99%+ ARE aq+tevo mapped (PROJECT_BIBLE §3) | It's `owned_cnt=0` ownership tier; don't treat as a mapping gap. |
 
 ---
 

@@ -160,6 +160,24 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ---
 
+## 4b. SeatGeek + TicketsData listings — current state *(2026-05-29 reconciliation · A1)*
+
+⚠ The T1/T3 `sg_listings_*` rows above (jobids 53–58 — the broker **`/v2/listings`** windowed pull) are **STALE**: those jobs were **disabled ~2026-05-14** and superseded by the broker `/listings` pipeline, which was in turn reworked 2026-05-29. Current state:
+
+| Job | Cadence | What it pulls | Status |
+|---|---|---|---|
+| `sg_listings_*` (53–58) | (overnight) | broker `/v2/listings` (all-marketplace) | **DISABLED ~05-14** (last fire 05-14 16:10) |
+| `sg_broker_listings_queue_5min` / `_peak` (239/308) | `*/5` | broker `/listings` nearest-8 | **DISABLED 05-29** (starved low tiers + burst-collided) |
+| `sg_priority_poll_tick_5min` (241) | `4-59/5` | broker `/listings` by tier | **DISABLED 05-29** |
+| **`sg_listings_floor_sweep`** | **`*/2`** | broker `/listings`, fair round-robin (bursts of 4), adaptive-gated on `ratelimit-remaining` | **ACTIVE — replaces the two above** |
+| `sg_broker_listings_metrics_refresh_hourly` · `sg_canonical_v2_pull_refresh_30min` · `sweep-old-sg-listings` · `sg_seller_*` · `sg_sales_*` | various | metrics / reconcile / sweep / seller(owned) / sales | ACTIVE (unchanged) |
+| **`td_tp_discover` / `td_tp_discover_drain`** | **`25 9` / `30 9`** | TickPick event discovery (Yankees/Knicks performer allowlist) | **ACTIVE (new 05-29)** |
+| **`td_enqueue_peak_tp`** | **`0 16,22,4`** | enqueue TP focus events → `td_pull_queue` (mirrors SH/VD/GT) | **ACTIVE (new 05-29)** |
+
+**Shared-token note:** all SG broker crons **+ a separate external prod program** draw on ONE SeatGeek token (~10 req/8s). 429s appear at low volume from burst collisions. Watch `v_sg_token_budget` + `v_sg_broker_429_health`; `sg-floor-sweep-watch` (scheduled task) posts hourly to `#terminal-2-alerts`. Floor-sweep is conservative (`*/2 × 4` ≈ 2,880/day); ramp to `*/1 × 5` only once the watch confirms headroom.
+
+---
+
 ## 5. Future-bot reservation pattern
 
 When a new bot lane (B2/B3/B4) is added:

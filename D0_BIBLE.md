@@ -421,7 +421,7 @@ tevo_venue_id
 | Table | Rows | Purpose | Key columns |
 |---|---|---|---|
 | `seatgeek_event_metrics` | 46,573 | SG listing metrics | sg_event_id, captured_at, listings_all_*/listings_owned_* |
-| `seatgeek_listings_snapshots` | 9.2M | SG listing firehose | sg_event_id, broadcast_price, quantity, pulled_at |
+| `seatgeek_listings_snapshots` | 9.2M | SG listing firehose | sg_event_id, broadcast_price, retail_price_all_in, quantity, section, row, is_broker_owned, **`captured_at`** (NOT `pulled_at` — that's the *sales* table), `endpoint` (`/listings` vs `v2/listings`) |
 | `seatgeek_sales_snapshots` | — | SG sales firehose | sg_event_id, sg_sale_id, broadcast_price, sale_at_utc. **MANDATORY DEDUP: DISTINCT ON (sg_sale_id) ORDER BY sg_sale_id, pulled_at DESC** |
 | `sg_event_priority_state` | 4,609 | Priority tier management | sg_event_id, tier (not priority_tier!), last_polled_at |
 
@@ -485,7 +485,8 @@ WHERE canonical_name ILIKE '%fenway%'
 |---|---|---|
 | `cron.job` | Cron schedule registry | jobname, schedule, command, active |
 | `cron.job_run_details` | Cron execution history | jobid, runid, status, start_time, end_time, return_message |
-| `v_sg_broker_429_health` | SG 429 rate monitoring | hour_bucket, total_requests, failed_429, pct_429 |
+| `v_sg_broker_429_health` | SG 429 rate monitoring (per `scope` = listings/sales) | scope, hour_bucket, **`total_fired`, `rate_limited`** (NOT total_requests/failed_429), ok, pct_429, pct_ok |
+| `v_sg_token_budget` | **Live shared-SG-token budget** (incl. external prod program's draw) from broker response headers | response_id, scope, remaining, limit_total, remaining_10. *(NEW 2026-05-29.)* Adaptive gates read this; honor only a FRESH (≤10s) reading. |
 | `bot_chat` | Cross-lane coordination log | id, bot_level, bot_lane, event_type, message, created_at, resolved_at |
 | `v_bot_chat_unresolved` | Open bot_chat items | Excludes rows with a `status` event reply pointing at them via in_reply_to |
 
@@ -565,9 +566,9 @@ SELECT public.bot_chat_log(
 | TEvo: collect-listings-* (5 crons) | ✅ | |
 | TEvo: evo_discover_new_events | ❌ | bot_chat_log called with 5th arg 'D0' — needs migration fix |
 | TEvo: listings_aq_backfill_overnight | ❌ | pg_cron 120s hard limit — open KANBAN item |
-| SG: sg_broker_listings_queue_5min | ✅ | |
-| SG: sg_broker_listings_queue_5min_peak | ✅ | Fixed mig 350000 — burst 25→8 |
+| SG: **sg_listings_floor_sweep** | ✅ | **NEW 2026-05-29** — fair round-robin `*/2 × 4`, adaptive-gated on `ratelimit-remaining`. **Replaces** sg_broker_listings_queue_5min + _peak + sg_priority_poll_tick_5min (all DISABLED 2026-05-29; they starved low tiers + burst-collided). |
 | SG: sg_blindspot_poll_5min | ❌ | deadlock on sg_event_priority_state UPDATE |
+| TD: **td_tp_discover / _drain / td_enqueue_peak_tp** | ✅ | **NEW 2026-05-29** — TickPick platform for the focus events (22 TP xref: 20 Yankee Stadium + 2 MSG). |
 | ESPN: all 8 crons | ✅ | |
 | TD: td_pull_drain, td_normalize_drain | ✅ | |
 | Sweep: sweep-old-listings, sweep-old-sg-listings | ✅ | Fixed mig 360000 |
@@ -585,10 +586,14 @@ FROM cron.job_run_details
 WHERE start_time > now() - interval '24h' AND status != 'succeeded'
 ORDER BY start_time DESC LIMIT 20;
 
--- SG 429 rate (last 6h)
-SELECT hour_bucket, total_requests, failed_429, round(pct_429, 1) AS pct_429
+-- SG 429 rate (last 6h) — cols are scope/total_fired/rate_limited (NOT total_requests/failed_429)
+SELECT scope, hour_bucket, total_fired, rate_limited, round(pct_429, 1) AS pct_429
 FROM v_sg_broker_429_health
 ORDER BY hour_bucket DESC LIMIT 6;
+
+-- Live shared-SG-token budget (incl. external prod program's draw); avg_rem<3 = gate starving the floor-sweep
+SELECT min(remaining) AS min_rem, round(avg(remaining),1) AS avg_rem
+FROM (SELECT remaining FROM v_sg_token_budget ORDER BY response_id DESC LIMIT 30) z;
 
 -- Data freshness across all sources
 SELECT 'tevo' AS src, MAX(captured_at) AS latest, COUNT(DISTINCT event_id) AS events

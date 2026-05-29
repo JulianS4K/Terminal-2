@@ -232,7 +232,8 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 |---|---|---|---|---|
 | `aq_event_map` | — | **Primary event hub** — bridges TD aq_short_event_id ↔ tevo_event_id / sg_event_id / sh/vivid/tm IDs. 7,271 rows. | A1 | mig 20260528380000 |
 | `sg_events_canonical` | 232 kB | SG event records resolved to TEvo (4,609 rows; 2,590 linked to tevo_event_id) | C1 | pre-history |
-| `ticketsdata_event_xref` | — | TD event catalog; gets tevo_event_id + sg_event_id + tevo_match_method via mig 380000 | A1 | pre-history + mig 380000 |
+| `ticketsdata_event_xref` | — | TD event catalog; gets tevo_event_id + sg_event_id + tevo_match_method via mig 380000. `platform` CHECK = SH/VD/GT/TM/**TP** (TP added mig 20260529180000). | A1 | pre-history + mig 380000 |
+| `td_tp_performers` | — | TickPick discovery performer allowlist (Yankees/Knicks) — mirrors `td_gt_performers`; drives `td_tp_discover`/`_drain`. | A1 | mig 20260529180000 |
 | `canonical_external_ids` | 1.2 MB | Master external-id table for events/performers/venues | C1 | pre-history (C1 phase 13 work in PR #51) |
 
 **Performer cross-source tables (`tevo_performer_id` = canonical key):**
@@ -518,7 +519,7 @@ Only 2 matviews — both perf-critical.
 
 ### 4.5 Health + ops (A1)
 
-`v_cron_health`, `v_pg_net_queue_health`, `v_bot_chat_unresolved`, `v_dashboard_coverage`, `v_dashboard_freshness`, `v_macro_indicators_health`, `v_macro_indicators_latest`, `v_one_to_one_health`
+`v_cron_health`, `v_pg_net_queue_health`, `v_bot_chat_unresolved`, `v_dashboard_coverage`, `v_dashboard_freshness`, `v_macro_indicators_health`, `v_macro_indicators_latest`, `v_one_to_one_health`, `v_sg_token_budget` (live shared-SeatGeek-token remaining from broker response headers `ratelimit-remaining` — incl. external prog draw; mig 20260529170000), `v_sg_broker_429_health` (per-`scope` 429 rollup — cols `total_fired`/`rate_limited`)
 
 ### 4.6 SeatGeek-specific (D2)
 
