@@ -60,7 +60,9 @@
       <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
       <button class="event-tab" data-tab="sg-listings" role="tab" aria-selected="false">SG Listings <span class="tab-count" id="tabCountSgListings"></span></button>
       <button class="event-tab" data-tab="evo-listings" role="tab" aria-selected="false">EVO Listings <span class="tab-count" id="tabCountEvoListings"></span></button>
-      <button class="event-tab" data-tab="td-listings" role="tab" aria-selected="false">TD Listings <span class="tab-count" id="tabCountTdListings"></span></button>
+      <button class="event-tab" data-tab="sh-listings" role="tab" aria-selected="false">SH Listings <span class="tab-count" id="tabCountShListings"></span></button>
+      <button class="event-tab" data-tab="gt-listings" role="tab" aria-selected="false">GT Listings <span class="tab-count" id="tabCountGtListings"></span></button>
+      <button class="event-tab" data-tab="vd-listings" role="tab" aria-selected="false">VD Listings <span class="tab-count" id="tabCountVdListings"></span></button>
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
@@ -120,36 +122,43 @@
       <div id="lastSnapshotBody"></div>
     </section>
 
-    <section id="cross-source-metrics">
+    <!-- Unified CROSS-SOURCE panel (WP-2): Listings/Price + Sales/Velocity under one
+         shared source-column header. Merges the former #cross-source-metrics +
+         #cross-platform-sales so both render as source-as-column tables. The 2 charts
+         below are merged into one composite canvas in WP-3. -->
+    <section id="cross-source">
       <div class="panel-title row">
-        <span>CROSS-SOURCE METRICS — TEvo · SG · TD</span>
+        <span>CROSS-SOURCE — Listings · Price · Sales · Velocity</span>
         <span class="muted small" id="crossSourceMeta"></span>
       </div>
-      <div id="crossSourceBody"><div class="empty">loading…</div></div>
-    </section>
-
-    <section id="cross-platform-sales">
-      <div class="panel-title row">
-        <span>CROSS-PLATFORM SALES — EVO · SG · SeatData · TP · Vivid · TD velocity</span>
-        <span class="muted small" id="crossSalesMeta"></span>
+      <div class="cross-src-sub">
+        <div class="cross-src-sub-hd">Listings / Price <span class="muted small">— TEvo · SG · SH · GT · VD</span></div>
+        <div id="crossSourceBody"><div class="empty">loading…</div></div>
       </div>
-      <div id="crossSalesBody"><div class="empty">loading…</div></div>
+      <div class="cross-src-sub">
+        <div class="cross-src-sub-hd">Sales / Velocity <span class="muted small">— EVO · SG · TP · Vivid · TD vel.</span> <span class="muted small" id="crossSalesMeta"></span></div>
+        <div id="crossSalesBody"><div class="empty">loading…</div></div>
+      </div>
     </section>
 
-    <!-- 2 fully independent chart sections (PR redesign 2026-05-18, v2).
-         Each owns its own range selector, legend, tooltip, and uPlot instance.
-         No cursor.sync — each chart is standalone. -->
-
-    <section id="chart-price" class="chart-section">
+    <!-- Composite CROSS-SOURCE chart (WP-3, 2026-05-29). Merges the former
+         #chart-price + #chart-inventory into one panel: ONE shared range
+         selector + a per-source master-toggle legend that hides/shows all of a
+         source's series across BOTH panes at once, plus a reserved overlay-layer
+         legend (ESPN live · Weather/Macro/Signals pending) per the layered-canvas
+         design (plan Part F). The two uPlot instances are kept (price on a $-axis,
+         inventory on count axes) so the very different magnitudes stay readable;
+         they share controls + time window. TD SH/GT/VD series already wired. -->
+    <section id="composite-chart" class="chart-section composite">
       <div class="chart-title">
-        <span>PRICE &amp; MEDIANS · <span id="chartPriceRangeLabel">7d</span></span>
+        <span>CROSS-SOURCE CHART · PRICE · INVENTORY · SALES · <span id="chartCompositeRangeLabel">7d</span></span>
         <div class="chart-controls">
-          <span class="legend" id="chartPriceLegend"></span>
+          <span class="source-toggles" id="chartSourceToggles" title="Click a source to toggle all of its series across both panes"></span>
           <span class="velocity-strip" id="velocityChips"></span>
           <label class="alerts-toggle" title="Show event alert markers on the chart">
             <input type="checkbox" id="chartPriceAlertsToggle" /> Alerts
           </label>
-          <select id="chartPriceRange" class="range-select" aria-label="Price chart range">
+          <select id="chartCompositeRange" class="range-select" aria-label="Chart time range">
             <option value="6">6h</option>
             <option value="24">24h</option>
             <option value="72">3d</option>
@@ -159,42 +168,52 @@
           </select>
         </div>
       </div>
-      <div id="chartHostPrice" class="chart-pane"></div>
-      <div id="chartPriceTooltip" class="chart-tooltip" hidden></div>
-    </section>
+      <div class="overlay-legend" id="chartOverlayLegend"></div>
 
-    <section id="chart-inventory" class="chart-section">
-      <div class="chart-title">
-        <span>INVENTORY &amp; SALES · <span id="chartInvRangeLabel">7d</span></span>
-        <div class="chart-controls">
+      <div class="composite-pane-block">
+        <div class="pane-label row">
+          <span>Price &amp; medians</span>
+          <span class="legend" id="chartPriceLegend"></span>
+        </div>
+        <div id="chartHostPrice" class="chart-pane"></div>
+        <div id="chartPriceTooltip" class="chart-tooltip" hidden></div>
+      </div>
+
+      <div class="composite-pane-block">
+        <div class="pane-label row">
+          <span>Inventory &amp; sales</span>
           <span class="legend" id="chartInvLegend"></span>
-          <select id="chartInvRange" class="range-select" aria-label="Inventory chart range">
-            <option value="6">6h</option>
-            <option value="24">24h</option>
-            <option value="72">3d</option>
-            <option value="168" selected>7d</option>
-            <option value="720">30d</option>
-            <option value="4320">ALL</option>
-          </select>
         </div>
+        <div id="chartHostInv" class="chart-pane"></div>
+        <div id="chartInvTooltip" class="chart-tooltip" hidden></div>
       </div>
-      <div id="chartHostInv" class="chart-pane"></div>
-      <div id="chartInvTooltip" class="chart-tooltip" hidden></div>
     </section>
 
+    <!-- BROKER SALES — by source (WP-5). Generalized from the former SG-only panel.
+         SG = market broker-sales aggregate (deepest live data, default). TP/Vivid =
+         OUR order book on that platform (v3 cross_source_orders) — only the tiles those
+         order objects support render. EVO* = pending a SECDEF RPC (A1-gated, WP-6). -->
     <section id="sg-broker-sales">
-      <div class="panel-title">SG BROKER SALES — AGGREGATE</div>
+      <div class="panel-title row">
+        <span>BROKER SALES — BY SOURCE</span>
+        <span class="broker-src-toggle" id="brokerSalesSrcToggle"></span>
+      </div>
       <div id="sgBrokerSalesBody"></div>
     </section>
 
     <section id="splits">
       <div class="panel-title">SPLITS — DENSITY · LAST 24H</div>
-      <div class="dual-src" id="splitsBody"></div>
+      <!-- WP-7: plain block — renderSplits() builds the TEvo|SG source-column grid
+           (.dual-src.cols-2) inside, then appends the omitted-sources footnote
+           full-width. TD dropped (no split-density backing). -->
+      <div id="splitsBody"></div>
     </section>
 
     <section id="zones">
       <div class="panel-title">ZONES — LATEST SNAPSHOT</div>
-      <div class="dual-src" id="zonesBody"></div>
+      <!-- WP-4: plain block — renderZones() builds the source-column grid inside
+           so the "omitted sources" note can sit full-width below the columns. -->
+      <div id="zonesBody"></div>
     </section>
 
     <section id="espn">
@@ -271,9 +290,9 @@
       </section>
     </div>
 
-    <!-- TD Listings — three sub-sections (SH · GT · VD), parallel load on first click -->
-    <div class="tab-pane" id="paneTdListings" role="tabpanel" hidden>
-
+    <!-- TD Listings split into 3 top-level per-source tabs (SH · GT · VD) — WP-1.
+         Each is its own .tab-pane (peer of SG/EVO Listings); lazy-loads on first activation. -->
+    <div class="tab-pane" id="paneShListings" role="tabpanel" hidden>
       <section id="td-listings-sh" class="td-platform-section td-sh-section">
         <div class="panel-title row">
           <span><span class="badge td-sh">SH</span> LISTINGS — StubHub (non-parking, last 7d)</span>
@@ -281,7 +300,9 @@
         </div>
         <div id="tdListingsShBody"><div class="empty">Click the tab to load.</div></div>
       </section>
+    </div>
 
+    <div class="tab-pane" id="paneGtListings" role="tabpanel" hidden>
       <section id="td-listings-gt" class="td-platform-section td-gt-section">
         <div class="panel-title row">
           <span><span class="badge td-gt">GT</span> LISTINGS — GameTime (non-parking, last 7d)</span>
@@ -289,7 +310,9 @@
         </div>
         <div id="tdListingsGtBody"><div class="empty">Click the tab to load.</div></div>
       </section>
+    </div>
 
+    <div class="tab-pane" id="paneVdListings" role="tabpanel" hidden>
       <section id="td-listings-vd" class="td-platform-section td-vd-section">
         <div class="panel-title row">
           <span><span class="badge td-vd">VD</span> LISTINGS — VividSeats (non-parking, last 7d)</span>
@@ -297,7 +320,6 @@
         </div>
         <div id="tdListingsVdBody"><div class="empty">Click the tab to load.</div></div>
       </section>
-
     </div>
 
     <div class="tab-pane" id="paneSgSales" role="tabpanel" hidden>

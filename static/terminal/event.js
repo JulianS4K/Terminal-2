@@ -15,10 +15,12 @@
   // TEvo history available even when their range selector is set to 30d.
   // Re-render cost is negligible; only the chart_data series array grows.
   const V3_LOAD_HOURS = 720;
-  // PR redesign 2026-05-18 v2: TWO fully independent chart sections.
-  //   #chart-price → 6 medians on $-axis + ESPN annotations
-  //   #chart-inventory → 3 qty lines (left axis) + SG sale BARS (right axis)
-  // Each section has its own range selector + state cache + tooltip. No cursor sync.
+  // Composite chart (WP-3, 2026-05-29): ONE #composite-chart section with two
+  // stacked panes that share a range selector + per-source master toggles:
+  //   price pane (#chartHostPrice) → medians on $-axis + ESPN annotations
+  //   inventory pane (#chartHostInv) → qty lines (left axis) + SG sale BARS (right)
+  // Two uPlot instances are kept so the $-axis and count axes stay readable;
+  // each pane keeps its own state cache + tooltip. No cursor sync.
   let _chartInstances = { price: null, inv: null };
   let _lastPayload = null;
   // Per-chart window (hours). Default 168h (7d) on first load.
@@ -67,8 +69,7 @@
       return;
     }
 
-    wireRangeSelectorPrice(eventId);
-    wireRangeSelectorInv(eventId);
+    wireRangeSelectorComposite(eventId);
     wireAlertsToggle();
     wireTabs(eventId);
     wireSalesWindow(eventId);
@@ -78,7 +79,6 @@
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
     loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
-    loadTdSplits(eventId).catch(e => console.error('[tdSplits]', e));
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
@@ -111,8 +111,7 @@
       // Two independent chart sections (PR redesign v2)
       safe('chartPrice',       () => renderChartPrice(chart, data.event_alerts));
       safe('chartInventory',   () => renderChartInventory(chart));
-      safe('chartLegendPrice', () => renderChartLegendPrice());
-      safe('chartLegendInv',   () => renderChartLegendInv());
+      safe('chartLegends',     () => refreshChartLegends());
       // Splits + Zones — TEvo side rendered now; SG side merged in by loadSgZonesSplits.
       // Splits + Zones: feed only the TEvo side here. The SG side lives in a
       // module-level cache populated by loadSgZonesSplits (parallel fetch);
@@ -127,7 +126,7 @@
       safe('freshness',  () => renderFreshness(data.freshness));
       safe('alerts',     () => renderAlerts(data.event_alerts));
       // v3 enrichments
-      safe('sgBrokerSales',    () => renderSgBrokerSales(data.sg_broker_sales));
+      safe('brokerSales',      () => setBrokerSalesData(data));
       safe('velocityChips',    () => renderVelocityChips(data.velocity));
       safe('competingEvents',  () => renderCompetingEvents(data.competing_events));
       safe('recentListings',   () => renderRecentListings(data.recent_listings));
@@ -147,30 +146,39 @@
     try { fn(); } catch (e) { console.error('[' + label + ']', e); }
   }
 
-  // Per-chart range selectors (PR redesign v2). Each only re-fetches its own
-  // extended payload + re-renders its own chart. v3 is NOT re-fetched — its
-  // payload was loaded at V3_LOAD_HOURS (720) which covers all default windows.
-  function wireRangeSelectorPrice(eventId) {
-    const sel = document.getElementById('chartPriceRange');
+  // Composite range selector (WP-3). ONE selector drives BOTH panes: it sets the
+  // shared window for price + inventory, re-renders both from cached v3 data
+  // immediately (new window clip), then re-fetches each pane's extended SG series
+  // for the new window (re-renders on arrival). v3 is NOT re-fetched — its payload
+  // was loaded at V3_LOAD_HOURS (720) which covers all default windows.
+  function wireRangeSelectorComposite(eventId) {
+    const sel = document.getElementById('chartCompositeRange');
     if (!sel) return;
     sel.addEventListener('change', async () => {
-      _chartPriceHours = parseInt(sel.value, 10) || DEFAULT_HOURS;
-      const lbl = document.getElementById('chartPriceRangeLabel');
-      if (lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
+      const hrs = parseInt(sel.value, 10) || DEFAULT_HOURS;
+      _chartPriceHours = hrs;
+      _chartInvHours   = hrs;
+      const lblTxt = sel.options[sel.selectedIndex].textContent;
+      const lbl = document.getElementById('chartCompositeRangeLabel');
+      if (lbl) lbl.textContent = lblTxt;
       const aw = document.getElementById('alertsWindow');
-      if (aw) aw.textContent = sel.options[sel.selectedIndex].textContent;
+      if (aw) aw.textContent = lblTxt;
       _chartExtStatePrice.payload = undefined;
-      // Re-render immediately with the new window clip (TEvo data from cached v3)
+      _chartExtStateInv.payload   = undefined;
+      // Re-render both panes immediately with the new window clip (cached v3 data)
       if (_lastPayload && _lastPayload.chart_data) {
         try {
           const chart = adaptChart(_lastPayload.chart_data);
           renderChartPrice(chart, _chartExtAlerts);
-          renderChartLegendPrice();
-        } catch (e) { console.error('[priceRangeRender]', e); }
+          renderChartInventory(chart);
+          refreshChartLegends();
+        } catch (e) { console.error('[compositeRangeRender]', e); }
       }
-      // Then fetch fresh SG series for the new window — re-renders on arrival
+      // Then fetch fresh SG series for the new window — each re-renders on arrival
       loadChartExtended('price', eventId, _chartPriceHours)
         .catch(e => console.error('[chartExt price]', e));
+      loadChartExtended('inv', eventId, _chartInvHours)
+        .catch(e => console.error('[chartExt inv]', e));
     });
   }
 
@@ -183,26 +191,6 @@
       try { localStorage.setItem(_ALERTS_LS_KEY, _showAlerts ? '1' : '0'); } catch (_) {}
       const inst = _chartInstances.price;
       if (inst && typeof inst.redraw === 'function') inst.redraw(false, true);
-    });
-  }
-
-  function wireRangeSelectorInv(eventId) {
-    const sel = document.getElementById('chartInvRange');
-    if (!sel) return;
-    sel.addEventListener('change', async () => {
-      _chartInvHours = parseInt(sel.value, 10) || DEFAULT_HOURS;
-      const lbl = document.getElementById('chartInvRangeLabel');
-      if (lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
-      _chartExtStateInv.payload = undefined;
-      if (_lastPayload && _lastPayload.chart_data) {
-        try {
-          const chart = adaptChart(_lastPayload.chart_data);
-          renderChartInventory(chart);
-          renderChartLegendInv();
-        } catch (e) { console.error('[invRangeRender]', e); }
-      }
-      loadChartExtended('inv', eventId, _chartInvHours)
-        .catch(e => console.error('[chartExt inv]', e));
     });
   }
 
@@ -824,11 +812,12 @@
   // Per-chart tooltip — reads value at cursor idx from that chart's build cache
   // and renders a compact floating table inside that chart's section.
   function updateChartTooltipFor(chartKey, srcInstance) {
-    const sectionId = chartKey === 'price' ? 'chart-price' : 'chart-inventory';
     const tipId     = chartKey === 'price' ? 'chartPriceTooltip' : 'chartInvTooltip';
     const build     = chartKey === 'price' ? _chartLastBuildPrice : _chartLastBuildInv;
     const tip       = document.getElementById(tipId);
-    const section   = document.getElementById(sectionId);
+    // Anchor to this pane's own block (composite layout, WP-3) so the tooltip
+    // stays aligned to the pane the cursor is over.
+    const section   = tip ? tip.closest('.composite-pane-block') : null;
     if (!tip || !section || !build || !srcInstance || !srcInstance.cursor) return;
     const idx = srcInstance.cursor.idx;
     if (idx == null || idx < 0 || idx >= build.xs.length) {
@@ -866,7 +855,9 @@
     const maxLeft = sectionRect.width - tipWidth - 8;
     const desiredLeft = px + 12;
     tip.style.left = Math.max(8, Math.min(desiredLeft, maxLeft)) + 'px';
-    tip.style.top  = '36px';
+    // Float just below this pane's label (composite layout, WP-3).
+    const lbl = section.querySelector('.pane-label');
+    tip.style.top  = ((lbl ? lbl.offsetHeight : 0) + 6) + 'px';
   }
 
   function drawAlertsMarkers(u, alerts) {
@@ -1027,12 +1018,112 @@
           const idx = build.specs.findIndex(s => s.key === key);
           if (idx >= 0) instance.setSeries(idx + 1 /* +1 for time series */, { show: !cur });
         }
-        renderChartLegendFor(chartKey); // refresh opacity
+        renderChartLegendFor(chartKey);   // refresh this legend's opacity
+        renderChartSourceToggles();        // keep source master toggles in sync
       });
     });
   }
   function renderChartLegendPrice() { renderChartLegendFor('price'); }
   function renderChartLegendInv()   { renderChartLegendFor('inv');   }
+
+  // ---------- Composite chart: per-source master toggles + overlay slots (WP-3) ----------
+  // Each source groups its price-pane + inventory-pane series under one swatch.
+  // Clicking a source chip hides/shows ALL of that source's series across BOTH
+  // panes at once — a coarse control above the existing per-series legends.
+  const CHART_SOURCE_GROUPS = [
+    { src: 'TEvo', color: '#fbbf24', keys: ['prices_owned', 'prices_market', 'prices_nonowned', 'counts_owned', 'counts_market'] },
+    { src: 'SG',   color: '#22d3ee', keys: ['sg_list_med', 'sg_own_med', 'sg_sale_med', 'sg_list_ct', 'sg_sale_ct'] },
+    { src: 'SH',   color: '#f97316', keys: ['td_sh_med', 'td-sh-cnt'] },
+    { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
+    { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
+  ];
+
+  // Which series keys currently carry real data (scanning both build caches).
+  // Used so the source toggles omit a source with no chart series (D3 honesty).
+  function chartKeysWithData() {
+    const present = new Set();
+    [_chartLastBuildPrice, _chartLastBuildInv].forEach(b => {
+      if (b && b.specs) b.specs.forEach(s => {
+        const has = (s.data && s.data.length) ||
+                    (s.projected && s.projected.some(v => v != null));
+        if (has) present.add(s.key);
+      });
+    });
+    return present;
+  }
+
+  // Toggle one series' visibility on whichever pane owns it (price or inv).
+  function setSeriesVisible(key, show) {
+    _chartVisible.set(key, show);
+    const tryPane = (build, inst) => {
+      if (!build || !build.specs || !inst) return false;
+      const i = build.specs.findIndex(s => s.key === key);
+      if (i < 0) return false;
+      inst.setSeries(i + 1 /* +1 for time series */, { show });
+      return true;
+    };
+    if (tryPane(_chartLastBuildPrice, _chartInstances.price)) return;
+    tryPane(_chartLastBuildInv, _chartInstances.inv);
+  }
+
+  function renderChartSourceToggles() {
+    const el = document.getElementById('chartSourceToggles');
+    if (!el) return;
+    const present = chartKeysWithData();
+    const chips = CHART_SOURCE_GROUPS.map(g => {
+      const keys = g.keys.filter(k => present.has(k));
+      if (!keys.length) return ''; // omit sources with no chart series (D3)
+      const anyOn = keys.some(k => _chartVisible.get(k) !== false);
+      return `<span class="source-toggle" data-src="${escapeHtml(g.src)}" ` +
+             `style="opacity:${anyOn ? '1' : '0.3'}" title="Toggle all ${escapeHtml(g.src)} series">` +
+             `<i style="background:${g.color}"></i>${escapeHtml(g.src)}</span>`;
+    }).filter(Boolean).join('');
+    el.innerHTML = chips || '<span class="muted small">no chart series yet</span>';
+    el.querySelectorAll('.source-toggle').forEach(node => {
+      node.addEventListener('click', () => {
+        const g = CHART_SOURCE_GROUPS.find(x => x.src === node.getAttribute('data-src'));
+        if (!g) return;
+        const presentNow = chartKeysWithData();
+        const keys = g.keys.filter(k => presentNow.has(k));
+        if (!keys.length) return;
+        const next = !keys.some(k => _chartVisible.get(k) !== false); // any on → all off; else all on
+        keys.forEach(k => setSeriesVisible(k, next));
+        refreshChartLegends();
+      });
+    });
+  }
+
+  // Reserved overlay-layer legend (plan Part F layered-canvas). ESPN markers are
+  // already drawn on the price pane via canvas hooks; Weather/Macro/Signals are
+  // reserved slots later phases drop into. Honest status: ● live vs ○ pending —
+  // never a fake "live" for an unwired layer.
+  function renderChartOverlayLegend() {
+    const el = document.getElementById('chartOverlayLegend');
+    if (!el) return;
+    const ext = _chartExtStatePrice.payload || null;
+    const ann = ext && ext.annotations;
+    const hasEspn = !!(ann && (
+      (ann.injuries && ann.injuries.length) ||
+      (ann.game_state && ann.game_state.length)));
+    const slots = [
+      { label: 'ESPN',    live: hasEspn, hint: hasEspn ? 'injury / game-state markers on price pane' : 'no ESPN markers for this event' },
+      { label: 'Weather', live: false,   hint: 'reserved — NWS alert windows (pending)' },
+      { label: 'Macro',   live: false,   hint: 'reserved — UMCSENT background band (pending)' },
+      { label: 'Signals', live: false,   hint: 'reserved — movers / gap markers (pending)' },
+    ];
+    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s =>
+      `<span class="overlay-chip ${s.live ? 'live' : 'pending'}" title="${escapeHtml(s.hint)}">` +
+      `${escapeHtml(s.label)} ${s.live ? '●' : '○'}</span>`).join('');
+  }
+
+  // Refresh every chart legend surface at once — the two detailed per-series
+  // legends plus the per-source master toggles and the overlay-slot legend.
+  function refreshChartLegends() {
+    renderChartLegendPrice();
+    renderChartLegendInv();
+    renderChartSourceToggles();
+    renderChartOverlayLegend();
+  }
 
   // ---------- Splits ----------
 
@@ -1040,12 +1131,11 @@
   // sources (v3 fetchPayload for TEvo + get_event_sg_zones_splits for SG)
   // can update independently without clobbering each other on re-render.
   // Each setter writes its side then triggers a unified render reading both.
-  const _splitsState = { tevo: undefined, sg: undefined, td: undefined };
+  const _splitsState = { tevo: undefined, sg: undefined };
   const _zonesState  = { tevo: undefined, deltas: undefined, sg: undefined };
 
   function setSplitsTevo(splits)   { _splitsState.tevo = splits; renderSplits(); }
   function setSplitsSg(sgSplits)   { _splitsState.sg   = sgSplits; renderSplits(); }
-  function setSplitsTd(tdSplits)   { _splitsState.td   = tdSplits; renderSplits(); }
   function setZonesTevo(zones, deltas) {
     _zonesState.tevo = zones; _zonesState.deltas = deltas; renderZones();
   }
@@ -1053,10 +1143,16 @@
 
   // Renders TEvo splits + SG splits + TD splits side-by-side from the module state cache.
   // Any side may still be `undefined` (loading) when this fires.
+  // WP-7: split DENSITY (lot format — singles/pairs/…) has real backing only for
+  // TEvo (v3 `splits`) and SG (get_event_sg_zones_splits, already wired). EVO /
+  // SeatData / TP / Vivid / TD have NO split-density source → omitted (D3), with a
+  // footnote naming them (never a fake/empty column). Mirrors the WP-4 zones layout.
   function renderSplits() {
     const body = document.getElementById('splitsBody');
     if (!body) return;
     body.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'dual-src cols-2';
     const left = document.createElement('div');
     left.className = 'dual-src-col';
     left.innerHTML = '<div class="dual-src-hdr">TEvo</div>';
@@ -1065,13 +1161,13 @@
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG</div>';
     right.appendChild(buildSgSplitsTable(_splitsState.sg));
-    const tdCol = document.createElement('div');
-    tdCol.className = 'dual-src-col';
-    tdCol.innerHTML = '<div class="dual-src-hdr">TD (SH · GT · VD)</div>';
-    tdCol.appendChild(buildTdSplitsTable(_splitsState.td));
-    body.appendChild(left);
-    body.appendChild(right);
-    body.appendChild(tdCol);
+    grid.appendChild(left);
+    grid.appendChild(right);
+    body.appendChild(grid);
+    const note = document.createElement('div');
+    note.className = 'cross-src-note muted small';
+    note.textContent = 'EVO · SeatData · TP · Vivid · TD — no split-density backing (omitted)';
+    body.appendChild(note);
   }
 
   function buildTevoSplitsTable(splits) {
@@ -1152,39 +1248,6 @@
     return wrap;
   }
 
-  // TD splits: array of {platform, section, listing_count, min_price, median_price}
-  function buildTdSplitsTable(tdSplits) {
-    const wrap = document.createElement('div');
-    if (tdSplits === undefined) { wrap.innerHTML = '<div class="empty">loading TD…</div>'; return wrap; }
-    if (!tdSplits || !tdSplits.length) {
-      wrap.innerHTML = '<div class="empty">no TD listings in last 24h</div>'; return wrap;
-    }
-    const tbl = document.createElement('table');
-    tbl.className = 'splits-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Platform</th>
-        <th>Section</th>
-        <th class="num">Listings</th>
-        <th class="num">Min $</th>
-        <th class="num">Median $</th>
-      </tr></thead><tbody></tbody>`;
-    const tb = tbl.querySelector('tbody');
-    tdSplits.slice(0, 50).forEach(r => {
-      const tr = document.createElement('tr');
-      const platCls = r.platform === 'SH' ? 'td-sh' : r.platform === 'GT' ? 'td-gt' : r.platform === 'VD' ? 'td-vd' : '';
-      tr.innerHTML = `
-        <td><span class="badge ${platCls}">${escapeHtml(r.platform)}</span></td>
-        <td>${escapeHtml(r.section || '—')}</td>
-        <td class="num">${T.fmtNum(r.listing_count)}</td>
-        <td class="num">${r.min_price    != null ? '$' + T.fmtNum(Math.round(r.min_price))    : '—'}</td>
-        <td class="num">${r.median_price != null ? '$' + T.fmtNum(Math.round(r.median_price)) : '—'}</td>`;
-      tb.appendChild(tr);
-    });
-    wrap.appendChild(tbl);
-    return wrap;
-  }
-
   function labelForBucket(b) {
     return { singles: 'singles (1)', pairs: 'pairs (2)', triples: 'triples (3)',
              quads: 'quads (4)', five_plus: '5+ pack' }[b] || b;
@@ -1204,6 +1267,12 @@
     const body = document.getElementById('zonesBody');
     if (!body) return;
     body.innerHTML = '';
+    // Side-by-side source columns — only sources with real zone-price backing
+    // render (D3). EVO/TEvo (broker_event_zones + zone_deltas) and SG
+    // (get_event_sg_zones_splits) are both live. SeatData/TP/Vivid/TD have no
+    // zone-price backing → omitted (noted below), never shown as empty columns.
+    const grid = document.createElement('div');
+    grid.className = 'dual-src cols-2';
     const left = document.createElement('div');
     left.className = 'dual-src-col';
     left.innerHTML = '<div class="dual-src-hdr">TEvo (zones)</div>';
@@ -1212,13 +1281,13 @@
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG (sections)</div>';
     right.appendChild(buildSgZonesTable(_zonesState.sg));
-    const tdCol = document.createElement('div');
-    tdCol.className = 'dual-src-col';
-    tdCol.innerHTML = '<div class="dual-src-hdr">TD (sections)</div>' +
-      '<div class="empty muted small" style="padding:8px">TD section-level data available in TD Listings tab<br>Zone xref mapping pending</div>';
-    body.appendChild(left);
-    body.appendChild(right);
-    body.appendChild(tdCol);
+    grid.appendChild(left);
+    grid.appendChild(right);
+    body.appendChild(grid);
+    const note = document.createElement('div');
+    note.className = 'cross-src-note muted small';
+    note.textContent = 'SeatData · TP · Vivid · TD — no zone-price backing (omitted)';
+    body.appendChild(note);
   }
 
   function buildTevoZonesTable(zones, deltas) {
@@ -1742,7 +1811,7 @@
     // Used for: (a) fr-chips freshness, (b) data-freshness table, (c) price chart TD overlay
     const { data: rows, error } = await Auth.client
       .from('event_listing_snapshot_daily')
-      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_combined_median')
       .eq('event_id', eventId)
       .order('snapshot_date', { ascending: false })
       .order('snapshot_slot', { ascending: false })
@@ -1803,10 +1872,10 @@
           const chart = adaptChart(_lastPayload.chart_data);
           // Re-render price chart with TD median overlay
           renderChartPrice(chart, _chartExtAlerts);
-          renderChartLegendPrice();
           // Re-render inventory chart with TD listing-count overlay
           renderChartInventory(chart);
-          renderChartLegendInv();
+          // TD sources are now present — refresh legends + source toggles
+          refreshChartLegends();
         } catch (e) { console.error('[td-chart-overlay]', e); }
       }
     }
@@ -1817,6 +1886,10 @@
         renderLastSnapshot(adaptChart(_lastPayload.chart_data));
       } catch (e) { console.error('[td-snap-rerender]', e); }
     }
+    // Re-render the unified CROSS-SOURCE table so its TD per-source columns
+    // (SH/GT/VD) paint now that _lastTdSnap is cached (WP-2). No new
+    // fetch — feeds the cached daily snapshot into the Listings/Price section.
+    try { rerenderCrossSource(); } catch (e) { console.error('[td-crosssource-rerender]', e); }
   }
 
   function renderDataFreshness(tdSnap, tdTs) {
@@ -1971,31 +2044,186 @@
   // v3 enrichment renderers (PR pending; v3 RPC adds 6 new panels)
   // ============================================================
 
-  // ---------- SG broker sales aggregate ----------
-  function renderSgBrokerSales(s) {
+  // ---------- Broker sales — by source (WP-5 + WP-6) ----------
+  // Generalizes the former SG-only renderSgBrokerSales into a source-toggle panel.
+  //   SG     = market broker-sales aggregate (v3 sg_broker_sales) — deepest live data,
+  //            default source. Renders the original 8 KPI tiles unchanged.
+  //   EVO    = OUR realized sales on the TEvo exchange (~99% seller=S4K). Aggregated
+  //            CLIENT-SIDE from the v3 payload's data.orders {items, orders} — the same
+  //            evo_orders ⨯ evo_order_items the All-Orders table already uses. No new
+  //            RPC/fetch: get_event_evo_orders_full (mig 20260517220000) + the v3 page
+  //            payload already expose this (WP-6 investigation; bot_chat 866). Only the
+  //            accepted/completed states count as realized (matches adaptOrders).
+  //   TP/Vivid = OUR order book on that platform (v3 cross_source_orders.{tickpick,vivid}).
+  //            Shallower: only the tiles those order objects support render (D3 — omit
+  //            tiles they lack, never fake zeros). Distinct labels (ORDERS/NOTIONAL) +
+  //            a footnote keep the semantics honest (our orders ≠ market-wide sold).
+  //   SeatData / TD = omitted (no orders backing) per W6.
+  let _brokerSalesData = { sg: null, evo: null, tp: [], vivid: [] };
+  let _brokerSalesSource = 'sg';
+
+  function setBrokerSalesData(data) {
+    const cso = data.cross_source_orders || {};
+    _brokerSalesData = {
+      sg:    data.sg_broker_sales || null,
+      evo:   aggregateEvoBrokerSales(data.orders), // client-side from v3 payload (WP-6)
+      tp:    Array.isArray(cso.tickpick) ? cso.tickpick : [],
+      vivid: Array.isArray(cso.vivid)    ? cso.vivid    : [],
+    };
+    // Default to SG (deepest live data); if SG is empty but a peer has data, fall back.
+    const live = brokerLiveSources();
+    if (!live.includes(_brokerSalesSource)) _brokerSalesSource = live[0] || 'sg';
+    renderBrokerSales(_brokerSalesSource);
+  }
+
+  // EVO realized-sales KPIs aggregated from the v3 data.orders payload (evo_orders ⨯
+  // evo_order_items). Returns an object shaped like sg_broker_sales (so the SG tile
+  // strip renders it) or null when the event has no accepted/completed EVO orders.
+  function aggregateEvoBrokerSales(ordersPayload) {
+    const items   = (ordersPayload && ordersPayload.items)  || [];
+    const ordList = (ordersPayload && ordersPayload.orders) || [];
+    if (!items.length) return null;
+    const ordById = new Map(ordList.map(o => [o.evo_order_id, o]));
+    const SOLD = new Set(['accepted', 'completed']); // realized — matches adaptOrders
+    let tix = 0, gross = 0, latest = null;
+    const px = [], sections = new Set(), orderIds = new Set();
+    items.forEach(it => {
+      const o = ordById.get(it.evo_order_id) || {};
+      if (!SOLD.has(o.state)) return;
+      const q = it.quantity != null ? Number(it.quantity) : null;
+      const p = it.price    != null ? Number(it.price)    : null;
+      orderIds.add(it.evo_order_id);
+      if (q != null && !isNaN(q)) tix += q;
+      if (p != null && q != null && !isNaN(p) && !isNaN(q)) gross += p * q;
+      if (p != null && !isNaN(p)) px.push(p);
+      const sec = it.ticket_group_section || it.section;
+      if (sec != null && String(sec).trim() !== '') sections.add(String(sec).trim());
+      const ts = o.evo_created_at || o.evo_updated_at || it.pulled_at;
+      const tms = ts ? new Date(ts).getTime() : NaN;
+      if (!isNaN(tms) && (latest == null || tms > latest)) latest = tms;
+    });
+    if (!orderIds.size) return null;
+    px.sort((a, b) => a - b);
+    return {
+      sales_count:       orderIds.size,
+      tickets_sold:      tix,
+      gross_estimate:    gross,
+      min_sale_price:    px.length ? px[0] : null,
+      median_sale_price: px.length ? px[Math.floor((px.length - 1) / 2)] : null,
+      max_sale_price:    px.length ? px[px.length - 1] : null,
+      distinct_sections: sections.size,
+      latest_sale_at:    latest != null ? new Date(latest).toISOString() : null,
+    };
+  }
+
+  // Which LIVE sources actually have data for this event (D3 — drives which toggles show).
+  function brokerLiveSources() {
+    const d = _brokerSalesData;
+    const out = [];
+    const sgHas = d.sg && !d.sg.hidden &&
+      (d.sg.sales_count != null || d.sg.gross_estimate != null || d.sg.tickets_sold != null);
+    if (sgHas)               out.push('sg');
+    if (d.evo)               out.push('evo');
+    if (d.tp && d.tp.length) out.push('tp');
+    if (d.vivid && d.vivid.length) out.push('vivid');
+    return out;
+  }
+
+  function renderBrokerSales(source) {
     const section = document.getElementById('sg-broker-sales');
     const body = document.getElementById('sgBrokerSalesBody');
+    const toggleHost = document.getElementById('brokerSalesSrcToggle');
     if (!body) return;
-    if (!s || s.hidden) {
+    const live = brokerLiveSources();
+    // No live broker-sales data at all → hide the panel (preserves prior behavior).
+    if (!live.length) {
       if (section) section.style.display = 'none';
       return;
     }
     if (section) section.style.display = '';
+    if (!live.includes(source)) source = live[0];
+    _brokerSalesSource = source;
+
+    // ---- source-toggle row (only live sources; D3 — no fake/pending columns) ----
+    if (toggleHost) {
+      const LBL = { sg: 'SG', evo: 'EVO', tp: 'TP', vivid: 'Vivid' };
+      toggleHost.innerHTML = live.map(k =>
+        `<button type="button" class="broker-src-btn${k === source ? ' active' : ''}" data-bsrc="${k}">${LBL[k]}</button>`
+      ).join('');
+      toggleHost.querySelectorAll('.broker-src-btn').forEach(b =>
+        b.addEventListener('click', () => renderBrokerSales(b.dataset.bsrc))
+      );
+    }
+
+    // ---- body ----
+    if (source === 'sg') {
+      body.innerHTML = brokerKpiStripSg(_brokerSalesData.sg) +
+        '<div class="cross-src-note muted small">SG = market broker-sales aggregate (all sellers, inferred from metrics)</div>';
+      return;
+    }
+    if (source === 'evo') {
+      // EVO aggregate shares the sg_broker_sales key shape → reuse the SG tile strip.
+      body.innerHTML = brokerKpiStripSg(_brokerSalesData.evo) +
+        '<div class="cross-src-note muted small">EVO = our realized sales on the TEvo exchange (accepted + completed orders; ~99% seller=S4K — our sell-through, not market-wide)</div>';
+      return;
+    }
+    const arr = source === 'tp' ? _brokerSalesData.tp : _brokerSalesData.vivid;
+    body.innerHTML = brokerKpiStripOrders(arr) +
+      `<div class="cross-src-note muted small">${source === 'tp' ? 'TP' : 'Vivid'} = our order book on this platform (our orders, not market-wide sold)</div>`;
+  }
+
+  function brokerTile(lbl, val, small) {
+    return `<div class="kpi-strip-cell"><span class="kpi-lbl">${lbl}</span><span class="kpi-val${small ? ' small' : ''}">${val}</span></div>`;
+  }
+
+  // SG market aggregate → the original 8-tile strip (tiles unchanged).
+  function brokerKpiStripSg(s) {
+    if (!s) return '<div class="empty">no SG broker-sales data</div>';
     const gmv = Number(s.gross_estimate) || 0;
     const tix = Number(s.tickets_sold) || 0;
     const sales = Number(s.sales_count) || 0;
-    const avgPx = sales ? Math.round(gmv / Math.max(tix, 1)) : null;
-    body.innerHTML = `
-      <div class="kpi-strip">
-        <div class="kpi-strip-cell"><span class="kpi-lbl">SALES</span><span class="kpi-val">${T.fmtNum(sales)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">TIX SOLD</span><span class="kpi-val">${T.fmtNum(tix)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">EST GMV</span><span class="kpi-val">$${T.fmtNum(Math.round(gmv))}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MIN</span><span class="kpi-val">${s.min_sale_price != null ? '$' + T.fmtNum(Math.round(s.min_sale_price)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MEDIAN</span><span class="kpi-val">${s.median_sale_price != null ? '$' + T.fmtNum(Math.round(s.median_sale_price)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MAX</span><span class="kpi-val">${s.max_sale_price != null ? '$' + T.fmtNum(Math.round(s.max_sale_price)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">SECTIONS</span><span class="kpi-val">${T.fmtNum(s.distinct_sections)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">LATEST</span><span class="kpi-val small">${T.fmtDate(s.latest_sale_at)}</span></div>
-      </div>`;
+    const money = v => (v != null ? '$' + T.fmtNum(Math.round(v)) : '—');
+    return '<div class="kpi-strip">' + [
+      brokerTile('SALES', T.fmtNum(sales)),
+      brokerTile('TIX SOLD', T.fmtNum(tix)),
+      brokerTile('EST GMV', '$' + T.fmtNum(Math.round(gmv))),
+      brokerTile('MIN', money(s.min_sale_price)),
+      brokerTile('MEDIAN', money(s.median_sale_price)),
+      brokerTile('MAX', money(s.max_sale_price)),
+      brokerTile('SECTIONS', T.fmtNum(s.distinct_sections)),
+      brokerTile('LATEST', T.fmtDate(s.latest_sale_at), true),
+    ].join('') + '</div>';
+  }
+
+  // TP/Vivid order array → only the tiles the order objects support (D3: omit lacking).
+  function brokerKpiStripOrders(arr) {
+    if (!arr || !arr.length) return '<div class="empty">no orders on this platform for this event</div>';
+    let tix = 0, tixSeen = false, gmv = 0, gmvSeen = false, latest = null;
+    const pxPer = [];
+    const sections = new Set();
+    arr.forEach(o => {
+      const q = o.quantity != null ? Number(o.quantity) : null;
+      const t = o.total != null ? Number(o.total) : null;
+      if (q != null && !isNaN(q)) { tix += q; tixSeen = true; }
+      if (t != null && !isNaN(t)) { gmv += t; gmvSeen = true; }
+      if (t != null && q != null && q > 0 && !isNaN(t) && !isNaN(q)) pxPer.push(t / q);
+      if (o.section != null && String(o.section).trim() !== '') sections.add(String(o.section).trim());
+      const ts = o.ordered_at ? new Date(o.ordered_at).getTime() : NaN;
+      if (!isNaN(ts) && (latest == null || ts > latest)) latest = ts;
+    });
+    pxPer.sort((a, b) => a - b);
+    const median = pxPer.length ? pxPer[Math.floor((pxPer.length - 1) / 2)] : null;
+    const cells = [brokerTile('ORDERS', T.fmtNum(arr.length))];
+    if (tixSeen) cells.push(brokerTile('TIX', T.fmtNum(tix)));
+    if (gmvSeen) cells.push(brokerTile('NOTIONAL', '$' + T.fmtNum(Math.round(gmv))));
+    if (pxPer.length) {
+      cells.push(brokerTile('MIN', '$' + T.fmtNum(Math.round(pxPer[0]))));
+      cells.push(brokerTile('MEDIAN', '$' + T.fmtNum(Math.round(median))));
+      cells.push(brokerTile('MAX', '$' + T.fmtNum(Math.round(pxPer[pxPer.length - 1]))));
+    }
+    if (sections.size) cells.push(brokerTile('SECTIONS', T.fmtNum(sections.size)));
+    if (latest != null) cells.push(brokerTile('LATEST', T.fmtDate(new Date(latest).toISOString()), true));
+    return '<div class="kpi-strip">' + cells.join('') + '</div>';
   }
 
   // (renderSgListingsSummary removed — deprecated cost_* fields per operator
@@ -2161,7 +2389,8 @@
   // Tab navigation + lazy-load (Phase 2a Tabs — mig 20260517180000)
   // ============================================================
   const _tabState = { loaded: {
-    'sg-listings': false, 'evo-listings': false, 'td-listings': false,
+    'sg-listings': false, 'evo-listings': false,
+    'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'sg-sales': false, 'our-orders': false,
   } };
 
@@ -2177,13 +2406,17 @@
         await loadSgListingsFull(eventId);
       } else if (tabId === 'evo-listings' && !_tabState.loaded['evo-listings']) {
         await loadEvoListingsFull(eventId);
-      } else if (tabId === 'td-listings' && !_tabState.loaded['td-listings']) {
-        _tabState.loaded['td-listings'] = true;
-        await Promise.all([
-          loadTdPlatformListings(eventId, 'SH'),
-          loadTdPlatformListings(eventId, 'GT'),
-          loadTdPlatformListings(eventId, 'VD'),
-        ]);
+      } else if (tabId === 'sh-listings' && !_tabState.loaded['sh-listings']) {
+        _tabState.loaded['sh-listings'] = true;
+        await loadTdPlatformListings(eventId, 'SH');
+        updateTdListingsTabCount();
+      } else if (tabId === 'gt-listings' && !_tabState.loaded['gt-listings']) {
+        _tabState.loaded['gt-listings'] = true;
+        await loadTdPlatformListings(eventId, 'GT');
+        updateTdListingsTabCount();
+      } else if (tabId === 'vd-listings' && !_tabState.loaded['vd-listings']) {
+        _tabState.loaded['vd-listings'] = true;
+        await loadTdPlatformListings(eventId, 'VD');
         updateTdListingsTabCount();
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
@@ -2213,7 +2446,9 @@
       'overview':     'paneOverview',
       'sg-listings':  'paneSgListings',
       'evo-listings': 'paneEvoListings',
-      'td-listings':  'paneTdListings',
+      'sh-listings':  'paneShListings',
+      'gt-listings':  'paneGtListings',
+      'vd-listings':  'paneVdListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
       'our-orders':   'paneOurOrders',
@@ -2421,9 +2656,11 @@
   // keeps only rows within 15 minutes of max(captured_at) for that platform — timing-agnostic
   // so both the 03:00 UTC and 16:20 UTC SH batches work correctly regardless of query time.
   async function loadTdPlatformListings(eventId, platform) {
-    const platLower = platform.toLowerCase();
-    const body = document.getElementById('tdListings' + platform + 'Body');
-    const meta = document.getElementById('tdListings' + platform + 'Meta');
+    // DB stores platform uppercase (SH/GT/VD) — used for the .eq('platform', …) filter.
+    // DOM IDs are title-case (tdListingsShBody / …ShMeta), so derive a title-case key.
+    const platTitle = platform.charAt(0) + platform.slice(1).toLowerCase();
+    const body = document.getElementById('tdListings' + platTitle + 'Body');
+    const meta = document.getElementById('tdListings' + platTitle + 'Meta');
     if (body) body.innerHTML = '<div class="empty">Loading ' + escapeHtml(platform) + ' listings…</div>';
     if (meta) meta.textContent = 'loading…';
     const Auth = window.TerminalAuth;
@@ -2496,74 +2733,21 @@
     if (body) { body.innerHTML = ''; body.appendChild(host); }
   }
 
+  // Per-source row-count chips for the 3 top-level TD tabs (SH/GT/VD). Reads the
+  // count each loadTdPlatformListings() writes into its section meta ("<n> rows · …").
+  // Idempotent: updates all three chips on every call.
   function updateTdListingsTabCount() {
-    const chip = document.getElementById('tabCountTdListings');
-    if (!chip) return;
-    // Sum visible row counts from all three sub-section metas
-    let total = 0;
-    for (const plat of ['SH', 'GT', 'VD']) {
+    for (const plat of ['Sh', 'Gt', 'Vd']) {
+      const chip = document.getElementById('tabCount' + plat + 'Listings');
+      if (!chip) continue;
       const meta = document.getElementById('tdListings' + plat + 'Meta');
+      let n = 0;
       if (meta) {
         const m = meta.textContent.match(/^(\d+)\s+rows/);
-        if (m) total += parseInt(m[1], 10);
+        if (m) n = parseInt(m[1], 10);
       }
+      chip.textContent = n ? String(n) : '';
     }
-    chip.textContent = total ? String(total) : '';
-  }
-
-  // ---------- TD Splits (latest batch per platform, grouped by platform + section) ----------
-  // Uses 26h window ordered newest-first to capture the most-recent collection run, then
-  // filters client-side to rows within 15 min of max(captured_at) per platform. This is
-  // timing-agnostic: SH 03:00 UTC or 16:20 UTC batches are both handled correctly.
-  async function loadTdSplits(eventId) {
-    const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client) return;
-    setSplitsTd(undefined); // show loading
-    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
-    const { data, error } = await Auth.client
-      .from('ticketsdata_listings_snapshots')
-      .select('platform,section,list_price,captured_at')
-      .eq('event_id', eventId)
-      .eq('is_parking', false)
-      .gte('captured_at', since26)
-      .order('captured_at', { ascending: false })
-      .limit(3000);
-    if (error) { setSplitsTd(null); return; }
-    const allRows = data || [];
-    if (!allRows.length) { setSplitsTd(null); return; }
-    // Latest-batch filter: keep only rows within 15 min of max(captured_at) per platform.
-    const maxAtByPlatform = {};
-    for (const r of allRows) {
-      if (!maxAtByPlatform[r.platform] || r.captured_at > maxAtByPlatform[r.platform]) {
-        maxAtByPlatform[r.platform] = r.captured_at;
-      }
-    }
-    const rows = allRows.filter(r => {
-      const maxAt = maxAtByPlatform[r.platform];
-      return maxAt && (new Date(maxAt) - new Date(r.captured_at)) < 15 * 60 * 1000;
-    });
-    if (!rows.length) { setSplitsTd(null); return; }
-    // Group by platform + section
-    const groups = new Map();
-    for (const r of rows) {
-      const k = (r.platform || '') + '|||' + (r.section || '');
-      if (!groups.has(k)) groups.set(k, { platform: r.platform || '?', section: r.section || '', prices: [] });
-      const p = +r.list_price;
-      if (isFinite(p) && p > 0) groups.get(k).prices.push(p);
-    }
-    const result = [...groups.values()].map(g => {
-      const ps = g.prices.sort((a, b) => a - b);
-      return {
-        platform:     g.platform,
-        section:      g.section,
-        listing_count: ps.length,
-        min_price:    ps.length ? ps[0] : null,
-        median_price: ps.length ? ps[Math.floor(ps.length / 2)] : null,
-      };
-    }).sort((a, b) =>
-      a.platform.localeCompare(b.platform) || b.listing_count - a.listing_count
-    );
-    setSplitsTd(result);
   }
 
   // ---------- Cross-Platform Sales panel (Overview tab) ----------
@@ -2578,15 +2762,13 @@
       return;
     }
     // Fire 4 queries in parallel
-    const [evoRes, sgRes, tdSnapRes, xbRes] = await Promise.all([
-      // EVO: latest event_metrics row (sold_quantity, sold_gross, sold_price_median, owned_tickets_count)
-      Auth.client
-        .from('event_metrics')
-        .select('sold_quantity,sold_gross,sold_price_median,owned_tickets_count,tickets_count,captured_at')
-        .eq('event_id', eventId)
-        .order('captured_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+    const [evoFullRes, sgRes, tdSnapRes, xbRes] = await Promise.all([
+      // EVO: realized sales aggregated from OUR TEvo orders (evo_orders ⨯ items).
+      // event_metrics has NO sold_* columns — EVO sales velocity lives only in the
+      // walled evo_orders, surfaced via this existing SECDEF RPC (WP-6; bot_chat 866).
+      // (The prior event_metrics.sold_* query referenced columns that never existed,
+      //  so the EVO sales column silently never rendered — this fixes that.)
+      rpcOrNull('get_event_evo_orders_full', { p_event_id: eventId, p_limit: 500 }),
       // SG: top-20 rows — listings and sales are separate INSERT rows so we merge best-available
       // from each: listings_all_count from the most-recent listings row, sold_quantity from
       // the most-recent sales row. .limit(20) ensures we span both row types.
@@ -2620,11 +2802,42 @@
       captured_at:       sgRows[0]?.captured_at ?? null,
     } : null;
     renderCrossPlatformSales({
-      evo:    evoRes.data  || null,
+      evo:    evoFullRes.error ? null : evoSalesFromFullRows(evoFullRes.data),
       sg:     sgMerged,
       tdSnap: tdSnapRes.data || [],
       xb:     xbRes.error ? null : (xbRes.data || null),
     }, meta);
+  }
+
+  // Aggregate get_event_evo_orders_full rows → the {sold_quantity, sold_gross,
+  // sold_price_median, captured_at} shape the CROSS-SOURCE Sales/Velocity EVO cell
+  // expects. Realized = accepted/completed states (matches adaptOrders + Broker Sales).
+  // Returns null when no realized EVO orders → EVO column omitted (D3, never fake zeros).
+  function evoSalesFromFullRows(full) {
+    const rows = (full && full.rows) || [];
+    if (!rows.length) return null;
+    const SOLD = new Set(['accepted', 'completed']);
+    let qty = 0, gross = 0, latest = null, any = false;
+    const px = [];
+    rows.forEach(r => {
+      if (!SOLD.has(r.state)) return;
+      any = true;
+      const q = r.item_quantity != null ? Number(r.item_quantity) : null;
+      const p = r.item_price    != null ? Number(r.item_price)    : null;
+      if (q != null && !isNaN(q)) qty += q;
+      if (p != null && q != null && !isNaN(p) && !isNaN(q)) gross += p * q;
+      if (p != null && !isNaN(p)) px.push(p);
+      const tms = r.evo_created_at ? new Date(r.evo_created_at).getTime() : NaN;
+      if (!isNaN(tms) && (latest == null || tms > latest)) latest = tms;
+    });
+    if (!any) return null;
+    px.sort((a, b) => a - b);
+    return {
+      sold_quantity:     qty,
+      sold_gross:        Math.round(gross),
+      sold_price_median: px.length ? px[Math.floor((px.length - 1) / 2)] : null,
+      captured_at:       latest != null ? new Date(latest).toISOString() : null,
+    };
   }
 
   function renderCrossPlatformSales(d, metaEl) {
@@ -2636,85 +2849,101 @@
     const tdSnap = d.tdSnap || [];
     const xbRows = (d.xb && d.xb.rows) ? d.xb.rows : [];
 
-    // TD listing-count delta: newest minus prior snapshot = positive means new listings (buying opportunity),
-    // negative means listings disappeared (likely sold).
+    // TD listing-count delta (velocity proxy): newest − prior snapshot. Negative
+    // means listings disappeared (likely sold = green); positive = new listings.
     const tdLatest = tdSnap[0] || null;
     const tdPrior  = tdSnap[1] || null;
-    function tdDelta(platform) {
-      const col = `td_${platform.toLowerCase()}_listings`;
+    function tdPlatDelta(p) {
+      const col = `td_${p}_listings`;
       if (!tdLatest || tdLatest[col] == null || !tdPrior || tdPrior[col] == null) return null;
       return tdLatest[col] - tdPrior[col];
     }
-    function fmtDelta(val) {
-      if (val == null) return '<span class="dim">—</span>';
-      const cls = val < 0 ? 'pos' : val > 0 ? 'neg' : '';  // negative = sold = good (green)
-      return `<span class="${cls}">${val >= 0 ? '+' : ''}${T.fmtNum(val)}</span>`;
+    let tdComb = null;
+    for (const p of ['sh', 'gt', 'vd']) {
+      const dv = tdPlatDelta(p);
+      if (dv != null) tdComb = (tdComb || 0) + dv;
     }
 
-    // Count TP/Vivid orders by source
     const tpOrders = xbRows.filter(r => (r.source || '').toLowerCase() === 'tickpick');
     const vvOrders = xbRows.filter(r => (r.source || '').toLowerCase() === 'vivid');
 
-    // Build rows
-    const tableRows = [];
-    function row(platform, metric, val, isMoney, note) {
-      const vStr = val == null
-        ? '<span class="dim">—</span>'
-        : (isMoney ? '$' + T.fmtNum(Math.round(+val)) : T.fmtNum(+val || 0));
-      return `<tr><td class="csale-platform">${escapeHtml(platform)}</td>` +
-        `<td>${escapeHtml(metric)}</td>` +
-        `<td class="num">${vStr}</td>` +
-        `<td class="muted small">${escapeHtml(note || '')}</td></tr>`;
-    }
+    // Which source columns have data (D3 — omit empty columns, never fake zeros).
+    const evoHas = evo.sold_quantity != null || evo.sold_gross != null || evo.sold_price_median != null;
+    const sgHas  = sg.sold_quantity != null || sg.sold_gross != null || sg.sold_price_median != null || sg.fill_rate != null;
+    const xbOk   = d.xb !== null;        // RPC succeeded → our TP/Vivid order count known
+    const tdHas  = tdComb != null;
+    const cols = [];
+    if (evoHas) cols.push('EVO');
+    if (sgHas)  cols.push('SG');
+    if (xbOk)   cols.push('TP');
+    if (xbOk)   cols.push('Vivid');
+    if (tdHas)  cols.push('TD vel');
 
-    if (evo.sold_quantity != null || evo.owned_tickets_count != null) {
-      tableRows.push(row('EVO', 'Sold qty (inferred)', evo.sold_quantity, false, 'event_metrics'));
-      tableRows.push(row('EVO', 'Sold gross (inferred)', evo.sold_gross, true, ''));
-      tableRows.push(row('EVO', 'Sold median $', evo.sold_price_median, true, ''));
-      tableRows.push(row('EVO', 'Owned remaining', evo.owned_tickets_count, false, ''));
-    }
-    if (sg.fill_rate != null || sg.sold_quantity != null) {
-      tableRows.push(row('SG', 'Fill rate', sg.fill_rate != null ? (+(sg.fill_rate) * 100).toFixed(1) + '%' : null, false, 'seatgeek_event_metrics'));
-      tableRows.push(row('SG', 'Sold qty', sg.sold_quantity, false, ''));
-      tableRows.push(row('SG', 'Sold median $', sg.sold_price_median, true, ''));
-      tableRows.push(row('SG', 'Market listings', sg.listings_all_count, false, ''));
-    }
-    for (const plat of ['SH', 'GT', 'VD']) {
-      const delta = tdDelta(plat);
-      const label = plat === 'SH' ? 'StubHub' : plat === 'GT' ? 'GameTime' : 'VividSeats';
-      const deltaCell = `<td class="num">${fmtDelta(delta)}</td>`;
-      const note = delta == null
-        ? 'need 2+ snapshots'
-        : (delta < 0 ? `${Math.abs(delta)} listings removed (velocity proxy)` : delta > 0 ? `${delta} new listings` : 'no change');
-      tableRows.push(
-        `<tr><td class="csale-platform"><span class="badge td-${plat.toLowerCase()}">${escapeHtml(plat)}</span> ${escapeHtml(label)}</td>` +
-        `<td>Listing Δ (${(tdLatest && tdPrior) ? `${tdLatest.snapshot_date} vs ${tdPrior.snapshot_date}` : '—'})</td>` +
-        `${deltaCell}<td class="muted small">${escapeHtml(note)}</td></tr>`
-      );
-    }
-    if (d.xb !== null) {
-      tableRows.push(row('TP', 'Our orders', tpOrders.length || null, false, tpOrders.length ? tpOrders.map(r => r.status || '').filter(Boolean).join(', ') : 'none'));
-      tableRows.push(row('Vivid', 'Our orders', vvOrders.length || null, false, vvOrders.length ? vvOrders.map(r => r.status || '').filter(Boolean).join(', ') : 'none'));
-    }
-
-    if (!tableRows.length) {
+    if (!cols.length) {
       body.innerHTML = '<div class="empty">no cross-platform sales data available</div>';
+      if (metaEl) metaEl.textContent = '';
       return;
     }
 
+    const money = v => (v == null ? '<span class="dim">—</span>' : '$' + T.fmtNum(Math.round(+v)));
+    const num   = v => (v == null ? '<span class="dim">—</span>' : T.fmtNum(+v || 0));
+    const pct   = v => (v == null ? '<span class="dim">—</span>' : (+(v) * 100).toFixed(1) + '%');
+    function vel(v) {
+      if (v == null) return '<span class="dim">—</span>';
+      const cls = v < 0 ? 'pos' : v > 0 ? 'neg' : '';
+      return `<span class="${cls}">${v >= 0 ? '+' : ''}${T.fmtNum(v)}</span>`;
+    }
+
+    // Per-source cell values keyed by metric. TP/Vivid carry only our order count;
+    // TD carries the listing-Δ velocity proxy — the rest are — (honest gaps).
+    const cell = {
+      'EVO':    { qty: num(evo.sold_quantity),       med: money(evo.sold_price_median), gross: money(evo.sold_gross), fill: '<span class="dim">—</span>' },
+      'SG':     { qty: num(sg.sold_quantity),        med: money(sg.sold_price_median),  gross: money(sg.sold_gross),  fill: pct(sg.fill_rate) },
+      'TP':     { qty: num(tpOrders.length || null), med: '<span class="dim">—</span>', gross: '<span class="dim">—</span>', fill: '<span class="dim">—</span>' },
+      'Vivid':  { qty: num(vvOrders.length || null), med: '<span class="dim">—</span>', gross: '<span class="dim">—</span>', fill: '<span class="dim">—</span>' },
+      'TD vel': { qty: vel(tdComb),                  med: '<span class="dim">—</span>', gross: '<span class="dim">—</span>', fill: '<span class="dim">—</span>' },
+    };
+    const metricRows = [
+      ['Sold / net qty', 'qty'],
+      ['Sold median $',  'med'],
+      ['Sold gross $',   'gross'],
+      ['Fill rate',      'fill'],
+    ];
+
     const tbl = document.createElement('table');
     tbl.className = 'cross-src-tbl cross-sales-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Platform</th><th>Metric</th><th class="num">Value</th><th>Note</th>
-      </tr></thead><tbody>${tableRows.join('')}</tbody>`;
+    tbl.innerHTML =
+      `<thead><tr><th>Metric</th>${cols.map(c => `<th class="num">${escapeHtml(c)}</th>`).join('')}</tr></thead>` +
+      `<tbody>${metricRows.map(([label, key]) =>
+        `<tr><td>${escapeHtml(label)}</td>${cols.map(c => `<td class="num">${cell[c][key]}</td>`).join('')}</tr>`
+      ).join('')}</tbody>`;
     body.innerHTML = '';
     body.appendChild(tbl);
 
+    // Mixed-semantics footnote (sources measure different things) + TD per-platform detail.
+    const notes = [];
+    if (evoHas) notes.push('EVO = our realized sales (accepted/completed orders)');
+    if (sgHas)  notes.push('SG = market sold (inferred from metrics)');
+    if (xbOk)   notes.push('TP/Vivid = our order count');
+    if (tdHas) {
+      const detail = [];
+      for (const p of ['sh', 'gt', 'vd']) {
+        const dv = tdPlatDelta(p);
+        if (dv != null) detail.push(`${p.toUpperCase()} ${dv >= 0 ? '+' : ''}${dv}`);
+      }
+      notes.push(`TD vel = listing-Δ proxy${detail.length ? ' (' + detail.join(' · ') + ')' : ''}; negative = likely sold`);
+    }
+    if (notes.length) {
+      const note = document.createElement('div');
+      note.className = 'cross-src-note muted small';
+      note.textContent = notes.join(' · ');
+      body.appendChild(note);
+    }
+
     const parts = [];
-    if (evo.captured_at) parts.push(`EVO as of ${T.fmtDate(evo.captured_at)}`);
-    if (sg.captured_at)  parts.push(`SG as of ${T.fmtDate(sg.captured_at)}`);
-    if (tdLatest)        parts.push(`TD snapshot ${tdLatest.snapshot_date} ${tdLatest.snapshot_slot}`);
+    if (evo.captured_at) parts.push(`EVO ${T.fmtDate(evo.captured_at)}`);
+    if (sg.captured_at)  parts.push(`SG ${T.fmtDate(sg.captured_at)}`);
+    if (tdLatest)        parts.push(`TD ${tdLatest.snapshot_date} ${tdLatest.snapshot_slot}`);
     if (metaEl) metaEl.textContent = parts.join(' · ');
   }
 
@@ -3028,32 +3257,55 @@
     renderCrossSourceMetrics(res.data || {}, performance.now() - t0);
   }
 
-  // Cache the last cross-source payload so we can re-render when v3 data
-  // arrives later and we want to override sold_price_median with the v3
-  // sg_broker_sales aggregate (which is what the SG BROKER SALES — AGGREGATE
-  // panel renders, ensuring both panels show the same number).
+  // Cache the last cross-source payload + overrides so we can re-render when v3
+  // data arrives (override sold_price_median with the v3 sg_broker_sales
+  // aggregate, matching the BROKER SALES panel) or when _lastTdSnap arrives
+  // (paint the TD per-source columns). Both re-renders go through the same fn.
   let _lastCrossSource = null;
+  let _lastCrossSourceOverrides = null;
 
   function renderCrossSourceMetrics(d, ms, overrides) {
     _lastCrossSource = d;
+    if (overrides) _lastCrossSourceOverrides = overrides;
     const body = document.getElementById('crossSourceBody');
     const meta = document.getElementById('crossSourceMeta');
     if (!body) return;
     const rows = (d && d.rows) || [];
     const hasSg  = d && d.sg_event_id != null;
-    // hasTd: TD data present when at least one platform has listings in last 24h
-    const hasTd  = !!(d && d.td_agg && Number(d.td_agg.listing_count) > 0);
-    const tdPlatforms = (d && d.td) ? Object.keys(d.td).filter(p => Number((d.td[p] || {}).listing_count) > 0) : [];
+
+    // TD per-source columns (SH/GT/VD — individual sub-sources only) are fed FE-only
+    // from the cached daily snapshot (_lastTdSnap ← event_listing_snapshot_daily via
+    // loadTdFreshness) — NOT this RPC. That table carries median + listing-count only
+    // (no get-in / spread), so those rows show — for TD and are never fabricated (WP-2).
+    const td = _lastTdSnap || null;
+    const tdVals = [td && td.td_sh_median, td && td.td_gt_median, td && td.td_vd_median,
+                    td && td.td_sh_listings, td && td.td_gt_listings, td && td.td_vd_listings];
+    const hasTd = !!(td && tdVals.some(v => v != null));
+    // Per-row TD source values keyed by RPC row label (see mig 20260527140000).
+    // Individual TD sub-sources only (SH/GT/VD) — the combined "TD comb." column
+    // was removed per operator request (the per-source columns are what matter).
+    function tdRow(label) {
+      if (!td) return { sh: null, gt: null, vd: null };
+      if (label === 'Median price') {
+        return { sh: td.td_sh_median, gt: td.td_gt_median, vd: td.td_vd_median };
+      }
+      if (label === 'Listings count') {
+        return { sh: td.td_sh_listings, gt: td.td_gt_listings, vd: td.td_vd_listings };
+      }
+      // Min price (get-in), Tickets available, P90, Owned/Non-owned median,
+      // Realized sale median → no per-source backing in the daily table.
+      return { sh: null, gt: null, vd: null };
+    }
 
     if (meta) {
       const parts = [];
       if (hasSg) parts.push(`sg_event_id ${d.sg_event_id}`);
       else        parts.push('no SG bridge — TEvo-only event');
-      if (hasTd && tdPlatforms.length) {
-        parts.push('TD: ' + tdPlatforms.map(p => {
-          const s = d.td[p];
-          return `${p} ${T.fmtNum(Number(s.listing_count))}`;
-        }).join(' · '));
+      if (hasTd) {
+        const tdHint = [['SH', td.td_sh_listings], ['GT', td.td_gt_listings], ['VD', td.td_vd_listings]]
+          .filter(([, n]) => n != null)
+          .map(([p, n]) => `${p} ${T.fmtNum(Number(n))}`).join(' · ');
+        if (tdHint) parts.push('TD: ' + tdHint);
       }
       if (ms != null) parts.push(ms.toFixed(0) + 'ms');
       meta.textContent = parts.filter(Boolean).join(' · ');
@@ -3063,7 +3315,7 @@
       return;
     }
     // Override "Realized sale median" SG cell with v3 sg_broker_sales aggregate
-    // when available (the SG BROKER SALES — AGGREGATE panel's source of truth).
+    // when available (the BROKER SALES panel's source of truth).
     const realizedOverride = overrides && overrides.realized_sale_median_sg;
     function fmtVal(v, isMoney) {
       if (v === null || v === undefined) return '<span class="dim">—</span>';
@@ -3072,18 +3324,10 @@
       if (isMoney) return '$' + T.fmtNum(Math.round(n));
       return T.fmtNum(n);
     }
-    function deltaPct(tevo, sg) {
-      if (tevo === null || tevo === undefined || sg === null || sg === undefined) return null;
-      const t = Number(tevo), s = Number(sg);
-      if (!Number.isFinite(t) || !Number.isFinite(s) || t === 0) return null;
-      return ((s - t) / t) * 100;
-    }
-    function deltaCell(tevo, sg) {
-      const p = deltaPct(tevo, sg);
-      if (p === null) return '<span class="dim">—</span>';
-      const cls = Math.abs(p) < 1 ? '' : (p > 0 ? 'pos' : 'neg');
-      return `<span class="${cls}">${p >= 0 ? '+' : ''}${p.toFixed(1)}%</span>`;
-    }
+    const tdHead = hasTd
+      ? '<th class="num td-mkt-col">SH</th><th class="num td-mkt-col">GT</th>' +
+        '<th class="num td-mkt-col">VD</th>'
+      : '';
     const tbl = document.createElement('table');
     tbl.className = 'cross-src-tbl';
     tbl.innerHTML = `
@@ -3091,8 +3335,7 @@
         <th>Metric</th>
         <th class="num">TEvo</th>
         <th class="num">SG</th>
-        <th class="num">Δ SG vs TEvo</th>
-        ${hasTd ? '<th class="num td-mkt-col">TD Market</th>' : ''}
+        ${tdHead}
       </tr></thead>
       <tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
@@ -3100,29 +3343,30 @@
       const tr = document.createElement('tr');
       let sgVal = r.sg;
       if (r.label === 'Realized sale median' && realizedOverride != null) sgVal = realizedOverride;
+      let tdCells = '';
+      if (hasTd) {
+        const t = tdRow(r.label);
+        tdCells =
+          `<td class="num td-mkt-col">${fmtVal(t.sh, r.is_money)}</td>` +
+          `<td class="num td-mkt-col">${fmtVal(t.gt, r.is_money)}</td>` +
+          `<td class="num td-mkt-col">${fmtVal(t.vd, r.is_money)}</td>`;
+      }
       tr.innerHTML = `
         <td>${escapeHtml(r.label || '')}</td>
         <td class="num">${fmtVal(r.tevo, r.is_money)}</td>
         <td class="num">${fmtVal(sgVal,  r.is_money)}</td>
-        <td class="num">${deltaCell(r.tevo, sgVal)}</td>
-        ${hasTd ? `<td class="num td-mkt-col">${fmtVal(r.td, r.is_money)}</td>` : ''}`;
+        ${tdCells}`;
       tb.appendChild(tr);
     });
     body.innerHTML = '';
     body.appendChild(tbl);
+  }
 
-    // Per-platform TD breakdown row below the table
-    if (hasTd && tdPlatforms.length) {
-      const bar = document.createElement('div');
-      bar.className = 'td-platform-bar';
-      bar.innerHTML = tdPlatforms.map(p => {
-        const s = d.td[p];
-        const minStr = s.min_price != null ? ` · min $${Math.round(Number(s.min_price))}` : '';
-        const medStr = s.median_price != null ? ` · med $${Math.round(Number(s.median_price))}` : '';
-        return `<span class="td-platform-chip">${escapeHtml(p)} <b>${T.fmtNum(Number(s.listing_count))}</b>${minStr}${medStr}</span>`;
-      }).join('');
-      body.appendChild(bar);
-    }
+  // Re-render the cross-source table from cached state — used after _lastTdSnap
+  // arrives (paint TD per-source columns) while re-applying any v3 override.
+  function rerenderCrossSource() {
+    if (!_lastCrossSource) return;
+    renderCrossSourceMetrics(_lastCrossSource, null, _lastCrossSourceOverrides || undefined);
   }
 
   // Called after v3 RPC payload arrives — re-renders the cross-source panel
@@ -3200,11 +3444,12 @@
         const chart = adaptChart(_lastPayload.chart_data);
         if (chartKey === 'price') {
           renderChartPrice(chart, _chartExtAlerts);
-          renderChartLegendPrice();
         } else {
           renderChartInventory(chart);
-          renderChartLegendInv();
         }
+        // Refresh both detailed legends + the source-toggle + overlay legends
+        // (source presence can change once SG/ext series arrive).
+        refreshChartLegends();
       } catch (e) {
         console.error('[setChartExtended ' + chartKey + ' re-render]', e);
       }
