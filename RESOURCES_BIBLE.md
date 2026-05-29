@@ -230,7 +230,7 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 
 | Table | Size | Purpose | Owner | Origin |
 |---|---|---|---|---|
-| `aq_event_map` | — | **Primary event hub** — bridges TD aq_short_event_id ↔ tevo_event_id / sg_event_id / sh/vivid/tm IDs. 7,271 rows. | A1 | mig 20260528380000 |
+| `aq_event_map` | — | **Primary event hub** — bridges TD aq_short_event_id ↔ tevo_event_id / sg_event_id / sh/vivid/tm IDs. 7,271 rows. `tm_event_id` now carries real hex→bigint TM ids for the 21 TD-focus events (kept in sync by `td_tm_discover_drain`, mig …220000) — direct-id cross-source processing. | A1 | mig 20260528380000 |
 | `sg_events_canonical` | 232 kB | SG event records resolved to TEvo (4,609 rows; 2,590 linked to tevo_event_id) | C1 | pre-history |
 | `ticketsdata_event_xref` | — | TD event catalog; gets tevo_event_id + sg_event_id + tevo_match_method via mig 380000. `platform` CHECK = SH/VD/GT/TM/TP (TP mig …180000; TM platform fully built mig …200000). **NB:** `td_pull_queue` carries its *own separate* `platform` CHECK — keep both in sync (TM gap there raised 23514, fixed mig …210000). | A1 | pre-history + mig 380000 |
 | `td_tp_performers` | — | TickPick discovery performer allowlist (Yankees/Knicks) — mirrors `td_gt_performers`; drives `td_tp_discover`/`_drain`. | A1 | mig 20260529180000 |
