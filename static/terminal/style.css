@@ -1817,6 +1817,8 @@ body[data-page="login"] {
 .badge.td-sh { background: rgba(249,115,22,.18); color: #fb923c; }
 .badge.td-gt { background: rgba(52,211,153,.15); color: #34d399; }
 .badge.td-vd { background: rgba(192,132,252,.15); color: #c084fc; }
+.badge.td-tp { background: rgba(244,114,182,.16); color: #f472b6; }
+.badge.td-tm { background: rgba(129,140,248,.16); color: #818cf8; }
 
 /* ---------- Data freshness table (#data-freshness section) ---------- */
 .data-freshness-tbl { width: 100%; border-collapse: collapse; font-size: 0.83em; }
@@ -1862,3 +1864,5 @@ body[data-page="login"] {
 .td-sh-section { border-left-color: #f97316; }   /* SH — orange */
 .td-gt-section { border-left-color: #2dd4bf; }   /* GT — teal  */
 .td-vd-section { border-left-color: #a855f7; }   /* VD — purple */
+.td-tp-section { border-left-color: #ec4899; }   /* TP — pink   */
+.td-tm-section { border-left-color: #6366f1; }   /* TM — indigo */

@@ -1811,7 +1811,7 @@
     // Used for: (a) fr-chips freshness, (b) data-freshness table, (c) price chart TD overlay
     const { data: rows, error } = await Auth.client
       .from('event_listing_snapshot_daily')
-      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_combined_median')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
       .eq('event_id', eventId)
       .order('snapshot_date', { ascending: false })
       .order('snapshot_slot', { ascending: false })
@@ -2391,6 +2391,7 @@
   const _tabState = { loaded: {
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
+    'tp-listings': false, 'tm-listings': false,
     'sg-sales': false, 'our-orders': false,
   } };
 
@@ -2417,6 +2418,14 @@
       } else if (tabId === 'vd-listings' && !_tabState.loaded['vd-listings']) {
         _tabState.loaded['vd-listings'] = true;
         await loadTdPlatformListings(eventId, 'VD');
+        updateTdListingsTabCount();
+      } else if (tabId === 'tp-listings' && !_tabState.loaded['tp-listings']) {
+        _tabState.loaded['tp-listings'] = true;
+        await loadTdPlatformListings(eventId, 'TP');
+        updateTdListingsTabCount();
+      } else if (tabId === 'tm-listings' && !_tabState.loaded['tm-listings']) {
+        _tabState.loaded['tm-listings'] = true;
+        await loadTdPlatformListings(eventId, 'TM');
         updateTdListingsTabCount();
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
@@ -2449,6 +2458,8 @@
       'sh-listings':  'paneShListings',
       'gt-listings':  'paneGtListings',
       'vd-listings':  'paneVdListings',
+      'tp-listings':  'paneTpListings',
+      'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
       'our-orders':   'paneOurOrders',
@@ -2737,7 +2748,7 @@
   // count each loadTdPlatformListings() writes into its section meta ("<n> rows · …").
   // Idempotent: updates all three chips on every call.
   function updateTdListingsTabCount() {
-    for (const plat of ['Sh', 'Gt', 'Vd']) {
+    for (const plat of ['Sh', 'Gt', 'Vd', 'Tp', 'Tm']) {
       const chip = document.getElementById('tabCount' + plat + 'Listings');
       if (!chip) continue;
       const meta = document.getElementById('tdListings' + plat + 'Meta');
@@ -3278,23 +3289,29 @@
     // loadTdFreshness) — NOT this RPC. That table carries median + listing-count only
     // (no get-in / spread), so those rows show — for TD and are never fabricated (WP-2).
     const td = _lastTdSnap || null;
-    const tdVals = [td && td.td_sh_median, td && td.td_gt_median, td && td.td_vd_median,
-                    td && td.td_sh_listings, td && td.td_gt_listings, td && td.td_vd_listings];
-    const hasTd = !!(td && tdVals.some(v => v != null));
-    // Per-row TD source values keyed by RPC row label (see mig 20260527140000).
-    // Individual TD sub-sources only (SH/GT/VD) — the combined "TD comb." column
-    // was removed per operator request (the per-source columns are what matter).
-    function tdRow(label) {
-      if (!td) return { sh: null, gt: null, vd: null };
-      if (label === 'Median price') {
-        return { sh: td.td_sh_median, gt: td.td_gt_median, vd: td.td_vd_median };
-      }
-      if (label === 'Listings count') {
-        return { sh: td.td_sh_listings, gt: td.td_gt_listings, vd: td.td_vd_listings };
-      }
-      // Min price (get-in), Tickets available, P90, Owned/Non-owned median,
-      // Realized sale median → no per-source backing in the daily table.
-      return { sh: null, gt: null, vd: null };
+    // TD sub-source columns are DYNAMIC: each appears only if it has data in the latest
+    // daily snapshot (D3 — omit empty, never fake). SH/GT/VD live now; TP/TM/TMr arrive
+    // once A1's compute_event_listing_snapshot rollup populates them (cols added 2026-05-29).
+    // TM = box-office FACE VALUE (primary, NOT a resale floor); TMr = verified resale —
+    // labeled distinctly per PROJECT_BIBLE §3 landmine.
+    const TD_SUBS = [
+      { label: 'SH',  med: 'td_sh_median',        cnt: 'td_sh_listings' },
+      { label: 'GT',  med: 'td_gt_median',        cnt: 'td_gt_listings' },
+      { label: 'VD',  med: 'td_vd_median',        cnt: 'td_vd_listings' },
+      { label: 'TP',  med: 'td_tp_median',        cnt: 'td_tp_listings' },
+      { label: 'TM',  med: 'td_tm_median',        cnt: 'td_tm_listings' },
+      { label: 'TMr', med: 'td_tm_resale_median', cnt: 'td_tm_resale_listings' },
+    ];
+    const tdCols = td ? TD_SUBS.filter(s => td[s.med] != null || td[s.cnt] != null) : [];
+    const hasTd = tdCols.length > 0;
+    const hasTmCols = tdCols.some(s => s.label === 'TM' || s.label === 'TMr');
+    // Per-row TD value for a sub-source column; only median + listing-count have
+    // per-source backing in the daily table (get-in/spread/etc → — for TD).
+    function tdCellVal(sub, label) {
+      if (!td) return null;
+      if (label === 'Median price')   return td[sub.med];
+      if (label === 'Listings count') return td[sub.cnt];
+      return null;
     }
 
     if (meta) {
@@ -3302,9 +3319,9 @@
       if (hasSg) parts.push(`sg_event_id ${d.sg_event_id}`);
       else        parts.push('no SG bridge — TEvo-only event');
       if (hasTd) {
-        const tdHint = [['SH', td.td_sh_listings], ['GT', td.td_gt_listings], ['VD', td.td_vd_listings]]
-          .filter(([, n]) => n != null)
-          .map(([p, n]) => `${p} ${T.fmtNum(Number(n))}`).join(' · ');
+        const tdHint = tdCols
+          .filter(s => td[s.cnt] != null)
+          .map(s => `${s.label} ${T.fmtNum(Number(td[s.cnt]))}`).join(' · ');
         if (tdHint) parts.push('TD: ' + tdHint);
       }
       if (ms != null) parts.push(ms.toFixed(0) + 'ms');
@@ -3324,10 +3341,7 @@
       if (isMoney) return '$' + T.fmtNum(Math.round(n));
       return T.fmtNum(n);
     }
-    const tdHead = hasTd
-      ? '<th class="num td-mkt-col">SH</th><th class="num td-mkt-col">GT</th>' +
-        '<th class="num td-mkt-col">VD</th>'
-      : '';
+    const tdHead = tdCols.map(s => `<th class="num td-mkt-col">${escapeHtml(s.label)}</th>`).join('');
     const tbl = document.createElement('table');
     tbl.className = 'cross-src-tbl';
     tbl.innerHTML = `
@@ -3345,11 +3359,9 @@
       if (r.label === 'Realized sale median' && realizedOverride != null) sgVal = realizedOverride;
       let tdCells = '';
       if (hasTd) {
-        const t = tdRow(r.label);
-        tdCells =
-          `<td class="num td-mkt-col">${fmtVal(t.sh, r.is_money)}</td>` +
-          `<td class="num td-mkt-col">${fmtVal(t.gt, r.is_money)}</td>` +
-          `<td class="num td-mkt-col">${fmtVal(t.vd, r.is_money)}</td>`;
+        tdCells = tdCols.map(s =>
+          `<td class="num td-mkt-col">${fmtVal(tdCellVal(s, r.label), r.is_money)}</td>`
+        ).join('');
       }
       tr.innerHTML = `
         <td>${escapeHtml(r.label || '')}</td>
@@ -3360,6 +3372,14 @@
     });
     body.innerHTML = '';
     body.appendChild(tbl);
+    // Honesty note when Ticketmaster columns are present: TM is box-office face value,
+    // not a resale floor like the other TD sources (PROJECT_BIBLE §3 landmine).
+    if (hasTmCols) {
+      const note = document.createElement('div');
+      note.className = 'cross-src-note muted small';
+      note.textContent = 'TM = Ticketmaster box-office face value (primary); TMr = verified resale';
+      body.appendChild(note);
+    }
   }
 
   // Re-render the cross-source table from cached state — used after _lastTdSnap
@@ -3519,15 +3539,25 @@
     // Append TD MARKETS section if snapshot data is already loaded
     if (_lastTdSnap) {
       const tdSnap = _lastTdSnap;
-      const tdFields = [
-        ['td_sh_listings',    'SH LISTINGS', null],
-        ['td_sh_median',      'SH MED',      '$'],
-        ['td_gt_listings',    'GT LISTINGS', null],
-        ['td_gt_median',      'GT MED',      '$'],
-        ['td_vd_listings',    'VD LISTINGS', null],
-        ['td_vd_median',      'VD MED',      '$'],
-        ['td_combined_median','TD COMBINED', '$'],
+      // All 5 TD platforms + TM resale split; TM MED = box-office face value (primary),
+      // TMr = verified resale (PROJECT_BIBLE §3 landmine). Only tiles with data render
+      // (D3) — TP/TM appear once A1's daily rollup populates them (cols added 2026-05-29).
+      const tdFieldDefs = [
+        ['td_sh_listings',        'SH LISTINGS',  null],
+        ['td_sh_median',          'SH MED',       '$'],
+        ['td_gt_listings',        'GT LISTINGS',  null],
+        ['td_gt_median',          'GT MED',       '$'],
+        ['td_vd_listings',        'VD LISTINGS',  null],
+        ['td_vd_median',          'VD MED',       '$'],
+        ['td_tp_listings',        'TP LISTINGS',  null],
+        ['td_tp_median',          'TP MED',       '$'],
+        ['td_tm_listings',        'TM LISTINGS',  null],
+        ['td_tm_median',          'TM FACE',      '$'],
+        ['td_tm_resale_listings', 'TMr LISTINGS', null],
+        ['td_tm_resale_median',   'TMr MED',      '$'],
+        ['td_combined_median',    'TD COMBINED',  '$'],
       ];
+      const tdFields = tdFieldDefs.filter(([col]) => tdSnap[col] != null);
       const tdCells = tdFields.map(([col, label, prefix]) => {
         const v = tdSnap[col];
         const valHtml = (v != null)

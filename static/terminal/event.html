@@ -63,6 +63,8 @@
       <button class="event-tab" data-tab="sh-listings" role="tab" aria-selected="false">SH Listings <span class="tab-count" id="tabCountShListings"></span></button>
       <button class="event-tab" data-tab="gt-listings" role="tab" aria-selected="false">GT Listings <span class="tab-count" id="tabCountGtListings"></span></button>
       <button class="event-tab" data-tab="vd-listings" role="tab" aria-selected="false">VD Listings <span class="tab-count" id="tabCountVdListings"></span></button>
+      <button class="event-tab" data-tab="tp-listings" role="tab" aria-selected="false">TP Listings <span class="tab-count" id="tabCountTpListings"></span></button>
+      <button class="event-tab" data-tab="tm-listings" role="tab" aria-selected="false">TM Listings <span class="tab-count" id="tabCountTmListings"></span></button>
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
@@ -319,6 +321,26 @@
           <span class="muted small" id="tdListingsVdMeta">tap tab to load</span>
         </div>
         <div id="tdListingsVdBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <div class="tab-pane" id="paneTpListings" role="tabpanel" hidden>
+      <section id="td-listings-tp" class="td-platform-section td-tp-section">
+        <div class="panel-title row">
+          <span><span class="badge td-tp">TP</span> LISTINGS — TickPick (non-parking, last 7d)</span>
+          <span class="muted small" id="tdListingsTpMeta">tap tab to load</span>
+        </div>
+        <div id="tdListingsTpBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <div class="tab-pane" id="paneTmListings" role="tabpanel" hidden>
+      <section id="td-listings-tm" class="td-platform-section td-tm-section">
+        <div class="panel-title row">
+          <span><span class="badge td-tm">TM</span> LISTINGS — Ticketmaster <span class="muted small">(box-office face value + verified resale)</span></span>
+          <span class="muted small" id="tdListingsTmMeta">tap tab to load</span>
+        </div>
+        <div id="tdListingsTmBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 
