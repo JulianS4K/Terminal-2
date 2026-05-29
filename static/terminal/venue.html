@@ -49,10 +49,11 @@
 
     <!-- Default active tab: Market Carpet — the venue as its own "stock ticker" -->
     <nav class="event-tabs" id="venueTabs" role="tablist" hidden>
-      <button class="event-tab" data-tab="overview" role="tab" aria-selected="false">Overview</button>
-      <button class="event-tab" data-tab="events"   role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountVenueEvents"></span></button>
-      <button class="event-tab" data-tab="owned"    role="tab" aria-selected="false">Owned Inventory</button>
-      <button class="event-tab" data-tab="sg"       role="tab" aria-selected="false">SG Activity</button>
+      <button class="event-tab" data-tab="overview"   role="tab" aria-selected="false">Overview</button>
+      <button class="event-tab" data-tab="events"     role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountVenueEvents"></span></button>
+      <button class="event-tab" data-tab="owned"      role="tab" aria-selected="false">Owned Inventory</button>
+      <button class="event-tab" data-tab="sg"         role="tab" aria-selected="false">SG Activity</button>
+      <button class="event-tab" data-tab="competing"  role="tab" aria-selected="false">Competing Events</button>
       <button class="event-tab active" data-tab="market" role="tab" aria-selected="true">Market Carpet <span class="tab-count" id="tabCountVenueMarket"></span></button>
     </nav>
 
@@ -97,6 +98,42 @@
           <span class="muted small" id="vSgMeta"></span>
         </div>
         <div id="vSgBody"></div>
+      </section>
+    </div>
+
+    <!-- Competing Events pane — find_competing_events RPC (Phase 12).
+         Calls find_competing_events(event_id, radius_miles, window_hours) for each
+         selected upcoming event. Operator picks an event + tunes radius/window.
+         RPC reads from events + venue_assets (both @s4kent.com readable). -->
+    <div class="tab-pane" id="vPaneCompeting" role="tabpanel" hidden>
+      <section id="venue-competing">
+        <div class="panel-title row">
+          <span>COMPETING EVENTS — NEARBY SAME-WINDOW</span>
+          <span class="muted small" id="vCompetingCount"></span>
+        </div>
+        <div class="muted small" style="margin-bottom:8px">
+          Events within the chosen radius + time window relative to the selected anchor event.
+          Source: <code>find_competing_events</code> — live query of <code>events</code> + <code>venue_assets</code>.
+        </div>
+        <div class="ctrl-row" id="vCompetingControls">
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">EVENT</span>
+            <select id="vCompetingEventSel" class="range-select" aria-label="Anchor event"></select>
+          </div>
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">RADIUS</span>
+            <button class="ctrl-btn" data-comp-radius="10">10 mi</button>
+            <button class="ctrl-btn is-active" data-comp-radius="50">50 mi</button>
+            <button class="ctrl-btn" data-comp-radius="100">100 mi</button>
+          </div>
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">WINDOW</span>
+            <button class="ctrl-btn" data-comp-window="24">24h</button>
+            <button class="ctrl-btn is-active" data-comp-window="72">72h</button>
+            <button class="ctrl-btn" data-comp-window="168">7d</button>
+          </div>
+        </div>
+        <div id="vCompetingBody"><div class="empty">select a tab to load</div></div>
       </section>
     </div>
 

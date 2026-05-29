@@ -13,7 +13,15 @@
   const T = window.Terminal;
 
   // State for lazy-loaded tabs
-  const _vTabState = { marketLoaded: false, venueEvents: null, venueAggregate: {} };
+  const _vTabState = {
+    marketLoaded:     false,
+    competingLoaded:  false,
+    venueEvents:      null,
+    venueAggregate:   {},
+    compRadius:       50,
+    compWindow:       72,
+    compEventId:      null,
+  };
 
   function getVenueId() {
     const v = new URLSearchParams(location.search).get('venue');
@@ -130,11 +138,12 @@
   function safe(label, fn) { try { fn(); } catch (e) { console.error('[' + label + ']', e); } }
 
   const VENUE_PANE_IDS = {
-    overview: 'vPaneOverview',
-    events:   'vPaneEvents',
-    owned:    'vPaneOwned',
-    sg:       'vPaneSg',
-    market:   'vPaneMarket',
+    overview:   'vPaneOverview',
+    events:     'vPaneEvents',
+    owned:      'vPaneOwned',
+    sg:         'vPaneSg',
+    competing:  'vPaneCompeting',
+    market:     'vPaneMarket',
   };
 
   function wireTabs() {
@@ -150,6 +159,9 @@
       activateTab(tabId);
       if (tabId === 'market' && !_vTabState.marketLoaded) {
         await loadVenueMarketCarpet();
+      }
+      if (tabId === 'competing' && !_vTabState.competingLoaded) {
+        initCompetingPanel();
       }
     });
     document.getElementById('venueTabs').removeAttribute('hidden');
@@ -205,7 +217,7 @@
   }
 
   // ---------- Upcoming Events tab ----------
-  function renderEvents(events) {
+  async function renderEvents(events) {
     const body = document.getElementById('vEventsBody');
     const countEl = document.getElementById('vEventCount');
     const tabCount = document.getElementById('tabCountVenueEvents');
@@ -218,6 +230,10 @@
       body.innerHTML = '<div class="empty">no upcoming events at this venue in the next 90d</div>';
       return;
     }
+    // Phase 1b: ensure movers-index preload is done before row render so
+    // T.moversChipHtml(e.id) can produce inline chips in the event-name cell.
+    // Idempotent + cached.
+    await T.moversPreloadIndex();
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
@@ -230,7 +246,7 @@
       const d = T.daysUntil(e.occurs_at_local);
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a></td>
+        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a> ${T.moversChipHtml(e.id)} ${T.temporalChipHtml(e.occurs_at_local)}</td>
         <td>${escapeHtml(e.primary_performer_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${T.fmtNum(e.tickets_count || 0)}</td>
@@ -489,6 +505,136 @@
     });
 
     if (body) { body.innerHTML = ''; body.appendChild(tbl); }
+  }
+
+  // ---------- Phase 12: Competing Events ----------
+  //
+  // find_competing_events(p_event_id, p_radius_miles, p_window_hours) queries
+  // events + venue_assets (both @s4kent.com RLS-readable). Returns:
+  //   competing_event_id, competing_event_name, competing_event_at,
+  //   competing_venue, competing_city, competing_event_type,
+  //   competing_performer, distance_miles, hours_offset
+
+  function initCompetingPanel() {
+    _vTabState.competingLoaded = true;
+    const events = _vTabState.venueEvents || [];
+    const sel = document.getElementById('vCompetingEventSel');
+    if (!sel) return;
+
+    // Populate anchor event dropdown from loaded venue events
+    sel.innerHTML = '';
+    if (!events.length) {
+      sel.innerHTML = '<option value="">no upcoming events</option>';
+    } else {
+      events.slice(0, 20).forEach(e => {
+        const d = T.daysUntil(e.occurs_at_local);
+        const opt = document.createElement('option');
+        opt.value = e.id;
+        opt.textContent = (d !== null ? '+' + d + 'd · ' : '') +
+          (e.name || ('Event ' + e.id));
+        sel.appendChild(opt);
+      });
+    }
+    // Default to first event
+    if (sel.options.length > 0) {
+      _vTabState.compEventId = +sel.options[0].value || null;
+      loadCompetingEvents();
+    }
+
+    // Event selector change
+    sel.addEventListener('change', () => {
+      _vTabState.compEventId = +sel.value || null;
+      loadCompetingEvents();
+    });
+
+    // Radius buttons
+    document.querySelectorAll('[data-comp-radius]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-comp-radius]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        _vTabState.compRadius = +btn.dataset.compRadius;
+        loadCompetingEvents();
+      });
+    });
+
+    // Window buttons
+    document.querySelectorAll('[data-comp-window]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-comp-window]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        _vTabState.compWindow = +btn.dataset.compWindow;
+        loadCompetingEvents();
+      });
+    });
+  }
+
+  async function loadCompetingEvents() {
+    const body    = document.getElementById('vCompetingBody');
+    const countEl = document.getElementById('vCompetingCount');
+    if (!body) return;
+    const eventId = _vTabState.compEventId;
+    if (!eventId) {
+      body.innerHTML = '<div class="empty">select an anchor event above</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading…</div>';
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+
+    try {
+      const res = await Auth.client.rpc('find_competing_events', {
+        p_event_id:     eventId,
+        p_radius_miles: _vTabState.compRadius,
+        p_window_hours: _vTabState.compWindow,
+      });
+      if (res.error) throw new Error(res.error.message || 'RPC error');
+      const rows = res.data || [];
+      if (countEl) countEl.textContent = rows.length ? `${rows.length} events` : '';
+      if (!rows.length) {
+        body.innerHTML =
+          `<div class="empty">no competing events within ${_vTabState.compRadius} mi ` +
+          `and ±${_vTabState.compWindow}h of this event</div>`;
+        return;
+      }
+
+      const tbl = document.createElement('table');
+      tbl.className = 'competing-tbl';
+      tbl.innerHTML = `
+        <thead><tr>
+          <th>Competing Event</th>
+          <th>Venue</th>
+          <th>City</th>
+          <th class="num">Dist (mi)</th>
+          <th class="num">Offset (h)</th>
+          <th>Type</th>
+          <th>Performer</th>
+        </tr></thead>
+        <tbody></tbody>`;
+      const tb = tbl.querySelector('tbody');
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const offsetAbs = Math.abs(+r.hours_offset || 0);
+        const offsetCls = offsetAbs <= 4 ? 'warn-cell' : '';  // same-night conflicts
+        tr.innerHTML = `
+          <td><a href="event.html?event=${r.competing_event_id}">${escapeHtml(r.competing_event_name || ('Event ' + r.competing_event_id))}</a></td>
+          <td>${escapeHtml(r.competing_venue || '—')}</td>
+          <td>${escapeHtml(r.competing_city || '—')}</td>
+          <td class="num">${r.distance_miles != null ? (+r.distance_miles).toFixed(1) : '—'}</td>
+          <td class="num ${offsetCls}">${r.hours_offset != null ? (r.hours_offset >= 0 ? '+' : '') + (+r.hours_offset).toFixed(1) + 'h' : '—'}</td>
+          <td class="muted small">${escapeHtml(r.competing_event_type || '—')}</td>
+          <td class="muted small">${escapeHtml(r.competing_performer || '—')}</td>`;
+        tb.appendChild(tr);
+      });
+      body.innerHTML = '';
+      body.appendChild(tbl);
+    } catch (e) {
+      body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+      if (countEl) countEl.textContent = '';
+    }
   }
 
   // ---------- Util ----------

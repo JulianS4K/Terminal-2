@@ -92,6 +92,16 @@ main.wrap {
 .badge.lifecycle-complete { border-color: var(--dim); color: var(--dim); }
 .badge.countdown { border-color: var(--accent); color: var(--accent); }
 
+/* TemporalChip — phase 3 */
+.badge.temporal           { border-color: var(--dim);  color: var(--muted); font-size: 10px; }
+.badge.temporal.urgent    { border-color: var(--warn); color: var(--warn);  font-weight: 600; }
+.badge.temporal.urgent.pos{ border-color: var(--pos);  color: var(--pos);   font-weight: 700; }
+.badge.temporal.near      { border-color: var(--info); color: var(--info); }
+.badge.temporal.muted     { border-color: var(--dim);  color: var(--dim);   font-size: 10px; }
+
+/* GapChip — phase 2: discovery_gap_alerts chips on event hero + movers rows */
+.badge.gap-chip { border-color: rgba(245,158,11,.45); color: var(--warn); font-size: 10px; }
+
 /* Coverage 4-light badge */
 .coverage { display: flex; gap: 4px; align-items: center; margin-top: 8px; }
 .coverage .lbl { color: var(--muted); font-family: var(--mono); font-size: 10px; margin-right: 4px; }

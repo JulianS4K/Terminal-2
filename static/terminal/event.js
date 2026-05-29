@@ -54,6 +54,44 @@
   // Initialize TD inv series as hidden by default (user-togglable in legend).
   ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
 
+  // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
+  // event is currently in the merged-7d slot of event_movers_index. Async +
+  // best-effort; no chip if the event is not in the index or preload fails.
+  async function loadHeroMoverChip(eventId) {
+    if (!eventId) return;
+    await T.moversPreloadIndex();
+    const chipHtml = T.moversChipHtml(eventId);
+    if (!chipHtml) return;
+    const badges = document.getElementById('evBadges');
+    if (!badges) return;
+    badges.insertAdjacentHTML('beforeend', ' ' + chipHtml);
+  }
+
+  // Phase 2: <GapChip> — appends discovery gap alert badges to evBadges.
+  // discovery_gap_alerts has no RLS (relrowsecurity=false) — readable directly
+  // via @s4kent.com JWT. Top-3 active alerts by signal_score. Best-effort async;
+  // no chips if the event has no active gaps.
+  async function loadHeroGapChips(eventId) {
+    if (!eventId) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const { data, error } = await Auth.client
+      .from('discovery_gap_alerts')
+      .select('gap_type,detail,signal_score')
+      .eq('event_id', eventId)
+      .is('resolved_at', null)
+      .order('signal_score', { ascending: false })
+      .limit(3);
+    if (error || !data || !data.length) return;
+    const badges = document.getElementById('evBadges');
+    if (!badges) return;
+    data.forEach(g => {
+      badges.insertAdjacentHTML('beforeend',
+        ` <span class="badge gap-chip" title="${escapeHtml(g.detail || '')}">${escapeHtml((g.gap_type || '').replace(/_/g, ' '))}</span>`
+      );
+    });
+  }
+
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const eventId = T.getEventId();
@@ -80,6 +118,8 @@
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
     loadTdSplits(eventId).catch(e => console.error('[tdSplits]', e));
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
+    loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
+    loadHeroGapChips(eventId).catch(e => console.error('[gapChips]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
@@ -391,13 +431,9 @@
     const badges = document.getElementById('evBadges');
     badges.innerHTML = '';
 
-    const days = T.daysUntil(ev.occurs_at_local || ev.occurs_at);
-    if (days !== null) {
-      const b = document.createElement('span');
-      b.className = 'badge countdown';
-      b.textContent = days <= 0 ? 'TODAY' : days === 1 ? 'TOMORROW' : `T-${days}d`;
-      badges.appendChild(b);
-    }
+    // Phase 3: TemporalChip — richer than the old "T-Xd" badge
+    const tempChip = T.temporalChipHtml(ev.occurs_at_local || ev.occurs_at);
+    if (tempChip) badges.insertAdjacentHTML('beforeend', tempChip);
     const lc = overview.lifecycle;
     if (lc) {
       const status = lc.status || lc.classification;

@@ -38,21 +38,31 @@
 
     <section id="movers-panel">
       <div class="panel-title row">
-        <span>MOVERS · OUR BOOK MARK-TO-MARKET</span>
+        <span>MOVERS · CROSS-SOURCE INDEX</span>
         <span class="muted small" id="moversCount"></span>
       </div>
+      <div id="moversSummaryStrip" class="muted small" style="margin-bottom:6px"></div>
       <div class="ctrl-row">
         <div class="ctrl-group">
+          <span class="ctrl-lbl">SOURCE</span>
+          <button class="ctrl-btn is-active" data-src="merged">Merged</button>
+          <button class="ctrl-btn"           data-src="evo">EVO</button>
+          <button class="ctrl-btn"           data-src="sg">SG</button>
+          <button class="ctrl-btn"           data-src="td_sh">SH</button>
+          <button class="ctrl-btn"           data-src="td_gt">GT</button>
+          <button class="ctrl-btn"           data-src="td_vd">VD</button>
+        </div>
+        <div class="ctrl-group">
           <span class="ctrl-lbl">WINDOW</span>
-          <button class="ctrl-btn" data-window="1">1h</button>
-          <button class="ctrl-btn" data-window="6">6h</button>
-          <button class="ctrl-btn is-active" data-window="24">24h</button>
-          <button class="ctrl-btn" data-window="168">7d</button>
+          <button class="ctrl-btn is-active" data-wdays="7">7d</button>
+          <button class="ctrl-btn"           data-wdays="15">15d</button>
+          <button class="ctrl-btn"           data-wdays="30">30d</button>
+          <button class="ctrl-btn"           data-wdays="180">180d</button>
         </div>
         <div class="ctrl-group">
           <span class="ctrl-lbl">SEGMENT</span>
           <button class="ctrl-btn is-active" data-segment="all">All</button>
-          <button class="ctrl-btn" data-segment="owned">Owned only</button>
+          <button class="ctrl-btn"           data-segment="owned">Owned only</button>
         </div>
       </div>
       <div id="moversBody"><div class="empty">loading…</div></div>
