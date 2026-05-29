@@ -2,7 +2,7 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline v1.0.0 2026-05-28 (A1); v1.1.0 2026-05-28 (A1) — §5 adds the forward-only SKILL.md structure standard. Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -106,7 +106,7 @@ Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are 
 - Service Tokens are the preferred mechanism for enforcement when feasible (Render's Member-role token can't perform writes by API constraint, providing hard isolation beyond policy). Until tokens are scoped per-bot, the scoping is policy-level and audited via Render's audit log.
 - Cross-service writes (D1 touching D2's service or vice versa) = lane violation, surfaces as `flag` in `bot_chat` per existing cross-lane rules
 
-### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15)
+### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15) *(v1.1 · A1 · 2026-05-28)*
 
 Every active bot MUST create its own lane-scoped aging-sweep scheduled task on first activation. Operator-mandated 2026-05-15 (bot_chat 210).
 
@@ -130,6 +130,14 @@ Every active bot MUST create its own lane-scoped aging-sweep scheduled task on f
 **Reference implementation**: `bot-chat-aging-sweep` shipped 2026-05-15 (A1). See `mcp__scheduled-tasks__create_scheduled_task` schema + the prompt embedded in that task's SKILL.md at `C:\Users\julia\.claude\scheduled-tasks\bot-chat-aging-sweep\SKILL.md`.
 
 **Why mandatory**: today's cron cascade incident (bot_chat 195) was caught in 3h by B1's interactive sweep. A1 missed it for that whole window because A1 only had a global aging sweep (every bot's items, no lane-specific focus). Per-bot sweeps catch lane-addressed work fast.
+
+**SKILL.md structure (forward-only, 2026-05-28).** New or revised task `SKILL.md` files use the four labeled sections below. Existing tasks are **grandfathered** — owners upgrade their own opportunistically (lane-scoped; A1 does not rewrite another bot's task file). Adapted from the public `agent-skills` pattern, deliberately trimmed to keep our token discipline: keep the parts that catch real failure modes, drop the verbose boilerplate.
+- **frontmatter** — `name`, `description` (unchanged).
+- **Process** — the numbered operative steps (query → act → tools); same content, just labeled.
+- **Red flags** — the must-NOT list, e.g. "never post to `bot_chat` (feedback loop)"; "a silent run looks identical to a dead task."
+- **Verification** — a one-line self-check the task *reasons about* before finishing, e.g. "confirm exactly one Slack post fired." Phrase as a check, **never an action** — wording it as a step can trigger a duplicate post.
+
+Keep payloads ≤1500 chars and the file ≤~80 lines — brevity beats ceremony; omit any section that doesn't apply.
 
 ### 6. Documentation discipline — the canonical doc set is CLOSED (2026-05-28)
 
