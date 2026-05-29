@@ -277,6 +277,18 @@ SELECT cron.schedule('td_tp_discover', '25 9 * * *',
 SELECT cron.schedule('td_tp_discover_drain', '30 9 * * *',
   $cronbody$ DO $b$ BEGIN IF NOT public.cron_should_fire('td_tp_discover_drain') THEN RETURN; END IF; PERFORM public.td_tp_discover_drain(); END $b$; $cronbody$);
 
+-- 8) Enqueue cron — push active TP rows into td_pull_queue 3x/day (mirrors SH/VD/GT).
+--    WITHOUT this, TP xref rows are never enqueued -> never pulled. td_enqueue_peak
+--    gates internally on cron_should_fire('td_enqueue_peak_tp') + td_budget_ok.
+SELECT cron.unschedule('td_enqueue_peak_tp') WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='td_enqueue_peak_tp');
+SELECT cron.schedule('td_enqueue_peak_tp', '0 16,22,4 * * *',
+  $cronbody$ DO $b$ BEGIN
+      PERFORM public.td_enqueue_peak('TP',
+        CASE date_part('hour', now() AT TIME ZONE 'UTC')::int
+          WHEN 16 THEN '12pm_ET' WHEN 22 THEN '6pm_ET'
+          WHEN  4 THEN '12am_ET' ELSE 'manual' END);
+    END $b$; $cronbody$);
+
 -- Post-apply smoke (run manually after apply):
 --   SELECT public.td_tp_discover();             -- fires /events for both performers
 --   -- wait ~45s --
