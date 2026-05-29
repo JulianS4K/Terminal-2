@@ -1,0 +1,43 @@
+name: docs-registry-check
+
+# Layer-3 anti-regrowth gate for documentation. Runs bin/check-docs.sh on every
+# PR and on push to main. A non-zero exit FAILS the check and blocks the merge.
+# Server-side — a bot cannot skip it with --no-verify.
+#
+# Enforces (see README registry + CLAUDE.md §6):
+#   1. Every root-level *.md is in the README.md registry table (and vice-versa).
+#   2. No dated / working-note file lives in docs/ outside docs/archive/.
+#
+# No secrets required — this is a pure repo-structure check.
+
+on:
+  pull_request:
+    paths:
+      - '**.md'
+      - 'bin/check-docs.sh'
+      - '.github/workflows/docs-registry-check.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run docs-registry check
+        run: |
+          chmod +x bin/check-docs.sh
+          bin/check-docs.sh --report-md docs-registry-report.md
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-registry-report
+          path: docs-registry-report.md
+          retention-days: 30

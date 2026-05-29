@@ -2,7 +2,7 @@
 
 D4 = **The Bridge** lane: primary-market ticketing intake + distribution to S4K's retail channels. Activating 2026-05-20 (was "UNASSIGNED / future"). Reports to C1 (hierarchy); subordinate-coding posture under D0 for any shared frontend surface.
 
-This doc codifies the boundaries D4 operates within. **Read first:** [`docs/d4_bridge_charter.md`](d4_bridge_charter.md) (scope + architecture), `CLAUDE.md §4` (Render scope), `LANE_DISCIPLINE.md §6` (deploy ownership), `BOT_HIERARCHY.md` (push matrix). This file fills in D4-specific operational detail.
+This doc codifies the boundaries D4 operates within. **Read first:** [`docs/d4_bridge_charter.md`](d4_bridge_charter.md) (scope + architecture), `CLAUDE.md §4` (Render scope), `BOT_HIERARCHY.md` (deploy ownership · push matrix · per-lane scope — absorbed the former `LANE_DISCIPLINE.md` on 2026-05-28). This file fills in D4-specific operational detail.
 
 ## Posture (activation, pre-implementation)
 

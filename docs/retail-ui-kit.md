@@ -1,7 +1,7 @@
 # Retail UI Kit
 
 **Owners:** claude design (UI), copilot (backend RPCs already shipped — see DATA WIRING).
-**Read first:** `AGENTS.md` → CLAUDE DESIGN LANGUAGE section. This kit applies that language to a manual browse flow that lives ALONGSIDE the chatbot, not instead of it.
+**Read first:** `docs/archive/AGENTS.md` → CLAUDE DESIGN LANGUAGE section (AGENTS.md archived 2026-05-28; the design-language guidance is preserved there). This kit applies that language to a manual browse flow that lives ALONGSIDE the chatbot, not instead of it.
 
 ## HARD RESTRICTION (rule 15)
 

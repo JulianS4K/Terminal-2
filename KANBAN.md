@@ -1,5 +1,7 @@
 # KANBAN.md — Terminal-2 shared work board
 
+> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Append-only board; the section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+
 > **One source of truth for what's next, who's on it, and what just shipped.**
 >
 > - **code** owns: backend (Python, SQL, edge functions), audits, git push.
@@ -76,7 +78,7 @@
 | B1-NEXT-24 | B1 | Periodic full-pass drift audit of `PROJECT_BIBLE.md` §4 RPC table. | Quarterly cadence |
 | B1-NEXT-25 | B1 | Periodic full-pass drift audit of `RESOURCES_BIBLE.md` §1. | Quarterly |
 | B1-NEXT-26 | B1 | bot_chat thread-closure rate dashboard — add to `release_health_check()` as `coordination.thread_closure_rate_7d`. | 1 SQL migration |
-| B1-NEXT-27 | B1 | Cross-bible consistency check (PROJECT_BIBLE.md vs LANE_DISCIPLINE.md vs BOT_HIERARCHY.md). | Periodic full diff |
+| B1-NEXT-27 | B1 | Cross-bible consistency check (PROJECT_BIBLE.md vs BOT_HIERARCHY.md — `LANE_DISCIPLINE.md` folded into BOT_HIERARCHY 2026-05-28). | Periodic full diff |
 | B1-NEXT-28 | B1 (post-MCP) | Slack channel signal-quality metric. | Blocked on B1-NEXT-21 |
 | B1-NEXT-35 | Op | Create scheduled task `b1-war-games-rotation`. Every 4h. | Operator approves Slack MCP tool + cron creation |
 | B1-NEXT-40 | Op | **G-9**: `allow_forking: true` on public repo. Forks clone full history including the leaked `CRON_SECRET` commit `5297739`. Compounds G-1. | Operator decision (usually allow_forking stays true; real fix is G-1 history rewrite) |
@@ -120,6 +122,24 @@
 | D2-OPS-1 | A1 apply | **Metrics tab reads dormant SG source.** 6 `d2_metrics_*` RPCs still filter `source IN ('evo','seatgeek',...)` → Metrics tab aggregates the dormant seller-side `seatgeek` (~$0) instead of the broker firehose `seatgeek_sales` (~$4M/hr). The Orders tab swapped to the firehose on 2026-05-16 (PR #147) but this companion RPC swap never applied. Verified live 2026-05-22 (`bool_and(... ILIKE '%seatgeek_sales%') = false`). | A1: `apply_migration` the **existing in-repo file** `20260516200000_d2_metrics_swap_sg_to_sg_sales.sql` (PR #147). Verified non-stale 2026-05-22 — live `d2_metrics_window` body is byte-identical except the source-IN list, so it's a clean swap with no drift-revert risk. |
 | D2-OPS-2 | D2 → D0 deploy | **Broker-sales views not wired into dashboard FE.** `v_sg_broker_sales_by_section` + `v_sg_broker_sales_by_event` are live in prod (PR #158) but referenced nowhere in `d2_dashboard/*` (grep-verified 2026-05-22). Operator intent 2026-05-16: "for use later in front end view." | D2 adds a dashboard panel/tab reading the views (section-grain rows + per-event "heat" rollup); deploy via D0. |
 | D2-OPS-3 | A1 apply + Op + SG | **WS2 SG SellerDirect webhook receiver not live.** Code merged (PR #149) but verified absent in prod 2026-05-22 (audit table + ingest RPCs + edge fn all missing). | A1: `apply_migration` 3 migs (`20260516210000/210100/210200`) + deploy `sg-seller-webhook` edge fn. Op: set vault `SG_SELLER_WEBHOOK_SECRET` + file SG support ticket (URL + token + 8 notification types). See `tests/test_sg_seller_webhook_contract.py` `SG_LIVE_TEST_PLAN`. |
+| A1-OPS-4 | A1 | **`listings_aq_backfill_overnight` still 120s-bounded despite `SET LOCAL`.** `SET LOCAL statement_timeout='3min'` inside a pg_cron `DO` block is overridden by pg_cron's system-level 120s hard limit, so the overnight backfill still caps at 120s. | Restructure `match_unmatched_listings_chunked(25, true)`, OR have the cron call a standalone SECDEF fn that escapes the pg_cron system timeout. (migrated from PROJECT_BIBLE §10) |
+| A1-OPS-5 | A1 | **`/health` endpoint doesn't exist** — the live health check is `/healthz`, not `/health`. | Fix any docs/monitoring that reference `/health`. (migrated from PROJECT_BIBLE §10) |
+| A1-OPS-6 | A1 / Op | **D4 Railway service decommission.** `static/bridge/` is current as of the 2026-05-25 rebuild and served from Render; the Railway host is now redundant. | Delete the Railway service once confirmed healthy on Render. (migrated from PROJECT_BIBLE §10) |
+| D4-OPS-29 | A1 / B1 | **`exos-media` owner-scoped read policy missing (62h+).** Storage DDL not yet applied: `CREATE POLICY … ON storage.objects WHERE bucket_id='exos-media' AND owner=auth.uid()`. Flagged by D4 in bot_chat #562. | A1 apply the storage policy; B1 review. (migrated from PROJECT_BIBLE §10) |
+
+### Known data-architecture gaps (workarounds, not bugs — don't rediscover)
+
+> Migrated from PROJECT_BIBLE §10 (2026-05-28). These are durable shape-of-the-data facts with a standing workaround — not actionable bugs. Don't waste cycles rediscovering them. (Resolved/shipped items from the old §10 drift watchlist live in `MIGRATION_CONVENTIONS.md §14` and `CHANGELOG.md`.)
+
+| Gap | Status | Workaround |
+|---|---|---|
+| `tevo_event_id` on SG snapshot tables | Partial: PR #178 backfilled to 87.35%; mig `20260517160000` makes NEW rows born populated where an xref exists | Query by `sg_event_id` when `tevo_event_id IS NULL` (no xref) |
+| `seatgeek_event_xref.last_listings_at` / `last_sales_at` | Dead globally (0/967) | Use `MAX(captured_at)` on the snapshot tables |
+| `sg_events_canonical.has_v2_listings_pulled` | Dead (25/4609 = 0.5%) | Same — use `MAX(captured_at)` |
+| `aq_short_event_id` on `listings_snapshots` | 0% populated (cron resumed 2026-05-16, fires 04:02 UTC) | Use `event_id` for TEvo reads |
+| ESPN snapshot pipeline = gameday-scope only | Specced, not built | Forward-look ESPN panels empty by design; use `espn_event_date_lookup` for forward-look team IDs / `game_at_utc` |
+| ~29% active TEvo events have no SG bridge | NWSL/USL/AHL/niche — real coverage gap | First-class TEvo-only UI state |
+| SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
 
 ---
 
@@ -519,7 +539,7 @@ Operator extended B1's mandate 2026-05-16: "communication channel, Librarians an
 - **[B1-NEXT-24] [SEC-LOW]** Periodic full-pass drift audit of `PROJECT_BIBLE.md` §3 (canonical RPC table) — verify all 32 listed RPCs exist in `pg_proc` with the signatures stated. Rotating quarterly cadence; first pass at session start. Tracked here separately from per-session sweep step 15 (which is per-session rotating spot-check).
 - **[B1-NEXT-25] [SEC-LOW]** Periodic full-pass drift audit of `RESOURCES_BIBLE.md` §1 (external services) — verify Render service IDs match `mcp__render__list_services`, vault secret names match `get_app_secret` allowlist, lane ownership rows match `BOT_HIERARCHY.md`. Rotating quarterly.
 - **[B1-NEXT-26] [SEC-LOW]** `bot_chat` thread-closure rate dashboard — query for `(count(resolved) + count(status-closed)) / count(total flag+question)` by lane over rolling 7d. File flag if any lane closure rate < 50%. Could be added as a row in `release_health_check()` (`coordination.thread_closure_rate_7d`).
-- **[B1-NEXT-27] [SEC-LOW]** Cross-bible consistency check (PROJECT_BIBLE.md vs LANE_DISCIPLINE.md vs BOT_HIERARCHY.md). Lane ownership rows, push restrictions, write-surface declarations should align across the three. Periodic full diff.
+- **[B1-NEXT-27] [SEC-LOW]** Cross-bible consistency check (PROJECT_BIBLE.md vs BOT_HIERARCHY.md — `LANE_DISCIPLINE.md` folded into BOT_HIERARCHY 2026-05-28, so the diff is now two-way). Lane ownership rows, push restrictions, write-surface declarations should align across both. Periodic full diff.
 - **[B1-NEXT-28] [SEC-LOW]** Slack channel signal-quality metric — once interactive Slack MCP loads in B1 sessions, per-channel message rate + dormancy + scheduled-task vs human post ratio. Threshold-based alerts on signal degradation.
 - **[B1-NEXT-29] [SEC-MED]** §6 retrofit on `public.refresh_sg_broker_sales_event_metrics(integer)` — SECDEF, anon EXECUTE, no body guard, no shared-secret gate. Drives hourly `:17` cron populating `seatgeek_event_metrics.sold_*`. Defense-in-depth (cron callers are service_role; primary mitigation is grant model). Filed by B1 in 2026-05-16 drift sweep after testing-unified architecture landed. Cross-lane to A1 — PR comment on the originating migration.
 - **[B1-NEXT-30] [SEC-MED]** §6 retrofit on `public.sg_seller_orders_queue(p_pages integer, p_statuses text)` — SECDEF, anon EXECUTE, no body guard. SG seller-side ingest queue. Defense-in-depth. Cross-lane to A1/D2 — PR comment on originating migration.

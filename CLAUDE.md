@@ -2,9 +2,11 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
+> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
+
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
-**Before doing anything, read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).** It consolidates the 80% you need from this file + LANE_DISCIPLINE.md + BOT_HIERARCHY.md + MIGRATION_CONVENTIONS.md + data-source docs into a single 400-line reference. Saves ~5× the tokens vs reading every governance file at session start.
+**Before doing anything, read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).** It consolidates the 80% you need from this file + BOT_HIERARCHY.md + MIGRATION_CONVENTIONS.md + data-source docs into a single per-session reference. Saves ~5× the tokens vs reading every governance file at session start.
 
 The bible has:
 - Hard rules (no-mutation, read-only-upstream, lane scope)
@@ -16,11 +18,11 @@ The bible has:
 - Workflow recipes ("I want to author a migration", "I want to wire a UI panel", etc.)
 - Recent landmark migrations (don't re-do work already shipped)
 - Drift watchlist (known gaps — don't waste cycles rediscovering)
-- Self-check (9-item pre-task checklist)
+- Self-check (10-item pre-task checklist)
 
 This file (CLAUDE.md) remains the canonical source for security rules + lockdown invariants. The bible is the operational handbook bots read once per session.
 
-Per-lane detail in `LANE_DISCIPLINE.md` (per-bot scope) + `BOT_HIERARCHY.md` (push restrictions matrix). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md` (referenced in the top matter of `LANE_DISCIPLINE.md`).
+Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `BOT_HIERARCHY.md` (it absorbed the former `LANE_DISCIPLINE.md` on 2026-05-28). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md`.
 
 ## Global operator rules (2026-05-13 lockdown)
 
@@ -65,7 +67,7 @@ OK: search / suggestions / events / performers / venues / ticket_groups / listin
 
 Each bot has operational latitude on UI files and JS wiring routed to them. Build, iterate, refactor without per-step approval.
 
-Lane assignments per `LANE_DISCIPLINE.md`:
+Lane assignments per `BOT_HIERARCHY.md`:
 - **D0** — Terminal FE (`static/terminal/*` when built)
 - **D1** — Consumer Retail (`static/store/*`, `static/store/test/*` sandbox)
 - **C1** — supervisor docs + audit harnesses + lane discipline
@@ -128,6 +130,16 @@ Every active bot MUST create its own lane-scoped aging-sweep scheduled task on f
 **Reference implementation**: `bot-chat-aging-sweep` shipped 2026-05-15 (A1). See `mcp__scheduled-tasks__create_scheduled_task` schema + the prompt embedded in that task's SKILL.md at `C:\Users\julia\.claude\scheduled-tasks\bot-chat-aging-sweep\SKILL.md`.
 
 **Why mandatory**: today's cron cascade incident (bot_chat 195) was caught in 3h by B1's interactive sweep. A1 missed it for that whole window because A1 only had a global aging sweep (every bot's items, no lane-specific focus). Per-bot sweeps catch lane-addressed work fast.
+
+### 6. Documentation discipline — the canonical doc set is CLOSED (2026-05-28)
+
+The repo's governance/reference docs are a **closed set**. The registry table in [`README.md`](README.md) lists every canonical root doc and exactly what it owns. This rule exists because the prior consolidation regrew into sprawl — nothing gated new-doc creation. Now there is a gate.
+
+- **Do NOT create new root or governance `.md` files.** To add a fact, edit the doc that already owns that topic (the README registry names the owner). A genuinely new top-level doc is an operator decision — ask first.
+- **One fact, one home — never duplicate; link.** If a fact already lives somewhere, point to it (`see <DOC> §<n>`) rather than restating it. Duplicated facts are exactly how these docs drifted out of sync.
+- **Ephemeral work never becomes a new doc.** Audits, checkpoints, session logs, handoffs, status snapshots → use `bot_chat` (durable cross-lane record) or `KANBAN.md` (open work). Only if a durable dated artifact is genuinely needed: `docs/archive/YYYY-MM-DD-<topic>.md` (historical, non-canonical).
+- **Enforcement is a hard CI gate.** `.github/workflows/docs-registry-check.yml` (via `bin/check-docs.sh`) fails any PR that adds a root `*.md` not in the README registry, or drops a dated/working-note file into `docs/` outside `docs/archive/`. It runs server-side — `--no-verify` cannot skip it.
+- **Version docs + tag section changes (2026-05-28).** Each canonical doc carries a `**Doc version:**` line (semver, baseline `v1.0.0`). When you add or materially change a section, tag its heading `(vX.Y · <BOT> · YYYY-MM-DD)` and bump the doc-version line — full convention in [`README.md`](README.md) *Doc-writing rules*. `CHANGELOG.md` is exempt. The gate also fails any registry doc missing its `**Doc version:**` line.
 
 ## Cross-lane writes
 

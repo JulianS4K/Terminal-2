@@ -1,5 +1,7 @@
 # SYNC_PROTOCOL.md
 
+> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+
 **Goal: shrink the time from "a bot has a change ready" to "every other bot is back in sync with prod."**
 
 Companion to `BOT_HIERARCHY.md` (who can push) and `MIGRATION_CONVENTIONS.md` (how to push). This is *how fast*.
@@ -272,7 +274,7 @@ If the latest broadcast names your lane in "next batons," that's your work.
 | Sync state ambiguous after a merge | Each bot guesses when to pull | SYNC CHECKPOINT broadcast triggers the pull |
 | Branch + PR grep | Inconsistent naming → can't find your branch | `claude/<lane>-<slug>` + `<type>(<lane>):` convention |
 | Deploy-branch drift | 9928 lines behind (the Render branch incident) | Weekly merge by service owner OR repoint at main |
-| First-time-bot ramp-up | Hunt for docs across the repo | `START_HERE.md` → `BOT_HIERARCHY.md` → `SYNC_PROTOCOL.md` → `MIGRATION_CONVENTIONS.md` |
+| First-time-bot ramp-up | Hunt for docs across the repo | `README.md` → `BOT_HIERARCHY.md` → `SYNC_PROTOCOL.md` → `MIGRATION_CONVENTIONS.md` |
 
 ---
 

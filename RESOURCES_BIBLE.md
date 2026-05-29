@@ -1,6 +1,8 @@
 # RESOURCES_BIBLE.md
 
-**Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Updated 2026-05-17 (main HEAD `e04387e`+post-#191).**
+> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+
+**Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Also the canonical home for the event-classification taxonomy + cross-cutting data RULES (RULE 0/1/2), absorbed from the retired `SCHEMA.md` — see §2.15–§2.17. Updated 2026-05-28 (absorbed SCHEMA.md taxonomy+RULES into §2.15–§2.17; performer/venue cross-source mapping chains + missing entity_performer_map / entity_venue_map / aq_performer_map / aq_venue_map / cross_source_venue_map entries added to §2.5) | prior: 2026-05-17 (main HEAD `e04387e`+post-#191).**
 
 **⚠ READ THIS BEFORE CREATING ANY TABLE / VIEW / RPC / CRON.** The inventory below is curated — if a name nearby fits your need, reuse instead of creating. Common collisions: `*_metrics`, `*_xref`, `v_event_*`, `sg_*_pending`. Run `SELECT relname FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace WHERE nspname='public' AND relkind IN ('r','v','m')` before authoring net-new structures.
 
@@ -220,16 +222,46 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 
 ### 2.5 Canonical / cross-source
 
+> **Cross-source mapping chains are fully documented in `D0_BIBLE.md §3` (cross-source ID architecture — canonical owner)** with lookup priority orders and SQL patterns. The tables below are the physical backing — read that section before writing any cross-source JOIN.
+>
+> **Key principle:** `tevo_performer_id` and `tevo_venue_id` are the canonical IDs. All other sources bridge through them. Source IDs (sg_*, sd_*, espn_*, td_*) are source-internal and must never be joined cross-source on raw values.
+
+**Event cross-source hub:**
+
 | Table | Size | Purpose | Owner | Origin |
 |---|---|---|---|---|
+| `aq_event_map` | — | **Primary event hub** — bridges TD aq_short_event_id ↔ tevo_event_id / sg_event_id / sh/vivid/tm IDs. 7,271 rows. | A1 | mig 20260528380000 |
+| `sg_events_canonical` | 232 kB | SG event records resolved to TEvo (4,609 rows; 2,590 linked to tevo_event_id) | C1 | pre-history |
+| `ticketsdata_event_xref` | — | TD event catalog; gets tevo_event_id + sg_event_id + tevo_match_method via mig 380000 | A1 | pre-history + mig 380000 |
 | `canonical_external_ids` | 1.2 MB | Master external-id table for events/performers/venues | C1 | pre-history (C1 phase 13 work in PR #51) |
-| `sg_events_canonical` | 232 kB | SG event records resolved to canonical | C1 | pre-history |
-| `espn_teams_canonical` | 64 kB | ESPN team records resolved to canonical | C1 | pre-history |
-| `performer_external_ids` | 528 kB | Performer-side external id map | C1 | pre-history |
+
+**Performer cross-source tables (`tevo_performer_id` = canonical key):**
+
+| Table | Size | Purpose | Owner | Origin |
+|---|---|---|---|---|
+| `entity_performer_map` | — | **Primary performer catalog** — tevo_performer_id PK, espn_team_id, espn_league, home_venue_ids[], genre, what_event_type, sd_performer_id, sg_performer_name (denorm). Start here. | C1 | pre-history |
+| `performer_external_ids` | 528 kB | Normalized multi-source ID store (1 row per source per performer) | C1 | pre-history |
 | `seatgeek_performer_xref` | 192 kB | SG ↔ TEvo performer mapping | C1 | pre-history |
+| `seatdata_performer_xref` | 24-32 kB | SeatData ↔ TEvo performer mapping | C1 / D2 | pre-history |
+| `performer_espn_team_xref` | 96 kB | Explicit tevo_performer_id → espn_team_id + espn_league | C1 | pre-history |
+| `aq_performer_map` | — | AQ performer_short_id → tevo_performer_id + aliases[] | A1 | pre-history |
+| `espn_teams_canonical` | 64 kB | ESPN team records resolved to canonical | C1 | pre-history |
+
+**Venue cross-source tables (`tevo_venue_id` = canonical key):**
+
+| Table | Size | Purpose | Owner | Origin |
+|---|---|---|---|---|
+| `entity_venue_map` | — | **Primary venue multi-source record** — tevo_venue_id PK, sd_venue_id, sg_venue_name (denorm), external_ids jsonb. Start here for SG/SD venue IDs. | C1 | pre-history |
 | `seatgeek_venue_xref` | 104 kB | SG ↔ TEvo venue mapping | C1 | pre-history |
-| `seatdata_performer_xref`, `seatdata_venue_xref`, `seatdata_section_xref`, `seatdata_zone_xref` | 24-32 kB | SD-side xref tables | C1 / D2 | pre-history |
-| `performer_espn_team_xref` | 96 kB | Performer ↔ ESPN team | C1 | pre-history |
+| `seatdata_venue_xref` | 24-32 kB | SeatData ↔ TEvo venue mapping | C1 / D2 | pre-history |
+| `aq_venue_map` | — | AQ venue_short_id → tevo_venue_id + sg_venue_id (sg_venue_id ~5% populated) | A1 | pre-history |
+| `cross_source_venue_map` | 391+ rows | Text name → tevo_venue_id with per-source alias arrays (sg/tickpick/vivid/seatdata); use `cross_source_venue_resolve(name,city,state)` fn | A1 | mig 20260516240000 (PR #177) |
+
+**Other cross-source:**
+
+| Table | Size | Purpose | Owner | Origin |
+|---|---|---|---|---|
+| `seatdata_section_xref`, `seatdata_zone_xref` | 24-32 kB | SD-side section/zone xref | C1 / D2 | pre-history |
 | `team_xref` (view) | — | Unified team-id resolution view | C1 | pre-history |
 | `taxonomy_xref` | 96 kB | TEvo taxonomy / category lookups | C1 | pre-history |
 | `broker_xref` | 32 kB | TEvo broker_id → name | A1 | pre-history |
@@ -266,17 +298,20 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 
 ### 2.8 Performer / venue metadata
 
+> **Cross-source ID tables** (`entity_performer_map`, `entity_venue_map`, `aq_performer_map`, `aq_venue_map`, `*_xref` tables) are in **§2.5** — the primary catalog for any cross-source lookup. This section covers enrichment/metadata tables that supplement those IDs.
+
 | Table | Size | Purpose | Owner |
 |---|---|---|---|
-| `performer_metadata` | 4 MB | Generic performer info | C1 |
+| `performer_metadata` | 4 MB | Performer branding — slug, colors, logo URLs, espn_team_id (tevo→ESPN bridge), espn_league | C1 |
 | `performer_wikipedia` | 592 kB | Wikipedia extracts per performer | C1 |
-| `performer_home_venues` | 120 kB | Performer → home venue mapping | C1 |
+| `performer_home_venues` | 120 kB | tevo_performer_id → tevo_venue_id + league (team home stadium) | C1 |
 | `performer_zones`, `performer_zone_rules` | 168-872 kB | Section→zone classification rules | C1 |
 | `performer_crawl_state`, `performer_wiki_pending` | 16-160 kB | Crawl checkpointing | C1 |
 | `important_x_accounts` | 264 kB | Curated Twitter handles per performer/team | C1 |
 | `performer_subreddits`, `general_subreddits` | 32-88 kB | Reddit source map (table retained, cron paused) | A1 |
 | `reddit_posts`, `reddit_pending` | 280-4720 kB | Reddit data (CRONS DROPPED 2026-05-13 PR #72; tables retained) | A1 |
-| `venue_assets`, `venue_geocode_pending`, `venue_crawl_state`, `venue_pulls`, `venue_pull_log` (cf log table) | 32-320 kB | Venue master + crawl state | C1 |
+| `venue_assets` | 32-320 kB | **Primary venue record** — tevo_venue_id PK, venue_name, city, state, capacity, is_indoor, lat/lon, espn_venue_id (TEXT), espn_venue_name, NWS weather fields. ESPN venue bridge is HERE (no separate ESPN venue table). | C1 |
+| `venue_geocode_pending`, `venue_crawl_state`, `venue_pulls`, `venue_pull_log` | 32-320 kB | Venue crawl state | C1 |
 
 ### 2.9 Chat / NLU
 
@@ -331,6 +366,117 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 | `*_pending` (12+ tables) | C1, A1 | Generic queue for cron-driven backfills (events, listings, weather, NWS, ESPN, tournament, etc.). `pg_net` retention sweep keeps them tidy. |
 | `*_pull_log`, `*_pull_budget`, `pull_rate_limits` | A1 | Provenance + rate-limit governance for outbound pulls |
 | `seatgeek_seller_pending`, `sg_seller_pending`, `sg_listings_pending`, `sg_event_backfill_pending`, `sg_event_match_pending`, `evo_event_backfill_pending`, `evo_orders_pending` | D2 | Per-source backfill queues |
+
+### 2.15 Event & performer classification taxonomy
+
+> *Absorbed from the retired `SCHEMA.md` (audited 2026-05-09). Counts are point-in-time/indicative — the category tree, derived columns, behavior rules, and ESPN map are the durable parts.*
+
+TEvo pushes a 3-level category tree per performer (`performer_metadata.top_category_name → parent_category_name → category_name`) plus 2 derived classifications.
+
+**`top_category_name` (4 values):** Concerts (~441, music acts), Sports (~343, teams/leagues/tournaments), Comedy (~24), Theater (~18 — musicals/plays/ballet/movies).
+
+**Sports subtree** (`parent_category_name` → leaves):
+
+| Parent | Leaves |
+|---|---|
+| Football | NCAA Football, NFL, IFL, UFL, USFL |
+| Soccer | MLS, NWSL, USL Championship, World Cup, EPL, Bundesliga, Mexico FMF, USL One, FA Cup |
+| Baseball | MLB, MiLB, Independent League |
+| Sports (generic catch-all) | Soccer/Rodeo/Cricket/Volleyball/Football/Rugby/Lacrosse/Fighting/Hockey/Misc |
+| Basketball | WNBA, NBA, CEBL |
+| Hockey | NHL, International, PWHL, NCAA Men's, AHL |
+| Fighting | MMA, WWE, Wrestling, Boxing |
+| Auto Racing | Monster Trucks |
+
+**Concerts subtree (genres):** Rock & Pop, Country & Folk, Alt Rock, R&B/Urban Soul, Rap & Hip-Hop, Hard Rock/Metal, Latin, Indie, Dance/Electronic, New Age, World, Misc, K-Pop, Festivals, Classical, Family, Reggae, Jazz, DJ.
+
+**Theater subtree:** Musicals, Entertainment Shows, Plays, Movies, Ballet & Dance.
+
+**Derived classifications** (SQL fns compute these from the leaf category):
+- **`performer_metadata.what_event_type`** (4 values): `game` (all Sports), `concert` (all Concerts), `comedy`, `show` (Theater).
+- **`performer_metadata.genre`** (~13 values, non-game only): rock, rnb, metal, comedy, latin, family, broadway, k-pop, classical, festival, theater, folk-world. NULL for `game`.
+- **`events.event_type`** (per-event, from primary_performer): `game`, `concert`, `comedy`, `show`.
+
+**Behavior rules driven by classification:**
+
+| Feature | Rule | Why |
+|---|---|---|
+| HOME/AWAY badges + row tints | only `what_event_type='game'` AND performer has `performer_home_venues` rows | concerts/comedy/theater have no "home" — a venue just hosts them |
+| ESPN context (standings/injuries/news) | only `game` AND performer has `performer_external_ids source='espn'` | ESPN doesn't track concerts |
+| Watchlist auto-coverage cron (jobid 34) | only teams with `source='espn'` AND `league IN (NFL,NBA,NHL,MLB,MLS,WNBA)` | Big-6 sports leagues only |
+| Zone curation eligibility | sports OR repeat-venue residencies (e.g. Phish at MSG) | curated zones are venue-specific patterns |
+
+**League → ESPN coverage (4-layer matrix, audited 2026-05-09).** ESPN coverage is layered: a team mapping suffices for performer pages (standings/record), but event pages need event-level snapshots + xref to surface live game state. Two separate ingest paths (`espn-collect` `team_daily` vs `gameday` scopes).
+
+| TEvo leaf | Performer map | Team standings | Game-day snapshots | Event xref | Coverage |
+|---|:---:|:---:|:---:|:---:|---|
+| **NBA** | ✅ | ✅ | ✅ | ✅ | full — performer + event pages get ESPN |
+| **MLB** | ✅ | ✅ | ✅ | ✅ | full — performer + event pages get ESPN |
+| **NFL** | ✅ | ✅ | ❌ | ❌ | performer page only (standings/record; no live game data) |
+| **NHL** | ✅ | ✅ | ❌ | ❌ | performer page only |
+| **MLS** | ✅ | ✅ | ❌ | ❌ | performer page only |
+| **WNBA** | ✅ | ✅ | ❌ | ❌ | performer page only |
+| **World Cup** | ✅ | ✅ | ❌ | ❌ | performer page only |
+| NCAA FB, MiLB, USL, NWSL, EPL, Bundesliga, … | ❌ | ❌ | ❌ | ❌ | none — no ESPN ingest |
+| Fighting (MMA/Boxing/WWE/Wrestling) | ❌ | ❌ | ❌ | ❌ | none — single-fighter format differs |
+
+**Known gap (ingest lane):** `espn-collect.gameday` only pulls NBA + MLB. Extending it to iterate MLS/NHL/NFL/WNBA/WC `events?league=…` endpoints unlocks game-day snapshots + auto-xref for all 5 at once — the `upsert_espn_event_snapshot()` RPC is already league-agnostic.
+
+### 2.16 Canonical data buckets (shared feature vocabulary)
+
+Every column we collect maps to one of these buckets — use the names below when discussing features. **10 core buckets:**
+
+| # | Bucket | Source tables | Cardinal columns |
+|---|---|---|---|
+| 1 | **Pricing** | event_metrics, zone_metrics, section_metrics | retail_min/p25/median/mean/p75/p90/max/sum, getin_price, wholesale_*, derived IQR/range/CV/skew/tail |
+| 2 | **Inventory volume** | event_metrics, zone/section_metrics, listings_snapshots | tickets_count, groups_count, sections_count, ancillary_*, median_group_size, quantity |
+| 3 | **Owned position (S4K)** | event_metrics, listings_snapshots (`brokerage_id=1768`) | owned_tickets_count, owned_groups_count, owned_share, owned_median_retail, is_owned |
+| 4 | **Splits & format** | event_metrics `splits_*`, listings_snapshots | splits_min_q, splits_pct_pairs/singles, splits_listings_with_*, format, splits[], in_hand, eticket |
+| 5 | **Market structure** | event_metrics | top5_concentration, price_dispersion, tail_premium, sections_active, retail_sum/notional |
+| 6 | **Standings & form** | espn_team_snapshots, espn_event_snapshots | wins, losses, ties, win_pct, games_back, playoff_seed, conf/div_rank, record_summary, streak |
+| 7 | **Player health** | espn_injuries_snapshots, espn_athlete_team_history | status, injury_type, return_date, transaction_type, is_baseline |
+| 8 | **Game context** | espn_event_snapshots | state, status_short, home/away_score, spread, over_under, home/away_ml, home_win_prob, attendance |
+| 9 | **News & narrative** | espn_news, wiki_*, why_signals | headline, type, published_at, rivalry intensity, season records, why signals |
+| 10 | **Map / config / topology** | events, performer_zones (+rules), zone_rules, venue_assets, performer_metadata | configuration_id/name, seating_chart URLs, fanvenues_key, zone defs, capacity, logo URLs |
+
+**7 ML-feature buckets** — collected but cross-cutting; treat as feature groups for forecasting / sell-through / mispricing models:
+
+| # | Bucket | Source | Signals |
+|---|---|---|---|
+| 11 | **Temporal & calendar** | events.occurs_at_local, event_metrics.captured_at | event_dow, event_hour, days_to_event, is_weekend/evening, season tag, holiday-window flag (computed) |
+| 12 | **Demand & popularity** | performer_metadata, watchlist, watch_sources | popularity_score, long_term_popularity_score, s4k_popularity_boost, is_chat_tracked, chat_ping_count |
+| 13 | **Historical / narrative depth** | wiki_* | founded_year, championships, season records, rivalry intensity 0-10, notable_moments/players |
+| 14 | **External signals (non-ESPN)** | why_signals | scope, signal_kind (weather/news/…), signal_value, weight, expires_at — currently NOAA alerts; extensible |
+| 15 | **Brokerage microstructure** | listings_snapshots aggregated | distinct office/brokerage count per event, S4K-vs-rest share, owned/non-owned spread, HHI diversity — NOT yet in a metrics table |
+| 16 | **Classification / taxonomy** | performer_metadata, events | see §2.15 |
+| 17 | **Major event calendar (curated)** | major_event_calendar | event_class (F1/NASCAR/Tennis_Major/Golf_Major/Olympics/…), venue, window_start/end, recurrence — non-team events with no TEvo team performer |
+
+**Bucket-17 onboarding recipe** (events with no TEvo team performer — F1/NASCAR, golf & tennis majors, Olympics): `major_event_calendar` is the source of truth. To bring one into the terminal: (1) find the venue's `tevo_venue_id` via `/api/venues?q=<venue_name>` and set `major_event_calendar.tevo_venue_id`; (2) `INSERT INTO watchlist (kind, ext_id, label) VALUES ('venue', tevo_venue_id, venue_name)`; (3) the next `collect-listings` tick pulls every TEvo event at that venue → `listings_snapshots` / `event_metrics` / `zone_metrics` populate (filter UI by date window); (4) ESPN context will NOT apply (no team xref) — the event page shows "ESPN coverage not applicable" by design. Adding a new `event_class` needs no schema change.
+
+### 2.17 Cross-cutting data RULES (RULE 0 / RULE 1 / RULE 2)
+
+Three durable rules absorbed from `SCHEMA.md`. They govern how you **add**, **query**, and **call** data.
+
+**RULE 0 — categorize all new data.** Any time you add data (new table, column, external feed, ingest source, derived metric, or **price source** — TEvo, SeatGeek, future Ticketmaster, etc.), you MUST (a) add it to the inventory in §2 and (b) assign it to a bucket in §2.16, creating a new bucket if none fits. Keep this doc in the same PR as the schema change — the inventory is only useful if it doesn't drift.
+
+**RULE 1 — ESPN `team_id` is league-scoped (cross-league landmine).** IDs 1–48 are reused across leagues: `espn_team_id="18"` is *simultaneously* NBA Knicks, MLB Pirates, NFL Saints, NHL #18, WNBA #18. **Every query against the ESPN tables MUST filter `(espn_team_id, espn_league)` together:**
+
+| Table | Required filter |
+|---|---|
+| `espn_team_snapshots` / `espn_injuries_snapshots` / `espn_news` | `WHERE espn_team_id=? AND espn_league=?` |
+| `espn_event_snapshots` | `WHERE (home_team_id=? OR away_team_id=?) AND espn_league=?` |
+| `espn_athletes` / `espn_athlete_team_history` | `WHERE espn_*_id=? AND espn_league=?` |
+
+Failure mode (real, commit `bbd18ed` 2026-05-09): omitting the league filter for a Knicks game returned **229 rows where only 12 were real** — 95% phantom from other leagues' team #18. The `_news_series` / `_injury_load_series` helpers in `chart-data` are the canonical correct template. **Enforced today in:** `/api/broker/performer/{id}/espn`, `/api/broker/event/{id}/espn`, `chart-data` (all 6 ESPN queries, post-`bbd18ed`), `/api/broker/news`, and the `auto_link_event_xref()` cron — each filters `(team_id, league)` together.
+
+**RULE 1 corollary — `is_baseline` is unreliable outside MLB/NHL (verify before filtering).** As of 2026-05-09, `is_baseline` change-detection only computed correctly for **MLB + NHL**; for **NBA / NFL / MLS / WNBA / World Cup** every `espn_injuries_snapshots` / `espn_team_snapshots` row was `is_baseline=true`, so a strict `WHERE is_baseline=false` returned **0 rows** for those leagues despite real data. `chart-data` mitigates by including baseline rows tagged `is_change`. The backend fix is uniform `content_hash` comparison in `upsert_espn_injury` across all 5 leagues. **Re-check current prod behavior before tightening any `is_baseline` filter.**
+
+**RULE 2 — external APIs are strictly READ-ONLY.** *Canonical operator statement lives in `CLAUDE.md §2`; this is the enforcement inventory.* TEvo, SeatGeek (broker + seller-direct), TickPick, Vivid, SeatData — we only GET/read, never POST/PUT/PATCH/DELETE (sole exception: SeatData `POST /v0.4/events/event-request-add`, metadata-only, no S4K data). Enforced in 3 tracked layers so no write can ship without flipping a visible file:
+1. **Runtime guards** — each `*_client.py` has `_assert_readonly_method()` + `ALLOWED_HTTP_METHODS = frozenset({"GET"})`, called inside the transport method before the request is built (raises `*ReadOnlyError`).
+2. **Static analysis** — `scripts/check_readonly.py` (CI / pre-commit) fails on any `post/put/patch/delete` to a forbidden host, or a client missing the guard tokens. Prints `RULE 2 clean` or itemizes violations.
+3. **Unit tests** — `tests/test_readonly_guards.py` (12 cases) assert each guard raises, each constant equals the frozenset, and that removing a guard makes the suite fail.
+
+Adding a new external API: copy the guard pattern from `evo_client.py`, add the module to `CLIENT_FILES` in `scripts/check_readonly.py`, mirror the unit tests, and list the integration in §1.
 
 ---
 
@@ -680,7 +826,7 @@ For resources created pre-2026-05 (most legacy tables), the PR numbering wasn't 
 - **Constraints + triggers** — same.
 - **RLS policies** — B1's lane; see B1's security migrations (000100-000400 series + PR #67/#68 follow-ups). Auditable via `SELECT * FROM pg_policies;`
 - **Edge function source code** — too volatile; `supabase/functions/<slug>/index.ts` is source-of-truth.
-- **Frontend file inventory** — see `BOT_HIERARCHY.md` §4 + `static/store/` directory.
+- **Frontend file inventory** — terminal (`static/terminal/*`) is mapped in `D0_BIBLE.md §B2`; storefront is the `static/store/` directory (D1 lane).
 - **Test fixtures + scripts** — under `tests/`.
 
 ---
@@ -691,4 +837,4 @@ For resources created pre-2026-05 (most legacy tables), the PR numbering wasn't 
 - For minor changes (e.g. column added to existing table), git history is enough — don't touch this doc.
 - A1 owns the refresh; C1/B1/D1 should flag drift via `bot_chat` `event_type='question'` if they spot a stale entry.
 
-Owner: A1. Mirror in `DOCUMENTATION_INDEX.md` after the next full refresh of that doc.
+Owner: A1.

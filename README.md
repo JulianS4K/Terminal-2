@@ -1,161 +1,123 @@
 # Terminal-2
 
-Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + 18 edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Multi-bot orchestrated — see [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).
+Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Jointly maintained by a small set of specialized bot lanes coordinating through `public.bot_chat`.
 
-## Quick links for bots starting a session
+> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
 
-| Read first | Why |
+---
+
+## Start here (reading order)
+
+A cold-started bot should read these four, in order. The first is loaded for you automatically every session; the rest you read once at session start.
+
+1. **[`CLAUDE.md`](CLAUDE.md)** — *(auto-loaded every session)* immutable security + operator lockdown rules. The safety baseline; it directs you to read the bible next.
+2. **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md)** — the per-session playbook: hard rules, SQL macros, §3 column-name landmines, workflow recipes, 10-item self-check. **Read this first** of the things you choose to open.
+3. **[`BOT_HIERARCHY.md`](BOT_HIERARCHY.md)** — who you are, who can push where, per-lane write scope, Render service ownership.
+4. **[`D0_BIBLE.md`](D0_BIBLE.md)** — cross-source ID architecture **+ the full cold-start manual for building the D0 terminal frontend** (PART 1).
+
+Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't claim a row marked `[IN PROGRESS by <lane>]`).
+
+---
+
+## Canonical docs — CLOSED registry
+
+> **This table is the complete, closed set of canonical docs.** To add a fact, edit the doc that **owns** it. **Never create a new root doc.** **Never state a fact in two places — link to its owner instead.** Sprawl regrew once before because nothing gated new-doc creation; now a CI gate enforces this table (see *Doc-writing rules* below).
+
+| Doc | Owns (single source of truth) |
 |---|---|
-| **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md)** | Operating playbook — hard rules, lane scope, SQL macros, column-name landmines, workflow recipes |
-| **[`KANBAN.md §🟢 OPEN WORK`](KANBAN.md)** | Single source of truth for **what's open right now** across all lanes (severity-sorted). Delete your row when you fix it. |
-| [`RESOURCES_BIBLE.md`](RESOURCES_BIBLE.md) | Inventory: 132 tables + 152 views + 75+ crons + 40+ edge fns. **Check here before authoring anything new.** |
-| [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) | Who can push to where. A1 is sole pusher to `main`. |
-| [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) | Migration filename rules + header + apply protocol |
-| [`CLAUDE.md`](CLAUDE.md) | Security rules + 2026-05-13 lockdown invariants |
-| [`LANE_DISCIPLINE.md`](LANE_DISCIPLINE.md) | Per-lane write surfaces + cross-lane patch protocol |
+| [`README.md`](README.md) | Entry point · reading order · **this registry** · doc-writing rules |
+| [`CLAUDE.md`](CLAUDE.md) | Immutable security + operator lockdown rules · doc-discipline rule *(auto-loaded every session)* |
+| [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md) | Per-session playbook: rule summary · SQL macros · **§3 column landmines** · workflow recipes · self-check |
+| [`D0_BIBLE.md`](D0_BIBLE.md) | Cross-source ID architecture (§3) · **full D0 terminal build manual** (PART 1) |
+| [`RESOURCES_BIBLE.md`](RESOURCES_BIBLE.md) | Inventory of tables / views / functions / crons / edge functions · **event taxonomy & RULES** |
+| [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) | Bot roster · push authority · Render service scope · per-bot lane scope |
+| [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) | Migration filename + header rules · level/lane taxonomy · **landmark-migration log (§14)** |
+| [`CRON_HIERARCHY.md`](CRON_HIERARCHY.md) | Cron scheduling policy + job ownership |
+| [`SYNC_PROTOCOL.md`](SYNC_PROTOCOL.md) | Repo ↔ deploy ↔ DB sync mechanics |
+| [`CHANGELOG.md`](CHANGELOG.md) | Auto-generated release notes (release-please) — **DO NOT hand-edit** |
+| [`KANBAN.md`](KANBAN.md) | Open work · drift watchlist · known data-architecture gaps *(append-only)* |
 
-## Architecture
+**Historical / non-canonical** (not in the closed set, kept only for the decision trail — do **not** treat as current):
+- `docs/archive/` — superseded audits, checkpoints, session logs, handoffs, and the former `LANE_DISCIPLINE.md` / `SCHEMA.md` (folded into BOT_HIERARCHY / RESOURCES_BIBLE respectively).
+- `design/` — point-in-time wireframes and design proposals.
+- `docs/` (non-archive) — a few active references owned by a canonical doc (e.g. per-bot operating constraints, runbooks the bibles link to). Everything dated/superseded lives under `docs/archive/`.
+
+---
+
+## Doc-writing rules (enforced by CI) *(v1.1 · A1 · 2026-05-28)*
+
+Mirrors `CLAUDE.md §6` (loaded every session) — repeated here because this is where the registry lives.
+
+1. **Do NOT create new root or governance `.md` files.** Add the fact to its owner above. A genuinely new top-level doc is an operator decision — ask first.
+2. **One fact, one home — never duplicate; link** (`see <DOC> §<n>`). Duplicated facts are how docs drift out of sync.
+3. **Ephemeral work never becomes a new doc.** Audits, checkpoints, session logs, handoffs, status snapshots → `bot_chat` (durable) or `KANBAN.md` (open work). Only if a durable dated artifact is genuinely needed: `docs/archive/YYYY-MM-DD-<topic>.md`.
+4. **The gate is real.** `.github/workflows/docs-registry-check.yml` (via `bin/check-docs.sh`) fails any PR that adds a root `*.md` not in this registry, or drops a dated/working-note file into `docs/` outside `docs/archive/`. It runs server-side — `--no-verify` can't skip it.
+5. **Version every doc; tag every section change.** Each canonical doc carries a `**Doc version:**` line under its title (semver; the closed set baselines at `v1.0.0` on 2026-05-28). When you add or materially change a section:
+   - **Tag the section heading** with `(vX.Y · <BOT> · YYYY-MM-DD)` — a new section starts at `v1.0`; an edit bumps the minor (`v1.1`, `v1.2`, …). Example: `## 4. Canonical SECDEF RPCs *(v1.2 · A1 · 2026-05-28)*`. (Pre-versioning sections carry an implicit `v1.0`; the first edit makes them `v1.1`.)
+   - **Bump the doc-version line** — patch for a wording fix, minor for a new/changed section, major for a structural rewrite.
+   - This gives a **section-level audit trail** — which bot changed what, when. `CHANGELOG.md` is exempt (release-please-generated). The CI gate fails any registry doc (except `CHANGELOG.md`) missing its `**Doc version:**` line.
+
+---
+
+## Architecture at a glance
 
 ```
-Browser ─► Render  (FastAPI + static)   ─► Supabase (Postgres + Auth + Edge Functions)
-                  │          │                        ▲
-                  │          │  /bridge/ (D4 Bridge)  │
-                  │          └─ same-origin session ──┘
-                  ├─► TEvo / SG / TickPick / Vivid    │
-                  │   (read-only — no writes per      │
-                  │    CLAUDE.md §1 rule 2)           │
-                  │                                   │
-                  └─► /api/store/* (retail)           │
-                                                      │
-              ┌── pg_cron (75+ jobs) ─► Edge Function ─┤
-              │                              │         │
-              └─ upstream APIs ──────────────┘         │
-                                                       │
-                              cross-bot coordination ──┘
-                              via public.bot_chat
+Browser ─► Render (FastAPI + static) ─► Supabase (Postgres + Auth + Edge Functions)
+                 │         │                        ▲
+                 │         └─ same-origin session ──┘
+                 ├─► TEvo / SG / TickPick / Vivid    (read-only — no writes, CLAUDE.md §2)
+                 │
+           ┌── pg_cron jobs ─► Edge Functions ─► upstream APIs ─┐
+           │                                                    │
+           └──────────── cross-bot coordination ── public.bot_chat
 ```
 
-**Hosted services:**
-- **Render** `vibepass-storefront-test` **(primary)** — unified FastAPI shell hosting all 4 surfaces: D0 Terminal (`/terminal`), D1 Store (`/store`), D2 Undelivered (`/undelivered`), D4 Bridge (`/bridge/`). Auto-deploys on `main` push. Same-origin for all — single Supabase session covers all surfaces.
-- **Render** `vibepass-terminal-test` — static CDN for D0 frontend assets
-- **Render** `d2-orders-dashboard` — beta-time placeholder, no live traffic
-- **Railway** `glorious-appreciation-production-a6ce.up.railway.app` — **decommission pending** (was primary prior to 2026-05-25; `static/bridge/` on Render is now current)
+Full deploy chain (Render services, IDs, testing-unified shell) → `BOT_HIERARCHY.md §7` and `D0_BIBLE.md` (PART 1, deploy chain).
 
 ## Repo layout
 
 ```
 .
-├── app.py                            FastAPI shell (all /api/* routes; mounts D2 router)
-├── evo_client.py                     TEvo v9 API client
-├── *_client.py                       SeatGeek, TickPick, Vivid, SeatData clients (read-only)
-├── d2_dashboard/                     D2 orders dashboard + APIRouter (mounted on app.py)
-├── d4_bridge/                        D4 — Exos/Bridge React SPA (Vite; build → static/bridge/)
+├── app.py                  FastAPI shell — all /api/* routes; mounts D2 router
+├── *_client.py             TEvo / SeatGeek / TickPick / Vivid / SeatData clients (read-only)
+├── d2_dashboard/           D2 orders dashboard + APIRouter (mounted on app.py)
+├── d4_bridge/              D4 — Exos/Bridge SPA source (Vite → static/bridge/)
 ├── static/
-│   ├── terminal/                     D0 — broker terminal (event/performer/venue pages)
-│   ├── store/                        D1 — consumer retail storefront
-│   ├── home/                         D0 home page (4-surface hub — Terminal/Store/Undelivered/Bridge)
-│   ├── bridge/                       D4 — Exos Bridge SPA build artifact (Vite dist, committed)
-│   ├── undelivered/                  D2 undelivered-orders surface
-│   └── _shared/                      Cross-surface utilities
+│   ├── terminal/           D0 — broker terminal (build manual: D0_BIBLE.md PART 1)
+│   ├── store/              D1 — consumer retail storefront
+│   ├── home/ undelivered/  D0 hub · D2 undelivered surface
+│   ├── bridge/             D4 — Exos Bridge SPA build artifact (committed)
+│   └── _shared/            cross-surface utilities
 ├── supabase/
-│   ├── migrations/                   318+ migrations (YYYYMMDDHHMMSS_descriptive.sql)
-│   └── functions/                    18 edge functions (collect, espn, sg-to-tevo-search-bridge, etc.)
-├── docs/                             Bot operating constraints + audits + bibles + war-games
-├── design/                           Wireframes + design proposals
-├── scripts/                          CI helpers (check_readonly.py, etc.)
-├── tests/                            pytest suite
-├── KANBAN.md                         Live work board + B1-NEXT security backlog
-├── PROJECT_BIBLE.md                  Operating playbook (read first every session)
-├── RESOURCES_BIBLE.md                What exists — tables/views/crons/edge fns
-├── CLAUDE.md                         Project-wide security rules + lockdown
-├── BOT_HIERARCHY.md                  Push restrictions per bot
-├── LANE_DISCIPLINE.md                Per-lane write surfaces
-├── MIGRATION_CONVENTIONS.md          Migration naming + headers + apply protocol
-├── render.yaml                       D1 storefront IaC
-├── render-d2-dashboard.yaml          D2 dashboard IaC
-└── Procfile                          Web entrypoint: uvicorn app:app
+│   ├── migrations/         YYYYMMDDHHMMSS_descriptive.sql (rules: MIGRATION_CONVENTIONS.md)
+│   └── functions/          edge functions
+├── bin/                    CI checks (sync-check.sh, check-docs.sh)
+├── scripts/ tests/         CI helpers · pytest suite
+├── docs/                   active references + docs/archive/ (historical)
+├── design/                 historical wireframes / proposals
+└── <canonical *.md>        the 11 docs in the registry above
 ```
 
-## Local dev
+## Build / run / deploy the terminal
+
+The complete cold-start manual — frontend file map, the `T.api()` data-fetch architecture, per-page endpoint/RPC contracts, the auth flow, local dev, and the exact Render deploy chain — lives in **[`D0_BIBLE.md`](D0_BIBLE.md) PART 1**. Quick local run:
 
 ```powershell
-# Install deps (pinned in requirements.txt)
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-
-# Env from .env.example
-cp .env.example .env  # then fill SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, etc.
-
-# Run
+python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -r requirements.txt
+cp .env.example .env   # fill SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, etc.
 uvicorn app:app --reload --port 8765
 ```
 
-Browser at `http://localhost:8765` lands on the home page. `/static/terminal/event.html?event=<id>` for the D0 broker view.
+`http://localhost:8765` → home hub; `/static/terminal/event.html?event=<id>` → D0 broker view.
 
-## Production deploys
+## Conventions — quick pointers (don't restate; link)
 
-**Render** (primary): auto-deploys on `main` push via `render.yaml` + `render-d2-dashboard.yaml`. `vibepass-storefront-test` serves all 4 surfaces.
-
-**Railway** (decommission pending): `Procfile` present for compatibility but no longer the primary host.
-
-A1 is sole pusher to `main`; subordinate bots open PRs against `main`.
-
-**Bridge rebuild**: when `d4_bridge/` source changes, rebuild with `npm --prefix d4_bridge run build` (requires `d4_bridge/.env.local` with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`), then `cp -r d4_bridge/dist static/bridge` and commit the artifact.
-
-## Bot orchestration (the short version)
-
-This repo is jointly maintained by ~10 specialized bot lanes (A1 admin, B1 security, C1 canonical drift, D0 terminal FE, D1 storefront, D2 orders, D3 scrapers, D4 ticketing infra, E1 external markets). Coordination happens via the `public.bot_chat` table (durable, append-only) + scheduled-task heartbeats + Slack channels (`#terminal-2-alerts`, `#terminal-2-admin`, `#terminal-2-d0`).
-
-If you're a bot starting a session: **read `PROJECT_BIBLE.md` first, then check `KANBAN.md §🟢 OPEN WORK`** for what's currently actionable. Don't claim work that's already in flight (the row is annotated `[IN PROGRESS by <lane>, PR #<n>]`).
-
-If you're a human reading this: most operational decisions are recorded in the docs/audits/checkpoints under `docs/`. The 2026-05-13 SQL-data lockdown means prod DB mutations require explicit operator approval per call.
-
-## TEvo gotchas (still relevant)
-
-- `event.available_count` is deprecated. Use `get_event_stats()`.
-- `event.occurs_at` has a `Z` suffix but is **LOCAL time**. Use `occurs_at_local`.
-- Canonical signing string always includes `?`, even with empty query.
-- Rate limit ~5 req/sec sustained. Collectors pace at 3 concurrent × 200ms + retry-on-429.
-- `/v9/events` date filter uses **dotted notation**: `"occurs_at.gte"` (underscore form `occurs_at_gte` returns 422). See `PROJECT_BIBLE.md §3` column landmines for the full set.
-
-## Credential rotation
-
-**TEvo creds** (no redeploy — stored in `settings` table):
-```sql
-update settings set value = 'new_token',  updated_at = now() where key = 'tevo_token';
-update settings set value = 'new_secret', updated_at = now() where key = 'tevo_secret';
-```
-
-**Allowed domain** (Render env):
-```powershell
-# Render dashboard → vibepass-storefront-test → Environment → ALLOWED_EMAIL_DOMAIN
-```
-
-**Vault secrets** (per `MIGRATION_CONVENTIONS.md` allowlist): use `get_app_secret()` from Postgres. See `docs/release-discipline.md §7` for rotation runbook.
-
-## Useful queries
-
-```sql
--- Current state of every tracked event
-SELECT e.name, e.occurs_at_local, em.listings_all_min, em.listings_owned_min
-FROM events e
-LEFT JOIN seatgeek_event_metrics em ON em.tevo_event_id = e.id
-WHERE e.occurs_at_local > now()
-ORDER BY e.occurs_at_local
-LIMIT 20;
-
--- Release health (one-shot smoke harness, B1-owned)
-SELECT * FROM public.release_health_check() WHERE status <> 'ok';
-
--- What's unresolved across bots
-SELECT id, event_type, bot_lane, created_at, substring(message, 1, 100)
-FROM public.bot_chat
-WHERE resolved_at IS NULL
-  AND event_type IN ('p0_security','flag','question')
-ORDER BY created_at DESC
-LIMIT 20;
-```
+- **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3`
+- **Migration filename/header/apply rules** → `MIGRATION_CONVENTIONS.md`
+- **Who can push / per-lane scope** → `BOT_HIERARCHY.md` (A1 is sole pusher to `main`)
+- **What exists before you build something new** → `RESOURCES_BIBLE.md`
+- **Credential rotation** → `MIGRATION_CONVENTIONS.md` vault allowlist + `docs/release-discipline.md §7`
+- **Cross-bot coordination** → `public.bot_chat` (durable, append-only) + Slack `#terminal-2-*`
 
 ---
 
