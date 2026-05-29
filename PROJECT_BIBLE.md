@@ -1,8 +1,8 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
-**Last updated**: 2026-05-28 by D0 — **doc consolidation**: §5 cross-source topology → pointer to `D0_BIBLE.md §3` (canonical owner); §9 landmark log → `MIGRATION_CONVENTIONS.md §14`; §10 drift → `KANBAN.md`; §2 roster → `BOT_HIERARCHY.md`, D4 block → `docs/d4_bridge_charter.md`; +2 verified §3 landmines (`public.events.occurs_at_local` is TEXT; `bid_ask_proxy` dropped). | prior: §5e/§5f performer+venue mapping chains; mig 380000 TD↔TEvo linkage; D0_BIBLE.md created; bot reorg + prod fixes 350000–370000
+**Last updated**: 2026-05-28 by A1 — **governance reconciliation** (B1 appraisal): §1 rule 4 + §6 Render-write row now state D0's workspace-wide Render parity with A1 (2026-05-16), resolving the §1↔§2↔§6 scope contradiction. | prior: 2026-05-28 by D0 — **doc consolidation**: §5 cross-source topology → pointer to `D0_BIBLE.md §3` (canonical owner); §9 landmark log → `MIGRATION_CONVENTIONS.md §14`; §10 drift → `KANBAN.md`; §2 roster → `BOT_HIERARCHY.md`, D4 block → `docs/d4_bridge_charter.md`; +2 verified §3 landmines (`public.events.occurs_at_local` is TEXT; `bid_ask_proxy` dropped). | prior: §5e/§5f performer+venue mapping chains; mig 380000 TD↔TEvo linkage; D0_BIBLE.md created; bot reorg + prod fixes 350000–370000
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -22,12 +22,12 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 
 ---
 
-## 1. Hard rules (you can't override these)
+## 1. Hard rules (you can't override these) *(v1.1 · A1 · 2026-05-28)*
 
 1. **SQL data is read-only by default.** Any `INSERT`/`UPDATE`/`DELETE`/DDL on prod requires explicit operator permission per call. Standing exceptions: `bot_chat` writes via `bot_chat_log()`, Supabase branch creation (copy-on-write fork, no prod mutation), authoring migration files (apply gated separately).
 2. **Upstream third-party APIs are READ-ONLY.** TEvo, SeatGeek, SeatData, TickPick, Vivid — GET endpoints only. No order POSTs, holds, webhook config changes without explicit operator authorization.
 3. **HTML / JS in your assigned lane is free reign** — no per-step approval.
-4. **Render workspace is per-service scoped** (§2 ownership matrix). Cross-service writes = lane violation.
+4. **Render workspace is per-service scoped** (§2 ownership matrix) — **except D0, which has workspace-wide parity with A1 (2026-05-16)**. Cross-service writes by any other lane = lane violation.
 5. **A1 is sole pusher to `main`** (see `MIGRATION_CONVENTIONS.md §9`).
 6. **Cross-lane file edits require coordination** via `bot_chat` `question` or PR comment to the lane owner.
 7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
@@ -170,7 +170,7 @@ SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 
 ---
 
-## 6. MCP tools by lane
+## 6. MCP tools by lane *(v1.1 · A1 · 2026-05-28)*
 
 | MCP family | A1 | B1 | C1 | D0 | D1 | D2 | D3/D4/E1 |
 |---|---|---|---|---|---|---|---|
@@ -178,7 +178,7 @@ SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 | Supabase mutation/migration | ✓ | CRIT only | drift-monitor only | ✗ | ✗ | ✗ | ✗ |
 | Supabase `create_branch` (copy-on-write) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Render: read (list/logs/metrics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Render: write (own service only) | all | ✗ | ✗ | terminal | storefront | dashboard | ✗ |
+| Render: write (scope per cell) | all | ✗ | ✗ | workspace-wide (2026-05-16) | storefront | dashboard | ✗ |
 | Slack | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | scheduled-tasks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | GitHub (`gh` via Bash) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
