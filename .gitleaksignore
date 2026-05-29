@@ -37,3 +37,11 @@ static/terminal/auth.js:generic-api-key:19
 
 # (Real fingerprints get appended below as the first scan run flags
 # allowlist candidates.)
+
+# D4 Bridge static bundle — Supabase anon JWT baked in at Vite build time.
+# VITE_SUPABASE_ANON_KEY is the publishable key, designed to be shipped to
+# browsers. Same key already in static/terminal/auth.js (silenced above).
+# See PROJECT_BIBLE.md §9 PR #316: "Landmine: these Vite env vars must be
+# present in .env.local whenever a new Bridge build is cut."
+# Commit 198878f is the v1.0.0-beta PR #369 checkpoint; key is still live.
+198878f61f85dcce11a671bc030fda731ec2e089:static/bridge/assets/index-C747K8Em.js:jwt:96
