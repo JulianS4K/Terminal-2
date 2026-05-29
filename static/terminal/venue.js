@@ -348,7 +348,7 @@
     const [snapRes, moversRes, gapsRes] = await Promise.all([
       Auth.client
         .from('event_listing_snapshot_daily')
-        .select('event_id,snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_combined_median')
+        .select('event_id,snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
         .in('event_id', eventIds)
         .order('snapshot_date', { ascending: false })
         .order('snapshot_slot', { ascending: false }),
@@ -386,7 +386,7 @@
 
     // ── Stock Ticker: aggregate metrics ──────────────────────────────────────
     const ag = _vTabState.venueAggregate || {};
-    let sumEvo = 0, sumSg = 0, sumSh = 0, sumGt = 0, sumVd = 0, wCount = 0;
+    let sumEvo = 0, sumSg = 0, sumSh = 0, sumGt = 0, sumVd = 0, sumTp = 0, sumTm = 0, wCount = 0;
     events.forEach(e => {
       const sn = snapByEvent[e.id];
       if (!sn) return;
@@ -395,11 +395,14 @@
       if (sn.td_sh_median     != null) sumSh  += +sn.td_sh_median;
       if (sn.td_gt_median     != null) sumGt  += +sn.td_gt_median;
       if (sn.td_vd_median     != null) sumVd  += +sn.td_vd_median;
+      if (sn.td_tp_median     != null) sumTp  += +sn.td_tp_median;
+      if (sn.td_tm_median     != null) sumTm  += +sn.td_tm_median;
       wCount++;
     });
     const wavg = (sum) => wCount > 0 ? Math.round(sum / wCount) : null;
     const avgEvo = wavg(sumEvo), avgSg = wavg(sumSg);
     const avgSh  = wavg(sumSh),  avgGt = wavg(sumGt), avgVd = wavg(sumVd);
+    const avgTp  = wavg(sumTp),  avgTm = wavg(sumTm);
 
     const allMovers = Object.values(moversByEvent).flat();
     const priceUp   = allMovers.filter(m => m.category === 'price_up').length;
@@ -421,7 +424,7 @@
           <div class="ticker-cell">
             <span class="ticker-lbl">PLATFORM MED</span>
             <span class="ticker-val">${$p(avgSg)}<span class="ticker-src"> SG</span></span>
-            <span class="ticker-sub">${avgSh ? $p(avgSh) + ' SH' : '—'} · ${avgGt ? $p(avgGt) + ' GT' : '—'} · ${avgVd ? $p(avgVd) + ' VD' : '—'}</span>
+            <span class="ticker-sub">${avgSh ? $p(avgSh) + ' SH' : '—'} · ${avgGt ? $p(avgGt) + ' GT' : '—'} · ${avgVd ? $p(avgVd) + ' VD' : '—'} · ${avgTp ? $p(avgTp) + ' TP' : '—'} · ${avgTm ? $p(avgTm) + ' TM' : '—'}</span>
           </div>
           <div class="ticker-cell">
             <span class="ticker-lbl">POSITION</span>
@@ -460,9 +463,13 @@
         <th class="num">SH</th>
         <th class="num">GT</th>
         <th class="num">VD</th>
+        <th class="num">TP</th>
+        <th class="num">TM</th>
+        <th class="num" title="Ticketmaster verified resale (secondary market)">TM-R</th>
         <th class="num">SH÷EVO</th>
         <th class="num">GT÷SH</th>
         <th class="num">VD÷SH</th>
+        <th class="num" title="resale premium over TM primary face">TM-R÷TM</th>
         <th>Movers</th>
         <th>Gaps</th>
       </tr></thead><tbody></tbody>`;
@@ -496,9 +503,13 @@
         <td class="num">${$p(sn.td_sh_median)}</td>
         <td class="num">${$p(sn.td_gt_median)}</td>
         <td class="num">${$p(sn.td_vd_median)}</td>
+        <td class="num">${$p(sn.td_tp_median)}</td>
+        <td class="num">${$p(sn.td_tm_median)}</td>
+        <td class="num">${$p(sn.td_tm_resale_median)}</td>
         <td class="num">${spread(sn.td_sh_median, sn.evo_retail_median)}</td>
         <td class="num">${spread(sn.td_gt_median, sn.td_sh_median)}</td>
         <td class="num">${spread(sn.td_vd_median, sn.td_sh_median)}</td>
+        <td class="num">${spread(sn.td_tm_resale_median, sn.td_tm_median)}</td>
         <td>${moverHtml}</td>
         <td>${gapHtml}</td>`;
       tb.appendChild(tr);
