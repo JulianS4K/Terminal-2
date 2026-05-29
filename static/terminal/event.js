@@ -54,6 +54,19 @@
   // Initialize TD inv series as hidden by default (user-togglable in legend).
   ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
 
+  // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
+  // event is currently in the merged-7d slot of event_movers_index. Async +
+  // best-effort; no chip if the event is not in the index or preload fails.
+  async function loadHeroMoverChip(eventId) {
+    if (!eventId) return;
+    await T.moversPreloadIndex();
+    const chipHtml = T.moversChipHtml(eventId);
+    if (!chipHtml) return;
+    const badges = document.getElementById('evBadges');
+    if (!badges) return;
+    badges.insertAdjacentHTML('beforeend', ' ' + chipHtml);
+  }
+
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const eventId = T.getEventId();
@@ -80,6 +93,7 @@
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
     loadTdSplits(eventId).catch(e => console.error('[tdSplits]', e));
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
+    loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));

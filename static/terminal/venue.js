@@ -205,7 +205,7 @@
   }
 
   // ---------- Upcoming Events tab ----------
-  function renderEvents(events) {
+  async function renderEvents(events) {
     const body = document.getElementById('vEventsBody');
     const countEl = document.getElementById('vEventCount');
     const tabCount = document.getElementById('tabCountVenueEvents');
@@ -218,6 +218,10 @@
       body.innerHTML = '<div class="empty">no upcoming events at this venue in the next 90d</div>';
       return;
     }
+    // Phase 1b: ensure movers-index preload is done before row render so
+    // T.moversChipHtml(e.id) can produce inline chips in the event-name cell.
+    // Idempotent + cached.
+    await T.moversPreloadIndex();
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
@@ -230,7 +234,7 @@
       const d = T.daysUntil(e.occurs_at_local);
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a></td>
+        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a> ${T.moversChipHtml(e.id)}</td>
         <td>${escapeHtml(e.primary_performer_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${T.fmtNum(e.tickets_count || 0)}</td>

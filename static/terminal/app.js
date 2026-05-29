@@ -137,8 +137,78 @@
     return null;
   }
 
+  // ---------- Movers-index cache (Phase 1b: <MoverChip>) ----------
+  //
+  // One shared lookup of get_event_movers_v2 (mig 20260527260000) per page.
+  // Pages call T.moversPreloadIndex() once at init; T.moversChipHtml(eventId)
+  // is then a sync Map lookup. Cached by (source, window_days); re-calling
+  // with different opts invalidates that key.
+  //
+  // Default (source='merged', window_days=7) covers ~150 events across the 6
+  // categories. Chips only render for events currently in that slot
+  // ("currently moving"); events without a row produce an empty string.
+  // When an event spans multiple categories the highest signal_score wins.
+  const _moversCache = { key: null, promise: null, map: null };
+
+  async function moversPreloadIndex(opts) {
+    const source     = (opts && opts.source)      || 'merged';
+    const windowDays = (opts && opts.window_days) || 7;
+    const key = source + '|' + windowDays;
+    if (_moversCache.key === key && _moversCache.promise) return _moversCache.promise;
+    _moversCache.key = key;
+    _moversCache.map = null;
+    _moversCache.promise = (async () => {
+      const Auth = window.TerminalAuth;
+      if (!Auth || !Auth.client || !Auth.getAccessToken()) return new Map();
+      try {
+        const res = await Auth.client.rpc('get_event_movers_v2', {
+          p_source:      source,
+          p_window_days: windowDays,
+          p_category:    null,
+          p_limit:       200,
+        });
+        if (res.error) { console.error('[movers preload]', res.error); return new Map(); }
+        const m = new Map();
+        (res.data || []).forEach(row => {
+          const id = +row.event_id;
+          const prev = m.get(id);
+          if (!prev || (+row.signal_score || 0) > (+prev.signal_score || 0)) m.set(id, row);
+        });
+        _moversCache.map = m;
+        return m;
+      } catch (e) {
+        console.error('[movers preload]', e);
+        return new Map();
+      }
+    })();
+    return _moversCache.promise;
+  }
+
+  function moversChipHtml(eventId) {
+    if (!eventId || !_moversCache.map) return '';
+    const row = _moversCache.map.get(+eventId);
+    if (!row) return '';
+    const cat   = (row.category || '').replace(/_/g, ' ');
+    const dpct  = (row.price_delta_pct != null && Number.isFinite(+row.price_delta_pct))
+      ? ((+row.price_delta_pct) > 0 ? '+' : '') + (+row.price_delta_pct).toFixed(1) + '%'
+      : '';
+    const sign  = (+row.price_delta_pct || 0) > 0 ? 'pos'
+                : (+row.price_delta_pct || 0) < 0 ? 'neg' : '';
+    const score = row.signal_score != null ? (+row.signal_score).toFixed(2) : '—';
+    const title = `In ${cat} index · rank ${row.rank} · score ${score}`;
+    return `<span class="badge ${sign}" title="${_esc(title)}">${_esc(cat)}${dpct ? ' ' + dpct : ''}</span>`;
+  }
+
+  function _esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+    }[c]));
+  }
+
   window.Terminal = {
     setStatus, getAuthHeader, api, getEventId,
     fmtDate, fmtNum, fmtPct, daysUntil, latestNonNull,
+    moversPreloadIndex, moversChipHtml,
   };
 })();
