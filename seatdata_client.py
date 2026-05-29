@@ -55,13 +55,18 @@ API_BASE = "https://seatdata.io/api"
 # to SeatData's catalog (NOT writing OUR data anywhere external). It's
 # the only POST we allow because it doesn't push our data — it requests
 # coverage. Everything else is GET.
-ALLOWED_HTTP_METHODS = frozenset({"GET", "POST_EVENT_ADD_ONLY"})
+# NOTE: ALLOWED_HTTP_METHODS uses "POST" (not a sentinel) because the guard
+# function is called with the real HTTP method string ("POST"), not a
+# route-specific label. The docstring above clarifies POST is scoped to
+# event-add only; enforcement is by call-site discipline, not method-name alone.
+ALLOWED_HTTP_METHODS = frozenset({"GET", "POST"})
 
 
 def _assert_readonly_method(method: str) -> None:
     """Hard guard: SeatData reads are always GET except for the event-add
-    request endpoint, which is metadata-only. Any other write is a bug."""
-    if method.upper() not in {"GET", "POST"}:
+    request endpoint (/v0.4/events/event-request-add), which is metadata-only.
+    Any other write method (PUT, DELETE, PATCH) is a bug and raises."""
+    if method.upper() not in ALLOWED_HTTP_METHODS:
         raise SeatDataError(
             f"READ-ONLY violation: method {method} is not allowed. "
             "SeatData integration is strictly read-only (RULE 2 in SCHEMA.md). "

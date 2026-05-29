@@ -19,22 +19,74 @@
 
   <main class="wrap movers">
     <section id="movers-controls">
-      <div class="panel-title">MOVERS REPORT</div>
-      <div class="ctrl-row">
-        <div class="ctrl-group">
-          <span class="ctrl-lbl">WINDOW</span>
-          <button class="ctrl-btn" data-window="1">1h</button>
-          <button class="ctrl-btn" data-window="6">6h</button>
-          <button class="ctrl-btn is-active" data-window="24">24h</button>
-          <button class="ctrl-btn" data-window="168">7d</button>
+      <div class="panel-title row">
+        <span>MOVERS</span>
+        <div class="ctrl-group" style="margin:0">
+          <button class="ctrl-btn is-active" data-mode="v2">Index v2</button>
+          <button class="ctrl-btn" data-mode="legacy">Legacy</button>
         </div>
-        <div class="ctrl-group">
-          <span class="ctrl-lbl">SEGMENT</span>
-          <button class="ctrl-btn is-active" data-segment="all">All</button>
-          <button class="ctrl-btn" data-segment="owned">Owned only</button>
-        </div>
-        <span class="muted small" id="moversCount"></span>
       </div>
+
+      <!-- V2 Index controls (default, visible) -->
+      <div id="v2Controls">
+        <div class="ctrl-row">
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">SOURCE</span>
+            <button class="ctrl-btn is-active" data-source="merged">Merged</button>
+            <button class="ctrl-btn" data-source="evo">EVO</button>
+            <button class="ctrl-btn" data-source="sg">SG</button>
+            <button class="ctrl-btn" data-source="td_sh">SH</button>
+            <button class="ctrl-btn" data-source="td_gt">GT</button>
+            <button class="ctrl-btn" data-source="td_vd">VD</button>
+          </div>
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">HORIZON</span>
+            <button class="ctrl-btn is-active" data-wdays="7">7d</button>
+            <button class="ctrl-btn" data-wdays="15">15d</button>
+            <button class="ctrl-btn" data-wdays="30">30d</button>
+            <button class="ctrl-btn" data-wdays="180">180d</button>
+            <button class="ctrl-btn" data-wdays="365">365d</button>
+          </div>
+          <span class="muted small" id="v2Count"></span>
+        </div>
+        <div class="ctrl-row">
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">CATEGORY</span>
+            <button class="ctrl-btn is-active" data-cat="">All</button>
+            <button class="ctrl-btn" data-cat="price_up">Price ↑</button>
+            <button class="ctrl-btn" data-cat="price_down">Price ↓</button>
+            <button class="ctrl-btn" data-cat="selling_fast">Selling Fast</button>
+            <button class="ctrl-btn" data-cat="accumulating">Accumulating</button>
+            <button class="ctrl-btn" data-cat="value_gap">Value Gap</button>
+            <button class="ctrl-btn" data-cat="cross_gap">Cross Gap</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legacy controls (hidden by default) -->
+      <div id="legacyControls" hidden>
+        <div class="ctrl-row">
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">WINDOW</span>
+            <button class="ctrl-btn" data-window="1">1h</button>
+            <button class="ctrl-btn" data-window="6">6h</button>
+            <button class="ctrl-btn is-active" data-window="24">24h</button>
+            <button class="ctrl-btn" data-window="168">7d</button>
+          </div>
+          <div class="ctrl-group">
+            <span class="ctrl-lbl">SEGMENT</span>
+            <button class="ctrl-btn is-active" data-segment="all">All</button>
+            <button class="ctrl-btn" data-segment="owned">Owned only</button>
+          </div>
+          <span class="muted small" id="moversCount"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- V2 Index results (default visible) -->
+    <section id="movers-v2">
+      <div id="v2SummaryStrip" class="muted small" style="margin-bottom:6px"></div>
+      <div id="v2Body"><div class="empty">loading…</div></div>
     </section>
 
     <section id="blind-spots">
@@ -45,13 +97,16 @@
       <div id="blindSpotsBody"><div class="empty">loading…</div></div>
     </section>
 
-    <section id="movers-table">
-      <div id="moversBody"><div class="empty">loading…</div></div>
-    </section>
+    <!-- Legacy results (hidden by default) -->
+    <div id="legacyResults" hidden>
+      <section id="movers-table">
+        <div id="moversBody"><div class="empty">loading…</div></div>
+      </section>
 
-    <section id="movers-note">
-      <div class="muted small">5-bucket classifier (SUPPLY_FLOOD / RE_PRICING / GHOST_RESOLVE / DEMAND_SPIKE / DUMP) is a Phase 2 enhancement — pending classifier RPC.</div>
-    </section>
+      <section id="movers-note">
+        <div class="muted small">5-bucket classifier (SUPPLY_FLOOD / RE_PRICING / GHOST_RESOLVE / DEMAND_SPIKE / DUMP) is a Phase 2 enhancement — pending classifier RPC.</div>
+      </section>
+    </div>
   </main>
 
   <script src="lib/supabase.js"></script>

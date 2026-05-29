@@ -1,6 +1,8 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-**Last updated**: 2026-05-26 by A1 — **v1.0.0-beta checkpoint** (PRs #369–#370: CI automation [TypeScript gate + D4 build + mypy + uptime monitor + release-please], 6 prod migrations applied [security REVOKE sweep + 3 broken crons fixed + SG 429 rate mitigation + scanned_by nullable], static/bridge rebuilt for PRs #341/#342, 13 TypeScript bugs fixed by noImplicitReturns, §9 + §10 updated)
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+
+**Last updated**: 2026-05-28 by A1 — **governance reconciliation** (B1 appraisal): §1 rule 4 + §6 Render-write row now state D0's workspace-wide Render parity with A1 (2026-05-16), resolving the §1↔§2↔§6 scope contradiction. | prior: 2026-05-28 by D0 — **doc consolidation**: §5 cross-source topology → pointer to `D0_BIBLE.md §3` (canonical owner); §9 landmark log → `MIGRATION_CONVENTIONS.md §14`; §10 drift → `KANBAN.md`; §2 roster → `BOT_HIERARCHY.md`, D4 block → `docs/d4_bridge_charter.md`; +2 verified §3 landmines (`public.events.occurs_at_local` is TEXT; `bid_ask_proxy` dropped). | prior: §5e/§5f performer+venue mapping chains; mig 380000 TD↔TEvo linkage; D0_BIBLE.md created; bot reorg + prod fixes 350000–370000
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
 
 This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
@@ -12,6 +14,7 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 | **What's open right now? (all lanes, severity-sorted)** | **`KANBAN.md §🟢 OPEN WORK` — single source of truth, populate-as-you-go, delete-when-fixed** |
 | What can I do? Hard rules, hierarchy, macros, recipes | **This file** |
 | What exists? Tables/views/crons/edge-fn inventory | `RESOURCES_BIBLE.md` |
+| **D0-specific: table inventory, cross-source links, ops health, diagnostic SQL** | **`D0_BIBLE.md`** |
 | Where's each lane going? (north-star + endgame) | `docs/d_tier_goals.md` |
 | Who can push to where? | `BOT_HIERARCHY.md` |
 | How do I apply a migration? | `MIGRATION_CONVENTIONS.md` |
@@ -19,12 +22,12 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 
 ---
 
-## 1. Hard rules (you can't override these)
+## 1. Hard rules (you can't override these) *(v1.1 · A1 · 2026-05-28)*
 
 1. **SQL data is read-only by default.** Any `INSERT`/`UPDATE`/`DELETE`/DDL on prod requires explicit operator permission per call. Standing exceptions: `bot_chat` writes via `bot_chat_log()`, Supabase branch creation (copy-on-write fork, no prod mutation), authoring migration files (apply gated separately).
 2. **Upstream third-party APIs are READ-ONLY.** TEvo, SeatGeek, SeatData, TickPick, Vivid — GET endpoints only. No order POSTs, holds, webhook config changes without explicit operator authorization.
 3. **HTML / JS in your assigned lane is free reign** — no per-step approval.
-4. **Render workspace is per-service scoped** (§2 ownership matrix). Cross-service writes = lane violation.
+4. **Render workspace is per-service scoped** (§2 ownership matrix) — **except D0, which has workspace-wide parity with A1 (2026-05-16)**. Cross-service writes by any other lane = lane violation.
 5. **A1 is sole pusher to `main`** (see `MIGRATION_CONVENTIONS.md §9`).
 6. **Cross-lane file edits require coordination** via `bot_chat` `question` or PR comment to the lane owner.
 7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
@@ -36,54 +39,31 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
 ## 2. Bot hierarchy + Render service ownership
 
+**Reorg 2026-05-28** — new mandate split; D1-E1 paused until D0 is working.
+
 ```
-A1 (admin · sole prod pusher · Render workspace owner)
-├── B1 (security · monitors all; CRIT push allowed)
-└── C1 (canonical · drift + checkpoint + token-discipline + quality/continuity monitor — see docs/c1_quality_continuity_charter.md)
-    ├── D0 (Terminal FE · static site)
-    ├── D1 (Consumer Retail · storefront/search)
-    ├── D2 (Order Clients · ops dashboard)
-    ├── D3 (Broadway Scraper · sub of D2)
-    ├── D4 (Exos/Bridge · primary-market ticketing — greenfield, own exos_* schema)
-    └── E1 (Kalshi/markets · future stub)
+A1 (SQL monitor + DB ops + git + connectors · sole prod pusher)
+└── B1 (security + governance monitor · bibles/git/bot-notes)
+    └── C1 (D-tier project coordinator + drift prevention)
+        └── D0 ← PRIORITY (Terminal FE · user visual layer · visual of A1 for user)
+
+⏸  D1 (Consumer Retail) · D2 (Order Clients) · D3 (Broadway)
+⏸  D4 (Exos/Ticketing) · E1 (Integration/Automation)
+    — all paused until D0 is working —
 ```
 
-| Bot | Render service | Service ID | Scope |
-|---|---|---|---|
-| A1 | workspace-wide | — | full (read + write + provisioning + delete) |
-| **D0** | **workspace-wide** | — | **full Render parity with A1 (2026-05-16)** — read + write + provisioning + delete across all services |
-| D1 | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | code author only; Render MCP read-only (writes route through D0 + A1) |
-| D2 | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | code author only; Render MCP read-only (writes route through D0 + A1) |
-| B1, C1, D3, D4, E1 | (all services) | — | read only |
+**Roster — full detail (mandate · status · Render scope · push authority) is owned by `BOT_HIERARCHY.md` (single source of truth).** At a glance: **A1 · B1 · C1 · D0 = ACTIVE** (D0 is PRIORITY, workspace-wide Render parity with A1); **D1 · D2 · D3 · D4 · E1 = PAUSED** until D0 ships. A1 is sole pusher to `main`.
 
-**Testing-unified architecture (2026-05-16, PR #168)**: All runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold starts). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts. `vibepass-terminal-test` continues to serve as a CDN for D0 static files; `d2-orders-dashboard` stays alive as a beta-time placeholder but has no live traffic. At beta, each surface migrates back to its own service via dedicated DNS + un-mounting from `app.py`.
+**Testing-unified (2026-05-16, PR #168)**: all runtime traffic flows through `vibepass-storefront-test` (starter, no cold starts) — it mounts D0 terminal + D1 storefront + D2 dashboard via `app.include_router`. `vibepass-terminal-test` is the D0 static CDN. Full deploy chain → `D0_BIBLE.md` (PART 1, deploy).
 
-Code-dir ownership (per `LANE_DISCIPLINE.md`):
-- D0 → `static/terminal/*` + Terminal FE
-- D1 → `static/store/*` + storefront API
-- D2 → ops dashboard
-- D4 → `d4_bridge/*` (Exos app) + `exos_*` / `bridge_event_xref` migrations (authors; A1 applies)
+Code-dir ownership (full per-lane scope → `BOT_HIERARCHY.md`):
+- D0 → `static/terminal/*` + terminal `app.py` routes
+- D1 → `static/store/*` + `/api/store/*`
+- D2 → `d2_dashboard/*`
+- D4 → `d4_bridge/*` (Exos app) + `exos_*` / `bridge_event_xref` migrations (D4 authors; A1 applies)
 - A1 → `supabase/migrations/*`, governance docs, cross-cutting
 
-**D4 / Exos (Bridge)** — primary-market ticketing, greenfield. Separate React app (`d4_bridge/*`) on its own `exos_*` schema (Firestore → Supabase migration **complete** 2026-05-23 — Firebase fully removed). Served at `/bridge/` via the unified Render service (`static/bridge/` — last rebuilt **2026-05-25** picking up PRs #336/#338/#339). Railway was the primary host (PR #319) but is now redundant — `static/bridge/` is current and Railway can be decommissioned. Same-origin `localStorage` means the hub's Supabase session carries over automatically (no double sign-in). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. Build: `npm --prefix d4_bridge run build` then copy `dist/ → static/bridge/`; Supabase keys must be in `d4_bridge/.env.local` (gitignored) at build time. **Always commit `static/bridge/` after a source change or Render serves the stale bundle.** Schema/value landmines in §3; full detail in `docs/d4_bridge_charter.md`.
-
-**D4 migration state (updated 2026-05-25):**
-
-✅ **Schema live — all 5 phases + free-first batch applied to prod.** Phase-1/2 (PR #305) + phase-3/4/5 (PR #308) B1-cleared. Free-first batch (migs 20260523130000–20260524160000) applied A1-session 2026-05-25 — adds drainer schema, oversell cap, server HMAC verify, purchase limits, growth RPCs, mail templates, security hardening. 12 `exos_*` tables + `bridge_event_xref` RLS-on; anon-EXECUTE revoked on all write-path RPCs. 0 rows — data populates via normal UI flows.
-
-✅ **Supabase Auth** — `lib/auth.ts` + `AuthContext.tsx` fully on Supabase Auth. No Firebase Auth anywhere. `AppUser` shape maps from `SupabaseUser`; `isAdminUser()` checks `app_metadata.admin` (server-set, unforgeable).
-
-✅ **Data libs wired** — `lib/events.ts`, `lib/orgs.ts`, `lib/tickets.ts` all read/write via `supabase-js` against `exos_*` tables. A transitional `Timestamp` shim remains purely for type-compat with `src/types.ts` — converts Postgres timestamptz strings to the old Firestore `Timestamp` shape so views stay drop-in. Safe to remove after the `src/types.ts` type sweep.
-
-✅ **`lib/storage.ts`** — Supabase Storage replaces Firebase Storage. `exos-media` bucket live (mig 20260520150000), path-scoped RLS (`event-images/{uid}/` + `org-logos/{orgId}/`), 5 MB cap, SVG excluded (hosted XSS risk on public bucket). `lib/orgLogo.ts` migrated.
-
-✅ **`lib/mail.ts`** — `queueEmail()` calls `supabase.rpc('exos_queue_mail', { p_template, p_ref_id })`. The SECDEF RPC (mig 20260520160000) server-derives recipient from the related record — no open relay (B1 SEC-HIGH closed bot_chat #438). Mail rows accumulate as `status='pending'`; **drainer deployed** (`exos-mail-drain` edge fn, 2026-05-24, cron `exos-mail-drain-2min` `*/2 * * * *` work-check-gated). ⚠️ **`RESEND_API_KEY` + `EXOS_MAIL_FROM` not yet set** — operator must set these Supabase edge-fn secrets in the dashboard before mail actually sends.
-
-✅ **Data cut-over resolved** — operator confirmed all Firestore data is test-only; no migration needed. `exos_*` tables start fresh at 0 rows and populate via normal UI flows (org create → events → tickets). `scripts/migrate-to-orgs.ts` was a Firestore-internal restructuring pass and is not applicable to the Supabase path. D4-OPS-2 closed 2026-05-23.
-
-❌ **`src/types.ts` Timestamp shim** — `Timestamp` type from `firebase/firestore` still used for date fields in `Event`/`Ticket`/`Transfer`. After cut-over, replace with `Date | string`; remove `toTs()` helpers.
-
-✅ **SW scope** — fixed PR #322 (2026-05-23): `BASE` derived from `self.location.href`; all manifest.json paths prefixed `/bridge/`. D4-OPS-1 closed.
+**D4 / Exos (Bridge)** — primary-market ticketing, greenfield React app on its own `exos_*` schema (Firestore→Supabase complete 2026-05-23, Firebase fully removed). Served at `/bridge/` via the unified Render service (`static/bridge/`, last rebuilt 2026-05-25). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. **Full charter, migration state, and build steps → `docs/d4_bridge_charter.md`; open D4 items → `KANBAN.md §🟢 OPEN WORK`.** D4 schema/value landmines stay in §3. (D4 is PAUSED — see roster above.)
 
 ---
 
@@ -102,6 +82,8 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `venue_assets` | `is_outdoor`, 882 rows | `is_indoor`, **111 rows** (outdoor = `is_indoor = false`) |
 | `sd_sales_normalized` | `observed_at`, `aq_short_event_id` | `sale_timestamp`, `tevo_event_id` |
 | `events` | `is_classified`, `tbd` | (neither exists — use `EXISTS(event_xref...)` for sports; parse `(Date TBD)` from name) |
+| `public.events` time column | `occurs_at` (no such column) | **`occurs_at_local` is the ONLY event-time column — and it's `TEXT`** (offset-bearing `"YYYY-MM-DDTHH:MM:SS±HH:MM"`, nullable). There is NO `occurs_at timestamptz`. Cast/parse the text if you need a real timestamp. Verified vs prod 2026-05-28. |
+| `bid_ask_proxy` | reference the table / view / column anywhere | **Permanently dropped — does not exist** (no table, no view, no column). Verified absent in prod 2026-05-28. Don't reintroduce reads against it; derive spread-style signals from `event_metrics` / `listings_*`. |
 | `listings_snapshots` (TEvo firehose 8M rows) | filter by `aq_short_event_id` | **0% populated** — query by `event_id` only. Filter ours: `is_owned=true AND brokerage_id=1768` |
 | `seatgeek_sales/listings_snapshots.tevo_event_id` | use as join key | **0% populated** — always query by `sg_event_id` (indexes added 2026-05-16) |
 | `seatgeek_sales_snapshots` aggregates | `count(*)` / `SUM(broadcast_price)` directly | **11–23× overcount** — UNIQUE `(sg_event_id, sg_sale_id, pulled_at)` means each logical sale re-inserts every poll. **MANDATORY**: `DISTINCT ON (sg_sale_id) ORDER BY sg_sale_id, pulled_at DESC` before any aggregate. `MAX()` alone is safe (idempotent). Exemplars: `v_event_sales_metrics_filtered`, `v_event_sales_velocity` (PR #161); v3 RPC `sg_broker_sales` (PR #191). |
@@ -118,10 +100,14 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `exos_events.occurs_at_local` (D4/Exos) | naive wall-clock timestamp | **Offset-bearing TEXT** `"YYYY-MM-DDTHH:MM:SS±HH:MM"` (e.g. `2026-05-21T20:00:00-04:00`) — mirrors `public.events`; derive via `utcToOccursAtLocal()`. The create flow MUST set `occurs_at_local` + `event_type` or they land NULL (shape-consistent ≠ value-consistent). |
 | `exos_events.event_type` (D4/Exos) | fine-grained map / "complete" every row | **Coarse category map only**: Sports→`game`, Music→`concert`, Arts→`show`; Nightlife/Tech/Food→`NULL` (matches the ~60% of TEvo rows that are NULL — don't backfill it). |
 | `exos_tickets` barcode/QR (D4/Exos) | store the barcode or QR payload | **Not stored** — only `barcode_secret` (plaintext HMAC key, RLS-gated to owner/buyer/staff). QR is computed + rotated **client-side** as `HMAC-SHA256(secret, "ticketId:ownerId:bucket")`. |
+| `INSERT ... ON CONFLICT ... RETURNING` + separate DELETE to expire old rows — use `clock_timestamp()` as `v_now` | `v_now := clock_timestamp()` in DECLARE; UPSERT sets col `= now()` (transaction start) | **Transaction-start-time vs wall-clock mismatch kills the index.** `clock_timestamp()` advances continuously; `now()` is fixed for the entire transaction. If DECLARE captures `clock_timestamp()` at `T+0ms`, but the UPSERT sets `last_computed_at = now()` (transaction start, necessarily ≤ `T+0ms`), then the DELETE `WHERE last_computed_at < v_now` fires immediately after and removes every row just inserted. **Fix**: use `v_now := now()` everywhere — DECLARE + UPSERT SET + DELETE WHERE all use the same fixed transaction timestamp; rows inserted in this tx have `last_computed_at = v_now` exactly, so the DELETE condition `< v_now` is false. Diagnosed on `compute_event_movers_index` 2026-05-27: function returned 20 (inserted) but table stayed empty. |
+| Postgres `format()` with float placeholders | `format('%.1f', v)` or `format('%.0f', v)` | **Only `%s`, `%I`, `%L` are valid.** `%.1f` → `unrecognized format() type specifier "."`. Numeric formatting: `round(v::numeric, 1) \|\| '%'` or `'val = ' \|\| round(v, 0)`. Discovered in `evo_sg_discovery_gaps()` 2026-05-27. |
+| `SELECT DISTINCT ON (…) … UNION ALL …` | direct UNION member | **Illegal in Postgres** — `DISTINCT ON` with `ORDER BY` cannot be a direct UNION/UNION ALL member. Wrap in a subquery: `SELECT * FROM (SELECT DISTINCT ON (x) … ORDER BY x, y) qN UNION ALL …`. Discovered in `evo_sg_discovery_gaps()` 2026-05-27. |
+| `bot_chat_log` first arg | `'status'`, `'info'` | **`p_level` is a bot tier, not severity**: valid values are `'admin','security','supervisor','primary-sales','secondary-sales','data-collection'`. D0 uses `'data-collection'`. Passing `'info'` → `bot_chat_bot_level_check` constraint violation. Discovered 2026-05-27. |
 
 ---
 
-## 4. Canonical SECDEF RPCs (the hot 15 of 32)
+## 4. Canonical SECDEF RPCs (the hot subset)
 
 | RPC | Args | When to call |
 |---|---|---|
@@ -153,54 +139,38 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `exos_follow_org(p_org_id)` / `exos_unfollow_org(p_org_id)` | uuid | **D4 org follows** (mig 20260520140000). Idempotent (`ON CONFLICT DO NOTHING`); `followers_count` counter updated atomically only on actual insert/delete — cannot drift. SECDEF. |
 | `exos_create_org(p_name, p_slug)` | text, text | **D4 org bootstrap** (mig 20260520120000). Only path to create an org; seeds owner membership. Validates slug uniqueness. SECDEF. |
 
-For the full RPC list + arg detail + composition relationships → `RESOURCES_BIBLE.md §3` and the migration headers.
+For the full RPC list + arg detail + composition relationships → the migration headers (canonical source) + `D0_BIBLE.md §5` (D0-facing RPCs). Note: `RESOURCES_BIBLE.md` indexes tables / views / crons / edge-fns — it has no standalone RPC inventory section.
 
 ---
 
-## 5. Cross-source bridge topology
+## 5. Cross-source bridge topology — see `D0_BIBLE.md §3` (canonical owner)
 
-```
-events (TEvo) ─── PK e.id ─────────────────────────────┐
-   │                                                    │
-   │ via entity_performer_map (perfid + ±6h date)       │
-   ▼                                                    ▼
-event_xref ──── espn_event_id ───────► espn_event_date_lookup
-   │                                    espn_event_snapshots (gameday-scope)
-   │                                    espn_team_snapshots
-   │                                    espn_injuries_snapshots
-   ▼
-seatgeek_event_xref ── sg_event_id ──► sg_events_canonical
-   │                                    seatgeek_listings_snapshots
-   │                                    seatgeek_sales_snapshots (DISTINCT ON sg_sale_id !)
-   │                                    seatgeek_event_metrics
-   ▼
-aq_event_map ── aq_short_event_id ────► universal canonical key
-   │                                    (SYS-md5 hash convention for derived rows)
-   ▼
-venue_short_id ──► aq_venue_map / venue_assets / weather_observations
-performer_short_id ──► aq_performer_map / espn_team_snapshots
-```
+> **Single source of truth moved to `D0_BIBLE.md §3a–§3g` (2026-05-28).** The full ID-namespace rules, the `aq_event_map` hub diagram, the TD→TEvo 5-step resolution chain, and the performer/venue mapping chains all live there with matching detail. This section keeps only the must-know teaser so a non-D0 bot knows the rule and where to look — don't duplicate the chains here.
+
+**The 4 rules that prevent wasted sessions:**
+1. **Source IDs are source-internal — NEVER join cross-source on raw numeric/text IDs.** TEvo `event_id` (3.0–3.4M), SG `sg_event_id` (17M+), TD `event_id`, ESPN `espn_event_id` (text) never line up.
+2. **`aq_event_map` is THE hub** — carries `tevo_event_id` / `sg_event_id` / `sh_event_id` / `vivid_event_id` / `tm_event_id` + `venue_short_id` + `performer_short_id`. Canonical IDs everything resolves to: **`tevo_event_id` / `tevo_performer_id` / `tevo_venue_id`** (all bigint).
+3. **`aq_short_event_id` is TWO different systems** (the #1 landmine): `listings_snapshots.aq_short_event_id` = TEvo `SYS-{hex}`, **0% populated** (query by `event_id`); `ticketsdata_event_xref.aq_short_event_id` = 7-char alphanumeric (e.g. `K9KX32Z`), **100% join** to `aq_event_map`. Never join the two to each other — zero matches guaranteed.
+4. **No numeric bridge → text + date match.** `performer + date` is unique (touring artists don't double-book a market same-day); sports use `home_team + away_team + date`. Never match on source-internal `venue_id` / `sg_venue_id` / `tevo_venue_id` across sources.
+
+**Do NOT rebuild these — they already exist** (full arg detail in §4 + the migration headers):
+- `cross_source_venue_resolve(name, city, state)` → `tevo_venue_id` (3-tier text match)
+- `sg_attempt_event_xref_v3(...)` / `auto_match_sg_canonical_v3()` → SG→TEvo matcher v3 (±24h, parking skip)
+- `refresh_td_event_links()` (mig 20260528380000) → nightly TD link sync, 5-step chain incl. text fallback
+- `sg_to_tevo_search_bridge_30min` cron → fills `aq_event_map.tevo_event_id`
 
 **D0 canonical entry** (Phase 2a):
-
 ```sql
 SELECT * FROM public._v_d0_event_index WHERE sg_event_id = $1;
--- OR for non-SG events (NFL etc.) — v2 RPC has fallback that resolves via event_xref:
+-- non-SG events (NFL etc.): v2 RPC resolves via event_xref fallback
 SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 ```
 
-**Snapshot inventory** (where the firehose tables live + what's available to surface as event-page tabs / time-series panels):
-- 5 live firehoses (SG listings, SG sales, TEvo listings, TEvo orders, SG seller orders) → `RESOURCES_BIBLE.md` "Snapshot streams" table
-- 3 lower-volume order streams (TickPick, SG seller listings, Vivid) → same table
-- 4 specialized live snapshots (ESPN event/injuries/team, event_competitors) → same table
-- 4 idle/empty (seatdata × 2, event_section_row, legacy `snapshots`) → same table
-- **D0 tab option matrix** (already shipped + 8 next-surface candidates with RPC patterns) → `RESOURCES_BIBLE.md` "D0 tab option matrix"
-
-Rule: before proposing a new snapshot capture, check the inventory — there's probably already a firehose for what you want, you just need a SECDEF RPC wrapper. 24h activity stats refresh on each major doc rebase.
+**Snapshot inventory** — before proposing a new snapshot capture, check what firehoses already exist (5 live + 3 order streams + 4 specialized + 4 idle) → `RESOURCES_BIBLE.md` "Snapshot streams" + "D0 tab option matrix". Rule: there's probably already a firehose for what you want — you just need a SECDEF RPC wrapper.
 
 ---
 
-## 6. MCP tools by lane
+## 6. MCP tools by lane *(v1.1 · A1 · 2026-05-28)*
 
 | MCP family | A1 | B1 | C1 | D0 | D1 | D2 | D3/D4/E1 |
 |---|---|---|---|---|---|---|---|
@@ -208,7 +178,7 @@ Rule: before proposing a new snapshot capture, check the inventory — there's p
 | Supabase mutation/migration | ✓ | CRIT only | drift-monitor only | ✗ | ✗ | ✗ | ✗ |
 | Supabase `create_branch` (copy-on-write) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Render: read (list/logs/metrics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Render: write (own service only) | all | ✗ | ✗ | terminal | storefront | dashboard | ✗ |
+| Render: write (scope per cell) | all | ✗ | ✗ | workspace-wide (2026-05-16) | storefront | dashboard | ✗ |
 | Slack | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | scheduled-tasks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | GitHub (`gh` via Bash) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -409,121 +379,15 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 
 ---
 
-## 9. Recent landmark migrations (don't re-do these)
+## 9. Recent landmark migrations → see `MIGRATION_CONVENTIONS.md §14`
 
-| Date | Migration | Effect |
-|---|---|---|
-| 2026-05-13 | cron policy gate | 4-stage conservation (budget/interval/work-check/window) |
-| 2026-05-14 | universal AQ matcher | 4-tier `match_to_aq_event_id` + `create_system_aq_event` |
-| 2026-05-14 | tiered polling | `sg_event_priority_state` + HOT/WARM/COOL/COLD tiers |
-| 2026-05-15 | `get_broker_event_page` v1 RPC | D0 Phase 1 Path C foundation |
-| **2026-05-16** | 20260516030000 | D0 Phase 2a prep: cancelled-filter + `tevo_event_id` col + `_v_d0_event_index` view |
-| 2026-05-16 | 20260516040000 | Resume `listings_aq_backfill_overnight` cron |
-| 2026-05-16 | 20260516050000 | `get_broker_event_page_v2` RPC (7 new keys, 185ms) |
-| 2026-05-16 | 20260516060000 | SG `sg_event_id` indexes (perf for v2) |
-| 2026-05-16 | 20260516070000 | NFL ESPN→TEvo→AQ→SG bridge + v2 RPC fallback fix |
-| 2026-05-16 | 20260516080000 | Multi-sport bridge (MLB/MLS/WNBA/NBA/NHL) |
-| 2026-05-16 | 20260516090000 | `espn_scoreboard_queue` default 90d → 270d |
-| 2026-05-16 | 20260516100000 | `evo_orders` event-mapping columns (tevo_event_id + aq_short_event_id) + backfill |
-| 2026-05-16 | 20260516110000 | NEW RPC `refresh_sg_broker_sales_event_metrics` + hourly cron; populates `seatgeek_event_metrics.sold_*` from `seatgeek_sales_snapshots` |
-| 2026-05-16 | 20260516120000 | 3 analytics views: `v_event_sales_velocity`, `v_event_sales_metrics_filtered`, `v_event_price_arbitrage` |
-| **2026-05-17** | 20260517160000 | **sg_broker_{listings,sales}_process bounded drain** — added `p_limit int DEFAULT 50` + lifted aq_event_map + seatgeek_event_xref into LEFT JOIN (drops per-row correlated subqueries). New rows born with `tevo_event_id` populated where xref exists. Unscheduled 30-min variants (redundant with 1-min priority). Drains 50 pendings in ~5s; was timing out at 2min draining unbounded. |
-| 2026-05-17 | 20260517160001 | Partial indexes `(*_prev_*_null_idx)` on `listings_snapshots` + `seatgeek_listings_snapshots` — fixes the seq-scan in `listings_deltas_backfill_chunked` that A1 PR #189 didn't address. Backfill of 15 events now <1s (was 5min timeout). |
-| 2026-05-17 | 20260517160002 | `match_listings_to_sg_tick` narrow + indexes — D2's bot_chat 225 sketch shipped: window 24h→6h, `ROW_NUMBER()` uniqueness instead of triple `NOT EXISTS`, helper indexes. 591ms vs prior 5min timeout. |
-| 2026-05-17 | 20260517160003 | `sweep_all_expired_pg_net_pending` now covers `sg_broker_pending` + one-shot drain of 1,595 zombies (orphaned by `net._http_response` prune). |
-| 2026-05-17 | 20260517160004 | Hotfix: drop legacy 0-arg overloads of `sg_broker_{listings,sales}_process`. Mig 20260517160000's `DEFAULT 50` addition created an overload not a replacement; cron `SELECT fn()` resolved ambiguously. Same class as A1 bot_chat 258 lesson. |
-| 2026-05-17 | 20260517260000 | **SG broker-listings event metrics** — 18 new cols on `seatgeek_event_metrics`: `listings_all_*` (full firehose) + `listings_owned_*` (`is_broker_owned=true` subset), both from `broadcast_price`. New `refresh_sg_broker_listings_event_metrics(p_max_events int)` hourly cron @ :47. Companion to PR #161 sales-side @ :17. Also DROP NOT NULL on `tevo_event_id` to allow SG-only events. |
-| **2026-05-18** | 20260518010000 | **event_sentiment cron**: schedule existing `backfill_event_sentiment(200)` @ :15,:45 via cron_should_fire gate. Fn existed since mig 20260509130000, never had a cron. |
-| 2026-05-18 | 20260518020000 | **event_competitors cron re-schedule**: re-schedule `refresh_event_competitors()` @ :40 hourly (was scheduled in mig 20260509350000 and lost). Sparse coverage by-design — only events with 20mi/24h venue neighbors. |
-| 2026-05-18 | 20260518030000 | **event_section_row_snapshots batch + cron**: new `rollup_event_section_row_batch(p_max_events int)` wrapper around existing single-event `rollup_event_section_row` (mig 20260512100150). Hourly cron @ :03. Writes source=tevo only; SG mirror pending future PR. |
-| 2026-05-18 | 20260518040000–040004 | **cost_* reader migration (5 readers)**: `v_event_price_arbitrage` + `v_event_full_v2` + `v_event_velocity_windows` + v2 RPC + v3 RPC all swap `cost_*` → `listings_all_*` (or `listings_owned_*` for arbitrage). Payload key names also renamed. |
-| 2026-05-18 | 20260518050000 | **cost_* columns DROP** + retire `compute_seatgeek_event_metrics` (legacy SellerDirect-only populator). 8 deprecated cost_* cols removed from `seatgeek_event_metrics`. |
-| 2026-05-18 | 20260518060000 | **event_metrics owned distribution DDL**: ADD COLUMN `owned_p25/p75/p90` numeric. Writer (Python app.py event-processor) is cross-lane — bot_chat handoff posted. Cols sit at NULL until writer-side ship. |
-| **2026-05-19** | 20260519000000 | **D0 weather localized RPC**: `get_event_weather_localized(p_event_id)` returns venue-localized forecast (`v_event_weather_with_fallback`) + NWS alerts filtered to event's UGC zones (`v_event_nws_alerts`). Replaces v3 RPC's global-alert behavior. Email-gated. |
-| 2026-05-19 | 20260519010000 | **D0 SG zones/splits RPC**: `get_event_sg_zones_splits(p_event_id)` per-section rollup (min/median/max broadcast_price + listings + tickets) + per-quantity-bucket splits (singles/pairs/triples/quads/five_plus) over 24h deduped SG listings. Bridge via `seatgeek_event_xref`. Email-gated. |
-| 2026-05-19 | 20260519100000 | **SG sales DISTINCT ON view cleanup**: 4 views (`seatgeek_event_latest`, `unified_orders`, `v_aq_match_quality`, `v_orphan_seatgeek_data`) were aggregating without DISTINCT ON sg_sale_id, silently 11–23× overcounting. Rebuilt with proper dedup. 2 dependents (`unified_orders_by_event`, `order_status_coverage`) recreated unchanged. Spot-check: event 3091415 sales_count went 8,431 → 368; unified_orders sg_sales rows went 1.82M → 121K. |
-| 2026-05-19 | 20260519110000 | **SG broker 429-aware pipeline**: processors set `sg_broker_pending.rows_persisted = -429` (re-queueable) vs `-1` (terminal failure) vs `>=0` (success row count). 429 rows auto-retry on next firing instead of staying terminal. Sentinel feeds the 429 monitoring views in mig 130000. |
-| 2026-05-19 | 20260519120000 | **SG priority crons 1min→5min**: `sg_priority_poll_tick_5min`, `sg_priority_listings_process_5min`, `sg_priority_sales_process_5min` renamed with staggered minute offsets. Reduces pg_cron load + 429 collision risk. Tier policy (240s/300s/1800s) still governs per-event cadence; cron just wakes the driver. |
-| 2026-05-19 | 20260519130000 | **SG broker 429 monitoring protocol**: `v_sg_broker_429_health` (hourly pct_429 rollup over 24h), `v_sg_broker_429_starved_events` (events 429'd 3+ times with no recent success), `check_sg_broker_429_health()` with hysteresis-protected bot_chat flag @ pct_429 > 15%. 15-min cron `sg_broker_429_health_check_15min`. |
-| **2026-05-19** | 20260519140000 | **🔥 SG broker burst-size emergency hotfix (PR #228)**: caps burst to 8 events/call on `sg_broker_listings_queue` + `sg_broker_sales_queue` (3+3 polls on `sg_priority_poll_tick`) — under SG's 10-token bucket. Drops broken `PERFORM pg_sleep(0.9)` calls (no-op given pg_net async dispatch — see §3 landmine + §7 macro). New schedules: listings `*/5`, sales `2-57/5`, poll_tick `4-59/5`. pct_429 went 70.7% (02:00 hour) → 0.0% on every firing 02:50 onward. Sustained 0.73 req/sec << 1.25 req/sec quota. |
-| 2026-05-19 | 20260519150000 | **D0 chart expansion RPC (PR #237)**: `get_event_chart_extended(p_event_id, p_chart_hours DEFAULT 168, p_espn_home_team text, p_espn_away_team text)` returns 5 SG-side series (listings_median/owned_median/listings_count/sales_median/sales_count over adaptive 15min..1d buckets) + 2 ESPN annotation arrays (injuries LAG(status) per athlete league-scoped; game_state LAG(status_short) per espn_event_id). Auto-resolves home/away from `espn_event_date_lookup` (forward-look) → `espn_event_snapshots` (gameday) when not passed. SECDEF + email gate. Landmine surfaced: `espn_team_id` collides cross-league (id=28 = MLB + NHL); RPC scopes by `espn_league`. Codified in §3 + §4. Latency 308ms warm @ 7d. |
-| 2026-05-19 | _(app code, no migration)_ | **D1 storefront movers reshape (PR #275)**: `/api/store/movers` response shape changed from `{events, rest}` (single strip + grid + label-bucket round-robin from PR #273/#274) to **4 themed-slider arrays**: `moving_fast` (SG sales ≥10 OR TEvo d24h ≤ -50), `price_drops` (retail_min < 0.7× SG median), `climbing` (TEvo `getin +5%` AND d24h<0, OR SG median +5% AND listings -5%), `specials` (`v_event_holidays` window match OR `v_rivalry_events` match, gated `owned > 100`). First 3 sections gate `owned > 50`. `_compute_movers` builds one candidate pool; each section filter is independent (event can appear in 0-2 sections). Label-bucket helpers (`_movers_compute_labels`, `_round_robin_pop_by_label`, `_LABEL_PRIORITY`, etc.) retired. v_rivalry_events dedupe rule codified in §3. |
-| **2026-05-20** | 20260520400000 | **Featured-pricing 10-min cron (PR #288)**: `collect_listings_featured_refresh(p_max_events int DEFAULT 50)` + cron `collect-listings-featured-10min` (`3-53/10`). Refreshes TEvo `/v9/ticket_groups` for NYC venue + `owned>100` + 24h–90d events (superset of the storefront Featured rail) every 10 min, fixing the ~6h–multi-day pricing staleness from the twice-daily windowed crons. Round-robins oldest-`captured_at`-first, skips <9min-fresh + 0-24h events. Writes land in `event_metrics`; matview `latest_event_metrics_refresh_5min` (@`:2`) makes them visible. ~5,760 extra TEvo calls/day. |
-| 2026-05-20 | 20260520410000 | **`compute_event_breakdowns` non-fatal (PR #289)**: self-caps zone+section steps at 6s (under the 8s `authenticator` ceiling), traps **`query_canceled` explicitly** (bare `WHEN OTHERS` misses 57014 — see §3 landmine), soft-fails a slow step → returns status jsonb instead of erroring. Stops the false 502s on heavy events (`collect-listings` calls this AFTER pricing persists; the RPC timeout was 502-ing pulls whose pricing already succeeded). |
-| 2026-05-20 | 20260520420000 | **Breakdowns backfill re-enable + extend (PR #290)**: re-enables `zone-backfill-isolated-10min` cron + upgrades `backfill_stale_zone_metrics` to recompute BOTH zone+section (was zones only), detect staleness via the `latest_event_metrics` matview (not an 8M-row `listings_snapshots` scan), and trap `query_canceled`. Out-of-band catch-up for heavy events that soft-fail the inline 6s RPC. **Known gap**: the heaviest events (1300+ listings) exceed even the 90s cap — `compute_event_zone_metrics`'s per-row `match_performer_zone()` LATERAL needs dedup optimization (tracked, §10). |
-| **2026-05-22** | 20260520120000 | **D4/Exos phase-1 — APPLIED to prod 2026-05-22** (B1 sign-off PR #304). `exos_*` orgs+events schema (profiles/orgs/org_secrets/memberships/invites/events/ticket_tiers/discount_codes + `bridge_event_xref`). Deny-by-default RLS, all 9 tables RLS-enabled; base-table grants REVOKE'd from anon + re-GRANT CRUD to authenticated (own-org only per RLS). Cross-org browse via `exos_public_*` VIEWs. Org bootstrap via `exos_create_org()` SECDEF. 0 rows — schema ready, data cut-over pending. |
-| **2026-05-22** | 20260520130000 | **D4/Exos phase-2 — APPLIED to prod 2026-05-22** (B1 sign-off PR #304). `exos_tickets`/`exos_transfers` + check-in + scan-reject audit logs + 6 write-path SECDEF RPCs (mint/check-in/transfer/cancel/claim/void). Atomic tier-claim closes oversell; atomic status-flip closes double-scan. All 8 write-path RPCs: anon-EXECUTE revoked (mig 20260520230000 same day). 0 rows — ready for first mint. See §8 D4 write-path recipe. |
-| **2026-05-22** | 20260520200000 | **SG broker 60d+ polling — APPLIED (PR #251)**. `sg_events_canonical.last_60d_pulled_at` column + `sg_broker_60d_plus_{listings,sales}_queue(p_max_events int DEFAULT 8)`. 4 crons: `sg_60d_listings_morning` / `sg_60d_sales_morning` (UTC 4-9, ~576 events/day each) + `sg_60d_listings_afternoon` / `sg_60d_sales_afternoon` (UTC 17-19, ~288 events/day each). Round-robins oldest-`last_60d_pulled_at`-first; drains via existing priority process crons. Closes the 60d+ gap: Yankees-Mets/Dodgers/Red Sox (35 games had 0 SG data before). 98.8% event coverage within 24h. |
-| **2026-05-23** | 20260520140000 | **D4/Exos phase-3 — org follow graph — APPLIED (PR #308, B1-cleared)**. `exos_org_follows(follower_uid, org_id)` PK + `exos_orgs.{description, followers_count}` + `exos_public_orgs` view refresh (adds bio + count). `exos_follow_org` / `exos_unfollow_org` SECDEF RPCs — idempotent `ON CONFLICT DO NOTHING`, counter updated atomically only on real change. anon REVOKE'd from table; SELECT granted to authenticated. |
-| 2026-05-23 | 20260520150000 | **D4/Exos phase-4 — media storage bucket — APPLIED (PR #308, B1-cleared)**. `exos-media` public bucket (5 MB cap). SVG excluded — SVG carries executable script; on a public bucket a direct object URL executes in the storage origin (hosted XSS, B1 SEC-MED bot_chat #438). Path-scoped RLS: `event-images/{uid}/…` → own-uid gate; `org-logos/{orgId}/…` → org-membership gate. Update/delete limited to object owner. |
-| 2026-05-23 | 20260520160000 | **D4/Exos phase-5 — transactional mail queue — APPLIED (PR #308, B1-cleared)**. `exos_mail` table (RLS on, zero client policies — service_role drainer only). `exos_queue_mail(p_template, p_ref_id)` SECDEF RPC server-derives `to_email` + body from the related record — open relay closed (B1 SEC-HIGH bot_chat #438, commit 3dc943f fixed 5 column/role refs). 5 templates: transfer-initiated/claimed, org-invite, event-cancelled/updated. Mail rows land as `status='pending'`; drainer (edge fn + email provider) is the next D4 milestone. |
-| 2026-05-23 | _(app code, no migration)_ | **D4/Bridge blank-app fix (PR #316)**: previous `static/bridge/` builds had `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` unset at build time — Supabase client initialised with empty strings, app rendered blank. Rebuilt with prod keys baked in via `d4_bridge/.env.local` (gitignored). **Landmine**: these Vite env vars must be present in `.env.local` whenever a new Bridge build is cut. |
-| 2026-05-23 | _(app code, no migration)_ | **Bridge as 4th hub surface (PR #318)**: `static/home/index.html` gets a Bridge card (violet `#c084fc`, always unlocked — Bridge handles own auth). Grid updated 3-col → 2×2. `static/home/home.js` shows a soft note when signed out; hides it when any session exists. |
-| 2026-05-23 | _(app code, no migration)_ | **Railway as Bridge primary host (PR #319)**: Bridge card now links to `/bridge/` (same Railway origin) instead of the external Render URL. Same-origin `localStorage` means the hub's Supabase session auto-carries-over to Bridge — one sign-in for all four surfaces. `app.py` route comment updated. |
-| 2026-05-23 | 20260523120000 | **D4/Bridge Realtime multi-lane check-in + SW scope fix (PR #322)**: `exos_event_checkins` added to `supabase_realtime` publication (idempotent). `OrganizerCheckIn` subscribes to `postgres_changes` INSERT — remote check-ins propagate to all door lanes in ~1s (RLS-gated to org staff, closes double-admit race D4-OPS-10). Reconnect re-pull (offline→online) closes offline gap. SW `BASE` now derived from `self.location.href` — `/bridge/` prefix handled correctly. manifest.json paths all prefixed. CSV voided label fixed. Load harness validated: 6-lane stampede on 50 tickets → 0 double-admits. |
-| **2026-05-24/25** | 20260523130000–20260524160000 | **D4 free-first batch — APPLIED to prod (A1 session 2026-05-25).** 10 migrations in dependency order: |
-| | 20260523130000 | **Mail drainer schema**: `exos_mail` adds `sending` status + `attempts`/`claimed_at`/`last_attempt_at` cols + `exos_mail_claimable_idx`. `exos_mail_claim_batch(p_limit, p_max_attempts)` + `exos_mail_mark(p_id, p_ok, p_error, p_max_attempts)` — service_role-only, FOR UPDATE SKIP LOCKED for concurrent-safe drain. |
-| | 20260523150000 | **Event-level oversell cap**: `exos_events.total_tickets` int (0 = uncapped). `exos_mint_tickets` enforces cap before minting. |
-| | 20260523160000 | **Server HMAC barcode verify**: `exos_check_in_ticket` upgraded to 4 args (adds `p_event_id uuid`, `p_barcode_payload text DEFAULT NULL`). When payload present, verifies rotating-QR HMAC server-side via `extensions.hmac()` with ±2-bucket tolerance — rejects forged/expired QRs before the DB write. |
-| | 20260523180000 | **Per-person purchase limits**: `exos_assert_purchase_limit(p_event_id, p_buyer, p_qty)` pre-check (raises on breach). `exos_mint_tickets` superset: enforces tier cap + event cap + purchase limit atomically; admin/service-role bypasses all caps. |
-| | 20260523200000 | **Growth primitives** (applied modified — `exos_distribution_listings` ALTER skipped, dormant table): `exos_orgs.marketing jsonb` (social handles, pixels, shareImageUrl); `exos_redeem_discount_code(p_event_id, p_code)` → validity + type + unlock tier IDs; `exos_announce_to_followers(p_event_id)` → bulk-queues `event-announce` mail to all org followers (staff-gated, published events only). |
-| | 20260523210000 | **Ticket-issued mail**: `exos_queue_ticket_issued(p_ticket_id uuid)` → queues purchase-confirmation `ticket-issued` mail to owner. Extends `exos_mail_template_check` with `ticket-issued`. Caller must be owner OR org staff. |
-| | 20260523220000 | **Notify holders**: `exos_notify_event_holders(p_event_id, p_template)` → bulk-queues `event-cancelled` or `event-updated` to all non-voided ticket holders (org staff / admin only). |
-| | 20260523230000 | **Issue to email**: `exos_issue_ticket_to_email(p_event_id, p_tier_id, p_recipient_email, p_qty, p_order_ref)` → looks up or creates Supabase user by email, mints `p_qty` tickets, queues confirmation. Idempotent on `order_ref`. Admin / org staff only. |
-| | 20260524150000 | **Public marketing view**: `exos_public_orgs` refreshed to expose `marketing` jsonb (social handles + pixel IDs + shareImageUrl). Anon-readable. |
-| | 20260524160000 | **Security hardening**: `exos_touch_updated_at()` trigger fn pinned `search_path = public, pg_temp` (Supabase advisor: `function_search_path_mutable`). `exos_has_org_role` anon-EXECUTE revoked via `REVOKE FROM anon, PUBLIC` (Supabase advisor: `anon_security_definer_function_executable`). Internal RLS/SECDEF callers unaffected. |
-| 2026-05-24/25 | _(edge fn)_ | **`exos-mail-drain` deployed** (v1, ACTIVE, `verify_jwt=false`): reads `exos_mail` claim batch → Resend API → `exos_mail_mark`. Cron `exos-mail-drain-2min` (`*/2 * * * *`) work-check-gated via `cron_policy.work_check_sql`. ⚠️ Awaiting operator: `RESEND_API_KEY` + `EXOS_MAIL_FROM` secrets in Supabase edge-fn dashboard. |
-| 2026-05-25 | _(app code, no migration)_ | **static/bridge rebuild**: `d4_bridge/` rebuilt locally and synced to `static/bridge/` — captures PRs #336 (consent banner basename + spinner), #338 (CreateEvent doors→show/end auto-fill), #339 (back-camera scanner + wallet QR timer). Render now serves current bundle; Railway redundant. |
-| **2026-05-25** | _(app.py, no migration)_ | **Camera Permissions-Policy for `/bridge` (PR #340)**: `app.py` shell now includes `camera` in the `Permissions-Policy` response header for the `/bridge/*` route, enabling the door-scanner's `getUserMedia` camera prompt. Without it, the browser silently blocked the API regardless of FE code. |
-| **2026-05-25** | _(FE only, needs rebuild)_ | **D4/Bridge FE batch — PRs #341–342** (static/bridge must be rebuilt+deployed): **#341** — wallet QR stamp `REDEEMED` renamed to **`ENTERED`** with "Scanned \<time\>" subline (fallback "SCANNED") on both `TicketDetail` + `WalletPass`; wording only, mute+auto-refresh unchanged. **#342** — (a) TRANSFER link disabled (greyed, with reason label) for `used`/`voided`/`pending` tickets — UX mirror of server-side `exos_create_transfer` `status='active'` guard; (b) "Inside Venue" counter on `OrganizerCheckIn` now shows `countEventCheckins(eventId)` (realtime scanned-in head-count via existing Realtime subscription) instead of `ticketsSold`. |
-| **2026-05-25** | 20260523170000 _(dormant — not applied, not deployed)_ | **D4 Stripe backend completion (PR #344)**: two gaps closed in the scaffold. (1) `exos_fulfill_checkout` now queues `ticket-issued` mail to buyer after minting — exception-safe (mail hiccup can't unwind the mint). (2) New `exos_refund_checkout(p_session_id, p_reason)` service-role RPC: voids still-**active** tickets, frees inventory (`tier.sold` + `event.tickets_sold` decremented), idempotent, leaves scanned tickets untouched; wired to `stripe-webhook` on `charge.refunded`. `'refunded'` added to session status CHECK. **All dormant — gated on Stripe creds.** Activation checklist: apply mig (branch-validate first), deploy `exos-checkout`/`stripe-webhook`/`exos-connect-onboard` (`--no-verify-jwt`), set `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`, add `charge.refunded` + `checkout.session.completed` to webhook endpoint, B1 review. |
-| 2026-05-25 | _(docs only)_ | **D-tier governance docs (PRs #347/#348)**: `docs/d_tier_goals.md` — operator-ratified north-star per lane (D0=trading desk, D1=secondary→D4-discovery eventual, D2=sales-data backend, D3=data source, D4=venue arm+ticket infra, E1=betting pool). `docs/d_tier_unification_plan.md` — B1-reviewed + goals aligned; §0.5 adds D1 sequencing reconcile flag (secondary-first vs v1 D1↔D4 loop; pending operator confirm). |
-| 2026-05-25 | _(app code)_ | **TEvo Fernet barcode decrypt (PR #351)**: `evo_client.decrypt_barcode(barcode, secret)` — Fernet-decodes encrypted barcodes from TEvo `/v9/orders` + `/v9/listings` (key = `base64url(secret[:32])`). Lazy `cryptography` import so broker read pipeline loads without dep; only the call site needs it. `requirements.txt`: `cryptography>=46.0.5,<49.0` — clears `GHSA-r6ph-v2qm-q3c2` (SECT curve subgroup attack, HIGH, first-patched 46.0.5). Tests: `tests/test_evo_barcode.py`. No consuming surface wired yet. |
-| **2026-05-25** | _(security — migrations + harness)_ | **B1 anon data-leak sweep (PRs #350/#354 + harness PR #352)**: Full enumeration of ~150 anon-readable view/matview surface found 14 SECDEF objects owned by `postgres` (`rolbypassrls=true`) readable by anon (publishable key) — live broker-intel leak (3,681 rows from `v_event_price_arbitrage`, 1,411 from `latest_event_metrics` matview) + latent order-PII (`unified_orders` 0 rows now; activates when orders flow). Root cause: Supabase auto-grants `ALL` to `anon` on every new public view/matview; PR #298 (functions/tables) never swept views/matviews. **PR #350**: `REVOKE ALL … FROM anon` on 12 views + 2 matviews (`authenticated`/`service_role` untouched; D2 dashboard + storefront unaffected). **PR #354**: `REVOKE EXECUTE FROM anon` on 5 residual ungated SECDEF functions (advisor sweep). **PR #352**: new harness `anon_secdef_relation_audit()` + Phase-2 KANBAN policy-gate — detects future anon-on-SECDEF regressions. Verify fix: `SET ROLE anon; SELECT * FROM public.v_event_price_arbitrage LIMIT 1;` → `permission denied`. |
-| 2026-05-25 | _(app code, D1, DORMANT)_ | **D1 TEvo Hosted Checkout — wired but dormant (PR #353)**: `app.py` + `static/store/` wired to redirect secondary-market purchases to TEvo's hosted checkout page. **Env-gated**: fires only when `TEVO_CHECKOUT_ENABLED=true` (not set in prod). Activation = set the env var on `vibepass-storefront-test` + verify TEvo checkout URL scheme. No DB migration; no B1 gate (read-only redirect). |
-| **2026-05-26** | _(security — applied to prod)_ | **B1 anon REVOKE sweep applied (PRs #350/#352/#354)**: `20260525170000` REVOKE anon SELECT on 14 SECDEF views/matviews (3 order-PII + 11 broker-intel, incl. `latest_event_metrics` matview which was live-leaking 1,411 rows). `20260525180000` new `_health_check_anon_exposed_relations()` fn (covers relkind='m' matviews, which `release_health_check.security_definer_views` missed). `20260525190000` REVOKE anon/authenticated EXECUTE on 5 ungated SECDEF fns (`cron_resume_with_gate`, `rollup_event_section_row_batch`, `tevo_blindspot_metrics_refresh`, `cron_last_fire`, `cross_source_venue_resolve`). Post-apply: `has_table_privilege('anon','v_event_price_arbitrage','SELECT')=false`. Health check: `warn/4` = 4 Tier-2 event-metadata views intentionally deferred (D0/D1 must confirm no anon/SEO page reads them). |
-| 2026-05-26 | 20260526000000 _(applied)_ | **fix_broken_crons**: `midnight-catchup-sweep` (SELECT→PERFORM + `SET LOCAL statement_timeout='5min'`), `weather_climatology_weekly` (two SELECT→PERFORM), `listings_aq_backfill_overnight` (chunk 100→25 + `SET LOCAL statement_timeout='3min'`). All 3 jobs now `active=true` with correct bodies. First successful runs after creation. |
-| 2026-05-26 | 20260526010000 _(applied)_ | **sg_429_rate_mitigation**: Reduces all 4 `sg_60d_*` crons from `queue(8)`→`queue(4)` halving burst. Root cause: 60d+ crons introduced 2026-05-22 each fired 8 events/slot, stacking with priority pipeline and exceeding SG's 10-req/8s bucket. Expected: 429 rate drops from 58% CRITICAL to <20%. Monitor via `v_sg_broker_429_health`. |
-| 2026-05-26 | 20260526020000 _(applied)_ | **fix_checkins_scanned_by_nullable**: `ALTER TABLE exos_event_checkins ALTER COLUMN scanned_by DROP NOT NULL`. Resolves P1 schema contradiction: `NOT NULL` + `ON DELETE SET NULL` on the same FK column — blocked auth user deletion. |
-| **2026-05-26** | _(CI/automation + code)_ | **v1.0.0-beta checkpoint (PR #369)**. (1) `.github/workflows/tests.yml` extended: new `typescript` job (`npm ci` + `tsc --noEmit` + `vite build` on every PR — D4 bridge type errors caught in CI for first time); mypy warn-only step on Python files. (2) `.github/workflows/uptime-check.yml` — pings `/healthz` every 5min from GitHub Actions, opens GitHub issue on failure, optional Slack alert via `SLACK_BOT_TOKEN` secret. (3) `.github/workflows/release-please.yml` + `release-please-config.json` + `.release-please-manifest.json` + `version.txt` — auto-generates CHANGELOG + GitHub Release from conventional commit titles on every `main` push. (4) `d4_bridge/tsconfig.json` + `noImplicitReturns` + `noFallthroughCasesInSwitch` — surfaced 13 real bugs (4 Express middleware missing `return next()`/`return res.json()`, 9 useEffect early-returns); all fixed. (5) `static/bridge/` rebuilt — captures PRs #341 (ENTERED stamp) + #342 (transfer gate + inside-venue counter). |
-| 2026-05-25 | _(app code, D4, DORMANT)_ | **D4 Stripe fulfillment idempotency (PR #359)**: `exos_fulfill_checkout` / `stripe-webhook` tightened — persists `'failed'` status on crash (no dangling session), idempotent terminal-state guard (replay `checkout.session.completed` on already-`fulfilled`/`failed` = no-op; closes double-mint on webhook replay). Cherry-picked orphan from `claude/d4-stripe-backend` (committed post-PR-#344 merge). Still dormant — same gate as PR #344. |
-| 2026-05-25 | _(deps)_ | **Dependabot dep bumps (PRs #355–#358)**: `actions/setup-python` 5→6; `uvicorn` patch; `anthropic` patch; `fastapi` patch. All within `requirements.txt` pinned `<` ranges; no API surface changes. |
+> **Moved (2026-05-28).** The hand-curated landmark-migration log ("don't re-do shipped work") now lives in **`MIGRATION_CONVENTIONS.md §14`** — the natural home for migration provenance, and the single source of truth. Auto-generated release notes live in `CHANGELOG.md` (release-please-owned — do NOT hand-edit). This playbook no longer duplicates the log; **before authoring any migration, check `MIGRATION_CONVENTIONS.md §14` to avoid re-shipping work.**
 
 ---
 
-## 10. Drift watchlist (known gaps — don't waste cycles rediscovering)
+## 10. Drift watchlist → see `KANBAN.md`
 
-| Gap | Status | Symptom / workaround |
-|---|---|---|
-| `tevo_event_id` populated on SG snapshot tables | Partial: PR #178 backfilled to 87.35%; mig 20260517160000 ensures NEW rows are born populated where xref exists | Query by `sg_event_id` when `tevo_event_id IS NULL` (no xref) |
-| `seatgeek_event_xref.last_listings_at`/`last_sales_at` | Dead globally (0/967) | Use `MAX(captured_at)` on snapshot tables |
-| `sg_events_canonical.has_v2_listings_pulled` | Dead (25/4609 = 0.5%) | Same |
-| ESPN snapshot pipeline = gameday-scope only | (specced, not built) | Forward-look ESPN panels empty by design. Use `espn_event_date_lookup` for forward-look team IDs / game_at_utc. |
-| 29% active TEvo events have no SG bridge | NWSL/USL/AHL/niche real gap | First-class TEvo-only UI state |
-| SG doesn't carry most NFL regular-season | SG coverage decision | NFL Event Detail renders TEvo+ESPN+AQ; SG hidden |
-| `aq_short_event_id` 0% on `listings_snapshots` | Cron resumed 2026-05-16; firing 04:02 UTC | Use `event_id` for TEvo reads |
-| `compute_event_zone/section_metrics` too slow for heavy events | Open (tracked task) | Per-row `match_performer_zone()` LATERAL exceeds even 90s for 1300+ listing events (Yankees). Their zone/section breakdowns stay stale; non-fatal RPC (mig 410000) just soft-fails them. Fix = dedup zone match (compute once per distinct section/row). 54.7% of DB time per 2026-05-14 audit. |
-| D4 Firestore → Supabase cut-over | **CLOSED 2026-05-23** — no migration needed | Operator confirmed all Firestore data was test-only. `exos_*` tables start at 0 rows. Remaining: `src/types.ts` Timestamp shim. |
-| D4 SW scope mismatch (D4-OPS-1) | **CLOSED 2026-05-23** — PR #322 | SW `BASE` derived from `self.location.href`; all manifest.json paths `/bridge/`-prefixed. |
-| D4 `exos-mail-drain` — RESEND creds unset | **Open — awaiting operator** | `RESEND_API_KEY` + `EXOS_MAIL_FROM` must be set in Supabase edge-fn secrets dashboard. Cron work-check-gated (silent until pending rows exist). |
-| D4 Railway decommission | **Open** | `static/bridge/` current as of 2026-05-25 rebuild. Railway service can be deleted once confirmed healthy on Render. |
-| D4 Stripe backend dormant (PRs #344/#359) | **Open — gated on Stripe creds** | Mig `20260523170000` + edge fns `exos-checkout`/`stripe-webhook`/`exos-connect-onboard` not applied/deployed. Activation checklist in §9 PR #344 entry. |
-| D1 TEvo Hosted Checkout dormant (PR #353) | **Open — env-gated** | Code merged; fires when `TEVO_CHECKOUT_ENABLED=true` on `vibepass-storefront-test`. Set env var to activate. |
-| D4 `static/bridge/` needs rebuild for PRs #341/#342 | **Open — FE-only** | PRs #341 (ENTERED stamp) + #342 (transfer gate + inside-venue counter) merged but `static/bridge/` bundle not yet rebuilt. Run `npm --prefix d4_bridge run build` + `cp -r d4_bridge/dist static/bridge` + commit. |
-| B1 anon-SECDEF surface (PR #352 harness) | **Ongoing — harness live** | `anon_secdef_relation_audit()` now runs in CI; any new SECDEF view/matview auto-granted to anon will surface. Zero findings post-PRs #350/#354. |
-| **Cron: `midnight-catchup-sweep` broken** | ✅ **CLOSED 2026-05-26** — mig `20260526000000`: SELECT→PERFORM + `SET LOCAL statement_timeout='5min'`. Active + firing. | — |
-| **Cron: `weather_climatology_weekly` broken** | ✅ **CLOSED 2026-05-26** — mig `20260526000000`: both bare SELECTs→PERFORM. Active + firing. | — |
-| **Cron: `listings_aq_backfill_overnight` timeout** | ✅ **CLOSED 2026-05-26** — mig `20260526000000`: chunk 100→25, `SET LOCAL statement_timeout='3min'`. Active. | — |
-| **SG 429 rate CRITICAL** | ✅ **MITIGATED 2026-05-26** — mig `20260526010000`: all 4 `sg_60d_*` crons reduced 8→4 events/fire. Monitor `v_sg_broker_429_health` for next 24h. Alert threshold: pct_429 >15% → reduce further or pause afternoon window. | — |
-| **D4 Bridge README stale** | ✅ CLOSED 2026-05-25 | — |
-| **GitHub: ~60 stale remote branches** | ✅ **CLOSED 2026-05-26** — bulk-pruned this session. | — |
-| **GitHub: no repo description or topics** | ✅ **CLOSED 2026-05-26** — description + 5 topics set. | — |
-| **GitHub: no releases/tags ever cut** | ✅ **CLOSED 2026-05-26** — `v1.0.0-beta` tag + GitHub Release cut. `release-please` auto-generates future CHANGELOG + releases on every `main` push. | — |
-| **Movers endpoint all-empty** | Open — `/api/store/movers` returns empty arrays for all sections. City defaulting null. Velocity data may not be qualifying. Investigate featured-section trigger logic. | D0/D1 |
-| **/health endpoint doesn't exist** | Open — health check is `/healthz` not `/health`. Fix any docs/monitoring that reference `/health`. | A1 |
-| **D4 static/bridge/ needs rebuild for PRs #341/#342** | ✅ **CLOSED 2026-05-26** — rebuilt + committed (PR #369). ENTERED stamp + transfer gate + inside-venue counter all live. | — |
-| **Uptime monitor: /healthz not externally pinged** | ✅ **CLOSED 2026-05-26** — `.github/workflows/uptime-check.yml` pings every 5min, opens GitHub issue + optional Slack on failure. For sub-minute alerting add Better Uptime/UptimeRobot (free tier). | — |
-| **TypeScript: D4 bridge has no CI gate** | ✅ **CLOSED 2026-05-26** — `tests.yml` `typescript` job runs `tsc --noEmit` + `vite build` on every PR. 13 pre-existing bugs fixed by `noImplicitReturns`. | — |
+> **Moved (2026-05-28).** Open drift / gaps now live in **`KANBAN.md`** — the single source of truth for "what's open right now": actionable items in **§🟢 OPEN WORK** (severity-sorted), durable shape-of-the-data workarounds under **"Known data-architecture gaps (don't rediscover)"**. Resolved/shipped fixes are recorded in `MIGRATION_CONVENTIONS.md §14` + `CHANGELOG.md`. **Before treating a "discovery" as new, check KANBAN** — it's probably a known gap with a standing workaround.
 
 ---
 
@@ -536,8 +400,9 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 5. ☐ For mutations: did I ask operator permission?
 6. ☐ For new crons: did I wrap with `cron_should_fire`?
 7. ☐ For cross-lane work: did I `bot_chat_log` a question?
-8. ☐ Is my work already shipped per §9 (don't re-do)?
-9. ☐ Is my "discovery" a §10 known gap (don't waste cycles)?
+8. ☐ Is my work already shipped per `MIGRATION_CONVENTIONS.md §14` (don't re-do)?
+9. ☐ Is my "discovery" a known gap in `KANBAN.md` (don't waste cycles)?
+10. ☐ **About to create a new doc?** STOP — the canonical doc set is CLOSED (see the README registry). Add the fact to its owning doc; never create a new root/governance `.md`; never state one fact in two places — link instead.
 
 If YES to all → proceed. Else fall back to `RESOURCES_BIBLE.md` for inventory or `CLAUDE.md` for security rules.
 

@@ -1,11 +1,13 @@
 # LANE_DISCIPLINE.md — per-lane operating rules
 
-Per 2026-05-12 hierarchy restructure. Each bot writes only to its assigned files / tables / crons / edge functions. Out-of-lane writes require PR comment to the lane owner first.
+**Reorg 2026-05-28** — new mandate split (A1=ops/SQL monitor, B1=security+governance, C1=D-tier coordinator, D0=user visual layer). D1-E1 PAUSED until D0 is working.
 
-**Companion to `BOT_HIERARCHY.md`** (repo root) — that doc is the quick-reference: hierarchy diagram, push restrictions matrix, single-writer table ownership, fast-path workflow, SECURITY DEFINER convention. **This doc is the detail**: per-lane writes / never-writes / function-call rules / client-response filters.
+Per 2026-05-12 hierarchy restructure (updated 2026-05-28). Each bot writes only to its assigned files / tables / crons / edge functions. Out-of-lane writes require PR comment to the lane owner first.
+
+**Companion to `BOT_HIERARCHY.md`** (repo root) — that doc is the quick-reference: hierarchy diagram, push restrictions matrix, single-writer table ownership, fast-path workflow, SECURITY DEFINER convention. **This doc is the detail**: per-lane writes / never-writes / function-call rules.
 
 **Per-bot self-contracts** sit one layer below this. Bots may author their own deep operational detail file at `docs/<bot>_operating_constraints.md`. Known instances:
-- `docs/d1_operating_constraints.md` (PR #77) — D1's self-contract: read surface (TEvo endpoints + Supabase tables), write surface (storefront routes only), forbidden actions, Sprint 2 freeze conditions
+- `docs/d1_operating_constraints.md` (PR #77) — D1's self-contract (PAUSED; preserved for reactivation)
 
 When a per-bot doc exists, it MUST be consistent with this doc and `BOT_HIERARCHY.md`. If a conflict surfaces, this doc + BOT_HIERARCHY.md win until reconciled.
 
@@ -13,127 +15,165 @@ See also: `docs/bot-hierarchy.mermaid` (visual diagram) and `MIGRATION_CONVENTIO
 
 ## Lane assignments
 
-| ID | Lane | Active bot | Status |
+| ID | Lane | Mandate | Status |
 |---|---|---|---|
-| A1 | Admin / Audit / Push | `mystifying-lederberg-ea407b` | active |
-| B1 | Security Manager | `review-supabase-access-v8Dtl` | active |
-| C1 | Drift Monitor + Daily Checkpoint Merger (was: Data + Chat Supervisor) | this session | active |
-| D0 | Terminal FE (read-only) | `audit-datasets-schemas-auoc3` | reassigned |
-| D1 | Consumer Retail (owns Render service `vibepass-storefront-test`) | `eloquent-chatterjee-aaedf0` | active |
-| D2 | Order Clients | `review-unified-order-suite-FA0qA` | active |
-| (sub D2) | Undelivered FE | same as D2 (or split when scope activates) | deferred |
-| D3 | Broadway (sub of D2) | `broadway-scraper-eChQ6` | active |
-| D4 | Our Ticketing Infra | unassigned | future |
-| E1 | External Markets (Kalshi, prediction markets, exchanges) | unassigned | future — stub created 2026-05-15 |
+| A1 | SQL Monitor / DB Ops / Git / Connectors | Monitor + fix SQL, Supabase alerts, all data sources, crons, tables, git + syncs, Jira/Asana + connectors | **ACTIVE** |
+| B1 | Security + Governance Monitor | Security (RLS/SECDEF/CRIT), bibles, git, Jira/Asana, other bot notes | **ACTIVE** |
+| C1 | D-tier Project Coordinator + Drift Prevention | Monitor + assist D0-D4 projects + docs; prevent code drift; daily checkpoint | **ACTIVE** |
+| D0 | Terminal FE — User Visual Layer | Primary user interface for project progress; visual of A1 for user; Render workspace-wide perms | **ACTIVE — PRIORITY** |
+| D1 | Consumer Retail | Storefront + /api/store/* | **PAUSED** |
+| D2 | Order Clients | 5 order SDKs + dashboard | **PAUSED** |
+| D3 | Broadway (sub-D2) | broadway_client.py + broadway_* | **PAUSED** |
+| D4 | Our Ticketing Infra | Exos schema live, data dormant; blocked on creds | **PAUSED** |
+| E1 | Integration / Automation | Zapier, WhatsApp, Slack alerts, webhooks (rebrand from Kalshi placeholder) | **PAUSED** |
 
 ## Per-lane restrictions
 
-### A1 — Admin / Audit / Push
+### A1 — SQL Monitor / DB Ops / Git / Connectors (2026-05-28 mandate)
+
+**Primary mission:** monitor the entire operational stack, detect issues, fix them fast, keep git + prod in sync.
+
+**Monitors (continuous — flags to bot_chat on alert):**
+- Supabase cron `job_run_details` — failures, timeouts, consecutive errors
+- `v_sg_broker_429_health` — 429 rate per scope; alert threshold >15%
+- Table sizes + growth rates — `listings_snapshots`, `seatgeek_listings_snapshots`, `ticketsdata_listings_snapshots`
+- Data source freshness — TEvo polling cadence, SG priority pipeline health, TD batch timing
+- Migration drift — prod-applied vs repo files (via `migration_drift_check()`)
+- `bot_chat` unresolved flags (aging sweep)
+- Jira/Asana task status — surface stale operator-action items
+- Git sync — `main` vs deployed branches; stale PRs
 
 **Writes:**
-- `app.py` (backend / FastAPI routes shared with D1, coordinate)
+- All foundation + ops migrations (sweep functions, xref, cron schedules, ingest tables)
+- `app.py` (backend / FastAPI routes — coordinate with D0/D1)
 - `evo_client.py`, `requirements.txt`, `Procfile`
 - `MIGRATION_CONVENTIONS.md`, `SCHEMA.md`, governance docs in `docs/`
-- All foundation migrations (ESPN canonical, FRED, listings TTL+dedup+matcher, in-DB matcher)
-- `event_xref`, `canonical_external_ids`, `espn_*` ingest tables
+- `event_xref`, `canonical_external_ids`, `espn_*`, `event_movers_index`, sweep functions
 - Ledger reconciliation in `supabase_migrations.schema_migrations`
-- Cron schedules in `audit-lane` namespace (ESPN, FRED, match_*)
 
 **Reads:** everything.
 
 **Authority:**
-- Sole pusher to `main`
-- Reviews all PRs against `MIGRATION_CONVENTIONS.md §9` checklist
+- Sole pusher to `main` (immutable — CLAUDE.md)
+- Reviews all PRs against `MIGRATION_CONVENTIONS.md §9`
+- Applies migrations to prod via MCP
 - Approves merges
 
-### B1 — Security Manager
+### B1 — Security + Governance Monitor (2026-05-28 mandate)
+
+**Primary mission:** own security AND governance monitoring — keeps code safe, docs accurate, and bot coordination healthy.
+
+**Security (existing):**
+- RLS coverage audits, SECURITY DEFINER function audit, anon-exposure harness
+- CRIT/HIGH patches (cross-cutting write authority for security fixes)
+- Reviews security-sensitive PRs; owns hand-apply gate for RLS migrations
+
+**Governance monitoring (expanded 2026-05-28):**
+- **Bibles**: monitor PROJECT_BIBLE, LANE_DISCIPLINE, BOT_HIERARCHY, AGENTS.md for drift vs actual state. Flag discrepancies to A1.
+- **Git**: monitor repo for secret leaks, insecure patterns; review open PRs for security
+- **Bot notes**: read + audit `bot_chat` aging items; flag stale unresolved threads to A1
+- **Jira/Asana**: track security + governance tickets; surface blockers
 
 **Writes (cross-cutting allowed):**
 - `KANBAN.md` security backlog
 - `docs/security-runbook-*.md`
-- `docs/proposed-migrations/*_security_*.sql` (hand-apply gate set)
+- `docs/proposed-migrations/*_security_*.sql` (hand-apply gate)
 - `supabase/migrations/*_security_*.sql` (auto-apply set)
 - `supabase/functions/_shared/cron-auth.ts`
-- Per-lane patches for security CRIT/HIGH (must coordinate via PR comment to lane owner)
+- Per-lane patches for security CRIT/HIGH (coordinate via PR comment to lane owner)
 
 **Reads:** everything.
 
 **Authority:**
-- Middle-man review between C1 and A1 for security-sensitive PRs
 - Resolves `event_type IN ('p0_security', 'flag')` in bot_chat
-- Owns hand-apply gate for RLS migrations
+- Middle-man review between C1 and A1 for security-sensitive PRs
+- Flag governance-doc drift to A1 for correction
 
-### C1 — Drift Monitor + Daily Checkpoint Merger
+### C1 — D-tier Project Coordinator + Code Drift Prevention (2026-05-28 mandate)
 
-**Refocused 2026-05-14** from "Data + Chat Supervisor" to drift monitoring + daily checkpoint cadence. Previous supervisor-lane responsibilities (xref governance, queue health migrations) shift to A1 (admin) or B1 (audit/security) depending on scope. The supervisor role function still exists — it's now performed primarily through drift detection rather than custodial writes.
+**Refocused 2026-05-28** — narrowed from 6-function overload to 3 clear responsibilities: D-tier project monitoring + docs assistance + drift prevention.
 
-**Primary mission:** keep prod state and repo state from diverging. Catch drift early; close it daily before it compounds.
+**Primary mission:** ensure D0-D4 projects move forward, docs stay accurate, and code/prod don't diverge.
 
-**Daily checkpoint routine** (per `docs/c1_daily_checkpoint_runbook.md`):
-1. Pull latest `main`; run `git fetch --all`
-2. Run `SELECT * FROM public.migration_drift_check();` — joins prod-applied migrations against `supabase/migrations/*.sql` on disk
-3. For any "applied to prod but no file" row → file follow-up issue to A1 + post `flag` to `bot_chat`
-4. For any "file exists but not applied" row → either apply (with operator OK) or revert the file
-5. List stale PRs: any PR open >24h gets a comment asking lane owner for ETA or stale-close
-6. Run `SELECT * FROM public.release_health_check() WHERE status <> 'ok'` — surface any new fails/warns introduced since yesterday's baseline
-7. Merge ready PRs to main per push-protocol (A1 retains final-merge authority on contentious cases)
-8. Post a daily checkpoint summary to `bot_chat` (`event_type='checkpoint'`)
+**D-tier project monitoring:**
+- Track open PRs for D0-D4 lanes; flag stale (>24h without activity) to A1
+- Read `bot_chat` items addressed to D-tier bots; surface blockers to A1/B1
+- Track task status for D0-specific deliverables (the priority lane)
+- When D1-E1 reactivate: coordinate their project docs and PR routing
+
+**Docs assistance:**
+- Keep D-tier design docs, wireframes, runbooks consistent with actual implementation
+- Flag doc-reality drift (e.g., LANE_DISCIPLINE says D0 does X but D0 actually does Y)
+- Assist D-tier bots with cross-lane doc questions
+
+**Code drift prevention (daily checkpoint):**
+1. `git fetch --all`; compare `main` vs last-known deployed state
+2. `SELECT * FROM public.migration_drift_check()` — flag any prod-applied-but-no-file or file-but-unapplied
+3. `SELECT * FROM public.release_health_check() WHERE status <> 'ok'` — surface new failures
+4. Post daily checkpoint summary to `bot_chat` (`event_type='checkpoint'`)
+5. Route fixes: migrations → A1, security → B1, code → lane owner via PR comment
 
 **Writes (in lane):**
 - `docs/c1-checkpoint-*.md` — daily checkpoint reports
-- `docs/c1_daily_checkpoint_runbook.md` — the runbook itself (canonical)
+- `docs/c1_daily_checkpoint_runbook.md` — the runbook
 - `bot_chat` checkpoint + drift-flag entries
-- `v_bot_chat_unresolved` view migration (resolve-protocol owner, see CLAUDE.md §1 / PR #114 Cluster D-1)
-- PR merge commits (within push-protocol)
-- Stale PR comments (cross-lane coordination, allowed for C1)
+- PR stale-close comments (cross-lane coordination)
 
-**Writes NOT in lane** (delegate or escalate):
-- Migrations to fix drift → A1 (admin / push)
-- Security findings → B1 (security manager)
-- Bot-lane code changes → respective lane owner via PR comment
+**Writes NOT in lane** (delegate):
+- Migrations to fix drift → A1
+- Security findings → B1
+- Bot-lane code changes → lane owner via PR comment
+- Connector integrations → E1 (when activated)
 
-**Cross-cutting onboarding requirement (2026-05-15)**: every active bot must create a lane-scoped aging-sweep scheduled task on first activation. Spec in `CLAUDE.md §5`. Minute slot registry maintained there.
+**Removed from C1 scope (2026-05-28):**
+- PR management / merge authority → D0 (for D-tier PRs)
+- Connector integrations (Zapier/Slack/WhatsApp) → E1
+- Health-check regression blocking → B1 + A1
 
 **Reads:** everything.
 
 **Authority:**
-- Merge PRs that pass discipline checks (matches push-protocol)
-- Close stale PRs >7 days with no activity (after warning the lane owner)
 - Flag drift to A1 for resolution
-- Block merges that introduce health-check regressions (post `flag` to `bot_chat`, route to A1)
+- Post stale-PR comments (surface for A1 close decision)
 
-**Cadence:** daily checkpoint at 09:00 ET (after overnight backdata processing completes; before US trading-hours peak). One scheduled session per day; ad-hoc sessions if drift gets surfaced by automated alerting between checkpoints.
+### D0 — Terminal FE — User Visual Layer (PRIORITY, 2026-05-28 mandate)
 
-**Charter expansion 2026-05-15** (operator directive, bot_chat 139): C1 owns **token monitor + minimization** alongside drift monitoring. Scope: migration header audit (≤15 lines), bot_chat length audit (≤1500 chars), token-discipline rulebook (`docs/token-discipline-rules.md`), quarterly efficiency report. Runbook Step 9 added.
+**Mission:** be the user's single window into project health and trading intelligence.
+- **Visual of A1 for user**: D0 renders everything A1 monitors so the operator can see at a glance whether infra is healthy.
+- **Trading intelligence**: event detail, movers index, discovery gaps, performer/venue pages with live multi-source data.
+- **D0 is the gating condition** for D1-E1 reactivation.
 
-**Charter expansion 2026-05-17** (operator directive): C1 owns **Quality & Continuity** — 6 previously-unowned duties, all monitor+surface+route (no new mutate authority): (1) data-quality / semantic validation, (2) cost / burn-rate, (3) DR / backup posture, (4) operator-action queue ledger, (5) credential lifecycle, (6) end-to-end product validation. Full spec: `docs/c1_quality_continuity_charter.md`. Runbook Steps 10-12 added (daily); cost/cred/DR are weekly. C1 detects + routes; fix/execution stays with A1 (apply), operator (rotate/approve), or lane owners (code).
-
-### D0 — Consolidated Frontend Lane (2026-05-15 reorg)
-
-**Role**: lane owner for all customer + operator frontend surfaces. Reviews + signs off on subordinate (D1, D2) PRs before A1 merges. Owns Render write authority on all three frontend services. Authors `static/terminal/*` directly.
-
-**Subordinates**: D1 (storefront implementer), D2 (dashboard implementer). They write code; D0 reviews; A1 merges after green CI.
-
-### D0 — Terminal FE direct surface
+**What "D0 is working" means:**
+The operator opens the terminal and sees:
+1. Ops health dashboard — cron status (all jobs: last fire, last success, consecutive failures), 429 rates by scope, table sizes, pipeline freshness per data source (TEvo/SG/TD), recent bot_chat activity
+2. Trading surfaces — event detail with TD/SG/EVO panels, movers v2 index, discovery gaps
+3. All live data (no stale/empty panels) for the active event set
 
 **Writes:**
-- Future `static/terminal/*` UI files (when built)
-- `docs/event-view-wireframe-*.md`
-- `docs/performer-view-wireframe-*.md`
-- Other Terminal-FE UI spec docs
+- `static/terminal/*.html`, `static/terminal/*.js`, `static/terminal/*.css`
+- `docs/event-view-wireframe-*.md`, `docs/d0-*.md`
+- `app.py` `/api/broker/*` routes (coordinate with A1)
 
 **NEVER writes:**
-- Any database table
-- Any cron schedule
+- Any database table directly
+- Any cron schedule (author migration; A1 applies)
 - Any edge function that mutates data
-- Any other lane's files
+- D1-E1 lane files (those lanes are PAUSED; don't touch them)
 
-**Render workspace authority (2026-05-16 operator directive — "full Render permissions"):**
-D0 has full workspace-wide Render permissions, parity with A1. All `mcp__render__*` tools available on every service + workspace-level operations (`create_*`, `select_workspace`, deletion, ownership changes). Standing write on `vibepass-terminal-test`, `vibepass-storefront-test`, `d2-orders-dashboard`, and any future services D0 provisions. Coordination expectation: bot_chat `flag` event when provisioning/deleting customer-facing services for transparency, but no per-call operator approval required.
+**Render workspace authority (2026-05-16, confirmed 2026-05-28):**
+Full workspace-wide parity with A1. All `mcp__render__*` tools, `create_*`, `select_workspace`, provisioning/deletion/ownership. Post `bot_chat flag` for transparency on customer-facing service changes; no per-call operator approval required.
 
-**Reads:** entire data plane (charts, predictive models, possibly Grok integration)
+**Reads:** entire data plane.
 
-### D1 — Consumer Retail (subordinate to D0 as of 2026-05-15)
+---
+
+## ⏸ D1 · D2 · D3 · D4 · E1 — PAUSED (2026-05-28)
+
+**All lanes below are paused until D0 is working.** No new PRs, no new migrations, no new deploys. Existing deployed code stays running. These sections are preserved as reference for reactivation.
+
+---
+
+### D1 — Consumer Retail (PAUSED — subordinate to D0)
 
 **Reports to D0.** Authors storefront code; D0 reviews + approves PRs; A1 merges after green CI.
 
@@ -250,32 +290,27 @@ These are retail-availability signals (analogous to "5 tickets left" on any cons
 - Anything outside its own future namespace
 - D1's Render service (`vibepass-storefront-test`) — D1 owns; touch only D1's surface — D4 gets its own deploy target when scoped, not Render
 
-### E1 — External Markets (lane stub, 2026-05-15)
+### E1 — Integration / Automation (PAUSED — rebrand 2026-05-28)
 
-**Status**: lane stub. No active bot session yet. Activates when operator assigns + Kalshi work begins (per bot_chat 221 / 223).
+**Status**: PAUSED. Reactivates after D0 is working.
 
-**Mission**: integrate external prediction markets and exchanges. First target: Kalshi (sports + macro event contracts). Future: Polymarket, sportsbooks, and — if direction (B) of bot_chat 221 activates — building Kalshi-styled ticket-price prediction markets ourselves.
+**Rebrand (2026-05-28)**: lane repurposed from "Kalshi/prediction markets placeholder" to **Integration / Automation**. First deliverables when activated:
+- Zapier → Slack: 429+cron failure alerts (was delegated to C1 via bot_chat #779)
+- Zapier → Gmail: D4 transactional email relay
+- Zapier → Sheets: order tracking spreadsheet
+- WhatsApp / Telegram: ops notification bot
+- Future: Kalshi integration (fits naturally in this lane — same external-API integration pattern)
 
 **Writes (when active)**:
-- `kalshi_client.py` (initial) + future `<exchange>_client.py` files
-- Edge functions for market data ingest (`supabase/functions/kalshi-*`)
-- Migration files matching `*_markets_*.sql` pattern (e.g. `<ts>_markets_kalshi_xref.sql`)
-- `markets_*` tables (e.g. `kalshi_event_xref`, `kalshi_market_snapshots`)
-- `docs/markets-*.md` design notes
-
-**Reads**: entire data plane (especially `listings_snapshots`, `aq_event_map`, `v_market_listings_by_event`, `events`). Cross-event correlation with our owned inventory is the operating premise.
+- `docs/e1-*.md` integration design notes
+- Edge functions for webhook routing (`supabase/functions/webhook-*`)
+- Migration files matching `*_integrations_*.sql`
+- `integrations_*` tables
 
 **NEVER writes**:
-- Ticket-ingest pipelines (A1 / D2 territory)
-- Frontend code (D-tier)
+- Ticket-ingest pipelines (A1 territory)
+- Frontend code (D-tier territory)
 - Order tables (D2 territory)
-- Other lanes' Render services
-
-**Render**: no service provisioned yet. Will spawn `vibepass-markets-*` when MVP needs deploy target. A1 owns provisioning.
-
-**Sign-off model**: A1 reviews + merges per push-protocol. No subordinate lane underneath E1 yet.
-
-**Why E-tier (not extension of D-tier)**: D = ticket data + storefronts. E = external markets + financial integration. Different category and risk profile (esp. if direction B activates — CFTC regulatory considerations on prediction markets); keeps D-tier focused.
 
 ## Cross-cutting rules
 

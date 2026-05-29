@@ -1,12 +1,17 @@
-// D0 Terminal — Discovery page (TEvo blindspot + returning entities).
-// Companion to movers.js; both consume Supabase RPCs through TerminalAuth.
+// D0 Terminal — Discovery page (gaps + TEvo blindspot + returning entities).
+// Companion to movers.js; all panels consume Supabase RPCs/tables via TerminalAuth.
 //
-// Two panels:
-//   1. BLIND SPOTS — TEvo SELLING, WE'RE NOT
+// Three panels:
+//   1. DISCOVERY GAPS — cross-platform alert table
+//      Table: discovery_gap_alerts (resolved_at IS NULL)
+//      Backed by mig 20260527250000. Gap types: sg_no_evo, td_*_no_evo,
+//      td_gt/vd_premium, evo_no_sg, value_gap_large, fill_rate_spike.
+//      Populated by evo_sg_discovery_gaps() cron daily at 9am UTC.
+//   2. BLIND SPOTS — TEvo SELLING, WE'RE NOT
 //      RPC: get_blind_spots_tevo_selling(min_conf, horizon, limit, venue, mode, band)
 //      Backed by mig 20260519180000. 3-signal composite over broker pool
 //      where we own 0 tickets, big 5 sports excluded. Confidence-sorted.
-//   2. RETURNING — performers + venues back after dormancy
+//   3. RETURNING — performers + venues back after dormancy
 //      RPC: get_returning_entities(min_gap_days, source, entity_type, limit)
 //      Backed by mig 20260519200000. TEvo perf+venue + SG venue today;
 //      SG performer link deferred to v2.
@@ -18,10 +23,13 @@
   // ---- State shared across both panels (filter UI -> RPC params) ----
   const tevoState = { mode: 'selling', band: '', conf: 0.5 };
   const retState  = { gap: 90, source: '', entityType: '' };
+  const gapState  = { type: '' }; // '' = all gap types
 
   function init() {
+    wireGapControls();
     wireTevoControls();
     wireReturningControls();
+    refreshDiscoveryGaps().catch(e => console.error('[discovery-gaps]', e));
     refreshTevoBlindSpots().catch(e => console.error('[tevo-blindspots]', e));
     refreshReturning().catch(e => console.error('[returning]', e));
     setStatus('');
@@ -30,6 +38,182 @@
   function setStatus(s) {
     const el = document.getElementById('status');
     if (el) el.textContent = s;
+  }
+
+  // -------- Discovery Gaps panel --------------------------------
+  // Queries discovery_gap_alerts (resolved_at IS NULL) via Supabase client.
+  // Groups by gap_type, enriches with event names from sg_events_canonical.
+  // Populated by evo_sg_discovery_gaps() cron (mig 250000, daily 9am UTC).
+
+  function wireGapControls() {
+    document.querySelectorAll('[data-gap-type]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        gapState.type = btn.dataset.gapType || '';
+        toggleActive(btn, '[data-gap-type]');
+        refreshDiscoveryGaps();
+      });
+    });
+  }
+
+  async function refreshDiscoveryGaps() {
+    const body      = document.getElementById('discoveryGapsBody');
+    const summaryEl = document.getElementById('discoveryGapsSummary');
+    const countEl   = document.getElementById('discoveryGapsCount');
+    if (!body) return;
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading…</div>';
+
+    try {
+      // Fetch active gaps (optional type filter)
+      let q = Auth.client
+        .from('discovery_gap_alerts')
+        .select('id,event_id,gap_type,detail,signal_score,detected_at')
+        .is('resolved_at', null)
+        .order('signal_score', { ascending: false })
+        .limit(200);
+      if (gapState.type) q = q.eq('gap_type', gapState.type);
+
+      const gapsRes = await q;
+      if (gapsRes.error) throw new Error(gapsRes.error.message);
+      const gaps = gapsRes.data || [];
+
+      // Enrich with event names + dates from sg_events_canonical
+      const eventIds = [...new Set(gaps.map(g => g.event_id).filter(Boolean))];
+      const eventMeta = {};
+      if (eventIds.length) {
+        const [sgRes, evoRes] = await Promise.all([
+          Auth.client
+            .from('sg_events_canonical')
+            .select('tevo_event_id,sg_event_name,sg_datetime_utc')
+            .in('tevo_event_id', eventIds),
+          // Fallback: TEvo events table for evo_no_sg gaps (no SG canonical match)
+          Auth.client
+            .from('events')
+            .select('id,name,occurs_at_local')
+            .in('id', eventIds),
+        ]);
+        if (!sgRes.error) {
+          (sgRes.data || []).forEach(e => { eventMeta[e.tevo_event_id] = e; });
+        }
+        if (!evoRes.error) {
+          (evoRes.data || []).forEach(e => {
+            if (!eventMeta[e.id]) {
+              // Only use TEvo fallback when no SG canonical row exists
+              eventMeta[e.id] = { sg_event_name: e.name, sg_datetime_utc: e.occurs_at_local };
+            }
+          });
+        }
+      }
+
+      // Counts
+      const total = gaps.length;
+      const distinctEvents = new Set(gaps.map(g => g.event_id)).size;
+      if (countEl) countEl.textContent = total ? `${total} gaps · ${distinctEvents} events` : '';
+
+      // Summary chips by type
+      const byType = {};
+      gaps.forEach(g => { byType[g.gap_type] = (byType[g.gap_type] || 0) + 1; });
+      if (summaryEl) {
+        summaryEl.innerHTML = Object.entries(byType).length
+          ? Object.entries(byType)
+              .sort((a, b) => b[1] - a[1])
+              .map(([t, n]) => `<span class="badge">${escapeHtml(t.replace(/_/g,' '))} ${n}</span>`)
+              .join(' ')
+          : '';
+      }
+
+      if (!total) {
+        body.innerHTML = '<div class="empty">no active discovery gap alerts — cron runs daily at 9am UTC</div>';
+        return;
+      }
+
+      // Group by gap_type and render
+      const groups = {};
+      gaps.forEach(g => { (groups[g.gap_type] = groups[g.gap_type] || []).push(g); });
+
+      // Priority sort order for gap types
+      const GAP_PRIORITY = [
+        'value_gap_large', 'fill_rate_spike',
+        'sg_no_evo', 'td_sh_no_evo', 'td_gt_no_evo', 'td_vd_no_evo',
+        'td_gt_premium', 'td_vd_premium', 'td_sh_no_gt', 'evo_no_sg',
+      ];
+      const sortedTypes = Object.keys(groups).sort((a, b) => {
+        const ia = GAP_PRIORITY.indexOf(a), ib = GAP_PRIORITY.indexOf(b);
+        if (ia === -1 && ib === -1) return a.localeCompare(b);
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        return ia - ib;
+      });
+
+      body.innerHTML = '';
+      sortedTypes.forEach(gapType => {
+        const items = groups[gapType];
+        const section = document.createElement('div');
+        section.className = 'v2-category-section';
+
+        // Count only future/undated items (past events are skipped in the tbody loop)
+        const futureCount = items.filter(g => {
+          const m = eventMeta[g.event_id] || {};
+          if (!m.sg_datetime_utc) return true; // no date = keep (e.g. evo_no_sg)
+          const d = T.daysUntil(m.sg_datetime_utc);
+          return d == null || d >= 0;
+        }).length;
+        if (!futureCount) return; // skip section entirely if all items are past
+
+        const hdr = document.createElement('div');
+        hdr.className = 'panel-title row';
+        hdr.innerHTML = `<span>${escapeHtml(gapType.toUpperCase().replace(/_/g,' '))} <span class="tab-count">${futureCount}</span></span>`;
+        section.appendChild(hdr);
+
+        const tbl = document.createElement('table');
+        tbl.className = 'discovery-gaps-tbl';
+        tbl.innerHTML = `
+          <thead><tr>
+            <th>Event</th>
+            <th class="num">T-days</th>
+            <th class="num">Score</th>
+            <th>Detail</th>
+            <th class="num">Detected</th>
+          </tr></thead><tbody></tbody>`;
+        const tb = tbl.querySelector('tbody');
+
+        items.forEach(g => {
+          const meta      = eventMeta[g.event_id] || {};
+          const eventName = meta.sg_event_name || ('Event ' + g.event_id);
+          const eventLink = g.event_id
+            ? `<a href="event.html?event=${g.event_id}">${escapeHtml(eventName)}</a>`
+            : escapeHtml(eventName);
+          const daysUntil = meta.sg_datetime_utc ? (T.daysUntil(meta.sg_datetime_utc) ?? '—') : '—';
+
+          // Skip past events (T-days < 0) — stale rows not yet swept by daily cron
+          if (typeof daysUntil === 'number' && daysUntil < 0) return;
+
+          // Fix SQL double-percent escape: format() in PG uses %% for literal %, so strip one
+          const detail = (g.detail || '').replace(/%%/g, '%');
+
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${eventLink}</td>
+            <td class="num">${daysUntil}</td>
+            <td class="num">${g.signal_score != null ? (+g.signal_score).toFixed(2) : '—'}</td>
+            <td class="muted small">${escapeHtml(detail)}</td>
+            <td class="num muted small">${fmtDateShort(g.detected_at)}</td>`;
+          tb.appendChild(tr);
+        });
+
+        section.appendChild(tbl);
+        body.appendChild(section);
+      });
+
+    } catch (e) {
+      body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+      if (countEl) countEl.textContent = '';
+    }
   }
 
   // -------- TEvo blindspot panel ---------------------------------

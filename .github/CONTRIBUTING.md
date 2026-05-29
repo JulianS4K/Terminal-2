@@ -13,7 +13,7 @@ Read these in order:
 1. [`PROJECT_BIBLE.md`](../PROJECT_BIBLE.md) — operating playbook (hard rules, lane scope, SQL macros, column-name landmines)
 2. [`KANBAN.md §🟢 OPEN`](../KANBAN.md) — what's actionable right now (severity-sorted)
 3. [`CLAUDE.md`](../CLAUDE.md) — security rules + 2026-05-13 lockdown
-4. [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.md) — your write surface
+4. [`BOT_HIERARCHY.md`](../BOT_HIERARCHY.md) — your write surface (roster · push authority · per-lane scope; absorbed the former `LANE_DISCIPLINE.md`)
 5. [`MIGRATION_CONVENTIONS.md`](../MIGRATION_CONVENTIONS.md) — if authoring migrations
 6. [`docs/<your-lane>_operating_constraints.md`](../docs/) — your self-contract
 

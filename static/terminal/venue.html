@@ -47,7 +47,17 @@
       </div>
     </section>
 
-    <div class="tab-pane active" id="vPaneOverview" role="tabpanel" hidden>
+    <!-- Default active tab: Market Carpet — the venue as its own "stock ticker" -->
+    <nav class="event-tabs" id="venueTabs" role="tablist" hidden>
+      <button class="event-tab" data-tab="overview" role="tab" aria-selected="false">Overview</button>
+      <button class="event-tab" data-tab="events"   role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountVenueEvents"></span></button>
+      <button class="event-tab" data-tab="owned"    role="tab" aria-selected="false">Owned Inventory</button>
+      <button class="event-tab" data-tab="sg"       role="tab" aria-selected="false">SG Activity</button>
+      <button class="event-tab active" data-tab="market" role="tab" aria-selected="true">Market Carpet <span class="tab-count" id="tabCountVenueMarket"></span></button>
+    </nav>
+
+    <!-- Overview pane: rollup KPIs only -->
+    <div class="tab-pane" id="vPaneOverview" role="tabpanel" hidden>
       <section id="venue-rollup">
         <div class="panel-title">VENUE ROLLUP — NEXT 90D</div>
         <div class="rollup-grid">
@@ -58,7 +68,29 @@
           <div class="ru-cell"><span class="ru-num" id="vrOwnedNotional">—</span><span class="ru-lbl">owned notional</span></div>
         </div>
       </section>
+    </div>
 
+    <!-- Upcoming Events pane -->
+    <div class="tab-pane" id="vPaneEvents" role="tabpanel" hidden>
+      <section id="venue-events">
+        <div class="panel-title row">
+          <span>UPCOMING EVENTS — NEXT 90D</span>
+          <span class="muted small" id="vEventCount"></span>
+        </div>
+        <div id="vEventsBody"></div>
+      </section>
+    </div>
+
+    <!-- Owned Inventory pane -->
+    <div class="tab-pane" id="vPaneOwned" role="tabpanel" hidden>
+      <section id="venue-owned">
+        <div class="panel-title">OWNED INVENTORY — AT THIS VENUE</div>
+        <div id="vOwnedBody"></div>
+      </section>
+    </div>
+
+    <!-- SG Activity pane -->
+    <div class="tab-pane" id="vPaneSg" role="tabpanel" hidden>
       <section id="venue-sg">
         <div class="panel-title row">
           <span>SG ACTIVITY — last 24h aggregate</span>
@@ -66,18 +98,25 @@
         </div>
         <div id="vSgBody"></div>
       </section>
+    </div>
 
-      <section id="venue-owned">
-        <div class="panel-title">OWNED INVENTORY — AT THIS VENUE</div>
-        <div id="vOwnedBody"></div>
+    <!-- Market Carpet pane — default view. Treats venue as a stock ticker.
+         Aggregated portfolio view + per-event cross-source medians.
+         Auto-loaded on page open. -->
+    <div class="tab-pane active" id="vPaneMarket" role="tabpanel">
+      <section id="venue-market-ticker">
+        <div id="vMarketTickerBody"><div class="empty">loading…</div></div>
       </section>
-
-      <section id="venue-events">
+      <section id="venue-market-carpet">
         <div class="panel-title row">
-          <span>UPCOMING EVENTS — NEXT 90D</span>
-          <span class="muted small" id="vEventCount"></span>
+          <span>MARKET CARPET — cross-source medians + signals per event</span>
+          <span class="muted small" id="vMarketMeta">loading…</span>
         </div>
-        <div id="vEventsBody"></div>
+        <div class="muted small" style="margin-bottom:8px">
+          EVO/SG/SH/GT/VD medians from latest <code>event_listing_snapshot_daily</code> row per event.
+          Spreads = each platform relative to EVO retail. TD data started 2026-05-27.
+        </div>
+        <div id="vMarketBody"><div class="empty">loading…</div></div>
       </section>
     </div>
 

@@ -1,5 +1,7 @@
 # CRON_HIERARCHY.md
 
+> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+
 **Tiered cron-scheduling policy for Terminal-2. Maximize data freshness within bounded concurrency, with explicit headroom for future bot lanes (B2-B4).**
 
 Operator directive 2026-05-14: "create a cron/data hierarchy so we can maximize data freshness without killing out available resources and allow for future projects like b1-4 to use resources."

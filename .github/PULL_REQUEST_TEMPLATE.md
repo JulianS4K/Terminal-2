@@ -1,4 +1,4 @@
-<!-- Fill every field. Admin blocks PRs missing fields. See START_HERE.md +
+<!-- Fill every field. Admin blocks PRs missing fields. See README.md +
      SYNC_PROTOCOL.md (track + checklist) + MIGRATION_CONVENTIONS.md. -->
 
 **Level**: <!-- admin | security | supervisor | primary-sales | secondary-sales | data-collection -->

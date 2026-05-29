@@ -19,6 +19,37 @@
 
   <main class="wrap movers">
 
+    <!-- Discovery Gaps — active cross-platform gap alerts from mig 250000.
+         Backed by discovery_gap_alerts table (evo_sg_discovery_gaps cron).
+         Gap types: sg_no_evo, td_sh/gt/vd_no_evo, td_gt_premium, td_vd_premium,
+         evo_no_sg, value_gap_large, fill_rate_spike. Lazy-loads on page init. -->
+    <section id="discovery-gaps">
+      <div class="panel-title row">
+        <span>DISCOVERY GAPS — CROSS-PLATFORM ALERTS</span>
+        <span class="muted small" id="discoveryGapsCount"></span>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">
+        Active alerts from <code>discovery_gap_alerts</code>. Populated by
+        <code>evo_sg_discovery_gaps()</code> daily at 9am UTC. Gap types:
+        coverage (SG/TD have events we don't track) · value (SG 20%+ above EVO) ·
+        fill-rate spike (accelerating sell-through) · platform premiums (GT/VD vs SH).
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">TYPE</span>
+          <button class="ctrl-btn is-active" data-gap-type="">All</button>
+          <button class="ctrl-btn" data-gap-type="value_gap_large">Value Gap</button>
+          <button class="ctrl-btn" data-gap-type="fill_rate_spike">Fill Rate</button>
+          <button class="ctrl-btn" data-gap-type="sg_no_evo">SG no EVO</button>
+          <button class="ctrl-btn" data-gap-type="td_gt_premium">GT premium</button>
+          <button class="ctrl-btn" data-gap-type="td_vd_premium">VD premium</button>
+          <button class="ctrl-btn" data-gap-type="evo_no_sg">Owned no SG</button>
+        </div>
+      </div>
+      <div id="discoveryGapsSummary" class="muted small" style="margin-bottom:6px"></div>
+      <div id="discoveryGapsBody"><div class="empty">loading…</div></div>
+    </section>
+
     <!-- TEvo blindspot panel — broker pool moving on events we own 0 of.
          Backed by get_blind_spots_tevo_selling RPC (mig 20260519180000).
          3-signal composite + confidence score + days-to-event band. -->
