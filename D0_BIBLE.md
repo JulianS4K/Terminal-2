@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-30 (A1) — §3a universal mapping rule + new §3h orders/sales → tevo (map via the AQ mapper). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -394,7 +394,12 @@ Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a
 | SeatGeek (market sales) | `seatgeek_sales_snapshots` | `sg_event_id` | `trg_sg_sales_populate_tevo_event_id` + `backfill_seatgeek_sales_tevo_event_id` |
 | SeatData | `sd_sales_normalized` | `sd_event_id` | own xref → `tevo_event_id` |
 
-**Pipeline:** `match_unmatched_orders_sweep()` (cron @ :22) stamps `aq_short_event_id` on order rows via `match_to_aq_event_id(source, …)`. Then **`backfill_order_tevo_from_aq()`** (cron @ :40, mig `20260530200000`) derives `tevo_event_id` from `aq_event_map` — EVO straight from its native `event_id`; TickPick with a **unique**-match fallback on the TP event's `raw` datetime+venue when the aq row isn't tevo-linked. Don't hand-map an order by name/date — run the backfill / go through the AQ mapper.
+**Pipeline — 3 idempotent cron stages (the canonical way to map ANY source to tevo):**
+1. **`match_unmatched_orders_sweep()`** @ :22 — stamps `aq_short_event_id` on order rows via `match_to_aq_event_id(source, …)`.
+2. **`resolve_aq_tevo_from_sources()`** @ :35 (mig `20260530220000`) — fills `aq_event_map.tevo_event_id` for still-unresolved rows from a linked source's **reliable raw** (venue + exact local datetime, **unique-match only**, `HAVING count(DISTINCT event)=1`). Self-heals the rows the sg/td bridges can't — the `aq_curated`/`system_seed` aq rows with **NULL venue or placeholder dates** (`…T23:59`) where the source raw holds the truth. Fixing the hub here also resolves **listings** on those rows, not just orders.
+3. **`backfill_order_tevo_from_aq()`** @ :40 (mig `20260530200000`) — derives each order's `tevo_event_id` from `aq_event_map` (EVO straight from its native `event_id`).
+
+> **★ To onboard a NEW source so it maps automatically:** add its reliable `raw` venue + local-datetime to the `sig` UNION in `resolve_aq_tevo_from_sources()`. Everything downstream then resolves. **Don't hand-map by name/date, and don't add per-source order hacks — fill the AQ hub and derive through it.**
 
 **Why it matters:** `our_orders_by_event`, `unified_orders_by_event`, and v3 `cross_source_orders` all key on `tevo_event_id`. A row with `tevo_event_id = NULL` is **invisible** in the terminal even though we sold the inventory. The 2026-05-30 backfill mapped ~2,700 orphaned orders this way (incl. our Knicks ECF + Finals sales across EVO + TickPick + Vivid).
 
