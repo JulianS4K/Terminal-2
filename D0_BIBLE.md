@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-30 (A1) — §3a universal mapping rule + new §3h orders/sales → tevo (map via the AQ mapper). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -204,6 +204,8 @@ Run these checks before spending tokens on exploratory queries. Prevents re-disc
 
 Each source has its own independent numeric ID space. A `tevo_event_id = 3001234` means NOTHING to SeatGeek or TicketsData. Never join raw IDs across sources.
 
+> **★ Universal mapping rule — listings AND orders/sales (A1 2026-05-30).** Every external source keys **both its listings and its orders/sales by its own native event id** (SH / VD / GT / TM / TP each their own, SG `sg_event_id`, SeatData `sd_event_id`, EVO `event_id`). The **AutomatiQ mapper (`aq_event_map`) is the ONLY correct bridge to `tevo_event_id` — always map *through* it.** The `tevo_event_id` column on source tables (`ticketsdata_event_xref`, `tickpick_orders`, `vivid_orders`, `seatgeek_orders`, `seatgeek_sales_snapshots`, `sd_sales_normalized`, …) is a **derived** value that is frequently NULL — never assume a source table is tevo-keyed. Populate it via native-id → `aq_short_event_id` → `aq_event_map.tevo_event_id` (orders/sales: `backfill_order_tevo_from_aq()`, hourly; listings: the TD→TEvo chain in §3c). Terminal listing/order views key on `tevo_event_id`, so an **unmapped row is invisible**. Order/sales specifics in **§3h**.
+
 | Source | ID column | Format | Internal to |
 |---|---|---|---|
 | TEvo | `tevo_event_id` / `event_id` | bigint 3.0M–3.4M | TEvo only |
@@ -378,6 +380,25 @@ tevo_venue_id
 - Have text name → `cross_source_venue_resolve(name, city, state)`
 - Have venue_short_id (from aq_event_map) → `aq_venue_map`
 - Need ESPN venue → `venue_assets.espn_venue_id` directly — no separate ESPN venue table
+
+### 3h. Orders & sales → TEvo (same rule — map via the AQ mapper) *(A1 · 2026-05-30)*
+
+Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a): each row carries the **source's own event id** plus a **derived `tevo_event_id` that is only populated by mapping through the AQ mapper** — freshly-collected orders have it NULL.
+
+| Source (our orders/sales) | Table | Native event key | → tevo via |
+|---|---|---|---|
+| EVO / TicketEvolution | `evo_orders` (+ `evo_order_items`) | `evo_order_items.event_id` **IS** the TEvo id | use it **directly** (ground truth) |
+| TickPick | `tickpick_orders` | `raw->>'event_id'` (TP id) + `aq_short_event_id` | `aq_event_map`; fallback = TP event's `raw` local datetime + venue (unique match) |
+| Vivid | `vivid_orders` | `vivid_event_id` / `aq_short_event_id` | `aq_event_map` |
+| SeatGeek (seller) | `seatgeek_orders` | `sg_event_id` / `aq_short_event_id` | `aq_event_map` → `sg_events_canonical` |
+| SeatGeek (market sales) | `seatgeek_sales_snapshots` | `sg_event_id` | `trg_sg_sales_populate_tevo_event_id` + `backfill_seatgeek_sales_tevo_event_id` |
+| SeatData | `sd_sales_normalized` | `sd_event_id` | own xref → `tevo_event_id` |
+
+**Pipeline:** `match_unmatched_orders_sweep()` (cron @ :22) stamps `aq_short_event_id` on order rows via `match_to_aq_event_id(source, …)`. Then **`backfill_order_tevo_from_aq()`** (cron @ :40, mig `20260530200000`) derives `tevo_event_id` from `aq_event_map` — EVO straight from its native `event_id`; TickPick with a **unique**-match fallback on the TP event's `raw` datetime+venue when the aq row isn't tevo-linked. Don't hand-map an order by name/date — run the backfill / go through the AQ mapper.
+
+**Why it matters:** `our_orders_by_event`, `unified_orders_by_event`, and v3 `cross_source_orders` all key on `tevo_event_id`. A row with `tevo_event_id = NULL` is **invisible** in the terminal even though we sold the inventory. The 2026-05-30 backfill mapped ~2,700 orphaned orders this way (incl. our Knicks ECF + Finals sales across EVO + TickPick + Vivid).
+
+**Pitfall:** `match_to_aq_event_id` can mis-match on venue+date collisions (it put Knicks Finals-G4 orders on a same-night concert at MSG). When auditing, confirm the matched event's performer matches the order's.
 
 ---
 
