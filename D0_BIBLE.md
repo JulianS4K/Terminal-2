@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -381,7 +381,7 @@ tevo_venue_id
 - Have venue_short_id (from aq_event_map) → `aq_venue_map`
 - Need ESPN venue → `venue_assets.espn_venue_id` directly — no separate ESPN venue table
 
-### 3h. Orders & sales → TEvo (same rule — map via the AQ mapper) *(A1 · 2026-05-30)*
+### 3h. Orders & sales → TEvo (same rule — map via the AQ mapper) *(v1.3 · A1 · 2026-05-30)*
 
 Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a): each row carries the **source's own event id** plus a **derived `tevo_event_id` that is only populated by mapping through the AQ mapper** — freshly-collected orders have it NULL.
 
@@ -396,10 +396,16 @@ Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a
 
 **Pipeline — 3 idempotent cron stages (the canonical way to map ANY source to tevo):**
 1. **`match_unmatched_orders_sweep()`** @ :22 — stamps `aq_short_event_id` on order rows via `match_to_aq_event_id(source, …)`.
-2. **`resolve_aq_tevo_from_sources()`** @ :35 (mig `20260530220000`) — fills `aq_event_map.tevo_event_id` for still-unresolved rows from a linked source's **reliable raw** (venue + exact local datetime, **unique-match only**, `HAVING count(DISTINCT event)=1`). Self-heals the rows the sg/td bridges can't — the `aq_curated`/`system_seed` aq rows with **NULL venue or placeholder dates** (`…T23:59`) where the source raw holds the truth. Fixing the hub here also resolves **listings** on those rows, not just orders.
+2. **`resolve_aq_tevo_from_sources()`** @ :35 (mig `20260530220000`) — fills `aq_event_map.tevo_event_id` for still-unresolved rows from a linked source's **reliable raw** (venue + exact local datetime, **unique-match only**, `HAVING count(DISTINCT event)=1`). Self-heals the rows the sg/td bridges can't — the `aq_curated`/`system_seed` aq rows with **NULL venue or placeholder dates** (`…T23:59`) where the source raw holds the truth. This fills the hub's `tevo_event_id`, feeding the **tevo-keyed order views** — it does **not** by itself resolve TD **listings**, which key off `aq_event_map.sg_event_id` via `sg_events_canonical` (a separate path; see §3a).
 3. **`backfill_order_tevo_from_aq()`** @ :40 (mig `20260530200000`) — derives each order's `tevo_event_id` from `aq_event_map` (EVO straight from its native `event_id`).
 
 > **★ To onboard a NEW source so it maps automatically:** add its reliable `raw` venue + local-datetime to the `sig` UNION in `resolve_aq_tevo_from_sources()`. Everything downstream then resolves. **Don't hand-map by name/date, and don't add per-source order hacks — fill the AQ hub and derive through it.**
+
+**Filling the hub's `tevo_event_id` — three signals, cheapest first (a row can be mapped by any):**
+1. **Local link (no API) — `link_aq_tevo_from_events()`** (mig `20260530230000`): an unmapped aq row whose TEvo event is **already in `events`** is linked by exact name + venue + date (±1d), **unique-match only** (`count(DISTINCT e.id)=1`, so it can't mis-map). Backfilled **456** rows (+237 NFL): the `espn_*_derived` schedule-skeleton rows carry **no source id**, so the source-keyed resolvers (sg bridge, stage 2) never reached them. Idempotent/re-runnable; not yet cron'd.
+2. **Source raw — `resolve_aq_tevo_from_sources()`** (stage 2 above): from a linked order's reliable raw venue + datetime.
+3. **Evo-search discovery (API)** — when the TEvo event isn't in `events` yet. Sign a TEvo GET **straight from SQL, no edge deploy**: creds live in `public.settings` (`tevo_token` / `tevo_secret`); `X-Signature = base64(hmac(secret, 'GET '||host||path||'?'||sorted_encoded_qs, 'sha256'))` (pgcrypto); fire `net.http_get(url, headers:=jsonb{X-Token,X-Signature,Accept:'application/vnd.ticketevolution.api+json; version=9'})`, then read `net._http_response` (async — worker can lag under cron load). Best probes: `/v9/events?venue_id=X&occurs_at.gte/lte` (venue+date), `/v9/performers/search?q=…` → `/v9/events?performer_id=X`, `/v9/searches/suggestions?q=…&entities=events&fuzzy=true`.
+   - **Catalog caveat (2026-05-30):** evo-search only finds the event **if TEvo carries it**. Verified — **NFL** ✓ (Commanders@Cowboys 9/20 → tevo `3285876`); **FIFA World Cup 2026** ✗: TEvo has the national-team performers (cat "World Cup") + pre-tournament friendlies, but **zero tournament matches** (0 events at all 6 US host venues across the window). WC games stay source-native (sg/sh/vd/tm — already in `aq_event_map`) until TEvo loads them; the existing sg→tevo bridge auto-maps each when it does.
 
 **Why it matters:** `our_orders_by_event`, `unified_orders_by_event`, and v3 `cross_source_orders` all key on `tevo_event_id`. A row with `tevo_event_id = NULL` is **invisible** in the terminal even though we sold the inventory. The 2026-05-30 backfill mapped ~2,700 orphaned orders this way (incl. our Knicks ECF + Finals sales across EVO + TickPick + Vivid).
 
