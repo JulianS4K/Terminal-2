@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -184,7 +184,7 @@ Loaded **only on `event.html`** (`event.html:11` css, `:381` js). Two independen
 
 > What the terminal reads. The terminal itself is read-only against the DB (D0 never writes tables); these are the surfaces it queries.
 
-## 2. "Check before investigating" checklist
+## 2. "Check before investigating" checklist *(v1.1 · A1 · 2026-05-31)*
 
 Run these checks before spending tokens on exploratory queries. Prevents re-discovery of known architecture.
 
@@ -195,6 +195,7 @@ Run these checks before spending tokens on exploratory queries. Prevents re-disc
 5. **Already in a view?** → Check `RESOURCES_BIBLE.md` for `v_canonical_*`, `v_event_*`, `v_sg_*`, `v_bot_chat_*` views before writing raw SQL.
 6. **Migration already shipped?** → `MIGRATION_CONVENTIONS.md` landmark-migration log. Don't re-implement work already in prod.
 7. **Open drift item?** → `KANBAN.md`. If you're debugging something that looks like a known gap, check there first.
+8. **Listings look stale?** → freshness is **horizon-driven** (2026-05-31). A far-horizon event polling slowly is on-cadence, not broken. Check `collector_cadence` + `evo_listings_poll_state` (SG: `sg_event_priority_state.last_fired_listings_at`) before alerting. See §7 + CRON_HIERARCHY §4b.
 
 ---
 
@@ -576,12 +577,14 @@ SELECT public.bot_chat_log(
 
 ---
 
-## 7. Data source freshness expectations
+## 7. Data source freshness expectations *(v1.1 · A1 · 2026-05-31)*
 
-| Source | Expected freshness | Table | Alert if stale > |
+> **Listings freshness is event-horizon-driven now (2026-05-31 collector-cadence cutover).** The old fixed horizon-window collectors are retired — EVO and SG now poll **per event** on a date-horizon band, driven by config in `public.collector_cadence` + per-event state tables (`evo_listings_poll_state`; SG reuses `sg_event_priority_state.last_fired_listings_at`). So "expected freshness" varies by how soon the event is: EVO ≤7d = 15 min … 61d+ = 12 h; SG ≤7d = 1 h … 31d+ = 24 h. The table below = the **near-event** expectation. A "stale" far-horizon event is usually on-cadence, not broken. SG is rate-limited (`p_max=5`); its clock advances only on HTTP 200. Bands: **CRON_HIERARCHY §4b**.
+
+| Source | Expected freshness (near-event) | Table | Alert if stale > |
 |---|---|---|---|
 | TEvo listings | <15 min | `event_metrics` | 30 min |
-| SeatGeek listings | <15 min | `seatgeek_event_metrics` | 1 hour |
+| SeatGeek listings | <1 hour | `seatgeek_event_metrics` | 1 hour |
 | ESPN | <15 min | `espn_event_snapshots` | 30 min |
 | TicketsData | <1 hour | `ticketsdata_listings_snapshots` | 2 hours |
 | Daily snapshot | daily @ 00:00 UTC | `event_listing_snapshot_daily` | 26 hours |

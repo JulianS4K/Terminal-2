@@ -1,6 +1,6 @@
 # CRON_HIERARCHY.md
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §1 job-count + §4b rewritten for the per-event collector-cadence model (`collector_cadence`-driven scan per source; EVO/SG horizon bands; ~12 horizon/blindspot collectors retired, 2–3 pollers added). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Tiered cron-scheduling policy for Terminal-2. Maximize data freshness within bounded concurrency, with explicit headroom for future bot lanes (B2-B4).**
 
@@ -11,7 +11,7 @@ Operator directive 2026-05-14: "create a cron/data hierarchy so we can maximize 
 ## 1. Resource constraints (hard limits)
 
 - `cron.max_running_jobs = 32` (Supabase default; not raisable without superuser support ticket)
-- Total active jobs (as of 2026-05-14): **74** (was 72 pre-Vivid; +2 for vivid_orders_queue/process)
+- Total active jobs: was **74** (2026-05-14); the **2026-05-31 collector-cadence cutover** retired ~12 horizon/blindspot collectors (the five `collect-listings-*` windows + `collect-listings-featured-10min` + the SG `sg_blindspot_poll_5min` / `sg_listings_floor_sweep` / `sg_60d_*` ×4 / `sg_broker_sales_queue_5min`) plus ~9 long-inactive jobs, and added 2–3 (`evo_listings_poll_2min`, `sg_listings_poll_2min`, + the re-added low-freq `collect-listings` discovery sweep). Net job count **dropped**; re-verify live via `SELECT count(*) FROM cron.job WHERE active`. See **§4b** for the per-event poller model.
 - `cron.use_background_workers = off` → each cron job uses a regular Postgres backend; competes with app traffic for `max_connections = 60`
 - Each backend on a long-running job (`>2 min`) blocks one of the 32 slots until it completes
 - pg_cron "job startup timeout" fires when all 32 slots are exhausted at a tick
@@ -160,23 +160,35 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ---
 
-## 4b. SeatGeek + TicketsData listings — current state *(2026-05-29 reconciliation · A1)*
+## 4b. Listings collection — per-event poller model *(v1.1 · A1 · 2026-05-31)*
 
-⚠ The T1/T3 `sg_listings_*` rows above (jobids 53–58 — the broker **`/v2/listings`** windowed pull) are **STALE**: those jobs were **disabled ~2026-05-14** and superseded by the broker `/listings` pipeline, which was in turn reworked 2026-05-29. Current state:
+**The horizon-windowed collectors are RETIRED.** Before 2026-05-31, both EVO and SG pulled listings via fixed time-window crons (`collect-listings-0-24h/1-7d/7-30d/30-60d/60d+`, the SG `sg_listings_*` `/v2` jobs, and the `sg_listings_floor_sweep` round-robin). The **collector-cadence cutover** (migs `20260531140000`–`170000`) replaces all of them with **one ≈2-min scan per source** that fires per-event based on each event's date-horizon, driven by config in **`public.collector_cadence`**.
 
-| Job | Cadence | What it pulls | Status |
+**How it works:** each source has a single tick cron that reads `collector_cadence` (via helper `collector_band(source,scope,hours)` → `(band, required_min)`, peak-aware for ET 12-23), finds events whose per-event clock is due for their horizon band, and fires the collect call for those only. Per-event clocks live in new state tables (see RESOURCES_BIBLE §2.2).
+
+| Job | Cadence | What it does | Status |
 |---|---|---|---|
-| `sg_listings_*` (53–58) | (overnight) | broker `/v2/listings` (all-marketplace) | **DISABLED ~05-14** (last fire 05-14 16:10) |
-| `sg_broker_listings_queue_5min` / `_peak` (239/308) | `*/5` | broker `/listings` nearest-8 | **DISABLED 05-29** (starved low tiers + burst-collided) |
-| `sg_priority_poll_tick_5min` (241) | `4-59/5` | broker `/listings` by tier | **DISABLED 05-29** |
-| **`sg_listings_floor_sweep`** | **`*/2`** | broker `/listings`, fair round-robin (bursts of 4), adaptive-gated on `ratelimit-remaining` | **ACTIVE — replaces the two above** |
-| `sg_broker_listings_metrics_refresh_hourly` · `sg_canonical_v2_pull_refresh_30min` · `sweep-old-sg-listings` · `sg_seller_*` · `sg_sales_*` | various | metrics / reconcile / sweep / seller(owned) / sales | ACTIVE (unchanged) |
-| **`td_tp_discover` / `td_tp_discover_drain`** | **`25 9` / `30 9`** | TickPick event discovery (Yankees/Knicks performer allowlist) | **ACTIVE (new 05-29)** |
-| **`td_enqueue_peak_tp`** | **`0 16,22,4`** | enqueue TP focus events → `td_pull_queue` (mirrors SH/VD/GT) | **ACTIVE (new 05-29)** |
-| **`td_tm_discover` / `td_tm_discover_drain`** | **`45 9` / `50 9`** | Ticketmaster event discovery (NYY/NYK artist allowlist; parses ISMDS EventFacets) | **ACTIVE (new 05-29)** |
-| **`td_enqueue_peak_tm`** | **`30 16,22,4`** | enqueue TM focus events → `td_pull_queue` (mirrors TP, +30min offset) | **ACTIVE (new 05-29)** |
+| **`evo_listings_poll_2min`** | `*/2` | `evo_listings_poll_tick(p_max)` — fires `collect-listings?event_id=X` per due event, stamps `evo_listings_poll_state.last_polled_listings_at` on fire | **ACTIVE (new 05-31)** |
+| **`sg_listings_poll_2min`** | `*/2` | `sg_listings_poll_tick(p_max,p_min_remaining)` — band-driven, rate-aware (backoff on `ratelimit-remaining`), strand-safe; `p_max=5` (SG is rate-limited) | **ACTIVE (new 05-31)** |
+| **`sg_sales_poll_5min`** | `*/5` | retuned `sg_sales_poll_tick` (now band-driven) | **ACTIVE (re-enabled 05-31, P0 follow-up)** |
+| **`collect-listings`** (discovery) | low-freq | re-added new-event discovery sweep (P0 follow-up; `evo_discover` Phase-2 in KANBAN) | **ACTIVE (re-added 05-31)** |
+| `collect-listings-0-24h/1-7d/7-30d/30-60d/60d+` · `collect-listings-featured-10min` | — | EVO horizon windows + featured | **RETIRED 05-31** |
+| `sg_listings_*` (53–58, `/v2`) · `sg_blindspot_poll_5min` · `sg_listings_floor_sweep` · `sg_60d_listings_morning/afternoon` · `sg_60d_sales_morning/afternoon` · `sg_broker_sales_queue_5min` | — | SG horizon / blindspot / floor-sweep / 60d / sales-queue | **RETIRED 05-31** |
+| `sg_broker_listings_metrics_refresh_hourly` · `sg_canonical_v2_pull_refresh_30min` · `sweep-old-sg-listings` · `sg_seller_*` · `td_*` (TickPick/TM discovery + enqueue, new 05-29) | various | metrics / reconcile / sweep / seller(owned) / TD platforms | ACTIVE (unchanged) |
 
-**Shared-token note:** all SG broker crons **+ a separate external prod program** draw on ONE SeatGeek token (~10 req/8s). 429s appear at low volume from burst collisions. Watch `v_sg_token_budget` + `v_sg_broker_429_health`; `sg-floor-sweep-watch` (scheduled task) posts hourly to `#terminal-2-alerts`. Floor-sweep is conservative (`*/2 × 4` ≈ 2,880/day); ramp to `*/1 × 5` only once the watch confirms headroom.
+**Per-event cadence bands (actual API calls per event, by date-horizon):**
+
+| Horizon | EVO (sole TEvo consumer, ≈unlimited) | SG (listings + sales) |
+|---|---|---|
+| ≤7d | 15 min | 1 h |
+| 8-14d | 30 min peak / 60 min off-peak | 4 h |
+| 15-30d | 1 h | 12 h |
+| 31-60d | 4 h | 24 h |
+| 61d+ | 12 h | 24 h |
+
+**Why EVO and SG differ:** EVO is the *only* consumer of the TEvo broker API (effectively unlimited quota) → aggressive near-event cadence. SG broker is **rate-limited (~5 req / 10s window)**, so `sg_listings_poll_tick` runs `p_max=5` per tick, backs off on the live `ratelimit-remaining` header, and is strand-safe; the SG cadence clock (`sg_event_priority_state.last_fired_listings_at`) advances **only on HTTP 200** (so a 429/timeout re-tries rather than burning the slot). SG reuses `sg_event_priority_state` (gained `last_fired_listings_at`) — there is **no** `sg_listings_poll_state` and **no** `horizon_days` column.
+
+**Shared-token note (unchanged):** all SG broker crons **+ a separate external prod program** draw on ONE SeatGeek token. Watch `v_sg_token_budget` + `v_sg_broker_429_health`.
 
 ---
 
