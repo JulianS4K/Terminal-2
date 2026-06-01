@@ -124,6 +124,9 @@
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
     await loadAndRender(eventId);
+    // Live updates (Supabase Realtime). Best-effort, post-render: if the socket
+    // never connects or no pings arrive the page is unchanged from before.
+    safe('realtime', () => wireRealtime(eventId));
   }
 
   function isLocalhost() {
@@ -184,6 +187,99 @@
 
   function safe(label, fn) {
     try { fn(); } catch (e) { console.error('[' + label + ']', e); }
+  }
+
+  // ── Realtime live refresh (Phase: Supabase Realtime, slice #1) ────────────
+  // Subscribe to a per-event Broadcast topic ("event:<id>"). The DB emits a
+  // tiny, DATA-FREE "dirty" ping (see migration *_d0_event_realtime_dirty_ping)
+  // when something page-worthy happens on this event (today: a warn/critical
+  // alert; later: the per-event metrics refresh). On a ping we re-pull the
+  // existing email-gated RPC and re-render — no polling, and no
+  // event data ever rides the public channel (the ping carries only
+  // {event_id, reason}). Re-fetch is throttled and pauses while the tab is
+  // hidden. If Realtime is unavailable or silent, the page behaves exactly as
+  // it did before (load-time render only) — this is purely additive.
+  let _rtChannel = null;
+  let _rtRefreshTimer = null;
+  let _rtLastRefresh = 0;
+  const _RT_MIN_INTERVAL_MS = 8000; // cap full re-fetch to <= 1 / 8s
+
+  function wireRealtime(eventId) {
+    const Auth = window.TerminalAuth;
+    const client = Auth && Auth.client;
+    if (!client || typeof client.channel !== 'function') return; // realtime unavailable → no-op
+    const pill = ensureLivePill();
+    _rtChannel = client
+      .channel('event:' + eventId, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'dirty' }, (msg) => scheduleLiveRefresh(eventId, msg && msg.payload))
+      .subscribe((status) => setLivePill(pill, status));
+    // Drop the socket when the page is dismissed (bfcache-friendly).
+    window.addEventListener('pagehide', teardownRealtime, { once: true });
+  }
+
+  function teardownRealtime() {
+    try {
+      const client = window.TerminalAuth && window.TerminalAuth.client;
+      if (_rtChannel && client) client.removeChannel(_rtChannel);
+    } catch (_) { /* best-effort */ }
+    _rtChannel = null;
+  }
+
+  function scheduleLiveRefresh(eventId, payload) {
+    // Pause while the tab is hidden — the next ping after it's visible resumes.
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (_rtRefreshTimer) return; // a refresh is already queued — coalesce bursts
+    const wait = Math.max(0, _RT_MIN_INTERVAL_MS - (Date.now() - _rtLastRefresh));
+    flashLivePill('updating');
+    _rtRefreshTimer = setTimeout(async () => {
+      _rtRefreshTimer = null;
+      _rtLastRefresh = Date.now();
+      try {
+        await loadAndRender(eventId);
+        flashLivePill('updated', payload && payload.reason);
+      } catch (e) {
+        console.error('[realtime] refresh failed', e);
+      }
+    }, wait);
+  }
+
+  // ── live pill UI ──────────────────────────────────────────────────────────
+  function ensureLivePill() {
+    let pill = document.getElementById('livePill');
+    if (pill) return pill;
+    pill = document.createElement('span');
+    pill.id = 'livePill';
+    pill.className = 'live-pill';
+    pill.title = 'Live updates via Supabase Realtime';
+    pill.innerHTML = '<span class="live-dot"></span><span class="live-label">live</span>';
+    const bar = document.querySelector('header.topbar') || document.body;
+    bar.appendChild(pill);
+    return pill;
+  }
+
+  function setLivePill(pill, status) {
+    if (!pill) return;
+    // supabase-js channel states: SUBSCRIBED | TIMED_OUT | CLOSED | CHANNEL_ERROR
+    const ok = status === 'SUBSCRIBED';
+    pill.classList.toggle('on', ok);
+    pill.classList.toggle('off', !ok);
+    pill.classList.remove('flash');
+    const label = pill.querySelector('.live-label');
+    if (label) label.textContent = ok ? 'live' : 'offline';
+  }
+
+  function flashLivePill(kind, reason) {
+    const pill = document.getElementById('livePill');
+    const label = pill && pill.querySelector('.live-label');
+    if (!label) return;
+    if (kind === 'updating') { pill.classList.add('flash'); label.textContent = 'updating…'; return; }
+    label.textContent = reason ? ('updated · ' + String(reason).slice(0, 24)) : 'updated';
+    setTimeout(() => {
+      if (!pill.classList.contains('on')) return;
+      pill.classList.remove('flash');
+      const lbl = pill.querySelector('.live-label');
+      if (lbl) lbl.textContent = 'live';
+    }, 2500);
   }
 
   // Composite range selector (WP-3). ONE selector drives BOTH panes: it sets the
