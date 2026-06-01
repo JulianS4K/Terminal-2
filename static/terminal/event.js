@@ -2573,8 +2573,16 @@
       if (countChip) countChip.textContent = '0';
       return;
     }
-    const rows = d.rows || [];
-    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
+    const allRows = d.rows || [];
+    // RPC dedups DISTINCT ON (sglid) across a 7-day window, so a listing keeps
+    // its LAST-SEEN captured_at — listings that vanished days ago still appear,
+    // stamped with stale pull times. That's the "multiple captured" symptom.
+    // Limit to the last pull: each poll writes one uniform captured_at, so the
+    // current board = rows whose captured_at equals the max across the result.
+    const lastPull = allRows.reduce((m, r) => (r.captured_at > m ? r.captured_at : m), '');
+    const rows = lastPull ? allRows.filter(r => r.captured_at === lastPull) : allRows;
+    const pullLabel = lastPull ? T.fmtDate(lastPull) : '—';
+    if (meta) meta.textContent = `${rows.length} listings · last pull ${pullLabel} · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
     if (countChip) countChip.textContent = String(rows.length);
     if (!rows.length) {
       body.innerHTML = '<div class="empty">no SG listings in last 7 days</div>';
