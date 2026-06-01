@@ -1,6 +1,6 @@
 -- ============================================================
 -- Fix: event_movers_index stopped updating (stale since 2026-05-30 07:35).
--- Authored by D0 2026-06-01. STATUS: NOT APPLIED — requires A1 apply (mutation lane).
+-- Authored by D0 2026-06-01. STATUS: Already applied to prod — via MCP 2026-06-01 (A1).
 --
 -- INVESTIGATION (live prod, 2026-06-01):
 --   Cron `compute_movers_index_post_snapshot` (jobid 300, `35 7,13,19 * * *`)

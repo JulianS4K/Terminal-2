@@ -1,6 +1,6 @@
 -- ============================================================
 -- D0 Realtime slice #1 — per-event "dirty" Broadcast ping.
--- Authored by D0 2026-06-01. STATUS: NOT APPLIED — requires A1 apply (mutation lane).
+-- Authored by D0 2026-06-01. STATUS: Already applied to prod — via MCP 2026-06-01 (A1).
 --
 -- Goal: let the open event page (static/terminal/event.js) refresh live instead
 -- of only at load time, WITHOUT streaming the firehose to clients and WITHOUT
@@ -63,9 +63,11 @@ END;
 $fn$;
 
 -- Least privilege: only the SECURITY DEFINER trigger path should emit pings.
--- EXECUTE is granted to PUBLIC by default, so revoke PUBLIC (covers anon +
--- authenticated) — the triggers run with definer rights and are unaffected.
-REVOKE ALL ON FUNCTION public.broadcast_event_dirty(bigint, text) FROM PUBLIC, anon;
+-- Supabase default privileges grant EXECUTE to anon AND authenticated
+-- explicitly (not via PUBLIC), so all three must be revoked. The triggers run
+-- with definer rights, and service_role keeps EXECUTE — both unaffected.
+-- Verified on prod post-apply: proacl = {postgres=X, service_role=X}.
+REVOKE ALL ON FUNCTION public.broadcast_event_dirty(bigint, text) FROM PUBLIC, anon, authenticated;
 
 -- 2) event_alerts → ping the event, but ONLY for page-worthy severities.
 --    The WHEN clause keeps the 94% info-level firehose from ever calling us.
