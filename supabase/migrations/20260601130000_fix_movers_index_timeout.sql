@@ -2,6 +2,15 @@
 -- Fix: event_movers_index stopped updating (stale since 2026-05-30 07:35).
 -- Authored by D0 2026-06-01. STATUS: Already applied to prod — via MCP 2026-06-01 (A1).
 --
+-- ⚠ PARTIALLY SUPERSEDED by 20260601140000_movers_two_tier_agg_cache.sql.
+-- The CTE guard here is a real improvement and is retained, but the
+-- `ALTER FUNCTION ... statement_timeout='600s'` was INEFFECTIVE: a function-local
+-- timeout does not re-arm the cron's already-running outer DO statement (armed at
+-- the role's 120s), so the batch kept timing out (verified: 19:35 run still died
+-- at 120s). The real fix is the two-tier split in 20260601140000 — compute the
+-- shared aggregates once into a cache (Tier 1), build per-source movers from the
+-- cache (Tier 2). compute_event_movers_index is replaced there.
+--
 -- INVESTIGATION (live prod, 2026-06-01):
 --   Cron `compute_movers_index_post_snapshot` (jobid 300, `35 7,13,19 * * *`)
 --   calls compute_event_movers_index_all(), which loops 6 sources × 5 windows =
