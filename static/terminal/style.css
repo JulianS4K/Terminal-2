@@ -54,6 +54,27 @@ a:hover { text-decoration: underline; }
 .topbar .status.err { color: var(--neg); }
 .topbar .status.ok  { color: var(--pos); }
 
+/* Realtime live-update pill (event page). Sits at the far right of the topbar,
+   right of #status. States: connecting (muted) · on (green pulse) ·
+   off/offline (dim) · flash (info, during a live re-fetch). */
+.live-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 1px 9px; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap;
+}
+.live-pill .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+.live-pill.on  { color: var(--pos); border-color: rgba(74, 222, 128, 0.4); }
+.live-pill.on .live-dot { background: var(--pos); animation: livePulse 2s infinite; }
+.live-pill.off { color: var(--muted); }
+.live-pill.flash { color: var(--info); border-color: rgba(96, 165, 250, 0.4); }
+.live-pill.flash .live-dot { background: var(--info); animation: none; }
+@keyframes livePulse {
+  0%   { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
+  70%  { box-shadow: 0 0 0 5px rgba(74, 222, 128, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+}
+
 main.wrap {
   padding: 12px 16px;
   display: grid;
