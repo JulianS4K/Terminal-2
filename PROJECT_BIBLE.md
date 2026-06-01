@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §5 rule 5 + §3 landmine: orders/sales obey the native-ID rule, map via the AQ mapper; v1.3.0 2026-05-31 (A1) — §3 landmine: SG broker is rate-limited (`sg_listings_poll_tick` `p_max=5`, `ratelimit-remaining` backoff), cadence is config-driven (`collector_cadence`), clock advances only on HTTP 200; v1.4.0 2026-06-01 (D0) — §6a: on a read-only/view-only attach, layer the general-data library (ESPN/NWS/Reddit/Wiki via `v_event_why_context`) for color commentary alongside the market SQL. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §5 rule 5 + §3 landmine: orders/sales obey the native-ID rule, map via the AQ mapper; v1.3.0 2026-05-31 (A1) — §3 landmine: SG broker is rate-limited (`sg_listings_poll_tick` `p_max=5`, `ratelimit-remaining` backoff), cadence is config-driven (`collector_cadence`), clock advances only on HTTP 200; v1.4.0 2026-06-01 (D0) — §6a: on a read-only/view-only attach, layer the general-data library (ESPN/NWS/Reddit/Wiki via `v_event_why_context`) for color commentary alongside the market SQL; v1.5.0 2026-06-01 (D0) — §6b: every broker-related answer ends with a verified existing terminal link (check it resolves first). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Last updated**: 2026-05-29 by A1 — **TD focus + SG floor-sweep + TickPick TD platform**: §3 +5 landmines (SG 3-feed listings taxonomy; SG per-token/burst limit + `ratelimit-remaining`/`v_sg_token_budget` + stale-read gate; `TRACK_BLINDSPOT`=ownership not mapping; TD SG/TP platforms + `td_enqueue_peak_<plat>` requirement; `td_pull_drain` `resolved_at` gap). Landmark migs `20260529120000` (TD focus → 20 Yankees home + Knicks playoff), `…170000` (SG `sg_listings_floor_sweep`), `…180000` (TickPick platform) → `MIGRATION_CONVENTIONS.md §14`; `CRON_HIERARCHY.md` + `KANBAN.md` updated. | prior: 2026-05-28 by A1 — **governance reconciliation** (B1 appraisal): §1 rule 4 + §6 Render-write row now state D0's workspace-wide Render parity with A1 (2026-05-16), resolving the §1↔§2↔§6 scope contradiction. | prior: 2026-05-28 by D0 — **doc consolidation**: §5 cross-source topology → pointer to `D0_BIBLE.md §3` (canonical owner); §9 landmark log → `MIGRATION_CONVENTIONS.md §14`; §10 drift → `KANBAN.md`; §2 roster → `BOT_HIERARCHY.md`, D4 block → `docs/d4_bridge_charter.md`; +2 verified §3 landmines (`public.events.occurs_at_local` is TEXT; `bid_ask_proxy` dropped). | prior: §5e/§5f performer+venue mapping chains; mig 380000 TD↔TEvo linkage; D0_BIBLE.md created; bot reorg + prod fixes 350000–370000
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
@@ -207,6 +207,24 @@ What to reference (the full inventory + freshness is owned by `RESOURCES_BIBLE.m
 - **One-call rollup:** `v_event_why_context` aggregates the above per event — start here.
 
 Rules: color commentary **augments, never replaces** the market numbers; quote exact values, never estimate; flag staleness (much of this layer is built-but-thin — see `RESOURCES_BIBLE.md`); never present context as a pricing decision (human-in-the-loop, per the analyst contract in `CLAUDE.md §2` + the read-only lockdown).
+
+### 6b. Every broker-related answer ends with a verified terminal link *(v1.0 · D0 · 2026-06-01)*
+
+When you answer a **broker / pricing / event / performer / venue / movers / orders** question (chat, analyst, any surface), **end the answer with a link to the relevant existing terminal page** so the human can jump straight to the live view. **Check the link resolves before you cite it** — confirm it's one of the canonical pages below and, for an entity link, that the id actually resolves in our data (don't hand-wave a URL). If nothing covers the answer — or the entity isn't in our data — **say so plainly instead of inventing a link.**
+
+Canonical terminal pages (served under `/terminal/` — routes in `app.py`, nav in `static/terminal/nav.js`; prefix with the deployed terminal host):
+
+| Surface | Link |
+|---|---|
+| Home / dashboard | `/terminal/` |
+| Event detail | `/terminal/event.html?event=<tevo_event_id>` |
+| Performer | `/terminal/performer.html?performer=<tevo_performer_id>` |
+| Venue | `/terminal/venue.html?venue=<tevo_venue_id>` |
+| Movers | `/terminal/movers.html` |
+| Discovery (blindspots) | `/terminal/discovery.html` |
+| Orders | `/terminal/orders.html` |
+
+The ids are the **canonical `tevo_*` ids** (§5 rule 2) — resolve via `_v_d0_event_index` / the AQ hub, not a source-native id.
 
 ---
 
