@@ -192,8 +192,9 @@
   // ── Realtime live refresh (Phase: Supabase Realtime, slice #1) ────────────
   // Subscribe to a per-event Broadcast topic ("event:<id>"). The DB emits a
   // tiny, DATA-FREE "dirty" ping (see migration *_d0_event_realtime_dirty_ping)
-  // whenever this event's metrics recompute or an alert fires. On a ping we
-  // re-pull the existing email-gated RPC and re-render — no polling, and no
+  // when something page-worthy happens on this event (today: a warn/critical
+  // alert; later: the per-event metrics refresh). On a ping we re-pull the
+  // existing email-gated RPC and re-render — no polling, and no
   // event data ever rides the public channel (the ping carries only
   // {event_id, reason}). Re-fetch is throttled and pauses while the tab is
   // hidden. If Realtime is unavailable or silent, the page behaves exactly as
