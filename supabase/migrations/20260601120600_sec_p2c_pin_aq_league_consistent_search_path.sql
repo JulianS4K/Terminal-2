@@ -1,0 +1,17 @@
+-- ============================================================
+-- SECURITY P2c — pin the last genuine app function with a mutable search_path (2026-06-01).
+-- lint 0011_function_search_path_mutable.
+--
+-- Investigation note: the advisor's "mutable search_path" set is 37 functions, but 35 of
+-- them are pg_trgm / unaccent EXTENSION internals (gtrgm_*, similarity, word_similarity,
+-- unaccent, set_limit, show_trgm, gin_*_trgm, …) — flagged only because those extensions
+-- are installed in `public`. Per-function ALTERs on extension-owned objects are fragile
+-- (reverted by ALTER EXTENSION … UPDATE) and are the wrong fix; the durable remediation for
+-- all 35 at once is relocating pg_trgm/unaccent out of `public` (lint 0014_extension_in_public).
+--
+-- Only 2 of the 37 are genuine app functions; both are now pinned:
+--   * aq_name_consistent      — sec_p2b (20260601120400)
+--   * aq_league_consistent    — here
+--   (compute_event_breakdowns was pinned in sec_p2 / 20260601120200)
+-- ============================================================
+ALTER FUNCTION public.aq_league_consistent(p_tevo bigint, p_aq_category text) SET search_path = public, extensions, pg_temp;
