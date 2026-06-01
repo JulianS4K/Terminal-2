@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §5 rule 5 + §3 landmine: orders/sales obey the native-ID rule, map via the AQ mapper; v1.3.0 2026-05-31 (A1) — §3 landmine: SG broker is rate-limited (`sg_listings_poll_tick` `p_max=5`, `ratelimit-remaining` backoff), cadence is config-driven (`collector_cadence`), clock advances only on HTTP 200. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §5 rule 5 + §3 landmine: orders/sales obey the native-ID rule, map via the AQ mapper; v1.3.0 2026-05-31 (A1) — §3 landmine: SG broker is rate-limited (`sg_listings_poll_tick` `p_max=5`, `ratelimit-remaining` backoff), cadence is config-driven (`collector_cadence`), clock advances only on HTTP 200; v1.4.0 2026-06-01 (D0) — §6a: on a read-only/view-only attach, layer the general-data library (ESPN/NWS/Reddit/Wiki via `v_event_why_context`) for color commentary alongside the market SQL. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Last updated**: 2026-05-29 by A1 — **TD focus + SG floor-sweep + TickPick TD platform**: §3 +5 landmines (SG 3-feed listings taxonomy; SG per-token/burst limit + `ratelimit-remaining`/`v_sg_token_budget` + stale-read gate; `TRACK_BLINDSPOT`=ownership not mapping; TD SG/TP platforms + `td_enqueue_peak_<plat>` requirement; `td_pull_drain` `resolved_at` gap). Landmark migs `20260529120000` (TD focus → 20 Yankees home + Knicks playoff), `…170000` (SG `sg_listings_floor_sweep`), `…180000` (TickPick platform) → `MIGRATION_CONVENTIONS.md §14`; `CRON_HIERARCHY.md` + `KANBAN.md` updated. | prior: 2026-05-28 by A1 — **governance reconciliation** (B1 appraisal): §1 rule 4 + §6 Render-write row now state D0's workspace-wide Render parity with A1 (2026-05-16), resolving the §1↔§2↔§6 scope contradiction. | prior: 2026-05-28 by D0 — **doc consolidation**: §5 cross-source topology → pointer to `D0_BIBLE.md §3` (canonical owner); §9 landmark log → `MIGRATION_CONVENTIONS.md §14`; §10 drift → `KANBAN.md`; §2 roster → `BOT_HIERARCHY.md`, D4 block → `docs/d4_bridge_charter.md`; +2 verified §3 landmines (`public.events.occurs_at_local` is TEXT; `bid_ask_proxy` dropped). | prior: §5e/§5f performer+venue mapping chains; mig 380000 TD↔TEvo linkage; D0_BIBLE.md created; bot reorg + prod fixes 350000–370000
 **Read this FIRST every session.** Saves ~5× the tokens vs reading every governance file at start.
@@ -195,6 +195,18 @@ SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 | Slack | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | scheduled-tasks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | GitHub (`gh` via Bash) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+### 6a. Read-only / "view-only" attach → layer in the general-data library for color commentary *(v1.0 · D0 · 2026-06-01)*
+
+When this project is attached to a Claude as a **view-only (read-only) data source** — the Terminal Analyst pattern (`docs/d0_terminal_analyst_skill.md`; remote-MCP plan in `docs/d0_llm_analysis_layer_spec.md`) — the AI must **not stop at the ticket-market SQL** (listings / orders / sales). It should **also pull the general / contextual data layer** to add *color commentary* — the "why" behind a price, a mover, or a demand read — always read-only, always grounded in an actual query.
+
+What to reference (the full inventory + freshness is owned by `RESOURCES_BIBLE.md` — don't restate it here, just reach for it):
+- **Sports context (ESPN):** injuries, team state / standings, recent results, news, win-prob → `v_event_full_sports`, `v_espn_injuries_current`, `v_team_recent_results`
+- **Weather (NWS/NOAA):** forecasts, active alerts, venue climatology → `v_event_weather`, `v_event_active_weather_alerts`
+- **Social / encyclopedic:** league + performer subreddits (`general_subreddits` / `performer_subreddits`), Reddit pulse, Wikipedia → `v_event_reddit`, `v_performer_reddit_pulse`
+- **One-call rollup:** `v_event_why_context` aggregates the above per event — start here.
+
+Rules: color commentary **augments, never replaces** the market numbers; quote exact values, never estimate; flag staleness (much of this layer is built-but-thin — see `RESOURCES_BIBLE.md`); never present context as a pricing decision (human-in-the-loop, per the analyst contract in `CLAUDE.md §2` + the read-only lockdown).
 
 ---
 
