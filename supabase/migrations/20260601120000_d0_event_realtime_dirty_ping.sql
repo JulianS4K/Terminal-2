@@ -62,7 +62,10 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION public.broadcast_event_dirty(bigint, text) FROM anon;
+-- Least privilege: only the SECURITY DEFINER trigger path should emit pings.
+-- EXECUTE is granted to PUBLIC by default, so revoke PUBLIC (covers anon +
+-- authenticated) — the triggers run with definer rights and are unaffected.
+REVOKE ALL ON FUNCTION public.broadcast_event_dirty(bigint, text) FROM PUBLIC, anon;
 
 -- 2) event_alerts → ping the event, but ONLY for page-worthy severities.
 --    The WHEN clause keeps the 94% info-level firehose from ever calling us.
