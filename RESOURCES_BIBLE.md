@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md
 
-> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-01 (D0) — non-SG AQ→TEvo bridge inventoried: §2.5 +`aq_tevo_search_attempts` (+`aq_tevo_search_candidates` RPC), §5.4 +`aq_to_tevo_search_bridge_13h` cron (→68 active), §6 +`aq-to-tevo-search-bridge` edge fn. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Also the canonical home for the event-classification taxonomy + cross-cutting data RULES (RULE 0/1/2), absorbed from the retired `SCHEMA.md` — see §2.15–§2.17. Updated 2026-05-28 (absorbed SCHEMA.md taxonomy+RULES into §2.15–§2.17; performer/venue cross-source mapping chains + missing entity_performer_map / entity_venue_map / aq_performer_map / aq_venue_map / cross_source_venue_map entries added to §2.5) | prior: 2026-05-17 (main HEAD `e04387e`+post-#191).**
 
@@ -273,6 +273,7 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 | Table | Size | Purpose | Owner | Origin |
 |---|---|---|---|---|
 | `seatdata_section_xref`, `seatdata_zone_xref` | 24-32 kB | SD-side section/zone xref | C1 / D2 | pre-history |
+| `aq_tevo_search_attempts` | — | Attempt ledger for the **non-SG** AQ→TEvo cold-search bridge (`aq-to-tevo-search-bridge` edge fn). PK `aq_id`→`aq_event_map.id`; `result ∈ matched/no_results/low_score/errored`; `meta jsonb`. Read-only mapping-coverage surface (`SELECT result, count(*) … GROUP BY 1`). Selector RPC `aq_tevo_search_candidates(p_limit, p_backoff_hours)` (never-tried-first anti-join, service-role). Sibling of `sg_tevo_search_attempts`. | D0 | mig 20260601120000 (PR #392) |
 | `team_xref` (view) | — | Unified team-id resolution view | C1 | pre-history |
 | `taxonomy_xref` | 96 kB | TEvo taxonomy / category lookups | C1 | pre-history |
 | `broker_xref` | 32 kB | TEvo broker_id → name | A1 | pre-history |
@@ -543,7 +544,7 @@ To query: `SELECT viewname FROM pg_views WHERE schemaname='public' AND viewname 
 
 ---
 
-## 5. Cron jobs — all 67 active
+## 5. Cron jobs — all 68 active
 
 Sorted by category. All run in `postgres` role under `pg_cron 1.6.4`. `cron.use_background_workers=off`, `max_running_jobs=32`.
 
@@ -600,6 +601,7 @@ Also modified: `sg_broker_listings_process` advances `last_polled_listings_at` *
 | 68 | `cross_source_match_tick_30min` | `*/30` | C1 |
 | 90 | `match_tournaments_daily` | `30 04` | C1 |
 | 101 | `match_events_to_espn_10min` | `*/10` | C1 |
+| **336** | `aq_to_tevo_search_bridge_13h` | `8 * * * *` (gated → ~13h cadence) | D0 (**PR #392**) |
 | **120** | `match_listings_to_sg_30min` | `7,37 * * * *` | A1 (**PR #66**) |
 | **124** | `latest_event_metrics_refresh_5min` | `3-58/5` | A1 (**PR #71**) |
 | 91 | `dashboard_writes_24h_refresh_60s` | `* * * * *` | C1 (**bot_chat row 65 flagged for cadence reduction**) |
@@ -676,7 +678,7 @@ Also modified: `sg_broker_listings_process` advances `last_polled_listings_at` *
 
 ---
 
-## 6. Edge functions — all 25 active
+## 6. Edge functions — 26 active
 
 Hosted in Supabase; deployed via `supabase functions deploy`. Source under `supabase/functions/<slug>/index.ts`.
 
@@ -707,6 +709,7 @@ Hosted in Supabase; deployed via `supabase functions deploy`. Source under `supa
 | `probe-seating-charts` | true | Diagnostic | A1 | dev only |
 | `probe-espn-data` | true | Diagnostic | A1 | dev only |
 | `why-noaa-weather-alerts` | true | Why-this-event helper for NOAA alerts | C1 | on-demand |
+| `aq-to-tevo-search-bridge` | true (+ body `requireCronSecret`) | **Non-SG AQ→TEvo cold-search**: searches TEvo `/v9/events` for TM/Vivid/SH `aq_event_map` rows w/ no `sg_event_id`, fills `tevo_event_id`. Server-side never-tried-first candidate selector; venue-signal guard. Pair of `sg-to-tevo-search-bridge`. | D0 | yes (`aq_to_tevo_search_bridge_13h`, jobid 336) |
 
 **Anon-callable (verify_jwt=false)**: `collect`, `collect-listings`, `diag-ticket-groups`, `sms-bot`, `web-bot`, `bulk-add-watchlist`, `probe-tevo-category`, `seed-home-venues`, `espn-collect`, `espn-rosters`, `wiki-collect`, `crawl-espn-team-assets`. B1 has these on the security-review surface (some are cron-only and should not be reachable from anon if at all possible).
 
