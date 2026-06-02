@@ -1905,20 +1905,35 @@ body[data-page="login"] {
 .wrap.event #seatmap-section { grid-column: 1 / -1; }
 #seatmap-section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
 #seatmap-section .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
-.seatmap-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+
+/* Source selector — picks which single source colors the map (not collective). */
+.seatmap-toolbar { gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.seatmap-src-label { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.seatmap-src-sel { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.sm-src-btn {
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
+  padding: 4px 10px; cursor: pointer; line-height: 1.4;
+}
+.sm-src-btn:hover { border-color: var(--accent); }
+.sm-src-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+.sm-src-btn.disabled, .sm-src-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sm-src-cnt { opacity: 0.7; font-size: 10px; margin-left: 2px; }
+
+/* Map on top (full width), listings below. */
 .seatmap-mapwrap {
   /* TEvo SVG maps are authored for a light surface — keep the map area light so the
      venue outline + section labels stay legible against the dark terminal shell. */
   background: #f7f7f7; border: 1px solid var(--line); border-radius: 6px;
-  min-height: 520px; overflow: hidden;
+  min-height: 560px; overflow: hidden; margin-bottom: 12px;
 }
-.seatmap-host { width: 100%; height: 520px; }
+.seatmap-host { width: 100%; height: 560px; }
 .seatmap-host svg { width: 100%; height: 100%; }
-.seatmap-side { display: flex; flex-direction: column; min-width: 0; }
 .seatmap-side-hd {
   font-family: var(--mono); font-size: 11px; color: var(--text);
   padding: 6px 8px; margin-bottom: 8px; background: var(--panel-2);
   border: 1px solid var(--line); border-radius: 4px; line-height: 1.4;
+  display: flex; justify-content: space-between; align-items: center;
 }
 .seatmap-reset {
   font-family: var(--mono); font-size: 11px; color: var(--bg);
@@ -1927,8 +1942,3 @@ body[data-page="login"] {
 }
 .seatmap-reset:hover { filter: brightness(1.1); }
 #seatmapListBody .empty { color: var(--muted); padding: 12px; text-align: center; }
-
-@media (max-width: 1100px) {
-  .seatmap-layout { grid-template-columns: 1fr; }
-  .seatmap-side { max-height: 420px; overflow-y: auto; }
-}
