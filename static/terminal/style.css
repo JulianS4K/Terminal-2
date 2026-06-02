@@ -1899,6 +1899,10 @@ body[data-page="login"] {
 .td-tm-section { border-left-color: #6366f1; }   /* TM — indigo */
 
 /* ---------- Seat Map tab (Tevomaps interactive venue map + section filter) ---------- */
+/* main.wrap.event is a 12-col grid and .tab-pane is display:contents, so this section
+   sits directly in that grid — it must span all 12 cols or it collapses to ~1/12 width
+   (crushing the map into a sliver). Mirrors the other full-width event sections. */
+.wrap.event #seatmap-section { grid-column: 1 / -1; }
 #seatmap-section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
 #seatmap-section .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
 .seatmap-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
