@@ -2806,6 +2806,7 @@
   let _seatmapRows = [];        // raw EVO listing rows for the per-section table
   let _seatmapSelected = [];    // section names currently selected on the map
   let _seatmapResetWired = false;
+  const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
 
   // Parking / non-seated pseudo-sections never match an SVG path (bible §3 parking
   // skip) — drop them so the legend's price scale isn't skewed by $30 parking spots.
@@ -2813,21 +2814,62 @@
     return /parking|garage|valet|\blot\b|min walk|mi from venue|shuttle|tailgate/i.test(section || '');
   }
 
-  // Collapse listing rows → one ticketGroup per section at its lowest retail floor,
-  // which is what the seatmap colors each section by.
-  function _seatmapTicketGroups(rows) {
-    const bySection = new Map();
+  // The map MANIFEST keys sections by full descriptive names ("Lower Level Corner 104",
+  // "Chase Bridges 316", "Floor 2"); our listings store only the trailing token ("104").
+  // Reduce either form to a comparable "tail" — trailing digits + a short letter suffix —
+  // so "Lower Level Corner 104"→"104", "105 WC"→"105wc", our "105WC"→"105wc", "Floor 2"→"2".
+  function _seatmapTail(s) {
+    const str = String(s == null ? '' : s).trim();
+    const m = str.match(/(\d+)\s*([A-Za-z]{0,4})\s*$/);
+    return m ? (m[1] + m[2]).toLowerCase() : str.toLowerCase();
+  }
+
+  // Fetch the venue/config manifest and build tail→fullKey. The library matches
+  // ticketGroups' tevo_section_name EXACTLY against these keys (lowercased), so we must
+  // hand it the full names, not the bare numbers. Tails that map to >1 key (e.g. "2" →
+  // both "Floor 2" and "Event Level Suites 2") are dropped as ambiguous — those sections
+  // stay uncolored but still appear in the listing table. Returns Map or null on failure.
+  async function _seatmapBuildSectionRemap(venueId, configurationId) {
+    try {
+      const resp = await fetch(`${SEATMAP_MAPS_DOMAIN}/${venueId}/${configurationId}/manifest.json`);
+      if (!resp.ok) return null;
+      const manifest = await resp.json();
+      const sections = (manifest && manifest.sections) || {};
+      const tailToKey = new Map();
+      const ambiguous = new Set();
+      Object.keys(sections).forEach(k => {
+        const t = _seatmapTail(k);
+        if (!t) return;
+        if (tailToKey.has(t)) ambiguous.add(t);
+        else tailToKey.set(t, k);
+      });
+      ambiguous.forEach(t => tailToKey.delete(t));
+      return tailToKey;
+    } catch (_) { return null; }
+  }
+
+  // Collapse listing rows → one ticketGroup per section at its lowest retail floor (what
+  // the map colors by), remapping our bare section token → the manifest's full section
+  // name via `remap`. With a manifest, unmatched/ambiguous tails are skipped (left grey);
+  // without one (fetch failed), we fall back to passing the bare token.
+  function _seatmapTicketGroups(rows, remap) {
+    const floorByTail = new Map();
     rows.forEach(r => {
       const sec = (r.section || '').trim();
       if (!sec || _seatmapIsParking(sec)) return;
       const price = Number(r.retail_price);
       if (!isFinite(price) || price <= 0) return;
-      const prev = bySection.get(sec);
-      if (prev == null || price < prev) bySection.set(sec, price);
+      const t = _seatmapTail(sec);
+      const prev = floorByTail.get(t);
+      if (prev == null || price < prev) floorByTail.set(t, price);
     });
-    return Array.from(bySection, ([sec, price]) => ({
-      tevo_section_name: sec, retail_price: price,
-    }));
+    const out = [];
+    floorByTail.forEach((price, tail) => {
+      const name = remap ? remap.get(tail) : tail;
+      if (remap && !name) return;   // unmatched / ambiguous → skip (stays grey, still listed)
+      out.push({ tevo_section_name: name || tail, retail_price: price });
+    });
+    return out;
   }
 
   async function loadSeatmap(eventId) {
@@ -2870,10 +2912,15 @@
       return;
     }
 
-    // (2) EVO listing floors → ticketGroups (reuses the EVO Listings tab RPC).
+    // (2) EVO listing floors → ticketGroups (reuses the EVO Listings tab RPC), remapped
+    //     from our bare section tokens to the manifest's full section names.
     const lstRes = await rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId });
     _seatmapRows = (lstRes && lstRes.data && lstRes.data.rows) || [];
-    const ticketGroups = _seatmapTicketGroups(_seatmapRows);
+    const remap = await _seatmapBuildSectionRemap(venueId, configurationId);
+    const ticketGroups = _seatmapTicketGroups(_seatmapRows, remap);
+    const ourTails = new Set(
+      _seatmapRows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => _seatmapTail(r.section)),
+    );
 
     // (3) Build the interactive map. build() is async in v5 → may resolve undefined.
     host.innerHTML = '';
@@ -2895,9 +2942,12 @@
     }
 
     if (meta) {
+      const mapped = remap
+        ? `${ticketGroups.length}/${ourTails.size} sections on map`
+        : `${ticketGroups.length} sections (manifest unavailable — no coloring)`;
       meta.textContent = `venue ${venueId} · config ${configurationId}`
         + (evRes.data.configuration_name ? ` (${evRes.data.configuration_name})` : '')
-        + ` · ${ticketGroups.length} sections priced`;
+        + ` · ${mapped}`;
     }
     _seatmapSelected = [];
     renderSeatmapList();
@@ -2918,13 +2968,14 @@
     renderSeatmapList();
   }
 
-  // Section names compare case-insensitively (the library lowercases internally).
+  // The library returns selected sections as full manifest names; our rows carry bare
+  // tokens — compare both via _seatmapTail so the filter matches regardless of form.
   function renderSeatmapList() {
     const body = document.getElementById('seatmapListBody');
     if (!body) return;
-    const sel = _seatmapSelected.map(s => String(s).toLowerCase());
+    const selTails = _seatmapSelected.map(_seatmapTail);
     let rows = _seatmapRows.filter(r => r.section && !_seatmapIsParking(r.section));
-    if (sel.length) rows = rows.filter(r => sel.includes(String(r.section).toLowerCase()));
+    if (selTails.length) rows = rows.filter(r => selTails.includes(_seatmapTail(r.section)));
     rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
 
     if (!rows.length) {
