@@ -2563,6 +2563,8 @@
         await loadSgSalesFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
+      } else if (tabId === 'seatmap' && !_tabState.loaded['seatmap']) {
+        await loadSeatmap(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
         // Merged tab — fire all 3 broker-order RPCs in parallel, render each
         // into its own stacked sub-section inside #paneOurOrders.
@@ -2594,6 +2596,7 @@
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
+      'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
@@ -2791,6 +2794,183 @@
     body.innerHTML = '';
     body.appendChild(host);
     if (meta) meta.textContent = `${rows.length} rows (${ownedCount} ours) · ${ms.toFixed(0)}ms`;
+  }
+
+  // ---------- Seat Map (interactive TEvo venue map as a section/price filter) ----------
+  // The vendored @ticketevolution/seatmaps-client UMD bundle exposes window.Tevomaps.
+  // venueId/configurationId come straight from public.events; the section→floor
+  // ticketGroups are derived from the EVO listings firehose (reusing the same RPC the
+  // "EVO Listings" tab uses). Clicking a section on the SVG calls onSelection, which
+  // filters the per-section listing table on the right. Lazy-loaded on first activation.
+  let _seatmapApi = null;
+  let _seatmapRows = [];        // raw EVO listing rows for the per-section table
+  let _seatmapSelected = [];    // section names currently selected on the map
+  let _seatmapResetWired = false;
+
+  // Parking / non-seated pseudo-sections never match an SVG path (bible §3 parking
+  // skip) — drop them so the legend's price scale isn't skewed by $30 parking spots.
+  function _seatmapIsParking(section) {
+    return /parking|garage|valet|\blot\b|min walk|mi from venue|shuttle|tailgate/i.test(section || '');
+  }
+
+  // Collapse listing rows → one ticketGroup per section at its lowest retail floor,
+  // which is what the seatmap colors each section by.
+  function _seatmapTicketGroups(rows) {
+    const bySection = new Map();
+    rows.forEach(r => {
+      const sec = (r.section || '').trim();
+      if (!sec || _seatmapIsParking(sec)) return;
+      const price = Number(r.retail_price);
+      if (!isFinite(price) || price <= 0) return;
+      const prev = bySection.get(sec);
+      if (prev == null || price < prev) bySection.set(sec, price);
+    });
+    return Array.from(bySection, ([sec, price]) => ({
+      tevo_section_name: sec, retail_price: price,
+    }));
+  }
+
+  async function loadSeatmap(eventId) {
+    _tabState.loaded['seatmap'] = true;
+    const meta = document.getElementById('seatmapMeta');
+    const host = document.getElementById('seatmapHost');
+    const listBody = document.getElementById('seatmapListBody');
+    if (meta) meta.textContent = 'loading…';
+    if (listBody) listBody.innerHTML = '<div class="empty">Loading listings…</div>';
+
+    if (!window.Tevomaps || !window.Tevomaps.SeatmapFactory) {
+      if (meta) meta.textContent = 'seatmap library not loaded';
+      if (host) host.innerHTML = '<div class="empty">tevomaps.bundle.js failed to load</div>';
+      return;
+    }
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) {
+      if (meta) meta.textContent = 'no auth (Path C unavailable on localhost)';
+      if (host) host.innerHTML = '<div class="empty">Seat map needs an @s4kent.com session.</div>';
+      return;
+    }
+
+    // (1) venue_id + configuration_id for this event (direct events read — RLS-OK).
+    const evRes = await Auth.client
+      .from('events')
+      .select('venue_id, configuration_id, configuration_name, venue_name')
+      .eq('id', eventId)
+      .maybeSingle();
+    if (evRes.error || !evRes.data) {
+      if (meta) meta.textContent = 'event lookup failed';
+      if (host) host.innerHTML = `<div class="empty">${escapeHtml(evRes.error?.message || 'no event row')}</div>`;
+      return;
+    }
+    const venueId = evRes.data.venue_id;
+    const configurationId = evRes.data.configuration_id;
+    if (venueId == null || configurationId == null) {
+      if (meta) meta.textContent = 'no map for this event';
+      if (host) host.innerHTML = '<div class="empty">This event has no TEvo venue_id / configuration_id — no seat map available.</div>';
+      if (listBody) listBody.innerHTML = '';
+      return;
+    }
+
+    // (2) EVO listing floors → ticketGroups (reuses the EVO Listings tab RPC).
+    const lstRes = await rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId });
+    _seatmapRows = (lstRes && lstRes.data && lstRes.data.rows) || [];
+    const ticketGroups = _seatmapTicketGroups(_seatmapRows);
+
+    // (3) Build the interactive map. build() is async in v5 → may resolve undefined.
+    host.innerHTML = '';
+    try {
+      const factory = new window.Tevomaps.SeatmapFactory({
+        venueId: String(venueId),
+        configurationId: String(configurationId),
+        ticketGroups,
+        showLegend: true,
+        showControls: true,
+        mouseControlEnabled: true,
+        onSelection: (sections) => onSeatmapSelection(sections),
+      });
+      _seatmapApi = await factory.build('seatmapHost');
+    } catch (e) {
+      if (meta) meta.textContent = 'map render error';
+      host.innerHTML = `<div class="empty">Seat map failed to render: ${escapeHtml(String((e && e.message) || e))}</div>`;
+      return;
+    }
+
+    if (meta) {
+      meta.textContent = `venue ${venueId} · config ${configurationId}`
+        + (evRes.data.configuration_name ? ` (${evRes.data.configuration_name})` : '')
+        + ` · ${ticketGroups.length} sections priced`;
+    }
+    _seatmapSelected = [];
+    renderSeatmapList();
+    wireSeatmapReset();
+  }
+
+  // Library fires this with the full set of currently-selected section names.
+  function onSeatmapSelection(sections) {
+    _seatmapSelected = Array.isArray(sections) ? sections.slice() : [];
+    const label = document.getElementById('seatmapSelLabel');
+    const reset = document.getElementById('seatmapResetBtn');
+    if (label) {
+      label.textContent = _seatmapSelected.length
+        ? `Filtering ${_seatmapSelected.length} section${_seatmapSelected.length > 1 ? 's' : ''}: ${_seatmapSelected.join(', ')}`
+        : 'Click a section to filter listings';
+    }
+    if (reset) reset.hidden = _seatmapSelected.length === 0;
+    renderSeatmapList();
+  }
+
+  // Section names compare case-insensitively (the library lowercases internally).
+  function renderSeatmapList() {
+    const body = document.getElementById('seatmapListBody');
+    if (!body) return;
+    const sel = _seatmapSelected.map(s => String(s).toLowerCase());
+    let rows = _seatmapRows.filter(r => r.section && !_seatmapIsParking(r.section));
+    if (sel.length) rows = rows.filter(r => sel.includes(String(r.section).toLowerCase()));
+    rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
+
+    if (!rows.length) {
+      body.innerHTML = `<div class="empty">${sel.length ? 'No EVO listings in the selected section(s).' : 'No EVO listings to show.'}</div>`;
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th><th class="num">Qty</th>
+        <th class="num">Retail</th><th>Type</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.slice(0, 300).forEach(r => {
+      const tr = document.createElement('tr');
+      if (r.is_owned) tr.className = 'owned-row';
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
+        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  function wireSeatmapReset() {
+    if (_seatmapResetWired) return;
+    const btn = document.getElementById('seatmapResetBtn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      // Deselect each section on the map; the lib echoes onSelection back to us.
+      if (_seatmapApi && typeof _seatmapApi.deselectSection === 'function') {
+        _seatmapSelected.slice().forEach(s => {
+          try { _seatmapApi.deselectSection(s); } catch (_) { /* ignore */ }
+        });
+      }
+      onSeatmapSelection([]);
+    });
+    _seatmapResetWired = true;
   }
 
   // ---------- TD Listings per-platform (full) ----------

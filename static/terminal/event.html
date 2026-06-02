@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <meta name="viewport" content="width=1440, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://maps.ticketevolution.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Event</title>
@@ -67,6 +67,7 @@
       <button class="event-tab" data-tab="tm-listings" role="tab" aria-selected="false">TM Listings <span class="tab-count" id="tabCountTmListings"></span></button>
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
+      <button class="event-tab" data-tab="seatmap" role="tab" aria-selected="false">Seat Map</button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
     </nav>
@@ -419,10 +420,37 @@
         <div id="crossBrokerFullBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
+
+    <!-- Seat Map — interactive TEvo venue seatmap as a section/price filter.
+         Renders maps.ticketevolution.com/{venue_id}/{configuration_id}/map.svg via the
+         vendored @ticketevolution/seatmaps-client UMD bundle (window.Tevomaps).
+         Sections are colored by our EVO listing floors; clicking a section filters the
+         per-section listing table below. Lazy-loads on first tab activation. -->
+    <div class="tab-pane" id="paneSeatmap" role="tabpanel" hidden>
+      <section id="seatmap-section">
+        <div class="panel-title row">
+          <span>SEAT MAP — TEvo venue map · colored by EVO listing floor</span>
+          <span class="muted small" id="seatmapMeta">tap tab to load</span>
+        </div>
+        <div class="seatmap-layout">
+          <div class="seatmap-mapwrap">
+            <div id="seatmapHost" class="seatmap-host"></div>
+          </div>
+          <div class="seatmap-side">
+            <div class="seatmap-side-hd row">
+              <span id="seatmapSelLabel">Click a section to filter listings</span>
+              <button type="button" id="seatmapResetBtn" class="seatmap-reset" hidden>Reset</button>
+            </div>
+            <div id="seatmapListBody"><div class="empty">—</div></div>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <script src="lib/supabase.js"></script>
   <script src="lib/uplot.iife.min.js"></script>
+  <script src="lib/tevomaps.bundle.js"></script>
   <script src="auth.js"></script>
   <script src="app.js"></script>
   <script src="nav.js"></script>
