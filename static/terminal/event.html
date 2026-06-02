@@ -421,29 +421,30 @@
       </section>
     </div>
 
-    <!-- Seat Map — interactive TEvo venue seatmap as a section/price filter.
+    <!-- Seat Map — interactive TEvo venue seatmap as a multi-source section/price filter.
          Renders maps.ticketevolution.com/{venue_id}/{configuration_id}/map.svg via the
-         vendored @ticketevolution/seatmaps-client UMD bundle (window.Tevomaps).
-         Sections are colored by our EVO listing floors; clicking a section filters the
-         per-section listing table below. Lazy-loads on first tab activation. -->
+         vendored @ticketevolution/seatmaps-client UMD bundle (window.Tevomaps). The source
+         selector re-colors the map by ONE source's floors at a time (TEvo · SG · SH · GT ·
+         VD) via updateTicketGroups(); the listing table below shows that same source.
+         Clicking a section filters the table. Lazy-loads on first tab activation. -->
     <div class="tab-pane" id="paneSeatmap" role="tabpanel" hidden>
       <section id="seatmap-section">
         <div class="panel-title row">
-          <span>SEAT MAP — TEvo venue map · colored by EVO listing floor</span>
+          <span>SEAT MAP — venue map · colored by selected source's listing floor</span>
           <span class="muted small" id="seatmapMeta">tap tab to load</span>
         </div>
-        <div class="seatmap-layout">
-          <div class="seatmap-mapwrap">
-            <div id="seatmapHost" class="seatmap-host"></div>
-          </div>
-          <div class="seatmap-side">
-            <div class="seatmap-side-hd row">
-              <span id="seatmapSelLabel">Click a section to filter listings</span>
-              <button type="button" id="seatmapResetBtn" class="seatmap-reset" hidden>Reset</button>
-            </div>
-            <div id="seatmapListBody"><div class="empty">—</div></div>
-          </div>
+        <div class="seatmap-toolbar row">
+          <span class="seatmap-src-label">Source on map:</span>
+          <span class="seatmap-src-sel" id="seatmapSourceSel"></span>
         </div>
+        <div class="seatmap-mapwrap">
+          <div id="seatmapHost" class="seatmap-host"></div>
+        </div>
+        <div class="seatmap-side-hd row">
+          <span id="seatmapSelLabel">Click a section to filter listings</span>
+          <button type="button" id="seatmapResetBtn" class="seatmap-reset" hidden>Reset</button>
+        </div>
+        <div id="seatmapListBody"><div class="empty">—</div></div>
       </section>
     </div>
   </main>
