@@ -2826,24 +2826,30 @@
 
   // Fetch the venue/config manifest and build tail→fullKey. The library matches
   // ticketGroups' tevo_section_name EXACTLY against these keys (lowercased), so we must
-  // hand it the full names, not the bare numbers. Tails that map to >1 key (e.g. "2" →
-  // both "Floor 2" and "Event Level Suites 2") are dropped as ambiguous — those sections
-  // stay uncolored but still appear in the listing table. Returns Map or null on failure.
+  // hand it the full names, not the bare numbers. A tail can collide across families
+  // (e.g. "2" → both "Floor 2" and "Event Level Suites 2"); on collision we prefer the
+  // "Floor N" key (individual floor/courtside seats are the common per-seat resale case —
+  // numeric rows + 2-seat splits — whereas suites sell as whole units). Other collision
+  // types are left unmatched (uncolored, but still listed). Returns Map or null on failure.
   async function _seatmapBuildSectionRemap(venueId, configurationId) {
     try {
       const resp = await fetch(`${SEATMAP_MAPS_DOMAIN}/${venueId}/${configurationId}/manifest.json`);
       if (!resp.ok) return null;
       const manifest = await resp.json();
       const sections = (manifest && manifest.sections) || {};
-      const tailToKey = new Map();
-      const ambiguous = new Set();
+      const byTail = new Map();
       Object.keys(sections).forEach(k => {
         const t = _seatmapTail(k);
         if (!t) return;
-        if (tailToKey.has(t)) ambiguous.add(t);
-        else tailToKey.set(t, k);
+        if (!byTail.has(t)) byTail.set(t, []);
+        byTail.get(t).push(k);
       });
-      ambiguous.forEach(t => tailToKey.delete(t));
+      const tailToKey = new Map();
+      byTail.forEach((keys, t) => {
+        if (keys.length === 1) { tailToKey.set(t, keys[0]); return; }
+        const floor = keys.find(k => /^floor\b/i.test(String(k).trim()));
+        if (floor) tailToKey.set(t, floor);   // else leave unmatched — don't guess
+      });
       return tailToKey;
     } catch (_) { return null; }
   }
