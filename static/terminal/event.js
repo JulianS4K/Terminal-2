@@ -1950,15 +1950,39 @@
       .limit(90);
     if (error) { console.error('[td-freshness] sb', error); return; }
     // Latest row for chips + freshness table
-    const snap = rows && rows.length ? rows[0] : null;
-    // Convert snapshot_date + slot to approx UTC timestamp for age calc
-    // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC
+    // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC. NOTE: the slot names do
+    // NOT sort chronologically as text ("morning" > "midday" > "evening" alphabetically),
+    // so a SQL `order by snapshot_slot desc` returns the EARLIEST (morning) slot. Sort
+    // chronologically client-side instead, or the panel shows the morning partial.
     const slotHourMap = { morning: 9, midday: 14, evening: 19 };
-    const rowTs = (r) => {
-      const h = slotHourMap[r.snapshot_slot] ?? 12;
-      return `${r.snapshot_date}T${String(h).padStart(2, '0')}:00:00Z`;
-    };
-    const snapTs = snap ? rowTs(snap) : null;
+    const slotRank = (r) => slotHourMap[r.snapshot_slot] ?? 12;
+    const rowTs = (r) => `${r.snapshot_date}T${String(slotRank(r)).padStart(2, '0')}:00:00Z`;
+    if (rows && rows.length) {
+      rows.sort((a, b) => a.snapshot_date !== b.snapshot_date
+        ? (a.snapshot_date < b.snapshot_date ? 1 : -1)   // newest date first
+        : slotRank(b) - slotRank(a));                    // then newest slot first
+    }
+    // The collector writes a slot even mid-pull, so the latest slot can show 0 for a
+    // platform that simply hadn't pulled yet. Build `snap` from the latest row but
+    // fill each platform from the freshest recent slot where it actually has a book
+    // (>0), keeping listings+median from the SAME slot. Bounded to the latest ~6 rows
+    // (~2 days) so a genuinely-empty platform doesn't carry a stale value forever.
+    let snap = rows && rows.length ? { ...rows[0] } : null;
+    if (snap) {
+      const recent = rows.slice(0, 6);
+      const PLATS = [
+        ['td_sh_listings', 'td_sh_median'], ['td_gt_listings', 'td_gt_median'],
+        ['td_vd_listings', 'td_vd_median'], ['td_tp_listings', 'td_tp_median'],
+        ['td_tm_listings', 'td_tm_median'], ['td_tm_resale_listings', 'td_tm_resale_median'],
+      ];
+      for (const [lf, mf] of PLATS) {
+        if (snap[lf] == null || +snap[lf] === 0) {
+          const hit = recent.find(r => r[lf] != null && +r[lf] > 0);
+          if (hit) { snap[lf] = hit[lf]; snap[mf] = hit[mf]; }
+        }
+      }
+    }
+    const snapTs = snap ? rowTs(rows[0]) : null;
     // Update the TD fr-chips in the hero
     const tdMap = { 'td-sh': snap?.td_sh_listings, 'td-gt': snap?.td_gt_listings, 'td-vd': snap?.td_vd_listings };
     for (const [src, listings] of Object.entries(tdMap)) {
@@ -2811,6 +2835,7 @@
   let _seatmapRowsBySource = {};// key → normalized rows [{section,row,quantity,retail_price,is_owned}]
   let _seatmapSelected = [];    // section names currently selected on the map
   let _seatmapWired = false;    // selector + reset listeners attached once
+  let _seatmapUserPicked = false; // user clicked a source → stop auto-picking
   let _seatmapConfigName = '';
   let _seatmapVenueLabel = '';
   const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
@@ -3032,6 +3057,7 @@
     _seatmapRowsBySource = {};
     _seatmapSource = 'EVO';
     _seatmapSelected = [];
+    _seatmapUserPicked = false;
 
     // (3) Default source = TEvo. Build the map ONCE with its floors; later source
     //     switches re-color via updateTicketGroups() rather than rebuilding the SVG.
@@ -3117,6 +3143,24 @@
       }
       renderSeatmapSelector();
     }
+    _seatmapAutoPickSource();
+  }
+
+  // Once all sources are fetched, default the map's coloring to whichever source maps
+  // the MOST sections onto this venue's manifest (SG section text is usually cleaner
+  // than EVO's broker free-text, but it's per-event, so we measure rather than assume).
+  // SG breaks ties (cleaner on average). Skipped once the user has picked a source.
+  function _seatmapAutoPickSource() {
+    if (_seatmapUserPicked || !_seatmapRemap || !_seatmapApi) return;
+    const tie = { SG: 0, EVO: 1, VD: 2, SH: 3, GT: 4 };   // lower = preferred on ties
+    let best = _seatmapSource, bestN = -1;
+    for (const s of SEATMAP_SOURCES) {
+      const rows = _seatmapRowsBySource[s.key];
+      if (!rows || !rows.length) continue;
+      const n = _seatmapTicketGroups(rows, _seatmapRemap).length;
+      if (n > bestN || (n === bestN && (tie[s.key] ?? 9) < (tie[best] ?? 9))) { bestN = n; best = s.key; }
+    }
+    if (best !== _seatmapSource && bestN > 0) selectSeatmapSource(best);
   }
 
   // Library fires this with the full set of currently-selected section names.
@@ -3199,6 +3243,7 @@
       sel.addEventListener('click', (e) => {
         const btn = e.target.closest('.sm-src-btn');
         if (!btn || btn.disabled) return;
+        _seatmapUserPicked = true;   // stop auto-pick once the user chooses
         selectSeatmapSource(btn.dataset.src);
       });
     }
