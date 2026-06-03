@@ -115,6 +115,7 @@
     // fetchPayload (Path A / Path C v3) fails. PR #205 cross-source +
     // PR redesign localized weather + SG zones/splits all independent.
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
+    loadSeatmapTabVisibility(eventId).catch(e => console.error('[seatmapTab]', e));
     loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
@@ -2884,8 +2885,14 @@
 
   // Parking / non-seated pseudo-sections never match an SVG path (bible §3 parking
   // skip) — drop them so the legend's price scale isn't skewed by $30 parking spots.
+  // Brokers also list off-site lots as STREET ADDRESSES ("1440 W Washington Blvd",
+  // "1 Light St", "2121 S. Towne Center Pl") — number-first + a street suffix. Filter
+  // those too (a real section like "Terrace 12" has the number LAST, so it's safe).
   function _seatmapIsParking(section) {
-    return /parking|garage|valet|\blot\b|min walk|mi from venue|shuttle|tailgate/i.test(section || '');
+    const s = section || '';
+    if (/parking|garage|valet|\blot\b|min walk|mi from venue|shuttle|tailgate/i.test(s)) return true;
+    if (/^\s*\d[\d\s.,/&–-]*\s+\S.*\b(st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|pkwy|parkway|hwy|highway|ln|lane|ct|court|pl|place|plz|plaza|cir|circle|way)\b\.?/i.test(s)) return true;
+    return false;
   }
 
   // ----- Section → manifest matcher (venue-agnostic; manifest drives everything) -----
@@ -3032,6 +3039,27 @@
       if (prev == null || price < prev) floorByKey.set(key, price);
     });
     return Array.from(floorByKey, ([key, price]) => ({ tevo_section_name: key, retail_price: price }));
+  }
+
+  // Hide the Seat Map tab when the venue/config is known to have NO interactive map
+  // (seatmap_manifest.has_map=false, populated by the seatmap-manifest-sync cron).
+  // Conservative: only hides on a definitive negative — if the config isn't synced
+  // yet (no row), the tab stays and the runtime fetch decides.
+  async function loadSeatmapTabVisibility(eventId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const ev = await Auth.client.from('events')
+      .select('venue_id, configuration_id').eq('id', eventId).maybeSingle();
+    if (ev.error || !ev.data || ev.data.venue_id == null || ev.data.configuration_id == null) return;
+    const mr = await Auth.client.from('seatmap_manifest')
+      .select('has_map')
+      .eq('venue_id', ev.data.venue_id)
+      .eq('configuration_id', ev.data.configuration_id)
+      .maybeSingle();
+    if (!mr.error && mr.data && mr.data.has_map === false) {
+      const btn = document.querySelector('.event-tab[data-tab="seatmap"]');
+      if (btn) btn.style.display = 'none';
+    }
   }
 
   async function loadSeatmap(eventId) {
