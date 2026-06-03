@@ -2941,16 +2941,20 @@
       if (!resp.ok) return null;
       const manifest = await resp.json();
       const sections = (manifest && manifest.sections) || {};
-      const byNumSuf = new Map(), byNum = new Map();
+      const byNumSuf = new Map(), byNum = new Map(), named = [];
       Object.keys(sections).forEach(k => {
         const p = _smParse(k);
-        if (p.num == null) return;             // named-only keys (e.g. "Bullpen Zone") — unindexed
+        if (p.num == null) {                   // numberless keys (GA / Pit / Lawn / Stage / SRO)
+          const nm = _smNorm(k);
+          named.push({ key: k, norm: nm, toks: nm.split(' ').filter(Boolean) });
+          return;
+        }
         const rec = { key: k, fam: p.fam, suf: p.suf };
         const ek = p.num + '|' + p.suf;
         (byNumSuf.get(ek) || byNumSuf.set(ek, []).get(ek)).push(rec);
         (byNum.get(p.num)  || byNum.set(p.num, []).get(p.num)).push(rec);
       });
-      return { byNumSuf, byNum, cache: new Map() };
+      return { byNumSuf, byNum, named, cache: new Map() };
     } catch (_) { return null; }
   }
 
@@ -2971,13 +2975,29 @@
   }
 
   // Match one listing section → manifest key (cached per venue). Tier chain:
-  // T1/T2 exact (num+suffix) unique → T2b suffixed-but-only-numeric → T3 family → T4 bowl.
+  // numberless (GA/Pit/Lawn) → name exact, else name token-overlap;
+  // numbered → T1/T2 exact (num+suffix) → T2b suffixed-but-only-numeric → T3 family → T4 bowl.
   function _seatmapMatchSection(section, idx) {
     if (!idx) return null;
     if (idx.cache.has(section)) return idx.cache.get(section);
     const p = _smParse(section);
     let key = null;
-    if (p.num != null) {
+    if (p.num == null) {
+      // numberless section (e.g. "General Admission", "GA Pit") → match named manifest keys.
+      const nm = _smNorm(section);
+      const named = idx.named || [];
+      let hit = named.find(x => x.norm === nm);                // exact normalized
+      if (!hit && named.length) {                              // else best token overlap (>0)
+        const lt = nm.split(' ').filter(Boolean);
+        let best = null, bs = 0;
+        for (const x of named) {
+          const ov = x.toks.filter(t => lt.includes(t)).length;
+          if (ov > bs) { bs = ov; best = x; }
+        }
+        hit = best;
+      }
+      key = hit ? hit.key : null;
+    } else {
       const exact = idx.byNumSuf.get(p.num + '|' + p.suf) || [];
       if (exact.length === 1) key = exact[0].key;             // T1/T2 — clean venues land here
       else if (exact.length > 1) key = _smPick(p, exact);     // same num+suf across families
