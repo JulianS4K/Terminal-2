@@ -3786,6 +3786,15 @@
     if (body) body.innerHTML = '<div class="empty">loading cross-source metrics…</div>';
     if (meta) meta.textContent = 'loading…';
     const t0 = performance.now();
+    // Preferred: uniform per-source distribution computed on the fly for EVERY source
+    // (mig 20260603120000). Falls back to the legacy TEvo/SG panel until A1 applies it,
+    // so this is deploy-safe before the migration lands.
+    const resU = await rpcOrNull('get_event_all_source_listing_metrics', { p_event_id: eventId });
+    if (!resU.error && resU.data && Array.isArray(resU.data.sources) && resU.data.sources.length) {
+      renderAllSourceMetrics(resU.data, performance.now() - t0);
+      return;
+    }
+    // Legacy fallback (sets _lastCrossSource so the TD-snapshot / v3 re-render hooks work).
     const res = await rpcOrNull('get_event_cross_source_metrics', { p_event_id: eventId });
     if (res.error) {
       if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
@@ -3793,6 +3802,42 @@
       return;
     }
     renderCrossSourceMetrics(res.data || {}, performance.now() - t0);
+  }
+
+  // Uniform multi-source distribution table (mig 20260603120000): one consistent
+  // methodology for every source (TEvo · SG · SH · GT · VD · TP · TM) — listings,
+  // tickets, min, median, p90, owned median — computed live from each firehose's
+  // latest batch. Metric rows × source columns; null cells render "—".
+  function renderAllSourceMetrics(d, ms) {
+    const body = document.getElementById('crossSourceBody');
+    const meta = document.getElementById('crossSourceMeta');
+    if (!body) return;
+    const sources = (d && d.sources) || [];
+    if (meta) {
+      meta.textContent = (d && d.sg_event_id != null ? `sg_event_id ${d.sg_event_id} · ` : '')
+        + `all-source live distribution${ms != null ? ` · ${ms.toFixed(0)}ms` : ''}`;
+    }
+    const METRICS = [
+      { label: 'Listings count',    key: 'listings',     money: false },
+      { label: 'Tickets available', key: 'tickets',      money: false },
+      { label: 'Min price',         key: 'min',          money: true },
+      { label: 'Median price',      key: 'median',       money: true },
+      { label: 'P90 price',         key: 'p90',          money: true },
+      { label: 'Owned median',      key: 'owned_median', money: true },
+    ];
+    const fmt = (v, money) => (v == null ? '—' : (money ? '$' + T.fmtNum(Math.round(v)) : T.fmtNum(v)));
+    const tbl = document.createElement('table');
+    tbl.className = 'cross-src-tbl';
+    tbl.innerHTML = `<thead><tr><th>Metric</th>${sources.map(s => `<th class="num">${escapeHtml(s.label || s.key)}</th>`).join('')}</tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    METRICS.forEach(m => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(m.label)}</td>`
+        + sources.map(s => `<td class="num">${fmt(s[m.key], m.money)}</td>`).join('');
+      tb.appendChild(tr);
+    });
+    body.innerHTML = '';
+    body.appendChild(tbl);
   }
 
   // Cache the last cross-source payload + overrides so we can re-render when v3
