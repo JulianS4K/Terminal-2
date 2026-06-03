@@ -116,7 +116,7 @@ Decision log at `cron_gate_decisions` (decision ∈ `fire | skip_offpeak | skip_
 | OBSERVE | upcoming, not owned | 12h | 2 |
 | SKIP | far future / no signal | n/a | 0 |
 
-`sg_classify_events()` recomputes tier per event every 5 min. `sg_priority_poll_tick(p_max_polls)` fires due polls.
+`sg_classify_events()` recomputes tier per event every 5 min. **Polling model (current):** the tier-cadence above was superseded by the **collector-cadence per-event model** (2026-05-31) — `sg_listings_poll_tick(p_max,p_min_remaining,p_owned_kind)` fires due polls driven by `collector_cadence` bands (horizon × `owned_kind`). As of 2026-06-03 it runs as **two crons**: `sg_listings_poll_owned_1min` (owned events, ON) + `sg_listings_poll_nonowned_5min` (non-owned, once-daily, OFF). Canonical: `CRON_HIERARCHY.md §4b`.
 
 ### Currently-paused cron snapshot
 
