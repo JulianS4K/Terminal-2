@@ -649,6 +649,23 @@ def root_landing():
     return FileResponse(os.path.join(STATIC_DIR, "home", "index.html"))
 
 
+@app.get("/home")
+def home_landing_redirect():
+    """Bounce bare /home → /home/ so the terminal's ← HUB button (nav.js,
+    href=/home/) resolves the same on the FastAPI shell as on the static CDN
+    (publishPath=static serves /home/index.html for the directory form)."""
+    return RedirectResponse(url="/home/", status_code=308)
+
+
+@app.get("/home/")
+def home_landing():
+    """Serve the unified landing selector at the explicit /home/ path. The
+    static CDN serves static/home/index.html here natively; this route gives
+    the FastAPI shell parity so HUB → /home/ never 404s regardless of which
+    surface (terminal-test CDN vs storefront-test shell) served the page."""
+    return FileResponse(os.path.join(STATIC_DIR, "home", "index.html"))
+
+
 @app.get("/terminal")
 def terminal_landing():
     """Bounce bare /terminal → /terminal/ (trailing slash) so the relative
