@@ -53,8 +53,20 @@
   // TD listing-count time series for the inventory chart overlay.
   // Shape: { sh: [{t,v}], gt: [{t,v}], vd: [{t,v}] } — counts not medians.
   let _tdInvCountSeries = null;
+  // Durable cross-source daily series (event_listing_snapshot_daily — INDEFINITE
+  // retention per the 2026-05-31 ladder, mig 20260531180000). This is the
+  // LONG-HORIZON backbone: it is spliced in BEFORE the fine-grained series so a
+  // line keeps going past the 30d firehose / 120d event_metrics sweep windows
+  // instead of cutting off (the retention-mismatch fix). The table is young
+  // (started 2026-05-27) so depth is shallow today and deepens as it fills.
+  // Shape: { med:{evo_owned,evo_mkt,sg_list,sg_own,sh,gt,vd}, cnt:{evo_own,evo_tix,sg_tix,sh,gt,vd} }.
+  let _dailyDurable = null;
   // Initialize TD inv series as hidden by default (user-togglable in legend).
   ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
+  // Declutter the default view (UI rebuild 2026-06-03): the redundant/secondary
+  // medians start hidden — the user opts them in from the legend. Keeps the
+  // first paint to one clean line per source instead of 9 overlapping lines.
+  ['prices_nonowned', 'sg_own_med'].forEach(k => _chartVisible.set(k, false));
 
   // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
   // event is currently in the merged-7d slot of event_movers_index. Async +
@@ -300,6 +312,7 @@
       if (lbl) lbl.textContent = lblTxt;
       const aw = document.getElementById('alertsWindow');
       if (aw) aw.textContent = lblTxt;
+      updateLayerHint(hrs);
       _chartExtStatePrice.payload = undefined;
       _chartExtStateInv.payload   = undefined;
       // Re-render both panes immediately with the new window clip (cached v3 data)
@@ -317,6 +330,20 @@
       loadChartExtended('inv', eventId, _chartInvHours)
         .catch(e => console.error('[chartExt inv]', e));
     });
+    updateLayerHint(_chartPriceHours);
+  }
+
+  // Data-layer hint: above the 30d firehose sweep window the durable daily
+  // snapshot is the only history, so emphasize that the line goes hybrid. ≤30d
+  // is purely high-resolution. Honest about which layer the user is looking at.
+  function updateLayerHint(hours) {
+    const el = document.getElementById('chartLayerHint');
+    if (!el) return;
+    const hybrid = (hours || DEFAULT_HOURS) > 720;
+    el.classList.toggle('hybrid', hybrid);
+    el.innerHTML = hybrid
+      ? '● hourly &nbsp;+&nbsp; <b>○ daily history</b>'
+      : '● hourly';
   }
 
   function wireAlertsToggle() {
@@ -732,14 +759,43 @@
     return { xs, specs };
   }
 
+  // Splice a durable daily series UNDER a fine-grained series (retention-mismatch
+  // fix, UI rebuild 2026-06-03). `fine` = high-resolution recent points
+  // (event_metrics / SG firehose, capped at the source's sweep window); `daily` =
+  // low-resolution but INDEFINITELY-retained points from
+  // event_listing_snapshot_daily. We keep every fine point and prepend only the
+  // daily points OLDER than the earliest fine point, yielding ONE continuous line
+  // per source whose history depth = max(both layers) — so SG no longer stops at
+  // 30d while TEvo runs to 120d. Both inputs are chronological {t,v}.
+  function mergeDurable(fine, daily) {
+    fine = fine || []; daily = daily || [];
+    if (!daily.length) return fine;
+    if (!fine.length) return daily;
+    let firstFineMs = Infinity;
+    for (const p of fine) { const ms = new Date(p.t).getTime(); if (ms < firstFineMs) firstFineMs = ms; }
+    const older = daily.filter(p => new Date(p.t).getTime() < firstFineMs);
+    return older.length ? older.concat(fine) : fine;
+  }
+
+  // Convenience: pull a durable median/count series by key, [] when not loaded yet.
+  function durMed(key) { return (_dailyDurable && _dailyDurable.med && _dailyDurable.med[key]) || []; }
+  function durCnt(key) { return (_dailyDurable && _dailyDurable.cnt && _dailyDurable.cnt[key]) || []; }
+
   // X-axis clip range for a given hours window. Returns [minSec, maxSec].
   // If the series data is older than the window, uPlot clips to the window
   // (showing an empty area for the missing time); if newer, the data fits.
   function clipRangeForHours(hours, xs) {
     if (!xs || !xs.length) return undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    const minSec = nowSec - hours * 3600;
+    const reqMin = nowSec - hours * 3600;
+    const dataMin = xs[0];                 // xs is chronological (buildSeriesData sorts)
     const dataMax = xs[xs.length - 1];
+    // Fit-to-history (UI rebuild 2026-06-03): when the window is WIDER than the
+    // history we actually have (e.g. 1y/ALL on the young durable table), clamp
+    // the left edge to the earliest real point so we don't render a vast empty
+    // gutter with the data crammed at the right. When we have MORE history than
+    // the window (short ranges), reqMin wins and the window is honored as before.
+    const minSec = Math.max(reqMin, dataMin);
     // Right edge: max(now, dataMax) so a future-dated event still shows its
     // most recent snapshot inside the window.
     return [minSec, Math.max(nowSec, dataMax)];
@@ -759,16 +815,21 @@
     const extSeries = (ext && ext.series) || {};
 
     const tdS = _tdChartSeries || {};
+    // Each median line splices its durable daily history (long horizon, indefinite)
+    // under its fine-grained recent points so the line is continuous past the
+    // firehose/event_metrics sweep windows. TD lines ARE the daily series already.
+    // Visual rebuild: one hue per source (owned = solid bold, market = thin solid,
+    // secondary = dotted), no more competing dash patterns.
     const specs = [
-      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', width: 2,   dash: null,   data: chart.prices_owned },
-      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', width: 1.5, dash: [4, 4], data: chart.prices_market },
-      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', width: 1.5, dash: [6, 3], data: chart.prices_nonowned },
-      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', width: 1.5, dash: null,   data: extSeries.sg_listings_median       || [] },
-      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', width: 1.5, dash: [3, 3], data: extSeries.sg_listings_owned_median || [] },
-      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', width: 1.5, dash: [5, 2], data: extSeries.sg_sales_median          || [] },
-      { key: 'td_sh_med',       label: 'SH median',      color: '#f97316', width: 1.5, dash: [8, 3], data: tdS.sh || [] },
-      { key: 'td_gt_med',       label: 'GT median',      color: '#34d399', width: 1.5, dash: [8, 3], data: tdS.gt || [] },
-      { key: 'td_vd_med',       label: 'VD median',      color: '#c084fc', width: 1.5, dash: [8, 3], data: tdS.vd || [] },
+      { key: 'prices_owned',    label: 'TEvo owned',  color: '#fbbf24', width: 2,   dash: null,    data: mergeDurable(chart.prices_owned,    durMed('evo_owned')) },
+      { key: 'prices_market',   label: 'TEvo market', color: '#a8a29e', width: 1.25, dash: null,   data: mergeDurable(chart.prices_market,   durMed('evo_mkt')) },
+      { key: 'prices_nonowned', label: 'TEvo non-own',color: '#a78bfa', width: 1,   dash: [2, 3],  data: chart.prices_nonowned },
+      { key: 'sg_list_med',     label: 'SG market',   color: '#22d3ee', width: 1.5, dash: null,    data: mergeDurable(extSeries.sg_listings_median       || [], durMed('sg_list')) },
+      { key: 'sg_own_med',      label: 'SG owned',    color: '#fb7185', width: 1,   dash: [2, 3],  data: mergeDurable(extSeries.sg_listings_owned_median || [], durMed('sg_own')) },
+      { key: 'sg_sale_med',     label: 'SG sales',    color: '#84cc16', width: 1.5, dash: [6, 3],  data: extSeries.sg_sales_median          || [] },
+      { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
+      { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
+      { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
     ];
     const { xs } = buildSeriesData(specs);
     _chartLastBuildPrice = { specs, xs };
@@ -862,9 +923,9 @@
     const extSeries = (ext && ext.series) || {};
 
     const specs = [
-      { key: 'counts_owned',  label: 'TEvo Owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
-      { key: 'counts_market', label: 'TEvo Mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: chart.counts_market },
-      { key: 'sg_list_ct',    label: 'SG list qty',    color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: extSeries.sg_listings_count || [] },
+      { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
+      { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
+      { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
       { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.sg_sales_count || [] },
     ];
     // Overlay TD listing-count series (dashed, hidden by default — user-togglable)
@@ -1944,11 +2005,11 @@
     // Used for: (a) fr-chips freshness, (b) data-freshness table, (c) price chart TD overlay
     const { data: rows, error } = await Auth.client
       .from('event_listing_snapshot_daily')
-      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,evo_owned_median,evo_tickets_count,evo_owned_tickets,sg_all_median,sg_owned_median,sg_all_tickets,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
       .eq('event_id', eventId)
       .order('snapshot_date', { ascending: false })
       .order('snapshot_slot', { ascending: false })
-      .limit(90);
+      .limit(1200);   // ~2yr of durable history (3 slots/day); cheap, indefinite table
     if (error) { console.error('[td-freshness] sb', error); return; }
     // Latest row for chips + freshness table
     // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC. NOTE: the slot names do
@@ -2011,6 +2072,10 @@
     if (rows && rows.length > 1) {
       const sh = [], gt = [], vd = [];
       const ish = [], igt = [], ivd = [];
+      // Durable cross-source backbone (long-horizon splice — retention fix).
+      const dm = { evo_owned: [], evo_mkt: [], sg_list: [], sg_own: [], sh: [], gt: [], vd: [] };
+      const dc = { evo_own: [], evo_tix: [], sg_tix: [], sh: [], gt: [], vd: [] };
+      const push = (arr, ts, v) => { if (v != null) arr.push({ t: ts, v: +v }); };
       for (const r of rows) {
         const ts = rowTs(r);
         if (r.td_sh_median   != null) sh.push({ t: ts, v: +r.td_sh_median });
@@ -2019,10 +2084,23 @@
         if (r.td_sh_listings != null) ish.push({ t: ts, v: +r.td_sh_listings });
         if (r.td_gt_listings != null) igt.push({ t: ts, v: +r.td_gt_listings });
         if (r.td_vd_listings != null) ivd.push({ t: ts, v: +r.td_vd_listings });
+        // EVO + SG durable medians/counts (these feed the long-horizon splice).
+        push(dm.evo_owned, ts, r.evo_owned_median);
+        push(dm.evo_mkt,   ts, r.evo_retail_median);
+        push(dm.sg_list,   ts, r.sg_all_median);
+        push(dm.sg_own,    ts, r.sg_owned_median);
+        push(dm.sh, ts, r.td_sh_median); push(dm.gt, ts, r.td_gt_median); push(dm.vd, ts, r.td_vd_median);
+        push(dc.evo_own, ts, r.evo_owned_tickets);
+        push(dc.evo_tix, ts, r.evo_tickets_count);
+        push(dc.sg_tix,  ts, r.sg_all_tickets);
+        push(dc.sh, ts, r.td_sh_listings); push(dc.gt, ts, r.td_gt_listings); push(dc.vd, ts, r.td_vd_listings);
       }
       // Reverse so series are chronological (we fetched newest-first)
       _tdChartSeries    = { sh: sh.reverse(),  gt: gt.reverse(),  vd: vd.reverse() };
       _tdInvCountSeries = { sh: ish.reverse(), gt: igt.reverse(), vd: ivd.reverse() };
+      Object.keys(dm).forEach(k => dm[k].reverse());
+      Object.keys(dc).forEach(k => dc[k].reverse());
+      _dailyDurable = { med: dm, cnt: dc };
 
       if (_lastPayload && _lastPayload.chart_data) {
         try {

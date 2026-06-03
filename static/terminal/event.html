@@ -158,6 +158,7 @@
         <div class="chart-controls">
           <span class="source-toggles" id="chartSourceToggles" title="Click a source to toggle all of its series across both panes"></span>
           <span class="velocity-strip" id="velocityChips"></span>
+          <span class="layer-hint" id="chartLayerHint" title="Recent points are high-resolution (hourly — from the firehose / event_metrics, swept at 30d / 120d). History beyond that window is the durable daily snapshot (3×/day, indefinite retention). One continuous line per source.">● hourly &nbsp;+&nbsp; ○ daily history</span>
           <label class="alerts-toggle" title="Show event alert markers on the chart">
             <input type="checkbox" id="chartPriceAlertsToggle" /> Alerts
           </label>
@@ -167,7 +168,9 @@
             <option value="72">3d</option>
             <option value="168" selected>7d</option>
             <option value="720">30d</option>
-            <option value="4320">ALL</option>
+            <option value="2160">90d</option>
+            <option value="8760">1y</option>
+            <option value="26280">ALL</option>
           </select>
         </div>
       </div>

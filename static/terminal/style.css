@@ -214,7 +214,7 @@ main.wrap {
 /* ---- Composite chart (WP-3) — one section, two stacked panes ----
    Price + inventory share controls + time window but keep separate uPlot
    instances so the $-axis and the count axes stay readable. */
-.chart-section.composite { min-height: 600px; }
+.chart-section.composite { min-height: 680px; }
 .composite-pane-block {
   flex: 1 1 0;
   display: flex;
@@ -227,7 +227,7 @@ main.wrap {
   margin-top: 8px;
   padding-top: 8px;
 }
-.composite-pane-block .chart-pane { flex: 1 1 auto; min-height: 220px; }
+.composite-pane-block .chart-pane { flex: 1 1 auto; min-height: 260px; }
 .composite-pane-block .pane-label {
   flex: 0 0 auto;
   font-family: var(--mono); font-size: 10px;
@@ -240,16 +240,19 @@ main.wrap {
 }
 .composite-pane-block .pane-label .legend { text-transform: none; letter-spacing: 0; }
 
-/* Per-source master toggles — coarse control above the per-series legends. */
-.source-toggles { display: inline-flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+/* Per-source master toggles — the PRIMARY chart control (pill chips). Clicking a
+   chip hides/shows ALL of that source's series across both panes. */
+.source-toggles { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .source-toggle {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: 5px;
   cursor: pointer; user-select: none;
-  font-family: var(--mono); font-size: 10px;
-  transition: opacity 80ms ease;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.3px;
+  padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel-2);
+  transition: opacity 80ms ease, border-color 80ms ease, background 80ms ease;
 }
-.source-toggle:hover { text-decoration: underline; text-decoration-style: dotted; }
-.source-toggle i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.source-toggle:hover { border-color: var(--line); background: var(--line-2); }
+.source-toggle i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 
 /* Reserved overlay-layer legend — ● live vs ○ pending (honest, never fake). */
 .overlay-legend {
@@ -1158,8 +1161,19 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 
 /* Chart controls (range selector + legend group inside each chart's title) */
 .chart-section .chart-controls {
-  display: flex; gap: 12px; align-items: center;
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: flex-end;
 }
+
+/* Data-layer hint — shows whether the durable daily layer is in play for the
+   selected window (retention-aware hybrid chart, 2026-06-03). */
+.layer-hint {
+  font-family: var(--mono); font-size: 10px; color: var(--dim);
+  white-space: nowrap; letter-spacing: 0.3px;
+  padding: 2px 7px; border: 1px solid var(--line-2); border-radius: 3px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.layer-hint.hybrid { color: var(--info); border-color: rgba(96, 165, 250, 0.4); }
+.layer-hint b { color: var(--text); font-weight: 600; }
 .range-select {
   background: var(--panel-2);
   border: 1px solid var(--line);
