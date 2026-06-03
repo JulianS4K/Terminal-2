@@ -2910,6 +2910,11 @@
   const SEATMAP_ZONES = {
     fd: 'field box', rs: 'reserve', lg: 'loge box', td: 'top deck',
     dg: 'dugout', pl: 'pavilion', pr: 'pavilion', bl: 'baseline', mvp: 'mvp',
+    // middle level: brokers/SG call it M / Mezz / Mezzanine, the manifest may say
+    // "Middle" OR "Mezzanine" — expand to both tokens so either naming matches.
+    m: 'middle mezzanine', mez: 'middle mezzanine', mezz: 'middle mezzanine',
+    mezzanine: 'middle mezzanine', drm: 'middle mezzanine',
+    flga: 'floor', flrga: 'floor',  // floor-GA codes → the Floor family
   };
   // Parse a section/key → { num (leading-zeros stripped), suf (sub-section letter), fam }.
   // num = the section number; suf = a single A-H sub-section letter glued to the number
