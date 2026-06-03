@@ -242,4 +242,13 @@
     temporalChipHtml,
     moversPreloadIndex, moversChipHtml,
   };
+
+  // PWA: register the service worker (installable + offline app shell). External
+  // file so it satisfies CSP script-src 'self'. Loaded on every terminal page.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .catch((e) => console.warn('[pwa] sw register failed', e));
+    });
+  }
 })();

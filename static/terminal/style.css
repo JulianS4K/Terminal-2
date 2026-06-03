@@ -2005,3 +2005,50 @@ body[data-page="login"] {
 }
 .seatmap-reset:hover { filter: brightness(1.1); }
 #seatmapListBody .empty { color: var(--muted); padding: 12px; text-align: center; }
+
+/* ============================================================================
+   Responsive / PWA — iPhone (added 2026-06-03). The terminal is a dense ≥1280
+   desktop grid; this layer reflows it for a standard iPhone (~390px) when
+   installed as a PWA or viewed on mobile. Strategy: collapse the 12-col grid to
+   one column, stack the hero, let dense tables scroll horizontally instead of
+   overflowing, and make the tab/control rows swipe.
+   ============================================================================ */
+@media (max-width: 768px) {
+  html, body { font-size: 14px; }
+
+  /* Respect the notch / home indicator (viewport-fit=cover). */
+  body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+  .topbar { padding-top: calc(8px + env(safe-area-inset-top)); flex-wrap: wrap; }
+  .topbar .status { margin-left: 0; }
+  .live-pill { margin-left: auto; }
+
+  /* Collapse the 12-col grid → single column; every panel spans full width. */
+  main.wrap { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+  main.wrap > * { grid-column: 1 / -1 !important; }
+
+  /* Hero stacks; KPI hero drops below and left-aligns. */
+  #hero { grid-template-columns: 1fr; gap: 12px; }
+  #kpi { grid-row: auto; text-align: left; }
+  .kpi-value { font-size: 24px; }
+
+  /* KPI grid → 2 columns on a phone. */
+  #kpi-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Dense tables: scroll the table itself rather than blow out the layout. */
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+
+  /* Event tabs + movers controls swipe horizontally. */
+  .event-tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+  .event-tab { white-space: nowrap; }
+  .ctrl-row { flex-wrap: wrap; gap: 8px; }
+
+  /* Charts get a workable height on a phone (panes were min 260px each). */
+  .chart-section.composite { min-height: 0; }
+  .composite-pane-block .chart-pane { min-height: 200px; }
+  .chart-section .chart-controls { gap: 8px; }
+
+  /* Source-link pills + watchlist controls wrap nicely. */
+  .panel-title.row { flex-wrap: wrap; gap: 4px; }
+  .src-link-row { margin-left: 0; }
+  .wl-pager { flex-wrap: wrap; }
+}
