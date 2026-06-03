@@ -133,6 +133,7 @@
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
     loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
     loadHeroGapChips(eventId).catch(e => console.error('[gapChips]', e));
+    loadSourceLinks(eventId).catch(e => console.error('[sourceLinks]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
@@ -1994,6 +1995,83 @@
     if (min < 60)  return `${min}m`;
     if (min < 1440) return `${Math.round(min / 60)}h`;
     return `${Math.round(min / 1440)}d`;
+  }
+
+  // ---------- Per-source event URLs (spot-check links on each data tab) ----------
+  // Resolves every source's id + marketplace URL off the canonical aq_event_map
+  // hub via the email-gated get_event_source_links RPC, then stamps a "↗ source"
+  // link into each data tab's header so the operator can click straight through
+  // and spot-check our captured data against the live book. Fire-and-forget;
+  // degrades silently if the RPC isn't applied yet (rpcOrNull returns an error).
+  const _SRC_LINK_TABS = [
+    { pane: 'paneSgListings', label: 'SeatGeek',     url: d => d.sg_url },
+    { pane: 'paneSgSales',    label: 'SeatGeek',     url: d => d.sg_url },
+    { pane: 'paneShListings', label: 'StubHub',      url: d => d.td && d.td.SH },
+    { pane: 'paneGtListings', label: 'GameTime',     url: d => d.td && d.td.GT },
+    { pane: 'paneVdListings', label: 'VividSeats',   url: d => d.td && d.td.VD },
+    { pane: 'paneTpListings', label: 'TickPick',     url: d => d.td && d.td.TP },
+    { pane: 'paneTmListings', label: 'Ticketmaster', url: d => d.td && d.td.TM },
+  ];
+
+  async function loadSourceLinks(eventId) {
+    const res = await rpcOrNull('get_event_source_links', { p_event_id: eventId });
+    if (!res || res.error || !res.data) return;
+    const d = res.data;
+    _SRC_LINK_TABS.forEach(t => attachSrcLink(t.pane, t.label, t.url(d)));
+    // TD Markets aggregates every available source link into one row.
+    attachSrcLinksMulti('paneTdMarkets', d);
+  }
+
+  // First <span> inside a pane's first .panel-title — we append the link there
+  // so it sits inline next to the title text (the .panel-title.row container is
+  // a 2-child space-between flex; appending into the title span avoids breaking
+  // that layout). Returns null when the pane/title isn't present.
+  function paneTitleSpan(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane) return null;
+    const title = pane.querySelector('.panel-title');
+    if (!title) return null;
+    return title.querySelector('span') || title;
+  }
+
+  // Idempotent single "↗ <label>" link in a pane title.
+  function attachSrcLink(paneId, label, url) {
+    if (!url) return;
+    const host = paneTitleSpan(paneId);
+    if (!host) return;
+    let link = host.querySelector('a.src-link[data-single]');
+    if (!link) {
+      link = document.createElement('a');
+      link.className = 'src-link';
+      link.setAttribute('data-single', '1');
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      host.appendChild(link);
+    }
+    link.href = url;
+    link.title = 'Open this event on ' + label + ' — spot-check our captured data against the live book';
+    link.innerHTML = '↗ ' + escapeHtml(label);
+  }
+
+  // All available source links in one row (TD Markets aggregate tab).
+  function attachSrcLinksMulti(paneId, d) {
+    const host = paneTitleSpan(paneId);
+    if (!host) return;
+    const links = [
+      ['SeatGeek', d.sg_url],
+      ['StubHub', d.td && d.td.SH], ['GameTime', d.td && d.td.GT],
+      ['VividSeats', d.td && d.td.VD], ['TickPick', d.td && d.td.TP],
+      ['Ticketmaster', d.td && d.td.TM],
+    ].filter(([, u]) => !!u);
+    let row = host.querySelector('.src-link-row');
+    if (!row) {
+      row = document.createElement('span');
+      row.className = 'src-link-row';
+      host.appendChild(row);
+    }
+    row.innerHTML = links.map(([lbl, u]) =>
+      `<a class="src-link" target="_blank" rel="noopener noreferrer" href="${escapeHtml(u)}" ` +
+      `title="Open on ${escapeHtml(lbl)}">↗ ${escapeHtml(lbl)}</a>`).join('');
   }
 
   // ---------- TD per-source freshness (event_listing_snapshot_daily) ----------
