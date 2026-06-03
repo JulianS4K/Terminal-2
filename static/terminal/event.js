@@ -2863,68 +2863,107 @@
     return /parking|garage|valet|\blot\b|min walk|mi from venue|shuttle|tailgate/i.test(section || '');
   }
 
-  // The map MANIFEST keys sections by full descriptive names ("Lower Level Corner 104",
-  // "Chase Bridges 316", "Floor 2"); our listings store only the trailing token ("104").
-  // Reduce either form to a comparable "tail" — trailing digits + a short letter suffix —
-  // so "Lower Level Corner 104"→"104", "105 WC"→"105wc", our "105WC"→"105wc", "Floor 2"→"2".
-  function _seatmapTail(s) {
-    const str = String(s == null ? '' : s).trim();
-    const m = str.match(/(\d+)\s*([A-Za-z]{0,4})\s*$/);
-    return m ? (m[1] + m[2]).toLowerCase() : str.toLowerCase();
+  // ----- Section → manifest matcher (venue-agnostic; manifest drives everything) -----
+  // The map MANIFEST keys sections by full descriptive names that vary wildly by venue:
+  // clean numeric+suffix ("014A", "320C"), named families ("Home Plate Box 10", "Club
+  // House 22"), or descriptive ("Lower Level Corner 104"). Broker `section` text is messy
+  // and venue-specific ("SEC10", "10", "Clubhouse Box 22", "FL5"). We match each listing
+  // section to a manifest key with a CONFIDENCE-ORDERED tier chain — exact/specific first,
+  // heuristics last and collision-gated — so clean venues resolve early (T1/T2) and never
+  // touch the messy-venue logic (T3/T4). Output is ALWAYS a real manifest key; when unsure
+  // we leave it unmatched (grey, still listed) rather than miscolor. No per-venue code.
+  const _SM_PREMIUM = /suite|club|diamond|dugout|founders|mvp|legend|champion|hall|vista|porch|all\s*star|gold\s*glove|rookie|silver|platinum|party|\bpass\b/i;
+
+  function _smNorm(s) {
+    return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  // Parse a section/key → { num (leading-zeros stripped), suf (≤3-letter suffix), fam (family tokens) }.
+  function _smParse(s) {
+    const n = _smNorm(s);
+    const m = n.match(/(\d+)\s*([a-z]{0,3})\s*$/);
+    if (!m) return { num: null, suf: '', fam: n };
+    const num = String(parseInt(m[1], 10));   // "014" → "14"
+    const suf = m[2] || '';
+    const fam = n.slice(0, m.index)
+      .replace(/\b(sec|section|ga)\b/g, ' ')   // generic bowl markers carry no family
+      .replace(/\bclubhouse\b/g, 'club house') // align broker abbrev → manifest vocab
+      .replace(/\s+/g, ' ').trim();
+    return { num, suf, fam };
   }
 
-  // Fetch the venue/config manifest and build tail→fullKey. The library matches
-  // ticketGroups' tevo_section_name EXACTLY against these keys (lowercased), so we must
-  // hand it the full names, not the bare numbers. A tail can collide across families
-  // (e.g. "2" → both "Floor 2" and "Event Level Suites 2"); on collision we prefer the
-  // "Floor N" key (individual floor/courtside seats are the common per-seat resale case —
-  // numeric rows + 2-seat splits — whereas suites sell as whole units). Other collision
-  // types are left unmatched (uncolored, but still listed). Returns Map or null on failure.
+  // Build the per-venue manifest index (cached). Returns { byNumSuf, byNum, cache } or null.
   async function _seatmapBuildSectionRemap(venueId, configurationId) {
     try {
       const resp = await fetch(`${SEATMAP_MAPS_DOMAIN}/${venueId}/${configurationId}/manifest.json`);
       if (!resp.ok) return null;
       const manifest = await resp.json();
       const sections = (manifest && manifest.sections) || {};
-      const byTail = new Map();
+      const byNumSuf = new Map(), byNum = new Map();
       Object.keys(sections).forEach(k => {
-        const t = _seatmapTail(k);
-        if (!t) return;
-        if (!byTail.has(t)) byTail.set(t, []);
-        byTail.get(t).push(k);
+        const p = _smParse(k);
+        if (p.num == null) return;             // named-only keys (e.g. "Bullpen Zone") — unindexed
+        const rec = { key: k, fam: p.fam, suf: p.suf };
+        const ek = p.num + '|' + p.suf;
+        (byNumSuf.get(ek) || byNumSuf.set(ek, []).get(ek)).push(rec);
+        (byNum.get(p.num)  || byNum.set(p.num, []).get(p.num)).push(rec);
       });
-      const tailToKey = new Map();
-      byTail.forEach((keys, t) => {
-        if (keys.length === 1) { tailToKey.set(t, keys[0]); return; }
-        const floor = keys.find(k => /^floor\b/i.test(String(k).trim()));
-        if (floor) tailToKey.set(t, floor);   // else leave unmatched — don't guess
-      });
-      return tailToKey;
+      return { byNumSuf, byNum, cache: new Map() };
     } catch (_) { return null; }
   }
 
-  // Collapse listing rows → one ticketGroup per section at its lowest retail floor (what
-  // the map colors by), remapping our bare section token → the manifest's full section
-  // name via `remap`. With a manifest, unmatched/ambiguous tails are skipped (left grey);
-  // without one (fetch failed), we fall back to passing the bare token.
-  function _seatmapTicketGroups(rows, remap) {
-    const floorByTail = new Map();
+  // T3 family align → T4 bowl-default (prefer non-premium). Returns a key or null (don't guess).
+  function _smPick(parsed, cands) {
+    const lt = parsed.fam ? parsed.fam.split(' ').filter(Boolean) : [];
+    if (lt.length) {
+      let best = null, bs = 0;
+      for (const c of cands) {
+        const s = c.fam.split(' ').filter(t => lt.includes(t)).length;
+        if (s > bs) { bs = s; best = c; }
+      }
+      if (best) return best.key;               // T3
+    }
+    const bowl = cands.filter(c => !_SM_PREMIUM.test(c.key));
+    if (bowl.length === 1) return bowl[0].key; // T4 — unique non-premium = the seating bowl
+    return null;                               // still ambiguous → leave grey
+  }
+
+  // Match one listing section → manifest key (cached per venue). Tier chain:
+  // T1/T2 exact (num+suffix) unique → T2b suffixed-but-only-numeric → T3 family → T4 bowl.
+  function _seatmapMatchSection(section, idx) {
+    if (!idx) return null;
+    if (idx.cache.has(section)) return idx.cache.get(section);
+    const p = _smParse(section);
+    let key = null;
+    if (p.num != null) {
+      const exact = idx.byNumSuf.get(p.num + '|' + p.suf) || [];
+      if (exact.length === 1) key = exact[0].key;             // T1/T2 — clean venues land here
+      else if (exact.length > 1) key = _smPick(p, exact);     // same num+suf across families
+      else {
+        const numOnly = idx.byNum.get(p.num) || [];           // no exact suffix match
+        if (numOnly.length === 1) key = numOnly[0].key;
+        else if (numOnly.length > 1) key = _smPick(p, numOnly);
+      }
+    }
+    idx.cache.set(section, key);
+    return key;
+  }
+
+  // Collapse listing rows → one ticketGroup per matched manifest section at its lowest floor
+  // (what the map colors by). Unmatched sections are skipped (grey) but still appear in the
+  // listing table. No manifest (fetch failed) → fall back to the raw section as the key.
+  function _seatmapTicketGroups(rows, idx) {
+    const floorByKey = new Map();
     rows.forEach(r => {
       const sec = (r.section || '').trim();
       if (!sec || _seatmapIsParking(sec)) return;
       const price = Number(r.retail_price);
       if (!isFinite(price) || price <= 0) return;
-      const t = _seatmapTail(sec);
-      const prev = floorByTail.get(t);
-      if (prev == null || price < prev) floorByTail.set(t, price);
+      const key = idx ? _seatmapMatchSection(sec, idx) : sec;
+      if (!key) return;
+      const prev = floorByKey.get(key);
+      if (prev == null || price < prev) floorByKey.set(key, price);
     });
-    const out = [];
-    floorByTail.forEach((price, tail) => {
-      const name = remap ? remap.get(tail) : tail;
-      if (remap && !name) return;   // unmatched / ambiguous → skip (stays grey, still listed)
-      out.push({ tevo_section_name: name || tail, retail_price: price });
-    });
-    return out;
+    return Array.from(floorByKey, ([key, price]) => ({ tevo_section_name: key, retail_price: price }));
   }
 
   async function loadSeatmap(eventId) {
@@ -3080,27 +3119,32 @@
     const meta = document.getElementById('seatmapMeta');
     if (!meta) return;
     const rows = _seatmapRowsBySource[_seatmapSource] || [];
-    const tails = new Set(rows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => _seatmapTail(r.section)));
+    const sections = new Set(rows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => r.section));
     const mapped = _seatmapRemap
-      ? `${mappedCount}/${tails.size} sections on map`
+      ? `${mappedCount}/${sections.size} sections on map`
       : `${mappedCount} sections (manifest unavailable — no coloring)`;
     meta.textContent = `${_seatmapVenueLabel} · ${_seatmapSrcLabel(_seatmapSource)} · ${mapped}`;
   }
 
-  // Renders the CURRENT source's listings; clicking a map section filters by tail
-  // (library returns full manifest names, our rows carry bare tokens → compare via tail).
+  // Renders the CURRENT source's listings; clicking a map section filters by matched key
+  // (the library returns full manifest names — we match each row's section the same way).
   function renderSeatmapList() {
     const body = document.getElementById('seatmapListBody');
     if (!body) return;
-    const selTails = _seatmapSelected.map(_seatmapTail);
+    const sel = _seatmapSelected.map(s => String(s).toLowerCase());
     const all = _seatmapRowsBySource[_seatmapSource] || [];
     let rows = all.filter(r => r.section && !_seatmapIsParking(r.section));
-    if (selTails.length) rows = rows.filter(r => selTails.includes(_seatmapTail(r.section)));
+    if (sel.length) {
+      rows = rows.filter(r => {
+        const k = _seatmapMatchSection(r.section, _seatmapRemap);
+        return k && sel.includes(String(k).toLowerCase());
+      });
+    }
     rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
 
     if (!rows.length) {
       const src = _seatmapSrcLabel(_seatmapSource);
-      body.innerHTML = `<div class="empty">${selTails.length ? `No ${escapeHtml(src)} listings in the selected section(s).` : `No ${escapeHtml(src)} listings for this event.`}</div>`;
+      body.innerHTML = `<div class="empty">${sel.length ? `No ${escapeHtml(src)} listings in the selected section(s).` : `No ${escapeHtml(src)} listings for this event.`}</div>`;
       return;
     }
     const host = document.createElement('div');
