@@ -2890,8 +2890,8 @@
   // those too (a real section like "Terrace 12" has the number LAST, so it's safe).
   function _seatmapIsParking(section) {
     const s = section || '';
-    if (/parking|garage|valet|\blot\b|min walk|mi from venue|shuttle|tailgate/i.test(s)) return true;
-    if (/^\s*\d[\d\s.,/&–-]*\s+\S.*\b(st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|pkwy|parkway|hwy|highway|ln|lane|ct|court|pl|place|plz|plaza|cir|circle|way)\b\.?/i.test(s)) return true;
+    if (/parking|garage|valet|\blot\b|\blot[\s.\-]?[a-z0-9]|min walk|mi from venue|shuttle|tailgate/i.test(s)) return true;
+    if (/^\s*\d[\d\s.,/&–-]*\s+\S.*\b(st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|pkwy|pkway|parkway|hwy|highway|ln|lane|ct|court|pl|place|plz|plaza|cir|circle|way)\b\.?/i.test(s)) return true;
     // number + compass direction + word = a street address even without a street suffix
     // ("840 N. Broadway", "61 E Elizabeth", "516 N. 2nd Ave"). Real sections aren't shaped this way.
     if (/^\s*\d+\s+[nsew]\b\.?\s+[a-z0-9]/i.test(s)) return true;
