@@ -1233,6 +1233,12 @@
     // singles, no "4+" when no listing has a split ≥ 4.
     let splitsAvailable = [];
     let event = null;
+    // Interactive seat map mounts once per event (the build refetches the
+    // manifest + spins up the bundled React tree — expensive). applyEventResponse
+    // runs on every filter change, so we guard against re-mounting; instead we
+    // refresh the existing map's prices when listings shift (see maybeMountSeatmap).
+    let seatmapMounted = false;
+    let seatmapApi = null;
     let zonesAvailable = [];   // populated from /api/store/events/{id}/zones
     let resolvedShare = null;  // populated when arriving via /s/{id}
     let suppressApply = false; // true while we paint inputs programmatically
@@ -1899,6 +1905,68 @@
       }
     }
 
+    // Sets the section chips matching `sections` to active and re-fetches.
+    // Used by the interactive seat map's onSelect: clicking a section on the
+    // map toggles the same chip a manual click would. Sections the map echoes
+    // back that have no chip yet are appended (active) so the selection still
+    // takes effect. Empty selection clears all section chips (show-all).
+    function selectSectionsFromMap(sections) {
+      const want = new Set((sections || []).map((s) => String(s).trim()).filter(Boolean));
+      // Make sure every wanted section has a chip; renderSectionChips already
+      // includes active sections in its universe, so seed activeSet via the
+      // existing chips plus any new ones.
+      const have = new Set($$(".filter-chip", sectionChipsEl).map((c) => c.dataset.value));
+      const missing = [...want].filter((s) => !have.has(s));
+      if (missing.length) {
+        // Re-render with the new sections folded into the active set so they
+        // render as real chips (keeps multi-select + clear working).
+        renderSectionChips([...want]);
+      } else {
+        for (const chip of $$(".filter-chip", sectionChipsEl)) {
+          chip.classList.toggle("on", want.has(chip.dataset.value));
+        }
+      }
+      scheduleApply();
+    }
+
+    // Mount the interactive TEvo seat map into #seatmapHost, once per event.
+    // No-op when the widget/bundle didn't load, when venue/config are missing,
+    // or when already mounted. On a successful build the static seating-chart
+    // image + any "unavailable" placeholder are hidden in favor of the map.
+    function maybeMountSeatmap() {
+      if (seatmapMounted) return;
+      if (!window.StoreSeatmap || typeof window.StoreSeatmap.mount !== "function") return;
+      const host = $("#seatmapHost");
+      const venueId = event && event.venue && event.venue.id;
+      const configId = event && event.configuration && event.configuration.id;
+      if (!host || venueId == null || configId == null) return;
+      seatmapMounted = true; // claim the slot up-front so re-renders don't race
+      host.hidden = false;
+      window.StoreSeatmap.mount({
+        host,
+        venueId,
+        configurationId: configId,
+        listings: allListings,
+        onSelect: selectSectionsFromMap,
+      }).then((result) => {
+        if (result && result.api) {
+          // Map built — hide the static fallback so we don't show both.
+          seatmapApi = result.api;
+          seatMap.style.display = "none";
+          const ph = host.parentElement && host.parentElement.querySelector(".map-placeholder");
+          if (ph) ph.remove();
+        } else {
+          // No published map (or build failed) — drop the empty host and let
+          // the static image/placeholder stand. Allow a retry on a later event.
+          host.hidden = true;
+          seatmapMounted = false;
+        }
+      }).catch(() => {
+        host.hidden = true;
+        seatmapMounted = false;
+      });
+    }
+
     // ---- Apply filter changes: read UI -> URL -> fetch -> render ----
     let applyTimer = null;
     function scheduleApply() {
@@ -2160,6 +2228,12 @@
           mapHost.append(ph);
         }
       }
+
+      // Interactive seat map — replaces the static image when the venue +
+      // configuration resolve to a published TEvo map. Mounts once (the build
+      // is heavy); on success the static <img>/placeholder is hidden. Failure
+      // is silent — the static fallback above stays put.
+      maybeMountSeatmap();
 
       const freshness = $("#freshness");
       if (freshness) {
