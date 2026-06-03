@@ -55,6 +55,7 @@
       <button class="event-tab" data-tab="sg"         role="tab" aria-selected="false">SG Activity</button>
       <button class="event-tab" data-tab="competing"  role="tab" aria-selected="false">Competing Events</button>
       <button class="event-tab active" data-tab="market" role="tab" aria-selected="true">Market Carpet <span class="tab-count" id="tabCountVenueMarket"></span></button>
+      <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">🔔 Alerts</button>
     </nav>
 
     <!-- Overview pane: rollup KPIs only -->
@@ -157,12 +158,17 @@
       </section>
     </div>
 
+    <div class="tab-pane" id="vPaneAlerts" role="tabpanel" hidden>
+      <section class="panel"><div class="alerts-root"><div class="empty">select a tab to load</div></div></section>
+    </div>
+
   </main>
 
   <script src="lib/supabase.js"></script>
   <script src="auth.js"></script>
   <script src="app.js"></script>
   <script src="nav.js"></script>
+  <script src="alerts.js"></script>
   <script src="venue.js"></script>
 </body>
 </html>

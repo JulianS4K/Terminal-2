@@ -2549,7 +2549,7 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tp-listings': false, 'tm-listings': false,
-    'sg-sales': false, 'our-orders': false,
+    'sg-sales': false, 'our-orders': false, 'alerts': false,
   } };
 
   function wireTabs(eventId) {
@@ -2600,6 +2600,10 @@
           loadCrossBrokerFull(eventId),
         ]);
         updateOurOrdersTabCount();
+      } else if (tabId === 'alerts' && !_tabState.loaded['alerts']) {
+        _tabState.loaded['alerts'] = true;
+        const label = document.getElementById('evTitle')?.textContent || '';
+        window.TerminalAlerts?.mount('event', eventId, label, document.querySelector('#paneAlerts .alerts-root'));
       }
     });
   }
@@ -2623,6 +2627,7 @@
       'td-markets':   'paneTdMarkets',
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
+      'alerts':       'paneAlerts',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
