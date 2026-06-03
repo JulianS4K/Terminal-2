@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md
 
-> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-01 (D0) — non-SG AQ→TEvo bridge inventoried: §2.5 +`aq_tevo_search_attempts` (+`aq_tevo_search_candidates` RPC), §5.4 +`aq_to_tevo_search_bridge_13h` cron (→68 active), §6 +`aq-to-tevo-search-bridge` edge fn. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-01 (D0) — non-SG AQ→TEvo bridge inventoried: §2.5 +`aq_tevo_search_attempts` (+`aq_tevo_search_candidates` RPC), §5.4 +`aq_to_tevo_search_bridge_13h` cron (→68 active), §6 +`aq-to-tevo-search-bridge` edge fn; v1.2.1 2026-06-02 (D0) — §6 reconciled vs deployed (`list_edge_functions`): removed bogus `sg-collect` row, added 4 missing live fns (`sg-to-tevo-search-bridge`, `tevo-owned-events-scan`, `tevo-blindspot-discovery`, `exos-mail-drain`), count → **29 active**. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Also the canonical home for the event-classification taxonomy + cross-cutting data RULES (RULE 0/1/2), absorbed from the retired `SCHEMA.md` — see §2.15–§2.17. Updated 2026-05-28 (absorbed SCHEMA.md taxonomy+RULES into §2.15–§2.17; performer/venue cross-source mapping chains + missing entity_performer_map / entity_venue_map / aq_performer_map / aq_venue_map / cross_source_venue_map entries added to §2.5) | prior: 2026-05-17 (main HEAD `e04387e`+post-#191).**
 
@@ -678,7 +678,7 @@ Also modified: `sg_broker_listings_process` advances `last_polled_listings_at` *
 
 ---
 
-## 6. Edge functions — 26 active
+## 6. Edge functions — 29 active
 
 Hosted in Supabase; deployed via `supabase functions deploy`. Source under `supabase/functions/<slug>/index.ts`.
 
@@ -686,7 +686,6 @@ Hosted in Supabase; deployed via `supabase functions deploy`. Source under `supa
 |---|---|---|---|---|
 | `collect` | false | Generic data-collection multiplexer (initial pull on signup) | A1 | no |
 | `collect-listings` | false | TEvo listings pull per time window | A1 | yes (5 windowed crons 108–112) |
-| `sg-collect` (path-style? — check) | n/a | n/a | — | (covered by `sg_listings_*` SQL crons) |
 | `espn-collect` | false | ESPN scoreboard pull | C1 | yes (113) |
 | `espn-rosters` | false | ESPN team roster pull | C1 | on-demand |
 | `crawl-espn-team-assets` | false | ESPN team logo/branding crawler | C1 | yes (107) |
@@ -709,9 +708,13 @@ Hosted in Supabase; deployed via `supabase functions deploy`. Source under `supa
 | `probe-seating-charts` | true | Diagnostic | A1 | dev only |
 | `probe-espn-data` | true | Diagnostic | A1 | dev only |
 | `why-noaa-weather-alerts` | true | Why-this-event helper for NOAA alerts | C1 | on-demand |
+| `sg-to-tevo-search-bridge` | true (+ body `requireCronSecret`) | **SG→TEvo cold-search** (SG-only events): searches TEvo `/v9/events`, fills `sg_events_canonical.tevo_event_id` + `seatgeek_event_xref`. owned_first prioritizes `seatgeek_seller_listings`. Pair of `aq-to-tevo-search-bridge`. | A1/D0 | yes (`sg_to_tevo_search_bridge_30min`) |
 | `aq-to-tevo-search-bridge` | true (+ body `requireCronSecret`) | **Non-SG AQ→TEvo cold-search**: searches TEvo `/v9/events` for TM/Vivid/SH `aq_event_map` rows w/ no `sg_event_id`, fills `tevo_event_id`. Server-side never-tried-first candidate selector; venue-signal guard. Pair of `sg-to-tevo-search-bridge`. | D0 | yes (`aq_to_tevo_search_bridge_13h`, jobid 336) |
+| `tevo-owned-events-scan` | true | Scans TEvo for broker-owned events (feeds the owned-priority surface). | A1 | on-demand |
+| `tevo-blindspot-discovery` | false | TEvo blind-spot discovery — surfaces events present upstream but not locally tracked. | A1 | yes |
+| `exos-mail-drain` | false | Drains `exos_mail` `status='pending'` → sends D4 transactional mail. | D4 | yes |
 
-**Anon-callable (verify_jwt=false)**: `collect`, `collect-listings`, `diag-ticket-groups`, `sms-bot`, `web-bot`, `bulk-add-watchlist`, `probe-tevo-category`, `seed-home-venues`, `espn-collect`, `espn-rosters`, `wiki-collect`, `crawl-espn-team-assets`. B1 has these on the security-review surface (some are cron-only and should not be reachable from anon if at all possible).
+**Anon-callable (verify_jwt=false)**: `collect`, `collect-listings`, `diag-ticket-groups`, `sms-bot`, `web-bot`, `bulk-add-watchlist`, `probe-tevo-category`, `seed-home-venues`, `espn-collect`, `espn-rosters`, `wiki-collect`, `crawl-espn-team-assets`, `tevo-blindspot-discovery`, `exos-mail-drain`. B1 has these on the security-review surface (some are cron-only and should not be reachable from anon if at all possible). NB: the two cold-search bridges (`sg-/aq-to-tevo-search-bridge`) and `exos-mail-drain` add body-level `requireCronSecret`, so platform `verify_jwt` is not their only gate (PROJECT_BIBLE §1 rule #7).
 
 ---
 
