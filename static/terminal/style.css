@@ -1205,6 +1205,41 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .src-link-row { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
 .src-link-row .src-link { margin-left: 0; }
 
+/* Track button (event hero) — per-user watchlist toggle. */
+.track-btn {
+  margin-top: 8px;
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  color: var(--accent); background: transparent;
+  border: 1px solid var(--accent); border-radius: 6px;
+  padding: 5px 12px; cursor: pointer; transition: background 80ms ease, color 80ms ease;
+}
+.track-btn:hover { background: rgba(251, 191, 36, 0.12); }
+.track-btn.on { background: var(--accent); color: #0a0a0a; }
+.track-btn[disabled] { opacity: 0.5; cursor: default; }
+
+/* Watchlist panel (home — first table). */
+#watchlist-panel { background: var(--panel); border: 1px solid var(--line); padding: 12px; }
+#watchlist-panel .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.wl-alert-btn, .wl-remove-btn {
+  background: transparent; border: 1px solid var(--line); border-radius: 4px;
+  cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 6px; color: var(--text);
+}
+.wl-alert-btn:hover, .wl-remove-btn:hover { border-color: var(--accent); }
+.wl-alert-btn.off { opacity: 0.55; }
+.wl-remove-btn { color: var(--muted); }
+.wl-remove-btn:hover { color: var(--neg); border-color: var(--neg); }
+.wl-pager {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-2);
+}
+.wl-page-btn {
+  font-family: var(--mono); font-size: 11px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
+  padding: 3px 10px; cursor: pointer;
+}
+.wl-page-btn:hover:not([disabled]) { border-color: var(--accent); }
+.wl-page-btn[disabled] { opacity: 0.4; cursor: default; }
+
 /* Splits panel */
 #splits .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
 .splits-tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }

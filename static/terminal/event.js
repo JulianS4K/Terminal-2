@@ -134,6 +134,7 @@
     loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
     loadHeroGapChips(eventId).catch(e => console.error('[gapChips]', e));
     loadSourceLinks(eventId).catch(e => console.error('[sourceLinks]', e));
+    wireTrackButton(eventId).catch(e => console.error('[track]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
@@ -1995,6 +1996,46 @@
     if (min < 60)  return `${min}m`;
     if (min < 1440) return `${Math.round(min / 60)}h`;
     return `${Math.round(min / 1440)}d`;
+  }
+
+  // ---------- Track button (per-user watchlist) ----------
+  // The ★ toggle adds/removes this event from the signed-in user's watchlist
+  // (event_watchlist_set; identity = their Google-OAuth email server-side). On
+  // load we read the user's list once to reflect current state. Hidden entirely
+  // if the watchlist RPCs aren't applied yet.
+  async function wireTrackButton(eventId) {
+    const btn = document.getElementById('trackBtn');
+    if (!btn) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+
+    let tracked = false;
+    const listRes = await rpcOrNull('event_watchlist_list', {});
+    if (listRes.error) {
+      // RPC not applied yet → leave the button hidden (no half-feature).
+      if (/does not exist/i.test(listRes.error.message || '') || listRes.error.code === '42883') return;
+    } else {
+      const items = (listRes.data && listRes.data.items) || [];
+      tracked = items.some(it => String(it.tevo_event_id) === String(eventId));
+    }
+    paintTrackBtn(btn, tracked);
+    btn.hidden = false;
+
+    btn.addEventListener('click', async () => {
+      const next = !(btn.getAttribute('aria-pressed') === 'true');
+      btn.disabled = true;
+      const res = await rpcOrNull('event_watchlist_set', { p_event_id: eventId, p_on: next });
+      btn.disabled = false;
+      if (res.error) { console.error('[track] set', res.error); T.setStatus('Track failed', 'err'); return; }
+      paintTrackBtn(btn, next);
+    });
+  }
+
+  function paintTrackBtn(btn, tracked) {
+    btn.setAttribute('aria-pressed', tracked ? 'true' : 'false');
+    btn.classList.toggle('on', tracked);
+    btn.textContent = tracked ? '★ Tracking' : '☆ Track';
+    btn.title = tracked ? 'On your watchlist — click to remove' : 'Track this event on your watchlist';
   }
 
   // ---------- Per-source event URLs (spot-check links on each data tab) ----------

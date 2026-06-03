@@ -33,9 +33,129 @@
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireMoversControls();
+    // Watchlist is the first table — the user's own tracked events. Independent
+    // RPC, runs in parallel with movers/blind-spots.
+    loadWatchlist().catch(e => console.error('[watchlist]', e));
     // Blind spots fires its own RPC, independent of movers — runs in parallel.
     renderBlindSpots().catch(e => console.error('[blindSpots]', e));
     load();
+  }
+
+  // ---------- Watchlist (first table; max 50/page, client-paged) ----------
+  const WL_PAGE_SIZE = 50;
+  let _wlItems = [];
+  let _wlPage = 0;
+
+  async function loadWatchlist() {
+    const body = document.getElementById('watchlistBody');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    const res = await Auth.client.rpc('event_watchlist_list');
+    if (res.error) {
+      // RPC not applied yet → honest empty state, no crash.
+      if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+        if (body) body.innerHTML = '<div class="empty">watchlist not enabled yet</div>';
+        return;
+      }
+      console.error('[watchlist] rpc', res.error);
+      if (body) body.innerHTML = '<div class="empty">failed to load watchlist</div>';
+      return;
+    }
+    _wlItems = (res.data && res.data.items) || [];
+    _wlPage = 0;
+    renderWatchlistPage();
+  }
+
+  function renderWatchlistPage() {
+    const body = document.getElementById('watchlistBody');
+    const countEl = document.getElementById('watchlistCount');
+    const pager = document.getElementById('watchlistPager');
+    if (!body) return;
+
+    if (countEl) countEl.textContent = _wlItems.length ? `${_wlItems.length} events` : '';
+    if (!_wlItems.length) {
+      body.innerHTML = '<div class="empty">No tracked events yet — open an event and tap ★ Track to add it.</div>';
+      if (pager) pager.hidden = true;
+      return;
+    }
+
+    const pages = Math.ceil(_wlItems.length / WL_PAGE_SIZE);
+    _wlPage = Math.max(0, Math.min(_wlPage, pages - 1));
+    const slice = _wlItems.slice(_wlPage * WL_PAGE_SIZE, (_wlPage + 1) * WL_PAGE_SIZE);
+
+    const tbl = document.createElement('table');
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Event</th>
+        <th class="num">T-days</th>
+        <th>Venue</th>
+        <th class="num">Alerts</th>
+        <th class="num"></th>
+      </tr></thead>
+      <tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    slice.forEach(it => {
+      const d = T.daysUntil(it.occurs_at_local);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>
+            ${it.performer ? `<div class="muted small">${escapeHtml(it.performer)}</div>` : ''}</td>
+        <td class="num">${d === null ? '—' : d}</td>
+        <td class="muted small">${escapeHtml(it.venue_name || it.venue_location || '—')}</td>
+        <td class="num">
+          <button class="wl-alert-btn ${it.alert_enabled ? 'on' : 'off'}" data-id="${it.tevo_event_id}"
+                  title="${it.alert_enabled ? 'Alerts on — click to mute' : 'Alerts muted — click to enable'}">
+            ${it.alert_enabled ? '🔔' : '🔕'}</button>
+        </td>
+        <td class="num"><button class="wl-remove-btn" data-id="${it.tevo_event_id}" title="Remove from watchlist">✕</button></td>`;
+      tb.appendChild(tr);
+    });
+    body.innerHTML = '';
+    body.appendChild(tbl);
+    wireWatchlistRowActions(body);
+    renderWatchlistPager(pages);
+  }
+
+  function renderWatchlistPager(pages) {
+    const pager = document.getElementById('watchlistPager');
+    if (!pager) return;
+    if (pages <= 1) { pager.hidden = true; pager.innerHTML = ''; return; }
+    pager.hidden = false;
+    pager.innerHTML =
+      `<button class="wl-page-btn" data-dir="-1" ${_wlPage === 0 ? 'disabled' : ''}>‹ Prev</button>` +
+      `<span class="muted small">Page ${_wlPage + 1} of ${pages} · showing ${WL_PAGE_SIZE}/page</span>` +
+      `<button class="wl-page-btn" data-dir="1" ${_wlPage >= pages - 1 ? 'disabled' : ''}>Next ›</button>`;
+    pager.querySelectorAll('.wl-page-btn').forEach(b =>
+      b.addEventListener('click', () => { _wlPage += parseInt(b.getAttribute('data-dir'), 10); renderWatchlistPage(); }));
+  }
+
+  function wireWatchlistRowActions(scope) {
+    const Auth = window.TerminalAuth;
+    scope.querySelectorAll('.wl-remove-btn').forEach(b =>
+      b.addEventListener('click', async () => {
+        const id = parseInt(b.getAttribute('data-id'), 10);
+        b.disabled = true;
+        const res = await Auth.client.rpc('event_watchlist_set', { p_event_id: id, p_on: false });
+        if (res.error) { b.disabled = false; console.error('[watchlist] remove', res.error); return; }
+        _wlItems = _wlItems.filter(x => x.tevo_event_id !== id);
+        renderWatchlistPage();
+      }));
+    scope.querySelectorAll('.wl-alert-btn').forEach(b =>
+      b.addEventListener('click', async () => {
+        const id = parseInt(b.getAttribute('data-id'), 10);
+        const item = _wlItems.find(x => x.tevo_event_id === id);
+        if (!item) return;
+        const next = !item.alert_enabled;
+        b.disabled = true;
+        const res = await Auth.client.rpc('event_watchlist_set_alert', { p_event_id: id, p_on: next });
+        b.disabled = false;
+        if (res.error) { console.error('[watchlist] alert', res.error); return; }
+        item.alert_enabled = next;
+        renderWatchlistPage();
+      }));
   }
 
   // ---------- Path-C v2 movers load ----------
