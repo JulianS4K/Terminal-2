@@ -2877,18 +2877,36 @@
   function _smNorm(s) {
     return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
   }
-  // Parse a section/key → { num (leading-zeros stripped), suf (≤3-letter suffix), fam (family tokens) }.
+  // Zone abbreviations brokers glue to a section number (esp. baseball): the manifest
+  // spells these out as family words, so we expand them to align. Multi-token where a
+  // level spans sub-families (Dodger field = Field Box / Infield Box / Preferred Field —
+  // all carry "field" or "box"). Venue-agnostic: an expansion only helps when that
+  // venue's manifest actually has the family; otherwise it's a harmless no-op.
+  const SEATMAP_ZONES = {
+    fd: 'field box', rs: 'reserve', lg: 'loge box', td: 'top deck',
+    dg: 'dugout', pl: 'pavilion', pr: 'pavilion', bl: 'baseline', mvp: 'mvp',
+  };
+  // Parse a section/key → { num (leading-zeros stripped), suf (sub-section letter), fam }.
+  // num = the section number; suf = a single A-H sub-section letter glued to the number
+  // (Yankee "117A"≠"117B"); fam = remaining words with zone codes expanded and generic
+  // markers (sec/section/ga) dropped. A trailing zone code (e.g. "12FD"→field) is treated
+  // as FAMILY, not a suffix — distinguished from a real suffix by "<digit><single a-h>$".
   function _smParse(s) {
     const n = _smNorm(s);
-    const m = n.match(/(\d+)\s*([a-z]{0,3})\s*$/);
-    if (!m) return { num: null, suf: '', fam: n };
-    const num = String(parseInt(m[1], 10));   // "014" → "14"
-    const suf = m[2] || '';
-    const fam = n.slice(0, m.index)
-      .replace(/\b(sec|section|ga)\b/g, ' ')   // generic bowl markers carry no family
-      .replace(/\bclubhouse\b/g, 'club house') // align broker abbrev → manifest vocab
-      .replace(/\s+/g, ' ').trim();
-    return { num, suf, fam };
+    const numM = n.match(/\d+/);
+    if (!numM) return { num: null, suf: '', fam: n };
+    const num = String(parseInt(numM[0], 10));      // first digit run; "014" → "14"
+    const sufM = n.match(/\d([a-h])$/);             // digit directly + one a-h letter = sub-section
+    const suf = sufM ? sufM[1] : '';
+    const nf = suf ? n.replace(/([a-h])$/, '') : n;
+    const fam = [];
+    (nf.match(/[a-z]+/g) || []).forEach(t => {
+      if (SEATMAP_ZONES[t]) fam.push(...SEATMAP_ZONES[t].split(' '));
+      else if (t === 'clubhouse') fam.push('club', 'house');
+      else if (/^(sec|section|ga)$/.test(t)) { /* generic — carries no family */ }
+      else fam.push(t);
+    });
+    return { num, suf, fam: fam.join(' ') };
   }
 
   // Build the per-venue manifest index (cached). Returns { byNumSuf, byNum, cache } or null.
