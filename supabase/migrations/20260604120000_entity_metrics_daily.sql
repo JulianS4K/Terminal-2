@@ -122,12 +122,23 @@ BEGIN
            d.*
     FROM public.events e
     CROSS JOIN LATERAL unnest(e.performer_ids) AS u(pid)
-    JOIN public.v_canonical_performer cp ON cp.tevo_performer_id = u.pid
+    -- dedupe v_canonical_performer to ONE row per performer: the view can emit
+    -- >1 row for a tevo_performer_id (differing name / what_event_type), which
+    -- would both split the 'all' group (duplicate PK) AND fan-out the join
+    -- (double-counting inventory sums). Prefer the row with a non-null type.
+    JOIN (
+      SELECT DISTINCT ON (tevo_performer_id)
+             tevo_performer_id, tevo_performer_name, what_event_type, home_venue_ids
+      FROM public.v_canonical_performer
+      ORDER BY tevo_performer_id, what_event_type NULLS LAST
+    ) cp ON cp.tevo_performer_id = u.pid
     JOIN _eld d ON d.event_id = e.id
   ),
   rolled AS (
-    -- 'all' split: every performer, every event
-    SELECT performer_id, performer_name, what_event_type, 'all'::text AS split,
+    -- 'all' split: every performer, every event (group by id only — name/type are
+    -- functionally dependent post-dedupe; min() keeps one row per performer)
+    SELECT performer_id, min(performer_name) AS performer_name,
+           min(what_event_type) AS what_event_type, 'all'::text AS split,
            count(DISTINCT event_id)::int                                              AS event_count,
            sum(evo_tickets_count)::int                                                AS evo_tickets_total,
            sum(evo_owned_tickets)::int                                                AS evo_owned_tickets_total,
@@ -140,10 +151,10 @@ BEGIN
            percentile_cont(0.9) WITHIN GROUP (ORDER BY amalgam_median)                AS price_p90,
            sum(coalesce(evo_owned_median, evo_retail_median) * evo_owned_tickets)     AS owned_book_notional
     FROM pe
-    GROUP BY performer_id, performer_name, what_event_type
+    GROUP BY performer_id
     UNION ALL
     -- 'home'/'away' splits: sports performers only
-    SELECT performer_id, performer_name, what_event_type, ha,
+    SELECT performer_id, min(performer_name), min(what_event_type), ha,
            count(DISTINCT event_id)::int,
            sum(evo_tickets_count)::int, sum(evo_owned_tickets)::int,
            sum(sg_all_tickets)::int,    sum(sg_owned_tickets)::int,
@@ -153,7 +164,7 @@ BEGIN
            sum(coalesce(evo_owned_median, evo_retail_median) * evo_owned_tickets)
     FROM pe
     WHERE ha IS NOT NULL
-    GROUP BY performer_id, performer_name, what_event_type, ha
+    GROUP BY performer_id, ha
   )
   INSERT INTO public.performer_metrics_daily
     (performer_id, snapshot_date, split, performer_name, what_event_type, event_count,
