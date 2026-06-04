@@ -2058,7 +2058,7 @@
     if (!body) return;
     const Auth = window.TerminalAuth;
     const email = (Auth && Auth.getEmail && Auth.getEmail()) || '';
-    let tracked = false, alertOn = false;
+    let tracked = false, alertOn = false, cadence = 'instant';
     const res = await rpcOrNull('event_watchlist_list', {});
     if (_wlRpcMissing(res)) {
       body.innerHTML = '<div class="empty">Watchlist not enabled yet (RPC pending apply).</div>';
@@ -2068,17 +2068,27 @@
       const me = ((res.data && res.data.items) || []).find(it => String(it.tevo_event_id) === String(eventId));
       tracked = !!me;
       alertOn = me ? me.alert_enabled !== false : false;
+      cadence = (me && me.alert_cadence) || 'instant';
     }
     body.innerHTML =
       '<div class="alerts-ctl">' +
         `<button id="alTrackBtn" class="track-btn ${tracked ? 'on' : ''}">${tracked ? '★ Tracking' : '☆ Track'}</button>` +
         `<button id="alAlertBtn" class="wl-alert-btn ${alertOn ? 'on' : 'off'}" ${tracked ? '' : 'disabled'} title="Mute / unmute alerts for this event">${alertOn ? '🔔 Alerts on' : '🔕 Alerts off'}</button>` +
+        `<label class="al-cadence">delivery&nbsp;` +
+          `<select id="alCadence" ${tracked && alertOn ? '' : 'disabled'} title="How often you're emailed about this event">` +
+            `<option value="instant">Instant</option>` +
+            `<option value="hourly">Hourly summary</option>` +
+            `<option value="daily">Daily summary</option>` +
+          `</select></label>` +
         `<span class="alerts-dest muted small">Alerts → <b>${escapeHtml(email || 'your login email')}</b></span>` +
       '</div>' +
       `<div class="muted small" style="margin-top:8px">Tracking adds this event to your watchlist (home screen). ` +
-      `When alerts fire they notify the email above${tracked ? '.' : ' — track the event first.'}</div>` +
+      `Instant = emailed as alerts fire; Hourly/Daily = one digest so you're not spammed. ` +
+      `Delivery goes to the email above${tracked ? '.' : ' — track the event first.'}</div>` +
       '<div style="margin-top:10px"><button id="alPreviewBtn" class="wl-page-btn">Preview alert email</button></div>' +
       '<div id="alPreviewHost" class="alert-preview" hidden></div>';
+    const cadSel = document.getElementById('alCadence');
+    if (cadSel) cadSel.value = cadence;
 
     const trackBtn = document.getElementById('alTrackBtn');
     const alertBtn = document.getElementById('alAlertBtn');
@@ -2098,6 +2108,12 @@
       const r = await rpcOrNull('event_watchlist_set_alert', { p_event_id: eventId, p_on: next });
       if (r.error) { alertBtn.disabled = false; console.error('[alerts toggle]', r.error); return; }
       await renderAlertsThisEvent(eventId);
+    });
+    if (cadSel) cadSel.addEventListener('change', async () => {
+      cadSel.disabled = true;
+      const r = await rpcOrNull('event_watchlist_set_cadence', { p_event_id: eventId, p_cadence: cadSel.value });
+      cadSel.disabled = false;
+      if (r.error) { console.error('[alerts cadence]', r.error); }
     });
     wireAlertPreview(eventId);
   }
@@ -2174,7 +2190,7 @@
         `${cur ? ' <span class="muted small">(this event)</span>' : ''}</td>` +
         `<td class="num">${d === null ? '—' : d}</td>` +
         `<td class="muted small">${escapeHtml(it.venue_name || it.venue_location || '—')}</td>` +
-        `<td class="num">${it.alert_enabled ? '🔔' : '🔕'}</td>` +
+        `<td class="num">${it.alert_enabled ? '🔔 ' + escapeHtml(it.alert_cadence || 'instant') : '🔕'}</td>` +
         '</tr>';
     }).join('');
     body.innerHTML = `<table><thead><tr><th>Event</th><th class="num">T-days</th><th>Venue</th><th class="num">Alerts</th></tr></thead><tbody>${rows}</tbody></table>` +

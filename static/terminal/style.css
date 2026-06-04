@@ -1245,6 +1245,12 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .alerts-ctl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .alerts-ctl .track-btn { margin-top: 0; }
 .wl-alert-btn.on { color: var(--accent); border-color: var(--accent); }
+.al-cadence { font-family: var(--mono); font-size: 11px; color: var(--muted); display: inline-flex; align-items: center; }
+.al-cadence select {
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  font-family: var(--mono); font-size: 11px; padding: 3px 6px; margin-left: 2px;
+}
+.al-cadence select:disabled { opacity: 0.5; }
 .alerts-dest { margin-left: auto; }
 .alerts-dest b { color: var(--text); }
 tr.wl-cur td { background: rgba(251, 191, 36, 0.07); }
