@@ -1248,6 +1248,8 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .alerts-dest { margin-left: auto; }
 .alerts-dest b { color: var(--text); }
 tr.wl-cur td { background: rgba(251, 191, 36, 0.07); }
+.alert-preview { margin-top: 8px; }
+.alert-preview-frame { border: 1px solid var(--line); border-radius: 6px; overflow: auto; max-height: 540px; }
 
 /* Splits panel */
 #splits .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }

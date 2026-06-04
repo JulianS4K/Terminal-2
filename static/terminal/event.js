@@ -2076,7 +2076,9 @@
         `<span class="alerts-dest muted small">Alerts → <b>${escapeHtml(email || 'your login email')}</b></span>` +
       '</div>' +
       `<div class="muted small" style="margin-top:8px">Tracking adds this event to your watchlist (home screen). ` +
-      `When alerts fire they notify the email above${tracked ? '.' : ' — track the event first.'}</div>`;
+      `When alerts fire they notify the email above${tracked ? '.' : ' — track the event first.'}</div>` +
+      '<div style="margin-top:10px"><button id="alPreviewBtn" class="wl-page-btn">Preview alert email</button></div>' +
+      '<div id="alPreviewHost" class="alert-preview" hidden></div>';
 
     const trackBtn = document.getElementById('alTrackBtn');
     const alertBtn = document.getElementById('alAlertBtn');
@@ -2096,6 +2098,36 @@
       const r = await rpcOrNull('event_watchlist_set_alert', { p_event_id: eventId, p_on: next });
       if (r.error) { alertBtn.disabled = false; console.error('[alerts toggle]', r.error); return; }
       await renderAlertsThisEvent(eventId);
+    });
+    wireAlertPreview(eventId);
+  }
+
+  // Render the exact alert email (the user will receive) inside the tab so the
+  // template is reviewable in-app. Server returns the rendered HTML (real alerts
+  // if any, else a labelled sample). We inject it directly — inline styles only,
+  // permitted by style-src 'unsafe-inline'; the email's own dark wrapper shows.
+  function wireAlertPreview(eventId) {
+    const btn  = document.getElementById('alPreviewBtn');
+    const host = document.getElementById('alPreviewHost');
+    if (!btn || !host) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; const label = btn.textContent; btn.textContent = 'Rendering…';
+      const r = await rpcOrNull('preview_event_alert_email', { p_event_id: eventId });
+      btn.disabled = false; btn.textContent = label;
+      host.hidden = false;
+      if (r.error) {
+        host.innerHTML = _wlRpcMissing(r)
+          ? '<div class="empty">Preview RPC pending apply.</div>'
+          : '<div class="empty">Preview failed.</div>';
+        return;
+      }
+      const data = r.data || {};
+      host.innerHTML = '<div class="muted small" style="margin:6px 0">Subject: <b>' +
+        escapeHtml(data.subject || '') + '</b>' + (data.is_sample ? ' · sample (no live alerts)' : '') + '</div>';
+      const frame = document.createElement('div');
+      frame.className = 'alert-preview-frame';
+      frame.innerHTML = data.html || '';
+      host.appendChild(frame);
     });
   }
 
