@@ -1,4 +1,4 @@
--- Migration 20260604130000 · lane:D0 (author) → A1 (apply + schedule crons) · writes:event_watchlist.alert_cadence/last_alerted_at + dispatch fns + event_watchlist_set_cadence + event_watchlist_list(v2) · reads:event_alerts,events · enqueues:exos_mail (CROSS-LANE → D4, see note) · pre:20260604120000 · auth:operator-requested 2026-06-04
+-- Migration 20260604130000 · lane:D0 (author) → A1 (apply + schedule crons) · writes:event_watchlist.alert_cadence/last_alerted_at + dispatch fns + event_watchlist_set_cadence + event_watchlist_list(v2) · reads:event_alerts,events · enqueues:alert_mail (D0-owned) · pre:20260604125000 · auth:operator-requested 2026-06-04
 --
 -- D0 — alert DELIVERY with three per-event cadences so users aren't spammed:
 --   • instant — emailed as alerts fire (dispatch runs every 2 min with the engine)
@@ -6,12 +6,10 @@
 --   • daily   — one summary email/user/day  across their daily-cadence events
 -- Mute = alert_enabled=false (off). Cadence is per watchlist row.
 --
--- Delivery reuses the existing Resend mailer: dispatch builds the HTML (shared
--- render_email_html shell) and enqueues into public.exos_mail, which the
--- already-deployed exos-mail-drain edge fn sends. ⚠ exos_mail is a D4-owned
--- table — this is a deliberate CROSS-LANE write of a generic transactional
--- queue; coordinated with A1/D4 (bot_chat). If D4 prefers isolation, swap the
--- two INSERT INTO exos_mail statements for a D0-owned outbox + drainer.
+-- Delivery keeps the terminal SEPARATE from Exos: dispatch builds the HTML
+-- (shared render_email_html shell) and enqueues into our OWN public.alert_mail
+-- (mig 20260604125000), drained by the sibling edge fn alert-mail-drain — same
+-- Resend backend pattern as Exos, separate queue + templates.
 --
 -- ⚠ CRON IS OPERATOR-GATED: the three cron.schedule lines are at the bottom,
 -- COMMENTED. A1 runs them after apply (and wires cron_policy/cron_should_fire
@@ -108,7 +106,7 @@ BEGIN
 END;
 $$;
 
--- ── 4. Dispatchers (cron-driven; server-side, enqueue into exos_mail) ────────
+-- ── 4. Dispatchers (cron-driven; server-side, enqueue into alert_mail) ───────
 CREATE OR REPLACE FUNCTION public.alert_dispatch_instant()
 RETURNS int LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
@@ -123,7 +121,7 @@ BEGIN
     IF v_max IS NULL THEN CONTINUE; END IF;        -- nothing new
     SELECT subject, html INTO v_sub, v_html FROM public.build_event_alert_email(r.user_email, r.tevo_event_id, v_since);
     IF v_html IS NOT NULL THEN
-      INSERT INTO public.exos_mail (to_email, template, subject, html)
+      INSERT INTO public.alert_mail (to_email, template, subject, html)
       VALUES (r.user_email, 'alert-instant', v_sub, v_html);
       v_cnt := v_cnt + 1;
     END IF;
@@ -146,7 +144,7 @@ BEGIN
   LOOP
     SELECT subject, html INTO v_sub, v_html FROM public.build_user_alert_summary_email(r.user_email, p_cadence, v_since);
     IF v_html IS NOT NULL THEN
-      INSERT INTO public.exos_mail (to_email, template, subject, html)
+      INSERT INTO public.alert_mail (to_email, template, subject, html)
       VALUES (r.user_email, 'alert-' || p_cadence, v_sub, v_html);
       v_cnt := v_cnt + 1;
     END IF;
