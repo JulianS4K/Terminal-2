@@ -78,6 +78,7 @@
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
+      <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
     </nav>
 
@@ -407,6 +408,27 @@
     </div>
 
     <!-- "Our Orders" merged tab — fires 3 parallel RPCs on first activate -->
+    <div class="tab-pane" id="paneAlerts" role="tabpanel" hidden>
+      <section id="alerts-this-event">
+        <div class="panel-title">THIS EVENT — TRACKING &amp; ALERTS</div>
+        <div id="alertsThisEventBody"><div class="empty">loading…</div></div>
+      </section>
+      <section id="alerts-recent">
+        <div class="panel-title row">
+          <span>RECENT ALERTS — THIS EVENT</span>
+          <span class="muted small" id="alertsRecentMeta"></span>
+        </div>
+        <div id="alertsRecentBody"><div class="empty">loading…</div></div>
+      </section>
+      <section id="alerts-watchlist">
+        <div class="panel-title row">
+          <span>MY WATCHLIST — ALL TRACKED EVENTS</span>
+          <span class="muted small" id="alertsWatchlistMeta"></span>
+        </div>
+        <div id="alertsWatchlistBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
     <div class="tab-pane" id="paneOurOrders" role="tabpanel" hidden>
       <section id="evo-orders-full">
         <div class="panel-title row">

@@ -1240,6 +1240,15 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .wl-page-btn:hover:not([disabled]) { border-color: var(--accent); }
 .wl-page-btn[disabled] { opacity: 0.4; cursor: default; }
 
+/* Watchlist & Alerts tab (event page). */
+#paneAlerts section { margin-bottom: 14px; }
+.alerts-ctl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.alerts-ctl .track-btn { margin-top: 0; }
+.wl-alert-btn.on { color: var(--accent); border-color: var(--accent); }
+.alerts-dest { margin-left: auto; }
+.alerts-dest b { color: var(--text); }
+tr.wl-cur td { background: rgba(251, 191, 36, 0.07); }
+
 /* Splits panel */
 #splits .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
 .splits-tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
