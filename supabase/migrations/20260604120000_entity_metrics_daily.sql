@@ -172,7 +172,7 @@ BEGIN
     (venue_id, snapshot_date, venue_name, event_count,
      evo_tickets_total, evo_owned_tickets_total, sg_all_tickets_total, sg_owned_tickets_total,
      getin_min, getin_median, price_min, price_median, price_p90, owned_book_notional)
-  SELECT e.venue_id, p_date, max(v.name), count(DISTINCT d.event_id)::int,
+  SELECT e.venue_id, p_date, max(e.venue_name), count(DISTINCT d.event_id)::int,
          sum(d.evo_tickets_count)::int, sum(d.evo_owned_tickets)::int,
          sum(d.sg_all_tickets)::int,    sum(d.sg_owned_tickets)::int,
          min(d.amalgam_getin),          percentile_cont(0.5) WITHIN GROUP (ORDER BY d.amalgam_getin),
@@ -181,7 +181,6 @@ BEGIN
          sum(coalesce(d.evo_owned_median, d.evo_retail_median) * d.evo_owned_tickets)
   FROM public.events e
   JOIN _eld d ON d.event_id = e.id
-  LEFT JOIN public.venues v ON v.id = e.venue_id
   WHERE e.venue_id IS NOT NULL
   GROUP BY e.venue_id;
   GET DIAGNOSTICS v_ven = ROW_COUNT;
