@@ -243,6 +243,10 @@ $func$;
 GRANT EXECUTE ON FUNCTION public.get_performer_metrics_daily(bigint, integer, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_venue_metrics_daily(bigint, integer)           TO authenticated;
 
+-- refresh fn is a SECDEF writer with no email gate → keep it off PUBLIC/anon
+-- (cron runs as owner, unaffected). Mirrors the D4 write-path revoke pattern.
+REVOKE EXECUTE ON FUNCTION public.refresh_entity_metrics_daily(date) FROM PUBLIC;
+
 -- ============================================================================
 -- 4. Cron — refresh today + yesterday every 4h
 --    (idempotent; later runs upgrade the row as evening slots land, and the

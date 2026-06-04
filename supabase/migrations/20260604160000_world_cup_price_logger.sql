@@ -166,6 +166,10 @@ $func$;
 GRANT EXECUTE ON FUNCTION public.get_wc_price_daily(bigint, integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_wc_price_board()                TO authenticated;
 
+-- refresh fn is a SECDEF writer with no email gate → keep it off PUBLIC/anon
+-- (cron runs as owner, unaffected). Mirrors the D4 write-path revoke pattern.
+REVOKE EXECUTE ON FUNCTION public.refresh_wc_price_daily(date, date) FROM PUBLIC;
+
 -- ============================================================================
 -- 4. Cron — re-roll a trailing 4-day window daily (idempotent; catches the
 --    sparse, late-arriving SG pulls without missing a poll)
