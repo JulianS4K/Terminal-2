@@ -126,7 +126,7 @@
   }
 
   // ---------- Tab nav ----------
-  const _tabState = { loaded: { espn: false, market: false }, performerId: null, portfolio: null };
+  const _tabState = { loaded: { espn: false, market: false, alerts: false }, performerId: null, portfolio: null };
 
   function wireTabs(performerId) {
     _tabState.performerId = performerId;
@@ -141,6 +141,10 @@
         await loadEspnContext(performerId);
       } else if (tabId === 'market' && !_tabState.loaded.market) {
         await loadMarketCarpet();
+      } else if (tabId === 'alerts' && !_tabState.loaded.alerts) {
+        _tabState.loaded.alerts = true;
+        const label = document.getElementById('phName')?.textContent || '';
+        window.TerminalAlerts?.mount('performer', performerId, label, document.querySelector('#panePerfAlerts .alerts-root'));
       }
     });
   }
@@ -151,6 +155,7 @@
     blindspots: 'paneBlindspots',
     market:     'paneMarket',
     espn:       'paneEspn',
+    alerts:     'panePerfAlerts',
   };
 
   function activateTab(tabId) {

@@ -70,6 +70,8 @@
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
+      <span class="event-tabs-sep" aria-hidden="true">|</span>
+      <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">🔔 Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
     </nav>
 
     <div class="tab-pane active" id="paneOverview" role="tabpanel">
@@ -447,6 +449,10 @@
         <div id="seatmapListBody"><div class="empty">—</div></div>
       </section>
     </div>
+
+    <div class="tab-pane" id="paneAlerts" role="tabpanel" hidden>
+      <section class="panel"><div class="alerts-root"><div class="empty">Click the tab to load.</div></div></section>
+    </div>
   </main>
 
   <script src="lib/supabase.js"></script>
@@ -455,6 +461,7 @@
   <script src="auth.js"></script>
   <script src="app.js"></script>
   <script src="nav.js"></script>
+  <script src="alerts.js"></script>
   <script src="event.js"></script>
 </body>
 </html>
