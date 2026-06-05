@@ -179,9 +179,17 @@ def _lem(eid: int, owned: int = 100, retail_min: float = 50.0,
     }
 
 
-def _event(eid: int, name: str = None, occurs: str = "2026-06-01T19:00:00-04:00",
+def _event(eid: int, name: str = None, occurs: str = None,
            venue_location: str = "New York, NY", performer_id: int = 16303,
            performer_name: str = "Test Team") -> dict:
+    # Relative default (not hardcoded) so the fixture event stays in the future
+    # regardless of when the suite runs — store_home filters to upcoming events
+    # via .gte("occurs_at_local", today). A fixed date silently became "past"
+    # (the 2026-06-01 literal turned into a time-bomb on 2026-06-02). Same fix
+    # already applied to the curation-order fixture (see _occurs() ~L291).
+    if occurs is None:
+        from datetime import date as _date, timedelta as _td
+        occurs = f"{(_date.today() + _td(days=30)).isoformat()}T19:00:00-04:00"
     return {
         "id": eid,
         "name": name or f"Test Event {eid}",
