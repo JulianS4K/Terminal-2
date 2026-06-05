@@ -1,0 +1,360 @@
+{
+  "status": 0,
+  "messages": [
+    "OK"
+  ],
+  "data": {
+    "event_id": 1079644,
+    "event_status": 1,
+    "tickets": [
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "11",
+        "IsGA": false,
+        "LastSeat": "9",
+        "OriginalTicketPrice": 279,
+        "PriceDescriptor": "",
+        "PriceId": 2870376,
+        "PriceName": "",
+        "Quality": 6,
+        "Quantity": 2,
+        "QuantityTypeId": 0,
+        "RowName": "B",
+        "SeatBlockFlags": "R,R",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "9",
+            "SeatFlags": "R"
+          },
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "11",
+            "SeatFlags": "R"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 108.11,
+        "TicketBlockId": 9945830989,
+        "TicketPrice": 279,
+        "TicketTypeId": 2,
+        "TicketTypeName": "Premium",
+        "seatsStr": [
+          "seat-orchestra-b-9",
+          "seat-orchestra-b-11"
+        ]
+      },
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "11",
+        "IsGA": false,
+        "LastSeat": "9",
+        "OriginalTicketPrice": 279,
+        "PriceDescriptor": "",
+        "PriceId": 2870376,
+        "PriceName": "",
+        "Quality": 8,
+        "Quantity": 2,
+        "QuantityTypeId": 0,
+        "RowName": "C",
+        "SeatBlockFlags": "R,R",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "9",
+            "SeatFlags": "R"
+          },
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "11",
+            "SeatFlags": "R"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 108.11,
+        "TicketBlockId": 9945830990,
+        "TicketPrice": 279,
+        "TicketTypeId": 2,
+        "TicketTypeName": "Premium",
+        "seatsStr": [
+          "seat-orchestra-c-9",
+          "seat-orchestra-c-11"
+        ]
+      },
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "11",
+        "IsGA": false,
+        "LastSeat": "9",
+        "OriginalTicketPrice": 279,
+        "PriceDescriptor": "",
+        "PriceId": 2870376,
+        "PriceName": "",
+        "Quality": 12,
+        "Quantity": 2,
+        "QuantityTypeId": 0,
+        "RowName": "E",
+        "SeatBlockFlags": "R,R",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "9",
+            "SeatFlags": "R"
+          },
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "11",
+            "SeatFlags": "R"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 108.11,
+        "TicketBlockId": 9945830991,
+        "TicketPrice": 279,
+        "TicketTypeId": 2,
+        "TicketTypeName": "Premium",
+        "seatsStr": [
+          "seat-orchestra-e-9",
+          "seat-orchestra-e-11"
+        ]
+      },
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "10",
+        "IsGA": false,
+        "LastSeat": "12",
+        "OriginalTicketPrice": 279,
+        "PriceDescriptor": "",
+        "PriceId": 2870376,
+        "PriceName": "",
+        "Quality": 14,
+        "Quantity": 2,
+        "QuantityTypeId": 0,
+        "RowName": "F",
+        "SeatBlockFlags": "R,R",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "10",
+            "SeatFlags": "R"
+          },
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "12",
+            "SeatFlags": "R"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 108.11,
+        "TicketBlockId": 9945830992,
+        "TicketPrice": 279,
+        "TicketTypeId": 2,
+        "TicketTypeName": "Premium",
+        "seatsStr": [
+          "seat-orchestra-f-10",
+          "seat-orchestra-f-12"
+        ]
+      },
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "113",
+        "IsGA": false,
+        "LastSeat": "112",
+        "OriginalTicketPrice": 325,
+        "PriceDescriptor": "",
+        "PriceId": 2871220,
+        "PriceName": "",
+        "Quality": 14,
+        "Quantity": 2,
+        "QuantityTypeId": 0,
+        "RowName": "F",
+        "SeatBlockFlags": "R,A",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "112",
+            "SeatFlags": "R"
+          },
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "113",
+            "SeatFlags": "A"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 125.94,
+        "TicketBlockId": 9945830993,
+        "TicketPrice": 325,
+        "TicketTypeId": 2,
+        "TicketTypeName": "Premium",
+        "seatsStr": [
+          "seat-orchestra-f-112",
+          "seat-orchestra-f-113"
+        ]
+      },
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "19",
+        "IsGA": false,
+        "LastSeat": "17",
+        "OriginalTicketPrice": 209,
+        "PriceDescriptor": "",
+        "PriceId": 2264002,
+        "PriceName": "",
+        "Quality": 18,
+        "Quantity": 2,
+        "QuantityTypeId": 1,
+        "RowName": "H",
+        "SeatBlockFlags": "_ASW,A,_ASC",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "17",
+            "SeatFlags": "_ASW"
+          },
+          {
+            "Id": null,
+            "Messages": "~",
+            "Number": "19",
+            "SeatFlags": "A,_ASC"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 80.99,
+        "TicketBlockId": 9945830988,
+        "TicketPrice": 209,
+        "TicketTypeId": 1,
+        "TicketTypeName": "Standard",
+        "seatsStr": [
+          "seat-orchestra-h-17",
+          "seat-orchestra-h-19"
+        ]
+      },
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "113",
+        "IsGA": false,
+        "LastSeat": "112",
+        "OriginalTicketPrice": 325,
+        "PriceDescriptor": "",
+        "PriceId": 2871220,
+        "PriceName": "",
+        "Quality": 22,
+        "Quantity": 2,
+        "QuantityTypeId": 0,
+        "RowName": "K",
+        "SeatBlockFlags": "R,A",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "112",
+            "SeatFlags": "R"
+          },
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "113",
+            "SeatFlags": "A"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 125.94,
+        "TicketBlockId": 9945830994,
+        "TicketPrice": 325,
+        "TicketTypeId": 2,
+        "TicketTypeName": "Premium",
+        "seatsStr": [
+          "seat-orchestra-k-112",
+          "seat-orchestra-k-113"
+        ]
+      },
+      {
+        "AreaId": 0,
+        "AreaName": "Orchestra",
+        "Attributes": [],
+        "CanSplitBlock": false,
+        "FirstSeat": "111",
+        "IsGA": false,
+        "LastSeat": "110",
+        "OriginalTicketPrice": 325,
+        "PriceDescriptor": "",
+        "PriceId": 2871220,
+        "PriceName": "",
+        "Quality": 22,
+        "Quantity": 2,
+        "QuantityTypeId": 0,
+        "RowName": "K",
+        "SeatBlockFlags": "R,R",
+        "Seats": [
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "110",
+            "SeatFlags": "R"
+          },
+          {
+            "Id": null,
+            "Messages": "",
+            "Number": "111",
+            "SeatFlags": "R"
+          }
+        ],
+        "SectionId": 6144,
+        "SectionName": "Orchestra",
+        "ServiceFee": 125.94,
+        "TicketBlockId": 9945830995,
+        "TicketPrice": 325,
+        "TicketTypeId": 2,
+        "TicketTypeName": "Premium",
+        "seatsStr": [
+          "seat-orchestra-k-110",
+          "seat-orchestra-k-111"
+        ]
+      }
+    ],
+    "score": 1.0
+  },
+  "bapi_cart_token": "REDACTED-CART-TOKEN",
+  "ga_code": "",
+  "ga_track_errors": false
+}
