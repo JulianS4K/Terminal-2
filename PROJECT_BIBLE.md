@@ -198,6 +198,36 @@ SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 | scheduled-tasks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | GitHub (`gh` via Bash) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
+### 6a. Read-only / "view-only" attach → layer in the general-data library for color commentary *(v1.0 · D0 · 2026-06-01)*
+
+When this project is attached to a Claude as a **view-only (read-only) data source** — the Terminal Analyst pattern (`docs/d0_terminal_analyst_skill.md`; remote-MCP plan in `docs/d0_llm_analysis_layer_spec.md`) — the AI must **not stop at the ticket-market SQL** (listings / orders / sales). It should **also pull the general / contextual data layer** to add *color commentary* — the "why" behind a price, a mover, or a demand read — always read-only, always grounded in an actual query.
+
+What to reference (the full inventory + freshness is owned by `RESOURCES_BIBLE.md` — don't restate it here, just reach for it):
+- **Sports context (ESPN):** injuries, team state / standings, recent results, news, win-prob → `v_event_full_sports`, `v_espn_injuries_current`, `v_team_recent_results`
+- **Weather (NWS/NOAA):** forecasts, active alerts, venue climatology → `v_event_weather`, `v_event_active_weather_alerts`
+- **Social / encyclopedic:** league + performer subreddits (`general_subreddits` / `performer_subreddits`), Reddit pulse, Wikipedia → `v_event_reddit`, `v_performer_reddit_pulse`
+- **One-call rollup:** `v_event_why_context` aggregates the above per event — start here.
+
+Rules: color commentary **augments, never replaces** the market numbers; quote exact values, never estimate; flag staleness (much of this layer is built-but-thin — see `RESOURCES_BIBLE.md`); never present context as a pricing decision (human-in-the-loop, per the analyst contract in `CLAUDE.md §2` + the read-only lockdown).
+
+### 6b. Every broker-related answer ends with a verified terminal link *(v1.0 · D0 · 2026-06-01)*
+
+When you answer a **broker / pricing / event / performer / venue / movers / orders** question (chat, analyst, any surface), **end the answer with a link to the relevant existing terminal page** so the human can jump straight to the live view. **Check the link resolves before you cite it** — confirm it's one of the canonical pages below and, for an entity link, that the id actually resolves in our data (don't hand-wave a URL). If nothing covers the answer — or the entity isn't in our data — **say so plainly instead of inventing a link.**
+
+Canonical terminal pages (served under `/terminal/` — routes in `app.py`, nav in `static/terminal/nav.js`; prefix with the deployed terminal host):
+
+| Surface | Link |
+|---|---|
+| Home / dashboard | `/terminal/` |
+| Event detail | `/terminal/event.html?event=<tevo_event_id>` |
+| Performer | `/terminal/performer.html?performer=<tevo_performer_id>` |
+| Venue | `/terminal/venue.html?venue=<tevo_venue_id>` |
+| Movers | `/terminal/movers.html` |
+| Discovery (blindspots) | `/terminal/discovery.html` |
+| Orders | `/terminal/orders.html` |
+
+The ids are the **canonical `tevo_*` ids** (§5 rule 2) — resolve via `_v_d0_event_index` / the AQ hub, not a source-native id.
+
 ---
 
 ## 7. SQL macros (operational patterns bots use repeatedly)
