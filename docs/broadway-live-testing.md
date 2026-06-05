@@ -1,5 +1,25 @@
 # Broadway.com live-testing runbook (2026-05-18)
 
+> ✅ **2026-05-24 live test results** — Hamilton
+> (`checkout.broadway.com/hamilton-broadway/12333/1079644/sections/`)
+> confirmed live via `chrome-devtools-mcp`:
+> - `requests` (any UA) → Fastly "Client Challenge" 3 KB stub (title
+>   "Client Challenge", no inline payload). **requests path is dead.**
+> - Real headless Chrome → Fastly passes → origin returns bootstrap with
+>   `event_polling_enabled=true` and **no `sections[]`**. Inventory loads
+>   from a separate async `POST .../sections/` (reCAPTCHA Enterprise +
+>   session CSRF gated). `fetch_sections()` now raises
+>   `BroadwayPollingRequired` on this state.
+> - Warm-session amortization proven: ~24 min after initial load, a page
+>   reload re-fired the availability POST with no new challenge. Validates
+>   the browser-session-reuse scaling strategy.
+> - Availability response schema: `data.tickets[]` PascalCase per-seat-block
+>   (8 blocks on Hamilton, `$289.99–$450.94` all-in, `Orchestra` section).
+>   Parsed by `BroadwayClient.parse_availability()` → `AvailabilitySnapshot`.
+> - Chrome extension MV3 (`broadway_extension/`) built as interim host:
+>   MAIN-world fetch/XHR tee → relay → service worker → `parse_availability.js`
+>   → ring buffer + optional Supabase ingest. RULE 2 intact throughout.
+
 How to exercise `broadway_client.py` against real `www.broadway.com` and
 `checkout.broadway.com` pages. Companion to:
 - `docs/concerts-broadway-tours-residencies.md` — schema / detection design
