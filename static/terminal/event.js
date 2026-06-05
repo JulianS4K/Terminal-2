@@ -53,8 +53,20 @@
   // TD listing-count time series for the inventory chart overlay.
   // Shape: { sh: [{t,v}], gt: [{t,v}], vd: [{t,v}] } — counts not medians.
   let _tdInvCountSeries = null;
+  // Durable cross-source daily series (event_listing_snapshot_daily — INDEFINITE
+  // retention per the 2026-05-31 ladder, mig 20260531180000). This is the
+  // LONG-HORIZON backbone: it is spliced in BEFORE the fine-grained series so a
+  // line keeps going past the 30d firehose / 120d event_metrics sweep windows
+  // instead of cutting off (the retention-mismatch fix). The table is young
+  // (started 2026-05-27) so depth is shallow today and deepens as it fills.
+  // Shape: { med:{evo_owned,evo_mkt,sg_list,sg_own,sh,gt,vd}, cnt:{evo_own,evo_tix,sg_tix,sh,gt,vd} }.
+  let _dailyDurable = null;
   // Initialize TD inv series as hidden by default (user-togglable in legend).
   ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
+  // Declutter the default view (UI rebuild 2026-06-03): the redundant/secondary
+  // medians start hidden — the user opts them in from the legend. Keeps the
+  // first paint to one clean line per source instead of 9 overlapping lines.
+  ['prices_nonowned', 'sg_own_med'].forEach(k => _chartVisible.set(k, false));
 
   // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
   // event is currently in the merged-7d slot of event_movers_index. Async +
@@ -121,6 +133,8 @@
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
     loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
     loadHeroGapChips(eventId).catch(e => console.error('[gapChips]', e));
+    loadSourceLinks(eventId).catch(e => console.error('[sourceLinks]', e));
+    wireTrackButton(eventId).catch(e => console.error('[track]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
@@ -300,6 +314,7 @@
       if (lbl) lbl.textContent = lblTxt;
       const aw = document.getElementById('alertsWindow');
       if (aw) aw.textContent = lblTxt;
+      updateLayerHint(hrs);
       _chartExtStatePrice.payload = undefined;
       _chartExtStateInv.payload   = undefined;
       // Re-render both panes immediately with the new window clip (cached v3 data)
@@ -317,6 +332,20 @@
       loadChartExtended('inv', eventId, _chartInvHours)
         .catch(e => console.error('[chartExt inv]', e));
     });
+    updateLayerHint(_chartPriceHours);
+  }
+
+  // Data-layer hint: above the 30d firehose sweep window the durable daily
+  // snapshot is the only history, so emphasize that the line goes hybrid. ≤30d
+  // is purely high-resolution. Honest about which layer the user is looking at.
+  function updateLayerHint(hours) {
+    const el = document.getElementById('chartLayerHint');
+    if (!el) return;
+    const hybrid = (hours || DEFAULT_HOURS) > 720;
+    el.classList.toggle('hybrid', hybrid);
+    el.innerHTML = hybrid
+      ? '● hourly &nbsp;+&nbsp; <b>○ daily history</b>'
+      : '● hourly';
   }
 
   function wireAlertsToggle() {
@@ -732,14 +761,46 @@
     return { xs, specs };
   }
 
+  // Splice a durable daily series UNDER a fine-grained series (retention-mismatch
+  // fix, UI rebuild 2026-06-03). `fine` = high-resolution recent points
+  // (event_metrics / SG firehose, capped at the source's sweep window); `daily` =
+  // low-resolution but INDEFINITELY-retained points from
+  // event_listing_snapshot_daily. We keep every fine point and prepend only the
+  // daily points OLDER than the earliest fine point, yielding ONE continuous line
+  // per source whose history depth = max(both layers) — so SG no longer stops at
+  // 30d while TEvo runs to 120d. Both inputs are chronological {t,v}.
+  function mergeDurable(fine, daily) {
+    fine = fine || []; daily = daily || [];
+    if (!daily.length) return fine;
+    if (!fine.length) return daily;
+    let firstFineMs = Infinity;
+    for (const p of fine) { const ms = new Date(p.t).getTime(); if (ms < firstFineMs) firstFineMs = ms; }
+    const older = daily.filter(p => new Date(p.t).getTime() < firstFineMs);
+    return older.length ? older.concat(fine) : fine;
+  }
+
+  // Convenience: pull a durable median/count series by key, [] when not loaded yet.
+  function durMed(key) { return (_dailyDurable && _dailyDurable.med && _dailyDurable.med[key]) || []; }
+  function durCnt(key) { return (_dailyDurable && _dailyDurable.cnt && _dailyDurable.cnt[key]) || []; }
+
   // X-axis clip range for a given hours window. Returns [minSec, maxSec].
-  // If the series data is older than the window, uPlot clips to the window
-  // (showing an empty area for the missing time); if newer, the data fits.
+  // The left edge is the requested window start clamped FORWARD to the first
+  // data point, so a window wider than the available history (esp. ALL =
+  // 4320h/180d) never pads the axis with empty pre-data space. The axis then
+  // spans only the days we actually have chart data for — selecting ALL fits
+  // to all-available-data instead of a fixed 180-day frame.
   function clipRangeForHours(hours, xs) {
     if (!xs || !xs.length) return undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    const minSec = nowSec - hours * 3600;
+    const reqMin = nowSec - hours * 3600;
+    const dataMin = xs[0];                 // xs is chronological (buildSeriesData sorts)
     const dataMax = xs[xs.length - 1];
+    // Fit-to-history (UI rebuild 2026-06-03): when the window is WIDER than the
+    // history we actually have (e.g. 1y/ALL on the young durable table), clamp
+    // the left edge to the earliest real point so we don't render a vast empty
+    // gutter with the data crammed at the right. When we have MORE history than
+    // the window (short ranges), reqMin wins and the window is honored as before.
+    const minSec = Math.max(reqMin, dataMin);
     // Right edge: max(now, dataMax) so a future-dated event still shows its
     // most recent snapshot inside the window.
     return [minSec, Math.max(nowSec, dataMax)];
@@ -759,16 +820,21 @@
     const extSeries = (ext && ext.series) || {};
 
     const tdS = _tdChartSeries || {};
+    // Each median line splices its durable daily history (long horizon, indefinite)
+    // under its fine-grained recent points so the line is continuous past the
+    // firehose/event_metrics sweep windows. TD lines ARE the daily series already.
+    // Visual rebuild: one hue per source (owned = solid bold, market = thin solid,
+    // secondary = dotted), no more competing dash patterns.
     const specs = [
-      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', width: 2,   dash: null,   data: chart.prices_owned },
-      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', width: 1.5, dash: [4, 4], data: chart.prices_market },
-      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', width: 1.5, dash: [6, 3], data: chart.prices_nonowned },
-      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', width: 1.5, dash: null,   data: extSeries.sg_listings_median       || [] },
-      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', width: 1.5, dash: [3, 3], data: extSeries.sg_listings_owned_median || [] },
-      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', width: 1.5, dash: [5, 2], data: extSeries.sg_sales_median          || [] },
-      { key: 'td_sh_med',       label: 'SH median',      color: '#f97316', width: 1.5, dash: [8, 3], data: tdS.sh || [] },
-      { key: 'td_gt_med',       label: 'GT median',      color: '#34d399', width: 1.5, dash: [8, 3], data: tdS.gt || [] },
-      { key: 'td_vd_med',       label: 'VD median',      color: '#c084fc', width: 1.5, dash: [8, 3], data: tdS.vd || [] },
+      { key: 'prices_owned',    label: 'TEvo owned',  color: '#fbbf24', width: 2,   dash: null,    data: mergeDurable(chart.prices_owned,    durMed('evo_owned')) },
+      { key: 'prices_market',   label: 'TEvo market', color: '#a8a29e', width: 1.25, dash: null,   data: mergeDurable(chart.prices_market,   durMed('evo_mkt')) },
+      { key: 'prices_nonowned', label: 'TEvo non-own',color: '#a78bfa', width: 1,   dash: [2, 3],  data: chart.prices_nonowned },
+      { key: 'sg_list_med',     label: 'SG market',   color: '#22d3ee', width: 1.5, dash: null,    data: mergeDurable(extSeries.sg_listings_median       || [], durMed('sg_list')) },
+      { key: 'sg_own_med',      label: 'SG owned',    color: '#fb7185', width: 1,   dash: [2, 3],  data: mergeDurable(extSeries.sg_listings_owned_median || [], durMed('sg_own')) },
+      { key: 'sg_sale_med',     label: 'SG sales',    color: '#84cc16', width: 1.5, dash: [6, 3],  data: extSeries.sg_sales_median          || [] },
+      { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
+      { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
+      { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
     ];
     const { xs } = buildSeriesData(specs);
     _chartLastBuildPrice = { specs, xs };
@@ -862,9 +928,9 @@
     const extSeries = (ext && ext.series) || {};
 
     const specs = [
-      { key: 'counts_owned',  label: 'TEvo Owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
-      { key: 'counts_market', label: 'TEvo Mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: chart.counts_market },
-      { key: 'sg_list_ct',    label: 'SG list qty',    color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: extSeries.sg_listings_count || [] },
+      { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
+      { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
+      { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
       { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.sg_sales_count || [] },
     ];
     // Overlay TD listing-count series (dashed, hidden by default — user-togglable)
@@ -1935,6 +2001,282 @@
     return `${Math.round(min / 1440)}d`;
   }
 
+  // ---------- Track button (per-user watchlist) ----------
+  // The ★ toggle adds/removes this event from the signed-in user's watchlist
+  // (event_watchlist_set; identity = their Google-OAuth email server-side). On
+  // load we read the user's list once to reflect current state. Hidden entirely
+  // if the watchlist RPCs aren't applied yet.
+  async function wireTrackButton(eventId) {
+    const btn = document.getElementById('trackBtn');
+    if (!btn) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+
+    let tracked = false;
+    const listRes = await rpcOrNull('event_watchlist_list', {});
+    if (listRes.error) {
+      // RPC not applied yet → leave the button hidden (no half-feature).
+      if (/does not exist/i.test(listRes.error.message || '') || listRes.error.code === '42883') return;
+    } else {
+      const items = (listRes.data && listRes.data.items) || [];
+      tracked = items.some(it => String(it.tevo_event_id) === String(eventId));
+    }
+    paintTrackBtn(btn, tracked);
+    btn.hidden = false;
+
+    btn.addEventListener('click', async () => {
+      const next = !(btn.getAttribute('aria-pressed') === 'true');
+      btn.disabled = true;
+      const res = await rpcOrNull('event_watchlist_set', { p_event_id: eventId, p_on: next });
+      btn.disabled = false;
+      if (res.error) { console.error('[track] set', res.error); T.setStatus('Track failed', 'err'); return; }
+      paintTrackBtn(btn, next);
+    });
+  }
+
+  function paintTrackBtn(btn, tracked) {
+    btn.setAttribute('aria-pressed', tracked ? 'true' : 'false');
+    btn.classList.toggle('on', tracked);
+    btn.textContent = tracked ? '★ Tracking' : '☆ Track';
+    btn.title = tracked ? 'On your watchlist — click to remove' : 'Track this event on your watchlist';
+  }
+
+  // ---------- Watchlist & Alerts tab ----------
+  // A dedicated event-page tab: track/alert controls for THIS event, the alert
+  // destination (the signed-in Google email), recent fired alerts for this event,
+  // and the user's full watchlist. Re-renders on every activation so toggles
+  // stay live. Reuses the same SECDEF RPCs as the hero ★ and the home table.
+  async function loadAlertsTab(eventId) {
+    await renderAlertsThisEvent(eventId);
+    renderAlertsRecent();
+    await renderAlertsWatchlist(eventId);
+  }
+
+  function _wlRpcMissing(res) {
+    return !!(res && res.error && (res.error.code === '42883' || /does not exist/i.test(res.error.message || '')));
+  }
+
+  async function renderAlertsThisEvent(eventId) {
+    const body = document.getElementById('alertsThisEventBody');
+    if (!body) return;
+    const Auth = window.TerminalAuth;
+    const email = (Auth && Auth.getEmail && Auth.getEmail()) || '';
+    let tracked = false, alertOn = false, cadence = 'instant';
+    const res = await rpcOrNull('event_watchlist_list', {});
+    if (_wlRpcMissing(res)) {
+      body.innerHTML = '<div class="empty">Watchlist not enabled yet (RPC pending apply).</div>';
+      return;
+    }
+    if (!res.error) {
+      const me = ((res.data && res.data.items) || []).find(it => String(it.tevo_event_id) === String(eventId));
+      tracked = !!me;
+      alertOn = me ? me.alert_enabled !== false : false;
+      cadence = (me && me.alert_cadence) || 'instant';
+    }
+    body.innerHTML =
+      '<div class="alerts-ctl">' +
+        `<button id="alTrackBtn" class="track-btn ${tracked ? 'on' : ''}">${tracked ? '★ Tracking' : '☆ Track'}</button>` +
+        `<button id="alAlertBtn" class="wl-alert-btn ${alertOn ? 'on' : 'off'}" ${tracked ? '' : 'disabled'} title="Mute / unmute alerts for this event">${alertOn ? '🔔 Alerts on' : '🔕 Alerts off'}</button>` +
+        `<label class="al-cadence">delivery&nbsp;` +
+          `<select id="alCadence" ${tracked && alertOn ? '' : 'disabled'} title="How often you're emailed about this event">` +
+            `<option value="instant">Instant</option>` +
+            `<option value="hourly">Hourly summary</option>` +
+            `<option value="daily">Daily summary</option>` +
+          `</select></label>` +
+        `<span class="alerts-dest muted small">Alerts → <b>${escapeHtml(email || 'your login email')}</b></span>` +
+      '</div>' +
+      `<div class="muted small" style="margin-top:8px">Tracking adds this event to your watchlist (home screen). ` +
+      `Instant = emailed as alerts fire; Hourly/Daily = one digest so you're not spammed. ` +
+      `Delivery goes to the email above${tracked ? '.' : ' — track the event first.'}</div>` +
+      '<div style="margin-top:10px"><button id="alPreviewBtn" class="wl-page-btn">Preview alert email</button></div>' +
+      '<div id="alPreviewHost" class="alert-preview" hidden></div>';
+    const cadSel = document.getElementById('alCadence');
+    if (cadSel) cadSel.value = cadence;
+
+    const trackBtn = document.getElementById('alTrackBtn');
+    const alertBtn = document.getElementById('alAlertBtn');
+    trackBtn.addEventListener('click', async () => {
+      const next = !tracked;
+      trackBtn.disabled = true;
+      const r = await rpcOrNull('event_watchlist_set', { p_event_id: eventId, p_on: next });
+      if (r.error) { trackBtn.disabled = false; console.error('[alerts track]', r.error); return; }
+      const hero = document.getElementById('trackBtn'); if (hero) paintTrackBtn(hero, next);
+      await renderAlertsThisEvent(eventId);
+      await renderAlertsWatchlist(eventId);
+    });
+    alertBtn.addEventListener('click', async () => {
+      if (!tracked) return;
+      const next = !alertOn;
+      alertBtn.disabled = true;
+      const r = await rpcOrNull('event_watchlist_set_alert', { p_event_id: eventId, p_on: next });
+      if (r.error) { alertBtn.disabled = false; console.error('[alerts toggle]', r.error); return; }
+      await renderAlertsThisEvent(eventId);
+    });
+    if (cadSel) cadSel.addEventListener('change', async () => {
+      cadSel.disabled = true;
+      const r = await rpcOrNull('event_watchlist_set_cadence', { p_event_id: eventId, p_cadence: cadSel.value });
+      cadSel.disabled = false;
+      if (r.error) { console.error('[alerts cadence]', r.error); }
+    });
+    wireAlertPreview(eventId);
+  }
+
+  // Render the exact alert email (the user will receive) inside the tab so the
+  // template is reviewable in-app. Server returns the rendered HTML (real alerts
+  // if any, else a labelled sample). We inject it directly — inline styles only,
+  // permitted by style-src 'unsafe-inline'; the email's own dark wrapper shows.
+  function wireAlertPreview(eventId) {
+    const btn  = document.getElementById('alPreviewBtn');
+    const host = document.getElementById('alPreviewHost');
+    if (!btn || !host) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; const label = btn.textContent; btn.textContent = 'Rendering…';
+      const r = await rpcOrNull('preview_event_alert_email', { p_event_id: eventId });
+      btn.disabled = false; btn.textContent = label;
+      host.hidden = false;
+      if (r.error) {
+        host.innerHTML = _wlRpcMissing(r)
+          ? '<div class="empty">Preview RPC pending apply.</div>'
+          : '<div class="empty">Preview failed.</div>';
+        return;
+      }
+      const data = r.data || {};
+      host.innerHTML = '<div class="muted small" style="margin:6px 0">Subject: <b>' +
+        escapeHtml(data.subject || '') + '</b>' + (data.is_sample ? ' · sample (no live alerts)' : '') + '</div>';
+      const frame = document.createElement('div');
+      frame.className = 'alert-preview-frame';
+      frame.innerHTML = data.html || '';
+      host.appendChild(frame);
+    });
+  }
+
+  function renderAlertsRecent() {
+    const body = document.getElementById('alertsRecentBody');
+    const meta = document.getElementById('alertsRecentMeta');
+    const chip = document.getElementById('tabCountAlerts');
+    if (!body) return;
+    const alerts = (_lastPayload && _lastPayload.event_alerts) || [];
+    if (meta) meta.textContent = alerts.length ? `${alerts.length} recent` : '';
+    if (chip) chip.textContent = alerts.length ? String(alerts.length) : '';
+    if (!alerts.length) { body.innerHTML = '<div class="empty">No alerts fired for this event recently.</div>'; return; }
+    const rows = alerts.slice(0, 50).map(a =>
+      '<tr>' +
+      `<td class="muted small">${a.fired_at ? escapeHtml(T.fmtDate(a.fired_at)) : '—'}</td>` +
+      `<td><span class="badge ${_sevClass(a.severity)}">${escapeHtml(String(a.severity || '').toUpperCase())}</span></td>` +
+      `<td class="muted small">${escapeHtml(a.rule_key || a.rule || '')}</td>` +
+      `<td>${escapeHtml(a.message || '')}</td>` +
+      '</tr>').join('');
+    body.innerHTML = `<table><thead><tr><th>When</th><th>Severity</th><th>Rule</th><th>Message</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  function _sevClass(s) {
+    s = String(s || '').toLowerCase();
+    if (/crit|critical/.test(s)) return 'lifecycle-ghost';
+    if (/warn|warning/.test(s)) return 'gap-chip';
+    return '';
+  }
+
+  async function renderAlertsWatchlist(eventId) {
+    const body = document.getElementById('alertsWatchlistBody');
+    const meta = document.getElementById('alertsWatchlistMeta');
+    if (!body) return;
+    const res = await rpcOrNull('event_watchlist_list', {});
+    if (_wlRpcMissing(res)) { body.innerHTML = '<div class="empty">Watchlist not enabled yet.</div>'; return; }
+    if (res.error) { body.innerHTML = '<div class="empty">Failed to load watchlist.</div>'; return; }
+    const items = (res.data && res.data.items) || [];
+    if (meta) meta.textContent = items.length ? `${items.length} events${items.length > 50 ? ' · showing 50' : ''}` : '';
+    if (!items.length) { body.innerHTML = '<div class="empty">No tracked events yet — ★ Track above to add this one.</div>'; return; }
+    const rows = items.slice(0, 50).map(it => {
+      const d = T.daysUntil(it.occurs_at_local);
+      const cur = String(it.tevo_event_id) === String(eventId);
+      return `<tr${cur ? ' class="wl-cur"' : ''}>` +
+        `<td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>` +
+        `${cur ? ' <span class="muted small">(this event)</span>' : ''}</td>` +
+        `<td class="num">${d === null ? '—' : d}</td>` +
+        `<td class="muted small">${escapeHtml(it.venue_name || it.venue_location || '—')}</td>` +
+        `<td class="num">${it.alert_enabled ? '🔔 ' + escapeHtml(it.alert_cadence || 'instant') : '🔕'}</td>` +
+        '</tr>';
+    }).join('');
+    body.innerHTML = `<table><thead><tr><th>Event</th><th class="num">T-days</th><th>Venue</th><th class="num">Alerts</th></tr></thead><tbody>${rows}</tbody></table>` +
+      (items.length > 50 ? '<div class="muted small" style="margin-top:6px">Showing 50 — full paged list on the home screen.</div>' : '');
+  }
+
+  // ---------- Per-source event URLs (spot-check links on each data tab) ----------
+  // Resolves every source's id + marketplace URL off the canonical aq_event_map
+  // hub via the email-gated get_event_source_links RPC, then stamps a "↗ source"
+  // link into each data tab's header so the operator can click straight through
+  // and spot-check our captured data against the live book. Fire-and-forget;
+  // degrades silently if the RPC isn't applied yet (rpcOrNull returns an error).
+  const _SRC_LINK_TABS = [
+    { pane: 'paneSgListings', label: 'SeatGeek',     url: d => d.sg_url },
+    { pane: 'paneSgSales',    label: 'SeatGeek',     url: d => d.sg_url },
+    { pane: 'paneShListings', label: 'StubHub',      url: d => d.td && d.td.SH },
+    { pane: 'paneGtListings', label: 'GameTime',     url: d => d.td && d.td.GT },
+    { pane: 'paneVdListings', label: 'VividSeats',   url: d => d.td && d.td.VD },
+    { pane: 'paneTpListings', label: 'TickPick',     url: d => d.td && d.td.TP },
+    { pane: 'paneTmListings', label: 'Ticketmaster', url: d => d.td && d.td.TM },
+  ];
+
+  async function loadSourceLinks(eventId) {
+    const res = await rpcOrNull('get_event_source_links', { p_event_id: eventId });
+    if (!res || res.error || !res.data) return;
+    const d = res.data;
+    _SRC_LINK_TABS.forEach(t => attachSrcLink(t.pane, t.label, t.url(d)));
+    // TD Markets aggregates every available source link into one row.
+    attachSrcLinksMulti('paneTdMarkets', d);
+  }
+
+  // First <span> inside a pane's first .panel-title — we append the link there
+  // so it sits inline next to the title text (the .panel-title.row container is
+  // a 2-child space-between flex; appending into the title span avoids breaking
+  // that layout). Returns null when the pane/title isn't present.
+  function paneTitleSpan(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane) return null;
+    const title = pane.querySelector('.panel-title');
+    if (!title) return null;
+    return title.querySelector('span') || title;
+  }
+
+  // Idempotent single "↗ <label>" link in a pane title.
+  function attachSrcLink(paneId, label, url) {
+    if (!url) return;
+    const host = paneTitleSpan(paneId);
+    if (!host) return;
+    let link = host.querySelector('a.src-link[data-single]');
+    if (!link) {
+      link = document.createElement('a');
+      link.className = 'src-link';
+      link.setAttribute('data-single', '1');
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      host.appendChild(link);
+    }
+    link.href = url;
+    link.title = 'Open this event on ' + label + ' — spot-check our captured data against the live book';
+    link.innerHTML = '↗ ' + escapeHtml(label);
+  }
+
+  // All available source links in one row (TD Markets aggregate tab).
+  function attachSrcLinksMulti(paneId, d) {
+    const host = paneTitleSpan(paneId);
+    if (!host) return;
+    const links = [
+      ['SeatGeek', d.sg_url],
+      ['StubHub', d.td && d.td.SH], ['GameTime', d.td && d.td.GT],
+      ['VividSeats', d.td && d.td.VD], ['TickPick', d.td && d.td.TP],
+      ['Ticketmaster', d.td && d.td.TM],
+    ].filter(([, u]) => !!u);
+    let row = host.querySelector('.src-link-row');
+    if (!row) {
+      row = document.createElement('span');
+      row.className = 'src-link-row';
+      host.appendChild(row);
+    }
+    row.innerHTML = links.map(([lbl, u]) =>
+      `<a class="src-link" target="_blank" rel="noopener noreferrer" href="${escapeHtml(u)}" ` +
+      `title="Open on ${escapeHtml(lbl)}">↗ ${escapeHtml(lbl)}</a>`).join('');
+  }
+
   // ---------- TD per-source freshness (event_listing_snapshot_daily) ----------
 
   async function loadTdFreshness(eventId) {
@@ -1944,11 +2286,11 @@
     // Used for: (a) fr-chips freshness, (b) data-freshness table, (c) price chart TD overlay
     const { data: rows, error } = await Auth.client
       .from('event_listing_snapshot_daily')
-      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,evo_owned_median,evo_tickets_count,evo_owned_tickets,sg_all_median,sg_owned_median,sg_all_tickets,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
       .eq('event_id', eventId)
       .order('snapshot_date', { ascending: false })
       .order('snapshot_slot', { ascending: false })
-      .limit(90);
+      .limit(1200);   // ~2yr of durable history (3 slots/day); cheap, indefinite table
     if (error) { console.error('[td-freshness] sb', error); return; }
     // Latest row for chips + freshness table
     // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC. NOTE: the slot names do
@@ -2011,6 +2353,10 @@
     if (rows && rows.length > 1) {
       const sh = [], gt = [], vd = [];
       const ish = [], igt = [], ivd = [];
+      // Durable cross-source backbone (long-horizon splice — retention fix).
+      const dm = { evo_owned: [], evo_mkt: [], sg_list: [], sg_own: [], sh: [], gt: [], vd: [] };
+      const dc = { evo_own: [], evo_tix: [], sg_tix: [], sh: [], gt: [], vd: [] };
+      const push = (arr, ts, v) => { if (v != null) arr.push({ t: ts, v: +v }); };
       for (const r of rows) {
         const ts = rowTs(r);
         if (r.td_sh_median   != null) sh.push({ t: ts, v: +r.td_sh_median });
@@ -2019,10 +2365,23 @@
         if (r.td_sh_listings != null) ish.push({ t: ts, v: +r.td_sh_listings });
         if (r.td_gt_listings != null) igt.push({ t: ts, v: +r.td_gt_listings });
         if (r.td_vd_listings != null) ivd.push({ t: ts, v: +r.td_vd_listings });
+        // EVO + SG durable medians/counts (these feed the long-horizon splice).
+        push(dm.evo_owned, ts, r.evo_owned_median);
+        push(dm.evo_mkt,   ts, r.evo_retail_median);
+        push(dm.sg_list,   ts, r.sg_all_median);
+        push(dm.sg_own,    ts, r.sg_owned_median);
+        push(dm.sh, ts, r.td_sh_median); push(dm.gt, ts, r.td_gt_median); push(dm.vd, ts, r.td_vd_median);
+        push(dc.evo_own, ts, r.evo_owned_tickets);
+        push(dc.evo_tix, ts, r.evo_tickets_count);
+        push(dc.sg_tix,  ts, r.sg_all_tickets);
+        push(dc.sh, ts, r.td_sh_listings); push(dc.gt, ts, r.td_gt_listings); push(dc.vd, ts, r.td_vd_listings);
       }
       // Reverse so series are chronological (we fetched newest-first)
       _tdChartSeries    = { sh: sh.reverse(),  gt: gt.reverse(),  vd: vd.reverse() };
       _tdInvCountSeries = { sh: ish.reverse(), gt: igt.reverse(), vd: ivd.reverse() };
+      Object.keys(dm).forEach(k => dm[k].reverse());
+      Object.keys(dc).forEach(k => dc[k].reverse());
+      _dailyDurable = { med: dm, cnt: dc };
 
       if (_lastPayload && _lastPayload.chart_data) {
         try {
@@ -2549,7 +2908,7 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tp-listings': false, 'tm-listings': false,
-    'sg-sales': false, 'our-orders': false,
+    'sg-sales': false, 'our-orders': false, 'alerts': false,
   } };
 
   function wireTabs(eventId) {
@@ -2588,6 +2947,9 @@
         await loadSgSalesFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
+      } else if (tabId === 'alerts') {
+        // Re-render every activation (cheap; reflects track/alert toggles).
+        await loadAlertsTab(eventId);
       } else if (tabId === 'seatmap' && !_tabState.loaded['seatmap']) {
         await loadSeatmap(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
@@ -2600,6 +2962,10 @@
           loadCrossBrokerFull(eventId),
         ]);
         updateOurOrdersTabCount();
+      } else if (tabId === 'alerts' && !_tabState.loaded['alerts']) {
+        _tabState.loaded['alerts'] = true;
+        const label = document.getElementById('evTitle')?.textContent || '';
+        window.TerminalAlerts?.mount('event', eventId, label, document.querySelector('#paneAlerts .alerts-root'));
       }
     });
   }
@@ -2621,8 +2987,10 @@
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
+      'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
+      'alerts':       'paneAlerts',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -2697,8 +3065,16 @@
       if (countChip) countChip.textContent = '0';
       return;
     }
-    const rows = d.rows || [];
-    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
+    const allRows = d.rows || [];
+    // RPC dedups DISTINCT ON (sglid) across a 7-day window, so a listing keeps
+    // its LAST-SEEN captured_at — listings that vanished days ago still appear,
+    // stamped with stale pull times. That's the "multiple captured" symptom.
+    // Limit to the last pull: each poll writes one uniform captured_at, so the
+    // current board = rows whose captured_at equals the max across the result.
+    const lastPull = allRows.reduce((m, r) => (r.captured_at > m ? r.captured_at : m), '');
+    const rows = lastPull ? allRows.filter(r => r.captured_at === lastPull) : allRows;
+    const pullLabel = lastPull ? T.fmtDate(lastPull) : '—';
+    if (meta) meta.textContent = `${rows.length} listings · last pull ${pullLabel} · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
     if (countChip) countChip.textContent = String(rows.length);
     if (!rows.length) {
       body.innerHTML = '<div class="empty">no SG listings in last 7 days</div>';

@@ -16,6 +16,7 @@
   const _vTabState = {
     marketLoaded:     false,
     competingLoaded:  false,
+    alertsLoaded:     false,
     venueEvents:      null,
     venueAggregate:   {},
     compRadius:       50,
@@ -144,6 +145,7 @@
     sg:         'vPaneSg',
     competing:  'vPaneCompeting',
     market:     'vPaneMarket',
+    alerts:     'vPaneAlerts',
   };
 
   function wireTabs() {
@@ -162,6 +164,11 @@
       }
       if (tabId === 'competing' && !_vTabState.competingLoaded) {
         initCompetingPanel();
+      }
+      if (tabId === 'alerts' && !_vTabState.alertsLoaded) {
+        _vTabState.alertsLoaded = true;
+        const label = document.getElementById('vhName')?.textContent || '';
+        window.TerminalAlerts?.mount('venue', getVenueId(), label, document.querySelector('#vPaneAlerts .alerts-root'));
       }
     });
     document.getElementById('venueTabs').removeAttribute('hidden');

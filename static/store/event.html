@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://maps.ticketevolution.com; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <!-- Title + description are overridden per-event by store.js once the
@@ -83,6 +83,13 @@
 
     <section id="body" class="event-body" hidden>
       <aside class="map">
+        <!-- Interactive TEvo seat map. store.js mounts the vendored Tevomaps
+             bundle here (via static/store/lib/seatmap.js) when the event's
+             venue + configuration resolve to a published map. Sections are
+             colored by cheapest available price; clicking one drives the
+             section filter. Stays empty (and hidden) when no map exists —
+             the static <img> below remains the fallback. -->
+        <div id="seatmapHost" class="seatmap-host" hidden></div>
         <!-- 1x1 transparent placeholder so the browser doesn't flash a
              broken-image icon between page-load and JS setting img.src
              from the configurations API. JS replaces the src attribute
@@ -177,6 +184,11 @@
     <span class="foot-meta">&copy; 2026 VibePass &middot; MVP preview</span>
   </footer>
 
+  <!-- Vendored TEvo seat-map bundle + the self-contained storefront widget.
+       Both load before store.js so window.Tevomaps / window.StoreSeatmap are
+       ready when store.js renders the map. Lane D1: static/store/* only. -->
+  <script src="/static/store/lib/tevomaps.bundle.js" defer></script>
+  <script src="/static/store/lib/seatmap.js" defer></script>
   <script src="/static/store/store.js" defer></script>
 </body>
 </html>

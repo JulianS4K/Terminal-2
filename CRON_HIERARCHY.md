@@ -1,6 +1,6 @@
 # CRON_HIERARCHY.md
 
-> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §1 job-count + §4b rewritten for the per-event collector-cadence model (`collector_cadence`-driven scan per source; EVO/SG horizon bands; ~12 horizon/blindspot collectors retired, 2–3 pollers added). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §1 job-count + §4b rewritten for the per-event collector-cadence model (`collector_cadence`-driven scan per source; EVO/SG horizon bands; ~12 horizon/blindspot collectors retired, 2–3 pollers added); v1.2.0 2026-06-03 (A1) — §4b: SG `/listings` poller split into owned (`sg_listings_poll_owned_1min`, ON) / non-owned (`sg_listings_poll_nonowned_5min`, once-daily, OFF); `sg_listings_poll_2min` retired; raw listings retention 30d→15d. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Tiered cron-scheduling policy for Terminal-2. Maximize data freshness within bounded concurrency, with explicit headroom for future bot lanes (B2-B4).**
 
@@ -11,7 +11,7 @@ Operator directive 2026-05-14: "create a cron/data hierarchy so we can maximize 
 ## 1. Resource constraints (hard limits)
 
 - `cron.max_running_jobs = 32` (Supabase default; not raisable without superuser support ticket)
-- Total active jobs: was **74** (2026-05-14); the **2026-05-31 collector-cadence cutover** retired ~12 horizon/blindspot collectors (the five `collect-listings-*` windows + `collect-listings-featured-10min` + the SG `sg_blindspot_poll_5min` / `sg_listings_floor_sweep` / `sg_60d_*` ×4 / `sg_broker_sales_queue_5min`) plus ~9 long-inactive jobs, and added 2–3 (`evo_listings_poll_2min`, `sg_listings_poll_2min`, + the re-added low-freq `collect-listings` discovery sweep). Net job count **dropped**; re-verify live via `SELECT count(*) FROM cron.job WHERE active`. See **§4b** for the per-event poller model.
+- Total active jobs: was **74** (2026-05-14); the **2026-05-31 collector-cadence cutover** retired ~12 horizon/blindspot collectors (the five `collect-listings-*` windows + `collect-listings-featured-10min` + the SG `sg_blindspot_poll_5min` / `sg_listings_floor_sweep` / `sg_60d_*` ×4 / `sg_broker_sales_queue_5min`) plus ~9 long-inactive jobs, and added 2–3 (`evo_listings_poll_2min`, `sg_listings_poll_2min`, + the re-added low-freq `collect-listings` discovery sweep). **2026-06-03**: `sg_listings_poll_2min` was split into `sg_listings_poll_owned_1min` (ON) + `sg_listings_poll_nonowned_5min` (OFF) — §4b. Net job count **dropped**; re-verify live via `SELECT count(*) FROM cron.job WHERE active`. See **§4b** for the per-event poller model.
 - `cron.use_background_workers = off` → each cron job uses a regular Postgres backend; competes with app traffic for `max_connections = 60`
 - Each backend on a long-running job (`>2 min`) blocks one of the 32 slots until it completes
 - pg_cron "job startup timeout" fires when all 32 slots are exhausted at a tick
@@ -160,7 +160,7 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ---
 
-## 4b. Listings collection — per-event poller model *(v1.1 · A1 · 2026-05-31)*
+## 4b. Listings collection — per-event poller model *(v1.2 · A1 · 2026-06-03)*
 
 **The horizon-windowed collectors are RETIRED.** Before 2026-05-31, both EVO and SG pulled listings via fixed time-window crons (`collect-listings-0-24h/1-7d/7-30d/30-60d/60d+`, the SG `sg_listings_*` `/v2` jobs, and the `sg_listings_floor_sweep` round-robin). The **collector-cadence cutover** (migs `20260531140000`–`170000`) replaces all of them with **one ≈2-min scan per source** that fires per-event based on each event's date-horizon, driven by config in **`public.collector_cadence`**.
 
@@ -169,11 +169,13 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 | Job | Cadence | What it does | Status |
 |---|---|---|---|
 | **`evo_listings_poll_2min`** | `*/2` | `evo_listings_poll_tick(p_max)` — fires `collect-listings?event_id=X` per due event, stamps `evo_listings_poll_state.last_polled_listings_at` on fire | **ACTIVE (new 05-31)** |
-| **`sg_listings_poll_2min`** | `*/2` | `sg_listings_poll_tick(p_max,p_min_remaining)` — band-driven, rate-aware (backoff on `ratelimit-remaining`), strand-safe; `p_max=5` (SG is rate-limited) | **ACTIVE (new 05-31)** |
+| **`sg_listings_poll_owned_1min`** | `*/1` | `sg_listings_poll_tick(5,3,'owned')` — broker `/listings`, **OWNED events only** (`owned_count_last_7d>0`); tight horizon bands, rate-aware, strand-safe | **ACTIVE (split 06-03)** |
+| **`sg_listings_poll_nonowned_5min`** | `*/5` | `sg_listings_poll_tick(8,3,'non')` — broker `/listings`, **NON-OWNED events**; once-daily per event (`collector_cadence` owned_kind='non' = 1440) | **OFF — wired, `cron_policy.enabled=false` (06-03); flip to resume** |
 | **`sg_sales_poll_5min`** | `*/5` | retuned `sg_sales_poll_tick` (now band-driven) | **ACTIVE (re-enabled 05-31, P0 follow-up)** |
 | **`collect-listings`** (discovery) | low-freq | re-added new-event discovery sweep (P0 follow-up; `evo_discover` Phase-2 in KANBAN) | **ACTIVE (re-added 05-31)** |
 | `collect-listings-0-24h/1-7d/7-30d/30-60d/60d+` · `collect-listings-featured-10min` | — | EVO horizon windows + featured | **RETIRED 05-31** |
 | `sg_listings_*` (53–58, `/v2`) · `sg_blindspot_poll_5min` · `sg_listings_floor_sweep` · `sg_60d_listings_morning/afternoon` · `sg_60d_sales_morning/afternoon` · `sg_broker_sales_queue_5min` | — | SG horizon / blindspot / floor-sweep / 60d / sales-queue | **RETIRED 05-31** |
+| `sg_listings_poll_2min` | — | combined SG listings poller (owned+non) | **RETIRED 06-03** — split into the two owned/non pollers above |
 | `sg_broker_listings_metrics_refresh_hourly` · `sg_canonical_v2_pull_refresh_30min` · `sweep-old-sg-listings` · `sg_seller_*` · `td_*` (TickPick/TM discovery + enqueue, new 05-29) | various | metrics / reconcile / sweep / seller(owned) / TD platforms | ACTIVE (unchanged) |
 
 **Per-event cadence bands (actual API calls per event, by date-horizon):**
@@ -187,6 +189,8 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 | 61d+ | 12 h | 24 h |
 
 **Why EVO and SG differ:** EVO is the *only* consumer of the TEvo broker API (effectively unlimited quota) → aggressive near-event cadence. SG broker is **rate-limited (~5 req / 10s window)**, so `sg_listings_poll_tick` runs `p_max=5` per tick, backs off on the live `ratelimit-remaining` header, and is strand-safe; the SG cadence clock (`sg_event_priority_state.last_fired_listings_at`) advances **only on HTTP 200** (so a 429/timeout re-tries rather than burning the slot). SG reuses `sg_event_priority_state` (gained `last_fired_listings_at`) — there is **no** `sg_listings_poll_state` and **no** `horizon_days` column.
+
+**Owned/non split (2026-06-03):** SG *listings* cadence is now keyed on `owned_kind`. **OWNED** events (we hold inventory, `owned_count_last_7d>0`) use the tight per-horizon bands in `collector_cadence` (≤7d 45/90 min · 8-14d 150/300 min · 15-30d 600/1200 min · 31d+ 1200/1320 min) via `sg_listings_poll_owned_1min` (**ACTIVE**). **NON-OWNED** events are a flat **once-daily (1440 min)** floor via `sg_listings_poll_nonowned_5min` (**OFF for now** — `cron_policy.enabled=false`). The SG column in the table above reflects the pre-split values; SG *sales* (`sg_sales_poll_5min`) is unchanged.
 
 **Shared-token note (unchanged):** all SG broker crons **+ a separate external prod program** draw on ONE SeatGeek token. Watch `v_sg_token_budget` + `v_sg_broker_429_health`.
 
