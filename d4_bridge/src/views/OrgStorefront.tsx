@@ -21,6 +21,7 @@ import { formatInTz } from '../lib/datetime';
 import { applyMeta } from '../lib/meta';
 import { initOrgPixels } from '../lib/pixels';
 import SocialLinks from '../components/SocialLinks';
+import { publicUrl } from '../lib/utils';
 
 interface ResolvedOrg {
   org: Organization;
@@ -143,7 +144,7 @@ export default function OrgStorefront() {
             title: org.name,
             description: `Upcoming events from ${org.name}.`,
             imageUrl: org.marketing?.shareImageUrl || org.theme?.logoUrl,
-            canonicalUrl: `${window.location.origin}/o/${org.slug}`,
+            canonicalUrl: publicUrl(`o/${org.slug}`),
           });
         } catch {
           /* non-fatal */

@@ -38,6 +38,8 @@ const EmbedEvent = lazy(() => import('./views/EmbedEvent'));
 const OrganizerOnboarding = lazy(() => import('./views/OrganizerOnboarding'));
 const ClaimInvite = lazy(() => import('./views/ClaimInvite'));
 const OrganizerEventReport = lazy(() => import('./views/OrganizerEventReport'));
+const PromoteEvent = lazy(() => import('./views/PromoteEvent'));
+const OrgPromote = lazy(() => import('./views/OrgPromote'));
 
 /**
  * @license
@@ -107,12 +109,14 @@ export default function App() {
                     <Route path="/create-event" element={<CreateEvent />} />
                     <Route path="/checkin/:eventId" element={<OrganizerCheckIn />} />
                     <Route path="/dashboard/event/:eventId" element={<OrganizerEventReport />} />
+                    <Route path="/dashboard/event/:eventId/promote" element={<PromoteEvent />} />
                     <Route path="/edit-event/:eventId" element={<EditEvent />} />
                     {/* Bridge multi-tenant org views (Sprint 1). */}
                     <Route path="/orgs" element={<Orgs />} />
                     <Route path="/orgs/new" element={<CreateOrg />} />
                     <Route path="/orgs/:orgId/settings" element={<OrgSettings />} />
                     <Route path="/orgs/:orgId/members" element={<OrgMembers />} />
+                    <Route path="/orgs/:orgId/promote" element={<OrgPromote />} />
                     {/* Onboarding flow for new organizers (Sprint 6). */}
                     <Route path="/onboarding" element={<OrganizerOnboarding />} />
                     <Route path="/invite/:token" element={<ClaimInvite />} />

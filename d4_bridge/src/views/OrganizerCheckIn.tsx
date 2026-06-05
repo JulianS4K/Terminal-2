@@ -195,7 +195,7 @@ export default function OrganizerCheckIn() {
           // a second flip of an already-used ticket returns {ok:false,
           // reason:'used'} (no throw), so we still drop it from the queue.
           // Only a real network/auth error throws and keeps it queued.
-          await checkInTicket(tId, 'manual', 'manual');
+          await checkInTicket(tId, 'manual', 'manual', undefined, eventId);
           successfulSyncs.push(tId);
         } catch (err) {
           console.error(`Error syncing pending update ${tId}:`, err);
@@ -406,8 +406,12 @@ export default function OrganizerCheckIn() {
         saveRegistry(eventId, next);
         return next;
       });
-      // A check-in landed (this lane or another) — refresh the attendance count.
-      countEventCheckins(eventId).then(setInsideVenue).catch(() => {});
+      // A check-in landed (this lane or another) — bump the live count by one
+      // rather than re-running a count(*) per scan. A count(*) per realtime tick
+      // per lane doesn't scale at a busy multi-lane gate; postgres_changes emits
+      // exactly one event per check-in row (incl. our own), so +1 is accurate.
+      // Reconciled against the authoritative head-count on reconnect below.
+      setInsideVenue((n) => n + 1);
     });
     return () => ch.leave();
   }, [eventId]);
@@ -427,6 +431,10 @@ export default function OrganizerCheckIn() {
   useEffect(() => {
     if (wasOfflineRef.current && !isOffline) {
       void downloadRegistry({ silent: true });
+      // Realtime doesn't replay check-ins that landed while we were
+      // disconnected, so reconcile the live count against the authoritative
+      // head-count once (the only count(*) on this path — not per scan).
+      if (eventId) countEventCheckins(eventId).then(setInsideVenue).catch(() => {});
     }
     wasOfflineRef.current = isOffline;
   }, [isOffline]);
@@ -485,11 +493,9 @@ export default function OrganizerCheckIn() {
     // happens later, after we've read the ticket doc and have its secret.
     const docId = extractTicketIdFromAny(probeValue) || probeValue;
 
-    // Sanity-check the doc id length before hitting Firestore. A typo
-    // ("T-AAAAAAAAAA…ZZZZ") via the manual-entry path could otherwise
-    // burn a Firestore read on a junk lookup. Firestore doc ids cap at
-    // 1500 bytes; we're stricter — `isValidId` in the rules limits to
-    // 128, so anything longer can't be a real ticket.
+    // Sanity-check the id length before a lookup so a manual-entry typo can't
+    // burn a staff-RLS read on junk. Ticket ids are UUIDs — anything over 128
+    // chars can't be a real ticket id.
     if (!docId || docId.length > 128) {
       setStatus('not-found');
       return;
@@ -611,6 +617,7 @@ export default function OrganizerCheckIn() {
             scanning ? 'camera' : 'manual',
             offlineTicket.barcodeSecret ? 'verified' : 'manual',
             probeValue,
+            eventId,
           );
           // Honor a server-side barcode rejection (e.g. the secret rotated via a
           // transfer since this registry was synced) — do NOT admit locally.
@@ -657,17 +664,12 @@ export default function OrganizerCheckIn() {
       return;
     }
 
-    // Fallback to online search if not in offline registry and online.
+    // Not in the offline registry and we're offline: supabase-js has no offline
+    // write queue (unlike the old Firestore SDK), so we can neither verify the
+    // ticket nor durably record the reject until the link returns. Surface
+    // "not found"; a re-scan once back online audits properly.
     if (isOffline) {
       setStatus('not-found');
-      // Queue an audit reject — Firestore SDK persists pending writes
-      // locally and replays them when network returns. So a bare-id
-      // manual entry while offline + uncached still leaves a paper
-      // trail for the organizer to review later.
-      void writeScanReject('not-found', scanning ? 'camera' : 'manual', {
-        ticketIdAttempted: docId,
-        reasonDetail: 'offline + not in registry',
-      });
       return;
     }
 
@@ -783,7 +785,7 @@ export default function OrganizerCheckIn() {
     // double-scan guard) AND writes the append-only check-in audit row. For a
     // signed payload it also RE-VERIFIES the HMAC server-side (D4-OPS-6), so a
     // forged/replayed code is rejected even if the client check was bypassed.
-    const result = await checkInTicket(scanTicket.id, src, verification, barcodePayload);
+    const result = await checkInTicket(scanTicket.id, src, verification, barcodePayload, eventId);
 
     if (result.ok) {
       setStatus('success');
