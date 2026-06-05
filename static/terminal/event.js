@@ -831,27 +831,53 @@
     }
   }
 
-  // Robust Y-axis range. uPlot's default auto-scale spans data min→max, so a
-  // single outlier (e.g. a $500+ suite sale spiking a median bucket) blows the
-  // axis out and compresses the $4-60 trading band into an unreadable sliver.
-  // This clips the top to ~p95 ONLY when a real outlier exists (real max > 1.5×
-  // p95); otherwise it shows the full range. Lines above the cap clip off-top.
+  // Y-axis range — adaptive to the prices currently in view.
+  //
+  // `initMin`/`initMax` are supplied by uPlot already scoped to (a) only the
+  // series on THIS scale and (b) only the points inside the current x-window,
+  // so they track the visible data as the time range changes or prices climb
+  // toward the event. The top gets a little headroom so the highest line isn't
+  // flush against the frame.
+  //
+  // History: this used to clip the top to ~p95 (computed over the WHOLE series,
+  // ignoring the x-window) to tame a lone suite-sale outlier. That cap was both
+  // non-adaptive and too aggressive — as event prices rose, the genuine top
+  // median lines were drawn off the top of the chart. We now follow the visible
+  // max instead, and only fence off a single pathological outlier that sits far
+  // above the rest of the visible points (so one bad tick still can't flatten
+  // the band, but normal price movement is never clipped).
   function robustYRange(u, initMin, initMax) {
-    var fallback = [0, (initMax == null || !isFinite(initMax)) ? 1 : initMax];
-    if (!u || !u.series || !u.data) return fallback;
-    var vals = [];
-    for (var i = 1; i < u.series.length; i++) {
-      if (u.series[i] && u.series[i].show === false) continue;
-      var d = u.data[i]; if (!d) continue;
-      for (var j = 0; j < d.length; j++) {
-        var v = d[j]; if (v != null && isFinite(v)) vals.push(v);
+    var hasMax = (initMax != null && isFinite(initMax));
+    // Adaptive default: follow the visible max with a little headroom.
+    var top = hasMax ? initMax * 1.06 : 1;
+    // Outlier fence: only engage when the visible max towers over the 98th pct
+    // of the visible points on this scale (i.e. a lone spike, not a rising
+    // trend). Recompute the percentile over the x-window so it stays adaptive.
+    if (u && u.series && u.data && u.data[0] && hasMax) {
+      var xs = u.data[0];
+      var xmin = u.scales && u.scales.x ? u.scales.x.min : null;
+      var xmax = u.scales && u.scales.x ? u.scales.x.max : null;
+      var lo = (initMin != null && isFinite(initMin)) ? initMin : -Infinity;
+      var vals = [];
+      for (var i = 1; i < u.series.length; i++) {
+        if (u.series[i] && u.series[i].show === false) continue;
+        var d = u.data[i]; if (!d) continue;
+        for (var j = 0; j < d.length; j++) {
+          var x = xs[j];
+          if (xmin != null && x < xmin) continue;
+          if (xmax != null && x > xmax) continue;
+          var v = d[j];
+          // Only count points within [initMin, initMax] for this scale so we
+          // don't fold a different scale's series into the percentile.
+          if (v != null && isFinite(v) && v >= lo && v <= initMax) vals.push(v);
+        }
+      }
+      if (vals.length > 20) {
+        vals.sort(function (a, b) { return a - b; });
+        var p98 = vals[Math.floor(vals.length * 0.98)];
+        if (p98 > 0 && initMax > p98 * 2) top = p98 * 1.2;
       }
     }
-    if (!vals.length) return fallback;
-    vals.sort(function (a, b) { return a - b; });
-    var p95 = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))];
-    var realMax = vals[vals.length - 1];
-    var top = (realMax <= p95 * 1.5) ? realMax * 1.08 : Math.max(p95 * 1.1, 1);
     return [0, top > 0 ? top : 1];
   }
 
