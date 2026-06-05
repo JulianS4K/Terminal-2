@@ -115,6 +115,7 @@
     // fetchPayload (Path A / Path C v3) fails. PR #205 cross-source +
     // PR redesign localized weather + SG zones/splits all independent.
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
+    loadSeatmapTabVisibility(eventId).catch(e => console.error('[seatmapTab]', e));
     loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
@@ -1950,15 +1951,39 @@
       .limit(90);
     if (error) { console.error('[td-freshness] sb', error); return; }
     // Latest row for chips + freshness table
-    const snap = rows && rows.length ? rows[0] : null;
-    // Convert snapshot_date + slot to approx UTC timestamp for age calc
-    // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC
+    // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC. NOTE: the slot names do
+    // NOT sort chronologically as text ("morning" > "midday" > "evening" alphabetically),
+    // so a SQL `order by snapshot_slot desc` returns the EARLIEST (morning) slot. Sort
+    // chronologically client-side instead, or the panel shows the morning partial.
     const slotHourMap = { morning: 9, midday: 14, evening: 19 };
-    const rowTs = (r) => {
-      const h = slotHourMap[r.snapshot_slot] ?? 12;
-      return `${r.snapshot_date}T${String(h).padStart(2, '0')}:00:00Z`;
-    };
-    const snapTs = snap ? rowTs(snap) : null;
+    const slotRank = (r) => slotHourMap[r.snapshot_slot] ?? 12;
+    const rowTs = (r) => `${r.snapshot_date}T${String(slotRank(r)).padStart(2, '0')}:00:00Z`;
+    if (rows && rows.length) {
+      rows.sort((a, b) => a.snapshot_date !== b.snapshot_date
+        ? (a.snapshot_date < b.snapshot_date ? 1 : -1)   // newest date first
+        : slotRank(b) - slotRank(a));                    // then newest slot first
+    }
+    // The collector writes a slot even mid-pull, so the latest slot can show 0 for a
+    // platform that simply hadn't pulled yet. Build `snap` from the latest row but
+    // fill each platform from the freshest recent slot where it actually has a book
+    // (>0), keeping listings+median from the SAME slot. Bounded to the latest ~6 rows
+    // (~2 days) so a genuinely-empty platform doesn't carry a stale value forever.
+    let snap = rows && rows.length ? { ...rows[0] } : null;
+    if (snap) {
+      const recent = rows.slice(0, 6);
+      const PLATS = [
+        ['td_sh_listings', 'td_sh_median'], ['td_gt_listings', 'td_gt_median'],
+        ['td_vd_listings', 'td_vd_median'], ['td_tp_listings', 'td_tp_median'],
+        ['td_tm_listings', 'td_tm_median'], ['td_tm_resale_listings', 'td_tm_resale_median'],
+      ];
+      for (const [lf, mf] of PLATS) {
+        if (snap[lf] == null || +snap[lf] === 0) {
+          const hit = recent.find(r => r[lf] != null && +r[lf] > 0);
+          if (hit) { snap[lf] = hit[lf]; snap[mf] = hit[mf]; }
+        }
+      }
+    }
+    const snapTs = snap ? rowTs(rows[0]) : null;
     // Update the TD fr-chips in the hero
     const tdMap = { 'td-sh': snap?.td_sh_listings, 'td-gt': snap?.td_gt_listings, 'td-vd': snap?.td_vd_listings };
     for (const [src, listings] of Object.entries(tdMap)) {
@@ -2563,6 +2588,8 @@
         await loadSgSalesFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
+      } else if (tabId === 'seatmap' && !_tabState.loaded['seatmap']) {
+        await loadSeatmap(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
         // Merged tab — fire all 3 broker-order RPCs in parallel, render each
         // into its own stacked sub-section inside #paneOurOrders.
@@ -2594,6 +2621,7 @@
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
+      'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
@@ -2791,6 +2819,502 @@
     body.innerHTML = '';
     body.appendChild(host);
     if (meta) meta.textContent = `${rows.length} rows (${ownedCount} ours) · ${ms.toFixed(0)}ms`;
+  }
+
+  // ---------- Seat Map (interactive TEvo venue map · multi-source section/price filter) ----------
+  // The vendored @ticketevolution/seatmaps-client UMD bundle exposes window.Tevomaps.
+  // venueId/configurationId come from public.events; the map is rendered once, then the
+  // SOURCE SELECTOR (TEvo · SeatGeek · StubHub · GameTime · VividSeats) re-colors it by
+  // ONE source's floors at a time via updateTicketGroups() — never collectively. Each
+  // source's per-section floors are joined to the map's manifest section names via the
+  // trailing-token remap. Clicking a section filters the per-source listing table below.
+  // All sources' RPCs take the tevo event_id and resolve the cross-source bridge server-side.
+  let _seatmapApi = null;
+  let _seatmapEventId = null;
+  let _seatmapRemap = null;     // tail → full manifest section name (venue/config-scoped, cached)
+  let _seatmapSource = 'EVO';   // which source currently colors the map
+  let _seatmapRowsBySource = {};// key → normalized rows [{section,row,quantity,retail_price,is_owned}]
+  let _seatmapSelected = [];    // section names currently selected on the map
+  let _seatmapWired = false;    // selector + reset listeners attached once
+  let _seatmapUserPicked = false; // user clicked a source → stop auto-picking
+  let _seatmapConfigName = '';
+  let _seatmapVenueLabel = '';
+  const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
+  // Source registry — TP excluded (zone-only, no section granularity); TM excluded
+  // (primary/box-office, no section-level resale listings for these events).
+  const SEATMAP_SOURCES = [
+    { key: 'EVO', label: 'TEvo' },
+    { key: 'SG',  label: 'SeatGeek' },
+    { key: 'SH',  label: 'StubHub' },
+    { key: 'GT',  label: 'GameTime' },
+    { key: 'VD',  label: 'VividSeats' },
+  ];
+
+  // Fetch one source's listings (by tevo event id — every RPC resolves the bridge itself)
+  // and normalize to a common shape. Prices use each source's all-in field where available.
+  async function _seatmapFetchSource(eventId, key) {
+    if (key === 'EVO') {
+      const r = await rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId });
+      return ((r && r.data && r.data.rows) || []).map(x => ({
+        section: x.section, row: x.row, quantity: x.quantity,
+        retail_price: x.retail_price, is_owned: !!x.is_owned,
+      }));
+    }
+    if (key === 'SG') {
+      const r = await rpcOrNull('get_event_sg_listings_full', { p_event_id: eventId });
+      return ((r && r.data && r.data.rows) || []).map(x => ({
+        section: x.section, row: x.row, quantity: x.quantity,
+        retail_price: (x.retail_price_all_in != null ? x.retail_price_all_in : x.broadcast_price),
+        is_owned: !!x.is_broker_owned,
+      }));
+    }
+    // SH / GT / VD via TicketsData
+    const r = await rpcOrNull('get_event_td_listings', { p_tevo_event_id: eventId, p_platform: key, p_hours: 26 });
+    const rows = Array.isArray(r && r.data) ? r.data : [];
+    return rows.map(x => ({
+      section: x.section, row: x.row, quantity: x.quantity,
+      retail_price: (x.price_with_fees != null && Number(x.price_with_fees) > 0 ? x.price_with_fees : x.list_price),
+      is_owned: false,
+    }));
+  }
+
+  function _seatmapSrcLabel(key) {
+    const s = SEATMAP_SOURCES.find(x => x.key === key);
+    return s ? s.label : key;
+  }
+
+  // Parking / non-seated pseudo-sections never match an SVG path (bible §3 parking
+  // skip) — drop them so the legend's price scale isn't skewed by $30 parking spots.
+  // Brokers also list off-site lots as STREET ADDRESSES ("1440 W Washington Blvd",
+  // "1 Light St", "2121 S. Towne Center Pl") — number-first + a street suffix. Filter
+  // those too (a real section like "Terrace 12" has the number LAST, so it's safe).
+  function _seatmapIsParking(section) {
+    const s = section || '';
+    if (/parking|garage|valet|\blot\b|\blot[\s.\-]?[a-z0-9]|min walk|mi from venue|shuttle|tailgate/i.test(s)) return true;
+    if (/^\s*\d[\d\s.,/&–-]*\s+\S.*\b(st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|pkwy|pkway|parkway|hwy|highway|ln|lane|ct|court|pl|place|plz|plaza|cir|circle|way)\b\.?/i.test(s)) return true;
+    // number + compass direction + word = a street address even without a street suffix
+    // ("840 N. Broadway", "61 E Elizabeth", "516 N. 2nd Ave"). Real sections aren't shaped this way.
+    if (/^\s*\d+\s+[nsew]\b\.?\s+[a-z0-9]/i.test(s)) return true;
+    return false;
+  }
+
+  // ----- Section → manifest matcher (venue-agnostic; manifest drives everything) -----
+  // The map MANIFEST keys sections by full descriptive names that vary wildly by venue:
+  // clean numeric+suffix ("014A", "320C"), named families ("Home Plate Box 10", "Club
+  // House 22"), or descriptive ("Lower Level Corner 104"). Broker `section` text is messy
+  // and venue-specific ("SEC10", "10", "Clubhouse Box 22", "FL5"). We match each listing
+  // section to a manifest key with a CONFIDENCE-ORDERED tier chain — exact/specific first,
+  // heuristics last and collision-gated — so clean venues resolve early (T1/T2) and never
+  // touch the messy-venue logic (T3/T4). Output is ALWAYS a real manifest key; when unsure
+  // we leave it unmatched (grey, still listed) rather than miscolor. No per-venue code.
+  const _SM_PREMIUM = /suite|club|diamond|dugout|founders|mvp|legend|champion|hall|vista|porch|all\s*star|gold\s*glove|rookie|silver|platinum|party|\bpass\b/i;
+
+  function _smNorm(s) {
+    return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  // Zone abbreviations brokers glue to a section number (esp. baseball): the manifest
+  // spells these out as family words, so we expand them to align. Multi-token where a
+  // level spans sub-families (Dodger field = Field Box / Infield Box / Preferred Field —
+  // all carry "field" or "box"). Venue-agnostic: an expansion only helps when that
+  // venue's manifest actually has the family; otherwise it's a harmless no-op.
+  const SEATMAP_ZONES = {
+    fd: 'field box', rs: 'reserve', lg: 'loge box', td: 'top deck',
+    dg: 'dugout', pl: 'pavilion', pr: 'pavilion', bl: 'baseline', mvp: 'mvp',
+    // middle level: brokers/SG call it M / Mezz / Mezzanine, the manifest may say
+    // "Middle" OR "Mezzanine" — expand to both tokens so either naming matches.
+    m: 'middle mezzanine', mez: 'middle mezzanine', mezz: 'middle mezzanine',
+    mezzanine: 'middle mezzanine', drm: 'middle mezzanine',
+    flga: 'floor', flrga: 'floor',  // floor-GA codes → the Floor family
+  };
+  // Parse a section/key → { num (leading-zeros stripped), suf (sub-section letter), fam }.
+  // num = the section number; suf = a single A-H sub-section letter glued to the number
+  // (Yankee "117A"≠"117B"); fam = remaining words with zone codes expanded and generic
+  // markers (sec/section/ga) dropped. A trailing zone code (e.g. "12FD"→field) is treated
+  // as FAMILY, not a suffix — distinguished from a real suffix by "<digit><single a-h>$".
+  function _smParse(s) {
+    const n = _smNorm(s);
+    const numM = n.match(/\d+/);
+    if (!numM) return { num: null, suf: '', fam: n };
+    const num = String(parseInt(numM[0], 10));      // first digit run; "014" → "14"
+    const sufM = n.match(/\d([a-h])$/);             // digit directly + one a-h letter = sub-section
+    const suf = sufM ? sufM[1] : '';
+    const nf = suf ? n.replace(/([a-h])$/, '') : n;
+    const fam = [];
+    (nf.match(/[a-z]+/g) || []).forEach(t => {
+      if (SEATMAP_ZONES[t]) fam.push(...SEATMAP_ZONES[t].split(' '));
+      else if (t === 'clubhouse') fam.push('club', 'house');
+      else if (/^(sec|section|ga)$/.test(t)) { /* generic — carries no family */ }
+      else fam.push(t);
+    });
+    return { num, suf, fam: fam.join(' ') };
+  }
+
+  // Build the per-venue manifest index (cached). Returns { byNumSuf, byNum, cache } or null.
+  async function _seatmapBuildSectionRemap(venueId, configurationId) {
+    try {
+      const resp = await fetch(`${SEATMAP_MAPS_DOMAIN}/${venueId}/${configurationId}/manifest.json`);
+      if (!resp.ok) return null;
+      const manifest = await resp.json();
+      const sections = (manifest && manifest.sections) || {};
+      const byNumSuf = new Map(), byNum = new Map(), named = [];
+      Object.keys(sections).forEach(k => {
+        const p = _smParse(k);
+        if (p.num == null) {                   // numberless keys (GA / Pit / Lawn / Stage / SRO)
+          const nm = _smNorm(k);
+          named.push({ key: k, norm: nm, toks: nm.split(' ').filter(Boolean) });
+          return;
+        }
+        const rec = { key: k, fam: p.fam, suf: p.suf };
+        const ek = p.num + '|' + p.suf;
+        (byNumSuf.get(ek) || byNumSuf.set(ek, []).get(ek)).push(rec);
+        (byNum.get(p.num)  || byNum.set(p.num, []).get(p.num)).push(rec);
+      });
+      return { byNumSuf, byNum, named, cache: new Map() };
+    } catch (_) { return null; }
+  }
+
+  // T3 family align → T4 bowl-default (prefer non-premium). Returns a key or null (don't guess).
+  function _smPick(parsed, cands) {
+    const lt = parsed.fam ? parsed.fam.split(' ').filter(Boolean) : [];
+    if (lt.length) {
+      let best = null, bs = 0;
+      for (const c of cands) {
+        const s = c.fam.split(' ').filter(t => lt.includes(t)).length;
+        if (s > bs) { bs = s; best = c; }
+      }
+      if (best) return best.key;               // T3
+    }
+    const bowl = cands.filter(c => !_SM_PREMIUM.test(c.key));
+    if (bowl.length === 1) return bowl[0].key; // T4 — unique non-premium = the seating bowl
+    return null;                               // still ambiguous → leave grey
+  }
+
+  // Match one listing section → manifest key (cached per venue). Tier chain:
+  // numberless (GA/Pit/Lawn) → name exact, else name token-overlap;
+  // numbered → T1/T2 exact (num+suffix) → T2b suffixed-but-only-numeric → T3 family → T4 bowl.
+  function _seatmapMatchSection(section, idx) {
+    if (!idx) return null;
+    if (idx.cache.has(section)) return idx.cache.get(section);
+    const p = _smParse(section);
+    let key = null;
+    if (p.num == null) {
+      // numberless section (e.g. "General Admission", "GA Pit") → match named manifest keys.
+      const nm = _smNorm(section);
+      const named = idx.named || [];
+      let hit = named.find(x => x.norm === nm);                // exact normalized
+      if (!hit && named.length) {                              // else best token overlap (>0)
+        const lt = nm.split(' ').filter(Boolean);
+        let best = null, bs = 0;
+        for (const x of named) {
+          const ov = x.toks.filter(t => lt.includes(t)).length;
+          if (ov > bs) { bs = ov; best = x; }
+        }
+        hit = best;
+      }
+      key = hit ? hit.key : null;
+    } else {
+      const exact = idx.byNumSuf.get(p.num + '|' + p.suf) || [];
+      if (exact.length === 1) key = exact[0].key;             // T1/T2 — clean venues land here
+      else if (exact.length > 1) key = _smPick(p, exact);     // same num+suf across families
+      else {
+        const numOnly = idx.byNum.get(p.num) || [];           // no exact suffix match
+        if (numOnly.length === 1) key = numOnly[0].key;
+        else if (numOnly.length > 1) key = _smPick(p, numOnly);
+      }
+    }
+    idx.cache.set(section, key);
+    return key;
+  }
+
+  // Collapse listing rows → one ticketGroup per matched manifest section at its lowest floor
+  // (what the map colors by). Unmatched sections are skipped (grey) but still appear in the
+  // listing table. No manifest (fetch failed) → fall back to the raw section as the key.
+  function _seatmapTicketGroups(rows, idx) {
+    const floorByKey = new Map();
+    rows.forEach(r => {
+      const sec = (r.section || '').trim();
+      if (!sec || _seatmapIsParking(sec)) return;
+      const price = Number(r.retail_price);
+      if (!isFinite(price) || price <= 0) return;
+      const key = idx ? _seatmapMatchSection(sec, idx) : sec;
+      if (!key) return;
+      const prev = floorByKey.get(key);
+      if (prev == null || price < prev) floorByKey.set(key, price);
+    });
+    return Array.from(floorByKey, ([key, price]) => ({ tevo_section_name: key, retail_price: price }));
+  }
+
+  // Hide the Seat Map tab when the venue/config is known to have NO interactive map
+  // (seatmap_manifest.has_map=false, populated by the seatmap-manifest-sync cron).
+  // Conservative: only hides on a definitive negative — if the config isn't synced
+  // yet (no row), the tab stays and the runtime fetch decides.
+  async function loadSeatmapTabVisibility(eventId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const ev = await Auth.client.from('events')
+      .select('venue_id, configuration_id').eq('id', eventId).maybeSingle();
+    if (ev.error || !ev.data || ev.data.venue_id == null || ev.data.configuration_id == null) return;
+    const mr = await Auth.client.from('seatmap_manifest')
+      .select('has_map')
+      .eq('venue_id', ev.data.venue_id)
+      .eq('configuration_id', ev.data.configuration_id)
+      .maybeSingle();
+    if (!mr.error && mr.data && mr.data.has_map === false) {
+      const btn = document.querySelector('.event-tab[data-tab="seatmap"]');
+      if (btn) btn.style.display = 'none';
+    }
+  }
+
+  async function loadSeatmap(eventId) {
+    _tabState.loaded['seatmap'] = true;
+    _seatmapEventId = eventId;
+    const meta = document.getElementById('seatmapMeta');
+    const host = document.getElementById('seatmapHost');
+    const listBody = document.getElementById('seatmapListBody');
+    if (meta) meta.textContent = 'loading…';
+    if (listBody) listBody.innerHTML = '<div class="empty">Loading listings…</div>';
+
+    if (!window.Tevomaps || !window.Tevomaps.SeatmapFactory) {
+      if (meta) meta.textContent = 'seatmap library not loaded';
+      if (host) host.innerHTML = '<div class="empty">tevomaps.bundle.js failed to load</div>';
+      return;
+    }
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) {
+      if (meta) meta.textContent = 'no auth (Path C unavailable on localhost)';
+      if (host) host.innerHTML = '<div class="empty">Seat map needs an @s4kent.com session.</div>';
+      return;
+    }
+
+    // (1) venue_id + configuration_id for this event (direct events read — RLS-OK).
+    const evRes = await Auth.client
+      .from('events')
+      .select('venue_id, configuration_id, configuration_name, venue_name')
+      .eq('id', eventId)
+      .maybeSingle();
+    if (evRes.error || !evRes.data) {
+      if (meta) meta.textContent = 'event lookup failed';
+      if (host) host.innerHTML = `<div class="empty">${escapeHtml(evRes.error?.message || 'no event row')}</div>`;
+      return;
+    }
+    const venueId = evRes.data.venue_id;
+    const configurationId = evRes.data.configuration_id;
+    if (venueId == null || configurationId == null) {
+      if (meta) meta.textContent = 'no map for this event';
+      if (host) host.innerHTML = '<div class="empty">This event has no TEvo venue_id / configuration_id — no seat map available.</div>';
+      if (listBody) listBody.innerHTML = '';
+      return;
+    }
+    _seatmapConfigName = evRes.data.configuration_name || '';
+    _seatmapVenueLabel = `venue ${venueId} · config ${configurationId}` + (_seatmapConfigName ? ` (${_seatmapConfigName})` : '');
+
+    // (2) Manifest remap (venue/config-scoped — built once, shared by every source).
+    _seatmapRemap = await _seatmapBuildSectionRemap(venueId, configurationId);
+    _seatmapRowsBySource = {};
+    _seatmapSource = 'EVO';
+    _seatmapSelected = [];
+    _seatmapUserPicked = false;
+
+    // (3) Default source = TEvo. Build the map ONCE with its floors; later source
+    //     switches re-color via updateTicketGroups() rather than rebuilding the SVG.
+    const evoRows = await _seatmapFetchSource(eventId, 'EVO');
+    _seatmapRowsBySource['EVO'] = evoRows;
+    const ticketGroups = _seatmapTicketGroups(evoRows, _seatmapRemap);
+
+    host.innerHTML = '';
+    try {
+      const factory = new window.Tevomaps.SeatmapFactory({
+        venueId: String(venueId),
+        configurationId: String(configurationId),
+        ticketGroups,
+        showLegend: true,
+        showControls: true,
+        mouseControlEnabled: true,
+        onSelection: (sections) => onSeatmapSelection(sections),
+      });
+      _seatmapApi = await factory.build('seatmapHost');
+    } catch (e) {
+      if (meta) meta.textContent = 'map render error';
+      host.innerHTML = `<div class="empty">Seat map failed to render: ${escapeHtml(String((e && e.message) || e))}</div>`;
+      return;
+    }
+
+    wireSeatmapControls();
+    renderSeatmapSelector();
+    renderSeatmapList();
+    updateSeatmapMeta(ticketGroups.length);
+    _seatmapProbeSources(eventId);   // fire-and-forget: enable/disable + count the other sources
+  }
+
+  // Switch which source colors the map. Re-colors via updateTicketGroups() (no SVG rebuild)
+  // and swaps the listing table to that source. One source at a time — never merged.
+  async function selectSeatmapSource(key) {
+    if (!_seatmapApi || key === _seatmapSource) return;
+    _seatmapSource = key;
+    _seatmapSelected = [];
+    renderSeatmapSelector();
+    const meta = document.getElementById('seatmapMeta');
+    if (meta) meta.textContent = `${_seatmapVenueLabel} · loading ${_seatmapSrcLabel(key)}…`;
+
+    let rows = _seatmapRowsBySource[key];
+    if (!rows) {
+      rows = await _seatmapFetchSource(_seatmapEventId, key);
+      _seatmapRowsBySource[key] = rows;
+    }
+    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap);
+    if (typeof _seatmapApi.updateTicketGroups === 'function') {
+      try { _seatmapApi.updateTicketGroups(ticketGroups); } catch (_) { /* ignore */ }
+    }
+    renderSeatmapSelector();   // refresh active state
+    renderSeatmapList();
+    updateSeatmapMeta(ticketGroups.length);
+  }
+
+  // Build the source selector buttons (active = current source; disabled once a source
+  // is known to have 0 listings for this event). Idempotent — re-rendered on every change.
+  function renderSeatmapSelector() {
+    const host = document.getElementById('seatmapSourceSel');
+    if (!host) return;
+    host.innerHTML = SEATMAP_SOURCES.map(s => {
+      const rows = _seatmapRowsBySource[s.key];
+      const known = rows !== undefined;
+      const empty = known && rows.length === 0;
+      const cnt = known ? ` <span class="sm-src-cnt">${rows.length}</span>` : '';
+      const cls = ['sm-src-btn'];
+      if (s.key === _seatmapSource) cls.push('active');
+      if (empty) cls.push('disabled');
+      return `<button type="button" class="${cls.join(' ')}" data-src="${s.key}"${empty ? ' disabled' : ''}>${escapeHtml(s.label)}${cnt}</button>`;
+    }).join('');
+  }
+
+  // Probe the non-default sources in the background so the selector can show per-source
+  // counts and disable empties — without blocking the initial TEvo render.
+  async function _seatmapProbeSources(eventId) {
+    for (const s of SEATMAP_SOURCES) {
+      if (s.key === 'EVO' || _seatmapRowsBySource[s.key] !== undefined) continue;
+      try {
+        _seatmapRowsBySource[s.key] = await _seatmapFetchSource(eventId, s.key);
+      } catch (_) {
+        _seatmapRowsBySource[s.key] = [];
+      }
+      renderSeatmapSelector();
+    }
+    _seatmapAutoPickSource();
+  }
+
+  // Once all sources are fetched, default the map's coloring to whichever source maps
+  // the MOST sections onto this venue's manifest (SG section text is usually cleaner
+  // than EVO's broker free-text, but it's per-event, so we measure rather than assume).
+  // SG breaks ties (cleaner on average). Skipped once the user has picked a source.
+  function _seatmapAutoPickSource() {
+    if (_seatmapUserPicked || !_seatmapRemap || !_seatmapApi) return;
+    const tie = { SG: 0, EVO: 1, VD: 2, SH: 3, GT: 4 };   // lower = preferred on ties
+    let best = _seatmapSource, bestN = -1;
+    for (const s of SEATMAP_SOURCES) {
+      const rows = _seatmapRowsBySource[s.key];
+      if (!rows || !rows.length) continue;
+      const n = _seatmapTicketGroups(rows, _seatmapRemap).length;
+      if (n > bestN || (n === bestN && (tie[s.key] ?? 9) < (tie[best] ?? 9))) { bestN = n; best = s.key; }
+    }
+    if (best !== _seatmapSource && bestN > 0) selectSeatmapSource(best);
+  }
+
+  // Library fires this with the full set of currently-selected section names.
+  function onSeatmapSelection(sections) {
+    _seatmapSelected = Array.isArray(sections) ? sections.slice() : [];
+    const label = document.getElementById('seatmapSelLabel');
+    const reset = document.getElementById('seatmapResetBtn');
+    if (label) {
+      label.textContent = _seatmapSelected.length
+        ? `Filtering ${_seatmapSelected.length} section${_seatmapSelected.length > 1 ? 's' : ''}: ${_seatmapSelected.join(', ')}`
+        : 'Click a section to filter listings';
+    }
+    if (reset) reset.hidden = _seatmapSelected.length === 0;
+    renderSeatmapList();
+  }
+
+  function updateSeatmapMeta(mappedCount) {
+    const meta = document.getElementById('seatmapMeta');
+    if (!meta) return;
+    const rows = _seatmapRowsBySource[_seatmapSource] || [];
+    const sections = new Set(rows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => r.section));
+    const mapped = _seatmapRemap
+      ? `${mappedCount}/${sections.size} sections on map`
+      : `${mappedCount} sections (manifest unavailable — no coloring)`;
+    meta.textContent = `${_seatmapVenueLabel} · ${_seatmapSrcLabel(_seatmapSource)} · ${mapped}`;
+  }
+
+  // Renders the CURRENT source's listings; clicking a map section filters by matched key
+  // (the library returns full manifest names — we match each row's section the same way).
+  function renderSeatmapList() {
+    const body = document.getElementById('seatmapListBody');
+    if (!body) return;
+    const sel = _seatmapSelected.map(s => String(s).toLowerCase());
+    const all = _seatmapRowsBySource[_seatmapSource] || [];
+    let rows = all.filter(r => r.section && !_seatmapIsParking(r.section));
+    if (sel.length) {
+      rows = rows.filter(r => {
+        const k = _seatmapMatchSection(r.section, _seatmapRemap);
+        return k && sel.includes(String(k).toLowerCase());
+      });
+    }
+    rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
+
+    if (!rows.length) {
+      const src = _seatmapSrcLabel(_seatmapSource);
+      body.innerHTML = `<div class="empty">${sel.length ? `No ${escapeHtml(src)} listings in the selected section(s).` : `No ${escapeHtml(src)} listings for this event.`}</div>`;
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th><th class="num">Qty</th>
+        <th class="num">Price</th><th>Type</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.slice(0, 300).forEach(r => {
+      const tr = document.createElement('tr');
+      if (r.is_owned) tr.className = 'owned-row';
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
+        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // Wire the source selector + reset once (delegated; survives selector re-renders).
+  function wireSeatmapControls() {
+    if (_seatmapWired) return;
+    const sel = document.getElementById('seatmapSourceSel');
+    if (sel) {
+      sel.addEventListener('click', (e) => {
+        const btn = e.target.closest('.sm-src-btn');
+        if (!btn || btn.disabled) return;
+        _seatmapUserPicked = true;   // stop auto-pick once the user chooses
+        selectSeatmapSource(btn.dataset.src);
+      });
+    }
+    const reset = document.getElementById('seatmapResetBtn');
+    if (reset) {
+      reset.addEventListener('click', () => {
+        if (_seatmapApi && typeof _seatmapApi.deselectSection === 'function') {
+          _seatmapSelected.slice().forEach(s => {
+            try { _seatmapApi.deselectSection(s); } catch (_) { /* ignore */ }
+          });
+        }
+        onSeatmapSelection([]);
+      });
+    }
+    _seatmapWired = true;
   }
 
   // ---------- TD Listings per-platform (full) ----------
@@ -3381,6 +3905,15 @@
     if (body) body.innerHTML = '<div class="empty">loading cross-source metrics…</div>';
     if (meta) meta.textContent = 'loading…';
     const t0 = performance.now();
+    // Preferred: uniform per-source distribution computed on the fly for EVERY source
+    // (mig 20260603120000). Falls back to the legacy TEvo/SG panel until A1 applies it,
+    // so this is deploy-safe before the migration lands.
+    const resU = await rpcOrNull('get_event_all_source_listing_metrics', { p_event_id: eventId });
+    if (!resU.error && resU.data && Array.isArray(resU.data.sources) && resU.data.sources.length) {
+      renderAllSourceMetrics(resU.data, performance.now() - t0);
+      return;
+    }
+    // Legacy fallback (sets _lastCrossSource so the TD-snapshot / v3 re-render hooks work).
     const res = await rpcOrNull('get_event_cross_source_metrics', { p_event_id: eventId });
     if (res.error) {
       if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
@@ -3388,6 +3921,42 @@
       return;
     }
     renderCrossSourceMetrics(res.data || {}, performance.now() - t0);
+  }
+
+  // Uniform multi-source distribution table (mig 20260603120000): one consistent
+  // methodology for every source (TEvo · SG · SH · GT · VD · TP · TM) — listings,
+  // tickets, min, median, p90, owned median — computed live from each firehose's
+  // latest batch. Metric rows × source columns; null cells render "—".
+  function renderAllSourceMetrics(d, ms) {
+    const body = document.getElementById('crossSourceBody');
+    const meta = document.getElementById('crossSourceMeta');
+    if (!body) return;
+    const sources = (d && d.sources) || [];
+    if (meta) {
+      meta.textContent = (d && d.sg_event_id != null ? `sg_event_id ${d.sg_event_id} · ` : '')
+        + `all-source live distribution${ms != null ? ` · ${ms.toFixed(0)}ms` : ''}`;
+    }
+    const METRICS = [
+      { label: 'Listings count',    key: 'listings',     money: false },
+      { label: 'Tickets available', key: 'tickets',      money: false },
+      { label: 'Min price',         key: 'min',          money: true },
+      { label: 'Median price',      key: 'median',       money: true },
+      { label: 'P90 price',         key: 'p90',          money: true },
+      { label: 'Owned median',      key: 'owned_median', money: true },
+    ];
+    const fmt = (v, money) => (v == null ? '—' : (money ? '$' + T.fmtNum(Math.round(v)) : T.fmtNum(v)));
+    const tbl = document.createElement('table');
+    tbl.className = 'cross-src-tbl';
+    tbl.innerHTML = `<thead><tr><th>Metric</th>${sources.map(s => `<th class="num">${escapeHtml(s.label || s.key)}</th>`).join('')}</tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    METRICS.forEach(m => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(m.label)}</td>`
+        + sources.map(s => `<td class="num">${fmt(s[m.key], m.money)}</td>`).join('');
+      tb.appendChild(tr);
+    });
+    body.innerHTML = '';
+    body.appendChild(tbl);
   }
 
   // Cache the last cross-source payload + overrides so we can re-render when v3
