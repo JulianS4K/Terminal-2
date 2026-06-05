@@ -179,6 +179,17 @@ def _lem(eid: int, owned: int = 100, retail_min: float = 50.0,
     }
 
 
+# Default occurs is RELATIVE to now (was a hardcoded 2026-06-01 — a time-bomb:
+# /api/store/home filters to future events via `.gte(occurs_at_local, today)`,
+# so once wall-clock passed that date every default-`_event` row got filtered
+# out and the home tests failed with count:0). Mirrors the relative `_occurs()`
+# helper in test_home_curation_order. ~14d out keeps these events comfortably
+# in the future without colliding with any per-test occurs override.
+def _default_occurs() -> str:
+    from datetime import datetime, timezone, timedelta
+    return (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+
+
 def _event(eid: int, name: str = None, occurs: str = None,
            venue_location: str = "New York, NY", performer_id: int = 16303,
            performer_name: str = "Test Team") -> dict:
@@ -193,7 +204,7 @@ def _event(eid: int, name: str = None, occurs: str = None,
     return {
         "id": eid,
         "name": name or f"Test Event {eid}",
-        "occurs_at_local": occurs,
+        "occurs_at_local": occurs if occurs is not None else _default_occurs(),
         "venue_id": 896,
         "venue_name": "Test Venue",
         "venue_location": venue_location,
