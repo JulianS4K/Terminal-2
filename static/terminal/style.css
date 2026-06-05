@@ -54,6 +54,27 @@ a:hover { text-decoration: underline; }
 .topbar .status.err { color: var(--neg); }
 .topbar .status.ok  { color: var(--pos); }
 
+/* Realtime live-update pill (event page). Sits at the far right of the topbar,
+   right of #status. States: connecting (muted) · on (green pulse) ·
+   off/offline (dim) · flash (info, during a live re-fetch). */
+.live-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 1px 9px; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap;
+}
+.live-pill .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+.live-pill.on  { color: var(--pos); border-color: rgba(74, 222, 128, 0.4); }
+.live-pill.on .live-dot { background: var(--pos); animation: livePulse 2s infinite; }
+.live-pill.off { color: var(--muted); }
+.live-pill.flash { color: var(--info); border-color: rgba(96, 165, 250, 0.4); }
+.live-pill.flash .live-dot { background: var(--info); animation: none; }
+@keyframes livePulse {
+  0%   { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
+  70%  { box-shadow: 0 0 0 5px rgba(74, 222, 128, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+}
+
 main.wrap {
   padding: 12px 16px;
   display: grid;
@@ -91,6 +112,16 @@ main.wrap {
 .badge.lifecycle-ghost    { border-color: var(--warn); color: var(--warn); }
 .badge.lifecycle-complete { border-color: var(--dim); color: var(--dim); }
 .badge.countdown { border-color: var(--accent); color: var(--accent); }
+
+/* TemporalChip — phase 3 */
+.badge.temporal           { border-color: var(--dim);  color: var(--muted); font-size: 10px; }
+.badge.temporal.urgent    { border-color: var(--warn); color: var(--warn);  font-weight: 600; }
+.badge.temporal.urgent.pos{ border-color: var(--pos);  color: var(--pos);   font-weight: 700; }
+.badge.temporal.near      { border-color: var(--info); color: var(--info); }
+.badge.temporal.muted     { border-color: var(--dim);  color: var(--dim);   font-size: 10px; }
+
+/* GapChip — phase 2: discovery_gap_alerts chips on event hero + movers rows */
+.badge.gap-chip { border-color: rgba(245,158,11,.45); color: var(--warn); font-size: 10px; }
 
 /* Coverage 4-light badge */
 .coverage { display: flex; gap: 4px; align-items: center; margin-top: 8px; }
@@ -179,6 +210,58 @@ main.wrap {
   width: 8px; height: 8px; background: #14b8a6;
 }
 .chart-section .uplot { background: transparent; }
+
+/* ---- Composite chart (WP-3) — one section, two stacked panes ----
+   Price + inventory share controls + time window but keep separate uPlot
+   instances so the $-axis and the count axes stay readable. */
+.chart-section.composite { min-height: 600px; }
+.composite-pane-block {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;          /* required so the nested canvas can shrink */
+  position: relative;     /* anchor for this pane's absolute .chart-tooltip */
+}
+.composite-pane-block + .composite-pane-block {
+  border-top: 1px solid var(--line-2);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.composite-pane-block .chart-pane { flex: 1 1 auto; min-height: 220px; }
+.composite-pane-block .pane-label {
+  flex: 0 0 auto;
+  font-family: var(--mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--muted);
+  padding: 0 8px 4px;
+}
+.composite-pane-block .pane-label.row {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+.composite-pane-block .pane-label .legend { text-transform: none; letter-spacing: 0; }
+
+/* Per-source master toggles — coarse control above the per-series legends. */
+.source-toggles { display: inline-flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.source-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  cursor: pointer; user-select: none;
+  font-family: var(--mono); font-size: 10px;
+  transition: opacity 80ms ease;
+}
+.source-toggle:hover { text-decoration: underline; text-decoration-style: dotted; }
+.source-toggle i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+/* Reserved overlay-layer legend — ● live vs ○ pending (honest, never fake). */
+.overlay-legend {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  padding: 0 8px 6px;
+  font-family: var(--mono); font-size: 10px;
+  flex: 0 0 auto;
+}
+.overlay-legend-lbl { color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.overlay-chip { padding: 1px 6px; border: 1px solid var(--line-2); border-radius: 3px; }
+.overlay-chip.live { color: var(--text); border-color: var(--accent); }
+.overlay-chip.pending { color: var(--muted); opacity: 0.7; }
 
 /* Cross-pane tooltip — floats above all 3 panes, anchored to cursor X. */
 .chart-tooltip {
@@ -811,6 +894,16 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .kpi-sg.pos { color: var(--pos); }
 .kpi-sg.neg { color: var(--neg); }
 
+/* Broker-sales source toggle (WP-5) — switch between SG / TP / Vivid / EVO* */
+.broker-src-toggle { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.broker-src-btn {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--muted); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 3px; padding: 2px 8px; cursor: pointer; line-height: 1.4;
+}
+.broker-src-btn:hover { color: var(--text); border-color: var(--muted); }
+.broker-src-btn.active { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+
 /* Velocity chips inside chart-controls strip */
 .velocity-strip { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .velocity-chip {
@@ -946,9 +1039,8 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .wrap.event #hero               { grid-column: 1 / -1; }
 .wrap.event #kpi-grid           { grid-column: 1 / -1; padding: 12px 16px; }
 .wrap.event #last-snapshot      { grid-column: 1 / -1; }
-.wrap.event #cross-source-metrics { grid-column: 1 / -1; }
-.wrap.event #chart-price        { grid-column: 1 / -1; padding: 12px 8px; }
-.wrap.event #chart-inventory    { grid-column: 1 / -1; padding: 12px 8px; }
+.wrap.event #cross-source       { grid-column: 1 / -1; }
+.wrap.event #composite-chart    { grid-column: 1 / -1; padding: 12px 8px; }
 .wrap.event #sg-broker-sales    { grid-column: 1 / -1; }
 .wrap.event #splits             { grid-column: 1 / -1; }
 .wrap.event #zones              { grid-column: 1 / -1; }
@@ -1456,6 +1548,21 @@ body[data-page="login"] {
 .td-platform-chip { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--shade); padding: 2px 8px; border-radius: 3px; }
 .td-platform-chip b { color: var(--text); }
 
+/* Unified CROSS-SOURCE panel — stacked Listings/Price + Sales/Velocity sub-sections (WP-2) */
+.cross-src-sub + .cross-src-sub { margin-top: 14px; }
+.cross-src-sub-hd {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  margin-bottom: 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--line);
+}
+.cross-src-sub-hd .muted { text-transform: none; letter-spacing: 0; }
+.cross-src-note { margin-top: 6px; }
+
 /* ---------- Full-list tabs (SG Listings / EVO Listings / SG Sales) ---------- */
 .full-list-tbl {
   width: 100%;
@@ -1613,6 +1720,8 @@ body[data-page="login"] {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
 }
+/* WP-4: 2-source variant (Zones renders only TEvo + SG — real backing only). */
+.dual-src.cols-2 { grid-template-columns: 1fr 1fr; }
 .dual-src-col {
   min-width: 0;
 }
@@ -1739,6 +1848,8 @@ body[data-page="login"] {
 .badge.td-sh { background: rgba(249,115,22,.18); color: #fb923c; }
 .badge.td-gt { background: rgba(52,211,153,.15); color: #34d399; }
 .badge.td-vd { background: rgba(192,132,252,.15); color: #c084fc; }
+.badge.td-tp { background: rgba(244,114,182,.16); color: #f472b6; }
+.badge.td-tm { background: rgba(129,140,248,.16); color: #818cf8; }
 
 /* ---------- Data freshness table (#data-freshness section) ---------- */
 .data-freshness-tbl { width: 100%; border-collapse: collapse; font-size: 0.83em; }
@@ -1784,3 +1895,50 @@ body[data-page="login"] {
 .td-sh-section { border-left-color: #f97316; }   /* SH — orange */
 .td-gt-section { border-left-color: #2dd4bf; }   /* GT — teal  */
 .td-vd-section { border-left-color: #a855f7; }   /* VD — purple */
+.td-tp-section { border-left-color: #ec4899; }   /* TP — pink   */
+.td-tm-section { border-left-color: #6366f1; }   /* TM — indigo */
+
+/* ---------- Seat Map tab (Tevomaps interactive venue map + section filter) ---------- */
+/* main.wrap.event is a 12-col grid and .tab-pane is display:contents, so this section
+   sits directly in that grid — it must span all 12 cols or it collapses to ~1/12 width
+   (crushing the map into a sliver). Mirrors the other full-width event sections. */
+.wrap.event #seatmap-section { grid-column: 1 / -1; }
+#seatmap-section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
+#seatmap-section .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+
+/* Source selector — picks which single source colors the map (not collective). */
+.seatmap-toolbar { gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.seatmap-src-label { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.seatmap-src-sel { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.sm-src-btn {
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
+  padding: 4px 10px; cursor: pointer; line-height: 1.4;
+}
+.sm-src-btn:hover { border-color: var(--accent); }
+.sm-src-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+.sm-src-btn.disabled, .sm-src-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sm-src-cnt { opacity: 0.7; font-size: 10px; margin-left: 2px; }
+
+/* Map on top (full width), listings below. */
+.seatmap-mapwrap {
+  /* TEvo SVG maps are authored for a light surface — keep the map area light so the
+     venue outline + section labels stay legible against the dark terminal shell. */
+  background: #f7f7f7; border: 1px solid var(--line); border-radius: 6px;
+  min-height: 560px; overflow: hidden; margin-bottom: 12px;
+}
+.seatmap-host { width: 100%; height: 560px; }
+.seatmap-host svg { width: 100%; height: 100%; }
+.seatmap-side-hd {
+  font-family: var(--mono); font-size: 11px; color: var(--text);
+  padding: 6px 8px; margin-bottom: 8px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 4px; line-height: 1.4;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.seatmap-reset {
+  font-family: var(--mono); font-size: 11px; color: var(--bg);
+  background: var(--accent); border: none; border-radius: 4px;
+  padding: 3px 10px; cursor: pointer; margin-left: 8px; flex: 0 0 auto;
+}
+.seatmap-reset:hover { filter: brightness(1.1); }
+#seatmapListBody .empty { color: var(--muted); padding: 12px; text-align: center; }

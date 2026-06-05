@@ -15,10 +15,12 @@
   // TEvo history available even when their range selector is set to 30d.
   // Re-render cost is negligible; only the chart_data series array grows.
   const V3_LOAD_HOURS = 720;
-  // PR redesign 2026-05-18 v2: TWO fully independent chart sections.
-  //   #chart-price → 6 medians on $-axis + ESPN annotations
-  //   #chart-inventory → 3 qty lines (left axis) + SG sale BARS (right axis)
-  // Each section has its own range selector + state cache + tooltip. No cursor sync.
+  // Composite chart (WP-3, 2026-05-29): ONE #composite-chart section with two
+  // stacked panes that share a range selector + per-source master toggles:
+  //   price pane (#chartHostPrice) → medians on $-axis + ESPN annotations
+  //   inventory pane (#chartHostInv) → qty lines (left axis) + SG sale BARS (right)
+  // Two uPlot instances are kept so the $-axis and count axes stay readable;
+  // each pane keeps its own state cache + tooltip. No cursor sync.
   let _chartInstances = { price: null, inv: null };
   let _lastPayload = null;
   // Per-chart window (hours). Default 168h (7d) on first load.
@@ -54,6 +56,44 @@
   // Initialize TD inv series as hidden by default (user-togglable in legend).
   ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
 
+  // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
+  // event is currently in the merged-7d slot of event_movers_index. Async +
+  // best-effort; no chip if the event is not in the index or preload fails.
+  async function loadHeroMoverChip(eventId) {
+    if (!eventId) return;
+    await T.moversPreloadIndex();
+    const chipHtml = T.moversChipHtml(eventId);
+    if (!chipHtml) return;
+    const badges = document.getElementById('evBadges');
+    if (!badges) return;
+    badges.insertAdjacentHTML('beforeend', ' ' + chipHtml);
+  }
+
+  // Phase 2: <GapChip> — appends discovery gap alert badges to evBadges.
+  // discovery_gap_alerts has no RLS (relrowsecurity=false) — readable directly
+  // via @s4kent.com JWT. Top-3 active alerts by signal_score. Best-effort async;
+  // no chips if the event has no active gaps.
+  async function loadHeroGapChips(eventId) {
+    if (!eventId) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const { data, error } = await Auth.client
+      .from('discovery_gap_alerts')
+      .select('gap_type,detail,signal_score')
+      .eq('event_id', eventId)
+      .is('resolved_at', null)
+      .order('signal_score', { ascending: false })
+      .limit(3);
+    if (error || !data || !data.length) return;
+    const badges = document.getElementById('evBadges');
+    if (!badges) return;
+    data.forEach(g => {
+      badges.insertAdjacentHTML('beforeend',
+        ` <span class="badge gap-chip" title="${escapeHtml(g.detail || '')}">${escapeHtml((g.gap_type || '').replace(/_/g, ' '))}</span>`
+      );
+    });
+  }
+
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const eventId = T.getEventId();
@@ -67,8 +107,7 @@
       return;
     }
 
-    wireRangeSelectorPrice(eventId);
-    wireRangeSelectorInv(eventId);
+    wireRangeSelectorComposite(eventId);
     wireAlertsToggle();
     wireTabs(eventId);
     wireSalesWindow(eventId);
@@ -76,14 +115,19 @@
     // fetchPayload (Path A / Path C v3) fails. PR #205 cross-source +
     // PR redesign localized weather + SG zones/splits all independent.
     loadCrossSourceMetrics(eventId).catch(e => console.error('[crossSource]', e));
+    loadSeatmapTabVisibility(eventId).catch(e => console.error('[seatmapTab]', e));
     loadWeatherLocalized(eventId).catch(e => console.error('[weatherLocalized]', e));
     loadSgZonesSplits(eventId).catch(e => console.error('[sgZonesSplits]', e));
-    loadTdSplits(eventId).catch(e => console.error('[tdSplits]', e));
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
+    loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
+    loadHeroGapChips(eventId).catch(e => console.error('[gapChips]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
     await loadAndRender(eventId);
+    // Live updates (Supabase Realtime). Best-effort, post-render: if the socket
+    // never connects or no pings arrive the page is unchanged from before.
+    safe('realtime', () => wireRealtime(eventId));
   }
 
   function isLocalhost() {
@@ -111,8 +155,7 @@
       // Two independent chart sections (PR redesign v2)
       safe('chartPrice',       () => renderChartPrice(chart, data.event_alerts));
       safe('chartInventory',   () => renderChartInventory(chart));
-      safe('chartLegendPrice', () => renderChartLegendPrice());
-      safe('chartLegendInv',   () => renderChartLegendInv());
+      safe('chartLegends',     () => refreshChartLegends());
       // Splits + Zones — TEvo side rendered now; SG side merged in by loadSgZonesSplits.
       // Splits + Zones: feed only the TEvo side here. The SG side lives in a
       // module-level cache populated by loadSgZonesSplits (parallel fetch);
@@ -127,7 +170,7 @@
       safe('freshness',  () => renderFreshness(data.freshness));
       safe('alerts',     () => renderAlerts(data.event_alerts));
       // v3 enrichments
-      safe('sgBrokerSales',    () => renderSgBrokerSales(data.sg_broker_sales));
+      safe('brokerSales',      () => setBrokerSalesData(data));
       safe('velocityChips',    () => renderVelocityChips(data.velocity));
       safe('competingEvents',  () => renderCompetingEvents(data.competing_events));
       safe('recentListings',   () => renderRecentListings(data.recent_listings));
@@ -147,30 +190,132 @@
     try { fn(); } catch (e) { console.error('[' + label + ']', e); }
   }
 
-  // Per-chart range selectors (PR redesign v2). Each only re-fetches its own
-  // extended payload + re-renders its own chart. v3 is NOT re-fetched — its
-  // payload was loaded at V3_LOAD_HOURS (720) which covers all default windows.
-  function wireRangeSelectorPrice(eventId) {
-    const sel = document.getElementById('chartPriceRange');
+  // ── Realtime live refresh (Phase: Supabase Realtime, slice #1) ────────────
+  // Subscribe to a per-event Broadcast topic ("event:<id>"). The DB emits a
+  // tiny, DATA-FREE "dirty" ping (see migration *_d0_event_realtime_dirty_ping)
+  // when something page-worthy happens on this event (today: a warn/critical
+  // alert; later: the per-event metrics refresh). On a ping we re-pull the
+  // existing email-gated RPC and re-render — no polling, and no
+  // event data ever rides the public channel (the ping carries only
+  // {event_id, reason}). Re-fetch is throttled and pauses while the tab is
+  // hidden. If Realtime is unavailable or silent, the page behaves exactly as
+  // it did before (load-time render only) — this is purely additive.
+  let _rtChannel = null;
+  let _rtRefreshTimer = null;
+  let _rtLastRefresh = 0;
+  const _RT_MIN_INTERVAL_MS = 8000; // cap full re-fetch to <= 1 / 8s
+
+  function wireRealtime(eventId) {
+    const Auth = window.TerminalAuth;
+    const client = Auth && Auth.client;
+    if (!client || typeof client.channel !== 'function') return; // realtime unavailable → no-op
+    const pill = ensureLivePill();
+    _rtChannel = client
+      .channel('event:' + eventId, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'dirty' }, (msg) => scheduleLiveRefresh(eventId, msg && msg.payload))
+      .subscribe((status) => setLivePill(pill, status));
+    // Drop the socket when the page is dismissed (bfcache-friendly).
+    window.addEventListener('pagehide', teardownRealtime, { once: true });
+  }
+
+  function teardownRealtime() {
+    try {
+      const client = window.TerminalAuth && window.TerminalAuth.client;
+      if (_rtChannel && client) client.removeChannel(_rtChannel);
+    } catch (_) { /* best-effort */ }
+    _rtChannel = null;
+  }
+
+  function scheduleLiveRefresh(eventId, payload) {
+    // Pause while the tab is hidden — the next ping after it's visible resumes.
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (_rtRefreshTimer) return; // a refresh is already queued — coalesce bursts
+    const wait = Math.max(0, _RT_MIN_INTERVAL_MS - (Date.now() - _rtLastRefresh));
+    flashLivePill('updating');
+    _rtRefreshTimer = setTimeout(async () => {
+      _rtRefreshTimer = null;
+      _rtLastRefresh = Date.now();
+      try {
+        await loadAndRender(eventId);
+        flashLivePill('updated', payload && payload.reason);
+      } catch (e) {
+        console.error('[realtime] refresh failed', e);
+      }
+    }, wait);
+  }
+
+  // ── live pill UI ──────────────────────────────────────────────────────────
+  function ensureLivePill() {
+    let pill = document.getElementById('livePill');
+    if (pill) return pill;
+    pill = document.createElement('span');
+    pill.id = 'livePill';
+    pill.className = 'live-pill';
+    pill.title = 'Live updates via Supabase Realtime';
+    pill.innerHTML = '<span class="live-dot"></span><span class="live-label">live</span>';
+    const bar = document.querySelector('header.topbar') || document.body;
+    bar.appendChild(pill);
+    return pill;
+  }
+
+  function setLivePill(pill, status) {
+    if (!pill) return;
+    // supabase-js channel states: SUBSCRIBED | TIMED_OUT | CLOSED | CHANNEL_ERROR
+    const ok = status === 'SUBSCRIBED';
+    pill.classList.toggle('on', ok);
+    pill.classList.toggle('off', !ok);
+    pill.classList.remove('flash');
+    const label = pill.querySelector('.live-label');
+    if (label) label.textContent = ok ? 'live' : 'offline';
+  }
+
+  function flashLivePill(kind, reason) {
+    const pill = document.getElementById('livePill');
+    const label = pill && pill.querySelector('.live-label');
+    if (!label) return;
+    if (kind === 'updating') { pill.classList.add('flash'); label.textContent = 'updating…'; return; }
+    label.textContent = reason ? ('updated · ' + String(reason).slice(0, 24)) : 'updated';
+    setTimeout(() => {
+      if (!pill.classList.contains('on')) return;
+      pill.classList.remove('flash');
+      const lbl = pill.querySelector('.live-label');
+      if (lbl) lbl.textContent = 'live';
+    }, 2500);
+  }
+
+  // Composite range selector (WP-3). ONE selector drives BOTH panes: it sets the
+  // shared window for price + inventory, re-renders both from cached v3 data
+  // immediately (new window clip), then re-fetches each pane's extended SG series
+  // for the new window (re-renders on arrival). v3 is NOT re-fetched — its payload
+  // was loaded at V3_LOAD_HOURS (720) which covers all default windows.
+  function wireRangeSelectorComposite(eventId) {
+    const sel = document.getElementById('chartCompositeRange');
     if (!sel) return;
     sel.addEventListener('change', async () => {
-      _chartPriceHours = parseInt(sel.value, 10) || DEFAULT_HOURS;
-      const lbl = document.getElementById('chartPriceRangeLabel');
-      if (lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
+      const hrs = parseInt(sel.value, 10) || DEFAULT_HOURS;
+      _chartPriceHours = hrs;
+      _chartInvHours   = hrs;
+      const lblTxt = sel.options[sel.selectedIndex].textContent;
+      const lbl = document.getElementById('chartCompositeRangeLabel');
+      if (lbl) lbl.textContent = lblTxt;
       const aw = document.getElementById('alertsWindow');
-      if (aw) aw.textContent = sel.options[sel.selectedIndex].textContent;
+      if (aw) aw.textContent = lblTxt;
       _chartExtStatePrice.payload = undefined;
-      // Re-render immediately with the new window clip (TEvo data from cached v3)
+      _chartExtStateInv.payload   = undefined;
+      // Re-render both panes immediately with the new window clip (cached v3 data)
       if (_lastPayload && _lastPayload.chart_data) {
         try {
           const chart = adaptChart(_lastPayload.chart_data);
           renderChartPrice(chart, _chartExtAlerts);
-          renderChartLegendPrice();
-        } catch (e) { console.error('[priceRangeRender]', e); }
+          renderChartInventory(chart);
+          refreshChartLegends();
+        } catch (e) { console.error('[compositeRangeRender]', e); }
       }
-      // Then fetch fresh SG series for the new window — re-renders on arrival
+      // Then fetch fresh SG series for the new window — each re-renders on arrival
       loadChartExtended('price', eventId, _chartPriceHours)
         .catch(e => console.error('[chartExt price]', e));
+      loadChartExtended('inv', eventId, _chartInvHours)
+        .catch(e => console.error('[chartExt inv]', e));
     });
   }
 
@@ -183,26 +328,6 @@
       try { localStorage.setItem(_ALERTS_LS_KEY, _showAlerts ? '1' : '0'); } catch (_) {}
       const inst = _chartInstances.price;
       if (inst && typeof inst.redraw === 'function') inst.redraw(false, true);
-    });
-  }
-
-  function wireRangeSelectorInv(eventId) {
-    const sel = document.getElementById('chartInvRange');
-    if (!sel) return;
-    sel.addEventListener('change', async () => {
-      _chartInvHours = parseInt(sel.value, 10) || DEFAULT_HOURS;
-      const lbl = document.getElementById('chartInvRangeLabel');
-      if (lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
-      _chartExtStateInv.payload = undefined;
-      if (_lastPayload && _lastPayload.chart_data) {
-        try {
-          const chart = adaptChart(_lastPayload.chart_data);
-          renderChartInventory(chart);
-          renderChartLegendInv();
-        } catch (e) { console.error('[invRangeRender]', e); }
-      }
-      loadChartExtended('inv', eventId, _chartInvHours)
-        .catch(e => console.error('[chartExt inv]', e));
     });
   }
 
@@ -391,13 +516,9 @@
     const badges = document.getElementById('evBadges');
     badges.innerHTML = '';
 
-    const days = T.daysUntil(ev.occurs_at_local || ev.occurs_at);
-    if (days !== null) {
-      const b = document.createElement('span');
-      b.className = 'badge countdown';
-      b.textContent = days <= 0 ? 'TODAY' : days === 1 ? 'TOMORROW' : `T-${days}d`;
-      badges.appendChild(b);
-    }
+    // Phase 3: TemporalChip — richer than the old "T-Xd" badge
+    const tempChip = T.temporalChipHtml(ev.occurs_at_local || ev.occurs_at);
+    if (tempChip) badges.insertAdjacentHTML('beforeend', tempChip);
     const lc = overview.lifecycle;
     if (lc) {
       const status = lc.status || lc.classification;
@@ -824,11 +945,12 @@
   // Per-chart tooltip — reads value at cursor idx from that chart's build cache
   // and renders a compact floating table inside that chart's section.
   function updateChartTooltipFor(chartKey, srcInstance) {
-    const sectionId = chartKey === 'price' ? 'chart-price' : 'chart-inventory';
     const tipId     = chartKey === 'price' ? 'chartPriceTooltip' : 'chartInvTooltip';
     const build     = chartKey === 'price' ? _chartLastBuildPrice : _chartLastBuildInv;
     const tip       = document.getElementById(tipId);
-    const section   = document.getElementById(sectionId);
+    // Anchor to this pane's own block (composite layout, WP-3) so the tooltip
+    // stays aligned to the pane the cursor is over.
+    const section   = tip ? tip.closest('.composite-pane-block') : null;
     if (!tip || !section || !build || !srcInstance || !srcInstance.cursor) return;
     const idx = srcInstance.cursor.idx;
     if (idx == null || idx < 0 || idx >= build.xs.length) {
@@ -866,7 +988,9 @@
     const maxLeft = sectionRect.width - tipWidth - 8;
     const desiredLeft = px + 12;
     tip.style.left = Math.max(8, Math.min(desiredLeft, maxLeft)) + 'px';
-    tip.style.top  = '36px';
+    // Float just below this pane's label (composite layout, WP-3).
+    const lbl = section.querySelector('.pane-label');
+    tip.style.top  = ((lbl ? lbl.offsetHeight : 0) + 6) + 'px';
   }
 
   function drawAlertsMarkers(u, alerts) {
@@ -1027,12 +1151,112 @@
           const idx = build.specs.findIndex(s => s.key === key);
           if (idx >= 0) instance.setSeries(idx + 1 /* +1 for time series */, { show: !cur });
         }
-        renderChartLegendFor(chartKey); // refresh opacity
+        renderChartLegendFor(chartKey);   // refresh this legend's opacity
+        renderChartSourceToggles();        // keep source master toggles in sync
       });
     });
   }
   function renderChartLegendPrice() { renderChartLegendFor('price'); }
   function renderChartLegendInv()   { renderChartLegendFor('inv');   }
+
+  // ---------- Composite chart: per-source master toggles + overlay slots (WP-3) ----------
+  // Each source groups its price-pane + inventory-pane series under one swatch.
+  // Clicking a source chip hides/shows ALL of that source's series across BOTH
+  // panes at once — a coarse control above the existing per-series legends.
+  const CHART_SOURCE_GROUPS = [
+    { src: 'TEvo', color: '#fbbf24', keys: ['prices_owned', 'prices_market', 'prices_nonowned', 'counts_owned', 'counts_market'] },
+    { src: 'SG',   color: '#22d3ee', keys: ['sg_list_med', 'sg_own_med', 'sg_sale_med', 'sg_list_ct', 'sg_sale_ct'] },
+    { src: 'SH',   color: '#f97316', keys: ['td_sh_med', 'td-sh-cnt'] },
+    { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
+    { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
+  ];
+
+  // Which series keys currently carry real data (scanning both build caches).
+  // Used so the source toggles omit a source with no chart series (D3 honesty).
+  function chartKeysWithData() {
+    const present = new Set();
+    [_chartLastBuildPrice, _chartLastBuildInv].forEach(b => {
+      if (b && b.specs) b.specs.forEach(s => {
+        const has = (s.data && s.data.length) ||
+                    (s.projected && s.projected.some(v => v != null));
+        if (has) present.add(s.key);
+      });
+    });
+    return present;
+  }
+
+  // Toggle one series' visibility on whichever pane owns it (price or inv).
+  function setSeriesVisible(key, show) {
+    _chartVisible.set(key, show);
+    const tryPane = (build, inst) => {
+      if (!build || !build.specs || !inst) return false;
+      const i = build.specs.findIndex(s => s.key === key);
+      if (i < 0) return false;
+      inst.setSeries(i + 1 /* +1 for time series */, { show });
+      return true;
+    };
+    if (tryPane(_chartLastBuildPrice, _chartInstances.price)) return;
+    tryPane(_chartLastBuildInv, _chartInstances.inv);
+  }
+
+  function renderChartSourceToggles() {
+    const el = document.getElementById('chartSourceToggles');
+    if (!el) return;
+    const present = chartKeysWithData();
+    const chips = CHART_SOURCE_GROUPS.map(g => {
+      const keys = g.keys.filter(k => present.has(k));
+      if (!keys.length) return ''; // omit sources with no chart series (D3)
+      const anyOn = keys.some(k => _chartVisible.get(k) !== false);
+      return `<span class="source-toggle" data-src="${escapeHtml(g.src)}" ` +
+             `style="opacity:${anyOn ? '1' : '0.3'}" title="Toggle all ${escapeHtml(g.src)} series">` +
+             `<i style="background:${g.color}"></i>${escapeHtml(g.src)}</span>`;
+    }).filter(Boolean).join('');
+    el.innerHTML = chips || '<span class="muted small">no chart series yet</span>';
+    el.querySelectorAll('.source-toggle').forEach(node => {
+      node.addEventListener('click', () => {
+        const g = CHART_SOURCE_GROUPS.find(x => x.src === node.getAttribute('data-src'));
+        if (!g) return;
+        const presentNow = chartKeysWithData();
+        const keys = g.keys.filter(k => presentNow.has(k));
+        if (!keys.length) return;
+        const next = !keys.some(k => _chartVisible.get(k) !== false); // any on → all off; else all on
+        keys.forEach(k => setSeriesVisible(k, next));
+        refreshChartLegends();
+      });
+    });
+  }
+
+  // Reserved overlay-layer legend (plan Part F layered-canvas). ESPN markers are
+  // already drawn on the price pane via canvas hooks; Weather/Macro/Signals are
+  // reserved slots later phases drop into. Honest status: ● live vs ○ pending —
+  // never a fake "live" for an unwired layer.
+  function renderChartOverlayLegend() {
+    const el = document.getElementById('chartOverlayLegend');
+    if (!el) return;
+    const ext = _chartExtStatePrice.payload || null;
+    const ann = ext && ext.annotations;
+    const hasEspn = !!(ann && (
+      (ann.injuries && ann.injuries.length) ||
+      (ann.game_state && ann.game_state.length)));
+    const slots = [
+      { label: 'ESPN',    live: hasEspn, hint: hasEspn ? 'injury / game-state markers on price pane' : 'no ESPN markers for this event' },
+      { label: 'Weather', live: false,   hint: 'reserved — NWS alert windows (pending)' },
+      { label: 'Macro',   live: false,   hint: 'reserved — UMCSENT background band (pending)' },
+      { label: 'Signals', live: false,   hint: 'reserved — movers / gap markers (pending)' },
+    ];
+    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s =>
+      `<span class="overlay-chip ${s.live ? 'live' : 'pending'}" title="${escapeHtml(s.hint)}">` +
+      `${escapeHtml(s.label)} ${s.live ? '●' : '○'}</span>`).join('');
+  }
+
+  // Refresh every chart legend surface at once — the two detailed per-series
+  // legends plus the per-source master toggles and the overlay-slot legend.
+  function refreshChartLegends() {
+    renderChartLegendPrice();
+    renderChartLegendInv();
+    renderChartSourceToggles();
+    renderChartOverlayLegend();
+  }
 
   // ---------- Splits ----------
 
@@ -1040,12 +1264,11 @@
   // sources (v3 fetchPayload for TEvo + get_event_sg_zones_splits for SG)
   // can update independently without clobbering each other on re-render.
   // Each setter writes its side then triggers a unified render reading both.
-  const _splitsState = { tevo: undefined, sg: undefined, td: undefined };
+  const _splitsState = { tevo: undefined, sg: undefined };
   const _zonesState  = { tevo: undefined, deltas: undefined, sg: undefined };
 
   function setSplitsTevo(splits)   { _splitsState.tevo = splits; renderSplits(); }
   function setSplitsSg(sgSplits)   { _splitsState.sg   = sgSplits; renderSplits(); }
-  function setSplitsTd(tdSplits)   { _splitsState.td   = tdSplits; renderSplits(); }
   function setZonesTevo(zones, deltas) {
     _zonesState.tevo = zones; _zonesState.deltas = deltas; renderZones();
   }
@@ -1053,10 +1276,16 @@
 
   // Renders TEvo splits + SG splits + TD splits side-by-side from the module state cache.
   // Any side may still be `undefined` (loading) when this fires.
+  // WP-7: split DENSITY (lot format — singles/pairs/…) has real backing only for
+  // TEvo (v3 `splits`) and SG (get_event_sg_zones_splits, already wired). EVO /
+  // SeatData / TP / Vivid / TD have NO split-density source → omitted (D3), with a
+  // footnote naming them (never a fake/empty column). Mirrors the WP-4 zones layout.
   function renderSplits() {
     const body = document.getElementById('splitsBody');
     if (!body) return;
     body.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'dual-src cols-2';
     const left = document.createElement('div');
     left.className = 'dual-src-col';
     left.innerHTML = '<div class="dual-src-hdr">TEvo</div>';
@@ -1065,13 +1294,13 @@
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG</div>';
     right.appendChild(buildSgSplitsTable(_splitsState.sg));
-    const tdCol = document.createElement('div');
-    tdCol.className = 'dual-src-col';
-    tdCol.innerHTML = '<div class="dual-src-hdr">TD (SH · GT · VD)</div>';
-    tdCol.appendChild(buildTdSplitsTable(_splitsState.td));
-    body.appendChild(left);
-    body.appendChild(right);
-    body.appendChild(tdCol);
+    grid.appendChild(left);
+    grid.appendChild(right);
+    body.appendChild(grid);
+    const note = document.createElement('div');
+    note.className = 'cross-src-note muted small';
+    note.textContent = 'EVO · SeatData · TP · Vivid · TD — no split-density backing (omitted)';
+    body.appendChild(note);
   }
 
   function buildTevoSplitsTable(splits) {
@@ -1152,39 +1381,6 @@
     return wrap;
   }
 
-  // TD splits: array of {platform, section, listing_count, min_price, median_price}
-  function buildTdSplitsTable(tdSplits) {
-    const wrap = document.createElement('div');
-    if (tdSplits === undefined) { wrap.innerHTML = '<div class="empty">loading TD…</div>'; return wrap; }
-    if (!tdSplits || !tdSplits.length) {
-      wrap.innerHTML = '<div class="empty">no TD listings in last 24h</div>'; return wrap;
-    }
-    const tbl = document.createElement('table');
-    tbl.className = 'splits-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Platform</th>
-        <th>Section</th>
-        <th class="num">Listings</th>
-        <th class="num">Min $</th>
-        <th class="num">Median $</th>
-      </tr></thead><tbody></tbody>`;
-    const tb = tbl.querySelector('tbody');
-    tdSplits.slice(0, 50).forEach(r => {
-      const tr = document.createElement('tr');
-      const platCls = r.platform === 'SH' ? 'td-sh' : r.platform === 'GT' ? 'td-gt' : r.platform === 'VD' ? 'td-vd' : '';
-      tr.innerHTML = `
-        <td><span class="badge ${platCls}">${escapeHtml(r.platform)}</span></td>
-        <td>${escapeHtml(r.section || '—')}</td>
-        <td class="num">${T.fmtNum(r.listing_count)}</td>
-        <td class="num">${r.min_price    != null ? '$' + T.fmtNum(Math.round(r.min_price))    : '—'}</td>
-        <td class="num">${r.median_price != null ? '$' + T.fmtNum(Math.round(r.median_price)) : '—'}</td>`;
-      tb.appendChild(tr);
-    });
-    wrap.appendChild(tbl);
-    return wrap;
-  }
-
   function labelForBucket(b) {
     return { singles: 'singles (1)', pairs: 'pairs (2)', triples: 'triples (3)',
              quads: 'quads (4)', five_plus: '5+ pack' }[b] || b;
@@ -1204,6 +1400,12 @@
     const body = document.getElementById('zonesBody');
     if (!body) return;
     body.innerHTML = '';
+    // Side-by-side source columns — only sources with real zone-price backing
+    // render (D3). EVO/TEvo (broker_event_zones + zone_deltas) and SG
+    // (get_event_sg_zones_splits) are both live. SeatData/TP/Vivid/TD have no
+    // zone-price backing → omitted (noted below), never shown as empty columns.
+    const grid = document.createElement('div');
+    grid.className = 'dual-src cols-2';
     const left = document.createElement('div');
     left.className = 'dual-src-col';
     left.innerHTML = '<div class="dual-src-hdr">TEvo (zones)</div>';
@@ -1212,13 +1414,13 @@
     right.className = 'dual-src-col';
     right.innerHTML = '<div class="dual-src-hdr">SG (sections)</div>';
     right.appendChild(buildSgZonesTable(_zonesState.sg));
-    const tdCol = document.createElement('div');
-    tdCol.className = 'dual-src-col';
-    tdCol.innerHTML = '<div class="dual-src-hdr">TD (sections)</div>' +
-      '<div class="empty muted small" style="padding:8px">TD section-level data available in TD Listings tab<br>Zone xref mapping pending</div>';
-    body.appendChild(left);
-    body.appendChild(right);
-    body.appendChild(tdCol);
+    grid.appendChild(left);
+    grid.appendChild(right);
+    body.appendChild(grid);
+    const note = document.createElement('div');
+    note.className = 'cross-src-note muted small';
+    note.textContent = 'SeatData · TP · Vivid · TD — no zone-price backing (omitted)';
+    body.appendChild(note);
   }
 
   function buildTevoZonesTable(zones, deltas) {
@@ -1742,22 +1944,46 @@
     // Used for: (a) fr-chips freshness, (b) data-freshness table, (c) price chart TD overlay
     const { data: rows, error } = await Auth.client
       .from('event_listing_snapshot_daily')
-      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
       .eq('event_id', eventId)
       .order('snapshot_date', { ascending: false })
       .order('snapshot_slot', { ascending: false })
       .limit(90);
     if (error) { console.error('[td-freshness] sb', error); return; }
     // Latest row for chips + freshness table
-    const snap = rows && rows.length ? rows[0] : null;
-    // Convert snapshot_date + slot to approx UTC timestamp for age calc
-    // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC
+    // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC. NOTE: the slot names do
+    // NOT sort chronologically as text ("morning" > "midday" > "evening" alphabetically),
+    // so a SQL `order by snapshot_slot desc` returns the EARLIEST (morning) slot. Sort
+    // chronologically client-side instead, or the panel shows the morning partial.
     const slotHourMap = { morning: 9, midday: 14, evening: 19 };
-    const rowTs = (r) => {
-      const h = slotHourMap[r.snapshot_slot] ?? 12;
-      return `${r.snapshot_date}T${String(h).padStart(2, '0')}:00:00Z`;
-    };
-    const snapTs = snap ? rowTs(snap) : null;
+    const slotRank = (r) => slotHourMap[r.snapshot_slot] ?? 12;
+    const rowTs = (r) => `${r.snapshot_date}T${String(slotRank(r)).padStart(2, '0')}:00:00Z`;
+    if (rows && rows.length) {
+      rows.sort((a, b) => a.snapshot_date !== b.snapshot_date
+        ? (a.snapshot_date < b.snapshot_date ? 1 : -1)   // newest date first
+        : slotRank(b) - slotRank(a));                    // then newest slot first
+    }
+    // The collector writes a slot even mid-pull, so the latest slot can show 0 for a
+    // platform that simply hadn't pulled yet. Build `snap` from the latest row but
+    // fill each platform from the freshest recent slot where it actually has a book
+    // (>0), keeping listings+median from the SAME slot. Bounded to the latest ~6 rows
+    // (~2 days) so a genuinely-empty platform doesn't carry a stale value forever.
+    let snap = rows && rows.length ? { ...rows[0] } : null;
+    if (snap) {
+      const recent = rows.slice(0, 6);
+      const PLATS = [
+        ['td_sh_listings', 'td_sh_median'], ['td_gt_listings', 'td_gt_median'],
+        ['td_vd_listings', 'td_vd_median'], ['td_tp_listings', 'td_tp_median'],
+        ['td_tm_listings', 'td_tm_median'], ['td_tm_resale_listings', 'td_tm_resale_median'],
+      ];
+      for (const [lf, mf] of PLATS) {
+        if (snap[lf] == null || +snap[lf] === 0) {
+          const hit = recent.find(r => r[lf] != null && +r[lf] > 0);
+          if (hit) { snap[lf] = hit[lf]; snap[mf] = hit[mf]; }
+        }
+      }
+    }
+    const snapTs = snap ? rowTs(rows[0]) : null;
     // Update the TD fr-chips in the hero
     const tdMap = { 'td-sh': snap?.td_sh_listings, 'td-gt': snap?.td_gt_listings, 'td-vd': snap?.td_vd_listings };
     for (const [src, listings] of Object.entries(tdMap)) {
@@ -1803,10 +2029,10 @@
           const chart = adaptChart(_lastPayload.chart_data);
           // Re-render price chart with TD median overlay
           renderChartPrice(chart, _chartExtAlerts);
-          renderChartLegendPrice();
           // Re-render inventory chart with TD listing-count overlay
           renderChartInventory(chart);
-          renderChartLegendInv();
+          // TD sources are now present — refresh legends + source toggles
+          refreshChartLegends();
         } catch (e) { console.error('[td-chart-overlay]', e); }
       }
     }
@@ -1817,6 +2043,10 @@
         renderLastSnapshot(adaptChart(_lastPayload.chart_data));
       } catch (e) { console.error('[td-snap-rerender]', e); }
     }
+    // Re-render the unified CROSS-SOURCE table so its TD per-source columns
+    // (SH/GT/VD) paint now that _lastTdSnap is cached (WP-2). No new
+    // fetch — feeds the cached daily snapshot into the Listings/Price section.
+    try { rerenderCrossSource(); } catch (e) { console.error('[td-crosssource-rerender]', e); }
   }
 
   function renderDataFreshness(tdSnap, tdTs) {
@@ -1971,31 +2201,186 @@
   // v3 enrichment renderers (PR pending; v3 RPC adds 6 new panels)
   // ============================================================
 
-  // ---------- SG broker sales aggregate ----------
-  function renderSgBrokerSales(s) {
+  // ---------- Broker sales — by source (WP-5 + WP-6) ----------
+  // Generalizes the former SG-only renderSgBrokerSales into a source-toggle panel.
+  //   SG     = market broker-sales aggregate (v3 sg_broker_sales) — deepest live data,
+  //            default source. Renders the original 8 KPI tiles unchanged.
+  //   EVO    = OUR realized sales on the TEvo exchange (~99% seller=S4K). Aggregated
+  //            CLIENT-SIDE from the v3 payload's data.orders {items, orders} — the same
+  //            evo_orders ⨯ evo_order_items the All-Orders table already uses. No new
+  //            RPC/fetch: get_event_evo_orders_full (mig 20260517220000) + the v3 page
+  //            payload already expose this (WP-6 investigation; bot_chat 866). Only the
+  //            accepted/completed states count as realized (matches adaptOrders).
+  //   TP/Vivid = OUR order book on that platform (v3 cross_source_orders.{tickpick,vivid}).
+  //            Shallower: only the tiles those order objects support render (D3 — omit
+  //            tiles they lack, never fake zeros). Distinct labels (ORDERS/NOTIONAL) +
+  //            a footnote keep the semantics honest (our orders ≠ market-wide sold).
+  //   SeatData / TD = omitted (no orders backing) per W6.
+  let _brokerSalesData = { sg: null, evo: null, tp: [], vivid: [] };
+  let _brokerSalesSource = 'sg';
+
+  function setBrokerSalesData(data) {
+    const cso = data.cross_source_orders || {};
+    _brokerSalesData = {
+      sg:    data.sg_broker_sales || null,
+      evo:   aggregateEvoBrokerSales(data.orders), // client-side from v3 payload (WP-6)
+      tp:    Array.isArray(cso.tickpick) ? cso.tickpick : [],
+      vivid: Array.isArray(cso.vivid)    ? cso.vivid    : [],
+    };
+    // Default to SG (deepest live data); if SG is empty but a peer has data, fall back.
+    const live = brokerLiveSources();
+    if (!live.includes(_brokerSalesSource)) _brokerSalesSource = live[0] || 'sg';
+    renderBrokerSales(_brokerSalesSource);
+  }
+
+  // EVO realized-sales KPIs aggregated from the v3 data.orders payload (evo_orders ⨯
+  // evo_order_items). Returns an object shaped like sg_broker_sales (so the SG tile
+  // strip renders it) or null when the event has no accepted/completed EVO orders.
+  function aggregateEvoBrokerSales(ordersPayload) {
+    const items   = (ordersPayload && ordersPayload.items)  || [];
+    const ordList = (ordersPayload && ordersPayload.orders) || [];
+    if (!items.length) return null;
+    const ordById = new Map(ordList.map(o => [o.evo_order_id, o]));
+    const SOLD = new Set(['accepted', 'completed']); // realized — matches adaptOrders
+    let tix = 0, gross = 0, latest = null;
+    const px = [], sections = new Set(), orderIds = new Set();
+    items.forEach(it => {
+      const o = ordById.get(it.evo_order_id) || {};
+      if (!SOLD.has(o.state)) return;
+      const q = it.quantity != null ? Number(it.quantity) : null;
+      const p = it.price    != null ? Number(it.price)    : null;
+      orderIds.add(it.evo_order_id);
+      if (q != null && !isNaN(q)) tix += q;
+      if (p != null && q != null && !isNaN(p) && !isNaN(q)) gross += p * q;
+      if (p != null && !isNaN(p)) px.push(p);
+      const sec = it.ticket_group_section || it.section;
+      if (sec != null && String(sec).trim() !== '') sections.add(String(sec).trim());
+      const ts = o.evo_created_at || o.evo_updated_at || it.pulled_at;
+      const tms = ts ? new Date(ts).getTime() : NaN;
+      if (!isNaN(tms) && (latest == null || tms > latest)) latest = tms;
+    });
+    if (!orderIds.size) return null;
+    px.sort((a, b) => a - b);
+    return {
+      sales_count:       orderIds.size,
+      tickets_sold:      tix,
+      gross_estimate:    gross,
+      min_sale_price:    px.length ? px[0] : null,
+      median_sale_price: px.length ? px[Math.floor((px.length - 1) / 2)] : null,
+      max_sale_price:    px.length ? px[px.length - 1] : null,
+      distinct_sections: sections.size,
+      latest_sale_at:    latest != null ? new Date(latest).toISOString() : null,
+    };
+  }
+
+  // Which LIVE sources actually have data for this event (D3 — drives which toggles show).
+  function brokerLiveSources() {
+    const d = _brokerSalesData;
+    const out = [];
+    const sgHas = d.sg && !d.sg.hidden &&
+      (d.sg.sales_count != null || d.sg.gross_estimate != null || d.sg.tickets_sold != null);
+    if (sgHas)               out.push('sg');
+    if (d.evo)               out.push('evo');
+    if (d.tp && d.tp.length) out.push('tp');
+    if (d.vivid && d.vivid.length) out.push('vivid');
+    return out;
+  }
+
+  function renderBrokerSales(source) {
     const section = document.getElementById('sg-broker-sales');
     const body = document.getElementById('sgBrokerSalesBody');
+    const toggleHost = document.getElementById('brokerSalesSrcToggle');
     if (!body) return;
-    if (!s || s.hidden) {
+    const live = brokerLiveSources();
+    // No live broker-sales data at all → hide the panel (preserves prior behavior).
+    if (!live.length) {
       if (section) section.style.display = 'none';
       return;
     }
     if (section) section.style.display = '';
+    if (!live.includes(source)) source = live[0];
+    _brokerSalesSource = source;
+
+    // ---- source-toggle row (only live sources; D3 — no fake/pending columns) ----
+    if (toggleHost) {
+      const LBL = { sg: 'SG', evo: 'EVO', tp: 'TP', vivid: 'Vivid' };
+      toggleHost.innerHTML = live.map(k =>
+        `<button type="button" class="broker-src-btn${k === source ? ' active' : ''}" data-bsrc="${k}">${LBL[k]}</button>`
+      ).join('');
+      toggleHost.querySelectorAll('.broker-src-btn').forEach(b =>
+        b.addEventListener('click', () => renderBrokerSales(b.dataset.bsrc))
+      );
+    }
+
+    // ---- body ----
+    if (source === 'sg') {
+      body.innerHTML = brokerKpiStripSg(_brokerSalesData.sg) +
+        '<div class="cross-src-note muted small">SG = market broker-sales aggregate (all sellers, inferred from metrics)</div>';
+      return;
+    }
+    if (source === 'evo') {
+      // EVO aggregate shares the sg_broker_sales key shape → reuse the SG tile strip.
+      body.innerHTML = brokerKpiStripSg(_brokerSalesData.evo) +
+        '<div class="cross-src-note muted small">EVO = our realized sales on the TEvo exchange (accepted + completed orders; ~99% seller=S4K — our sell-through, not market-wide)</div>';
+      return;
+    }
+    const arr = source === 'tp' ? _brokerSalesData.tp : _brokerSalesData.vivid;
+    body.innerHTML = brokerKpiStripOrders(arr) +
+      `<div class="cross-src-note muted small">${source === 'tp' ? 'TP' : 'Vivid'} = our order book on this platform (our orders, not market-wide sold)</div>`;
+  }
+
+  function brokerTile(lbl, val, small) {
+    return `<div class="kpi-strip-cell"><span class="kpi-lbl">${lbl}</span><span class="kpi-val${small ? ' small' : ''}">${val}</span></div>`;
+  }
+
+  // SG market aggregate → the original 8-tile strip (tiles unchanged).
+  function brokerKpiStripSg(s) {
+    if (!s) return '<div class="empty">no SG broker-sales data</div>';
     const gmv = Number(s.gross_estimate) || 0;
     const tix = Number(s.tickets_sold) || 0;
     const sales = Number(s.sales_count) || 0;
-    const avgPx = sales ? Math.round(gmv / Math.max(tix, 1)) : null;
-    body.innerHTML = `
-      <div class="kpi-strip">
-        <div class="kpi-strip-cell"><span class="kpi-lbl">SALES</span><span class="kpi-val">${T.fmtNum(sales)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">TIX SOLD</span><span class="kpi-val">${T.fmtNum(tix)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">EST GMV</span><span class="kpi-val">$${T.fmtNum(Math.round(gmv))}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MIN</span><span class="kpi-val">${s.min_sale_price != null ? '$' + T.fmtNum(Math.round(s.min_sale_price)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MEDIAN</span><span class="kpi-val">${s.median_sale_price != null ? '$' + T.fmtNum(Math.round(s.median_sale_price)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">MAX</span><span class="kpi-val">${s.max_sale_price != null ? '$' + T.fmtNum(Math.round(s.max_sale_price)) : '—'}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">SECTIONS</span><span class="kpi-val">${T.fmtNum(s.distinct_sections)}</span></div>
-        <div class="kpi-strip-cell"><span class="kpi-lbl">LATEST</span><span class="kpi-val small">${T.fmtDate(s.latest_sale_at)}</span></div>
-      </div>`;
+    const money = v => (v != null ? '$' + T.fmtNum(Math.round(v)) : '—');
+    return '<div class="kpi-strip">' + [
+      brokerTile('SALES', T.fmtNum(sales)),
+      brokerTile('TIX SOLD', T.fmtNum(tix)),
+      brokerTile('EST GMV', '$' + T.fmtNum(Math.round(gmv))),
+      brokerTile('MIN', money(s.min_sale_price)),
+      brokerTile('MEDIAN', money(s.median_sale_price)),
+      brokerTile('MAX', money(s.max_sale_price)),
+      brokerTile('SECTIONS', T.fmtNum(s.distinct_sections)),
+      brokerTile('LATEST', T.fmtDate(s.latest_sale_at), true),
+    ].join('') + '</div>';
+  }
+
+  // TP/Vivid order array → only the tiles the order objects support (D3: omit lacking).
+  function brokerKpiStripOrders(arr) {
+    if (!arr || !arr.length) return '<div class="empty">no orders on this platform for this event</div>';
+    let tix = 0, tixSeen = false, gmv = 0, gmvSeen = false, latest = null;
+    const pxPer = [];
+    const sections = new Set();
+    arr.forEach(o => {
+      const q = o.quantity != null ? Number(o.quantity) : null;
+      const t = o.total != null ? Number(o.total) : null;
+      if (q != null && !isNaN(q)) { tix += q; tixSeen = true; }
+      if (t != null && !isNaN(t)) { gmv += t; gmvSeen = true; }
+      if (t != null && q != null && q > 0 && !isNaN(t) && !isNaN(q)) pxPer.push(t / q);
+      if (o.section != null && String(o.section).trim() !== '') sections.add(String(o.section).trim());
+      const ts = o.ordered_at ? new Date(o.ordered_at).getTime() : NaN;
+      if (!isNaN(ts) && (latest == null || ts > latest)) latest = ts;
+    });
+    pxPer.sort((a, b) => a - b);
+    const median = pxPer.length ? pxPer[Math.floor((pxPer.length - 1) / 2)] : null;
+    const cells = [brokerTile('ORDERS', T.fmtNum(arr.length))];
+    if (tixSeen) cells.push(brokerTile('TIX', T.fmtNum(tix)));
+    if (gmvSeen) cells.push(brokerTile('NOTIONAL', '$' + T.fmtNum(Math.round(gmv))));
+    if (pxPer.length) {
+      cells.push(brokerTile('MIN', '$' + T.fmtNum(Math.round(pxPer[0]))));
+      cells.push(brokerTile('MEDIAN', '$' + T.fmtNum(Math.round(median))));
+      cells.push(brokerTile('MAX', '$' + T.fmtNum(Math.round(pxPer[pxPer.length - 1]))));
+    }
+    if (sections.size) cells.push(brokerTile('SECTIONS', T.fmtNum(sections.size)));
+    if (latest != null) cells.push(brokerTile('LATEST', T.fmtDate(new Date(latest).toISOString()), true));
+    return '<div class="kpi-strip">' + cells.join('') + '</div>';
   }
 
   // (renderSgListingsSummary removed — deprecated cost_* fields per operator
@@ -2161,7 +2546,9 @@
   // Tab navigation + lazy-load (Phase 2a Tabs — mig 20260517180000)
   // ============================================================
   const _tabState = { loaded: {
-    'sg-listings': false, 'evo-listings': false, 'td-listings': false,
+    'sg-listings': false, 'evo-listings': false,
+    'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
+    'tp-listings': false, 'tm-listings': false,
     'sg-sales': false, 'our-orders': false,
   } };
 
@@ -2177,18 +2564,32 @@
         await loadSgListingsFull(eventId);
       } else if (tabId === 'evo-listings' && !_tabState.loaded['evo-listings']) {
         await loadEvoListingsFull(eventId);
-      } else if (tabId === 'td-listings' && !_tabState.loaded['td-listings']) {
-        _tabState.loaded['td-listings'] = true;
-        await Promise.all([
-          loadTdPlatformListings(eventId, 'SH'),
-          loadTdPlatformListings(eventId, 'GT'),
-          loadTdPlatformListings(eventId, 'VD'),
-        ]);
+      } else if (tabId === 'sh-listings' && !_tabState.loaded['sh-listings']) {
+        _tabState.loaded['sh-listings'] = true;
+        await loadTdPlatformListings(eventId, 'SH');
+        updateTdListingsTabCount();
+      } else if (tabId === 'gt-listings' && !_tabState.loaded['gt-listings']) {
+        _tabState.loaded['gt-listings'] = true;
+        await loadTdPlatformListings(eventId, 'GT');
+        updateTdListingsTabCount();
+      } else if (tabId === 'vd-listings' && !_tabState.loaded['vd-listings']) {
+        _tabState.loaded['vd-listings'] = true;
+        await loadTdPlatformListings(eventId, 'VD');
+        updateTdListingsTabCount();
+      } else if (tabId === 'tp-listings' && !_tabState.loaded['tp-listings']) {
+        _tabState.loaded['tp-listings'] = true;
+        await loadTdPlatformListings(eventId, 'TP');
+        updateTdListingsTabCount();
+      } else if (tabId === 'tm-listings' && !_tabState.loaded['tm-listings']) {
+        _tabState.loaded['tm-listings'] = true;
+        await loadTdPlatformListings(eventId, 'TM');
         updateTdListingsTabCount();
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
+      } else if (tabId === 'seatmap' && !_tabState.loaded['seatmap']) {
+        await loadSeatmap(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
         // Merged tab — fire all 3 broker-order RPCs in parallel, render each
         // into its own stacked sub-section inside #paneOurOrders.
@@ -2213,9 +2614,14 @@
       'overview':     'paneOverview',
       'sg-listings':  'paneSgListings',
       'evo-listings': 'paneEvoListings',
-      'td-listings':  'paneTdListings',
+      'sh-listings':  'paneShListings',
+      'gt-listings':  'paneGtListings',
+      'vd-listings':  'paneVdListings',
+      'tp-listings':  'paneTpListings',
+      'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
+      'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
@@ -2415,15 +2821,513 @@
     if (meta) meta.textContent = `${rows.length} rows (${ownedCount} ours) · ${ms.toFixed(0)}ms`;
   }
 
+  // ---------- Seat Map (interactive TEvo venue map · multi-source section/price filter) ----------
+  // The vendored @ticketevolution/seatmaps-client UMD bundle exposes window.Tevomaps.
+  // venueId/configurationId come from public.events; the map is rendered once, then the
+  // SOURCE SELECTOR (TEvo · SeatGeek · StubHub · GameTime · VividSeats) re-colors it by
+  // ONE source's floors at a time via updateTicketGroups() — never collectively. Each
+  // source's per-section floors are joined to the map's manifest section names via the
+  // trailing-token remap. Clicking a section filters the per-source listing table below.
+  // All sources' RPCs take the tevo event_id and resolve the cross-source bridge server-side.
+  let _seatmapApi = null;
+  let _seatmapEventId = null;
+  let _seatmapRemap = null;     // tail → full manifest section name (venue/config-scoped, cached)
+  let _seatmapSource = 'EVO';   // which source currently colors the map
+  let _seatmapRowsBySource = {};// key → normalized rows [{section,row,quantity,retail_price,is_owned}]
+  let _seatmapSelected = [];    // section names currently selected on the map
+  let _seatmapWired = false;    // selector + reset listeners attached once
+  let _seatmapUserPicked = false; // user clicked a source → stop auto-picking
+  let _seatmapConfigName = '';
+  let _seatmapVenueLabel = '';
+  const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
+  // Source registry — TP excluded (zone-only, no section granularity); TM excluded
+  // (primary/box-office, no section-level resale listings for these events).
+  const SEATMAP_SOURCES = [
+    { key: 'EVO', label: 'TEvo' },
+    { key: 'SG',  label: 'SeatGeek' },
+    { key: 'SH',  label: 'StubHub' },
+    { key: 'GT',  label: 'GameTime' },
+    { key: 'VD',  label: 'VividSeats' },
+  ];
+
+  // Fetch one source's listings (by tevo event id — every RPC resolves the bridge itself)
+  // and normalize to a common shape. Prices use each source's all-in field where available.
+  async function _seatmapFetchSource(eventId, key) {
+    if (key === 'EVO') {
+      const r = await rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId });
+      return ((r && r.data && r.data.rows) || []).map(x => ({
+        section: x.section, row: x.row, quantity: x.quantity,
+        retail_price: x.retail_price, is_owned: !!x.is_owned,
+      }));
+    }
+    if (key === 'SG') {
+      const r = await rpcOrNull('get_event_sg_listings_full', { p_event_id: eventId });
+      return ((r && r.data && r.data.rows) || []).map(x => ({
+        section: x.section, row: x.row, quantity: x.quantity,
+        retail_price: (x.retail_price_all_in != null ? x.retail_price_all_in : x.broadcast_price),
+        is_owned: !!x.is_broker_owned,
+      }));
+    }
+    // SH / GT / VD via TicketsData
+    const r = await rpcOrNull('get_event_td_listings', { p_tevo_event_id: eventId, p_platform: key, p_hours: 26 });
+    const rows = Array.isArray(r && r.data) ? r.data : [];
+    return rows.map(x => ({
+      section: x.section, row: x.row, quantity: x.quantity,
+      retail_price: (x.price_with_fees != null && Number(x.price_with_fees) > 0 ? x.price_with_fees : x.list_price),
+      is_owned: false,
+    }));
+  }
+
+  function _seatmapSrcLabel(key) {
+    const s = SEATMAP_SOURCES.find(x => x.key === key);
+    return s ? s.label : key;
+  }
+
+  // Parking / non-seated pseudo-sections never match an SVG path (bible §3 parking
+  // skip) — drop them so the legend's price scale isn't skewed by $30 parking spots.
+  // Brokers also list off-site lots as STREET ADDRESSES ("1440 W Washington Blvd",
+  // "1 Light St", "2121 S. Towne Center Pl") — number-first + a street suffix. Filter
+  // those too (a real section like "Terrace 12" has the number LAST, so it's safe).
+  function _seatmapIsParking(section) {
+    const s = section || '';
+    if (/parking|garage|valet|\blot\b|\blot[\s.\-]?[a-z0-9]|min walk|mi from venue|shuttle|tailgate/i.test(s)) return true;
+    if (/^\s*\d[\d\s.,/&–-]*\s+\S.*\b(st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|pkwy|pkway|parkway|hwy|highway|ln|lane|ct|court|pl|place|plz|plaza|cir|circle|way)\b\.?/i.test(s)) return true;
+    // number + compass direction + word = a street address even without a street suffix
+    // ("840 N. Broadway", "61 E Elizabeth", "516 N. 2nd Ave"). Real sections aren't shaped this way.
+    if (/^\s*\d+\s+[nsew]\b\.?\s+[a-z0-9]/i.test(s)) return true;
+    return false;
+  }
+
+  // ----- Section → manifest matcher (venue-agnostic; manifest drives everything) -----
+  // The map MANIFEST keys sections by full descriptive names that vary wildly by venue:
+  // clean numeric+suffix ("014A", "320C"), named families ("Home Plate Box 10", "Club
+  // House 22"), or descriptive ("Lower Level Corner 104"). Broker `section` text is messy
+  // and venue-specific ("SEC10", "10", "Clubhouse Box 22", "FL5"). We match each listing
+  // section to a manifest key with a CONFIDENCE-ORDERED tier chain — exact/specific first,
+  // heuristics last and collision-gated — so clean venues resolve early (T1/T2) and never
+  // touch the messy-venue logic (T3/T4). Output is ALWAYS a real manifest key; when unsure
+  // we leave it unmatched (grey, still listed) rather than miscolor. No per-venue code.
+  const _SM_PREMIUM = /suite|club|diamond|dugout|founders|mvp|legend|champion|hall|vista|porch|all\s*star|gold\s*glove|rookie|silver|platinum|party|\bpass\b/i;
+
+  function _smNorm(s) {
+    return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  // Zone abbreviations brokers glue to a section number (esp. baseball): the manifest
+  // spells these out as family words, so we expand them to align. Multi-token where a
+  // level spans sub-families (Dodger field = Field Box / Infield Box / Preferred Field —
+  // all carry "field" or "box"). Venue-agnostic: an expansion only helps when that
+  // venue's manifest actually has the family; otherwise it's a harmless no-op.
+  const SEATMAP_ZONES = {
+    fd: 'field box', rs: 'reserve', lg: 'loge box', td: 'top deck',
+    dg: 'dugout', pl: 'pavilion', pr: 'pavilion', bl: 'baseline', mvp: 'mvp',
+    // middle level: brokers/SG call it M / Mezz / Mezzanine, the manifest may say
+    // "Middle" OR "Mezzanine" — expand to both tokens so either naming matches.
+    m: 'middle mezzanine', mez: 'middle mezzanine', mezz: 'middle mezzanine',
+    mezzanine: 'middle mezzanine', drm: 'middle mezzanine',
+    flga: 'floor', flrga: 'floor',  // floor-GA codes → the Floor family
+  };
+  // Parse a section/key → { num (leading-zeros stripped), suf (sub-section letter), fam }.
+  // num = the section number; suf = a single A-H sub-section letter glued to the number
+  // (Yankee "117A"≠"117B"); fam = remaining words with zone codes expanded and generic
+  // markers (sec/section/ga) dropped. A trailing zone code (e.g. "12FD"→field) is treated
+  // as FAMILY, not a suffix — distinguished from a real suffix by "<digit><single a-h>$".
+  function _smParse(s) {
+    const n = _smNorm(s);
+    const numM = n.match(/\d+/);
+    if (!numM) return { num: null, suf: '', fam: n };
+    const num = String(parseInt(numM[0], 10));      // first digit run; "014" → "14"
+    const sufM = n.match(/\d([a-h])$/);             // digit directly + one a-h letter = sub-section
+    const suf = sufM ? sufM[1] : '';
+    const nf = suf ? n.replace(/([a-h])$/, '') : n;
+    const fam = [];
+    (nf.match(/[a-z]+/g) || []).forEach(t => {
+      if (SEATMAP_ZONES[t]) fam.push(...SEATMAP_ZONES[t].split(' '));
+      else if (t === 'clubhouse') fam.push('club', 'house');
+      else if (/^(sec|section|ga)$/.test(t)) { /* generic — carries no family */ }
+      else fam.push(t);
+    });
+    return { num, suf, fam: fam.join(' ') };
+  }
+
+  // Build the per-venue manifest index (cached). Returns { byNumSuf, byNum, cache } or null.
+  async function _seatmapBuildSectionRemap(venueId, configurationId) {
+    try {
+      const resp = await fetch(`${SEATMAP_MAPS_DOMAIN}/${venueId}/${configurationId}/manifest.json`);
+      if (!resp.ok) return null;
+      const manifest = await resp.json();
+      const sections = (manifest && manifest.sections) || {};
+      const byNumSuf = new Map(), byNum = new Map(), named = [];
+      Object.keys(sections).forEach(k => {
+        const p = _smParse(k);
+        if (p.num == null) {                   // numberless keys (GA / Pit / Lawn / Stage / SRO)
+          const nm = _smNorm(k);
+          named.push({ key: k, norm: nm, toks: nm.split(' ').filter(Boolean) });
+          return;
+        }
+        const rec = { key: k, fam: p.fam, suf: p.suf };
+        const ek = p.num + '|' + p.suf;
+        (byNumSuf.get(ek) || byNumSuf.set(ek, []).get(ek)).push(rec);
+        (byNum.get(p.num)  || byNum.set(p.num, []).get(p.num)).push(rec);
+      });
+      return { byNumSuf, byNum, named, cache: new Map() };
+    } catch (_) { return null; }
+  }
+
+  // T3 family align → T4 bowl-default (prefer non-premium). Returns a key or null (don't guess).
+  function _smPick(parsed, cands) {
+    const lt = parsed.fam ? parsed.fam.split(' ').filter(Boolean) : [];
+    if (lt.length) {
+      let best = null, bs = 0;
+      for (const c of cands) {
+        const s = c.fam.split(' ').filter(t => lt.includes(t)).length;
+        if (s > bs) { bs = s; best = c; }
+      }
+      if (best) return best.key;               // T3
+    }
+    const bowl = cands.filter(c => !_SM_PREMIUM.test(c.key));
+    if (bowl.length === 1) return bowl[0].key; // T4 — unique non-premium = the seating bowl
+    return null;                               // still ambiguous → leave grey
+  }
+
+  // Match one listing section → manifest key (cached per venue). Tier chain:
+  // numberless (GA/Pit/Lawn) → name exact, else name token-overlap;
+  // numbered → T1/T2 exact (num+suffix) → T2b suffixed-but-only-numeric → T3 family → T4 bowl.
+  function _seatmapMatchSection(section, idx) {
+    if (!idx) return null;
+    if (idx.cache.has(section)) return idx.cache.get(section);
+    const p = _smParse(section);
+    let key = null;
+    if (p.num == null) {
+      // numberless section (e.g. "General Admission", "GA Pit") → match named manifest keys.
+      const nm = _smNorm(section);
+      const named = idx.named || [];
+      let hit = named.find(x => x.norm === nm);                // exact normalized
+      if (!hit && named.length) {                              // else best token overlap (>0)
+        const lt = nm.split(' ').filter(Boolean);
+        let best = null, bs = 0;
+        for (const x of named) {
+          const ov = x.toks.filter(t => lt.includes(t)).length;
+          if (ov > bs) { bs = ov; best = x; }
+        }
+        hit = best;
+      }
+      key = hit ? hit.key : null;
+    } else {
+      const exact = idx.byNumSuf.get(p.num + '|' + p.suf) || [];
+      if (exact.length === 1) key = exact[0].key;             // T1/T2 — clean venues land here
+      else if (exact.length > 1) key = _smPick(p, exact);     // same num+suf across families
+      else {
+        const numOnly = idx.byNum.get(p.num) || [];           // no exact suffix match
+        if (numOnly.length === 1) key = numOnly[0].key;
+        else if (numOnly.length > 1) key = _smPick(p, numOnly);
+      }
+    }
+    idx.cache.set(section, key);
+    return key;
+  }
+
+  // Collapse listing rows → one ticketGroup per matched manifest section at its lowest floor
+  // (what the map colors by). Unmatched sections are skipped (grey) but still appear in the
+  // listing table. No manifest (fetch failed) → fall back to the raw section as the key.
+  function _seatmapTicketGroups(rows, idx) {
+    const floorByKey = new Map();
+    rows.forEach(r => {
+      const sec = (r.section || '').trim();
+      if (!sec || _seatmapIsParking(sec)) return;
+      const price = Number(r.retail_price);
+      if (!isFinite(price) || price <= 0) return;
+      const key = idx ? _seatmapMatchSection(sec, idx) : sec;
+      if (!key) return;
+      const prev = floorByKey.get(key);
+      if (prev == null || price < prev) floorByKey.set(key, price);
+    });
+    return Array.from(floorByKey, ([key, price]) => ({ tevo_section_name: key, retail_price: price }));
+  }
+
+  // Hide the Seat Map tab when the venue/config is known to have NO interactive map
+  // (seatmap_manifest.has_map=false, populated by the seatmap-manifest-sync cron).
+  // Conservative: only hides on a definitive negative — if the config isn't synced
+  // yet (no row), the tab stays and the runtime fetch decides.
+  async function loadSeatmapTabVisibility(eventId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const ev = await Auth.client.from('events')
+      .select('venue_id, configuration_id').eq('id', eventId).maybeSingle();
+    if (ev.error || !ev.data || ev.data.venue_id == null || ev.data.configuration_id == null) return;
+    const mr = await Auth.client.from('seatmap_manifest')
+      .select('has_map')
+      .eq('venue_id', ev.data.venue_id)
+      .eq('configuration_id', ev.data.configuration_id)
+      .maybeSingle();
+    if (!mr.error && mr.data && mr.data.has_map === false) {
+      const btn = document.querySelector('.event-tab[data-tab="seatmap"]');
+      if (btn) btn.style.display = 'none';
+    }
+  }
+
+  async function loadSeatmap(eventId) {
+    _tabState.loaded['seatmap'] = true;
+    _seatmapEventId = eventId;
+    const meta = document.getElementById('seatmapMeta');
+    const host = document.getElementById('seatmapHost');
+    const listBody = document.getElementById('seatmapListBody');
+    if (meta) meta.textContent = 'loading…';
+    if (listBody) listBody.innerHTML = '<div class="empty">Loading listings…</div>';
+
+    if (!window.Tevomaps || !window.Tevomaps.SeatmapFactory) {
+      if (meta) meta.textContent = 'seatmap library not loaded';
+      if (host) host.innerHTML = '<div class="empty">tevomaps.bundle.js failed to load</div>';
+      return;
+    }
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) {
+      if (meta) meta.textContent = 'no auth (Path C unavailable on localhost)';
+      if (host) host.innerHTML = '<div class="empty">Seat map needs an @s4kent.com session.</div>';
+      return;
+    }
+
+    // (1) venue_id + configuration_id for this event (direct events read — RLS-OK).
+    const evRes = await Auth.client
+      .from('events')
+      .select('venue_id, configuration_id, configuration_name, venue_name')
+      .eq('id', eventId)
+      .maybeSingle();
+    if (evRes.error || !evRes.data) {
+      if (meta) meta.textContent = 'event lookup failed';
+      if (host) host.innerHTML = `<div class="empty">${escapeHtml(evRes.error?.message || 'no event row')}</div>`;
+      return;
+    }
+    const venueId = evRes.data.venue_id;
+    const configurationId = evRes.data.configuration_id;
+    if (venueId == null || configurationId == null) {
+      if (meta) meta.textContent = 'no map for this event';
+      if (host) host.innerHTML = '<div class="empty">This event has no TEvo venue_id / configuration_id — no seat map available.</div>';
+      if (listBody) listBody.innerHTML = '';
+      return;
+    }
+    _seatmapConfigName = evRes.data.configuration_name || '';
+    _seatmapVenueLabel = `venue ${venueId} · config ${configurationId}` + (_seatmapConfigName ? ` (${_seatmapConfigName})` : '');
+
+    // (2) Manifest remap (venue/config-scoped — built once, shared by every source).
+    _seatmapRemap = await _seatmapBuildSectionRemap(venueId, configurationId);
+    _seatmapRowsBySource = {};
+    _seatmapSource = 'EVO';
+    _seatmapSelected = [];
+    _seatmapUserPicked = false;
+
+    // (3) Default source = TEvo. Build the map ONCE with its floors; later source
+    //     switches re-color via updateTicketGroups() rather than rebuilding the SVG.
+    const evoRows = await _seatmapFetchSource(eventId, 'EVO');
+    _seatmapRowsBySource['EVO'] = evoRows;
+    const ticketGroups = _seatmapTicketGroups(evoRows, _seatmapRemap);
+
+    host.innerHTML = '';
+    try {
+      const factory = new window.Tevomaps.SeatmapFactory({
+        venueId: String(venueId),
+        configurationId: String(configurationId),
+        ticketGroups,
+        showLegend: true,
+        showControls: true,
+        mouseControlEnabled: true,
+        onSelection: (sections) => onSeatmapSelection(sections),
+      });
+      _seatmapApi = await factory.build('seatmapHost');
+    } catch (e) {
+      if (meta) meta.textContent = 'map render error';
+      host.innerHTML = `<div class="empty">Seat map failed to render: ${escapeHtml(String((e && e.message) || e))}</div>`;
+      return;
+    }
+
+    wireSeatmapControls();
+    renderSeatmapSelector();
+    renderSeatmapList();
+    updateSeatmapMeta(ticketGroups.length);
+    _seatmapProbeSources(eventId);   // fire-and-forget: enable/disable + count the other sources
+  }
+
+  // Switch which source colors the map. Re-colors via updateTicketGroups() (no SVG rebuild)
+  // and swaps the listing table to that source. One source at a time — never merged.
+  async function selectSeatmapSource(key) {
+    if (!_seatmapApi || key === _seatmapSource) return;
+    _seatmapSource = key;
+    _seatmapSelected = [];
+    renderSeatmapSelector();
+    const meta = document.getElementById('seatmapMeta');
+    if (meta) meta.textContent = `${_seatmapVenueLabel} · loading ${_seatmapSrcLabel(key)}…`;
+
+    let rows = _seatmapRowsBySource[key];
+    if (!rows) {
+      rows = await _seatmapFetchSource(_seatmapEventId, key);
+      _seatmapRowsBySource[key] = rows;
+    }
+    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap);
+    if (typeof _seatmapApi.updateTicketGroups === 'function') {
+      try { _seatmapApi.updateTicketGroups(ticketGroups); } catch (_) { /* ignore */ }
+    }
+    renderSeatmapSelector();   // refresh active state
+    renderSeatmapList();
+    updateSeatmapMeta(ticketGroups.length);
+  }
+
+  // Build the source selector buttons (active = current source; disabled once a source
+  // is known to have 0 listings for this event). Idempotent — re-rendered on every change.
+  function renderSeatmapSelector() {
+    const host = document.getElementById('seatmapSourceSel');
+    if (!host) return;
+    host.innerHTML = SEATMAP_SOURCES.map(s => {
+      const rows = _seatmapRowsBySource[s.key];
+      const known = rows !== undefined;
+      const empty = known && rows.length === 0;
+      const cnt = known ? ` <span class="sm-src-cnt">${rows.length}</span>` : '';
+      const cls = ['sm-src-btn'];
+      if (s.key === _seatmapSource) cls.push('active');
+      if (empty) cls.push('disabled');
+      return `<button type="button" class="${cls.join(' ')}" data-src="${s.key}"${empty ? ' disabled' : ''}>${escapeHtml(s.label)}${cnt}</button>`;
+    }).join('');
+  }
+
+  // Probe the non-default sources in the background so the selector can show per-source
+  // counts and disable empties — without blocking the initial TEvo render.
+  async function _seatmapProbeSources(eventId) {
+    for (const s of SEATMAP_SOURCES) {
+      if (s.key === 'EVO' || _seatmapRowsBySource[s.key] !== undefined) continue;
+      try {
+        _seatmapRowsBySource[s.key] = await _seatmapFetchSource(eventId, s.key);
+      } catch (_) {
+        _seatmapRowsBySource[s.key] = [];
+      }
+      renderSeatmapSelector();
+    }
+    _seatmapAutoPickSource();
+  }
+
+  // Once all sources are fetched, default the map's coloring to whichever source maps
+  // the MOST sections onto this venue's manifest (SG section text is usually cleaner
+  // than EVO's broker free-text, but it's per-event, so we measure rather than assume).
+  // SG breaks ties (cleaner on average). Skipped once the user has picked a source.
+  function _seatmapAutoPickSource() {
+    if (_seatmapUserPicked || !_seatmapRemap || !_seatmapApi) return;
+    const tie = { SG: 0, EVO: 1, VD: 2, SH: 3, GT: 4 };   // lower = preferred on ties
+    let best = _seatmapSource, bestN = -1;
+    for (const s of SEATMAP_SOURCES) {
+      const rows = _seatmapRowsBySource[s.key];
+      if (!rows || !rows.length) continue;
+      const n = _seatmapTicketGroups(rows, _seatmapRemap).length;
+      if (n > bestN || (n === bestN && (tie[s.key] ?? 9) < (tie[best] ?? 9))) { bestN = n; best = s.key; }
+    }
+    if (best !== _seatmapSource && bestN > 0) selectSeatmapSource(best);
+  }
+
+  // Library fires this with the full set of currently-selected section names.
+  function onSeatmapSelection(sections) {
+    _seatmapSelected = Array.isArray(sections) ? sections.slice() : [];
+    const label = document.getElementById('seatmapSelLabel');
+    const reset = document.getElementById('seatmapResetBtn');
+    if (label) {
+      label.textContent = _seatmapSelected.length
+        ? `Filtering ${_seatmapSelected.length} section${_seatmapSelected.length > 1 ? 's' : ''}: ${_seatmapSelected.join(', ')}`
+        : 'Click a section to filter listings';
+    }
+    if (reset) reset.hidden = _seatmapSelected.length === 0;
+    renderSeatmapList();
+  }
+
+  function updateSeatmapMeta(mappedCount) {
+    const meta = document.getElementById('seatmapMeta');
+    if (!meta) return;
+    const rows = _seatmapRowsBySource[_seatmapSource] || [];
+    const sections = new Set(rows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => r.section));
+    const mapped = _seatmapRemap
+      ? `${mappedCount}/${sections.size} sections on map`
+      : `${mappedCount} sections (manifest unavailable — no coloring)`;
+    meta.textContent = `${_seatmapVenueLabel} · ${_seatmapSrcLabel(_seatmapSource)} · ${mapped}`;
+  }
+
+  // Renders the CURRENT source's listings; clicking a map section filters by matched key
+  // (the library returns full manifest names — we match each row's section the same way).
+  function renderSeatmapList() {
+    const body = document.getElementById('seatmapListBody');
+    if (!body) return;
+    const sel = _seatmapSelected.map(s => String(s).toLowerCase());
+    const all = _seatmapRowsBySource[_seatmapSource] || [];
+    let rows = all.filter(r => r.section && !_seatmapIsParking(r.section));
+    if (sel.length) {
+      rows = rows.filter(r => {
+        const k = _seatmapMatchSection(r.section, _seatmapRemap);
+        return k && sel.includes(String(k).toLowerCase());
+      });
+    }
+    rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
+
+    if (!rows.length) {
+      const src = _seatmapSrcLabel(_seatmapSource);
+      body.innerHTML = `<div class="empty">${sel.length ? `No ${escapeHtml(src)} listings in the selected section(s).` : `No ${escapeHtml(src)} listings for this event.`}</div>`;
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th><th class="num">Qty</th>
+        <th class="num">Price</th><th>Type</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.slice(0, 300).forEach(r => {
+      const tr = document.createElement('tr');
+      if (r.is_owned) tr.className = 'owned-row';
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
+        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // Wire the source selector + reset once (delegated; survives selector re-renders).
+  function wireSeatmapControls() {
+    if (_seatmapWired) return;
+    const sel = document.getElementById('seatmapSourceSel');
+    if (sel) {
+      sel.addEventListener('click', (e) => {
+        const btn = e.target.closest('.sm-src-btn');
+        if (!btn || btn.disabled) return;
+        _seatmapUserPicked = true;   // stop auto-pick once the user chooses
+        selectSeatmapSource(btn.dataset.src);
+      });
+    }
+    const reset = document.getElementById('seatmapResetBtn');
+    if (reset) {
+      reset.addEventListener('click', () => {
+        if (_seatmapApi && typeof _seatmapApi.deselectSection === 'function') {
+          _seatmapSelected.slice().forEach(s => {
+            try { _seatmapApi.deselectSection(s); } catch (_) { /* ignore */ }
+          });
+        }
+        onSeatmapSelection([]);
+      });
+    }
+    _seatmapWired = true;
+  }
+
   // ---------- TD Listings per-platform (full) ----------
   // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD), last 26h ordered
   // newest-first so the limit captures the most-recent collection batch. Client-side filter
   // keeps only rows within 15 minutes of max(captured_at) for that platform — timing-agnostic
   // so both the 03:00 UTC and 16:20 UTC SH batches work correctly regardless of query time.
   async function loadTdPlatformListings(eventId, platform) {
-    const platLower = platform.toLowerCase();
-    const body = document.getElementById('tdListings' + platform + 'Body');
-    const meta = document.getElementById('tdListings' + platform + 'Meta');
+    // DB stores platform uppercase (SH/GT/VD) — used for the .eq('platform', …) filter.
+    // DOM IDs are title-case (tdListingsShBody / …ShMeta), so derive a title-case key.
+    const platTitle = platform.charAt(0) + platform.slice(1).toLowerCase();
+    const body = document.getElementById('tdListings' + platTitle + 'Body');
+    const meta = document.getElementById('tdListings' + platTitle + 'Meta');
     if (body) body.innerHTML = '<div class="empty">Loading ' + escapeHtml(platform) + ' listings…</div>';
     if (meta) meta.textContent = 'loading…';
     const Auth = window.TerminalAuth;
@@ -2432,35 +3336,25 @@
       return;
     }
     const t0 = performance.now();
-    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
-    const res = await Auth.client
-      .from('ticketsdata_listings_snapshots')
-      .select('section,row,quantity,list_price,price_with_fees,captured_at')
-      .eq('event_id', eventId)
-      .eq('platform', platform)
-      .eq('is_parking', false)
-      .gte('captured_at', since26)
-      .order('captured_at', { ascending: false })
-      .order('list_price')
-      .limit(3000);
+    // ticketsdata_listings_snapshots is keyed by each platform's OWN TD event id, not tevo.
+    // RPC maps tevo -> TD-event-id (ticketsdata_event_xref <- aq_event_map <- sg_events_canonical)
+    // and returns the latest 15-min batch, non-parking, price-sorted. (RPC get_event_td_listings)
+    const res = await Auth.client.rpc('get_event_td_listings', {
+      p_tevo_event_id: eventId, p_platform: platform, p_hours: 26
+    });
     const elapsed = performance.now() - t0;
     if (res.error) {
       if (body) body.innerHTML = `<div class="empty">error: ${escapeHtml(res.error.message)}</div>`;
       if (meta) meta.textContent = 'error';
       return;
     }
-    const allRows = res.data || [];
-    if (!allRows.length) {
-      if (body) body.innerHTML = `<div class="empty">No ${escapeHtml(platform)} listings in last 26 hours. Data started 2026-05-27 — sparse initially.</div>`;
+    const rows = res.data || [];
+    if (!rows.length) {
+      if (body) body.innerHTML = `<div class="empty">No ${escapeHtml(platform)} listings in the latest collection batch (last 26h).</div>`;
       if (meta) meta.textContent = '0 rows';
       return;
     }
-    // Latest-batch filter: keep only rows within 15 min of the most-recent captured_at.
-    // This ensures we show the current collection batch, not a stale earlier batch that
-    // would otherwise dominate when the limit was reached on a busy event.
-    const maxAt = allRows[0].captured_at; // already sorted DESC
-    const cutoff = new Date(new Date(maxAt).getTime() - 15 * 60 * 1000).toISOString();
-    const rows = allRows.filter(r => r.captured_at >= cutoff);
+    const maxAt = rows.reduce((m, r) => (r.captured_at > m ? r.captured_at : m), rows[0].captured_at);
     const batchDate = T.fmtDate ? T.fmtDate(maxAt) : maxAt.slice(0, 16).replace('T', ' ') + ' UTC';
     // Compute summary stats
     const prices = rows.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
@@ -2496,74 +3390,21 @@
     if (body) { body.innerHTML = ''; body.appendChild(host); }
   }
 
+  // Per-source row-count chips for the 3 top-level TD tabs (SH/GT/VD). Reads the
+  // count each loadTdPlatformListings() writes into its section meta ("<n> rows · …").
+  // Idempotent: updates all three chips on every call.
   function updateTdListingsTabCount() {
-    const chip = document.getElementById('tabCountTdListings');
-    if (!chip) return;
-    // Sum visible row counts from all three sub-section metas
-    let total = 0;
-    for (const plat of ['SH', 'GT', 'VD']) {
+    for (const plat of ['Sh', 'Gt', 'Vd', 'Tp', 'Tm']) {
+      const chip = document.getElementById('tabCount' + plat + 'Listings');
+      if (!chip) continue;
       const meta = document.getElementById('tdListings' + plat + 'Meta');
+      let n = 0;
       if (meta) {
         const m = meta.textContent.match(/^(\d+)\s+rows/);
-        if (m) total += parseInt(m[1], 10);
+        if (m) n = parseInt(m[1], 10);
       }
+      chip.textContent = n ? String(n) : '';
     }
-    chip.textContent = total ? String(total) : '';
-  }
-
-  // ---------- TD Splits (latest batch per platform, grouped by platform + section) ----------
-  // Uses 26h window ordered newest-first to capture the most-recent collection run, then
-  // filters client-side to rows within 15 min of max(captured_at) per platform. This is
-  // timing-agnostic: SH 03:00 UTC or 16:20 UTC batches are both handled correctly.
-  async function loadTdSplits(eventId) {
-    const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client) return;
-    setSplitsTd(undefined); // show loading
-    const since26 = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
-    const { data, error } = await Auth.client
-      .from('ticketsdata_listings_snapshots')
-      .select('platform,section,list_price,captured_at')
-      .eq('event_id', eventId)
-      .eq('is_parking', false)
-      .gte('captured_at', since26)
-      .order('captured_at', { ascending: false })
-      .limit(3000);
-    if (error) { setSplitsTd(null); return; }
-    const allRows = data || [];
-    if (!allRows.length) { setSplitsTd(null); return; }
-    // Latest-batch filter: keep only rows within 15 min of max(captured_at) per platform.
-    const maxAtByPlatform = {};
-    for (const r of allRows) {
-      if (!maxAtByPlatform[r.platform] || r.captured_at > maxAtByPlatform[r.platform]) {
-        maxAtByPlatform[r.platform] = r.captured_at;
-      }
-    }
-    const rows = allRows.filter(r => {
-      const maxAt = maxAtByPlatform[r.platform];
-      return maxAt && (new Date(maxAt) - new Date(r.captured_at)) < 15 * 60 * 1000;
-    });
-    if (!rows.length) { setSplitsTd(null); return; }
-    // Group by platform + section
-    const groups = new Map();
-    for (const r of rows) {
-      const k = (r.platform || '') + '|||' + (r.section || '');
-      if (!groups.has(k)) groups.set(k, { platform: r.platform || '?', section: r.section || '', prices: [] });
-      const p = +r.list_price;
-      if (isFinite(p) && p > 0) groups.get(k).prices.push(p);
-    }
-    const result = [...groups.values()].map(g => {
-      const ps = g.prices.sort((a, b) => a - b);
-      return {
-        platform:     g.platform,
-        section:      g.section,
-        listing_count: ps.length,
-        min_price:    ps.length ? ps[0] : null,
-        median_price: ps.length ? ps[Math.floor(ps.length / 2)] : null,
-      };
-    }).sort((a, b) =>
-      a.platform.localeCompare(b.platform) || b.listing_count - a.listing_count
-    );
-    setSplitsTd(result);
   }
 
   // ---------- Cross-Platform Sales panel (Overview tab) ----------
@@ -2578,15 +3419,13 @@
       return;
     }
     // Fire 4 queries in parallel
-    const [evoRes, sgRes, tdSnapRes, xbRes] = await Promise.all([
-      // EVO: latest event_metrics row (sold_quantity, sold_gross, sold_price_median, owned_tickets_count)
-      Auth.client
-        .from('event_metrics')
-        .select('sold_quantity,sold_gross,sold_price_median,owned_tickets_count,tickets_count,captured_at')
-        .eq('event_id', eventId)
-        .order('captured_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+    const [evoFullRes, sgRes, tdSnapRes, xbRes] = await Promise.all([
+      // EVO: realized sales aggregated from OUR TEvo orders (evo_orders ⨯ items).
+      // event_metrics has NO sold_* columns — EVO sales velocity lives only in the
+      // walled evo_orders, surfaced via this existing SECDEF RPC (WP-6; bot_chat 866).
+      // (The prior event_metrics.sold_* query referenced columns that never existed,
+      //  so the EVO sales column silently never rendered — this fixes that.)
+      rpcOrNull('get_event_evo_orders_full', { p_event_id: eventId, p_limit: 500 }),
       // SG: top-20 rows — listings and sales are separate INSERT rows so we merge best-available
       // from each: listings_all_count from the most-recent listings row, sold_quantity from
       // the most-recent sales row. .limit(20) ensures we span both row types.
@@ -2620,11 +3459,42 @@
       captured_at:       sgRows[0]?.captured_at ?? null,
     } : null;
     renderCrossPlatformSales({
-      evo:    evoRes.data  || null,
+      evo:    evoFullRes.error ? null : evoSalesFromFullRows(evoFullRes.data),
       sg:     sgMerged,
       tdSnap: tdSnapRes.data || [],
       xb:     xbRes.error ? null : (xbRes.data || null),
     }, meta);
+  }
+
+  // Aggregate get_event_evo_orders_full rows → the {sold_quantity, sold_gross,
+  // sold_price_median, captured_at} shape the CROSS-SOURCE Sales/Velocity EVO cell
+  // expects. Realized = accepted/completed states (matches adaptOrders + Broker Sales).
+  // Returns null when no realized EVO orders → EVO column omitted (D3, never fake zeros).
+  function evoSalesFromFullRows(full) {
+    const rows = (full && full.rows) || [];
+    if (!rows.length) return null;
+    const SOLD = new Set(['accepted', 'completed']);
+    let qty = 0, gross = 0, latest = null, any = false;
+    const px = [];
+    rows.forEach(r => {
+      if (!SOLD.has(r.state)) return;
+      any = true;
+      const q = r.item_quantity != null ? Number(r.item_quantity) : null;
+      const p = r.item_price    != null ? Number(r.item_price)    : null;
+      if (q != null && !isNaN(q)) qty += q;
+      if (p != null && q != null && !isNaN(p) && !isNaN(q)) gross += p * q;
+      if (p != null && !isNaN(p)) px.push(p);
+      const tms = r.evo_created_at ? new Date(r.evo_created_at).getTime() : NaN;
+      if (!isNaN(tms) && (latest == null || tms > latest)) latest = tms;
+    });
+    if (!any) return null;
+    px.sort((a, b) => a - b);
+    return {
+      sold_quantity:     qty,
+      sold_gross:        Math.round(gross),
+      sold_price_median: px.length ? px[Math.floor((px.length - 1) / 2)] : null,
+      captured_at:       latest != null ? new Date(latest).toISOString() : null,
+    };
   }
 
   function renderCrossPlatformSales(d, metaEl) {
@@ -2636,85 +3506,101 @@
     const tdSnap = d.tdSnap || [];
     const xbRows = (d.xb && d.xb.rows) ? d.xb.rows : [];
 
-    // TD listing-count delta: newest minus prior snapshot = positive means new listings (buying opportunity),
-    // negative means listings disappeared (likely sold).
+    // TD listing-count delta (velocity proxy): newest − prior snapshot. Negative
+    // means listings disappeared (likely sold = green); positive = new listings.
     const tdLatest = tdSnap[0] || null;
     const tdPrior  = tdSnap[1] || null;
-    function tdDelta(platform) {
-      const col = `td_${platform.toLowerCase()}_listings`;
+    function tdPlatDelta(p) {
+      const col = `td_${p}_listings`;
       if (!tdLatest || tdLatest[col] == null || !tdPrior || tdPrior[col] == null) return null;
       return tdLatest[col] - tdPrior[col];
     }
-    function fmtDelta(val) {
-      if (val == null) return '<span class="dim">—</span>';
-      const cls = val < 0 ? 'pos' : val > 0 ? 'neg' : '';  // negative = sold = good (green)
-      return `<span class="${cls}">${val >= 0 ? '+' : ''}${T.fmtNum(val)}</span>`;
+    let tdComb = null;
+    for (const p of ['sh', 'gt', 'vd']) {
+      const dv = tdPlatDelta(p);
+      if (dv != null) tdComb = (tdComb || 0) + dv;
     }
 
-    // Count TP/Vivid orders by source
     const tpOrders = xbRows.filter(r => (r.source || '').toLowerCase() === 'tickpick');
     const vvOrders = xbRows.filter(r => (r.source || '').toLowerCase() === 'vivid');
 
-    // Build rows
-    const tableRows = [];
-    function row(platform, metric, val, isMoney, note) {
-      const vStr = val == null
-        ? '<span class="dim">—</span>'
-        : (isMoney ? '$' + T.fmtNum(Math.round(+val)) : T.fmtNum(+val || 0));
-      return `<tr><td class="csale-platform">${escapeHtml(platform)}</td>` +
-        `<td>${escapeHtml(metric)}</td>` +
-        `<td class="num">${vStr}</td>` +
-        `<td class="muted small">${escapeHtml(note || '')}</td></tr>`;
-    }
+    // Which source columns have data (D3 — omit empty columns, never fake zeros).
+    const evoHas = evo.sold_quantity != null || evo.sold_gross != null || evo.sold_price_median != null;
+    const sgHas  = sg.sold_quantity != null || sg.sold_gross != null || sg.sold_price_median != null || sg.fill_rate != null;
+    const xbOk   = d.xb !== null;        // RPC succeeded → our TP/Vivid order count known
+    const tdHas  = tdComb != null;
+    const cols = [];
+    if (evoHas) cols.push('EVO');
+    if (sgHas)  cols.push('SG');
+    if (xbOk)   cols.push('TP');
+    if (xbOk)   cols.push('Vivid');
+    if (tdHas)  cols.push('TD vel');
 
-    if (evo.sold_quantity != null || evo.owned_tickets_count != null) {
-      tableRows.push(row('EVO', 'Sold qty (inferred)', evo.sold_quantity, false, 'event_metrics'));
-      tableRows.push(row('EVO', 'Sold gross (inferred)', evo.sold_gross, true, ''));
-      tableRows.push(row('EVO', 'Sold median $', evo.sold_price_median, true, ''));
-      tableRows.push(row('EVO', 'Owned remaining', evo.owned_tickets_count, false, ''));
-    }
-    if (sg.fill_rate != null || sg.sold_quantity != null) {
-      tableRows.push(row('SG', 'Fill rate', sg.fill_rate != null ? (+(sg.fill_rate) * 100).toFixed(1) + '%' : null, false, 'seatgeek_event_metrics'));
-      tableRows.push(row('SG', 'Sold qty', sg.sold_quantity, false, ''));
-      tableRows.push(row('SG', 'Sold median $', sg.sold_price_median, true, ''));
-      tableRows.push(row('SG', 'Market listings', sg.listings_all_count, false, ''));
-    }
-    for (const plat of ['SH', 'GT', 'VD']) {
-      const delta = tdDelta(plat);
-      const label = plat === 'SH' ? 'StubHub' : plat === 'GT' ? 'GameTime' : 'VividSeats';
-      const deltaCell = `<td class="num">${fmtDelta(delta)}</td>`;
-      const note = delta == null
-        ? 'need 2+ snapshots'
-        : (delta < 0 ? `${Math.abs(delta)} listings removed (velocity proxy)` : delta > 0 ? `${delta} new listings` : 'no change');
-      tableRows.push(
-        `<tr><td class="csale-platform"><span class="badge td-${plat.toLowerCase()}">${escapeHtml(plat)}</span> ${escapeHtml(label)}</td>` +
-        `<td>Listing Δ (${(tdLatest && tdPrior) ? `${tdLatest.snapshot_date} vs ${tdPrior.snapshot_date}` : '—'})</td>` +
-        `${deltaCell}<td class="muted small">${escapeHtml(note)}</td></tr>`
-      );
-    }
-    if (d.xb !== null) {
-      tableRows.push(row('TP', 'Our orders', tpOrders.length || null, false, tpOrders.length ? tpOrders.map(r => r.status || '').filter(Boolean).join(', ') : 'none'));
-      tableRows.push(row('Vivid', 'Our orders', vvOrders.length || null, false, vvOrders.length ? vvOrders.map(r => r.status || '').filter(Boolean).join(', ') : 'none'));
-    }
-
-    if (!tableRows.length) {
+    if (!cols.length) {
       body.innerHTML = '<div class="empty">no cross-platform sales data available</div>';
+      if (metaEl) metaEl.textContent = '';
       return;
     }
 
+    const money = v => (v == null ? '<span class="dim">—</span>' : '$' + T.fmtNum(Math.round(+v)));
+    const num   = v => (v == null ? '<span class="dim">—</span>' : T.fmtNum(+v || 0));
+    const pct   = v => (v == null ? '<span class="dim">—</span>' : (+(v) * 100).toFixed(1) + '%');
+    function vel(v) {
+      if (v == null) return '<span class="dim">—</span>';
+      const cls = v < 0 ? 'pos' : v > 0 ? 'neg' : '';
+      return `<span class="${cls}">${v >= 0 ? '+' : ''}${T.fmtNum(v)}</span>`;
+    }
+
+    // Per-source cell values keyed by metric. TP/Vivid carry only our order count;
+    // TD carries the listing-Δ velocity proxy — the rest are — (honest gaps).
+    const cell = {
+      'EVO':    { qty: num(evo.sold_quantity),       med: money(evo.sold_price_median), gross: money(evo.sold_gross), fill: '<span class="dim">—</span>' },
+      'SG':     { qty: num(sg.sold_quantity),        med: money(sg.sold_price_median),  gross: money(sg.sold_gross),  fill: pct(sg.fill_rate) },
+      'TP':     { qty: num(tpOrders.length || null), med: '<span class="dim">—</span>', gross: '<span class="dim">—</span>', fill: '<span class="dim">—</span>' },
+      'Vivid':  { qty: num(vvOrders.length || null), med: '<span class="dim">—</span>', gross: '<span class="dim">—</span>', fill: '<span class="dim">—</span>' },
+      'TD vel': { qty: vel(tdComb),                  med: '<span class="dim">—</span>', gross: '<span class="dim">—</span>', fill: '<span class="dim">—</span>' },
+    };
+    const metricRows = [
+      ['Sold / net qty', 'qty'],
+      ['Sold median $',  'med'],
+      ['Sold gross $',   'gross'],
+      ['Fill rate',      'fill'],
+    ];
+
     const tbl = document.createElement('table');
     tbl.className = 'cross-src-tbl cross-sales-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Platform</th><th>Metric</th><th class="num">Value</th><th>Note</th>
-      </tr></thead><tbody>${tableRows.join('')}</tbody>`;
+    tbl.innerHTML =
+      `<thead><tr><th>Metric</th>${cols.map(c => `<th class="num">${escapeHtml(c)}</th>`).join('')}</tr></thead>` +
+      `<tbody>${metricRows.map(([label, key]) =>
+        `<tr><td>${escapeHtml(label)}</td>${cols.map(c => `<td class="num">${cell[c][key]}</td>`).join('')}</tr>`
+      ).join('')}</tbody>`;
     body.innerHTML = '';
     body.appendChild(tbl);
 
+    // Mixed-semantics footnote (sources measure different things) + TD per-platform detail.
+    const notes = [];
+    if (evoHas) notes.push('EVO = our realized sales (accepted/completed orders)');
+    if (sgHas)  notes.push('SG = market sold (inferred from metrics)');
+    if (xbOk)   notes.push('TP/Vivid = our order count');
+    if (tdHas) {
+      const detail = [];
+      for (const p of ['sh', 'gt', 'vd']) {
+        const dv = tdPlatDelta(p);
+        if (dv != null) detail.push(`${p.toUpperCase()} ${dv >= 0 ? '+' : ''}${dv}`);
+      }
+      notes.push(`TD vel = listing-Δ proxy${detail.length ? ' (' + detail.join(' · ') + ')' : ''}; negative = likely sold`);
+    }
+    if (notes.length) {
+      const note = document.createElement('div');
+      note.className = 'cross-src-note muted small';
+      note.textContent = notes.join(' · ');
+      body.appendChild(note);
+    }
+
     const parts = [];
-    if (evo.captured_at) parts.push(`EVO as of ${T.fmtDate(evo.captured_at)}`);
-    if (sg.captured_at)  parts.push(`SG as of ${T.fmtDate(sg.captured_at)}`);
-    if (tdLatest)        parts.push(`TD snapshot ${tdLatest.snapshot_date} ${tdLatest.snapshot_slot}`);
+    if (evo.captured_at) parts.push(`EVO ${T.fmtDate(evo.captured_at)}`);
+    if (sg.captured_at)  parts.push(`SG ${T.fmtDate(sg.captured_at)}`);
+    if (tdLatest)        parts.push(`TD ${tdLatest.snapshot_date} ${tdLatest.snapshot_slot}`);
     if (metaEl) metaEl.textContent = parts.join(' · ');
   }
 
@@ -3019,6 +3905,15 @@
     if (body) body.innerHTML = '<div class="empty">loading cross-source metrics…</div>';
     if (meta) meta.textContent = 'loading…';
     const t0 = performance.now();
+    // Preferred: uniform per-source distribution computed on the fly for EVERY source
+    // (mig 20260603120000). Falls back to the legacy TEvo/SG panel until A1 applies it,
+    // so this is deploy-safe before the migration lands.
+    const resU = await rpcOrNull('get_event_all_source_listing_metrics', { p_event_id: eventId });
+    if (!resU.error && resU.data && Array.isArray(resU.data.sources) && resU.data.sources.length) {
+      renderAllSourceMetrics(resU.data, performance.now() - t0);
+      return;
+    }
+    // Legacy fallback (sets _lastCrossSource so the TD-snapshot / v3 re-render hooks work).
     const res = await rpcOrNull('get_event_cross_source_metrics', { p_event_id: eventId });
     if (res.error) {
       if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
@@ -3028,32 +3923,97 @@
     renderCrossSourceMetrics(res.data || {}, performance.now() - t0);
   }
 
-  // Cache the last cross-source payload so we can re-render when v3 data
-  // arrives later and we want to override sold_price_median with the v3
-  // sg_broker_sales aggregate (which is what the SG BROKER SALES — AGGREGATE
-  // panel renders, ensuring both panels show the same number).
+  // Uniform multi-source distribution table (mig 20260603120000): one consistent
+  // methodology for every source (TEvo · SG · SH · GT · VD · TP · TM) — listings,
+  // tickets, min, median, p90, owned median — computed live from each firehose's
+  // latest batch. Metric rows × source columns; null cells render "—".
+  function renderAllSourceMetrics(d, ms) {
+    const body = document.getElementById('crossSourceBody');
+    const meta = document.getElementById('crossSourceMeta');
+    if (!body) return;
+    const sources = (d && d.sources) || [];
+    if (meta) {
+      meta.textContent = (d && d.sg_event_id != null ? `sg_event_id ${d.sg_event_id} · ` : '')
+        + `all-source live distribution${ms != null ? ` · ${ms.toFixed(0)}ms` : ''}`;
+    }
+    const METRICS = [
+      { label: 'Listings count',    key: 'listings',     money: false },
+      { label: 'Tickets available', key: 'tickets',      money: false },
+      { label: 'Min price',         key: 'min',          money: true },
+      { label: 'Median price',      key: 'median',       money: true },
+      { label: 'P90 price',         key: 'p90',          money: true },
+      { label: 'Owned median',      key: 'owned_median', money: true },
+    ];
+    const fmt = (v, money) => (v == null ? '—' : (money ? '$' + T.fmtNum(Math.round(v)) : T.fmtNum(v)));
+    const tbl = document.createElement('table');
+    tbl.className = 'cross-src-tbl';
+    tbl.innerHTML = `<thead><tr><th>Metric</th>${sources.map(s => `<th class="num">${escapeHtml(s.label || s.key)}</th>`).join('')}</tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    METRICS.forEach(m => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(m.label)}</td>`
+        + sources.map(s => `<td class="num">${fmt(s[m.key], m.money)}</td>`).join('');
+      tb.appendChild(tr);
+    });
+    body.innerHTML = '';
+    body.appendChild(tbl);
+  }
+
+  // Cache the last cross-source payload + overrides so we can re-render when v3
+  // data arrives (override sold_price_median with the v3 sg_broker_sales
+  // aggregate, matching the BROKER SALES panel) or when _lastTdSnap arrives
+  // (paint the TD per-source columns). Both re-renders go through the same fn.
   let _lastCrossSource = null;
+  let _lastCrossSourceOverrides = null;
 
   function renderCrossSourceMetrics(d, ms, overrides) {
     _lastCrossSource = d;
+    if (overrides) _lastCrossSourceOverrides = overrides;
     const body = document.getElementById('crossSourceBody');
     const meta = document.getElementById('crossSourceMeta');
     if (!body) return;
     const rows = (d && d.rows) || [];
     const hasSg  = d && d.sg_event_id != null;
-    // hasTd: TD data present when at least one platform has listings in last 24h
-    const hasTd  = !!(d && d.td_agg && Number(d.td_agg.listing_count) > 0);
-    const tdPlatforms = (d && d.td) ? Object.keys(d.td).filter(p => Number((d.td[p] || {}).listing_count) > 0) : [];
+
+    // TD per-source columns (SH/GT/VD — individual sub-sources only) are fed FE-only
+    // from the cached daily snapshot (_lastTdSnap ← event_listing_snapshot_daily via
+    // loadTdFreshness) — NOT this RPC. That table carries median + listing-count only
+    // (no get-in / spread), so those rows show — for TD and are never fabricated (WP-2).
+    const td = _lastTdSnap || null;
+    // TD sub-source columns are DYNAMIC: each appears only if it has data in the latest
+    // daily snapshot (D3 — omit empty, never fake). SH/GT/VD live now; TP/TM/TMr arrive
+    // once A1's compute_event_listing_snapshot rollup populates them (cols added 2026-05-29).
+    // TM = box-office FACE VALUE (primary, NOT a resale floor); TMr = verified resale —
+    // labeled distinctly per PROJECT_BIBLE §3 landmine.
+    const TD_SUBS = [
+      { label: 'SH',  med: 'td_sh_median',        cnt: 'td_sh_listings' },
+      { label: 'GT',  med: 'td_gt_median',        cnt: 'td_gt_listings' },
+      { label: 'VD',  med: 'td_vd_median',        cnt: 'td_vd_listings' },
+      { label: 'TP',  med: 'td_tp_median',        cnt: 'td_tp_listings' },
+      { label: 'TM',  med: 'td_tm_median',        cnt: 'td_tm_listings' },
+      { label: 'TMr', med: 'td_tm_resale_median', cnt: 'td_tm_resale_listings' },
+    ];
+    const tdCols = td ? TD_SUBS.filter(s => td[s.med] != null || td[s.cnt] != null) : [];
+    const hasTd = tdCols.length > 0;
+    const hasTmCols = tdCols.some(s => s.label === 'TM' || s.label === 'TMr');
+    // Per-row TD value for a sub-source column; only median + listing-count have
+    // per-source backing in the daily table (get-in/spread/etc → — for TD).
+    function tdCellVal(sub, label) {
+      if (!td) return null;
+      if (label === 'Median price')   return td[sub.med];
+      if (label === 'Listings count') return td[sub.cnt];
+      return null;
+    }
 
     if (meta) {
       const parts = [];
       if (hasSg) parts.push(`sg_event_id ${d.sg_event_id}`);
       else        parts.push('no SG bridge — TEvo-only event');
-      if (hasTd && tdPlatforms.length) {
-        parts.push('TD: ' + tdPlatforms.map(p => {
-          const s = d.td[p];
-          return `${p} ${T.fmtNum(Number(s.listing_count))}`;
-        }).join(' · '));
+      if (hasTd) {
+        const tdHint = tdCols
+          .filter(s => td[s.cnt] != null)
+          .map(s => `${s.label} ${T.fmtNum(Number(td[s.cnt]))}`).join(' · ');
+        if (tdHint) parts.push('TD: ' + tdHint);
       }
       if (ms != null) parts.push(ms.toFixed(0) + 'ms');
       meta.textContent = parts.filter(Boolean).join(' · ');
@@ -3063,7 +4023,7 @@
       return;
     }
     // Override "Realized sale median" SG cell with v3 sg_broker_sales aggregate
-    // when available (the SG BROKER SALES — AGGREGATE panel's source of truth).
+    // when available (the BROKER SALES panel's source of truth).
     const realizedOverride = overrides && overrides.realized_sale_median_sg;
     function fmtVal(v, isMoney) {
       if (v === null || v === undefined) return '<span class="dim">—</span>';
@@ -3072,18 +4032,7 @@
       if (isMoney) return '$' + T.fmtNum(Math.round(n));
       return T.fmtNum(n);
     }
-    function deltaPct(tevo, sg) {
-      if (tevo === null || tevo === undefined || sg === null || sg === undefined) return null;
-      const t = Number(tevo), s = Number(sg);
-      if (!Number.isFinite(t) || !Number.isFinite(s) || t === 0) return null;
-      return ((s - t) / t) * 100;
-    }
-    function deltaCell(tevo, sg) {
-      const p = deltaPct(tevo, sg);
-      if (p === null) return '<span class="dim">—</span>';
-      const cls = Math.abs(p) < 1 ? '' : (p > 0 ? 'pos' : 'neg');
-      return `<span class="${cls}">${p >= 0 ? '+' : ''}${p.toFixed(1)}%</span>`;
-    }
+    const tdHead = tdCols.map(s => `<th class="num td-mkt-col">${escapeHtml(s.label)}</th>`).join('');
     const tbl = document.createElement('table');
     tbl.className = 'cross-src-tbl';
     tbl.innerHTML = `
@@ -3091,8 +4040,7 @@
         <th>Metric</th>
         <th class="num">TEvo</th>
         <th class="num">SG</th>
-        <th class="num">Δ SG vs TEvo</th>
-        ${hasTd ? '<th class="num td-mkt-col">TD Market</th>' : ''}
+        ${tdHead}
       </tr></thead>
       <tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
@@ -3100,29 +4048,36 @@
       const tr = document.createElement('tr');
       let sgVal = r.sg;
       if (r.label === 'Realized sale median' && realizedOverride != null) sgVal = realizedOverride;
+      let tdCells = '';
+      if (hasTd) {
+        tdCells = tdCols.map(s =>
+          `<td class="num td-mkt-col">${fmtVal(tdCellVal(s, r.label), r.is_money)}</td>`
+        ).join('');
+      }
       tr.innerHTML = `
         <td>${escapeHtml(r.label || '')}</td>
         <td class="num">${fmtVal(r.tevo, r.is_money)}</td>
         <td class="num">${fmtVal(sgVal,  r.is_money)}</td>
-        <td class="num">${deltaCell(r.tevo, sgVal)}</td>
-        ${hasTd ? `<td class="num td-mkt-col">${fmtVal(r.td, r.is_money)}</td>` : ''}`;
+        ${tdCells}`;
       tb.appendChild(tr);
     });
     body.innerHTML = '';
     body.appendChild(tbl);
-
-    // Per-platform TD breakdown row below the table
-    if (hasTd && tdPlatforms.length) {
-      const bar = document.createElement('div');
-      bar.className = 'td-platform-bar';
-      bar.innerHTML = tdPlatforms.map(p => {
-        const s = d.td[p];
-        const minStr = s.min_price != null ? ` · min $${Math.round(Number(s.min_price))}` : '';
-        const medStr = s.median_price != null ? ` · med $${Math.round(Number(s.median_price))}` : '';
-        return `<span class="td-platform-chip">${escapeHtml(p)} <b>${T.fmtNum(Number(s.listing_count))}</b>${minStr}${medStr}</span>`;
-      }).join('');
-      body.appendChild(bar);
+    // Honesty note when Ticketmaster columns are present: TM is box-office face value,
+    // not a resale floor like the other TD sources (PROJECT_BIBLE §3 landmine).
+    if (hasTmCols) {
+      const note = document.createElement('div');
+      note.className = 'cross-src-note muted small';
+      note.textContent = 'TM = Ticketmaster box-office face value (primary); TMr = verified resale';
+      body.appendChild(note);
     }
+  }
+
+  // Re-render the cross-source table from cached state — used after _lastTdSnap
+  // arrives (paint TD per-source columns) while re-applying any v3 override.
+  function rerenderCrossSource() {
+    if (!_lastCrossSource) return;
+    renderCrossSourceMetrics(_lastCrossSource, null, _lastCrossSourceOverrides || undefined);
   }
 
   // Called after v3 RPC payload arrives — re-renders the cross-source panel
@@ -3200,11 +4155,12 @@
         const chart = adaptChart(_lastPayload.chart_data);
         if (chartKey === 'price') {
           renderChartPrice(chart, _chartExtAlerts);
-          renderChartLegendPrice();
         } else {
           renderChartInventory(chart);
-          renderChartLegendInv();
         }
+        // Refresh both detailed legends + the source-toggle + overlay legends
+        // (source presence can change once SG/ext series arrive).
+        refreshChartLegends();
       } catch (e) {
         console.error('[setChartExtended ' + chartKey + ' re-render]', e);
       }
@@ -3274,15 +4230,25 @@
     // Append TD MARKETS section if snapshot data is already loaded
     if (_lastTdSnap) {
       const tdSnap = _lastTdSnap;
-      const tdFields = [
-        ['td_sh_listings',    'SH LISTINGS', null],
-        ['td_sh_median',      'SH MED',      '$'],
-        ['td_gt_listings',    'GT LISTINGS', null],
-        ['td_gt_median',      'GT MED',      '$'],
-        ['td_vd_listings',    'VD LISTINGS', null],
-        ['td_vd_median',      'VD MED',      '$'],
-        ['td_combined_median','TD COMBINED', '$'],
+      // All 5 TD platforms + TM resale split; TM MED = box-office face value (primary),
+      // TMr = verified resale (PROJECT_BIBLE §3 landmine). Only tiles with data render
+      // (D3) — TP/TM appear once A1's daily rollup populates them (cols added 2026-05-29).
+      const tdFieldDefs = [
+        ['td_sh_listings',        'SH LISTINGS',  null],
+        ['td_sh_median',          'SH MED',       '$'],
+        ['td_gt_listings',        'GT LISTINGS',  null],
+        ['td_gt_median',          'GT MED',       '$'],
+        ['td_vd_listings',        'VD LISTINGS',  null],
+        ['td_vd_median',          'VD MED',       '$'],
+        ['td_tp_listings',        'TP LISTINGS',  null],
+        ['td_tp_median',          'TP MED',       '$'],
+        ['td_tm_listings',        'TM LISTINGS',  null],
+        ['td_tm_median',          'TM FACE',      '$'],
+        ['td_tm_resale_listings', 'TMr LISTINGS', null],
+        ['td_tm_resale_median',   'TMr MED',      '$'],
+        ['td_combined_median',    'TD COMBINED',  '$'],
       ];
+      const tdFields = tdFieldDefs.filter(([col]) => tdSnap[col] != null);
       const tdCells = tdFields.map(([col, label, prefix]) => {
         const v = tdSnap[col];
         const valHtml = (v != null)

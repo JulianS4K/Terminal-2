@@ -137,8 +137,109 @@
     return null;
   }
 
+  // ---------- TemporalChip (Phase 3) ----------
+  //
+  // Returns a coloured day-of-week + bucket chip for any ISO event date.
+  // Phase 3 degraded: pure FE date math (day-of-week + T-days bucket).
+  // Holiday / school-break / MLB-branded-series enrichment deferred to Phase 3b
+  // pending A1 migration (those lore tables are admin_only RLS).
+  //
+  // Classes map to existing .badge CSS:
+  //   urgent = T≤1d (red/orange tint)
+  //   near   = T 2-7d (yellow tint)
+  //   (none) = T 8-30d (neutral)
+  //   muted  = T>30d or past
+  function temporalChipHtml(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime())) return '';
+    const now = Date.now();
+    const days = Math.ceil((d.getTime() - now) / 86400000);
+    const dow  = d.toLocaleDateString(undefined, { weekday: 'short' }); // "Mon"
+    const full = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    let label, cls;
+    if (days < -1)       { label = Math.abs(days) + 'd ago'; cls = 'muted'; }
+    else if (days <= 0)  { label = 'TODAY';                  cls = 'urgent pos'; }
+    else if (days === 1) { label = 'TMRW · ' + dow;          cls = 'urgent'; }
+    else if (days <= 7)  { label = dow + ' +' + days + 'd';  cls = 'near'; }
+    else if (days <= 30) { label = '+' + days + 'd';          cls = ''; }
+    else                 { label = '+' + days + 'd';          cls = 'muted'; }
+    return `<span class="badge temporal ${cls.trim()}" title="${_esc(full)}">${_esc(label)}</span>`;
+  }
+
+  // ---------- Movers-index cache (Phase 1b: <MoverChip>) ----------
+  //
+  // One shared lookup of get_event_movers_v2 (mig 20260527260000) per page.
+  // Pages call T.moversPreloadIndex() once at init; T.moversChipHtml(eventId)
+  // is then a sync Map lookup. Cached by (source, window_days); re-calling
+  // with different opts invalidates that key.
+  //
+  // Default (source='merged', window_days=7) covers ~150 events across the 6
+  // categories. Chips only render for events currently in that slot
+  // ("currently moving"); events without a row produce an empty string.
+  // When an event spans multiple categories the highest signal_score wins.
+  const _moversCache = { key: null, promise: null, map: null };
+
+  async function moversPreloadIndex(opts) {
+    const source     = (opts && opts.source)      || 'merged';
+    const windowDays = (opts && opts.window_days) || 7;
+    const key = source + '|' + windowDays;
+    if (_moversCache.key === key && _moversCache.promise) return _moversCache.promise;
+    _moversCache.key = key;
+    _moversCache.map = null;
+    _moversCache.promise = (async () => {
+      const Auth = window.TerminalAuth;
+      if (!Auth || !Auth.client || !Auth.getAccessToken()) return new Map();
+      try {
+        const res = await Auth.client.rpc('get_event_movers_v2', {
+          p_source:      source,
+          p_window_days: windowDays,
+          p_category:    null,
+          p_limit:       200,
+        });
+        if (res.error) { console.error('[movers preload]', res.error); return new Map(); }
+        const m = new Map();
+        (res.data || []).forEach(row => {
+          const id = +row.event_id;
+          const prev = m.get(id);
+          if (!prev || (+row.signal_score || 0) > (+prev.signal_score || 0)) m.set(id, row);
+        });
+        _moversCache.map = m;
+        return m;
+      } catch (e) {
+        console.error('[movers preload]', e);
+        return new Map();
+      }
+    })();
+    return _moversCache.promise;
+  }
+
+  function moversChipHtml(eventId) {
+    if (!eventId || !_moversCache.map) return '';
+    const row = _moversCache.map.get(+eventId);
+    if (!row) return '';
+    const cat   = (row.category || '').replace(/_/g, ' ');
+    const dpct  = (row.price_delta_pct != null && Number.isFinite(+row.price_delta_pct))
+      ? ((+row.price_delta_pct) > 0 ? '+' : '') + (+row.price_delta_pct).toFixed(1) + '%'
+      : '';
+    const sign  = (+row.price_delta_pct || 0) > 0 ? 'pos'
+                : (+row.price_delta_pct || 0) < 0 ? 'neg' : '';
+    const score = row.signal_score != null ? (+row.signal_score).toFixed(2) : '—';
+    const title = `In ${cat} index · rank ${row.rank} · score ${score}`;
+    return `<span class="badge ${sign}" title="${_esc(title)}">${_esc(cat)}${dpct ? ' ' + dpct : ''}</span>`;
+  }
+
+  function _esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+    }[c]));
+  }
+
   window.Terminal = {
     setStatus, getAuthHeader, api, getEventId,
     fmtDate, fmtNum, fmtPct, daysUntil, latestNonNull,
+    temporalChipHtml,
+    moversPreloadIndex, moversChipHtml,
   };
 })();

@@ -1,61 +1,163 @@
 // D0 Terminal — Home page.
-// One fetch: /api/broker/movers?window_hours=<window>. Derives coverage band,
-// blind spots panel, full movers table (with window/segment controls), and
-// the owned-events list from the single mover response.
 //
-// Movers table mirrors the standalone movers.html page — operator can change
-// the window or segment from home without page-hopping.
+// Movers panel reads `event_movers_index` via Path-C RPCs (mig 20260527260000):
+//   get_event_movers_v2(source, window_days, category, limit)
+//   get_event_movers_index_summary(source, window_days)
+// Coverage band, full movers table (source / window / segment controls), and
+// owned-events list all derive from the v2 rows.
+//
+// Semantic shift from the prior /api/broker/movers?window_hours= path:
+//   • OLD: events that moved in the last N hours (rolling-window delta).
+//   • NEW: events currently in the mover index slot for an N-day horizon —
+//     populated by the cross-source mover compute (price_up / price_down /
+//     selling_fast / accumulating / value_gap / cross_gap categories).
+// Source toggle lets operator pin to a single platform or use the merged
+// composite. Owned/market deltas + SG sales / owned median / value cols
+// from the legacy panel are NOT in v2 — they render as "—" honest empty.
+// Blind spots fires its own RPC (get_blind_spots_sg_selling) — independent.
 
 (function () {
   'use strict';
   const T = window.Terminal;
 
   const state = {
-    window: 24,
-    segment: 'all',          // 'all' | 'owned'
+    source: 'merged',         // 'merged' | 'evo' | 'sg' | 'td_sh' | 'td_gt' | 'td_vd'
+    windowDays: 7,            // 7 | 15 | 30 | 180 (rpc-supported buckets)
+    segment: 'all',           // 'all' | 'owned'
     rows: [],
     sortKey: 'delta_market_pct',
     sortDir: 'desc',
+    gapMap: new Map(),        // event_id → [{ gap_type, detail, signal_score }]
   };
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireMoversControls();
-    // Blind spots fires its own RPC, independent of /api/broker/movers — runs in parallel.
+    // Blind spots fires its own RPC, independent of movers — runs in parallel.
     renderBlindSpots().catch(e => console.error('[blindSpots]', e));
     load();
   }
 
-  function load() {
-    T.setStatus(`Loading home · ${state.window}h…`);
-    T.api(`/api/broker/movers?window_hours=${state.window}`)
-      .then(data => {
-        T.setStatus('Loaded', 'ok');
-        const events = (data && data.events) || {};
-        state.rows = unionRows([
-          events.owned_winners, events.owned_losers,
-          events.market_winners, events.market_losers,
-          events.value_winners, events.value_losers,
-          events.owned_value_winners, events.owned_value_losers,
-        ]);
-        renderCoverage(state.rows);
-        renderMovers();
-        renderOwnedEvents(state.rows);
-      })
-      .catch(e => {
-        T.setStatus(e.message, 'err');
-        const body = document.getElementById('moversBody');
-        if (body) body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
-      });
+  // ---------- Path-C v2 movers load ----------
+
+  async function load() {
+    T.setStatus(`Loading home · ${state.source} · ${state.windowDays}d…`);
+    const body = document.getElementById('moversBody');
+    if (body) body.innerHTML = '<div class="empty">loading…</div>';
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      T.setStatus('not signed in', 'err');
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+
+    try {
+      const [eventsRes, summaryRes] = await Promise.all([
+        Auth.client.rpc('get_event_movers_v2', {
+          p_source:      state.source,
+          p_window_days: state.windowDays,
+          p_category:    null,   // all categories
+          p_limit:       200,
+        }),
+        Auth.client.rpc('get_event_movers_index_summary', {
+          p_source:      state.source,
+          p_window_days: state.windowDays,
+        }),
+      ]);
+      if (eventsRes.error)  throw new Error(eventsRes.error.message  || 'movers RPC error');
+      if (summaryRes.error) throw new Error(summaryRes.error.message || 'summary RPC error');
+
+      const rawRows = eventsRes.data  || [];
+      const summary = summaryRes.data || [];
+
+      // Reshape v2 columns to the legacy field aliases that renderMovers /
+      // renderCoverage / renderOwnedEvents consume. Fields not in v2 become null
+      // and render as "—".
+      state.rows = rawRows.map(reshapeV2Row);
+      state.gapMap = new Map();   // reset on each load
+
+      T.setStatus('Loaded', 'ok');
+      renderSummaryStrip(summary);
+      renderCoverage(state.rows);
+      renderMovers();
+      renderOwnedEvents(state.rows);
+      // Phase 2: batch-load gap alerts for all mover event_ids, then re-render
+      // so GapChips appear in the table without blocking the initial paint.
+      loadGapMap(state.rows).catch(e => console.error('[gapMap]', e));
+    } catch (e) {
+      T.setStatus(e.message, 'err');
+      if (body) body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
   }
 
-  function unionRows(lists) {
-    const seen = new Map();
-    lists.forEach(list => (list || []).forEach(r => {
-      const id = r.event_id;
-      if (id && !seen.has(id)) seen.set(id, r);
-    }));
-    return Array.from(seen.values());
+  // Map v2 RPC row → legacy field names used by the render functions.
+  function reshapeV2Row(r) {
+    return Object.assign({}, r, {
+      // v2 → legacy alias
+      name:             r.event_name || r.name || ('Event ' + r.event_id),
+      occurs_at_local:  r.occurs_at  || r.occurs_at_local,
+      cur_market_med:   r.cur_price  != null ? +r.cur_price  : null,
+      delta_market_pct: r.price_delta_pct != null ? +r.price_delta_pct : null,
+      cur_owned_tix:    r.cur_owned  != null ? +r.cur_owned  : 0,
+      // v2 lacks these — null renders as "—" in the table
+      cur_market_tix:   null,
+      cur_owned_med:    null,
+      sg_sales_window:  null,
+      delta_owned_pct:  null,
+      delta_market_val: null,
+      delta_owned_val:  null,
+      performer_name:   null,
+    });
+  }
+
+  // Summary strip above movers table — same shape as movers.html v2SummaryStrip.
+  function renderSummaryStrip(summary) {
+    const strip = document.getElementById('moversSummaryStrip');
+    if (!strip || !summary.length) { if (strip) strip.innerHTML = ''; return; }
+    strip.innerHTML = summary.map(s => {
+      const sz   = s.index_size || 0;
+      const cov  = s.data_coverage_pct != null ? ` · ${Math.round(s.data_coverage_pct)}% cov` : '';
+      const turn = (+s.entries_24h || 0) + (+s.exits_24h || 0);
+      const turnStr = turn ? ` · ${turn} Δ/24h` : '';
+      return `<span class="badge" title="source=${s.source} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category || '')}: ${sz}${cov}${turnStr}</span>`;
+    }).join(' ');
+  }
+
+  // ---------- Phase 2: GapChip batch loader ----------
+  // discovery_gap_alerts has no RLS (relrowsecurity=false) — direct read OK.
+  // Queries all active gaps for the current mover rows in one round-trip, then
+  // re-renders the movers table so gap badges appear in event name cells.
+
+  async function loadGapMap(rows) {
+    if (!rows || !rows.length) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const ids = [...new Set(rows.map(r => r.event_id).filter(Boolean))];
+    if (!ids.length) return;
+    const { data, error } = await Auth.client
+      .from('discovery_gap_alerts')
+      .select('event_id,gap_type,detail,signal_score')
+      .in('event_id', ids)
+      .is('resolved_at', null)
+      .order('signal_score', { ascending: false });
+    if (error || !data) return;
+    const m = new Map();
+    data.forEach(g => {
+      if (!m.has(g.event_id)) m.set(g.event_id, []);
+      m.get(g.event_id).push(g);
+    });
+    state.gapMap = m;
+    renderMovers();  // re-render now that gap badges are available
+  }
+
+  // Returns HTML for up to 2 gap chips for an event (compact — avoid badge overflow).
+  function gapBadgesHtml(eventId) {
+    const gaps = state.gapMap.get(eventId);
+    if (!gaps || !gaps.length) return '';
+    return gaps.slice(0, 2).map(g =>
+      `<span class="badge gap-chip" title="${escapeHtml(g.detail || '')}">${escapeHtml((g.gap_type || '').replace(/_/g, ' '))}</span>`
+    ).join(' ');
   }
 
   // ---------- Coverage band ----------
@@ -97,12 +199,9 @@
 
   const BLIND_SPOT_MIN_SCORE = 2;  // was 3; audit 2026-05-24 found score>=3 ~never reached
   const BLIND_SPOT_MAX_ROWS  = 20;
-  // Threshold for the table-row "blindspot" highlight: SG sales activity
-  // above this level with zero owned tickets flags the row warn-color.
-  // Mirrors the legacy heuristic (sg_sales_window >= 5 AND cur_owned_tix == 0)
-  // documented at line 93. Was referenced at line 290 but never declared —
-  // ReferenceError on render. Default kept at 5 to match prior behavior.
-  const BLIND_SPOT_MIN_SG_SALES = 5;
+  // BLIND_SPOT_MIN_SG_SALES removed: the movers panel is now v2 RPC-backed and
+  // no longer uses sg_sales_window to highlight rows. The sg_selling blind-spot
+  // RPC (renderBlindSpots) provides a dedicated panel for that signal.
 
   async function renderBlindSpots() {
     const body = document.getElementById('blindSpotsBody');
@@ -203,14 +302,25 @@
   // ---------- Full movers table (mirrors movers.html) ----------
 
   function wireMoversControls() {
-    document.querySelectorAll('[data-window]').forEach(btn => {
+    // Source toggle
+    document.querySelectorAll('[data-src]').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-window]').forEach(b => b.classList.remove('is-active'));
+        document.querySelectorAll('[data-src]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
-        state.window = parseInt(btn.dataset.window, 10);
+        state.source = btn.dataset.src;
         load();
       });
     });
+    // Window (days)
+    document.querySelectorAll('[data-wdays]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-wdays]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        state.windowDays = parseInt(btn.dataset.wdays, 10);
+        load();
+      });
+    });
+    // Segment
     document.querySelectorAll('[data-segment]').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('[data-segment]').forEach(b => b.classList.remove('is-active'));
@@ -243,19 +353,21 @@
       return state.sortDir === 'desc' ? bv - av : av - bv;
     });
 
+    // v2 RPC cols available: event_name, occurs_at, cur_price (→ cur_market_med),
+    // price_delta_pct (→ delta_market_pct), cur_owned (→ cur_owned_tix), category,
+    // rank, signal_score, evo_median, sg_median, td_sh/gt/vd_median, *_spread.
+    // Legacy cols not in v2 (cur_market_tix, cur_owned_med, sg_sales_window,
+    // delta_owned_pct, delta_market_val, delta_owned_val) are dropped from the
+    // header to avoid a table of "—".
     const cols = [
-      { key: null,                  label: 'Event',       align: 'left' },
-      { key: null,                  label: 'Performer',   align: 'left' },
-      { key: 'occurs_at_local',     label: 'T-days',      align: 'num' },
-      { key: 'cur_market_tix',      label: 'Mkt qty',     align: 'num' },
-      { key: 'cur_owned_tix',       label: 'Owned qty',   align: 'num' },
-      { key: 'cur_market_med',      label: 'Mkt median',  align: 'num' },
-      { key: 'cur_owned_med',       label: 'Own median',  align: 'num' },
-      { key: 'sg_sales_window',     label: 'SG sales',    align: 'num' },
-      { key: 'delta_market_pct',    label: 'Mkt %Δ',      align: 'num' },
-      { key: 'delta_owned_pct',     label: 'Own %Δ',      align: 'num' },
-      { key: 'delta_market_val',    label: 'Mkt Δ$',      align: 'num' },
-      { key: 'delta_owned_val',     label: 'Own Δ$',      align: 'num' },
+      { key: null,               label: 'Event',      align: 'left' },
+      { key: null,               label: 'Category',   align: 'left' },
+      { key: null,               label: 'T-days',     align: 'num'  },
+      { key: 'cur_owned_tix',    label: 'Owned',      align: 'num'  },
+      { key: 'cur_market_med',   label: 'Cur $',      align: 'num'  },
+      { key: 'delta_market_pct', label: '%Δ',         align: 'num'  },
+      { key: 'signal_score',     label: 'Score',      align: 'num'  },
+      { key: 'rank',             label: 'Rank',       align: 'num'  },
     ];
 
     body.innerHTML = '';
@@ -288,26 +400,18 @@
       tr.classList.add('clickable');
       tr.addEventListener('click', () => { window.location.href = 'event.html?event=' + r.event_id; });
       const d = T.daysUntil(r.occurs_at_local || r.occurs_at);
-      const mDPct = +r.delta_market_pct;
-      const oDPct = +r.delta_owned_pct;
-      const mDVal = +r.delta_market_val;
-      const oDVal = +r.delta_owned_val;
-      const sg = +r.sg_sales_window || 0;
+      const mDPct = r.delta_market_pct != null ? +r.delta_market_pct : NaN;
       const ownedTix = +r.cur_owned_tix || 0;
-      const sgBlind = sg > BLIND_SPOT_MIN_SG_SALES && ownedTix === 0;
+      const score = r.signal_score != null ? (+r.signal_score).toFixed(2) : '—';
       tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a></td>
-        <td>${escapeHtml(r.performer_name || '—')}</td>
+        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a> ${T.temporalChipHtml(r.occurs_at_local || r.occurs_at)} ${gapBadgesHtml(r.event_id)}</td>
+        <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="num">${T.fmtNum(+r.cur_market_tix || 0)}</td>
         <td class="num ${ownedTix > 0 ? 'ours' : ''}">${T.fmtNum(ownedTix)}</td>
-        <td class="num">${r.cur_market_med ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>
-        <td class="num">${r.cur_owned_med ? '$' + T.fmtNum(Math.round(+r.cur_owned_med)) : '—'}</td>
-        <td class="num ${sgBlind ? 'warn-cell' : ''}">${sg ? T.fmtNum(sg) : '—'}</td>
+        <td class="num">${r.cur_market_med != null ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>
         <td class="num ${pctCls(mDPct)}">${Number.isFinite(mDPct) ? T.fmtPct(mDPct, 1) : '—'}</td>
-        <td class="num ${pctCls(oDPct)}">${Number.isFinite(oDPct) ? T.fmtPct(oDPct, 1) : '—'}</td>
-        <td class="num ${pctCls(mDVal)}">${fmtDelta(mDVal)}</td>
-        <td class="num ${pctCls(oDVal)}">${fmtDelta(oDVal)}</td>`;
+        <td class="num muted small">${score}</td>
+        <td class="num muted small">${r.rank != null ? r.rank : '—'}</td>`;
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);
@@ -353,37 +457,33 @@
       return;
     }
 
+    // v2 RPC: cur_owned_med / delta_owned_val not available.
+    // Show qty + cur price (cur_market_med alias) + %Δ + mover chip.
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
         <th>Event</th>
-        <th>Performer</th>
         <th class="num">T-days</th>
         <th class="num">Owned qty</th>
-        <th class="num">Owned med</th>
-        <th class="num">Notional</th>
-        <th class="num">24h Δ$</th>
+        <th class="num">Cur $</th>
+        <th class="num">%Δ</th>
+        <th class="num">Category</th>
       </tr></thead>
       <tbody></tbody>
     `;
     const tb = tbl.querySelector('tbody');
     upcoming.slice(0, 30).forEach(r => {
       const ot = +r.cur_owned_tix || 0;
-      const om = +r.cur_owned_med || 0;
-      const notional = ot * om;
-      const d = T.daysUntil(r.occurs_at_local || r.occurs_at);
-      const dval = +r.delta_owned_val;
-      const dvalCls = !Number.isFinite(dval) ? '' : dval > 0 ? 'pos' : dval < 0 ? 'neg' : '';
-      const dvalTxt = !Number.isFinite(dval) ? '—' : (dval >= 0 ? '+' : '−') + '$' + T.fmtNum(Math.round(Math.abs(dval)));
+      const d  = T.daysUntil(r.occurs_at_local || r.occurs_at);
+      const mDPct = r.delta_market_pct != null ? +r.delta_market_pct : NaN;
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a></td>
-        <td>${escapeHtml(r.performer_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="num">${T.fmtNum(ot)}</td>
-        <td class="num">${om ? '$' + T.fmtNum(Math.round(om)) : '—'}</td>
-        <td class="num">${notional ? '$' + T.fmtNum(Math.round(notional)) : '—'}</td>
-        <td class="num ${dvalCls}">${dvalTxt}</td>
+        <td class="num ours">${T.fmtNum(ot)}</td>
+        <td class="num">${r.cur_market_med != null ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>
+        <td class="num ${pctCls(mDPct)}">${Number.isFinite(mDPct) ? T.fmtPct(mDPct, 1) : '—'}</td>
+        <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
       `;
       tb.appendChild(tr);
     });

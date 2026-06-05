@@ -507,6 +507,30 @@ Deno.serve(async (req) => {
   const evo = new EvoClient(creds.token, creds.secret);
   const s4kBrokerageId = await resolveS4kBrokerageId(db);
 
+  // Wave 3 change-detection: drop listings unchanged vs their latest snapshot (+ an hourly
+  // heartbeat so "unchanged" != "delisted"). Aggregates still run over the FULL response —
+  // only the raw listings_snapshots INSERT is filtered. Halves write volume at the new cadence.
+  const filterChangedListings = async (eventId: number, rows: any[]): Promise<any[]> => {
+    if (rows.length === 0) return rows;
+    const sinceIso = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
+    const { data: prev } = await db
+      .from("listings_snapshots")
+      .select("tevo_ticket_group_id,section,row,quantity,retail_price,wholesale_price,format,captured_at")
+      .eq("event_id", eventId).gt("captured_at", sinceIso)
+      .order("captured_at", { ascending: false }).limit(20000);
+    const latest = new Map<unknown, any>();
+    for (const p of prev ?? []) if (!latest.has(p.tevo_ticket_group_id)) latest.set(p.tevo_ticket_group_id, p);
+    const HEARTBEAT_MS = 3600 * 1000, now = Date.now();
+    return rows.filter((r) => {
+      const p = latest.get(r.tevo_ticket_group_id);
+      if (!p) return true;                       // new ticket group → write
+      const unchanged = p.section === r.section && String(p.row ?? "") === String(r.row ?? "") &&
+        p.quantity === r.quantity && Number(p.retail_price) === Number(r.retail_price) &&
+        Number(p.wholesale_price ?? 0) === Number(r.wholesale_price ?? 0) && (p.format ?? null) === (r.format ?? null);
+      return !unchanged || (now - new Date(p.captured_at).getTime()) > HEARTBEAT_MS;  // changed OR heartbeat-due
+    });
+  };
+
   const url = new URL(req.url);
   const eventIdParam = url.searchParams.get("event_id");
   const windowParam = url.searchParams.get("window");
@@ -533,14 +557,16 @@ Deno.serve(async (req) => {
     try {
       const groups = await withRetry(() => evo.getTicketGroups(eid));
       const listingRows = buildListingRows(eid, capturedAt, groups, s4kBrokerageId);
+      const rowsToInsert = await filterChangedListings(eid, listingRows);  // Wave 3: skip unchanged
 
-      for (let i = 0; i < listingRows.length; i += 500) {
-        const chunk = listingRows.slice(i, i + 500);
+      for (let i = 0; i < rowsToInsert.length; i += 500) {
+        const chunk = rowsToInsert.slice(i, i + 500);
         const { error } = await db.from("listings_snapshots").insert(chunk);
         if (error) throw new Error(`listings insert failed: ${error.message}`);
       }
-      listingRowsCount = listingRows.length;
-      ownedRowsCount = listingRows.filter((r) => r.is_owned).length;
+      listingRowsCount = rowsToInsert.length;
+      ownedRowsCount = rowsToInsert.filter((r) => r.is_owned).length;
+      // NOTE: aggregates below intentionally run over the FULL listingRows, not rowsToInsert.
 
       const eMetrics = computeEventMetrics(listingRows, eid, capturedAt);
       const { error: em } = await db.from("event_metrics")

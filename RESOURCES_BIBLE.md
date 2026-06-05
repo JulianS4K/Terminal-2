@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-02 (D0) — Map/config row: `v_broker_configurations.fanvenues_key` flagged as the Seat Map availability signal (→ `D0_BIBLE §B11`). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Also the canonical home for the event-classification taxonomy + cross-cutting data RULES (RULE 0/1/2), absorbed from the retired `SCHEMA.md` — see §2.15–§2.17. Updated 2026-05-28 (absorbed SCHEMA.md taxonomy+RULES into §2.15–§2.17; performer/venue cross-source mapping chains + missing entity_performer_map / entity_venue_map / aq_performer_map / aq_venue_map / cross_source_venue_map entries added to §2.5) | prior: 2026-05-17 (main HEAD `e04387e`+post-#191).**
 
@@ -70,11 +70,18 @@
 
 **"SG broker sales" disambiguation**: the term in conversation could mean **either** (a) the SG marketplace firehose at 516K/24h = all broker sales on SG via the broker API (`seatgeek_sales_snapshots`) **or** (b) our office's SG SellerDirect sales pulled from our seller account (`seatgeek_orders`, 400/static). Most analytics work uses (a) since it has volume; (b) is for reconciliation of OUR account specifically. D0 can surface both as separate tabs.
 
-**Retention policy** (per migration `20260512210000`):
-- All 5 live firehoses + all order tables = **NEVER swept, forever retention**
-- ESPN snapshots = retained (no prune cron)
-- SeatData snapshots = retained but pipeline dormant
-- `snapshots` (legacy) = retained but unused — do not write
+**Retention policy** — *superseded by the 2026-05-31 retention ladder (mig `20260531180000`, Wave 1).* The prior "firehoses never swept, forever retention" rule (mig `20260512210000`) is **replaced** by an operator-set ladder + autovacuum tuning on high-churn tables:
+
+| Bucket | Window | Swept by |
+|---|---|---|
+| Raw snapshots (ALL sources — EVO/SG/TD listings + sales firehoses) | **30d** | `sweep_old_listings` / `sweep_old_td_listings` (re-batched, 30d) + per-source sweeps |
+| `event_metrics` | **120d** | modified `sweep_old_listings` (event_metrics → 120d) |
+| `section_metrics` | **60d** | `sweep_old_section_metrics(60)` (new) |
+| `event_section_rows` | **30d** | `sweep_old_event_section_rows(30)` (new) |
+| `espn_injuries` | **90d** | `sweep_old_espn_injuries(90)` (new) |
+| `event_listing_snapshot_daily` | **INDEFINITE** | (not swept — durable cross-source daily medians) |
+
+Order tables remain forever-retention (§2.3). SeatData snapshots retained but pipeline dormant; `snapshots` (legacy) retained-unused — do not write. **Open**: VACUUM FULL pass + partitioning (Wave 4) tracked in KANBAN.
 
 
 
@@ -189,6 +196,8 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 | `listing_xref` | 80 kB | Per-listing cross-source resolution (TEvo ticket_group ↔ SG listing) | A1 (matcher), C1 (schema) | PR #66 matcher; C1 owns the table |
 | `ticketsdata_listings_snapshots` | growing | Cross-platform listings snapshots: SH (StubHub), GT (GameTime), VD (VividSeats). `platform` + `event_id` + `snapshot_ts` + `listing_count`, `median_price`, `getin_price`. Collected by edge function, sweeps via `sweep_old_ticketsdata_snapshots`. Started 2026-05-27. | A1 | mig 20260527000000-20260527220000 |
 | `tevo_ticket_groups_cache` | 320 kB | Short-lived TEvo ticket_groups cache (5-min TTL) for storefront reads | D1 | pre-history |
+| `collector_cadence` | — | **Tunable poll-interval config** per `(source, scope, band)`: `min_hours`, `max_hours`, `peak_interval_min`, `offpeak_interval_min`, `enabled`, `sort_order`, `notes`. Drives the per-event listings pollers (CRON_HIERARCHY §4b). Helper `collector_band(source,scope,hours)` → `(band, required_min)`, peak-aware (ET 12-23). | A1 | mig 20260531140000 |
+| `evo_listings_poll_state` | — | Per-event EVO listings clock: `event_id` PK, `last_polled_listings_at`, `listings_polls_today`, `budget_day`. Stamped on-fire by `evo_listings_poll_tick`. (SG has **no** equivalent — it reuses `sg_event_priority_state.last_fired_listings_at`.) | A1 | mig 20260531150000 |
 
 ### 2.3 Sales (order tables — **never swept, forever retention**)
 
@@ -230,9 +239,11 @@ Total: **~135 base tables** in `public`. Grouped here by purpose. Where a PR/mig
 
 | Table | Size | Purpose | Owner | Origin |
 |---|---|---|---|---|
-| `aq_event_map` | — | **Primary event hub** — bridges TD aq_short_event_id ↔ tevo_event_id / sg_event_id / sh/vivid/tm IDs. 7,271 rows. | A1 | mig 20260528380000 |
+| `aq_event_map` | — | **Primary event hub** — bridges TD aq_short_event_id ↔ tevo_event_id / sg_event_id / sh/vivid/tm IDs. 7,271 rows. `tm_event_id` now carries real hex→bigint TM ids for the 21 TD-focus events (kept in sync by `td_tm_discover_drain`, mig …220000) — direct-id cross-source processing. | A1 | mig 20260528380000 |
 | `sg_events_canonical` | 232 kB | SG event records resolved to TEvo (4,609 rows; 2,590 linked to tevo_event_id) | C1 | pre-history |
-| `ticketsdata_event_xref` | — | TD event catalog; gets tevo_event_id + sg_event_id + tevo_match_method via mig 380000 | A1 | pre-history + mig 380000 |
+| `ticketsdata_event_xref` | — | TD event catalog; gets tevo_event_id + sg_event_id + tevo_match_method via mig 380000. `platform` CHECK = SH/VD/GT/TM/TP (TP mig …180000; TM platform fully built mig …200000). **NB:** `td_pull_queue` carries its *own separate* `platform` CHECK — keep both in sync (TM gap there raised 23514, fixed mig …210000). | A1 | pre-history + mig 380000 |
+| `td_tp_performers` | — | TickPick discovery performer allowlist (Yankees/Knicks) — mirrors `td_gt_performers`; drives `td_tp_discover`/`_drain`. | A1 | mig 20260529180000 |
+| `td_tm_performers` | — | Ticketmaster discovery performer allowlist (NYY `artist/805992` + NYK `artist/805988`) — mirrors `td_tp_performers`; drives `td_tm_discover`/`_drain` (ISMDS EventFacets → `event_listing_snapshot_daily.td_tm_*`). | A1 | mig 20260529200000 |
 | `canonical_external_ids` | 1.2 MB | Master external-id table for events/performers/venues | C1 | pre-history (C1 phase 13 work in PR #51) |
 
 **Performer cross-source tables (`tevo_performer_id` = canonical key):**
@@ -437,7 +448,7 @@ Every column we collect maps to one of these buckets — use the names below whe
 | 7 | **Player health** | espn_injuries_snapshots, espn_athlete_team_history | status, injury_type, return_date, transaction_type, is_baseline |
 | 8 | **Game context** | espn_event_snapshots | state, status_short, home/away_score, spread, over_under, home/away_ml, home_win_prob, attendance |
 | 9 | **News & narrative** | espn_news, wiki_*, why_signals | headline, type, published_at, rivalry intensity, season records, why signals |
-| 10 | **Map / config / topology** | events, performer_zones (+rules), zone_rules, venue_assets, performer_metadata | configuration_id/name, seating_chart URLs, fanvenues_key, zone defs, capacity, logo URLs |
+| 10 | **Map / config / topology** | events, performer_zones (+rules), zone_rules, venue_assets, performer_metadata, `v_broker_configurations` | configuration_id/name, seating_chart URLs, **`fanvenues_key` (≈79 configs — the D0 Seat Map "interactive map exists" signal; see `D0_BIBLE §B11`)**, zone defs, capacity, logo URLs |
 
 **7 ML-feature buckets** — collected but cross-cutting; treat as feature groups for forecasting / sell-through / mispricing models:
 
@@ -518,7 +529,7 @@ Only 2 matviews — both perf-critical.
 
 ### 4.5 Health + ops (A1)
 
-`v_cron_health`, `v_pg_net_queue_health`, `v_bot_chat_unresolved`, `v_dashboard_coverage`, `v_dashboard_freshness`, `v_macro_indicators_health`, `v_macro_indicators_latest`, `v_one_to_one_health`
+`v_cron_health`, `v_pg_net_queue_health`, `v_bot_chat_unresolved`, `v_dashboard_coverage`, `v_dashboard_freshness`, `v_macro_indicators_health`, `v_macro_indicators_latest`, `v_one_to_one_health`, `v_sg_token_budget` (live shared-SeatGeek-token remaining from broker response headers `ratelimit-remaining` — incl. external prog draw; mig 20260529170000), `v_sg_broker_429_health` (per-`scope` 429 rollup — cols `total_fired`/`rate_limited`)
 
 ### 4.6 SeatGeek-specific (D2)
 
@@ -542,7 +553,11 @@ Sorted by category. All run in `postgres` role under `pg_cron 1.6.4`. `cron.use_
 |---|---|---|---|---|---|
 | 38 | `master-cascade-2min` | `*/2 * * * *` | `master_cascade_2min()` | C1? | **15.5% of DB time (11s mean)** — bot_chat row 65 flagged |
 | 36 | `midnight-catchup-sweep` | `0 0 * * *` | `midnight_catchup_sweep()` | A1 | |
-| 6 | `sweep-old-listings` | `0 3 * * *` | `sweep_old_listings()` | A1 | TTL 30d, **PR #66** |
+| 6 | `sweep-old-listings` | `0 3 * * *` | `sweep_old_listings()` | A1 | raw 30d; **event_metrics→120d** (mig `…180000`, 2026-05-31) |
+| — | `sweep_old_section_metrics` | daily | `sweep_old_section_metrics(60)` | A1 | **NEW 2026-05-31** — section_metrics 60d |
+| — | `sweep_old_event_section_rows` | daily | `sweep_old_event_section_rows(30)` | A1 | **NEW 2026-05-31** — event_section_rows 30d |
+| — | `sweep_old_espn_injuries` | daily | `sweep_old_espn_injuries(90)` | A1 | **NEW 2026-05-31** — espn_injuries 90d |
+| — | `sweep_old_td_listings` | daily | `sweep_old_td_listings()` | A1 | **re-batched 2026-05-31**, 30d |
 | 117 | `sweep_duplicate_listings_hourly` | `15 * * * *` | `sweep_duplicate_listings(50)` | A1 | **PR #66**, batched per-event |
 | 118 | `sweep_terminal_event_listings_hourly` | `20 * * * *` | `sweep_terminal_event_listings(50)` | A1 | **PR #66**, keep-5 for terminal events |
 | 114 | `sweep_expired_pg_net_pending_hourly` | `17 * * * *` | `sweep_all_expired_pg_net_pending(12)` | C1 | PR #65 (pg_net retention) |
@@ -553,17 +568,18 @@ Sorted by category. All run in `postgres` role under `pg_cron 1.6.4`. `cron.use_
 | 73 | `orphan_backfill_sweep_daily` | `35 3 * * *` | `orphan_backfill_sweep()` | C1 | |
 | 80 | `tournament_search_pending_sweep_weekly` | `10 4 * * 0` | `tournament_search_pending_sweep()` | C1 | |
 
-### 5.2 Listings collection (TEvo + SeatGeek)
+### 5.2 Listings collection — per-event poller model *(v1.1 · A1 · 2026-05-31)*
 
-| jobid | name | sched | Owner |
+**RETIRED 2026-05-31** (collector-cadence cutover, migs `…140000`–`170000`): the EVO horizon windows (`collect-listings-0-24h/1-7d/7-30d/30-60d/60d+` + `collect-listings-featured-10min`), the SG `/v2` windows (`sg_listings_0-24h … 60d+`, 53–57) + `sg_listings_process_5min` (58), `sg_blindspot_poll_5min`, `sg_listings_floor_sweep`, `sg_60d_listings/sales_morning/afternoon`, `sg_broker_sales_queue_5min`. Replaced by one `collector_cadence`-driven scan per source.
+
+| name | sched | function | Owner |
 |---|---|---|---|
-| 108 | `collect-listings-0-24h` | `*/20` | A1 |
-| 109 | `collect-listings-1-7d` | `:05/hr` | A1 |
-| 110 | `collect-listings-7-30d` | `:10/4h` | A1 |
-| 111 | `collect-listings-30-60d` | `:15/12h` | A1 |
-| 112 | `collect-listings-60d+` | `:20 02:00` | A1 |
-| 53–57 | `sg_listings_0-24h` … `60d+` | same window cadence | D2 |
-| 58 | `sg_listings_process_5min` | `2-59/5` | D2 |
+| `evo_listings_poll_2min` | `*/2` | `evo_listings_poll_tick(p_max)` — fires `collect-listings?event_id=X` per due event, stamp-on-fire | A1 |
+| `sg_listings_poll_2min` | `*/2` | `sg_listings_poll_tick(p_max,p_min_remaining)` — band-driven, rate-aware (`ratelimit-remaining` backoff), strand-safe, `p_max=5` | A1 |
+| `sg_sales_poll_5min` | `*/5` | `sg_sales_poll_tick` (retuned, band-driven) — re-enabled 05-31 | A1 |
+| `collect-listings` (discovery) | low-freq | new-event discovery sweep (re-added 05-31; `evo_discover` Phase-2 pending) | A1 |
+
+Also modified: `sg_broker_listings_process` advances `last_polled_listings_at` **only on HTTP 200**. Cadence config + per-event clocks: `collector_cadence` + `evo_listings_poll_state` (§2.2); per-horizon intervals in **CRON_HIERARCHY §4b**.
 
 ### 5.3 Orders pipeline (D2)
 

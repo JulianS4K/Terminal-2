@@ -1,0 +1,296 @@
+-- ============================================================
+-- Add TickPick as a TicketsData platform — SCOPED to the current focus events
+-- Authored by A1 (a1/td lane) 2026-05-29 per operator directive.
+-- DESIGN/COMMIT ONLY — apply to prod is gated separately (validate on apply).
+-- ============================================================
+-- GOAL: pull TickPick listings (via TD /fetch?platform=tickpick) for ONLY the
+-- events already in the TD watchlist (the 20 Yankees home + Knicks playoff focus
+-- set). Mirrors the existing Gametime discovery: search TD /events per performer,
+-- match by HOME venue + datetime to focus events, insert TP xref rows; the
+-- existing td_pull_drain/td_normalize_drain then fetch + store listings.
+--
+-- VERIFIED (2026-05-29, read-only probes):
+--   * TD /events?platform=tickpick → body.items[] (event_id, buy_url, event_date_utc, display_name)
+--   * TD /fetch?platform=tickpick  → items.offers[] (1,271 listings on a Yankees test event)
+--   * All 20 Yankees home games match a Yankee-Stadium tickpick event; real Knicks
+--     MSG Finals home games match; away/speculative placeholders are excluded by the
+--     home-venue gate (they live on the opponent's page, e.g. OKC Paycom Center).
+-- ============================================================
+
+-- 1) Platform code mapping
+CREATE OR REPLACE FUNCTION public.td_api_platform(p_code text)
+ RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER
+ SET search_path TO 'public','pg_temp'
+AS $function$
+  SELECT CASE p_code
+    WHEN 'SH' THEN 'stubhub'
+    WHEN 'VD' THEN 'vividseats'
+    WHEN 'GT' THEN 'gametime'
+    WHEN 'TM' THEN 'ticketmaster'
+    WHEN 'TP' THEN 'tickpick'
+    ELSE LOWER(p_code)
+  END;
+$function$;
+
+-- 2) Normalizer: add a TickPick branch (items.offers[]; price + fee breakdown).
+CREATE OR REPLACE FUNCTION public.ticketsdata_normalize_listings(p_platform text, p_content jsonb)
+ RETURNS TABLE(td_listing_id text, section text, "row" text, quantity integer, list_price numeric, price_with_fees numeric, is_parking boolean, raw jsonb)
+ LANGUAGE plpgsql STABLE SECURITY DEFINER
+ SET search_path TO 'public','pg_temp'
+AS $function$
+BEGIN
+  CASE p_platform
+    WHEN 'SH' THEN
+      RETURN QUERY
+      SELECT (item->>'listingId')::text, public.td_normalize_section(item->>'section'),
+             item->>'row', (item->>'availableTickets')::int,
+             (item->>'rawPrice')::numeric, (item->>'rawPrice')::numeric,
+             (lower(COALESCE(item->>'ticketClassName','')) LIKE '%parking%')::boolean, item
+      FROM jsonb_array_elements(p_content->'body'->'items') AS item;
+
+    WHEN 'VD' THEN
+      RETURN QUERY
+      SELECT (offer->>'listingId')::text, public.td_normalize_section(offer->>'section'),
+             offer->>'row', (offer->>'availableTickets')::int,
+             (offer->>'rawPrice')::numeric, (offer->>'rawPriceWithFees')::numeric,
+             false::boolean, offer
+      FROM jsonb_array_elements(p_content->'items'->'offers') AS offer;
+
+    WHEN 'GT' THEN
+      RETURN QUERY
+      SELECT (item->>'listing_id')::text, public.td_normalize_section(item->>'section_name'),
+             item->>'row', (item->>'quantity')::int,
+             (item->'price'->>'prefee')::numeric, (item->'price'->>'total')::numeric,
+             (lower(COALESCE(item->>'ticket_type','')) = 'parking')::boolean, item
+      FROM jsonb_array_elements(p_content->'body') AS item;
+
+    WHEN 'TP' THEN
+      -- TickPick /fetch shape: { items: { offers: [ { listing_id, section_name, row,
+      --   quantity, price, fees:{delivery,facility,service}, is_parking } ] } }
+      RETURN QUERY
+      SELECT
+        (offer->>'listing_id')::text,
+        public.td_normalize_section(offer->>'section_name'),
+        offer->>'row',
+        (offer->>'quantity')::int,
+        (offer->>'price')::numeric,
+        (offer->>'price')::numeric
+          + COALESCE((offer->'fees'->>'delivery')::numeric,0)
+          + COALESCE((offer->'fees'->>'facility')::numeric,0)
+          + COALESCE((offer->'fees'->>'service')::numeric,0),
+        COALESCE((offer->>'is_parking')::boolean, false),
+        offer
+      FROM jsonb_array_elements(p_content->'items'->'offers') AS offer;
+
+    WHEN 'TM' THEN
+      RAISE NOTICE 'ticketsdata_normalize_listings: TM field paths TBD — 0 rows';
+      RETURN;
+    ELSE
+      RAISE EXCEPTION 'ticketsdata_normalize_listings: unknown platform %', p_platform;
+  END CASE;
+END $function$;
+
+-- 2b) Allow the 'TP' platform code in the xref CHECK constraint (was SH/VD/GT/TM only).
+ALTER TABLE public.ticketsdata_event_xref DROP CONSTRAINT IF EXISTS ticketsdata_event_xref_platform_check;
+ALTER TABLE public.ticketsdata_event_xref ADD CONSTRAINT ticketsdata_event_xref_platform_check
+  CHECK (platform = ANY (ARRAY['SH','VD','GT','TM','TP']));
+
+-- 3) Performer allowlist (mirrors td_gt_performers) — scoped to the focus teams.
+CREATE TABLE IF NOT EXISTS public.td_tp_performers (
+  id                          bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  performer_url               text NOT NULL UNIQUE,
+  active                      boolean NOT NULL DEFAULT true,
+  last_discovered_at          timestamptz,
+  pending_discover_request_id bigint,
+  updated_at                  timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO public.td_tp_performers (performer_url, active) VALUES
+  ('https://www.tickpick.com/mlb/new-york-yankees-tickets/', true),
+  ('https://www.tickpick.com/nba/new-york-knicks-tickets/',  true)
+ON CONFLICT (performer_url) DO NOTHING;
+
+-- 4) Discovery: fire TD /events (tickpick) per active performer.
+CREATE OR REPLACE FUNCTION public.td_tp_discover()
+ RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+ SET search_path TO 'public','extensions','pg_temp'
+AS $function$
+DECLARE r RECORD; v_user text; v_pass text; v_req_id bigint; v_count int := 0;
+BEGIN
+  IF NOT public.cron_should_fire('td_tp_discover') THEN RETURN 0; END IF;
+  IF NOT public.td_budget_ok() THEN RAISE NOTICE 'td_tp_discover: budget exhausted'; RETURN 0; END IF;
+  v_user := public.get_app_secret('TICKETSDATA_USERNAME');
+  v_pass := public.get_app_secret('TICKETSDATA_PASSWORD');
+  IF v_user IS NULL OR v_pass IS NULL THEN RAISE EXCEPTION 'td_tp_discover: TICKETSDATA creds missing'; END IF;
+
+  FOR r IN
+    SELECT id, performer_url FROM public.td_tp_performers
+    WHERE active = true
+      AND (pending_discover_request_id IS NULL
+           OR last_discovered_at IS NULL
+           OR last_discovered_at < clock_timestamp() - interval '22 hours')
+    ORDER BY id
+  LOOP
+    SELECT net.http_get(
+      url := 'https://ticketsdata.com/events',
+      params := jsonb_build_object('platform','tickpick','performer_url',r.performer_url,
+                                   'username',v_user,'password',v_pass),
+      headers := '{}'::jsonb, timeout_milliseconds := 35000
+    ) INTO v_req_id;
+    UPDATE public.td_tp_performers SET pending_discover_request_id = v_req_id, updated_at = clock_timestamp() WHERE id = r.id;
+    v_count := v_count + 1;
+  END LOOP;
+  RETURN v_count;
+END $function$;
+REVOKE ALL ON FUNCTION public.td_tp_discover() FROM PUBLIC;
+
+-- 5) Discovery drain: match tickpick events to focus events by HOME venue + datetime,
+--    insert TP xref rows (event_url = full tickpick URL). Away/off-date events excluded.
+CREATE OR REPLACE FUNCTION public.td_tp_discover_drain()
+ RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+ SET search_path TO 'public','extensions','pg_temp'
+AS $function$
+DECLARE r RECORD; ev RECORD; v_aq text; v_count int := 0;
+BEGIN
+  IF NOT public.cron_should_fire('td_tp_discover_drain') THEN RETURN 0; END IF;
+
+  FOR r IN
+    SELECT p.id AS performer_id, h.status_code, h.content AS raw_content
+    FROM public.td_tp_performers p
+    JOIN net._http_response h ON h.id = p.pending_discover_request_id
+    WHERE p.active = true AND p.pending_discover_request_id IS NOT NULL
+    ORDER BY p.id
+  LOOP
+    IF r.status_code = 200 THEN
+      FOR ev IN
+        SELECT item->>'event_id'                       AS tp_id,
+               item->>'buy_url'                         AS buy_url,
+               (item->>'event_date_utc')::timestamptz   AS dt_utc,
+               item->>'display_name'                    AS venue
+        FROM jsonb_array_elements(r.raw_content::jsonb->'body'->'items') AS item
+        WHERE item->>'event_id' IS NOT NULL
+          AND item->>'buy_url' IS NOT NULL
+          AND item->>'event_date_utc' IS NOT NULL
+      LOOP
+        -- Match to a focus event: home-venue gate + datetime within 18h
+        -- (18h absorbs the tz-naive aq_event_map.event_date vs true-UTC tickpick date).
+        SELECT t.aq_short_event_id INTO v_aq
+        FROM public.td_target_events() t
+        JOIN public.aq_event_map aem ON aem.aq_short_event_id = t.aq_short_event_id
+        WHERE abs(extract(epoch FROM (aem.event_date::timestamptz - ev.dt_utc))) < 64800
+          AND (
+            (aem.event_name ILIKE '%yankees%' AND ev.venue ILIKE '%yankee stadium%')
+            OR (aem.event_name ILIKE '%knicks%' AND ev.venue ILIKE '%madison square garden%')
+          )
+        ORDER BY abs(extract(epoch FROM (aem.event_date::timestamptz - ev.dt_utc)))
+        LIMIT 1;
+
+        IF v_aq IS NOT NULL THEN
+          INSERT INTO public.ticketsdata_event_xref
+            (event_id, platform, aq_short_event_id, event_url, active, always_on, match_method, updated_at)
+          VALUES ((ev.tp_id)::bigint, 'TP', v_aq,
+                  'https://www.tickpick.com' || ev.buy_url, true, true, 'tp_events_venue_date', clock_timestamp())
+          ON CONFLICT (event_id, platform) DO UPDATE
+            SET event_url = EXCLUDED.event_url, active = true, always_on = true,
+                aq_short_event_id = EXCLUDED.aq_short_event_id,
+                match_method = 'tp_events_venue_date', updated_at = clock_timestamp();
+          v_count := v_count + 1;
+        END IF;
+      END LOOP;
+
+      PERFORM public.td_charge_credit(1, NULL, 'TP', '/events', 200,
+                                      (r.raw_content::jsonb->>'quota_remaining')::int);
+    END IF;
+
+    UPDATE public.td_tp_performers
+    SET pending_discover_request_id = NULL, last_discovered_at = clock_timestamp(), updated_at = clock_timestamp()
+    WHERE id = r.performer_id;
+  END LOOP;
+  RETURN v_count;
+END $function$;
+REVOKE ALL ON FUNCTION public.td_tp_discover_drain() FROM PUBLIC;
+
+-- 6) td_apply_targets: keep TP focus rows alive (don't deactivate them in the daily sweep).
+CREATE OR REPLACE FUNCTION public.td_apply_targets()
+ RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+ SET search_path TO 'public','pg_temp'
+AS $function$
+DECLARE v_count int := 0; v_now timestamptz := now();
+BEGIN
+  WITH t AS (SELECT * FROM public.td_target_events() WHERE sh_event_id IS NOT NULL)
+  INSERT INTO public.ticketsdata_event_xref
+    (event_id, platform, aq_short_event_id, event_url, active, always_on, match_method, updated_at)
+  SELECT t.sh_event_id, 'SH', t.aq_short_event_id,
+         'https://www.stubhub.com/x/event/' || t.sh_event_id::text || '/', true, true, 'direct_id', v_now
+  FROM t
+  ON CONFLICT (event_id, platform) DO UPDATE
+    SET active = true, always_on = true, event_url = EXCLUDED.event_url, updated_at = v_now;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+
+  WITH t AS (SELECT * FROM public.td_target_events() WHERE vivid_event_id IS NOT NULL)
+  INSERT INTO public.ticketsdata_event_xref
+    (event_id, platform, aq_short_event_id, event_url, active, always_on, match_method, updated_at)
+  SELECT t.vivid_event_id, 'VD', t.aq_short_event_id,
+         'https://www.vividseats.com/production/' || t.vivid_event_id::text, true, true, 'direct_id', v_now
+  FROM t
+  ON CONFLICT (event_id, platform) DO UPDATE
+    SET active = true, always_on = true, event_url = EXCLUDED.event_url, updated_at = v_now;
+
+  -- Deactivate everything that is not a current target.
+  -- TP rows are discovery-managed and keyed by tickpick event_id (not sh/vd/sg),
+  -- so they are kept by aq_short_event_id membership in the target set.
+  UPDATE public.ticketsdata_event_xref x
+  SET active = false, updated_at = v_now
+  WHERE x.active = true
+    AND NOT EXISTS (
+      SELECT 1 FROM public.td_target_events() t
+      WHERE (x.platform = 'SH' AND x.event_id = t.sh_event_id)
+         OR (x.platform = 'VD' AND x.event_id = t.vivid_event_id)
+         OR (x.platform = 'GT' AND x.event_id = t.sg_event_id)
+         OR (x.platform = 'TP' AND x.aq_short_event_id = t.aq_short_event_id)
+    );
+
+  UPDATE public.ticketsdata_event_xref x
+  SET always_on = true, updated_at = v_now
+  WHERE x.platform = 'GT' AND x.active = true
+    AND EXISTS (SELECT 1 FROM public.td_target_events() t WHERE t.sg_event_id = x.event_id);
+
+  UPDATE public.ticketsdata_event_xref x
+  SET owned_tickets = COALESCE(em_data.owned_tickets_count, 0),
+      median_retail_price = em_data.retail_median, updated_at = v_now
+  FROM public.aq_event_map aem
+  JOIN public.sg_events_canonical sgc ON sgc.sg_event_id = aem.sg_event_id
+  LEFT JOIN LATERAL (
+    SELECT em.owned_tickets_count, em.retail_median FROM public.event_metrics em
+    WHERE em.event_id = sgc.tevo_event_id ORDER BY em.captured_at DESC LIMIT 1
+  ) em_data ON true
+  WHERE aem.aq_short_event_id = x.aq_short_event_id AND x.active = true AND sgc.tevo_event_id IS NOT NULL;
+
+  RETURN v_count;
+END $function$;
+
+-- 7) Crons (daily, staggered after the SH/VD refresh + GT discovery at 09:15/09:20).
+SELECT cron.unschedule('td_tp_discover')       WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='td_tp_discover');
+SELECT cron.unschedule('td_tp_discover_drain') WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='td_tp_discover_drain');
+
+SELECT cron.schedule('td_tp_discover', '25 9 * * *',
+  $cronbody$ DO $b$ BEGIN IF NOT public.cron_should_fire('td_tp_discover') THEN RETURN; END IF; PERFORM public.td_tp_discover(); END $b$; $cronbody$);
+SELECT cron.schedule('td_tp_discover_drain', '30 9 * * *',
+  $cronbody$ DO $b$ BEGIN IF NOT public.cron_should_fire('td_tp_discover_drain') THEN RETURN; END IF; PERFORM public.td_tp_discover_drain(); END $b$; $cronbody$);
+
+-- 8) Enqueue cron — push active TP rows into td_pull_queue 3x/day (mirrors SH/VD/GT).
+--    WITHOUT this, TP xref rows are never enqueued -> never pulled. td_enqueue_peak
+--    gates internally on cron_should_fire('td_enqueue_peak_tp') + td_budget_ok.
+SELECT cron.unschedule('td_enqueue_peak_tp') WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='td_enqueue_peak_tp');
+SELECT cron.schedule('td_enqueue_peak_tp', '0 16,22,4 * * *',
+  $cronbody$ DO $b$ BEGIN
+      PERFORM public.td_enqueue_peak('TP',
+        CASE date_part('hour', now() AT TIME ZONE 'UTC')::int
+          WHEN 16 THEN '12pm_ET' WHEN 22 THEN '6pm_ET'
+          WHEN  4 THEN '12am_ET' ELSE 'manual' END);
+    END $b$; $cronbody$);
+
+-- Post-apply smoke (run manually after apply):
+--   SELECT public.td_tp_discover();             -- fires /events for both performers
+--   -- wait ~45s --
+--   SELECT public.td_tp_discover_drain();        -- returns # of TP xref rows inserted (expect ~20+ Yankees + matched Knicks)
+--   SELECT platform, count(*) FROM public.ticketsdata_event_xref WHERE active GROUP BY platform;  -- TP should appear

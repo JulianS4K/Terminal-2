@@ -1,7 +1,17 @@
 // D0 Terminal — Movers page.
-// Calls /api/broker/movers?window_hours=<w>. Unions winner+loser lists into a
-// single sortable table. Window selector + owned/all segment toggle.
-// 5-bucket classifier is Phase 2 (not in endpoint yet).
+//
+// Two modes:
+//   • v2 (default) — reads `event_movers_index` via Path-C Supabase RPCs
+//       get_event_movers_v2(source, window_days, category, limit)
+//       get_event_movers_index_summary(source, window_days)
+//     (mig 20260527260000_movers_index_rpc_api). Source / window-days /
+//     category controls drive the index slot. Cross-source median + spread
+//     columns surface inter-platform arbitrage signals.
+//   • legacy — keeps the original /api/broker/movers?window_hours=N path
+//     (winner/loser/value list shape) for backward compat until home.js is
+//     migrated and the legacy controls retired.
+//
+// Blind spots is independent — its own Path-C RPC.
 
 (function () {
   'use strict';
@@ -114,7 +124,7 @@
   }
 
   // ============================================================
-  // V2 — load + render
+  // V2 — load + render (Path-C: direct Supabase RPCs)
   // ============================================================
   async function loadV2() {
     const body    = document.getElementById('v2Body');
@@ -124,11 +134,50 @@
     if (stripEl) stripEl.innerHTML = '';
 
     T.setStatus(`Loading v2 movers · ${v2State.source} · ${v2State.windowDays}d…`);
-    const params = new URLSearchParams({ window_days: String(v2State.windowDays), source: v2State.source });
-    if (v2State.category) params.set('category', v2State.category);
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      T.setStatus('not signed in', 'err');
+      return;
+    }
 
     try {
-      const data = await T.api('/api/broker/movers?' + params.toString());
+      // Direct Path-C reads of the movers-index RPCs (mig 20260527260000) —
+      // replaces the cross-origin T.api('/api/broker/movers?…') call. Same
+      // pattern as renderBlindSpots's get_blind_spots_sg_selling call.
+      // p_limit=200 safely covers 6 categories × 25 rank slots.
+      const [eventsRes, summaryRes] = await Promise.all([
+        Auth.client.rpc('get_event_movers_v2', {
+          p_source: v2State.source,
+          p_window_days: v2State.windowDays,
+          p_category: v2State.category,  // null = all categories
+          p_limit: 200,
+        }),
+        Auth.client.rpc('get_event_movers_index_summary', {
+          p_source: v2State.source,
+          p_window_days: v2State.windowDays,
+        }),
+      ]);
+      if (eventsRes.error)  throw new Error(eventsRes.error.message  || 'movers RPC error');
+      if (summaryRes.error) throw new Error(summaryRes.error.message || 'summary RPC error');
+
+      const events  = eventsRes.data  || [];
+      const summary = summaryRes.data || [];
+
+      // Reshape flat rows → { event_count, events_by_category, summary } so the
+      // existing renderV2Events / renderV2Summary keep working unchanged.
+      const byCategory = {};
+      events.forEach(r => {
+        const cat = r.category || 'uncategorized';
+        (byCategory[cat] = byCategory[cat] || []).push(r);
+      });
+      const data = {
+        event_count: events.length,
+        events_by_category: byCategory,
+        summary: summary,
+      };
+
       T.setStatus('Loaded', 'ok');
       v2State.data = data;
       if (countEl) countEl.textContent = data.event_count ? `${data.event_count} events` : '';
