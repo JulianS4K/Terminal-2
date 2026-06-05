@@ -403,6 +403,139 @@ def test_is_tbd_helper_unit():
     assert app_module._is_tbd(None) is False
 
 
+# ---------- Featured rail: playoff exemption + empty-rail fallback ----------
+#
+# Operator directive 2026-05-26: the "Featured in NYC" rail (/api/store/movers)
+# was rendering empty because all current NYC owned inventory was either an
+# "(If Necessary)" playoff game (dropped as speculative) or below the owned-
+# count gates. Two behavior changes:
+#   1. Playoff games surface in the movers strip despite "(If Necessary)" and
+#      bypass the owned>100 Featured depth gate (highest-value NYC inventory).
+#   2. When NO rail qualifies, Featured falls back to the soonest upcoming
+#      owned NYC events so the homepage is never blank.
+# NOTE: this relaxation is scoped to the movers strip only — /api/store/home
+# and search still drop "(If Necessary)" games (see tests above).
+#
+# _compute_movers filters events to occurs_at_local >= today, so the end-to-end
+# tests below use dates RELATIVE to today (not hardcoded) — otherwise they'd
+# become a CI time-bomb the moment the fixed dates fall into the past (the same
+# class of bug fixed for the store_home fixture).
+
+def _fut(days_ahead: int) -> str:
+    """An occurs_at_local timestamp `days_ahead` days from today (Eastern-ish
+    offset), kept inside the movers day_cap window."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    d = (_dt.now(_tz.utc).date() + _td(days=days_ahead)).isoformat()
+    return f"{d}T19:00:00-04:00"
+
+
+def test_section_featured_includes_playoff_under_owned_gate():
+    """Playoff game with owned <= 100 must still be Featured — playoff games
+    are exempt from the owned>100 depth gate."""
+    playoff = {
+        "id": 1,
+        "name": "Cleveland Cavaliers at New York Knicks (Game 7) (If Necessary)",
+        "owned_tickets_count": 61,           # < 100, would fail the gate
+        "owned_median_retail": 5880,
+        "occurs_at_local": "2026-05-31T20:00:00-04:00",
+    }
+    out = app_module._section_featured([playoff], {}, {})
+    assert [c["id"] for c in out] == [1]
+    assert out[0]["_featured_kind"] == "playoff"
+
+
+def test_section_featured_excludes_nonplayoff_under_owned_gate():
+    """Non-playoff event under owned 100 with sub-$50 median stays out — the
+    depth gate still applies to everything that isn't a playoff/holiday/
+    rivalry/marquee signal."""
+    ev = {
+        "id": 2, "name": "Some Concert",
+        "owned_tickets_count": 61, "owned_median_retail": 20,
+        "occurs_at_local": "2026-06-01T19:00:00-04:00",
+    }
+    assert app_module._section_featured([ev], {}, {}) == []
+
+
+def test_section_featured_premium_nonplayoff_still_included():
+    """Regression guard: a non-playoff event with owned>100 AND median>$50
+    is still Featured as 'premium' (existing behavior unchanged)."""
+    ev = {
+        "id": 3, "name": "Big Headliner",
+        "owned_tickets_count": 150, "owned_median_retail": 120,
+        "occurs_at_local": "2026-06-02T19:00:00-04:00",
+    }
+    out = app_module._section_featured([ev], {}, {})
+    assert [c["id"] for c in out] == [3]
+    assert out[0]["_featured_kind"] == "premium"
+
+
+def test_compute_movers_features_playoff_if_necessary():
+    """End-to-end: a playoff '(If Necessary)' game with owned 61 survives the
+    speculative-name filter AND the owned>100 gate, landing in Featured."""
+    db = _FakeDB({
+        "events": [_event(
+            1, name="Cleveland Cavaliers at New York Knicks (Game 7) (If Necessary)",
+            occurs=_fut(5))],
+        "latest_event_metrics": [_lem(1, owned=61, retail_min=5880.0)],
+        "event_lifecycle": [_lc(1)],
+    })
+    out = app_module._compute_movers(db, "NYC", 21, 8)
+    assert 1 in [c["id"] for c in out["featured"]]
+    assert out["featured"][0]["_featured_kind"] == "playoff"
+
+
+def test_compute_movers_drops_cancelled_playoff():
+    """A CANCELLED playoff game must NOT surface — cancellation is terminal,
+    unlike '(If Necessary)' which merely may-not-be-played."""
+    db = _FakeDB({
+        "events": [_event(
+            1, name="Knicks at Pacers (Game 6) - CANCELLED",
+            occurs=_fut(6))],
+        "latest_event_metrics": [_lem(1, owned=200, retail_min=900.0)],
+        "event_lifecycle": [_lc(1)],
+    })
+    out = app_module._compute_movers(db, "NYC", 21, 8)
+    all_ids = [c["id"] for rail in
+               ("featured", "moving_fast", "price_drops", "climbing", "specials")
+               for c in out.get(rail, [])]
+    assert 1 not in all_ids
+
+
+def test_compute_movers_fallback_to_soonest_when_all_rails_empty():
+    """Two thin-inventory non-playoff events (owned 49 + 9) clear no rail.
+    Featured falls back to the soonest upcoming owned events, soonest first,
+    tagged _featured_kind='fallback' with no curation chip."""
+    db = _FakeDB({
+        "events": [
+            _event(10, name="Don Toliver Concert", occurs=_fut(10)),
+            _event(11, name="Cincinnati Reds at New York Mets", occurs=_fut(3)),
+        ],
+        "latest_event_metrics": [_lem(10, owned=49), _lem(11, owned=9)],
+        "event_lifecycle": [_lc(10), _lc(11)],
+    })
+    out = app_module._compute_movers(db, "NYC", 21, 8)
+    assert out["moving_fast"] == [] and out["price_drops"] == [] and out["climbing"] == []
+    assert [c["id"] for c in out["featured"]] == [11, 10]  # sooner event first
+    assert all(c.get("_featured_kind") == "fallback" for c in out["featured"])
+    assert all(c.get("_featured_tag") == "" for c in out["featured"])
+
+
+def test_compute_movers_no_fallback_when_a_rail_populated():
+    """When a rail already has events, the fallback does NOT fire — Featured
+    holds the curated playoff pick, not the thin-inventory long tail."""
+    db = _FakeDB({
+        "events": [
+            _event(1, name="Cavaliers at Knicks (Game 7) (If Necessary)", occurs=_fut(5)),
+            _event(10, name="Low Inventory Concert", occurs=_fut(10)),
+        ],
+        "latest_event_metrics": [_lem(1, owned=61, retail_min=5880.0), _lem(10, owned=9)],
+        "event_lifecycle": [_lc(1), _lc(10)],
+    })
+    out = app_module._compute_movers(db, "NYC", 21, 8)
+    assert [c["id"] for c in out["featured"]] == [1]
+    assert out["featured"][0]["_featured_kind"] == "playoff"
+
+
 def test_home_city_nyc_filters_correctly(store_home_client):
     """city=NYC restricts to NYC-area venues. Bronx + Flushing + Manhattan
     all pass; LA + Chicago must not."""
