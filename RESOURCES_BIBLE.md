@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md
 
-> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-02 (D0) — Map/config row: `v_broker_configurations.fanvenues_key` flagged as the Seat Map availability signal (→ `D0_BIBLE §B11`). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Also the canonical home for the event-classification taxonomy + cross-cutting data RULES (RULE 0/1/2), absorbed from the retired `SCHEMA.md` — see §2.15–§2.17. Updated 2026-05-28 (absorbed SCHEMA.md taxonomy+RULES into §2.15–§2.17; performer/venue cross-source mapping chains + missing entity_performer_map / entity_venue_map / aq_performer_map / aq_venue_map / cross_source_venue_map entries added to §2.5) | prior: 2026-05-17 (main HEAD `e04387e`+post-#191).**
 
@@ -448,7 +448,7 @@ Every column we collect maps to one of these buckets — use the names below whe
 | 7 | **Player health** | espn_injuries_snapshots, espn_athlete_team_history | status, injury_type, return_date, transaction_type, is_baseline |
 | 8 | **Game context** | espn_event_snapshots | state, status_short, home/away_score, spread, over_under, home/away_ml, home_win_prob, attendance |
 | 9 | **News & narrative** | espn_news, wiki_*, why_signals | headline, type, published_at, rivalry intensity, season records, why signals |
-| 10 | **Map / config / topology** | events, performer_zones (+rules), zone_rules, venue_assets, performer_metadata | configuration_id/name, seating_chart URLs, fanvenues_key, zone defs, capacity, logo URLs |
+| 10 | **Map / config / topology** | events, performer_zones (+rules), zone_rules, venue_assets, performer_metadata, `v_broker_configurations` | configuration_id/name, seating_chart URLs, **`fanvenues_key` (≈79 configs — the D0 Seat Map "interactive map exists" signal; see `D0_BIBLE §B11`)**, zone defs, capacity, logo URLs |
 
 **7 ML-feature buckets** — collected but cross-cutting; treat as feature groups for forecasting / sell-through / mispricing models:
 
