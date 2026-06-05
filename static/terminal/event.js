@@ -733,13 +733,20 @@
   }
 
   // X-axis clip range for a given hours window. Returns [minSec, maxSec].
-  // If the series data is older than the window, uPlot clips to the window
-  // (showing an empty area for the missing time); if newer, the data fits.
+  // The left edge is the requested window start clamped FORWARD to the first
+  // data point, so a window wider than the available history (esp. ALL =
+  // 4320h/180d) never pads the axis with empty pre-data space. The axis then
+  // spans only the days we actually have chart data for — selecting ALL fits
+  // to all-available-data instead of a fixed 180-day frame.
   function clipRangeForHours(hours, xs) {
     if (!xs || !xs.length) return undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    const minSec = nowSec - hours * 3600;
+    const dataMin = xs[0];
     const dataMax = xs[xs.length - 1];
+    // Left edge: don't go earlier than the first data point. For short windows
+    // (6h/24h/…) the window start is more recent than dataMin so it wins as
+    // before; for over-wide windows the axis snaps to the data's actual start.
+    const minSec = Math.max(nowSec - hours * 3600, dataMin);
     // Right edge: max(now, dataMax) so a future-dated event still shows its
     // most recent snapshot inside the window.
     return [minSec, Math.max(nowSec, dataMax)];
