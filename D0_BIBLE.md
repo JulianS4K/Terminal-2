@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.5.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected); v1.5.0 2026-06-02 (D0) — §B2 file map refresh + new §B11 Seat Map (multi-source Tevomaps overlay, PRs #406-410). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -46,7 +46,7 @@ There are **two data paths** out of the browser:
 
 *(There is no "Path B" — the A/C labels are historical. The event page uses a **Path C → Path A waterfall**: try RPC v3, fall back to RPC v2, then fall back to 5 parallel REST calls. See §B4.)*
 
-## B2. Frontend file map (`static/terminal/`, 23 files)
+## B2. Frontend file map (`static/terminal/`, 25 files) *(v1.1 · D0 · 2026-06-02)*
 
 **JS modules (11):**
 
@@ -57,7 +57,7 @@ There are **two data paths** out of the browser:
 | `login.js` | 81 | Login-page state machine + post-OAuth bounce. |
 | `nav.js` | 346 | Injects topbar, global search (`terminal_search` RPC `nav.js:115`), version chip, sign-out. |
 | `home.js` | 413 | Landing dashboard — movers + SG blind spots. |
-| `event.js` | 3489 | Event detail — charts, 7 tabs, the RPC waterfall. Heaviest module. |
+| `event.js` | 4246 | Event detail — charts, tabs incl. **Seat Map (§B11)**, the RPC waterfall. Heaviest module. |
 | `movers.js` | 496 | Movers table (v2 index mode + legacy mode). |
 | `discovery.js` | 475 | Discovery gap-alerts / blind-spots / returning-entities panels. |
 | `performer.js` | 674 | Performer index + detail + ESPN + Market Carpet tab. |
@@ -67,9 +67,9 @@ There are **two data paths** out of the browser:
 **HTML pages (8):** `index.html` (home), `event.html`, `movers.html`, `discovery.html`, `performer.html`, `venue.html`, `orders.html`, `login.html`.
 Each sets `data-page` on `<body>` and loads the chain **`lib/supabase.js → auth.js → app.js → nav.js → <page>.js`**, with two exceptions:
 - `login.html` loads only `lib/supabase.js → auth.js → login.js` (no app.js/nav.js — you're not authed yet).
-- `event.html` additionally loads `lib/uplot.iife.min.js` (`event.html:381`) + `lib/uplot.min.css` (`event.html:11`).
+- `event.html` additionally loads `lib/uplot.iife.min.js` + `lib/uplot.min.css` (charts) and `lib/tevomaps.bundle.js` (Seat Map, §B11).
 
-**lib/ (3):** `lib/supabase.js` (197 KB minified UMD supabase-js bundle, no source map), `lib/uplot.iife.min.js` (charting), `lib/uplot.min.css`.
+**lib/ (4) + 1 notice:** `lib/supabase.js` (197 KB minified UMD supabase-js bundle, no source map), `lib/uplot.iife.min.js` (charting), `lib/uplot.min.css`, `lib/tevomaps.bundle.js` (617 KB vendored `@ticketevolution/seatmaps-client@5.0.0` UMD bundle, global `Tevomaps`, React bundled in — see §B11 + `lib/tevomaps.bundle.NOTICE.md` for provenance/license).
 
 **css (1):** `style.css` — shared styling for every page.
 
@@ -177,6 +177,26 @@ Loaded **only on `event.html`** (`event.html:11` css, `:381` js). Two independen
 4. **`lib/supabase.js` is a 197 KB minified UMD bundle, no source map, no in-tree version string.** To reproduce auth behavior (implicit flow, `detectSessionInUrl`) a rebuild must independently pin the supabase-js version.
 5. **`tickpick_orders` / `vivid_orders` are unreachable from the frontend by design** — service_role-only, read through a SECDEF RPC (`event.js:2607`), never a direct table read. Know the RPC name to surface TP/Vivid sales.
 6. **No TODO/FIXME/HACK markers exist in the frontend JS** — it's clean; the gaps above came from cross-file/runtime analysis, not in-code breadcrumbs.
+
+---
+
+## B11. Seat Map — multi-source Tevomaps overlay *(v1.0 · D0 · 2026-06-02)*
+
+The **Seat Map** tab on `event.html` renders the TEvo interactive venue seatmap and colors each section by a **selected source's** listing floor. Shipped PRs #406-410.
+
+**Library (vendored, not npm).** `lib/tevomaps.bundle.js` = the prebuilt **UMD** bundle of `@ticketevolution/seatmaps-client@5.0.0` (`dist/bundle.js`), exposing global `window.Tevomaps`. React+ReactDOM are bundled in, so there is **no build step and no React dep** — it loads via a plain `<script>` exactly like `uplot.iife.min.js`. Provenance/sha/license in `lib/tevomaps.bundle.NOTICE.md` (package is `UNLICENSED` — used under the TEvo broker relationship, vendored at operator direction). To update: re-`npm pack`, copy `dist/bundle.js`, refresh the sha.
+
+**Inputs (all already in our DB — pure Path-C, no backend change).**
+- `venueId` ← `public.events.venue_id`; `configurationId` ← `public.events.configuration_id` (both read directly, RLS-OK).
+- Section→floor `ticketGroups` per source, fetched **by tevo event_id** (each RPC resolves the cross-source bridge itself): EVO `get_event_evo_listings_full`, SG `get_event_sg_listings_full`, SH/GT/VD `get_event_td_listings(p_tevo_event_id, p_platform, p_hours)`.
+
+**Runtime fetch + CSP.** The library fetches `https://maps.ticketevolution.com/{venueId}/{configurationId}/{map.svg,manifest.json}` from the **browser**. `event.html`'s `<meta>` CSP `connect-src` MUST include `https://maps.ticketevolution.com` (added in #406). The maps host is **not reachable from CI/agent/SQL envs** (egress allowlist) — only a real browser renders it.
+
+**Section-name mapping (the gotcha — see PROJECT_BIBLE §3 landmine).** The manifest keys sections by **full descriptive names** (`Lower Level Corner 104`, `Chase Bridges 316`, `Floor 2`), but every source stores only the trailing token (`104`). The map matches `tevo_section_name` *exactly* (lowercased). So `loadSeatmap` fetches the manifest, reduces both sides to a **tail** (trailing digits + short letter suffix), and remaps our tokens → full names before handing them to `SeatmapFactory`. Tail collisions (`2` → `Floor 2` *and* `Event Level Suites 2`) prefer the `Floor N` key; other collisions are left uncolored (still listed).
+
+**Multi-source selector.** Map renders once (default TEvo); the selector re-colors by **one** source at a time via `api.updateTicketGroups()` (never collective) and swaps the listing table. Sources: **TEvo · SeatGeek · StubHub · GameTime · VividSeats**. **TP excluded** (zone-only granularity — `100s`/`Lower`/`Suites`); **TM excluded** (primary/box-office, no section-level resale). Coverage on MSG/Knicks: GT ~100%, VD ~99%, SH ~90%, SG ~95%; the only non-mapping residue is inherently zone-level (`lower level`, `100 Level`, club buckets).
+
+**Map availability across inventory.** ~100% of upcoming events carry `venue_id`+`configuration_id` (can attempt), but only **~79 configurations / 72 venues** carry a `v_broker_configurations.fanvenues_key` (our in-DB "interactive map exists" proxy; covers ~1,483 upcoming events). True CDN coverage is `≥79` and browser-probe-confirmable only. See KANBAN for the coverage-probe follow-up.
 
 ---
 

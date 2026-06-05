@@ -1,5 +1,16 @@
 # Broadway scale plan (2026-05-18)
 
+> ⚠ **2026-05-24 REDESIGN** — Broadway.com moved inventory out of the
+> bootstrap GET. The `SectionListing` / `sections[]` schema below is
+> **legacy** (applies to old responses / the SIX offline fixture only).
+> Live shows now return `event_polling_enabled=true` with no `sections[]`;
+> real inventory comes from an async reCAPTCHA-gated availability POST
+> with a `data.tickets[]` array (PascalCase, per-seat-block). Parser:
+> `BroadwayClient.parse_availability()` → `AvailabilitySnapshot` /
+> `TicketBlock`. Field mapping updated below (§ Transport 2026-05-24).
+> The `broadway_collect` edge-function plan is non-viable; browser-driven
+> collection is required (see `docs/broadway-live-testing.md`).
+
 How D3 scales `broadway_client.py` from per-show smoke tests to
 all-Broadway daily coverage. Resolves three issues raised in
 `docs/broadway-live-testing.md` planning notes:
@@ -64,6 +75,33 @@ broadway_pull_queue          (slug, event_id, performance_time, last_snapshot_at
 | **new**: `fee` (numeric) | service fee on top of face | `SectionListing.fee` |
 | **new**: `area_indexes` (int[]) | broadway's seating-area ids | `SectionListing.area_indexes` |
 | **new**: `broadway_show_id` (bigint) | for joins to broadway_shows | `payload.show.aristotle_id` |
+
+### Field mapping — TicketBlock → broadway_listings_snapshots (2026-05-24 schema)
+
+> Replaces the SectionListing mapping above for live shows. `TicketBlock`
+> fields are PascalCase from the availability POST `data.tickets[]`.
+
+| `broadway_listings_snapshots` field | `TicketBlock` field | Notes |
+|---|---|---|
+| `broadway_event_id` (bigint) | `event_id` (on `AvailabilitySnapshot`) | from wrapper |
+| `captured_at_utc` (timestamptz) | `captured_at_utc` | client clock |
+| `price_index` (bigint) | `TicketBlock.price_id` | `PriceId` — unique per block |
+| `section_name` (text) | `TicketBlock.section_name` | `SectionName` |
+| `area_name` (text) | `TicketBlock.area_name` | `AreaName` |
+| `row_name` (text) | `TicketBlock.row_name` | `RowName` |
+| `ticket_type` (text) | `TicketBlock.ticket_type` | `TicketTypeName` (Standard/Premium) |
+| `face_price` (numeric) | `TicketBlock.price` | `TicketPrice` |
+| `fee` (numeric) | `TicketBlock.fee` | `ServiceFee` |
+| `original_price` (numeric, nullable) | `TicketBlock.original_price` | `OriginalTicketPrice` (discount) |
+| `quantity` (int) | `TicketBlock.quantity` | `Quantity` (block size) |
+| `quality` (int, nullable) | `TicketBlock.quality` | `Quality` (Broadway internal score) |
+| `is_ga` (bool) | `TicketBlock.is_ga` | `IsGA` |
+| `can_split` (bool) | `TicketBlock.can_split` | `CanSplitBlock` |
+| `price_name` (text, nullable) | `TicketBlock.price_name` | `PriceName` |
+| `ticket_block_id` (text, nullable) | `TicketBlock.ticket_block_id` | `TicketBlockId` |
+| `section_id` (int, nullable) | `TicketBlock.section_id` | `SectionId` |
+| `area_id` (int, nullable) | `TicketBlock.area_id` | `AreaId` |
+| `broadway_show_id` (bigint) | from `AvailabilitySnapshot.event_id` upstream join | |
 
 ### Retention — 30 days for raw, indefinite for metrics
 
@@ -233,6 +271,27 @@ Rows in this view = events that have missed their cadence. Surfaces via:
 - Dashboard panel (D2-owned)
 - Daily `bot_chat_log` flag if `count(*) > 0`
 - A1's existing aging-sweep cron picks up the flag
+
+## Transport (2026-05-24)
+
+Broadway.com's 2026-05-24 redesign rendered the `requests`-based GET
+collection path non-viable:
+
+| Layer | Old | New (2026-05-24) |
+|---|---|---|
+| **Bootstrap response** | `data.sections[]` inline inventory | `event_polling_enabled=true`, no sections |
+| **Inventory source** | Inline in bootstrap HTML | Async POST `.../sections/` |
+| **Gate** | None — plain GET | Fastly JS "Client Challenge" + reCAPTCHA Enterprise + session CSRF |
+| **Response schema** | `SectionListing` (camelCase) | `TicketBlock` (PascalCase, per-seat-block) |
+| **Parser** | `_snapshot_from_payload` → `SectionsSnapshot` | `parse_availability` → `AvailabilitySnapshot` |
+| **Collection host** | Deno edge function (planned) | Chrome extension MV3 (interim) / Playwright worker |
+| **RULE 2 strategy** | GET-only requests client | OBSERVE page's own XHR — never issue POST |
+
+The Chrome extension at `broadway_extension/` is the current interim
+host. It runs in residential Chrome, lets the page solve Fastly +
+reCAPTCHA, tees the availability XHR in the MAIN world, parses via
+`parse_availability.js` (JS port of the Python parser, fixture-verified),
+and ships to a configurable ingest endpoint.
 
 ## Implementation order
 
