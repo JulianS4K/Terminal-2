@@ -5,6 +5,7 @@ import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, UserPlus, ShieldAlert, Send, Check, Copy } from 'lucide-react';
 import { queueEmail } from '../lib/mail';
+import { publicUrl } from '../lib/utils';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 
@@ -104,7 +105,7 @@ export default function TransferTicket() {
   // instead of the form. The sender keeps the page open, copies the
   // claim link, and pastes it into whatever messaging app they prefer.
   if (completedTransferId) {
-    const claimUrl = `${window.location.origin}/claim/${completedTransferId}`;
+    const claimUrl = publicUrl(`claim/${completedTransferId}`);
     const handleCopy = async () => {
       try {
         await navigator.clipboard.writeText(claimUrl);

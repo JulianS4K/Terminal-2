@@ -38,6 +38,13 @@
   // localStorage so the preference survives reloads.
   const _ALERTS_LS_KEY = 'd0_chart_show_alerts';
   let _showAlerts = (typeof localStorage !== 'undefined' && localStorage.getItem(_ALERTS_LS_KEY) === '1');
+  // ESPN overlay markers (injury / game-state) ON by default; toggle via the
+  // ESPN chip in the overlay legend, persisted in localStorage.
+  const _ESPN_LS_KEY = 'd0_chart_show_espn';
+  let _showEspn = !(typeof localStorage !== 'undefined' && localStorage.getItem(_ESPN_LS_KEY) === '0');
+  // Cached v2 `espn` payload (team_standings / injuries / recent_results) — used
+  // by the chart's ESPN context strip + marker tooltips for team-name lookup.
+  let _espnInfo = null;
   // Legend toggle state (session-scope, shared map — keys are globally unique).
   const _chartVisible = new Map();
   // Per-chart build caches so each tooltip can read its own series at cursor.idx.
@@ -53,8 +60,20 @@
   // TD listing-count time series for the inventory chart overlay.
   // Shape: { sh: [{t,v}], gt: [{t,v}], vd: [{t,v}] } — counts not medians.
   let _tdInvCountSeries = null;
+  // Durable cross-source daily series (event_listing_snapshot_daily — INDEFINITE
+  // retention per the 2026-05-31 ladder, mig 20260531180000). This is the
+  // LONG-HORIZON backbone: it is spliced in BEFORE the fine-grained series so a
+  // line keeps going past the 30d firehose / 120d event_metrics sweep windows
+  // instead of cutting off (the retention-mismatch fix). The table is young
+  // (started 2026-05-27) so depth is shallow today and deepens as it fills.
+  // Shape: { med:{evo_owned,evo_mkt,sg_list,sg_own,sh,gt,vd}, cnt:{evo_own,evo_tix,sg_tix,sh,gt,vd} }.
+  let _dailyDurable = null;
   // Initialize TD inv series as hidden by default (user-togglable in legend).
   ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
+  // Declutter the default view (UI rebuild 2026-06-03): the redundant/secondary
+  // medians start hidden — the user opts them in from the legend. Keeps the
+  // first paint to one clean line per source instead of 9 overlapping lines.
+  ['prices_nonowned', 'sg_own_med'].forEach(k => _chartVisible.set(k, false));
 
   // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
   // event is currently in the merged-7d slot of event_movers_index. Async +
@@ -121,6 +140,8 @@
     loadCrossPlatformSales(eventId).catch(e => console.error('[crossSales]', e));
     loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
     loadHeroGapChips(eventId).catch(e => console.error('[gapChips]', e));
+    loadSourceLinks(eventId).catch(e => console.error('[sourceLinks]', e));
+    wireTrackButton(eventId).catch(e => console.error('[track]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
     loadChartExtended('inv',   eventId, _chartInvHours  ).catch(e => console.error('[chartExt inv]', e));
@@ -300,6 +321,7 @@
       if (lbl) lbl.textContent = lblTxt;
       const aw = document.getElementById('alertsWindow');
       if (aw) aw.textContent = lblTxt;
+      updateLayerHint(hrs);
       _chartExtStatePrice.payload = undefined;
       _chartExtStateInv.payload   = undefined;
       // Re-render both panes immediately with the new window clip (cached v3 data)
@@ -317,6 +339,20 @@
       loadChartExtended('inv', eventId, _chartInvHours)
         .catch(e => console.error('[chartExt inv]', e));
     });
+    updateLayerHint(_chartPriceHours);
+  }
+
+  // Data-layer hint: above the 30d firehose sweep window the durable daily
+  // snapshot is the only history, so emphasize that the line goes hybrid. ≤30d
+  // is purely high-resolution. Honest about which layer the user is looking at.
+  function updateLayerHint(hours) {
+    const el = document.getElementById('chartLayerHint');
+    if (!el) return;
+    const hybrid = (hours || DEFAULT_HOURS) > 720;
+    el.classList.toggle('hybrid', hybrid);
+    el.innerHTML = hybrid
+      ? '● hourly &nbsp;+&nbsp; <b>○ daily history</b>'
+      : '● hourly';
   }
 
   function wireAlertsToggle() {
@@ -512,6 +548,7 @@
     document.getElementById('evTitle').textContent = ev.name || `Event ${ev.id || ''}`;
     document.getElementById('evVenue').textContent = ev.venue_name || ev.venue || '—';
     document.getElementById('evDate').textContent  = T.fmtDate(ev.occurs_at_local || ev.occurs_at);
+    _eventStartMs = Date.parse(ev.occurs_at_local || ev.occurs_at || '') || NaN;
 
     const badges = document.getElementById('evBadges');
     badges.innerHTML = '';
@@ -715,6 +752,13 @@
     grid: { stroke: AXIS_GRID, width: 1 },
     ticks: { stroke: AXIS_TICKS, size: 6 },
   };
+  // Top (price) pane x-axis: keep the vertical gridlines + ticks for alignment,
+  // but blank the date labels — only the bottom (inventory) pane shows the date
+  // row, so the shared time axis isn't printed twice between the stacked panes.
+  const X_AXIS_TOP = Object.assign({}, X_AXIS, {
+    values: (u, splits) => splits.map(() => ''),
+    size: 16,
+  });
 
   // Helpers shared by both chart renderers
   function buildSeriesData(specs) {
@@ -732,14 +776,46 @@
     return { xs, specs };
   }
 
+  // Splice a durable daily series UNDER a fine-grained series (retention-mismatch
+  // fix, UI rebuild 2026-06-03). `fine` = high-resolution recent points
+  // (event_metrics / SG firehose, capped at the source's sweep window); `daily` =
+  // low-resolution but INDEFINITELY-retained points from
+  // event_listing_snapshot_daily. We keep every fine point and prepend only the
+  // daily points OLDER than the earliest fine point, yielding ONE continuous line
+  // per source whose history depth = max(both layers) — so SG no longer stops at
+  // 30d while TEvo runs to 120d. Both inputs are chronological {t,v}.
+  function mergeDurable(fine, daily) {
+    fine = fine || []; daily = daily || [];
+    if (!daily.length) return fine;
+    if (!fine.length) return daily;
+    let firstFineMs = Infinity;
+    for (const p of fine) { const ms = new Date(p.t).getTime(); if (ms < firstFineMs) firstFineMs = ms; }
+    const older = daily.filter(p => new Date(p.t).getTime() < firstFineMs);
+    return older.length ? older.concat(fine) : fine;
+  }
+
+  // Convenience: pull a durable median/count series by key, [] when not loaded yet.
+  function durMed(key) { return (_dailyDurable && _dailyDurable.med && _dailyDurable.med[key]) || []; }
+  function durCnt(key) { return (_dailyDurable && _dailyDurable.cnt && _dailyDurable.cnt[key]) || []; }
+
   // X-axis clip range for a given hours window. Returns [minSec, maxSec].
-  // If the series data is older than the window, uPlot clips to the window
-  // (showing an empty area for the missing time); if newer, the data fits.
+  // The left edge is the requested window start clamped FORWARD to the first
+  // data point, so a window wider than the available history (esp. ALL =
+  // 4320h/180d) never pads the axis with empty pre-data space. The axis then
+  // spans only the days we actually have chart data for — selecting ALL fits
+  // to all-available-data instead of a fixed 180-day frame.
   function clipRangeForHours(hours, xs) {
     if (!xs || !xs.length) return undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    const minSec = nowSec - hours * 3600;
+    const reqMin = nowSec - hours * 3600;
+    const dataMin = xs[0];                 // xs is chronological (buildSeriesData sorts)
     const dataMax = xs[xs.length - 1];
+    // Fit-to-history (UI rebuild 2026-06-03): when the window is WIDER than the
+    // history we actually have (e.g. 1y/ALL on the young durable table), clamp
+    // the left edge to the earliest real point so we don't render a vast empty
+    // gutter with the data crammed at the right. When we have MORE history than
+    // the window (short ranges), reqMin wins and the window is honored as before.
+    const minSec = Math.max(reqMin, dataMin);
     // Right edge: max(now, dataMax) so a future-dated event still shows its
     // most recent snapshot inside the window.
     return [minSec, Math.max(nowSec, dataMax)];
@@ -759,18 +835,44 @@
     const extSeries = (ext && ext.series) || {};
 
     const tdS = _tdChartSeries || {};
+    // Each median line splices its durable daily history (long horizon, indefinite)
+    // under its fine-grained recent points so the line is continuous past the
+    // firehose/event_metrics sweep windows. TD lines ARE the daily series already.
+    // Visual rebuild: one hue per source (owned = solid bold, market = thin solid,
+    // secondary = dotted), no more competing dash patterns.
     const specs = [
-      { key: 'prices_owned',    label: 'TEvo Owned',     color: '#fbbf24', width: 2,   dash: null,   data: chart.prices_owned },
-      { key: 'prices_market',   label: 'TEvo Market',    color: '#737373', width: 1.5, dash: [4, 4], data: chart.prices_market },
-      { key: 'prices_nonowned', label: 'TEvo Non-owned', color: '#a78bfa', width: 1.5, dash: [6, 3], data: chart.prices_nonowned },
-      { key: 'sg_list_med',     label: 'SG list med',    color: '#22d3ee', width: 1.5, dash: null,   data: extSeries.sg_listings_median       || [] },
-      { key: 'sg_own_med',      label: 'SG owned med',   color: '#fb7185', width: 1.5, dash: [3, 3], data: extSeries.sg_listings_owned_median || [] },
-      { key: 'sg_sale_med',     label: 'SG sale med',    color: '#84cc16', width: 1.5, dash: [5, 2], data: extSeries.sg_sales_median          || [] },
-      { key: 'td_sh_med',       label: 'SH median',      color: '#f97316', width: 1.5, dash: [8, 3], data: tdS.sh || [] },
-      { key: 'td_gt_med',       label: 'GT median',      color: '#34d399', width: 1.5, dash: [8, 3], data: tdS.gt || [] },
-      { key: 'td_vd_med',       label: 'VD median',      color: '#c084fc', width: 1.5, dash: [8, 3], data: tdS.vd || [] },
+      { key: 'prices_owned',    label: 'TEvo owned',  color: '#fbbf24', width: 2,   dash: null,    data: mergeDurable(chart.prices_owned,    durMed('evo_owned')) },
+      { key: 'prices_market',   label: 'TEvo market', color: '#a8a29e', width: 1.25, dash: null,   data: mergeDurable(chart.prices_market,   durMed('evo_mkt')) },
+      { key: 'prices_nonowned', label: 'TEvo non-own',color: '#a78bfa', width: 1,   dash: [2, 3],  data: chart.prices_nonowned },
+      { key: 'sg_list_med',     label: 'SG market',   color: '#22d3ee', width: 1.5, dash: null,    data: mergeDurable(extSeries.sg_listings_median       || [], durMed('sg_list')) },
+      { key: 'sg_own_med',      label: 'SG owned',    color: '#fb7185', width: 1,   dash: [2, 3],  data: mergeDurable(extSeries.sg_listings_owned_median || [], durMed('sg_own')) },
+      { key: 'sg_sale_med',     label: 'SG sales',    color: '#84cc16', width: 1.5, dash: [6, 3],  data: extSeries.sg_sales_median          || [] },
+      { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
+      { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
+      { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
     ];
     const { xs } = buildSeriesData(specs);
+
+    // "Overall median" — quantity-weighted, carry-forward consensus across all
+    // listing sources: EVO (live) + SG (live) + the six TicketsData books
+    // (SH/GT/VD/TP/TM/TMr, carried at their own cadence). Weighted by each
+    // source's listing count; slow books are assumed-till-next-refresh and only
+    // dropped when stranded past 3×τ. Drawn last (bold white) as the headline.
+    const tdF = _tdFamily || {};
+    const tdSrc = (k) => ({ med: (tdF[k] && tdF[k].med) || [], cnt: (tdF[k] && tdF[k].cnt) || [] });
+    const overallProjected = buildOverallConsensus(xs, [
+      { cad: 'EVO', med: chart.prices_market || [],               cnt: chart.counts_market || [] },
+      { cad: 'SG',  med: extSeries.sg_listings_median || [],       cnt: extSeries.sg_listings_count || [] },
+      { cad: 'SH',  ...tdSrc('sh') },
+      { cad: 'GT',  ...tdSrc('gt') },
+      { cad: 'VD',  ...tdSrc('vd') },
+      { cad: 'TP',  ...tdSrc('tp') },
+      { cad: 'TM',  ...tdSrc('tm') },
+      { cad: 'TMr', ...tdSrc('tmr') },
+    ]);
+    specs.push({ key: 'overall_med', label: 'Overall median', color: '#ffffff',
+                 width: 3, dash: null, data: [], projected: overallProjected });
+
     _chartLastBuildPrice = { specs, xs };
 
     const xRange = clipRangeForHours(_chartPriceHours, xs);
@@ -784,7 +886,7 @@
         y: { range: robustYRange },
       },
       axes: [
-        X_AXIS,
+        X_AXIS_TOP,
         { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
@@ -801,14 +903,18 @@
       ],
       hooks: {
         draw: [
+          // Off-peak (after-hours) shading first so it sits under the markers.
+          (u) => drawOffPeakBands(u),
           // Read _showAlerts at draw time so the toggle takes effect via redraw()
           // without rebuilding the chart instance.
           (u) => drawAlertsMarkers(u, _showAlerts ? (_chartExtAlerts || []) : []),
-          (u) => drawInjuryMarkers(u, ext && ext.annotations && ext.annotations.injuries),
-          (u) => drawGameStateMarkers(u, ext && ext.annotations && ext.annotations.game_state),
         ],
-        ready:   [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
-        setSize: [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
+        // ESPN markers are visible + hoverable DOM glyphs (not canvas) so the
+        // hit-target always lines up with the glyph. Re-place them on ready /
+        // resize / scale-change (drag-zoom) so they track the data.
+        ready:    [(u) => renderEspnMarkers(u, host)],
+        setSize:  [(u) => renderEspnMarkers(u, host)],
+        setScale: [(u) => renderEspnMarkers(u, host)],
         setCursor: [(u) => updateChartTooltipFor('price', u)],
       },
     };
@@ -824,31 +930,136 @@
     }
   }
 
-  // Robust Y-axis range. uPlot's default auto-scale spans data min→max, so a
-  // single outlier (e.g. a $500+ suite sale spiking a median bucket) blows the
-  // axis out and compresses the $4-60 trading band into an unreadable sliver.
-  // This clips the top to ~p95 ONLY when a real outlier exists (real max > 1.5×
-  // p95); otherwise it shows the full range. Lines above the cap clip off-top.
+  // Y-axis range — always 10% above the maximum value currently in view.
+  //
+  // `initMax` is supplied by uPlot already scoped to (a) only the series on THIS
+  // scale and (b) only the points inside the current x-window, so the top tracks
+  // the on-screen data as the time range changes or prices climb toward the
+  // event — no line is ever clipped, and a single spike just lifts the top.
   function robustYRange(u, initMin, initMax) {
-    var fallback = [0, (initMax == null || !isFinite(initMax)) ? 1 : initMax];
-    if (!u || !u.series || !u.data) return fallback;
-    var vals = [];
-    for (var i = 1; i < u.series.length; i++) {
-      if (u.series[i] && u.series[i].show === false) continue;
-      var d = u.data[i]; if (!d) continue;
-      for (var j = 0; j < d.length; j++) {
-        var v = d[j]; if (v != null && isFinite(v)) vals.push(v);
-      }
-    }
-    if (!vals.length) return fallback;
-    vals.sort(function (a, b) { return a - b; });
-    var p95 = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))];
-    var realMax = vals[vals.length - 1];
-    var top = (realMax <= p95 * 1.5) ? realMax * 1.08 : Math.max(p95 * 1.1, 1);
-    return [0, top > 0 ? top : 1];
+    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
+    return [0, mx > 0 ? mx * 1.1 : 1];
   }
 
-  // ---------- INVENTORY CHART ----------
+  // Count-axis range — for the inventory pane's integer count scales (left 'y'
+  // lines + right 'yr' bars). uPlot's initMax is already per-scale + in-view, so
+  // this is adaptive and (unlike robustYRange) never folds the other axis's
+  // series into the range. 10% headroom (matches the price pane) keeps the
+  // tallest line/bar off the frame.
+  function countYRange(u, initMin, initMax) {
+    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
+    return [0, mx > 0 ? mx * 1.1 : 1];
+  }
+
+  // Integer-only tick increments for count axes — prevents uPlot from picking
+  // fractional steps (0.5, 0.2…) that round to duplicate labels ("1,1,2,2").
+  const COUNT_INCRS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+
+  // ---------- Overall (cross-source) market median ----------
+  // Quantity-weighted consensus across all listing sources, with after-hours
+  // carry-forward: each source contributes its LATEST reading (assumed to hold
+  // until its next refresh), weighted by its listing count. A source drops out
+  // only once it's stale past 3× its expected refresh interval τ — and τ is
+  // per-source from OBSERVED cadence (EVO 15min live · SG ~1h · TicketsData
+  // SH~90m/VD~180m/GT·TM~6h/TP·TMr~8h), not the cron schedule. Off-peak (ET
+  // 0-11) the slow books are simply carried = the "after-hours" session.
+  let _tdFamily = null;     // { sh:{med,cnt}, gt, vd, tp, tm, tmr } from loadTdFreshness
+  let _eventStartMs = NaN;  // event start (horizon-aware τ for EVO/SG)
+  let _overallShade = null; // [{x0,x1}] off-peak spans (sec) for the draw hook
+
+  function _isPeakEt(ms) {
+    // Peak = ET 12:00–23:59 (matches collector_band). DST-correct via Intl.
+    const h = parseInt(new Date(ms).toLocaleString('en-US',
+      { timeZone: 'America/New_York', hour: 'numeric', hour12: false }), 10);
+    return h >= 12 && h <= 23;
+  }
+  // Expected refresh interval (minutes) — the basis for the stranded cut-off
+  // (stranded once age > 3×τ). NOTE: these are tuned to the data the CLIENT
+  // actually has: EVO/SG from the live payloads, but TicketsData from the
+  // 3-slot/day DAILY ROLLUP (≈14 h overnight gap), so TD τ must be loose enough
+  // to carry overnight rather than strand. The SERVER/firehose version (which
+  // reads ticketsdata_listings_snapshots at the real per-platform 3–19×/day
+  // cadence) uses the tighter per-platform τ. Values err toward CARRYING so the
+  // line stays continuous; a source drops only on genuine multi-cycle absence.
+  function _tauMin(cad, hrs, isPeak) {
+    if (cad === 'EVO') {
+      if (hrs <= 168) return 120;          // ~2 h grace ⇒ stranded ~6 h
+      if (hrs <= 336) return isPeak ? 180 : 240;
+      if (hrs <= 720) return 360;
+      return 1440;
+    }
+    if (cad === 'SG') {
+      if (hrs <= 168) return 180;          // stranded ~9 h
+      if (hrs <= 336) return 360;
+      return 1440;
+    }
+    return 600;                            // TicketsData (rollup) ⇒ stranded ~30 h
+  }
+  // Forward-fill (carry) a [{t,v}] series onto the seconds axis xs, tracking the
+  // timestamp of the last real observation per bucket (for staleness/age).
+  function _carryProject(pts, xs) {
+    const obs = (pts || [])
+      .map(p => ({ t: Math.round(new Date(p.t).getTime() / 1000), v: +p.v }))
+      .filter(o => isFinite(o.v))
+      .sort((a, b) => a.t - b.t);
+    const val = new Array(xs.length).fill(null);
+    const obsT = new Array(xs.length).fill(null);
+    let j = 0, lv = null, lt = null;
+    for (let i = 0; i < xs.length; i++) {
+      while (j < obs.length && obs[j].t <= xs[i]) { lv = obs[j].v; lt = obs[j].t; j++; }
+      val[i] = lv; obsT[i] = lt;
+    }
+    return { val, obsT };
+  }
+  function _wMedian(pairs) {   // pairs: [{m, w}] — lower weighted median
+    if (!pairs.length) return null;
+    pairs.sort((a, b) => a.m - b.m);
+    const total = pairs.reduce((s, p) => s + p.w, 0);
+    if (total <= 0) return null;
+    let cum = 0;
+    for (const p of pairs) { cum += p.w; if (cum >= total / 2) return p.m; }
+    return pairs[pairs.length - 1].m;
+  }
+  // sources: [{ cad, med:[{t,v}], cnt:[{t,v}] }] → per-bucket quantity-weighted
+  // median (null where no source is live). Also records off-peak spans for shading.
+  function buildOverallConsensus(xs, sources) {
+    const K = 3; // grace: drop a source once age > K×τ (stranded)
+    const prep = sources.map(s => ({ cad: s.cad, mP: _carryProject(s.med, xs), cP: _carryProject(s.cnt, xs) }));
+    const med = new Array(xs.length).fill(null);
+    const shade = [];
+    let runStart = null;
+    for (let i = 0; i < xs.length; i++) {
+      const ms = xs[i] * 1000;
+      const isPeak = _isPeakEt(ms);
+      const hrs = isFinite(_eventStartMs) ? Math.max(0, (_eventStartMs - ms) / 3600000) : 9999;
+      const pairs = [];
+      for (const p of prep) {
+        const m = p.mP.val[i], c = p.cP.val[i], ot = p.mP.obsT[i];
+        if (m == null || c == null || c <= 0 || ot == null) continue;
+        if ((xs[i] - ot) / 60 > K * _tauMin(p.cad, hrs, isPeak)) continue; // stranded
+        pairs.push({ m: m, w: c });
+      }
+      med[i] = _wMedian(pairs);
+      if (!isPeak && med[i] != null) { if (runStart == null) runStart = xs[i]; }
+      else if (runStart != null) { shade.push({ x0: runStart, x1: xs[i] }); runStart = null; }
+    }
+    if (runStart != null) shade.push({ x0: runStart, x1: xs[xs.length - 1] });
+    _overallShade = shade;
+    return med;
+  }
+  // Faint background tint over off-peak (after-hours) spans on the price pane.
+  function drawOffPeakBands(u) {
+    if (!_overallShade || !_overallShade.length || !u.ctx) return;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.fillStyle = 'rgba(120,130,170,0.05)';
+    _overallShade.forEach(b => {
+      const x0 = u.valToPos(b.x0, 'x', true);
+      const x1 = u.valToPos(b.x1, 'x', true);
+      ctx.fillRect(x0, u.bbox.top, Math.max(1, x1 - x0), u.bbox.height);
+    });
+    ctx.restore();
+  }
   // 3 line series on left Y-axis (integer ticket counts) + 1 bar series on
   // right Y-axis (SG sale count). uPlot supports per-series scales natively;
   // right axis registered as scale 'yr' with side=1.
@@ -862,9 +1073,9 @@
     const extSeries = (ext && ext.series) || {};
 
     const specs = [
-      { key: 'counts_owned',  label: 'TEvo Owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: chart.counts_owned },
-      { key: 'counts_market', label: 'TEvo Mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: chart.counts_market },
-      { key: 'sg_list_ct',    label: 'SG list qty',    color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: extSeries.sg_listings_count || [] },
+      { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
+      { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
+      { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
       { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.sg_sales_count || [] },
     ];
     // Overlay TD listing-count series (dashed, hidden by default — user-togglable)
@@ -891,19 +1102,21 @@
       cursor: { drag: { x: true, y: false } },
       scales: {
         x:  { time: true, range: xRange ? (() => xRange) : undefined },
-        y:  { range: robustYRange },
-        yr: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] },
+        y:  { range: countYRange },
+        yr: { range: countYRange },
       },
       axes: [
         X_AXIS,
         { scale: 'y',  side: 3, stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
+          incrs: COUNT_INCRS,
           values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
           size: 56 },
         { scale: 'yr', side: 1, stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { show: false },
           ticks: { stroke: AXIS_TICKS, size: 6 },
+          incrs: COUNT_INCRS,
           values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
           size: 48 },
       ],
@@ -1025,54 +1238,24 @@
     return '#60a5fa';
   }
 
-  // Injury transition canvas marker — small "+" near top of chart, magenta.
-  // Same canvas-px coordinate convention as drawAlertsMarkers (canPos=true).
-  function drawInjuryMarkers(u, injuries) {
-    if (!injuries || !injuries.length || !u.ctx) return;
-    const ctx = u.ctx;
-    ctx.save();
-    ctx.strokeStyle = '#ec4899'; // pink/magenta — distinct from yellow/red alert palette
-    ctx.lineWidth = 2;
-    injuries.forEach(a => {
-      if (!a.at) return;
-      const tSec = Math.round(new Date(a.at).getTime() / 1000);
-      const x = u.valToPos(tSec, 'x', true);
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const y = u.bbox.top + 14;
-      // small cross
-      ctx.beginPath();
-      ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y);
-      ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3);
-      ctx.stroke();
-    });
-    ctx.restore();
+  // ESPN annotation markers — pink "+" (injury status change) + teal "◆" (game
+  // state change) near the top of the price pane. Rendered as VISIBLE, hoverable
+  // DOM glyphs in the .chart-anno-host overlay (the prior implementation drew a
+  // canvas glyph but put the hover hit-target in a host-spanning overlay WITHOUT
+  // the y-axis-gutter offset, so the target sat ~1 axis-width left of the glyph
+  // and hover almost never landed). Positioning now adds u.over's offset so the
+  // glyph == the hit-target, and it is re-placed on ready/setSize/setScale.
+  function injMarkerTip(a) {
+    const team = espnTeamName(a.espn_team_id);
+    return `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'}${team ? ' · ' + team : ''}): ` +
+           `${a.prev_status || '—'} → ${a.new_status || '—'}`;
   }
-
-  // Game-state transition canvas marker — small square near top of chart, teal.
-  function drawGameStateMarkers(u, states) {
-    if (!states || !states.length || !u.ctx) return;
-    const ctx = u.ctx;
-    ctx.save();
-    ctx.fillStyle = '#14b8a6'; // teal
-    states.forEach(s => {
-      if (!s.at) return;
-      const tSec = Math.round(new Date(s.at).getTime() / 1000);
-      const x = u.valToPos(tSec, 'x', true);
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const y = u.bbox.top + 26;
-      ctx.fillRect(x - 3, y - 3, 6, 6);
-    });
-    ctx.restore();
+  function gsMarkerTip(s) {
+    return `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`;
   }
-
-  // DOM-overlay tooltips for annotations (canvas can't host hover tooltips natively).
-  // Sibling absolute-positioned dots over the chart canvas; native title= attribute
-  // for hover text. Cheap + zero plugin deps. Re-run on uPlot ready + setSize.
-  function renderAnnotationTooltips(u, host, annotations) {
-    if (!annotations) return;
+  function renderEspnMarkers(u, host) {
     let overlay = host.querySelector('.chart-anno-host');
     if (!overlay) {
-      // Ensure host is positioned for absolute children
       const cs = window.getComputedStyle(host);
       if (cs.position === 'static') host.style.position = 'relative';
       overlay = document.createElement('div');
@@ -1080,25 +1263,29 @@
       host.appendChild(overlay);
     }
     overlay.innerHTML = '';
-    const inj = annotations.injuries || [];
-    const gs  = annotations.game_state || [];
-    const addDot = (t, kind, tip) => {
+    if (!_showEspn || !u.over) return;
+    const ext = _chartExtStatePrice.payload;
+    const ann = ext && ext.annotations;
+    if (!ann) return;
+    const ox = u.over.offsetLeft, oy = u.over.offsetTop, ow = u.over.offsetWidth;
+    const place = (t, cls, glyph, tip) => {
+      if (!t) return;
       const tSec = Math.round(new Date(t).getTime() / 1000);
-      // canPos=false → CSS pixels (matches DOM coordinate space)
-      const x = u.valToPos(tSec, 'x');
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const yOffset = kind === 'inj' ? 12 : 24;
-      const dot = document.createElement('div');
-      dot.className = 'chart-anno-dot anno-' + kind;
-      dot.style.left = (x - 5) + 'px';
-      dot.style.top = (u.bbox.top + yOffset - 5) + 'px';
-      dot.title = tip;
-      overlay.appendChild(dot);
+      const px = u.valToPos(tSec, 'x'); // CSS px relative to the plot area
+      if (px < 0 || px > ow) return;
+      const el = document.createElement('div');
+      el.className = 'espn-marker ' + cls;
+      el.style.left = (ox + px) + 'px';
+      el.style.top  = (oy + (cls === 'em-gs' ? 22 : 7)) + 'px';
+      el.title = tip;
+      el.textContent = glyph;
+      overlay.appendChild(el);
     };
-    inj.forEach(a => addDot(a.at, 'inj',
-      `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'} · team ${a.espn_team_id || '?'}): ${a.prev_status || '—'} → ${a.new_status || '—'}`));
-    gs.forEach(s => addDot(s.at, 'gs',
-      `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`));
+    // De-noise: skip first-seen "transitions" (prev_status == null) — those are
+    // just players already injured when the window opened, not status-change
+    // events, and they pile into an indistinct cluster at the window's left edge.
+    (ann.injuries || []).forEach(a => { if (a.prev_status != null) place(a.at, 'em-inj', '+', injMarkerTip(a)); });
+    (ann.game_state || []).forEach(s => place(s.at, 'em-gs', '◆', gsMarkerTip(s)));
   }
 
   // Shared legend renderer — chartKey selects which build cache + DOM target.
@@ -1239,14 +1426,30 @@
       (ann.injuries && ann.injuries.length) ||
       (ann.game_state && ann.game_state.length)));
     const slots = [
-      { label: 'ESPN',    live: hasEspn, hint: hasEspn ? 'injury / game-state markers on price pane' : 'no ESPN markers for this event' },
-      { label: 'Weather', live: false,   hint: 'reserved — NWS alert windows (pending)' },
-      { label: 'Macro',   live: false,   hint: 'reserved — UMCSENT background band (pending)' },
-      { label: 'Signals', live: false,   hint: 'reserved — movers / gap markers (pending)' },
+      { key: 'espn', label: 'ESPN', live: hasEspn, toggle: hasEspn, on: _showEspn,
+        hint: hasEspn ? (_showEspn ? 'ESPN markers ON — click to hide' : 'ESPN markers HIDDEN — click to show')
+                      : 'no ESPN markers for this event' },
+      { label: 'Weather', live: false, hint: 'reserved — NWS alert windows (pending)' },
+      { label: 'Macro',   live: false, hint: 'reserved — UMCSENT background band (pending)' },
+      { label: 'Signals', live: false, hint: 'reserved — movers / gap markers (pending)' },
     ];
-    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s =>
-      `<span class="overlay-chip ${s.live ? 'live' : 'pending'}" title="${escapeHtml(s.hint)}">` +
-      `${escapeHtml(s.label)} ${s.live ? '●' : '○'}</span>`).join('');
+    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s => {
+      const cls = s.toggle ? (s.on ? 'live' : 'off') + ' toggleable' : (s.live ? 'live' : 'pending');
+      const dot = !s.live ? '○' : (s.toggle && !s.on ? '◍' : '●');
+      return `<span class="overlay-chip ${cls}"${s.key ? ` data-overlay="${s.key}"` : ''} title="${escapeHtml(s.hint)}">` +
+             `${escapeHtml(s.label)} ${dot}</span>`;
+    }).join('');
+    const espnChip = el.querySelector('.overlay-chip.toggleable[data-overlay="espn"]');
+    if (espnChip) {
+      espnChip.addEventListener('click', () => {
+        _showEspn = !_showEspn;
+        try { localStorage.setItem(_ESPN_LS_KEY, _showEspn ? '1' : '0'); } catch (_) {}
+        const inst = _chartInstances.price;
+        const host = document.getElementById('chartHostPrice');
+        if (inst && host) renderEspnMarkers(inst, host);
+        renderChartOverlayLegend();
+      });
+    }
   }
 
   // Refresh every chart legend surface at once — the two detailed per-series
@@ -1545,7 +1748,91 @@
 
   // ---------- ESPN ----------
 
+  // Resolve team names from the event title ("AWAY at HOME") + the espn payload's
+  // home/away ids, so ESPN surfaces show "Yankees" not "team 10". No RPC needed.
+  function espnTeams() {
+    const info = _espnInfo || {};
+    const titleEl = document.getElementById('evTitle');
+    const title = titleEl ? (titleEl.textContent || '') : '';
+    let awayName = '', homeName = '';
+    const parts = title.split(/\s+at\s+/i);
+    if (parts.length === 2) { awayName = parts[0].trim(); homeName = parts[1].trim(); }
+    return {
+      homeId: String(info.home_team_id != null ? info.home_team_id : ''),
+      awayId: String(info.away_team_id != null ? info.away_team_id : ''),
+      homeName, awayName,
+    };
+  }
+  function espnTeamName(teamId) {
+    if (teamId == null) return '';
+    const id = String(teamId), t = espnTeams();
+    if (id === t.homeId && t.homeName) return t.homeName;
+    if (id === t.awayId && t.awayName) return t.awayName;
+    return 'team ' + id;
+  }
+  function espnShortName(n) {
+    if (!n) return '';
+    const parts = n.trim().split(/\s+/);
+    return parts[parts.length - 1]; // nickname, e.g. "Yankees"
+  }
+
+  // ESPN context strip in the chart section — per-team record / win% / seed /
+  // streak / injuries + last game, styled distinct from the market chart.
+  function renderEspnChartStrip() {
+    const el = document.getElementById('espnChartStrip');
+    if (!el) return;
+    const info = _espnInfo;
+    if (!info || info.hidden) { el.hidden = true; el.innerHTML = ''; return; }
+    const t = espnTeams();
+    const byId = {};
+    (info.team_standings || []).forEach(s => { byId[String(s.espn_team_id)] = s; });
+    const results = info.recent_results || [];
+    const injuries = info.injuries || [];
+    const injCount = id => injuries.filter(i => String(i.espn_team_id) === id).length;
+    const lastGame = id => {
+      const g = results.find(r => String(r.home_team_id) === id || String(r.away_team_id) === id);
+      if (!g) return '';
+      const isHome = String(g.home_team_id) === id;
+      const me = isHome ? g.home_score : g.away_score;
+      const opp = isHome ? g.away_score : g.home_score;
+      if (me == null || opp == null) return '';
+      const wl = me > opp ? 'w' : me < opp ? 'l' : 't';
+      const oppName = espnShortName(espnTeamName(isHome ? g.away_team_id : g.home_team_id));
+      return `<span class="espn-wl espn-wl-${wl}">${wl.toUpperCase()}</span> ${me}-${opp} ` +
+             `<span class="muted">${isHome ? 'vs' : '@'} ${escapeHtml(oppName)}</span>`;
+    };
+    const card = (id, name, tag) => {
+      const s = byId[id] || {};
+      const rec = s.record_summary || `${s.wins || 0}-${s.losses || 0}`;
+      const wp = s.win_pct != null ? Number(s.win_pct).toFixed(3).replace(/^0/, '') : '';
+      const seed = s.playoff_seed != null ? '#' + s.playoff_seed : '';
+      const inj = injCount(id);
+      const last = lastGame(id);
+      return `<div class="espn-team">` +
+        `<div class="espn-team-hd"><span class="espn-tag">${tag}</span> <span class="espn-team-nm">${escapeHtml(name || ('team ' + id))}</span></div>` +
+        `<div class="espn-team-line">` +
+          `<span class="espn-rec">${escapeHtml(rec)}</span>` +
+          (wp ? `<span class="muted">${wp}</span>` : '') +
+          (seed ? `<span class="espn-seed">${escapeHtml(seed)}</span>` : '') +
+          (s.streak ? `<span class="espn-streak">${escapeHtml(s.streak)}</span>` : '') +
+          (inj ? `<span class="espn-inj-chip" title="${inj} active injuries">&oplus; ${inj}</span>` : '') +
+        `</div>` +
+        `<div class="espn-team-last">${last || '<span class="muted">—</span>'}</div>` +
+      `</div>`;
+    };
+    const lg = info.espn_league ? String(info.espn_league).toUpperCase() : '';
+    el.innerHTML =
+      `<span class="espn-strip-badge">ESPN</span>` +
+      (lg ? `<span class="espn-strip-lg">${escapeHtml(lg)}</span>` : '') +
+      card(t.awayId, t.awayName, 'AWAY') +
+      `<span class="espn-strip-at">@</span>` +
+      card(t.homeId, t.homeName, 'HOME');
+    el.hidden = false;
+  }
+
   function renderEspn(espn) {
+    _espnInfo = (espn && !espn.hidden) ? espn : null;
+    renderEspnChartStrip();
     const section = document.getElementById('espn');
     const body = document.getElementById('espnBody');
     const subtitle = document.getElementById('espnSubtitle');
@@ -1935,6 +2222,282 @@
     return `${Math.round(min / 1440)}d`;
   }
 
+  // ---------- Track button (per-user watchlist) ----------
+  // The ★ toggle adds/removes this event from the signed-in user's watchlist
+  // (event_watchlist_set; identity = their Google-OAuth email server-side). On
+  // load we read the user's list once to reflect current state. Hidden entirely
+  // if the watchlist RPCs aren't applied yet.
+  async function wireTrackButton(eventId) {
+    const btn = document.getElementById('trackBtn');
+    if (!btn) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+
+    let tracked = false;
+    const listRes = await rpcOrNull('event_watchlist_list', {});
+    if (listRes.error) {
+      // RPC not applied yet → leave the button hidden (no half-feature).
+      if (/does not exist/i.test(listRes.error.message || '') || listRes.error.code === '42883') return;
+    } else {
+      const items = (listRes.data && listRes.data.items) || [];
+      tracked = items.some(it => String(it.tevo_event_id) === String(eventId));
+    }
+    paintTrackBtn(btn, tracked);
+    btn.hidden = false;
+
+    btn.addEventListener('click', async () => {
+      const next = !(btn.getAttribute('aria-pressed') === 'true');
+      btn.disabled = true;
+      const res = await rpcOrNull('event_watchlist_set', { p_event_id: eventId, p_on: next });
+      btn.disabled = false;
+      if (res.error) { console.error('[track] set', res.error); T.setStatus('Track failed', 'err'); return; }
+      paintTrackBtn(btn, next);
+    });
+  }
+
+  function paintTrackBtn(btn, tracked) {
+    btn.setAttribute('aria-pressed', tracked ? 'true' : 'false');
+    btn.classList.toggle('on', tracked);
+    btn.textContent = tracked ? '★ Tracking' : '☆ Track';
+    btn.title = tracked ? 'On your watchlist — click to remove' : 'Track this event on your watchlist';
+  }
+
+  // ---------- Watchlist & Alerts tab ----------
+  // A dedicated event-page tab: track/alert controls for THIS event, the alert
+  // destination (the signed-in Google email), recent fired alerts for this event,
+  // and the user's full watchlist. Re-renders on every activation so toggles
+  // stay live. Reuses the same SECDEF RPCs as the hero ★ and the home table.
+  async function loadAlertsTab(eventId) {
+    await renderAlertsThisEvent(eventId);
+    renderAlertsRecent();
+    await renderAlertsWatchlist(eventId);
+  }
+
+  function _wlRpcMissing(res) {
+    return !!(res && res.error && (res.error.code === '42883' || /does not exist/i.test(res.error.message || '')));
+  }
+
+  async function renderAlertsThisEvent(eventId) {
+    const body = document.getElementById('alertsThisEventBody');
+    if (!body) return;
+    const Auth = window.TerminalAuth;
+    const email = (Auth && Auth.getEmail && Auth.getEmail()) || '';
+    let tracked = false, alertOn = false, cadence = 'instant';
+    const res = await rpcOrNull('event_watchlist_list', {});
+    if (_wlRpcMissing(res)) {
+      body.innerHTML = '<div class="empty">Watchlist not enabled yet (RPC pending apply).</div>';
+      return;
+    }
+    if (!res.error) {
+      const me = ((res.data && res.data.items) || []).find(it => String(it.tevo_event_id) === String(eventId));
+      tracked = !!me;
+      alertOn = me ? me.alert_enabled !== false : false;
+      cadence = (me && me.alert_cadence) || 'instant';
+    }
+    body.innerHTML =
+      '<div class="alerts-ctl">' +
+        `<button id="alTrackBtn" class="track-btn ${tracked ? 'on' : ''}">${tracked ? '★ Tracking' : '☆ Track'}</button>` +
+        `<button id="alAlertBtn" class="wl-alert-btn ${alertOn ? 'on' : 'off'}" ${tracked ? '' : 'disabled'} title="Mute / unmute alerts for this event">${alertOn ? '🔔 Alerts on' : '🔕 Alerts off'}</button>` +
+        `<label class="al-cadence">delivery&nbsp;` +
+          `<select id="alCadence" ${tracked && alertOn ? '' : 'disabled'} title="How often you're emailed about this event">` +
+            `<option value="instant">Instant</option>` +
+            `<option value="hourly">Hourly summary</option>` +
+            `<option value="daily">Daily summary</option>` +
+          `</select></label>` +
+        `<span class="alerts-dest muted small">Alerts → <b>${escapeHtml(email || 'your login email')}</b></span>` +
+      '</div>' +
+      `<div class="muted small" style="margin-top:8px">Tracking adds this event to your watchlist (home screen). ` +
+      `Instant = emailed as alerts fire; Hourly/Daily = one digest so you're not spammed. ` +
+      `Delivery goes to the email above${tracked ? '.' : ' — track the event first.'}</div>` +
+      '<div style="margin-top:10px"><button id="alPreviewBtn" class="wl-page-btn">Preview alert email</button></div>' +
+      '<div id="alPreviewHost" class="alert-preview" hidden></div>';
+    const cadSel = document.getElementById('alCadence');
+    if (cadSel) cadSel.value = cadence;
+
+    const trackBtn = document.getElementById('alTrackBtn');
+    const alertBtn = document.getElementById('alAlertBtn');
+    trackBtn.addEventListener('click', async () => {
+      const next = !tracked;
+      trackBtn.disabled = true;
+      const r = await rpcOrNull('event_watchlist_set', { p_event_id: eventId, p_on: next });
+      if (r.error) { trackBtn.disabled = false; console.error('[alerts track]', r.error); return; }
+      const hero = document.getElementById('trackBtn'); if (hero) paintTrackBtn(hero, next);
+      await renderAlertsThisEvent(eventId);
+      await renderAlertsWatchlist(eventId);
+    });
+    alertBtn.addEventListener('click', async () => {
+      if (!tracked) return;
+      const next = !alertOn;
+      alertBtn.disabled = true;
+      const r = await rpcOrNull('event_watchlist_set_alert', { p_event_id: eventId, p_on: next });
+      if (r.error) { alertBtn.disabled = false; console.error('[alerts toggle]', r.error); return; }
+      await renderAlertsThisEvent(eventId);
+    });
+    if (cadSel) cadSel.addEventListener('change', async () => {
+      cadSel.disabled = true;
+      const r = await rpcOrNull('event_watchlist_set_cadence', { p_event_id: eventId, p_cadence: cadSel.value });
+      cadSel.disabled = false;
+      if (r.error) { console.error('[alerts cadence]', r.error); }
+    });
+    wireAlertPreview(eventId);
+  }
+
+  // Render the exact alert email (the user will receive) inside the tab so the
+  // template is reviewable in-app. Server returns the rendered HTML (real alerts
+  // if any, else a labelled sample). We inject it directly — inline styles only,
+  // permitted by style-src 'unsafe-inline'; the email's own dark wrapper shows.
+  function wireAlertPreview(eventId) {
+    const btn  = document.getElementById('alPreviewBtn');
+    const host = document.getElementById('alPreviewHost');
+    if (!btn || !host) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; const label = btn.textContent; btn.textContent = 'Rendering…';
+      const r = await rpcOrNull('preview_event_alert_email', { p_event_id: eventId });
+      btn.disabled = false; btn.textContent = label;
+      host.hidden = false;
+      if (r.error) {
+        host.innerHTML = _wlRpcMissing(r)
+          ? '<div class="empty">Preview RPC pending apply.</div>'
+          : '<div class="empty">Preview failed.</div>';
+        return;
+      }
+      const data = r.data || {};
+      host.innerHTML = '<div class="muted small" style="margin:6px 0">Subject: <b>' +
+        escapeHtml(data.subject || '') + '</b>' + (data.is_sample ? ' · sample (no live alerts)' : '') + '</div>';
+      const frame = document.createElement('div');
+      frame.className = 'alert-preview-frame';
+      frame.innerHTML = data.html || '';
+      host.appendChild(frame);
+    });
+  }
+
+  function renderAlertsRecent() {
+    const body = document.getElementById('alertsRecentBody');
+    const meta = document.getElementById('alertsRecentMeta');
+    const chip = document.getElementById('tabCountAlerts');
+    if (!body) return;
+    const alerts = (_lastPayload && _lastPayload.event_alerts) || [];
+    if (meta) meta.textContent = alerts.length ? `${alerts.length} recent` : '';
+    if (chip) chip.textContent = alerts.length ? String(alerts.length) : '';
+    if (!alerts.length) { body.innerHTML = '<div class="empty">No alerts fired for this event recently.</div>'; return; }
+    const rows = alerts.slice(0, 50).map(a =>
+      '<tr>' +
+      `<td class="muted small">${a.fired_at ? escapeHtml(T.fmtDate(a.fired_at)) : '—'}</td>` +
+      `<td><span class="badge ${_sevClass(a.severity)}">${escapeHtml(String(a.severity || '').toUpperCase())}</span></td>` +
+      `<td class="muted small">${escapeHtml(a.rule_key || a.rule || '')}</td>` +
+      `<td>${escapeHtml(a.message || '')}</td>` +
+      '</tr>').join('');
+    body.innerHTML = `<table><thead><tr><th>When</th><th>Severity</th><th>Rule</th><th>Message</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  function _sevClass(s) {
+    s = String(s || '').toLowerCase();
+    if (/crit|critical/.test(s)) return 'lifecycle-ghost';
+    if (/warn|warning/.test(s)) return 'gap-chip';
+    return '';
+  }
+
+  async function renderAlertsWatchlist(eventId) {
+    const body = document.getElementById('alertsWatchlistBody');
+    const meta = document.getElementById('alertsWatchlistMeta');
+    if (!body) return;
+    const res = await rpcOrNull('event_watchlist_list', {});
+    if (_wlRpcMissing(res)) { body.innerHTML = '<div class="empty">Watchlist not enabled yet.</div>'; return; }
+    if (res.error) { body.innerHTML = '<div class="empty">Failed to load watchlist.</div>'; return; }
+    const items = (res.data && res.data.items) || [];
+    if (meta) meta.textContent = items.length ? `${items.length} events${items.length > 50 ? ' · showing 50' : ''}` : '';
+    if (!items.length) { body.innerHTML = '<div class="empty">No tracked events yet — ★ Track above to add this one.</div>'; return; }
+    const rows = items.slice(0, 50).map(it => {
+      const d = T.daysUntil(it.occurs_at_local);
+      const cur = String(it.tevo_event_id) === String(eventId);
+      return `<tr${cur ? ' class="wl-cur"' : ''}>` +
+        `<td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>` +
+        `${cur ? ' <span class="muted small">(this event)</span>' : ''}</td>` +
+        `<td class="num">${d === null ? '—' : d}</td>` +
+        `<td class="muted small">${escapeHtml(it.venue_name || it.venue_location || '—')}</td>` +
+        `<td class="num">${it.alert_enabled ? '🔔 ' + escapeHtml(it.alert_cadence || 'instant') : '🔕'}</td>` +
+        '</tr>';
+    }).join('');
+    body.innerHTML = `<table><thead><tr><th>Event</th><th class="num">T-days</th><th>Venue</th><th class="num">Alerts</th></tr></thead><tbody>${rows}</tbody></table>` +
+      (items.length > 50 ? '<div class="muted small" style="margin-top:6px">Showing 50 — full paged list on the home screen.</div>' : '');
+  }
+
+  // ---------- Per-source event URLs (spot-check links on each data tab) ----------
+  // Resolves every source's id + marketplace URL off the canonical aq_event_map
+  // hub via the email-gated get_event_source_links RPC, then stamps a "↗ source"
+  // link into each data tab's header so the operator can click straight through
+  // and spot-check our captured data against the live book. Fire-and-forget;
+  // degrades silently if the RPC isn't applied yet (rpcOrNull returns an error).
+  const _SRC_LINK_TABS = [
+    { pane: 'paneSgListings', label: 'SeatGeek',     url: d => d.sg_url },
+    { pane: 'paneSgSales',    label: 'SeatGeek',     url: d => d.sg_url },
+    { pane: 'paneShListings', label: 'StubHub',      url: d => d.td && d.td.SH },
+    { pane: 'paneGtListings', label: 'GameTime',     url: d => d.td && d.td.GT },
+    { pane: 'paneVdListings', label: 'VividSeats',   url: d => d.td && d.td.VD },
+    { pane: 'paneTpListings', label: 'TickPick',     url: d => d.td && d.td.TP },
+    { pane: 'paneTmListings', label: 'Ticketmaster', url: d => d.td && d.td.TM },
+  ];
+
+  async function loadSourceLinks(eventId) {
+    const res = await rpcOrNull('get_event_source_links', { p_event_id: eventId });
+    if (!res || res.error || !res.data) return;
+    const d = res.data;
+    _SRC_LINK_TABS.forEach(t => attachSrcLink(t.pane, t.label, t.url(d)));
+    // TD Markets aggregates every available source link into one row.
+    attachSrcLinksMulti('paneTdMarkets', d);
+  }
+
+  // First <span> inside a pane's first .panel-title — we append the link there
+  // so it sits inline next to the title text (the .panel-title.row container is
+  // a 2-child space-between flex; appending into the title span avoids breaking
+  // that layout). Returns null when the pane/title isn't present.
+  function paneTitleSpan(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane) return null;
+    const title = pane.querySelector('.panel-title');
+    if (!title) return null;
+    return title.querySelector('span') || title;
+  }
+
+  // Idempotent single "↗ <label>" link in a pane title.
+  function attachSrcLink(paneId, label, url) {
+    if (!url) return;
+    const host = paneTitleSpan(paneId);
+    if (!host) return;
+    let link = host.querySelector('a.src-link[data-single]');
+    if (!link) {
+      link = document.createElement('a');
+      link.className = 'src-link';
+      link.setAttribute('data-single', '1');
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      host.appendChild(link);
+    }
+    link.href = url;
+    link.title = 'Open this event on ' + label + ' — spot-check our captured data against the live book';
+    link.innerHTML = '↗ ' + escapeHtml(label);
+  }
+
+  // All available source links in one row (TD Markets aggregate tab).
+  function attachSrcLinksMulti(paneId, d) {
+    const host = paneTitleSpan(paneId);
+    if (!host) return;
+    const links = [
+      ['SeatGeek', d.sg_url],
+      ['StubHub', d.td && d.td.SH], ['GameTime', d.td && d.td.GT],
+      ['VividSeats', d.td && d.td.VD], ['TickPick', d.td && d.td.TP],
+      ['Ticketmaster', d.td && d.td.TM],
+    ].filter(([, u]) => !!u);
+    let row = host.querySelector('.src-link-row');
+    if (!row) {
+      row = document.createElement('span');
+      row.className = 'src-link-row';
+      host.appendChild(row);
+    }
+    row.innerHTML = links.map(([lbl, u]) =>
+      `<a class="src-link" target="_blank" rel="noopener noreferrer" href="${escapeHtml(u)}" ` +
+      `title="Open on ${escapeHtml(lbl)}">↗ ${escapeHtml(lbl)}</a>`).join('');
+  }
+
   // ---------- TD per-source freshness (event_listing_snapshot_daily) ----------
 
   async function loadTdFreshness(eventId) {
@@ -1944,11 +2507,11 @@
     // Used for: (a) fr-chips freshness, (b) data-freshness table, (c) price chart TD overlay
     const { data: rows, error } = await Auth.client
       .from('event_listing_snapshot_daily')
-      .select('snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
+      .select('snapshot_date,snapshot_slot,evo_retail_median,evo_owned_median,evo_tickets_count,evo_owned_tickets,sg_all_median,sg_owned_median,sg_all_tickets,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
       .eq('event_id', eventId)
       .order('snapshot_date', { ascending: false })
       .order('snapshot_slot', { ascending: false })
-      .limit(90);
+      .limit(1200);   // ~2yr of durable history (3 slots/day); cheap, indefinite table
     if (error) { console.error('[td-freshness] sb', error); return; }
     // Latest row for chips + freshness table
     // Slots: morning≈09:00, midday≈14:00, evening≈19:00 UTC. NOTE: the slot names do
@@ -2011,6 +2574,10 @@
     if (rows && rows.length > 1) {
       const sh = [], gt = [], vd = [];
       const ish = [], igt = [], ivd = [];
+      // Durable cross-source backbone (long-horizon splice — retention fix).
+      const dm = { evo_owned: [], evo_mkt: [], sg_list: [], sg_own: [], sh: [], gt: [], vd: [] };
+      const dc = { evo_own: [], evo_tix: [], sg_tix: [], sh: [], gt: [], vd: [] };
+      const push = (arr, ts, v) => { if (v != null) arr.push({ t: ts, v: +v }); };
       for (const r of rows) {
         const ts = rowTs(r);
         if (r.td_sh_median   != null) sh.push({ t: ts, v: +r.td_sh_median });
@@ -2019,10 +2586,43 @@
         if (r.td_sh_listings != null) ish.push({ t: ts, v: +r.td_sh_listings });
         if (r.td_gt_listings != null) igt.push({ t: ts, v: +r.td_gt_listings });
         if (r.td_vd_listings != null) ivd.push({ t: ts, v: +r.td_vd_listings });
+        // EVO + SG durable medians/counts (these feed the long-horizon splice).
+        push(dm.evo_owned, ts, r.evo_owned_median);
+        push(dm.evo_mkt,   ts, r.evo_retail_median);
+        push(dm.sg_list,   ts, r.sg_all_median);
+        push(dm.sg_own,    ts, r.sg_owned_median);
+        push(dm.sh, ts, r.td_sh_median); push(dm.gt, ts, r.td_gt_median); push(dm.vd, ts, r.td_vd_median);
+        push(dc.evo_own, ts, r.evo_owned_tickets);
+        push(dc.evo_tix, ts, r.evo_tickets_count);
+        push(dc.sg_tix,  ts, r.sg_all_tickets);
+        push(dc.sh, ts, r.td_sh_listings); push(dc.gt, ts, r.td_gt_listings); push(dc.vd, ts, r.td_vd_listings);
       }
       // Reverse so series are chronological (we fetched newest-first)
       _tdChartSeries    = { sh: sh.reverse(),  gt: gt.reverse(),  vd: vd.reverse() };
       _tdInvCountSeries = { sh: ish.reverse(), gt: igt.reverse(), vd: ivd.reverse() };
+      // Full TicketsData family (median + count per platform) for the overall
+      // consensus — includes TP / TM primary / TM resale, which the chart
+      // overlays don't draw but the weighted median should weigh in.
+      const fam = { sh:{med:[],cnt:[]}, gt:{med:[],cnt:[]}, vd:{med:[],cnt:[]},
+                    tp:{med:[],cnt:[]}, tm:{med:[],cnt:[]}, tmr:{med:[],cnt:[]} };
+      for (const r of rows) {
+        const ts = rowTs(r);
+        const add = (k, mv, cv) => {
+          if (mv != null) fam[k].med.push({ t: ts, v: +mv });
+          if (cv != null) fam[k].cnt.push({ t: ts, v: +cv });
+        };
+        add('sh',  r.td_sh_median,        r.td_sh_listings);
+        add('gt',  r.td_gt_median,        r.td_gt_listings);
+        add('vd',  r.td_vd_median,        r.td_vd_listings);
+        add('tp',  r.td_tp_median,        r.td_tp_listings);
+        add('tm',  r.td_tm_median,        r.td_tm_listings);
+        add('tmr', r.td_tm_resale_median, r.td_tm_resale_listings);
+      }
+      Object.values(fam).forEach(o => { o.med.reverse(); o.cnt.reverse(); });
+      _tdFamily = fam;
+      Object.keys(dm).forEach(k => dm[k].reverse());
+      Object.keys(dc).forEach(k => dc[k].reverse());
+      _dailyDurable = { med: dm, cnt: dc };
 
       if (_lastPayload && _lastPayload.chart_data) {
         try {
@@ -2549,7 +3149,7 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tp-listings': false, 'tm-listings': false,
-    'sg-sales': false, 'our-orders': false,
+    'sg-sales': false, 'our-orders': false, 'alerts': false,
   } };
 
   function wireTabs(eventId) {
@@ -2588,6 +3188,9 @@
         await loadSgSalesFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
+      } else if (tabId === 'alerts') {
+        // Re-render every activation (cheap; reflects track/alert toggles).
+        await loadAlertsTab(eventId);
       } else if (tabId === 'seatmap' && !_tabState.loaded['seatmap']) {
         await loadSeatmap(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
@@ -2595,11 +3198,16 @@
         // into its own stacked sub-section inside #paneOurOrders.
         _tabState.loaded['our-orders'] = true;
         await Promise.all([
+          loadSgSellerListingsFull(eventId),
           loadEvoOrdersFull(eventId),
           loadSgSellerOrdersFull(eventId),
           loadCrossBrokerFull(eventId),
         ]);
         updateOurOrdersTabCount();
+      } else if (tabId === 'alerts' && !_tabState.loaded['alerts']) {
+        _tabState.loaded['alerts'] = true;
+        const label = document.getElementById('evTitle')?.textContent || '';
+        window.TerminalAlerts?.mount('event', eventId, label, document.querySelector('#paneAlerts .alerts-root'));
       }
     });
   }
@@ -2621,8 +3229,10 @@
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
+      'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
+      'alerts':       'paneAlerts',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -2697,8 +3307,16 @@
       if (countChip) countChip.textContent = '0';
       return;
     }
-    const rows = d.rows || [];
-    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
+    const allRows = d.rows || [];
+    // RPC dedups DISTINCT ON (sglid) across a 7-day window, so a listing keeps
+    // its LAST-SEEN captured_at — listings that vanished days ago still appear,
+    // stamped with stale pull times. That's the "multiple captured" symptom.
+    // Limit to the last pull: each poll writes one uniform captured_at, so the
+    // current board = rows whose captured_at equals the max across the result.
+    const lastPull = allRows.reduce((m, r) => (r.captured_at > m ? r.captured_at : m), '');
+    const rows = lastPull ? allRows.filter(r => r.captured_at === lastPull) : allRows;
+    const pullLabel = lastPull ? T.fmtDate(lastPull) : '—';
+    if (meta) meta.textContent = `${rows.length} listings · last pull ${pullLabel} · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
     if (countChip) countChip.textContent = String(rows.length);
     if (!rows.length) {
       body.innerHTML = '<div class="empty">no SG listings in last 7 days</div>';
@@ -2840,15 +3458,22 @@
   let _seatmapConfigName = '';
   let _seatmapVenueLabel = '';
   const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
-  // Source registry — TP excluded (zone-only, no section granularity); TM excluded
-  // (primary/box-office, no section-level resale listings for these events).
+  // Source registry — TM excluded (primary/box-office, no section-level resale
+  // listings for these events). TP is INCLUDED but is ZONE-ONLY: it lists whole
+  // bands ("100s"/"Lower"/"Suites"), not sections, so it colors by zone expansion
+  // (see _seatmapZoneKeys) rather than the per-section matcher. _seatmapIsZoneSource
+  // flags which sources take the zone path.
   const SEATMAP_SOURCES = [
     { key: 'EVO', label: 'TEvo' },
     { key: 'SG',  label: 'SeatGeek' },
     { key: 'SH',  label: 'StubHub' },
     { key: 'GT',  label: 'GameTime' },
     { key: 'VD',  label: 'VividSeats' },
+    { key: 'TP',  label: 'TickPick' },
   ];
+  // Sources whose `section` is a ZONE label, not a seat section — colored by
+  // expanding each zone to the manifest sections it covers (TickPick only today).
+  function _seatmapIsZoneSource(key) { return key === 'TP'; }
 
   // Fetch one source's listings (by tevo event id — every RPC resolves the bridge itself)
   // and normalize to a common shape. Prices use each source's all-in field where available.
@@ -2986,6 +3611,15 @@
     }
     const bowl = cands.filter(c => !_SM_PREMIUM.test(c.key));
     if (bowl.length === 1) return bowl[0].key; // T4 — unique non-premium = the seating bowl
+    // T4b — Floor N wins a bowl collision. Arenas number the courtside FLOOR 1..N AND
+    // carry a parallel "VIP N" (also non-premium, so it survives the bowl filter) for the
+    // SAME numbers → two non-premium candidates and we'd give up. Per the documented
+    // tie-rule ("tail collisions prefer the Floor N key"), the bare/numeric listing is the
+    // floor, so prefer the unique Floor-named candidate. (Fixes MSG floor 2/4/6/8/10/11/12.)
+    if (bowl.length > 1) {
+      const floor = bowl.filter(c => /(^|[^a-z])floor([^a-z]|$)/i.test(c.key));
+      if (floor.length === 1) return floor[0].key;
+    }
     return null;                               // still ambiguous → leave grey
   }
 
@@ -3026,20 +3660,79 @@
     return key;
   }
 
+  // ----- Zone expansion (for zone-only sources like TickPick) -----
+  // TickPick lists whole ZONES, not seat sections: a hundreds band ("100s"/"200s"/
+  // "400s"/"100 level"), a named tier ("Lower"/"Upper"/"Middle"/"Floor"/"Suites"/
+  // "Club"/"Lounge"/"Balcony"), or a bare section number. To color it we expand each
+  // zone label to the SET of manifest section keys it covers and paint them all at the
+  // zone's floor. Venue-agnostic: a band maps by the section number's hundreds digit;
+  // a named tier maps by a word the manifest key contains; anything else falls back to
+  // the single-section matcher. Overlapping zones resolve to the lowest floor per key.
+  const _SM_ZONE_WORDS = {
+    lower: 'lower', upper: 'upper', middle: 'middle', mezz: 'middle', mezzanine: 'middle',
+    floor: 'floor', court: 'floor', courtside: 'floor', field: 'field',
+    suite: 'suite', suites: 'suite', club: 'club', lounge: 'lounge', lounges: 'lounge',
+    balcony: 'balcony', bridge: 'bridge', bridges: 'bridge', vip: 'vip', terrace: 'terrace',
+  };
+  function _seatmapAllKeys(idx) {
+    if (idx._allKeys) return idx._allKeys;
+    const keys = [];
+    idx.byNum.forEach(arr => arr.forEach(r => keys.push(r.key)));
+    (idx.named || []).forEach(x => keys.push(x.key));
+    idx._allKeys = Array.from(new Set(keys));
+    return idx._allKeys;
+  }
+  function _seatmapZoneKeys(label, idx) {
+    if (!idx) return [];
+    const cache = idx._zoneCache || (idx._zoneCache = new Map());
+    if (cache.has(label)) return cache.get(label);
+    const norm = _smNorm(label);
+    let out = [];
+    // hundreds band: "100", "100s", "100 level", "400s"
+    const band = norm.match(/(^|\s)([1-9])0{2}\s*(s|level|lvl)?(\s|$)/);
+    if (band) {
+      const lo = parseInt(band[2], 10) * 100, hi = lo + 99;
+      idx.byNum.forEach((arr, num) => {
+        const v = parseInt(num, 10);
+        if (v >= lo && v <= hi) arr.forEach(r => out.push(r.key));
+      });
+    }
+    if (!out.length) {                                   // named tier
+      const wants = new Set();
+      norm.split(' ').filter(Boolean).forEach(t => { if (_SM_ZONE_WORDS[t]) wants.add(_SM_ZONE_WORDS[t]); });
+      if (wants.size) {
+        _seatmapAllKeys(idx).forEach(k => {
+          const kn = _smNorm(k);
+          for (const w of wants) { if (kn.indexOf(w) !== -1) { out.push(k); break; } }
+        });
+      }
+    }
+    if (!out.length) {                                   // bare number / unknown → one section
+      const k = _seatmapMatchSection(label, idx);
+      if (k) out = [k];
+    }
+    out = Array.from(new Set(out));
+    cache.set(label, out);
+    return out;
+  }
+
   // Collapse listing rows → one ticketGroup per matched manifest section at its lowest floor
   // (what the map colors by). Unmatched sections are skipped (grey) but still appear in the
   // listing table. No manifest (fetch failed) → fall back to the raw section as the key.
-  function _seatmapTicketGroups(rows, idx) {
+  // zoneSrc=true (TickPick) expands each row's zone label to every section it covers.
+  function _seatmapTicketGroups(rows, idx, zoneSrc) {
     const floorByKey = new Map();
     rows.forEach(r => {
       const sec = (r.section || '').trim();
       if (!sec || _seatmapIsParking(sec)) return;
       const price = Number(r.retail_price);
       if (!isFinite(price) || price <= 0) return;
-      const key = idx ? _seatmapMatchSection(sec, idx) : sec;
-      if (!key) return;
-      const prev = floorByKey.get(key);
-      if (prev == null || price < prev) floorByKey.set(key, price);
+      const keys = idx ? (zoneSrc ? _seatmapZoneKeys(sec, idx) : [_seatmapMatchSection(sec, idx)]) : [sec];
+      keys.forEach(key => {
+        if (!key) return;
+        const prev = floorByKey.get(key);
+        if (prev == null || price < prev) floorByKey.set(key, price);
+      });
     });
     return Array.from(floorByKey, ([key, price]) => ({ tevo_section_name: key, retail_price: price }));
   }
@@ -3161,7 +3854,7 @@
       rows = await _seatmapFetchSource(_seatmapEventId, key);
       _seatmapRowsBySource[key] = rows;
     }
-    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap);
+    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap, _seatmapIsZoneSource(key));
     if (typeof _seatmapApi.updateTicketGroups === 'function') {
       try { _seatmapApi.updateTicketGroups(ticketGroups); } catch (_) { /* ignore */ }
     }
@@ -3211,6 +3904,7 @@
     const tie = { SG: 0, EVO: 1, VD: 2, SH: 3, GT: 4 };   // lower = preferred on ties
     let best = _seatmapSource, bestN = -1;
     for (const s of SEATMAP_SOURCES) {
+      if (_seatmapIsZoneSource(s.key)) continue;   // zone sources over-paint (whole bands) — never auto-win
       const rows = _seatmapRowsBySource[s.key];
       if (!rows || !rows.length) continue;
       const n = _seatmapTicketGroups(rows, _seatmapRemap).length;
@@ -3238,24 +3932,43 @@
     if (!meta) return;
     const rows = _seatmapRowsBySource[_seatmapSource] || [];
     const sections = new Set(rows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => r.section));
+    const isZone = _seatmapIsZoneSource(_seatmapSource);
     const mapped = _seatmapRemap
-      ? `${mappedCount}/${sections.size} sections on map`
+      ? (isZone
+          ? `${sections.size} zone${sections.size === 1 ? '' : 's'} → ${mappedCount} sections painted`
+          : `${mappedCount}/${sections.size} sections on map`)
       : `${mappedCount} sections (manifest unavailable — no coloring)`;
     meta.textContent = `${_seatmapVenueLabel} · ${_seatmapSrcLabel(_seatmapSource)} · ${mapped}`;
   }
 
+  // Does this row's section resolve to a manifest key (i.e. does the map color it)?
+  // Zone sources resolve via zone expansion; section sources via the single matcher.
+  // Returns null when there's no manifest to judge against (don't label as unmapped).
+  function _seatmapRowMapped(r, zoneSrc) {
+    if (!_seatmapRemap) return null;
+    const keys = zoneSrc
+      ? _seatmapZoneKeys(r.section, _seatmapRemap)
+      : [_seatmapMatchSection(r.section, _seatmapRemap)];
+    return keys.some(Boolean);
+  }
+
   // Renders the CURRENT source's listings; clicking a map section filters by matched key
   // (the library returns full manifest names — we match each row's section the same way).
+  // Any listing whose section does NOT resolve to a manifest section (so the map leaves it
+  // grey) is tagged with an `unmapped` pill + row highlight so we can spot-check the misses.
   function renderSeatmapList() {
     const body = document.getElementById('seatmapListBody');
     if (!body) return;
     const sel = _seatmapSelected.map(s => String(s).toLowerCase());
     const all = _seatmapRowsBySource[_seatmapSource] || [];
+    const zoneSrc = _seatmapIsZoneSource(_seatmapSource);
     let rows = all.filter(r => r.section && !_seatmapIsParking(r.section));
     if (sel.length) {
       rows = rows.filter(r => {
-        const k = _seatmapMatchSection(r.section, _seatmapRemap);
-        return k && sel.includes(String(k).toLowerCase());
+        const keys = zoneSrc
+          ? _seatmapZoneKeys(r.section, _seatmapRemap)
+          : [_seatmapMatchSection(r.section, _seatmapRemap)];
+        return keys.some(k => k && sel.includes(String(k).toLowerCase()));
       });
     }
     rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
@@ -3275,17 +3988,30 @@
         <th class="num">Price</th><th>Type</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
+    let unmappedCount = 0;
     rows.slice(0, 300).forEach(r => {
       const tr = document.createElement('tr');
-      if (r.is_owned) tr.className = 'owned-row';
+      const mapped = _seatmapRowMapped(r, zoneSrc);   // true | false | null (no manifest)
+      const cls = [];
+      if (r.is_owned) cls.push('owned-row');
+      if (mapped === false) { cls.push('unmapped-row'); unmappedCount++; }
+      if (cls.length) tr.className = cls.join(' ');
+      const ownPill = r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>';
+      const unmappedPill = mapped === false ? ' <span class="pill unmapped" title="section not on the venue map — not colored">unmapped</span>' : '';
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${T.fmtNum(r.quantity)}</td>
         <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
-        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>'}</td>`;
+        <td>${ownPill}${unmappedPill}</td>`;
       tb.appendChild(tr);
     });
+    if (unmappedCount) {
+      const cap = document.createElement('div');
+      cap.className = 'sm-unmapped-note';
+      cap.textContent = `${unmappedCount} listing${unmappedCount === 1 ? '' : 's'} not on the venue map (grey — spot-check)`;
+      host.appendChild(cap);
+    }
     host.appendChild(tbl);
     body.innerHTML = '';
     body.appendChild(host);
@@ -3745,6 +4471,76 @@
         <td>${firstOfOrder ? holdExp : ''}</td>
         <td>${firstOfOrder ? escapeHtml(r.buyer_brokerage_name || '—') : ''}</td>
         <td>${firstOfOrder ? escapeHtml(r.fraud_check_status || '—') : ''}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Our SG SellerDirect Listings (our inventory, AQ-mapped) ----------
+  async function loadSgSellerListingsFull(eventId) {
+    const body = document.getElementById('sgSellerListingsFullBody');
+    const meta = document.getElementById('sgSellerListingsFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading our SG SellerDirect inventory…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_sg_seller_listings_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['sg-seller-listings'] = true;
+    renderSgSellerListingsFull(res.data, performance.now() - t0);
+  }
+
+  function renderSgSellerListingsFull(d, ms) {
+    const body = document.getElementById('sgSellerListingsFullBody');
+    const meta = document.getElementById('sgSellerListingsFullMeta');
+    if (!body) return;
+    if (!d || d.hidden) {
+      const reason = d && d.reason === 'no_seller_listings'
+        ? 'no SG SellerDirect inventory mapped to this event' : 'hidden';
+      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+      if (meta) meta.textContent = '0 listings';
+      return;
+    }
+    const rows = d.rows || [];
+    const s = d.summary || {};
+    if (meta) {
+      const med = s.median_cost != null ? '$' + T.fmtNum(Math.round(s.median_cost)) : '—';
+      meta.textContent = `${s.total_listings || rows.length} listings · ${s.total_tickets || 0} tix · median cost ${med} · ${ms.toFixed(0)}ms`;
+    }
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no SG SellerDirect inventory for this event</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Cost</th>
+        <th>In-Hand</th><th>Delivery</th><th>Notes</th>
+        <th>Pulled</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const deliv = [r.is_instant ? 'instant' : null, r.is_edelivery ? 'edeliv' : null]
+        .filter(Boolean).join('·') || '—';
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.cost != null ? '$' + T.fmtNum(Math.round(r.cost)) : '—'}</td>
+        <td>${r.in_hand_date ? T.fmtDate(r.in_hand_date) : '—'}</td>
+        <td>${escapeHtml(deliv)}</td>
+        <td class="muted">${escapeHtml(r.notes || '')}</td>
+        <td>${r.pulled_at ? T.fmtDate(r.pulled_at) : '—'}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
