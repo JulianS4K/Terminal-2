@@ -548,6 +548,7 @@
     document.getElementById('evTitle').textContent = ev.name || `Event ${ev.id || ''}`;
     document.getElementById('evVenue').textContent = ev.venue_name || ev.venue || '—';
     document.getElementById('evDate').textContent  = T.fmtDate(ev.occurs_at_local || ev.occurs_at);
+    _eventStartMs = Date.parse(ev.occurs_at_local || ev.occurs_at || '') || NaN;
 
     const badges = document.getElementById('evBadges');
     badges.innerHTML = '';
@@ -852,25 +853,23 @@
     ];
     const { xs } = buildSeriesData(specs);
 
-    // "Overall median" — a generated general-market median across all listing
-    // sources (one ask-median per marketplace): TEvo Market, SG list, StubHub,
-    // GameTime, VividSeats. Excludes our owned inventory + actual sales. At each
-    // bucket it's the median of whichever listing-source medians are present, so
-    // it stays meaningful even when some sources have no data for that bucket.
-    // Drawn last (on top) as a bold white line so it reads as the headline.
-    const OVERALL_SRC = ['prices_market', 'sg_list_med', 'td_sh_med', 'td_gt_med', 'td_vd_med'];
-    const overallSpecs = specs.filter(s => OVERALL_SRC.indexOf(s.key) !== -1);
-    const overallProjected = xs.map((_, i) => {
-      const vals = [];
-      overallSpecs.forEach(s => {
-        const v = s.projected[i];
-        if (v != null && isFinite(v)) vals.push(v);
-      });
-      if (!vals.length) return null;
-      vals.sort((a, b) => a - b);
-      const m = Math.floor(vals.length / 2);
-      return vals.length % 2 ? vals[m] : (vals[m - 1] + vals[m]) / 2;
-    });
+    // "Overall median" — quantity-weighted, carry-forward consensus across all
+    // listing sources: EVO (live) + SG (live) + the six TicketsData books
+    // (SH/GT/VD/TP/TM/TMr, carried at their own cadence). Weighted by each
+    // source's listing count; slow books are assumed-till-next-refresh and only
+    // dropped when stranded past 3×τ. Drawn last (bold white) as the headline.
+    const tdF = _tdFamily || {};
+    const tdSrc = (k) => ({ med: (tdF[k] && tdF[k].med) || [], cnt: (tdF[k] && tdF[k].cnt) || [] });
+    const overallProjected = buildOverallConsensus(xs, [
+      { cad: 'EVO', med: chart.prices_market || [],               cnt: chart.counts_market || [] },
+      { cad: 'SG',  med: extSeries.sg_listings_median || [],       cnt: extSeries.sg_listings_count || [] },
+      { cad: 'SH',  ...tdSrc('sh') },
+      { cad: 'GT',  ...tdSrc('gt') },
+      { cad: 'VD',  ...tdSrc('vd') },
+      { cad: 'TP',  ...tdSrc('tp') },
+      { cad: 'TM',  ...tdSrc('tm') },
+      { cad: 'TMr', ...tdSrc('tmr') },
+    ]);
     specs.push({ key: 'overall_med', label: 'Overall median', color: '#ffffff',
                  width: 3, dash: null, data: [], projected: overallProjected });
 
@@ -904,6 +903,8 @@
       ],
       hooks: {
         draw: [
+          // Off-peak (after-hours) shading first so it sits under the markers.
+          (u) => drawOffPeakBands(u),
           // Read _showAlerts at draw time so the toggle takes effect via redraw()
           // without rebuilding the chart instance.
           (u) => drawAlertsMarkers(u, _showAlerts ? (_chartExtAlerts || []) : []),
@@ -953,6 +954,113 @@
   // Integer-only tick increments for count axes — prevents uPlot from picking
   // fractional steps (0.5, 0.2…) that round to duplicate labels ("1,1,2,2").
   const COUNT_INCRS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+
+  // ---------- Overall (cross-source) market median ----------
+  // Quantity-weighted consensus across all listing sources, with after-hours
+  // carry-forward: each source contributes its LATEST reading (assumed to hold
+  // until its next refresh), weighted by its listing count. A source drops out
+  // only once it's stale past 3× its expected refresh interval τ — and τ is
+  // per-source from OBSERVED cadence (EVO 15min live · SG ~1h · TicketsData
+  // SH~90m/VD~180m/GT·TM~6h/TP·TMr~8h), not the cron schedule. Off-peak (ET
+  // 0-11) the slow books are simply carried = the "after-hours" session.
+  let _tdFamily = null;     // { sh:{med,cnt}, gt, vd, tp, tm, tmr } from loadTdFreshness
+  let _eventStartMs = NaN;  // event start (horizon-aware τ for EVO/SG)
+  let _overallShade = null; // [{x0,x1}] off-peak spans (sec) for the draw hook
+
+  function _isPeakEt(ms) {
+    // Peak = ET 12:00–23:59 (matches collector_band). DST-correct via Intl.
+    const h = parseInt(new Date(ms).toLocaleString('en-US',
+      { timeZone: 'America/New_York', hour: 'numeric', hour12: false }), 10);
+    return h >= 12 && h <= 23;
+  }
+  // Expected refresh interval (minutes). EVO/SG horizon-banded + peak-aware;
+  // TicketsData platforms use their observed firehose cadence (flat).
+  function _tauMin(cad, hrs, isPeak) {
+    if (cad === 'EVO') {
+      if (hrs <= 168) return 15;
+      if (hrs <= 336) return isPeak ? 30 : 60;
+      if (hrs <= 720) return 60;
+      if (hrs <= 1440) return 240;
+      return 720;
+    }
+    if (cad === 'SG') {
+      if (hrs <= 168) return 90;
+      if (hrs <= 336) return 300;
+      if (hrs <= 720) return 1200;
+      return 1440;
+    }
+    switch (cad) {            // TicketsData — observed median inter-pull gaps
+      case 'SH': return 120;
+      case 'VD': return 180;
+      case 'TP': case 'TMr': return 480;
+      default:   return 360;  // GT, TM
+    }
+  }
+  // Forward-fill (carry) a [{t,v}] series onto the seconds axis xs, tracking the
+  // timestamp of the last real observation per bucket (for staleness/age).
+  function _carryProject(pts, xs) {
+    const obs = (pts || [])
+      .map(p => ({ t: Math.round(new Date(p.t).getTime() / 1000), v: +p.v }))
+      .filter(o => isFinite(o.v))
+      .sort((a, b) => a.t - b.t);
+    const val = new Array(xs.length).fill(null);
+    const obsT = new Array(xs.length).fill(null);
+    let j = 0, lv = null, lt = null;
+    for (let i = 0; i < xs.length; i++) {
+      while (j < obs.length && obs[j].t <= xs[i]) { lv = obs[j].v; lt = obs[j].t; j++; }
+      val[i] = lv; obsT[i] = lt;
+    }
+    return { val, obsT };
+  }
+  function _wMedian(pairs) {   // pairs: [{m, w}] — lower weighted median
+    if (!pairs.length) return null;
+    pairs.sort((a, b) => a.m - b.m);
+    const total = pairs.reduce((s, p) => s + p.w, 0);
+    if (total <= 0) return null;
+    let cum = 0;
+    for (const p of pairs) { cum += p.w; if (cum >= total / 2) return p.m; }
+    return pairs[pairs.length - 1].m;
+  }
+  // sources: [{ cad, med:[{t,v}], cnt:[{t,v}] }] → per-bucket quantity-weighted
+  // median (null where no source is live). Also records off-peak spans for shading.
+  function buildOverallConsensus(xs, sources) {
+    const K = 3; // grace: drop a source once age > K×τ (stranded)
+    const prep = sources.map(s => ({ cad: s.cad, mP: _carryProject(s.med, xs), cP: _carryProject(s.cnt, xs) }));
+    const med = new Array(xs.length).fill(null);
+    const shade = [];
+    let runStart = null;
+    for (let i = 0; i < xs.length; i++) {
+      const ms = xs[i] * 1000;
+      const isPeak = _isPeakEt(ms);
+      const hrs = isFinite(_eventStartMs) ? Math.max(0, (_eventStartMs - ms) / 3600000) : 9999;
+      const pairs = [];
+      for (const p of prep) {
+        const m = p.mP.val[i], c = p.cP.val[i], ot = p.mP.obsT[i];
+        if (m == null || c == null || c <= 0 || ot == null) continue;
+        if ((xs[i] - ot) / 60 > K * _tauMin(p.cad, hrs, isPeak)) continue; // stranded
+        pairs.push({ m: m, w: c });
+      }
+      med[i] = _wMedian(pairs);
+      if (!isPeak && med[i] != null) { if (runStart == null) runStart = xs[i]; }
+      else if (runStart != null) { shade.push({ x0: runStart, x1: xs[i] }); runStart = null; }
+    }
+    if (runStart != null) shade.push({ x0: runStart, x1: xs[xs.length - 1] });
+    _overallShade = shade;
+    return med;
+  }
+  // Faint background tint over off-peak (after-hours) spans on the price pane.
+  function drawOffPeakBands(u) {
+    if (!_overallShade || !_overallShade.length || !u.ctx) return;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.fillStyle = 'rgba(120,130,170,0.05)';
+    _overallShade.forEach(b => {
+      const x0 = u.valToPos(b.x0, 'x', true);
+      const x1 = u.valToPos(b.x1, 'x', true);
+      ctx.fillRect(x0, u.bbox.top, Math.max(1, x1 - x0), u.bbox.height);
+    });
+    ctx.restore();
+  }
   // 3 line series on left Y-axis (integer ticket counts) + 1 bar series on
   // right Y-axis (SG sale count). uPlot supports per-series scales natively;
   // right axis registered as scale 'yr' with side=1.
@@ -2493,6 +2601,26 @@
       // Reverse so series are chronological (we fetched newest-first)
       _tdChartSeries    = { sh: sh.reverse(),  gt: gt.reverse(),  vd: vd.reverse() };
       _tdInvCountSeries = { sh: ish.reverse(), gt: igt.reverse(), vd: ivd.reverse() };
+      // Full TicketsData family (median + count per platform) for the overall
+      // consensus — includes TP / TM primary / TM resale, which the chart
+      // overlays don't draw but the weighted median should weigh in.
+      const fam = { sh:{med:[],cnt:[]}, gt:{med:[],cnt:[]}, vd:{med:[],cnt:[]},
+                    tp:{med:[],cnt:[]}, tm:{med:[],cnt:[]}, tmr:{med:[],cnt:[]} };
+      for (const r of rows) {
+        const ts = rowTs(r);
+        const add = (k, mv, cv) => {
+          if (mv != null) fam[k].med.push({ t: ts, v: +mv });
+          if (cv != null) fam[k].cnt.push({ t: ts, v: +cv });
+        };
+        add('sh',  r.td_sh_median,        r.td_sh_listings);
+        add('gt',  r.td_gt_median,        r.td_gt_listings);
+        add('vd',  r.td_vd_median,        r.td_vd_listings);
+        add('tp',  r.td_tp_median,        r.td_tp_listings);
+        add('tm',  r.td_tm_median,        r.td_tm_listings);
+        add('tmr', r.td_tm_resale_median, r.td_tm_resale_listings);
+      }
+      Object.values(fam).forEach(o => { o.med.reverse(); o.cnt.reverse(); });
+      _tdFamily = fam;
       Object.keys(dm).forEach(k => dm[k].reverse());
       Object.keys(dc).forEach(k => dc[k].reverse());
       _dailyDurable = { med: dm, cnt: dc };
