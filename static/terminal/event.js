@@ -847,54 +847,15 @@
     }
   }
 
-  // Y-axis range — adaptive to the prices currently in view.
+  // Y-axis range — always 10% above the maximum value currently in view.
   //
-  // `initMin`/`initMax` are supplied by uPlot already scoped to (a) only the
-  // series on THIS scale and (b) only the points inside the current x-window,
-  // so they track the visible data as the time range changes or prices climb
-  // toward the event. The top gets a little headroom so the highest line isn't
-  // flush against the frame.
-  //
-  // History: this used to clip the top to ~p95 (computed over the WHOLE series,
-  // ignoring the x-window) to tame a lone suite-sale outlier. That cap was both
-  // non-adaptive and too aggressive — as event prices rose, the genuine top
-  // median lines were drawn off the top of the chart. We now follow the visible
-  // max instead, and only fence off a single pathological outlier that sits far
-  // above the rest of the visible points (so one bad tick still can't flatten
-  // the band, but normal price movement is never clipped).
+  // `initMax` is supplied by uPlot already scoped to (a) only the series on THIS
+  // scale and (b) only the points inside the current x-window, so the top tracks
+  // the on-screen data as the time range changes or prices climb toward the
+  // event — no line is ever clipped, and a single spike just lifts the top.
   function robustYRange(u, initMin, initMax) {
-    var hasMax = (initMax != null && isFinite(initMax));
-    // Adaptive default: follow the visible max with a little headroom.
-    var top = hasMax ? initMax * 1.06 : 1;
-    // Outlier fence: only engage when the visible max towers over the 98th pct
-    // of the visible points on this scale (i.e. a lone spike, not a rising
-    // trend). Recompute the percentile over the x-window so it stays adaptive.
-    if (u && u.series && u.data && u.data[0] && hasMax) {
-      var xs = u.data[0];
-      var xmin = u.scales && u.scales.x ? u.scales.x.min : null;
-      var xmax = u.scales && u.scales.x ? u.scales.x.max : null;
-      var lo = (initMin != null && isFinite(initMin)) ? initMin : -Infinity;
-      var vals = [];
-      for (var i = 1; i < u.series.length; i++) {
-        if (u.series[i] && u.series[i].show === false) continue;
-        var d = u.data[i]; if (!d) continue;
-        for (var j = 0; j < d.length; j++) {
-          var x = xs[j];
-          if (xmin != null && x < xmin) continue;
-          if (xmax != null && x > xmax) continue;
-          var v = d[j];
-          // Only count points within [initMin, initMax] for this scale so we
-          // don't fold a different scale's series into the percentile.
-          if (v != null && isFinite(v) && v >= lo && v <= initMax) vals.push(v);
-        }
-      }
-      if (vals.length > 20) {
-        vals.sort(function (a, b) { return a - b; });
-        var p98 = vals[Math.floor(vals.length * 0.98)];
-        if (p98 > 0 && initMax > p98 * 2) top = p98 * 1.2;
-      }
-    }
-    return [0, top > 0 ? top : 1];
+    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
+    return [0, mx > 0 ? mx * 1.1 : 1];
   }
 
   // Count-axis range — for the inventory pane's integer count scales (left 'y'
