@@ -973,28 +973,27 @@
       { timeZone: 'America/New_York', hour: 'numeric', hour12: false }), 10);
     return h >= 12 && h <= 23;
   }
-  // Expected refresh interval (minutes). EVO/SG horizon-banded + peak-aware;
-  // TicketsData platforms use their observed firehose cadence (flat).
+  // Expected refresh interval (minutes) — the basis for the stranded cut-off
+  // (stranded once age > 3×τ). NOTE: these are tuned to the data the CLIENT
+  // actually has: EVO/SG from the live payloads, but TicketsData from the
+  // 3-slot/day DAILY ROLLUP (≈14 h overnight gap), so TD τ must be loose enough
+  // to carry overnight rather than strand. The SERVER/firehose version (which
+  // reads ticketsdata_listings_snapshots at the real per-platform 3–19×/day
+  // cadence) uses the tighter per-platform τ. Values err toward CARRYING so the
+  // line stays continuous; a source drops only on genuine multi-cycle absence.
   function _tauMin(cad, hrs, isPeak) {
     if (cad === 'EVO') {
-      if (hrs <= 168) return 15;
-      if (hrs <= 336) return isPeak ? 30 : 60;
-      if (hrs <= 720) return 60;
-      if (hrs <= 1440) return 240;
-      return 720;
-    }
-    if (cad === 'SG') {
-      if (hrs <= 168) return 90;
-      if (hrs <= 336) return 300;
-      if (hrs <= 720) return 1200;
+      if (hrs <= 168) return 120;          // ~2 h grace ⇒ stranded ~6 h
+      if (hrs <= 336) return isPeak ? 180 : 240;
+      if (hrs <= 720) return 360;
       return 1440;
     }
-    switch (cad) {            // TicketsData — observed median inter-pull gaps
-      case 'SH': return 120;
-      case 'VD': return 180;
-      case 'TP': case 'TMr': return 480;
-      default:   return 360;  // GT, TM
+    if (cad === 'SG') {
+      if (hrs <= 168) return 180;          // stranded ~9 h
+      if (hrs <= 336) return 360;
+      return 1440;
     }
+    return 600;                            // TicketsData (rollup) ⇒ stranded ~30 h
   }
   // Forward-fill (carry) a [{t,v}] series onto the seconds axis xs, tracking the
   // timestamp of the last real observation per bucket (for staleness/age).
