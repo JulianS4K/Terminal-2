@@ -306,7 +306,7 @@ Savings come entirely from SH/VD no longer pulling their ~38 cold `d31p` events 
 
 Token now sees **≤1 small batch/min** (~4 ≪ 10/8s budget), alternating listings/sales. **Process** crons `sg_priority_*_process` → `*/2` (was `*/5`) so snapshots land continuously (DB-only). After-hours: same phases, sparse (`*/10` listings, `*/12` sales).
 
-**SellerDirect (#3) finding — HELD, needs a decision (corrected 2026-06-06):** the bulk `/listings?per_page=500` call is **cursor-less** (`p_pages` ignored) and the live response `meta` reports **`total: 290,710`** listings with a keyset cursor (`next_page: ">i:..."`). We ingest **only page 1 (500 rows) = 0.17%** — far worse than the earlier "435/500" read (435 was what *survived ingest filtering*, not the feed size). This is **not** a small tweak: following the cursor to completion = ~582 calls/sweep, a real volume/cost decision (and a question of whether this endpoint returns our own book vs a broader marketplace). **Migration #4 is intentionally NOT applied** — surfaced to the operator rather than blind-looping a working feed. Options: (a) paginate fully each sweep; (b) cap to first N pages on a slower cadence; (c) verify the feed scope first.
+**SellerDirect (#3) — NOT a pagination problem; use the existing webhook (corrected 2026-06-06).** The bulk `/listings?per_page=500` call is cursor-less and the live `meta` reports **`total: 290,710`** of *our own* listings (fields carry `cost`/`barcodes`/`seller_subaccount_id`), so page-1-only ingests ~0.17% of our book. **Do NOT solve this by looping the cursor** (~582 calls/sweep on the shared SG token, straight back into 429 territory). The designed solution already exists and is **merged but undeployed**: the **SG SellerDirect webhook receiver** (`KANBAN.md` **D2-OPS-3**, PR #149 — migs `20260516210000/210100/210200` + `sg-seller-webhook` edge fn; needs operator vault `SG_SELLER_WEBHOOK_SECRET` + an SG support ticket for the 8 notification types). Push-based per-event freshness is the correct path; **migration #4 (cursor poller) is abandoned.**
 
 ### Safeguards retained
 TD 300/day + 9,000/mo caps · SG `ratelimit-remaining` / `v_sg_token_budget` gate · `cron_should_fire` · clock-advance-on-200 strand-safety. `collector_cadence` is **data** → instant revert by row update; no schema drops; firehose tables untouched.
@@ -315,7 +315,7 @@ TD 300/day + 9,000/mo caps · SG `ratelimit-remaining` / `v_sg_token_budget` gat
 1. ✅ **APPLIED** `20260606191854` — `collector_cadence` re-tune + widen peak window `{9–23,0}` ET (SG listings/sales bands).
 2. ✅ **APPLIED** `20260606192104` — SG token interleave: `/sales`→`tick(4)` odd-min, `/listings` even-min, `*_process`→`*/2` (429-burst fix).
 3. ✅ **APPLIED** `20260606192416` — TD fold: `td_enqueue_peak`→`collector_band`-driven; metronome drain `p_max=1` (+resolved_at guard); staggered per-platform enqueue; retire flat 4×/day; add TD bands.
-4. ⏸ **HELD** — SellerDirect pagination (see *SellerDirect finding* above; needs operator decision before touching the feed).
+4. ❌ **ABANDONED** — SellerDirect cursor poller. Coverage is already architected as the **webhook receiver** (`KANBAN.md` D2-OPS-3, merged/undeployed) — deploy that instead of polling. See *SellerDirect finding* above.
 
 **Cutover note:** TD budget was already exhausted (300/300) under the old flat system when #3 landed, so TD firing resumes under the new horizon cadence at the next 00:00 UTC budget reset — clean, no double-spend. SG changes take effect on the next tick.
 
