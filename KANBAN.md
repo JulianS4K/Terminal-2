@@ -901,7 +901,9 @@ Plus three new chart series powered by `seatgeek_event_metrics`:
 
 ### NEXT (design) — SeatGeek Seller Direct: S4K inventory + sales overlay
 
-**What**: SG Seller Direct integration is live (commit *pending*). Cron `seatgeek-seller-collect-10min` (jobid 41) pulls 1000 listings + paginated orders every 10 min from `sellerdirect-api.seatgeek.com`. Every row carries inline event metadata, so `seatgeek_event_xref` auto-fills via fuzzy match.
+> **Status 2026-06-06:** **LISTINGS side shipped** — full-book rolling-cursor pull + AQ map + D0 event-page panel (`get_event_sg_seller_listings_full`, mig `20260606194100`; CRON_HIERARCHY §4c). **ORDERS side (`/orders`, `seatgeek_orders`) is OBSOLETE** (operator directive) — feed is stale to 2025-06 with no payment data; not maintained, do not build the orders overlay below. Real-time upgrade for listings = webhook **D2-OPS-3** (still merged/undeployed).
+
+**What**: SG Seller Direct integration is live. Listings are pulled full-book (rolling cursor) from `sellerdirect-api.seatgeek.com` and AQ-mapped to canonical TEvo events. Every row carries inline event metadata, so `seatgeek_event_xref` / `sg_events_canonical` auto-fill via fuzzy match. *(Orders ingest below is obsolete — see status banner.)*
 
 UI surfaces to add:
 1. **"S4K on SG" panel on event hero**. `GET /api/seatgeek/event/{tevo_id}/seller-listings` returns our active SG listings for the event with summary (count, tickets, median cost). Show as a small dense panel: "S4K SG: 12 listings · 47 tix · median cost $89".
