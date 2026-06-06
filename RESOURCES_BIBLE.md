@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md
 
-> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-02 (D0) — Map/config row: `v_broker_configurations.fanvenues_key` flagged as the Seat Map availability signal (→ `D0_BIBLE §B11`); v1.3.0 2026-06-03 (A1) — EVO raw `listings_snapshots` retention **30d→15d** (metrics unchanged 120d); SG `/listings` poller split into owned (`sg_listings_poll_owned_1min`, ON) / non-owned (`sg_listings_poll_nonowned_5min`, OFF), `sg_listings_poll_2min` retired. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Also the canonical home for the event-classification taxonomy + cross-cutting data RULES (RULE 0/1/2), absorbed from the retired `SCHEMA.md` — see §2.15–§2.17. Updated 2026-05-28 (absorbed SCHEMA.md taxonomy+RULES into §2.15–§2.17; performer/venue cross-source mapping chains + missing entity_performer_map / entity_venue_map / aq_performer_map / aq_venue_map / cross_source_venue_map entries added to §2.5) | prior: 2026-05-17 (main HEAD `e04387e`+post-#191).**
 
@@ -74,7 +74,8 @@
 
 | Bucket | Window | Swept by |
 |---|---|---|
-| Raw snapshots (ALL sources — EVO/SG/TD listings + sales firehoses) | **30d** | `sweep_old_listings` / `sweep_old_td_listings` (re-batched, 30d) + per-source sweeps |
+| EVO raw `listings_snapshots` (the 18 GB firehose) | **15d** *(halved 2026-06-03, mig `…190000`)* | `sweep_old_listings(15)` |
+| Other raw snapshots (SG/TD listings + sales firehoses) | **30d** | `sweep_old_td_listings` (re-batched, 30d) + per-source sweeps |
 | `event_metrics` | **120d** | modified `sweep_old_listings` (event_metrics → 120d) |
 | `section_metrics` | **60d** | `sweep_old_section_metrics(60)` (new) |
 | `event_section_rows` | **30d** | `sweep_old_event_section_rows(30)` (new) |
@@ -448,7 +449,7 @@ Every column we collect maps to one of these buckets — use the names below whe
 | 7 | **Player health** | espn_injuries_snapshots, espn_athlete_team_history | status, injury_type, return_date, transaction_type, is_baseline |
 | 8 | **Game context** | espn_event_snapshots | state, status_short, home/away_score, spread, over_under, home/away_ml, home_win_prob, attendance |
 | 9 | **News & narrative** | espn_news, wiki_*, why_signals | headline, type, published_at, rivalry intensity, season records, why signals |
-| 10 | **Map / config / topology** | events, performer_zones (+rules), zone_rules, venue_assets, performer_metadata | configuration_id/name, seating_chart URLs, fanvenues_key, zone defs, capacity, logo URLs |
+| 10 | **Map / config / topology** | events, performer_zones (+rules), zone_rules, venue_assets, performer_metadata, `v_broker_configurations` | configuration_id/name, seating_chart URLs, **`fanvenues_key` (≈79 configs — the D0 Seat Map "interactive map exists" signal; see `D0_BIBLE §B11`)**, zone defs, capacity, logo URLs |
 
 **7 ML-feature buckets** — collected but cross-cutting; treat as feature groups for forecasting / sell-through / mispricing models:
 
@@ -553,7 +554,7 @@ Sorted by category. All run in `postgres` role under `pg_cron 1.6.4`. `cron.use_
 |---|---|---|---|---|---|
 | 38 | `master-cascade-2min` | `*/2 * * * *` | `master_cascade_2min()` | C1? | **15.5% of DB time (11s mean)** — bot_chat row 65 flagged |
 | 36 | `midnight-catchup-sweep` | `0 0 * * *` | `midnight_catchup_sweep()` | A1 | |
-| 6 | `sweep-old-listings` | `0 3 * * *` | `sweep_old_listings()` | A1 | raw 30d; **event_metrics→120d** (mig `…180000`, 2026-05-31) |
+| 6 | `sweep-old-listings` | `0 3 * * *` | `sweep_old_listings(15)` | A1 | raw listings **15d** (halved from 30d, mig `…190000`, 2026-06-03); **event_metrics→120d** (unchanged) |
 | — | `sweep_old_section_metrics` | daily | `sweep_old_section_metrics(60)` | A1 | **NEW 2026-05-31** — section_metrics 60d |
 | — | `sweep_old_event_section_rows` | daily | `sweep_old_event_section_rows(30)` | A1 | **NEW 2026-05-31** — event_section_rows 30d |
 | — | `sweep_old_espn_injuries` | daily | `sweep_old_espn_injuries(90)` | A1 | **NEW 2026-05-31** — espn_injuries 90d |
@@ -575,7 +576,9 @@ Sorted by category. All run in `postgres` role under `pg_cron 1.6.4`. `cron.use_
 | name | sched | function | Owner |
 |---|---|---|---|
 | `evo_listings_poll_2min` | `*/2` | `evo_listings_poll_tick(p_max)` — fires `collect-listings?event_id=X` per due event, stamp-on-fire | A1 |
-| `sg_listings_poll_2min` | `*/2` | `sg_listings_poll_tick(p_max,p_min_remaining)` — band-driven, rate-aware (`ratelimit-remaining` backoff), strand-safe, `p_max=5` | A1 |
+| `sg_listings_poll_owned_1min` | `*/1` | `sg_listings_poll_tick(5,3,'owned')` — broker `/listings`, OWNED events only; tight horizon bands, rate-aware, strand-safe. **ACTIVE** | A1 |
+| `sg_listings_poll_nonowned_5min` | `*/5` | `sg_listings_poll_tick(8,3,'non')` — broker `/listings`, NON-OWNED events; once-daily (cadence 1440). **OFF — `cron_policy.enabled=false`** | A1 |
+| ~~`sg_listings_poll_2min`~~ | — | combined poller — **RETIRED 2026-06-03**, split into the two owned/non crons above (mig `…180000`) | A1 |
 | `sg_sales_poll_5min` | `*/5` | `sg_sales_poll_tick` (retuned, band-driven) — re-enabled 05-31 | A1 |
 | `collect-listings` (discovery) | low-freq | new-event discovery sweep (re-added 05-31; `evo_discover` Phase-2 pending) | A1 |
 

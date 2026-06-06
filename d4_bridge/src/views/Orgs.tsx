@@ -8,7 +8,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Plus, Settings, Users, Check } from 'lucide-react';
+import { Plus, Settings, Users, Check, Megaphone } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
 
@@ -109,6 +109,13 @@ export default function Orgs() {
                       Switch
                     </button>
                   )}
+                  <button
+                    onClick={() => navigate(`/orgs/${org.id}/promote`)}
+                    className="p-2 bg-white/5 hover:bg-white/10 transition-all"
+                    title="Promote"
+                  >
+                    <Megaphone size={16} />
+                  </button>
                   {membership.role === 'owner' && (
                     <>
                       <button

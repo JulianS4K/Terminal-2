@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.5.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected); v1.5.0 2026-06-02 (D0) — §B2 file map refresh + new §B11 Seat Map (multi-source Tevomaps overlay, PRs #406-410); v1.6.0 2026-06-03 (D0) — §B9 chart rebuilt: retention-aware hybrid backbone (durable daily spliced under fine-grained series) + UI cleanup. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -46,7 +46,7 @@ There are **two data paths** out of the browser:
 
 *(There is no "Path B" — the A/C labels are historical. The event page uses a **Path C → Path A waterfall**: try RPC v3, fall back to RPC v2, then fall back to 5 parallel REST calls. See §B4.)*
 
-## B2. Frontend file map (`static/terminal/`, 23 files)
+## B2. Frontend file map (`static/terminal/`, 25 files) *(v1.1 · D0 · 2026-06-02)*
 
 **JS modules (11):**
 
@@ -57,7 +57,7 @@ There are **two data paths** out of the browser:
 | `login.js` | 81 | Login-page state machine + post-OAuth bounce. |
 | `nav.js` | 346 | Injects topbar, global search (`terminal_search` RPC `nav.js:115`), version chip, sign-out. |
 | `home.js` | 413 | Landing dashboard — movers + SG blind spots. |
-| `event.js` | 3489 | Event detail — charts, 7 tabs, the RPC waterfall. Heaviest module. |
+| `event.js` | 4246 | Event detail — charts, tabs incl. **Seat Map (§B11)**, the RPC waterfall. Heaviest module. |
 | `movers.js` | 496 | Movers table (v2 index mode + legacy mode). |
 | `discovery.js` | 475 | Discovery gap-alerts / blind-spots / returning-entities panels. |
 | `performer.js` | 674 | Performer index + detail + ESPN + Market Carpet tab. |
@@ -67,9 +67,9 @@ There are **two data paths** out of the browser:
 **HTML pages (8):** `index.html` (home), `event.html`, `movers.html`, `discovery.html`, `performer.html`, `venue.html`, `orders.html`, `login.html`.
 Each sets `data-page` on `<body>` and loads the chain **`lib/supabase.js → auth.js → app.js → nav.js → <page>.js`**, with two exceptions:
 - `login.html` loads only `lib/supabase.js → auth.js → login.js` (no app.js/nav.js — you're not authed yet).
-- `event.html` additionally loads `lib/uplot.iife.min.js` (`event.html:381`) + `lib/uplot.min.css` (`event.html:11`).
+- `event.html` additionally loads `lib/uplot.iife.min.js` + `lib/uplot.min.css` (charts) and `lib/tevomaps.bundle.js` (Seat Map, §B11).
 
-**lib/ (3):** `lib/supabase.js` (197 KB minified UMD supabase-js bundle, no source map), `lib/uplot.iife.min.js` (charting), `lib/uplot.min.css`.
+**lib/ (4) + 1 notice:** `lib/supabase.js` (197 KB minified UMD supabase-js bundle, no source map), `lib/uplot.iife.min.js` (charting), `lib/uplot.min.css`, `lib/tevomaps.bundle.js` (617 KB vendored `@ticketevolution/seatmaps-client@5.0.0` UMD bundle, global `Tevomaps`, React bundled in — see §B11 + `lib/tevomaps.bundle.NOTICE.md` for provenance/license).
 
 **css (1):** `style.css` — shared styling for every page.
 
@@ -165,9 +165,14 @@ Two services, both deploy from `branch: main`:
 - **Optional**: `AUTH_DISABLED=true` to bypass JWT verification in dev (`app.py:224`; ignored in prod `:240`); `CORS_ALLOWED_ORIGINS` (defaults to localhost — fine for same-origin dev).
 - **Static**: FastAPI mounts `/static` from `STATIC_DIR` (`app.py:7940`); the terminal is served same-origin, so `API_BASE` resolves to `''` on localhost (`app.js:32`) and no CORS config is needed locally.
 
-## B9. Charting (uPlot)
+## B9. Charting (uPlot) *(v1.1 · D0 · 2026-06-03)*
 
-Loaded **only on `event.html`** (`event.html:11` css, `:381` js). Two independent uPlot instances render into `#chart-price` and `#chart-inventory` (`event.html:143-183`), each with 6h/24h/3d/7d/30d/ALL range selects. Built in `event.js`: `renderChartPrice` (`:630`), `renderChartInventory` (`:734`), Y-range guard `robustYRange` (`:711`), bar-path drawing (`:764`). Series originate from the `get_broker_event_page_v3/v2` payload's chart block (Path-A equivalent: `…/chart-data?hours=720`), mapped through `adaptChart` over `event_metrics_series` columns (`event.js:294`).
+Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite `#composite-chart` section with two stacked uPlot panes — **price** (`#chartHostPrice`, medians on a $-axis) + **inventory** (`#chartHostInv`, qty lines + SG sale bars) — sharing one range selector (6h/24h/3d/7d/30d/90d/1y/ALL) + per-source pill toggles. Built in `event.js`: `renderChartPrice`, `renderChartInventory`, Y-range guard `robustYRange`, `clipRangeForHours` (fit-to-history x-axis).
+
+**Retention-aware hybrid backbone (rebuilt 2026-06-03).** Each median/count line is **two data layers spliced into one continuous series** via `mergeDurable(fine, daily)`:
+- **fine** (recent, high-res) — `event_metrics_series` for TEvo (from `get_broker_event_page_v3/v2`, loaded at `V3_LOAD_HOURS=720`≈30d) + SG firehose series from `get_event_chart_extended`. Capped by the source's sweep window (firehoses 30d, `event_metrics` 120d — see RESOURCES_BIBLE retention ladder).
+- **daily** (long-horizon, durable) — `event_listing_snapshot_daily` (**indefinite** retention, 3 slots/day; EVO+SG+TD medians/getins/counts). Fetched in `loadTdFreshness` (limit 1200 ≈ 2yr), exposed via `durMed()`/`durCnt()`.
+- `mergeDurable` keeps every fine point and prepends only daily points **older than** the earliest fine point → one line whose depth = max(both layers), so SG no longer dead-ends at 30d while TEvo runs to 120d. The `#chartLayerHint` pill flips to "○ daily history" when the window > 30d. **Caveat:** the durable table only started **2026-05-27**, so long-range depth is shallow today and deepens as it fills; EVO daily coverage ~97%, SG ~6% (sparse but honest — `spanGaps` handles it). TD lines (SH/GT/VD) are the daily series natively.
 
 ## B10. Cold-start gaps (resolved here so you aren't blocked)
 
@@ -177,6 +182,26 @@ Loaded **only on `event.html`** (`event.html:11` css, `:381` js). Two independen
 4. **`lib/supabase.js` is a 197 KB minified UMD bundle, no source map, no in-tree version string.** To reproduce auth behavior (implicit flow, `detectSessionInUrl`) a rebuild must independently pin the supabase-js version.
 5. **`tickpick_orders` / `vivid_orders` are unreachable from the frontend by design** — service_role-only, read through a SECDEF RPC (`event.js:2607`), never a direct table read. Know the RPC name to surface TP/Vivid sales.
 6. **No TODO/FIXME/HACK markers exist in the frontend JS** — it's clean; the gaps above came from cross-file/runtime analysis, not in-code breadcrumbs.
+
+---
+
+## B11. Seat Map — multi-source Tevomaps overlay *(v1.0 · D0 · 2026-06-02)*
+
+The **Seat Map** tab on `event.html` renders the TEvo interactive venue seatmap and colors each section by a **selected source's** listing floor. Shipped PRs #406-410.
+
+**Library (vendored, not npm).** `lib/tevomaps.bundle.js` = the prebuilt **UMD** bundle of `@ticketevolution/seatmaps-client@5.0.0` (`dist/bundle.js`), exposing global `window.Tevomaps`. React+ReactDOM are bundled in, so there is **no build step and no React dep** — it loads via a plain `<script>` exactly like `uplot.iife.min.js`. Provenance/sha/license in `lib/tevomaps.bundle.NOTICE.md` (package is `UNLICENSED` — used under the TEvo broker relationship, vendored at operator direction). To update: re-`npm pack`, copy `dist/bundle.js`, refresh the sha.
+
+**Inputs (all already in our DB — pure Path-C, no backend change).**
+- `venueId` ← `public.events.venue_id`; `configurationId` ← `public.events.configuration_id` (both read directly, RLS-OK).
+- Section→floor `ticketGroups` per source, fetched **by tevo event_id** (each RPC resolves the cross-source bridge itself): EVO `get_event_evo_listings_full`, SG `get_event_sg_listings_full`, SH/GT/VD `get_event_td_listings(p_tevo_event_id, p_platform, p_hours)`.
+
+**Runtime fetch + CSP.** The library fetches `https://maps.ticketevolution.com/{venueId}/{configurationId}/{map.svg,manifest.json}` from the **browser**. `event.html`'s `<meta>` CSP `connect-src` MUST include `https://maps.ticketevolution.com` (added in #406). The maps host is **not reachable from CI/agent/SQL envs** (egress allowlist) — only a real browser renders it.
+
+**Section-name mapping (the gotcha — see PROJECT_BIBLE §3 landmine).** The manifest keys sections by **full descriptive names** (`Lower Level Corner 104`, `Chase Bridges 316`, `Floor 2`), but every source stores only the trailing token (`104`). The map matches `tevo_section_name` *exactly* (lowercased). So `loadSeatmap` fetches the manifest, reduces both sides to a **tail** (trailing digits + short letter suffix), and remaps our tokens → full names before handing them to `SeatmapFactory`. Tail collisions (`2` → `Floor 2` *and* `Event Level Suites 2`) prefer the `Floor N` key; other collisions are left uncolored (still listed).
+
+**Multi-source selector.** Map renders once (default TEvo); the selector re-colors by **one** source at a time via `api.updateTicketGroups()` (never collective) and swaps the listing table. Sources: **TEvo · SeatGeek · StubHub · GameTime · VividSeats**. **TP excluded** (zone-only granularity — `100s`/`Lower`/`Suites`); **TM excluded** (primary/box-office, no section-level resale). Coverage on MSG/Knicks: GT ~100%, VD ~99%, SH ~90%, SG ~95%; the only non-mapping residue is inherently zone-level (`lower level`, `100 Level`, club buckets).
+
+**Map availability across inventory.** ~100% of upcoming events carry `venue_id`+`configuration_id` (can attempt), but only **~79 configurations / 72 venues** carry a `v_broker_configurations.fanvenues_key` (our in-DB "interactive map exists" proxy; covers ~1,483 upcoming events). True CDN coverage is `≥79` and browser-probe-confirmable only. See KANBAN for the coverage-probe follow-up.
 
 ---
 
@@ -246,8 +271,10 @@ aq_event_map (7,271 rows as of 2026-05-28)
    ├── category             text    — sport/genre
    ├── venue_short_id       text    — AQ venue ID → aq_venue_map (tevo_venue_id, sg_venue_id)
    ├── performer_short_id   text    — AQ performer ID → aq_performer_map (tevo_performer_id)
-   └── aq_source            text    — 'aq_curated' | 'system_seed'
+   └── aq_source            text    — 'aq_curated' | 'system_seed' | 'evo_only'
 ```
+
+**`aq_source='evo_only'` sentinel (D0 2026-06-06).** Rows tagged `evo_only` are TEvo events intentionally **not** carried on any cross-source feed (SG/SH/VD/TM) — residencies / attractions with no twin to bridge (e.g. *The Wizard of Oz at Sphere*, *MSG Tour Experience*). They are seeded with `tevo_event_id` set + all other-source ids NULL so an "unmapped" gap query can separate intentional EVO-only inventory from real bridge failures: add `AND aq_source IS DISTINCT FROM 'evo_only'`. Driven by the `evo_only_patterns` allowlist + `tag_evo_only_events()` (daily cron `evo_only_autotag_daily` @ 08:45 UTC). Note: SG-direction surfaces (`v_unmatched_events`, `evo_sg_discovery_gaps`) and the owned/velocity blindspot views never include these by construction, so no exclusion is needed there.
 
 ### 3c. TD → TEvo resolution chain
 
