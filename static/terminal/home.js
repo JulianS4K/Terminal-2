@@ -14,7 +14,7 @@
 // Source toggle lets operator pin to a single platform or use the merged
 // composite. Owned/market deltas + SG sales / owned median / value cols
 // from the legacy panel are NOT in v2 — they render as "—" honest empty.
-// Blind spots fires its own RPC (get_blind_spots_sg_selling) — independent.
+// Top-50 chart fires its own RPC (get_sg_market_chart) — independent.
 
 (function () {
   'use strict';
@@ -28,6 +28,7 @@
     sortKey: 'delta_market_pct',
     sortDir: 'desc',
     gapMap: new Map(),        // event_id → [{ gap_type, detail, signal_score }]
+    chartTab: 'top',          // 'top' (rank 1-50) | 'rest' (rank 51+)
   };
 
   async function init() {
@@ -36,8 +37,9 @@
     // Watchlist is the first table — the user's own tracked events. Independent
     // RPC, runs in parallel with movers/blind-spots.
     loadWatchlist().catch(e => console.error('[watchlist]', e));
-    // Blind spots fires its own RPC, independent of movers — runs in parallel.
-    renderBlindSpots().catch(e => console.error('[blindSpots]', e));
+    // Top-50 chart fires its own RPC, independent of movers — runs in parallel.
+    wireChartTabs();
+    renderMarketChart().catch(e => console.error('[sgChart]', e));
     load();
   }
 
@@ -301,31 +303,49 @@
     setText('cvToday', T.fmtNum(today));
   }
 
-  // ---------- Blind spots panel — SG selling, we're not ----------
+  // ---------- TOP 50 — SG SELLING, WE'RE NOT IN ----------
   //
-  // Calls get_blind_spots_sg_selling(p_min_score) RPC (mig 20260520370000).
-  // Composite 0-4 score across:
-  //   1. listings shrinking >= 5% over 48h
-  //   2. price rising       >= 10% over 48h
-  //   3. sales accelerating >= 30% (last 24h vs prior 24h)
-  //   4. sales clearing at/above current ask
-  // Surfaces events scoring >= 2/4 (two independent signals agreeing). Pool:
-  // ~2,930 unmatched US SG events polled at 12h cadence (TRACK_BLINDSPOT tier).
-  // RPC perf-fixed via matview mig 20260524120000 (was timing out >11s).
+  // Billboard-style daily chart of SG market events we hold ZERO owned
+  // inventory in, ranked by sales ACTIVITY. Calls get_sg_market_chart(offset,
+  // limit) RPC (mig 20260606120000), which reads the daily-rebuilt
+  // sg_market_chart table.
   //
-  // Replaces the prior heuristic (sg_sales_window >= 5 AND cur_owned_tix == 0
-  // pulled from /api/broker/movers) — that surfaced matched events with SG
-  // activity but doesn't cover the unmatched-US cohort the new tracker targets.
+  //   chart_score = percent_rank(7d-MA daily volume)
+  //               + percent_rank(7d-MA sales median)        (0..2)
+  //
+  // High on EITHER axis charts; high on BOTH tops it. Eligibility:
+  // owned_count_last_7d = 0, future event, >= 2 days of sales in trailing 7d.
+  // Each row carries prev_rank / peak_rank / days_on_chart for movement.
+  // Two tabs: "Top 50" (rank 1-50) and "The Rest" (rank 51+, capped server-side).
 
-  const BLIND_SPOT_MIN_SCORE = 2;  // was 3; audit 2026-05-24 found score>=3 ~never reached
-  const BLIND_SPOT_MAX_ROWS  = 20;
-  // BLIND_SPOT_MIN_SG_SALES removed: the movers panel is now v2 RPC-backed and
-  // no longer uses sg_sales_window to highlight rows. The sg_selling blind-spot
-  // RPC (renderBlindSpots) provides a dedicated panel for that signal.
+  const CHART_PAGE = 50;        // tab 1 size = top 50
+  const CHART_REST_LIMIT = 200; // tab 2: ranks 51..250
 
-  async function renderBlindSpots() {
-    const body = document.getElementById('blindSpotsBody');
-    const countEl = document.getElementById('blindSpotsCount');
+  function wireChartTabs() {
+    document.querySelectorAll('[data-chart-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.classList.contains('is-active')) return;
+        document.querySelectorAll('[data-chart-tab]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        state.chartTab = btn.dataset.chartTab;
+        renderMarketChart().catch(e => console.error('[sgChart]', e));
+      });
+    });
+  }
+
+  // Movement glyph from rank_delta (prev_rank - rank): + = climbed.
+  function movementCell(r) {
+    if (r.is_new) return '<span class="chart-move new" title="new entry">NEW</span>';
+    const d = r.rank_delta;
+    if (d == null) return '<span class="chart-move flat">—</span>';
+    if (d > 0)  return `<span class="chart-move up"   title="up ${d} from #${r.prev_rank}">▲ ${d}</span>`;
+    if (d < 0)  return `<span class="chart-move down" title="down ${-d} from #${r.prev_rank}">▼ ${-d}</span>`;
+    return '<span class="chart-move flat" title="no change">=</span>';
+  }
+
+  async function renderMarketChart() {
+    const body = document.getElementById('sgChartBody');
+    const metaEl = document.getElementById('sgChartMeta');
     if (!body) return;
 
     const Auth = window.TerminalAuth;
@@ -336,82 +356,79 @@
 
     body.innerHTML = '<div class="empty">loading…</div>';
 
-    let rows;
+    const isRest = state.chartTab === 'rest';
+    const args = isRest
+      ? { p_offset: CHART_PAGE, p_limit: CHART_REST_LIMIT }
+      : { p_offset: 0,          p_limit: CHART_PAGE };
+
+    let payload;
     try {
-      const res = await Auth.client.rpc('get_blind_spots_sg_selling',
-        { p_min_score: BLIND_SPOT_MIN_SCORE });
+      const res = await Auth.client.rpc('get_sg_market_chart', args);
       if (res.error) throw new Error(res.error.message || 'RPC error');
-      rows = res.data || [];
+      payload = res.data || {};
     } catch (e) {
       body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
-      if (countEl) countEl.textContent = '';
+      if (metaEl) metaEl.textContent = '';
       return;
     }
 
-    const n = rows.length;
-    if (countEl) countEl.textContent = n
-      ? `${n} event${n === 1 ? '' : 's'} (showing top ${Math.min(n, BLIND_SPOT_MAX_ROWS)})`
-      : '';
+    const rows = payload.rows || [];
+    const total = payload.total || 0;
+    const charted = payload.chart_date ? ` · ${escapeHtml(payload.chart_date)}` : '';
+    if (metaEl) {
+      metaEl.textContent = total
+        ? (isRest ? `ranks 51–${Math.min(total, CHART_PAGE + rows.length)} of ${total}${charted}`
+                  : `${total} non-owned events charting${charted}`)
+        : '';
+    }
 
-    if (!n) {
-      body.innerHTML =
-        '<div class="empty">no SG-selling signals at score &ge; ' + BLIND_SPOT_MIN_SCORE +
-        '/4 (48h baseline accumulating)</div>';
+    if (!rows.length) {
+      body.innerHTML = isRest
+        ? '<div class="empty">no events beyond the top 50</div>'
+        : '<div class="empty">chart not built yet (rebuilds daily @ 11:05 UTC)</div>';
       return;
     }
 
     const tbl = document.createElement('table');
-    tbl.className = 'blind-spots-tbl';
+    tbl.className = 'blind-spots-tbl chart-tbl';
     tbl.innerHTML = `
       <thead><tr>
+        <th class="num">#</th>
+        <th title="Movement vs yesterday's chart">+/-</th>
         <th>Event</th><th>Venue</th>
         <th class="num">T-days</th>
-        <th class="num" title="Composite 0-4 across listings drop + price rise + sales accel + sales above ask">Score</th>
-        <th class="num" title="DISTINCT sg_sale_id in last 24h">Sales 24h</th>
-        <th class="num" title="Sales velocity: last 24h vs prior 24h">Vel %</th>
-        <th class="num">Listings</th>
-        <th class="num" title="48h delta on distinct sglid count">L Δ%</th>
-        <th class="num">Med px</th>
-        <th class="num" title="48h delta on median listing price">P Δ%</th>
-        <th class="num" title="Median sale 24h vs current median ask">Sale/Ask</th>
-        <th class="num" title="Sales 24h / Listings now">Clear</th>
+        <th class="num" title="7-day moving average of daily sales (distinct sg_sale_id / day)">Vol/day</th>
+        <th class="num" title="7-day moving average of daily sales median price">Med px</th>
+        <th class="num" title="7-day MA daily gross (volume × median, approx)">GMV/day</th>
+        <th class="num" title="Chart score = percentile(volume) + percentile(median), 0–2">Score</th>
+        <th class="num" title="Best rank achieved · days on chart">Peak·On</th>
       </tr></thead>
       <tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
 
-    rows.slice(0, BLIND_SPOT_MAX_ROWS).forEach(r => {
+    rows.forEach(r => {
       const d = T.daysUntil(r.sg_datetime_utc);
       const tr = document.createElement('tr');
 
-      // Event cell links to event.html if we have a TEvo bridge, else plain text.
       const eventLabel = r.tevo_event_id
         ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id))}</a>`
         : escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id));
 
-      // Score cell — hover reveals which signals are lit.
-      const signalsTitle = [
-        (r.signal_listings_drop  ? '✓' : '✗') + ' listings shrinking ≥ 5%',
-        (r.signal_price_rise     ? '✓' : '✗') + ' price rising ≥ 10%',
-        (r.signal_sales_accel    ? '✓' : '✗') + ' sales accelerating ≥ 30%',
-        (r.signal_sales_above_ask? '✓' : '✗') + ' sales clearing at/above ask'
-      ].join(' · ');
-
-      const pct = v => (v == null ? '—' : T.fmtPct(v));
-      const cls = (cond, on, off) => cond ? on : (off || '');
+      const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+      const score = (r.chart_score == null) ? '—' : (+r.chart_score).toFixed(2);
+      const peakOn = `${r.peak_rank ?? '—'}·${r.days_on_chart ?? '—'}`;
 
       tr.innerHTML = `
+        <td class="num chart-rank">${r.rank}</td>
+        <td>${movementCell(r)}</td>
         <td>${eventLabel}</td>
         <td>${escapeHtml(r.sg_venue_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="num" title="${signalsTitle}"><strong>${r.selling_score}/4</strong></td>
-        <td class="num">${r.sales_24h_count || 0}</td>
-        <td class="num ${cls(r.sales_velocity_pct > 0, 'pos', r.sales_velocity_pct < 0 ? 'neg' : '')}">${pct(r.sales_velocity_pct)}</td>
-        <td class="num">${r.listings_now}</td>
-        <td class="num ${cls(r.listings_pct_delta < 0, 'neg', r.listings_pct_delta > 0 ? 'pos' : '')}">${pct(r.listings_pct_delta)}</td>
-        <td class="num">${r.median_now ? '$' + T.fmtNum(Math.round(+r.median_now)) : '—'}</td>
-        <td class="num ${cls(r.price_pct_delta > 0, 'pos', r.price_pct_delta < 0 ? 'neg' : '')}">${pct(r.price_pct_delta)}</td>
-        <td class="num ${cls(r.sale_vs_listing_pct > 0, 'pos', r.sale_vs_listing_pct < 0 ? 'neg' : '')}">${pct(r.sale_vs_listing_pct)}</td>
-        <td class="num">${r.clearing_ratio != null ? T.fmtNum(Math.round(r.clearing_ratio * 100)) + '%' : '—'}</td>`;
+        <td class="num">${r.ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume))}</td>
+        <td class="num">${money(r.ma7_median)}</td>
+        <td class="num">${money(r.ma7_gross)}</td>
+        <td class="num" title="vol pct ${r.pct_volume} · med pct ${r.pct_median}"><strong>${score}</strong></td>
+        <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
       tb.appendChild(tr);
     });
 
