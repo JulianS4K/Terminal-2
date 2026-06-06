@@ -38,6 +38,13 @@
   // localStorage so the preference survives reloads.
   const _ALERTS_LS_KEY = 'd0_chart_show_alerts';
   let _showAlerts = (typeof localStorage !== 'undefined' && localStorage.getItem(_ALERTS_LS_KEY) === '1');
+  // ESPN overlay markers (injury / game-state) ON by default; toggle via the
+  // ESPN chip in the overlay legend, persisted in localStorage.
+  const _ESPN_LS_KEY = 'd0_chart_show_espn';
+  let _showEspn = !(typeof localStorage !== 'undefined' && localStorage.getItem(_ESPN_LS_KEY) === '0');
+  // Cached v2 `espn` payload (team_standings / injuries / recent_results) — used
+  // by the chart's ESPN context strip + marker tooltips for team-name lookup.
+  let _espnInfo = null;
   // Legend toggle state (session-scope, shared map — keys are globally unique).
   const _chartVisible = new Map();
   // Per-chart build caches so each tooltip can read its own series at cursor.idx.
@@ -811,11 +818,13 @@
           // Read _showAlerts at draw time so the toggle takes effect via redraw()
           // without rebuilding the chart instance.
           (u) => drawAlertsMarkers(u, _showAlerts ? (_chartExtAlerts || []) : []),
-          (u) => drawInjuryMarkers(u, ext && ext.annotations && ext.annotations.injuries),
-          (u) => drawGameStateMarkers(u, ext && ext.annotations && ext.annotations.game_state),
         ],
-        ready:   [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
-        setSize: [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
+        // ESPN markers are visible + hoverable DOM glyphs (not canvas) so the
+        // hit-target always lines up with the glyph. Re-place them on ready /
+        // resize / scale-change (drag-zoom) so they track the data.
+        ready:    [(u) => renderEspnMarkers(u, host)],
+        setSize:  [(u) => renderEspnMarkers(u, host)],
+        setScale: [(u) => renderEspnMarkers(u, host)],
         setCursor: [(u) => updateChartTooltipFor('price', u)],
       },
     };
@@ -1058,54 +1067,24 @@
     return '#60a5fa';
   }
 
-  // Injury transition canvas marker — small "+" near top of chart, magenta.
-  // Same canvas-px coordinate convention as drawAlertsMarkers (canPos=true).
-  function drawInjuryMarkers(u, injuries) {
-    if (!injuries || !injuries.length || !u.ctx) return;
-    const ctx = u.ctx;
-    ctx.save();
-    ctx.strokeStyle = '#ec4899'; // pink/magenta — distinct from yellow/red alert palette
-    ctx.lineWidth = 2;
-    injuries.forEach(a => {
-      if (!a.at) return;
-      const tSec = Math.round(new Date(a.at).getTime() / 1000);
-      const x = u.valToPos(tSec, 'x', true);
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const y = u.bbox.top + 14;
-      // small cross
-      ctx.beginPath();
-      ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y);
-      ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3);
-      ctx.stroke();
-    });
-    ctx.restore();
+  // ESPN annotation markers — pink "+" (injury status change) + teal "◆" (game
+  // state change) near the top of the price pane. Rendered as VISIBLE, hoverable
+  // DOM glyphs in the .chart-anno-host overlay (the prior implementation drew a
+  // canvas glyph but put the hover hit-target in a host-spanning overlay WITHOUT
+  // the y-axis-gutter offset, so the target sat ~1 axis-width left of the glyph
+  // and hover almost never landed). Positioning now adds u.over's offset so the
+  // glyph == the hit-target, and it is re-placed on ready/setSize/setScale.
+  function injMarkerTip(a) {
+    const team = espnTeamName(a.espn_team_id);
+    return `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'}${team ? ' · ' + team : ''}): ` +
+           `${a.prev_status || '—'} → ${a.new_status || '—'}`;
   }
-
-  // Game-state transition canvas marker — small square near top of chart, teal.
-  function drawGameStateMarkers(u, states) {
-    if (!states || !states.length || !u.ctx) return;
-    const ctx = u.ctx;
-    ctx.save();
-    ctx.fillStyle = '#14b8a6'; // teal
-    states.forEach(s => {
-      if (!s.at) return;
-      const tSec = Math.round(new Date(s.at).getTime() / 1000);
-      const x = u.valToPos(tSec, 'x', true);
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const y = u.bbox.top + 26;
-      ctx.fillRect(x - 3, y - 3, 6, 6);
-    });
-    ctx.restore();
+  function gsMarkerTip(s) {
+    return `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`;
   }
-
-  // DOM-overlay tooltips for annotations (canvas can't host hover tooltips natively).
-  // Sibling absolute-positioned dots over the chart canvas; native title= attribute
-  // for hover text. Cheap + zero plugin deps. Re-run on uPlot ready + setSize.
-  function renderAnnotationTooltips(u, host, annotations) {
-    if (!annotations) return;
+  function renderEspnMarkers(u, host) {
     let overlay = host.querySelector('.chart-anno-host');
     if (!overlay) {
-      // Ensure host is positioned for absolute children
       const cs = window.getComputedStyle(host);
       if (cs.position === 'static') host.style.position = 'relative';
       overlay = document.createElement('div');
@@ -1113,25 +1092,29 @@
       host.appendChild(overlay);
     }
     overlay.innerHTML = '';
-    const inj = annotations.injuries || [];
-    const gs  = annotations.game_state || [];
-    const addDot = (t, kind, tip) => {
+    if (!_showEspn || !u.over) return;
+    const ext = _chartExtStatePrice.payload;
+    const ann = ext && ext.annotations;
+    if (!ann) return;
+    const ox = u.over.offsetLeft, oy = u.over.offsetTop, ow = u.over.offsetWidth;
+    const place = (t, cls, glyph, tip) => {
+      if (!t) return;
       const tSec = Math.round(new Date(t).getTime() / 1000);
-      // canPos=false → CSS pixels (matches DOM coordinate space)
-      const x = u.valToPos(tSec, 'x');
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const yOffset = kind === 'inj' ? 12 : 24;
-      const dot = document.createElement('div');
-      dot.className = 'chart-anno-dot anno-' + kind;
-      dot.style.left = (x - 5) + 'px';
-      dot.style.top = (u.bbox.top + yOffset - 5) + 'px';
-      dot.title = tip;
-      overlay.appendChild(dot);
+      const px = u.valToPos(tSec, 'x'); // CSS px relative to the plot area
+      if (px < 0 || px > ow) return;
+      const el = document.createElement('div');
+      el.className = 'espn-marker ' + cls;
+      el.style.left = (ox + px) + 'px';
+      el.style.top  = (oy + (cls === 'em-gs' ? 22 : 7)) + 'px';
+      el.title = tip;
+      el.textContent = glyph;
+      overlay.appendChild(el);
     };
-    inj.forEach(a => addDot(a.at, 'inj',
-      `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'} · team ${a.espn_team_id || '?'}): ${a.prev_status || '—'} → ${a.new_status || '—'}`));
-    gs.forEach(s => addDot(s.at, 'gs',
-      `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`));
+    // De-noise: skip first-seen "transitions" (prev_status == null) — those are
+    // just players already injured when the window opened, not status-change
+    // events, and they pile into an indistinct cluster at the window's left edge.
+    (ann.injuries || []).forEach(a => { if (a.prev_status != null) place(a.at, 'em-inj', '+', injMarkerTip(a)); });
+    (ann.game_state || []).forEach(s => place(s.at, 'em-gs', '◆', gsMarkerTip(s)));
   }
 
   // Shared legend renderer — chartKey selects which build cache + DOM target.
@@ -1272,14 +1255,30 @@
       (ann.injuries && ann.injuries.length) ||
       (ann.game_state && ann.game_state.length)));
     const slots = [
-      { label: 'ESPN',    live: hasEspn, hint: hasEspn ? 'injury / game-state markers on price pane' : 'no ESPN markers for this event' },
-      { label: 'Weather', live: false,   hint: 'reserved — NWS alert windows (pending)' },
-      { label: 'Macro',   live: false,   hint: 'reserved — UMCSENT background band (pending)' },
-      { label: 'Signals', live: false,   hint: 'reserved — movers / gap markers (pending)' },
+      { key: 'espn', label: 'ESPN', live: hasEspn, toggle: hasEspn, on: _showEspn,
+        hint: hasEspn ? (_showEspn ? 'ESPN markers ON — click to hide' : 'ESPN markers HIDDEN — click to show')
+                      : 'no ESPN markers for this event' },
+      { label: 'Weather', live: false, hint: 'reserved — NWS alert windows (pending)' },
+      { label: 'Macro',   live: false, hint: 'reserved — UMCSENT background band (pending)' },
+      { label: 'Signals', live: false, hint: 'reserved — movers / gap markers (pending)' },
     ];
-    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s =>
-      `<span class="overlay-chip ${s.live ? 'live' : 'pending'}" title="${escapeHtml(s.hint)}">` +
-      `${escapeHtml(s.label)} ${s.live ? '●' : '○'}</span>`).join('');
+    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s => {
+      const cls = s.toggle ? (s.on ? 'live' : 'off') + ' toggleable' : (s.live ? 'live' : 'pending');
+      const dot = !s.live ? '○' : (s.toggle && !s.on ? '◍' : '●');
+      return `<span class="overlay-chip ${cls}"${s.key ? ` data-overlay="${s.key}"` : ''} title="${escapeHtml(s.hint)}">` +
+             `${escapeHtml(s.label)} ${dot}</span>`;
+    }).join('');
+    const espnChip = el.querySelector('.overlay-chip.toggleable[data-overlay="espn"]');
+    if (espnChip) {
+      espnChip.addEventListener('click', () => {
+        _showEspn = !_showEspn;
+        try { localStorage.setItem(_ESPN_LS_KEY, _showEspn ? '1' : '0'); } catch (_) {}
+        const inst = _chartInstances.price;
+        const host = document.getElementById('chartHostPrice');
+        if (inst && host) renderEspnMarkers(inst, host);
+        renderChartOverlayLegend();
+      });
+    }
   }
 
   // Refresh every chart legend surface at once — the two detailed per-series
@@ -1578,7 +1577,91 @@
 
   // ---------- ESPN ----------
 
+  // Resolve team names from the event title ("AWAY at HOME") + the espn payload's
+  // home/away ids, so ESPN surfaces show "Yankees" not "team 10". No RPC needed.
+  function espnTeams() {
+    const info = _espnInfo || {};
+    const titleEl = document.getElementById('evTitle');
+    const title = titleEl ? (titleEl.textContent || '') : '';
+    let awayName = '', homeName = '';
+    const parts = title.split(/\s+at\s+/i);
+    if (parts.length === 2) { awayName = parts[0].trim(); homeName = parts[1].trim(); }
+    return {
+      homeId: String(info.home_team_id != null ? info.home_team_id : ''),
+      awayId: String(info.away_team_id != null ? info.away_team_id : ''),
+      homeName, awayName,
+    };
+  }
+  function espnTeamName(teamId) {
+    if (teamId == null) return '';
+    const id = String(teamId), t = espnTeams();
+    if (id === t.homeId && t.homeName) return t.homeName;
+    if (id === t.awayId && t.awayName) return t.awayName;
+    return 'team ' + id;
+  }
+  function espnShortName(n) {
+    if (!n) return '';
+    const parts = n.trim().split(/\s+/);
+    return parts[parts.length - 1]; // nickname, e.g. "Yankees"
+  }
+
+  // ESPN context strip in the chart section — per-team record / win% / seed /
+  // streak / injuries + last game, styled distinct from the market chart.
+  function renderEspnChartStrip() {
+    const el = document.getElementById('espnChartStrip');
+    if (!el) return;
+    const info = _espnInfo;
+    if (!info || info.hidden) { el.hidden = true; el.innerHTML = ''; return; }
+    const t = espnTeams();
+    const byId = {};
+    (info.team_standings || []).forEach(s => { byId[String(s.espn_team_id)] = s; });
+    const results = info.recent_results || [];
+    const injuries = info.injuries || [];
+    const injCount = id => injuries.filter(i => String(i.espn_team_id) === id).length;
+    const lastGame = id => {
+      const g = results.find(r => String(r.home_team_id) === id || String(r.away_team_id) === id);
+      if (!g) return '';
+      const isHome = String(g.home_team_id) === id;
+      const me = isHome ? g.home_score : g.away_score;
+      const opp = isHome ? g.away_score : g.home_score;
+      if (me == null || opp == null) return '';
+      const wl = me > opp ? 'w' : me < opp ? 'l' : 't';
+      const oppName = espnShortName(espnTeamName(isHome ? g.away_team_id : g.home_team_id));
+      return `<span class="espn-wl espn-wl-${wl}">${wl.toUpperCase()}</span> ${me}-${opp} ` +
+             `<span class="muted">${isHome ? 'vs' : '@'} ${escapeHtml(oppName)}</span>`;
+    };
+    const card = (id, name, tag) => {
+      const s = byId[id] || {};
+      const rec = s.record_summary || `${s.wins || 0}-${s.losses || 0}`;
+      const wp = s.win_pct != null ? Number(s.win_pct).toFixed(3).replace(/^0/, '') : '';
+      const seed = s.playoff_seed != null ? '#' + s.playoff_seed : '';
+      const inj = injCount(id);
+      const last = lastGame(id);
+      return `<div class="espn-team">` +
+        `<div class="espn-team-hd"><span class="espn-tag">${tag}</span> <span class="espn-team-nm">${escapeHtml(name || ('team ' + id))}</span></div>` +
+        `<div class="espn-team-line">` +
+          `<span class="espn-rec">${escapeHtml(rec)}</span>` +
+          (wp ? `<span class="muted">${wp}</span>` : '') +
+          (seed ? `<span class="espn-seed">${escapeHtml(seed)}</span>` : '') +
+          (s.streak ? `<span class="espn-streak">${escapeHtml(s.streak)}</span>` : '') +
+          (inj ? `<span class="espn-inj-chip" title="${inj} active injuries">&oplus; ${inj}</span>` : '') +
+        `</div>` +
+        `<div class="espn-team-last">${last || '<span class="muted">—</span>'}</div>` +
+      `</div>`;
+    };
+    const lg = info.espn_league ? String(info.espn_league).toUpperCase() : '';
+    el.innerHTML =
+      `<span class="espn-strip-badge">ESPN</span>` +
+      (lg ? `<span class="espn-strip-lg">${escapeHtml(lg)}</span>` : '') +
+      card(t.awayId, t.awayName, 'AWAY') +
+      `<span class="espn-strip-at">@</span>` +
+      card(t.homeId, t.homeName, 'HOME');
+    el.hidden = false;
+  }
+
   function renderEspn(espn) {
+    _espnInfo = (espn && !espn.hidden) ? espn : null;
+    renderEspnChartStrip();
     const section = document.getElementById('espn');
     const body = document.getElementById('espnBody');
     const subtitle = document.getElementById('espnSubtitle');
