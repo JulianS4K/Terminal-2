@@ -861,10 +861,11 @@
   // Count-axis range — for the inventory pane's integer count scales (left 'y'
   // lines + right 'yr' bars). uPlot's initMax is already per-scale + in-view, so
   // this is adaptive and (unlike robustYRange) never folds the other axis's
-  // series into the range. 8% headroom keeps the tallest line/bar off the frame.
+  // series into the range. 10% headroom (matches the price pane) keeps the
+  // tallest line/bar off the frame.
   function countYRange(u, initMin, initMax) {
     var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
-    return [0, mx > 0 ? mx * 1.08 : 1];
+    return [0, mx > 0 ? mx * 1.1 : 1];
   }
 
   // Integer-only tick increments for count axes — prevents uPlot from picking
