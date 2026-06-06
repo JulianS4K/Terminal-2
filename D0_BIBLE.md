@@ -271,8 +271,10 @@ aq_event_map (7,271 rows as of 2026-05-28)
    ├── category             text    — sport/genre
    ├── venue_short_id       text    — AQ venue ID → aq_venue_map (tevo_venue_id, sg_venue_id)
    ├── performer_short_id   text    — AQ performer ID → aq_performer_map (tevo_performer_id)
-   └── aq_source            text    — 'aq_curated' | 'system_seed'
+   └── aq_source            text    — 'aq_curated' | 'system_seed' | 'evo_only'
 ```
+
+**`aq_source='evo_only'` sentinel (D0 2026-06-06).** Rows tagged `evo_only` are TEvo events intentionally **not** carried on any cross-source feed (SG/SH/VD/TM) — residencies / attractions with no twin to bridge (e.g. *The Wizard of Oz at Sphere*, *MSG Tour Experience*). They are seeded with `tevo_event_id` set + all other-source ids NULL so an "unmapped" gap query can separate intentional EVO-only inventory from real bridge failures: add `AND aq_source IS DISTINCT FROM 'evo_only'`. Driven by the `evo_only_patterns` allowlist + `tag_evo_only_events()` (daily cron `evo_only_autotag_daily` @ 08:45 UTC). Note: SG-direction surfaces (`v_unmatched_events`, `evo_sg_discovery_gaps`) and the owned/velocity blindspot views never include these by construction, so no exclusion is needed there.
 
 ### 3c. TD → TEvo resolution chain
 
