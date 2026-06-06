@@ -162,7 +162,7 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ## 4b. Listings collection — per-event poller model *(v1.2 · A1 · 2026-06-03)*
 
-> **Forward note (2026-06-06):** the SG + TD cadences in this section are scheduled to be superseded by the **trading-hours redesign in §4c** (market-timed, metronome firing). That work is **pending migrations — not yet live**; this section reflects current prod until cutover.
+> **Forward note (2026-06-06):** the SG listings/sales + TD cadences in this section were **superseded by the trading-hours redesign in §4c** (market-timed, metronome firing) — **migrations #1–#3 applied to prod 2026-06-06**. The owned/non split below still holds; the per-event *intervals* and TD firing model are now governed by §4c. SellerDirect pagination (#4) remains pending.
 
 **The horizon-windowed collectors are RETIRED.** Before 2026-05-31, both EVO and SG pulled listings via fixed time-window crons (`collect-listings-0-24h/1-7d/7-30d/30-60d/60d+`, the SG `sg_listings_*` `/v2` jobs, and the `sg_listings_floor_sweep` round-robin). The **collector-cadence cutover** (migs `20260531140000`–`170000`) replaces all of them with **one ≈2-min scan per source** that fires per-event based on each event's date-horizon, driven by config in **`public.collector_cadence`**.
 
@@ -200,7 +200,7 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ## 4c. Trading-hours cadence redesign — market-timed, distributed firing *(v1.3 · A1 · 2026-06-06)*
 
-> **Status: design of record, PENDING migrations** (branch `claude/cool-gates-YTASz`). Supersedes the §4b SG/TD cadences **once applied**. **EVO is unchanged** (sole TEvo consumer, ≈unlimited → keep §4b bands). Scope: SG broker `/listings` (owned), SG `/sales`, SG SellerDirect (#3), TicketsData (TD) 5 platforms (SH/VD/GT/TP/TM — TD has **no** SeatGeek platform, so SeatGeek is never routed through TD).
+> **Status: migrations #1–#3 APPLIED to prod 2026-06-06** (operator-authorized; versions `20260606191854` / `192104` / `192416`). These supersede the §4b SG/TD cadences (now **live**). **#4 (SellerDirect) HELD** — see *SellerDirect finding* below. **EVO is unchanged** (sole TEvo consumer, ≈unlimited → keep §4b bands). Scope: SG broker `/listings` (owned), SG `/sales`, TicketsData (TD) 5 platforms (SH/VD/GT/TP/TM — covered; SeatGeek incl. any TD→SG discovery stays on its native feeds, never routed through TD).
 
 ### Problem
 TD's flat "≤4×/day per event" enqueue is **horizon-blind** → ~950 credits/day of demand against a **300/day cap** → exhausts ~12:24 ET, starving US afternoon/evening (the highest-activity window). SG sales fired **20-request bursts every 5 min** → concurrent token hits → 429s. Both ignored *when* the market actually trades.
@@ -306,16 +306,18 @@ Savings come entirely from SH/VD no longer pulling their ~38 cold `d31p` events 
 
 Token now sees **≤1 small batch/min** (~4 ≪ 10/8s budget), alternating listings/sales. **Process** crons `sg_priority_*_process` → `*/2` (was `*/5`) so snapshots land continuously (DB-only). After-hours: same phases, sparse (`*/10` listings, `*/12` sales).
 
-**SellerDirect (#3) coverage fix:** the bulk `per_page=500` call is **cursor-less** (`p_pages` ignored) → silently truncates past 500 (currently 435/500). Redesign paginates/cursors until exhausted.
+**SellerDirect (#3) finding — HELD, needs a decision (corrected 2026-06-06):** the bulk `/listings?per_page=500` call is **cursor-less** (`p_pages` ignored) and the live response `meta` reports **`total: 290,710`** listings with a keyset cursor (`next_page: ">i:..."`). We ingest **only page 1 (500 rows) = 0.17%** — far worse than the earlier "435/500" read (435 was what *survived ingest filtering*, not the feed size). This is **not** a small tweak: following the cursor to completion = ~582 calls/sweep, a real volume/cost decision (and a question of whether this endpoint returns our own book vs a broader marketplace). **Migration #4 is intentionally NOT applied** — surfaced to the operator rather than blind-looping a working feed. Options: (a) paginate fully each sweep; (b) cap to first N pages on a slower cadence; (c) verify the feed scope first.
 
 ### Safeguards retained
 TD 300/day + 9,000/mo caps · SG `ratelimit-remaining` / `v_sg_token_budget` gate · `cron_should_fire` · clock-advance-on-200 strand-safety. `collector_cadence` is **data** → instant revert by row update; no schema drops; firehose tables untouched.
 
-### Migration staging (each its own file, draft PR, **apply gated** per call)
-1. `collector_cadence` re-tune + widen peak window `{9–23,0}` ET + add TD rows.
-2. SG firing: `/sales`→metronome `tick(4)`/odd phase, `/listings` even phase, `*_process`→`*/2`, floor + SellerDirect phases (token interleave + 429 fix).
-3. TD fold: `td_enqueue_peak`→`collector_band`-driven; metronome drain `p_max=1`; staggered per-platform enqueue; retire flat 4×/day.
-4. SellerDirect pagination fix.
+### Migration staging
+1. ✅ **APPLIED** `20260606191854` — `collector_cadence` re-tune + widen peak window `{9–23,0}` ET (SG listings/sales bands).
+2. ✅ **APPLIED** `20260606192104` — SG token interleave: `/sales`→`tick(4)` odd-min, `/listings` even-min, `*_process`→`*/2` (429-burst fix).
+3. ✅ **APPLIED** `20260606192416` — TD fold: `td_enqueue_peak`→`collector_band`-driven; metronome drain `p_max=1` (+resolved_at guard); staggered per-platform enqueue; retire flat 4×/day; add TD bands.
+4. ⏸ **HELD** — SellerDirect pagination (see *SellerDirect finding* above; needs operator decision before touching the feed).
+
+**Cutover note:** TD budget was already exhausted (300/300) under the old flat system when #3 landed, so TD firing resumes under the new horizon cadence at the next 00:00 UTC budget reset — clean, no double-spend. SG changes take effect on the next tick.
 
 ---
 
