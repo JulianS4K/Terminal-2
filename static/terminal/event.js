@@ -851,6 +851,29 @@
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
     ];
     const { xs } = buildSeriesData(specs);
+
+    // "Overall median" — a generated general-market median across all listing
+    // sources (one ask-median per marketplace): TEvo Market, SG list, StubHub,
+    // GameTime, VividSeats. Excludes our owned inventory + actual sales. At each
+    // bucket it's the median of whichever listing-source medians are present, so
+    // it stays meaningful even when some sources have no data for that bucket.
+    // Drawn last (on top) as a bold white line so it reads as the headline.
+    const OVERALL_SRC = ['prices_market', 'sg_list_med', 'td_sh_med', 'td_gt_med', 'td_vd_med'];
+    const overallSpecs = specs.filter(s => OVERALL_SRC.indexOf(s.key) !== -1);
+    const overallProjected = xs.map((_, i) => {
+      const vals = [];
+      overallSpecs.forEach(s => {
+        const v = s.projected[i];
+        if (v != null && isFinite(v)) vals.push(v);
+      });
+      if (!vals.length) return null;
+      vals.sort((a, b) => a - b);
+      const m = Math.floor(vals.length / 2);
+      return vals.length % 2 ? vals[m] : (vals[m - 1] + vals[m]) / 2;
+    });
+    specs.push({ key: 'overall_med', label: 'Overall median', color: '#ffffff',
+                 width: 3, dash: null, data: [], projected: overallProjected });
+
     _chartLastBuildPrice = { specs, xs };
 
     const xRange = clipRangeForHours(_chartPriceHours, xs);
