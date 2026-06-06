@@ -2957,6 +2957,7 @@
         // into its own stacked sub-section inside #paneOurOrders.
         _tabState.loaded['our-orders'] = true;
         await Promise.all([
+          loadSgSellerListingsFull(eventId),
           loadEvoOrdersFull(eventId),
           loadSgSellerOrdersFull(eventId),
           loadCrossBrokerFull(eventId),
@@ -4121,6 +4122,76 @@
         <td>${firstOfOrder ? holdExp : ''}</td>
         <td>${firstOfOrder ? escapeHtml(r.buyer_brokerage_name || '—') : ''}</td>
         <td>${firstOfOrder ? escapeHtml(r.fraud_check_status || '—') : ''}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Our SG SellerDirect Listings (our inventory, AQ-mapped) ----------
+  async function loadSgSellerListingsFull(eventId) {
+    const body = document.getElementById('sgSellerListingsFullBody');
+    const meta = document.getElementById('sgSellerListingsFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading our SG SellerDirect inventory…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_sg_seller_listings_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['sg-seller-listings'] = true;
+    renderSgSellerListingsFull(res.data, performance.now() - t0);
+  }
+
+  function renderSgSellerListingsFull(d, ms) {
+    const body = document.getElementById('sgSellerListingsFullBody');
+    const meta = document.getElementById('sgSellerListingsFullMeta');
+    if (!body) return;
+    if (!d || d.hidden) {
+      const reason = d && d.reason === 'no_seller_listings'
+        ? 'no SG SellerDirect inventory mapped to this event' : 'hidden';
+      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+      if (meta) meta.textContent = '0 listings';
+      return;
+    }
+    const rows = d.rows || [];
+    const s = d.summary || {};
+    if (meta) {
+      const med = s.median_cost != null ? '$' + T.fmtNum(Math.round(s.median_cost)) : '—';
+      meta.textContent = `${s.total_listings || rows.length} listings · ${s.total_tickets || 0} tix · median cost ${med} · ${ms.toFixed(0)}ms`;
+    }
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no SG SellerDirect inventory for this event</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Cost</th>
+        <th>In-Hand</th><th>Delivery</th><th>Notes</th>
+        <th>Pulled</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const deliv = [r.is_instant ? 'instant' : null, r.is_edelivery ? 'edeliv' : null]
+        .filter(Boolean).join('·') || '—';
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.cost != null ? '$' + T.fmtNum(Math.round(r.cost)) : '—'}</td>
+        <td>${r.in_hand_date ? T.fmtDate(r.in_hand_date) : '—'}</td>
+        <td>${escapeHtml(deliv)}</td>
+        <td class="muted">${escapeHtml(r.notes || '')}</td>
+        <td>${r.pulled_at ? T.fmtDate(r.pulled_at) : '—'}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
