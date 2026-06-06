@@ -9,11 +9,14 @@
   // at root (publishPath strips static/terminal/). Each link is resolved
   // relative to the current page URL by the browser.
   const PAGES = [
-    // ← HUB is an absolute /, taking the operator back to the unified
-    // landing selector (Terminal / Undelivered / Store) on the static
-    // site's root. HOME below remains the terminal's mark-to-market
-    // dashboard (broker desk view).
-    { id: 'hub',       label: '← HUB',     href: '/' },
+    // ← HUB takes the operator back to the unified landing selector
+    // (Terminal / Undelivered / Store / Bridge). Points at the explicit
+    // `/home/` path — which serves static/home/index.html directly on the
+    // static CDN (publishPath=static) without depending on the bare-`/`
+    // root rewrite (not guaranteed live, see render-d0-terminal.yaml) AND
+    // resolves on the FastAPI shell via the /home route (app.py). HOME
+    // below remains the terminal's mark-to-market dashboard (broker desk).
+    { id: 'hub',       label: '← HUB',     href: '/home/' },
     { id: 'home',      label: 'HOME',      href: './' },
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },

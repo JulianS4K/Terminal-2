@@ -110,6 +110,26 @@ export function formatCurrency(amount: number, currency = 'USD') {
   }
 }
 
+/**
+ * Build an absolute URL to a client route, honoring the Vite base path.
+ *
+ * The SPA is served under `/bridge/` today (vite `base` + `<BrowserRouter
+ * basename>`), and moves to root after the beta DNS split. `BASE_URL` tracks
+ * that ('/bridge/' now, '/' later), so links built here resolve in BOTH
+ * topologies. Building `${origin}/event/x` directly omits the base and 404s
+ * under the current /bridge deployment (there is no bare /event route on the
+ * server — only /bridge/* hosts the SPA).
+ *
+ * @param path route path, leading slash optional (e.g. `event/123` or `/claim/x`)
+ */
+export function publicUrl(path: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const base = ((import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/');
+  const cleanBase = base.endsWith('/') ? base.slice(0, -1) : base; // '/bridge' | ''
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${origin}${cleanBase}${cleanPath}`;
+}
+
 export function generateBarcodeContent(ticketId: string, ownerId: string, secret?: string) {
   // Rotating barcode: ticketId + ownerId + current 30s bucket + secret.
   // The 30s bucket means a screenshotted QR stops scanning after at most

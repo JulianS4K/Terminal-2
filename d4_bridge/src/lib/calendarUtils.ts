@@ -1,5 +1,6 @@
 import * as ics from 'ics';
 import { Event } from '../types';
+import { publicUrl } from './utils';
 
 export const generateGoogleCalendarLink = (event: Event) => {
   const start = new Date(event.date.seconds * 1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
@@ -16,7 +17,7 @@ export const downloadIcsFile = (event: Event) => {
     title: event.title,
     description: event.description,
     location: event.location,
-    url: window.location.origin + '/event/' + event.id,
+    url: publicUrl('event/' + event.id),
     categories: [event.category],
     status: 'CONFIRMED',
     busyStatus: 'BUSY'

@@ -15,6 +15,25 @@ So we grab the page with requests, find that assignment, JSON-parse the
 wrapper, and read .data. No JS execution, no headless browser, no
 Next.js runtime needed.
 
+⚠ 2026-05-24 REDESIGN (live-verified on Hamilton): Broadway.com moved
+per-performance INVENTORY out of this bootstrap. The inline `json = {…}`
+still carries show / venue / performance metadata, but `data` now has
+`event_polling_enabled` and NO `sections`. The real seat inventory is
+served by an async availability endpoint:
+
+    POST https://checkout.broadway.com/{slug}/{show_id}/{event_id}/sections/
+    -> {"status":0,"data":{"event_id":…,"tickets":[ <seat-block>, … ]}}
+
+…gated behind Fastly's JS "Client Challenge" + reCAPTCHA Enterprise +
+a session CSRF token. The requests-based GET path below can no longer
+obtain pricing on its own — fetch_sections() now raises
+BroadwayPollingRequired when it detects this state. A browser-driven
+collector (Playwright/Puppeteer; see docs/broadway-live-testing.md)
+drives a real browser, lets the page solve the challenge + reCAPTCHA,
+and OBSERVES the availability XHR; the resulting JSON is parsed by the
+pure function BroadwayClient.parse_availability() into TicketBlock rows.
+We never issue the POST ourselves (RULE 2 keeps this client GET-only).
+
 Listing-data unit of work:
   https://checkout.broadway.com/{slug}/{show_id}/{event_id}/sections/
 
@@ -84,6 +103,19 @@ class BroadwayError(Exception):
 
 class BroadwayParseError(BroadwayError):
     """HTML or embedded JSON did not match expected shape."""
+
+
+class BroadwayPollingRequired(BroadwayError):
+    """The checkout bootstrap parsed OK but carries no inventory.
+    Broadway.com (2026-05-24 redesign) sets `event_polling_enabled` on the
+    bootstrap payload and loads sections/prices from an asynchronous
+    availability endpoint (POST .../sections/) gated behind reCAPTCHA
+    Enterprise + a session CSRF token. The requests GET path cannot fetch
+    inventory on its own; fetch_sections() raises this so the legacy path
+    fails loud instead of returning an empty (silently-wrong) snapshot.
+    The browser-driven collector catches this and falls back to observing
+    the page's own availability XHR (see docs/broadway-live-testing.md).
+    """
 
 
 # ---------- dataclasses ----------
@@ -208,6 +240,66 @@ class SectionsSnapshot:
     types: list[SectionListing]
     alerts: list[Any]
     raw_payload: dict[str, Any] | None = None
+
+
+@dataclass
+class TicketBlock:
+    """One seat-block from an availability payload data.tickets[]."""
+    section_name: str
+    area_name: str
+    row_name: str
+    ticket_type: str
+    price: float
+    fee: float
+    original_price: float | None
+    quantity: int
+    price_id: int | None
+    section_id: int | None
+    area_id: int | None
+    quality: int | None
+    is_ga: bool
+    can_split: bool
+    price_name: str | None
+    ticket_block_id: Any = None
+    seats: list[str] = field(default_factory=list)
+
+    @property
+    def all_in(self) -> float:
+        return self.price + self.fee
+
+
+@dataclass
+class AvailabilitySnapshot:
+    event_id: int
+    event_status: int | None
+    requested_quantity: int | None
+    score: float | None
+    tickets: list[TicketBlock]
+    status: int | None = None
+    messages: list[str] = field(default_factory=list)
+    captured_at_utc: str | None = None
+    source_url: str | None = None
+    raw_payload: dict[str, Any] | None = None
+
+    @property
+    def available(self) -> bool:
+        return bool(self.tickets)
+
+    @property
+    def price_min(self) -> float | None:
+        return min((t.all_in for t in self.tickets), default=None)
+
+    @property
+    def price_max(self) -> float | None:
+        return max((t.all_in for t in self.tickets), default=None)
+
+    @property
+    def sections(self) -> list[str]:
+        seen: list[str] = []
+        for t in self.tickets:
+            if t.section_name and t.section_name not in seen:
+                seen.append(t.section_name)
+        return seen
 
 
 # ---------- idempotency helper ----------
@@ -573,6 +665,92 @@ class BroadwayClient:
             raw_payload=payload if keep_raw else None,
         )
 
+    @staticmethod
+    def _ticket_from_row(r: dict) -> TicketBlock:
+        _f = BroadwayClient._coerce_float
+
+        def _int_or_none(v: Any) -> int | None:
+            try:
+                return int(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        seats = r.get("seatsStr")
+        if not isinstance(seats, list):
+            seats = []
+        return TicketBlock(
+            section_name=str(r.get("SectionName") or ""),
+            area_name=str(r.get("AreaName") or ""),
+            row_name=str(r.get("RowName") or ""),
+            ticket_type=str(r.get("TicketTypeName") or ""),
+            price=float(_f(r.get("TicketPrice")) or 0.0),
+            fee=float(_f(r.get("ServiceFee")) or 0.0),
+            original_price=_f(r.get("OriginalTicketPrice")),
+            quantity=int(r.get("Quantity") or 0),
+            price_id=_int_or_none(r.get("PriceId")),
+            section_id=_int_or_none(r.get("SectionId")),
+            area_id=_int_or_none(r.get("AreaId")),
+            quality=_int_or_none(r.get("Quality")),
+            is_ga=bool(r.get("IsGA")),
+            can_split=bool(r.get("CanSplitBlock")),
+            price_name=(r.get("PriceName") or None),
+            ticket_block_id=r.get("TicketBlockId"),
+            seats=[str(s) for s in seats],
+        )
+
+    @classmethod
+    def parse_availability(
+        cls,
+        obj: dict,
+        *,
+        requested_quantity: int | None = None,
+        captured_at: str | None = None,
+        source_url: str | None = None,
+        keep_raw: bool = False,
+    ) -> AvailabilitySnapshot:
+        """Parse an availability POST response payload into an AvailabilitySnapshot.
+
+        PURE function — issues no network request. RULE 2: we OBSERVE the
+        page's own XHR response; we never issue the POST ourselves.
+
+        Args:
+            obj: the raw JSON dict ({"status":0,"data":{…}}) or the inner
+                 data dict directly.
+            requested_quantity: quantity passed to the availability endpoint,
+                 if known.
+            captured_at: ISO-8601 UTC timestamp of capture.
+            source_url: URL the payload came from, for logging.
+            keep_raw: if True, stash the full obj in raw_payload.
+        """
+        if not isinstance(obj, dict):
+            raise BroadwayParseError("parse_availability: expected a dict")
+        wrapper_status = obj.get("status") if "status" in obj else None
+        messages_raw = obj.get("messages")
+        messages: list[str] = [str(m) for m in messages_raw] if isinstance(messages_raw, list) else []
+        data = obj.get("data") if isinstance(obj.get("data"), dict) else obj
+        if "tickets" not in data:
+            raise BroadwayParseError(
+                f"parse_availability: payload has no data.tickets[] — "
+                f"not an availability response (data keys: {sorted(data.keys())[:12]})"
+            )
+        tickets = [
+            cls._ticket_from_row(r)
+            for r in (data.get("tickets") or [])
+            if isinstance(r, dict)
+        ]
+        return AvailabilitySnapshot(
+            event_id=int(data.get("event_id") or 0),
+            event_status=data.get("event_status"),
+            requested_quantity=requested_quantity,
+            score=cls._coerce_float(data.get("score")),
+            tickets=tickets,
+            status=wrapper_status,
+            messages=messages,
+            captured_at_utc=captured_at,
+            source_url=source_url,
+            raw_payload=obj if keep_raw else None,
+        )
+
     # ---------- defensive fallbacks ----------
 
     @staticmethod
@@ -662,6 +840,27 @@ class BroadwayClient:
 
         payload = self._extract_inline_payload(html)
         if payload is not None:
+            has_inline_inventory = bool(
+                payload.get("sections") or payload.get("areas")
+                or payload.get("types") or payload.get("premium_areas")
+            )
+            if not has_inline_inventory and payload.get("event_polling_enabled"):
+                self._log_pull(
+                    "sections", slug=slug, show_id=show_id, event_id=event_id,
+                    status=status, rows=0,
+                    error=(
+                        "bootstrap OK but event_polling_enabled with no inline sections — "
+                        "inventory is on the async availability POST (reCAPTCHA-gated); "
+                        "use browser-driven collector"
+                    ),
+                )
+                raise BroadwayPollingRequired(
+                    f"event {event_id} ({slug}): bootstrap carries no inline inventory "
+                    f"(event_polling_enabled=true). Real inventory is served by an async "
+                    f"availability POST gated behind reCAPTCHA Enterprise + session CSRF. "
+                    f"Use a browser-driven collector (see docs/broadway-live-testing.md) "
+                    f"that observes the page's own XHR — never issue the POST directly (RULE 2)."
+                )
             snap = self._snapshot_from_payload(
                 slug, show_id, event_id, payload,
                 captured_at, url, keep_raw_payload,
@@ -901,6 +1100,7 @@ def _main(argv: list[str]) -> int:
         print("  python broadway_client.py snapshot <slug>")
         print("  python broadway_client.py dump-raw <url> <out-path>")
         print("  python broadway_client.py parse-file <html-path>")
+        print("  python broadway_client.py parse-availability <availability-json>")
         return 1
     cmd = argv[1]
     cli = BroadwayClient()
@@ -957,6 +1157,16 @@ def _main(argv: list[str]) -> int:
             keep_raw=False,
         )
         _print_snapshot(snap)
+    elif cmd == "parse-availability":
+        # Offline parse of a saved availability JSON file — no network.
+        # Usage: python broadway_client.py parse-availability <path-to-json>
+        with open(argv[2], "r", encoding="utf-8") as f:
+            obj = _json.load(f)
+        snap = BroadwayClient.parse_availability(
+            obj,
+            source_url=f"file://{argv[2]}",
+        )
+        print(_json.dumps(asdict(snap), indent=2, default=str))
     else:
         print(f"unknown command: {cmd}", file=sys.stderr)
         return 2

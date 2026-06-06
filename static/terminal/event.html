@@ -3,7 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://maps.ticketevolution.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
@@ -28,6 +35,8 @@
           <span id="evDate">—</span>
         </p>
         <div class="badges" id="evBadges"></div>
+        <button id="trackBtn" class="track-btn" hidden aria-pressed="false"
+                title="Track this event on your watchlist">☆ Track</button>
       </div>
       <div class="hero-side">
         <div id="hero-weather" hidden>
@@ -69,7 +78,10 @@
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
+      <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
+      <span class="event-tabs-sep" aria-hidden="true">|</span>
+      <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">🔔 Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
     </nav>
 
     <div class="tab-pane active" id="paneOverview" role="tabpanel">
@@ -158,6 +170,7 @@
         <div class="chart-controls">
           <span class="source-toggles" id="chartSourceToggles" title="Click a source to toggle all of its series across both panes"></span>
           <span class="velocity-strip" id="velocityChips"></span>
+          <span class="layer-hint" id="chartLayerHint" title="Recent points are high-resolution (hourly — from the firehose / event_metrics, swept at 30d / 120d). History beyond that window is the durable daily snapshot (3×/day, indefinite retention). One continuous line per source.">● hourly &nbsp;+&nbsp; ○ daily history</span>
           <label class="alerts-toggle" title="Show event alert markers on the chart">
             <input type="checkbox" id="chartPriceAlertsToggle" /> Alerts
           </label>
@@ -167,7 +180,9 @@
             <option value="72">3d</option>
             <option value="168" selected>7d</option>
             <option value="720">30d</option>
-            <option value="4320">ALL</option>
+            <option value="2160">90d</option>
+            <option value="8760">1y</option>
+            <option value="26280">ALL</option>
           </select>
         </div>
       </div>
@@ -398,6 +413,27 @@
     </div>
 
     <!-- "Our Orders" merged tab — fires 3 parallel RPCs on first activate -->
+    <div class="tab-pane" id="paneAlerts" role="tabpanel" hidden>
+      <section id="alerts-this-event">
+        <div class="panel-title">THIS EVENT — TRACKING &amp; ALERTS</div>
+        <div id="alertsThisEventBody"><div class="empty">loading…</div></div>
+      </section>
+      <section id="alerts-recent">
+        <div class="panel-title row">
+          <span>RECENT ALERTS — THIS EVENT</span>
+          <span class="muted small" id="alertsRecentMeta"></span>
+        </div>
+        <div id="alertsRecentBody"><div class="empty">loading…</div></div>
+      </section>
+      <section id="alerts-watchlist">
+        <div class="panel-title row">
+          <span>MY WATCHLIST — ALL TRACKED EVENTS</span>
+          <span class="muted small" id="alertsWatchlistMeta"></span>
+        </div>
+        <div id="alertsWatchlistBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
     <div class="tab-pane" id="paneOurOrders" role="tabpanel" hidden>
       <section id="evo-orders-full">
         <div class="panel-title row">
@@ -450,6 +486,10 @@
         <div id="seatmapListBody"><div class="empty">—</div></div>
       </section>
     </div>
+
+    <div class="tab-pane" id="paneAlerts" role="tabpanel" hidden>
+      <section class="panel"><div class="alerts-root"><div class="empty">Click the tab to load.</div></div></section>
+    </div>
   </main>
 
   <script src="lib/supabase.js"></script>
@@ -458,6 +498,7 @@
   <script src="auth.js"></script>
   <script src="app.js"></script>
   <script src="nav.js"></script>
+  <script src="alerts.js"></script>
   <script src="event.js"></script>
 </body>
 </html>

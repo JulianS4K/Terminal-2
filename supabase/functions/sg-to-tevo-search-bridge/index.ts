@@ -1,4 +1,4 @@
-// sg-to-tevo-search-bridge (v4)
+// sg-to-tevo-search-bridge (v5)
 //
 // COLD BRIDGE: for SG events that have no corresponding row in TEvo's local
 // `events` table, actively call TEvo /v9/events search (with date+performer
@@ -13,13 +13,21 @@
 //
 // v4 (2026-05-16): added owned_first / owned_only modes. When ownedFirst (default
 // true), prioritizes SG events that appear in seatgeek_seller_listings (we own
-// inventory on them). In owned_only mode, ONLY scans those events — using an
-// .in(ownedIds) filter so date-ordered pagination doesn't miss far-future events.
+// inventory on them). In owned_only mode, ONLY scans those events.
+//
+// v5 (2026-06-01): candidate selection moved server-side into the
+// sg_tevo_search_candidates SECDEF RPC (anti-join sg_tevo_search_attempts,
+// never-tried-first ordering). The old client-side path fetched a date-ordered
+// LIMIT*6 window and filtered tried rows in JS, which pinned the scan to the
+// nearest-dated front of the queue — ~1300 never-tried upcoming candidates were
+// never reached. The RPC preserves owned_first / owned_only priority. Mirrors the
+// non-SG aq-to-tevo-search-bridge pattern (migration 20260601051410).
 //
 // GET /functions/v1/sg-to-tevo-search-bridge?limit=20&dry_run=false
 //                                            &owned_first=true   (default ON)
 //                                            &owned_only=true    (drain owned only)
 //                                            &min_score=50
+//                                            &backoff_hours=24
 //
 // Body-gated via requireCronSecret per PROJECT_BIBLE §1 rule #7.
 
@@ -95,54 +103,19 @@ Deno.serve(async (req) => {
   const minScore = Number(url.searchParams.get("min_score") ?? "50");
   const ownedFirst = url.searchParams.get("owned_first") !== "false";  // default ON
   const ownedOnly = url.searchParams.get("owned_only") === "true";
+  const backoffHours = Math.max(1, Number(url.searchParams.get("backoff_hours") ?? "24"));
 
-  const cutoffIso = new Date(Date.now() - 24 * 3600000).toISOString();
-  const { data: recentlyTried } = await sb.from("sg_tevo_search_attempts").select("sg_event_id").gte("attempted_at", cutoffIso);
-  const triedSet = new Set((recentlyTried ?? []).map((r: any) => r.sg_event_id));
-
-  let ownedIds: number[] = [];
-  if (ownedFirst || ownedOnly) {
-    const { data: ownedRows } = await sb.from("seatgeek_seller_listings").select("sg_event_id");
-    ownedIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.sg_event_id)));
-  }
-  const ownedSet = new Set(ownedIds);
-
-  // owned_only / owned_first: fetch owned events directly via .in() (no date pagination)
-  let ownedCandidates: any[] = [];
-  if ((ownedFirst || ownedOnly) && ownedIds.length > 0) {
-    const { data: ownedPool } = await sb
-      .from("sg_events_canonical")
-      .select("sg_event_id, sg_event_name, sg_event_date, sg_datetime_utc, sg_venue_name, sg_venue_city, sg_venue_state, sg_category")
-      .is("tevo_event_id", null)
-      .gt("sg_datetime_utc", new Date().toISOString())
-      .in("sg_event_id", ownedIds)
-      .order("sg_datetime_utc", { ascending: true });
-    ownedCandidates = (ownedPool ?? [])
-      .filter((c: any) => !triedSet.has(c.sg_event_id))
-      .filter((c: any) => !/parking/i.test(c.sg_venue_name ?? "") && !/parking/i.test(c.sg_event_name ?? ""))
-      .filter((c: any) => !['Parking','parking'].includes(c.sg_category ?? ''));
-  }
-
-  // General pool — only fetched when not owned_only
-  let otherCandidates: any[] = [];
-  if (!ownedOnly) {
-    const { data: pool } = await sb
-      .from("sg_events_canonical")
-      .select("sg_event_id, sg_event_name, sg_event_date, sg_datetime_utc, sg_venue_name, sg_venue_city, sg_venue_state, sg_category")
-      .is("tevo_event_id", null)
-      .gt("sg_datetime_utc", new Date().toISOString())
-      .not("sg_category", "in", "(Parking,parking)")
-      .order("sg_datetime_utc", { ascending: true })
-      .limit(limit * 6);
-    otherCandidates = (pool ?? [])
-      .filter((c: any) => !triedSet.has(c.sg_event_id))
-      .filter((c: any) => !ownedSet.has(c.sg_event_id))
-      .filter((c: any) => !/parking/i.test(c.sg_venue_name ?? "") && !/parking/i.test(c.sg_event_name ?? ""));
-  }
-
-  const filtered: any[] = ownedOnly ? ownedCandidates.slice(0, limit)
-                       : ownedFirst ? [...ownedCandidates, ...otherCandidates].slice(0, limit)
-                                    : otherCandidates.slice(0, limit);
+  // Server-side candidate selection: anti-joins sg_tevo_search_attempts and
+  // orders never-tried-first within owned priority. Replaces the old date-front
+  // LIMIT*6 + client-side filter that starved never-tried candidates.
+  const { data: candidates, error: candErr } = await sb.rpc("sg_tevo_search_candidates", {
+    p_limit: limit,
+    p_backoff_hours: backoffHours,
+    p_owned_first: ownedFirst,
+    p_owned_only: ownedOnly,
+  });
+  if (candErr) return new Response(JSON.stringify({ ok: false, error: candErr.message }), { status: 500, headers: { "content-type": "application/json" } });
+  const filtered: any[] = candidates ?? [];
 
   const venueMap = new Map<number, number | null>();
   // Parallel venue lookups — these are independent read RPCs so there's no
@@ -164,7 +137,7 @@ Deno.serve(async (req) => {
   let matched = 0, noResults = 0, errored = 0, ownedAttempted = 0;
 
   for (const c of filtered) {
-    if (ownedSet.has(c.sg_event_id)) ownedAttempted++;
+    if (c.owned) ownedAttempted++;
     const teamA = (c.sg_event_name || "").split(" at ")[0]?.trim() || "";
     const teamB = (c.sg_event_name || "").split(" at ")[1]?.trim() || teamA;
     const tevoVenueId = venueMap.get(c.sg_event_id) ?? null;
@@ -187,7 +160,7 @@ Deno.serve(async (req) => {
     const events: any[] = ((resp.body as any).events ?? []) as any[];
     if (events.length === 0) {
       noResults++;
-      await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: "no_results", meta: { date_gte: dateGte, date_lte: dateLte, name: teamB || teamA, tevo_venue_id: tevoVenueId, owned: ownedSet.has(c.sg_event_id) } }, { onConflict: "sg_event_id" });
+      if (!dryRun) await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: "no_results", meta: { date_gte: dateGte, date_lte: dateLte, name: teamB || teamA, tevo_venue_id: tevoVenueId, owned: c.owned } }, { onConflict: "sg_event_id" });
       continue;
     }
 
@@ -200,7 +173,7 @@ Deno.serve(async (req) => {
 
     if (!best || bestScore < minScore) {
       noResults++;
-      await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: "low_score", meta: { best_score: bestScore, best_id: best?.id, best_name: best?.name, top_n: events.length, owned: ownedSet.has(c.sg_event_id) } }, { onConflict: "sg_event_id" });
+      if (!dryRun) await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: "low_score", meta: { best_score: bestScore, best_id: best?.id, best_name: best?.name, top_n: events.length, owned: c.owned } }, { onConflict: "sg_event_id" });
       continue;
     }
 
@@ -218,29 +191,29 @@ Deno.serve(async (req) => {
       await sb.from("seatgeek_event_xref").upsert({
         tevo_event_id: best.id, sg_event_id: c.sg_event_id, sg_event_name: c.sg_event_name,
         sg_event_location: c.sg_venue_name, sg_start_data: c.sg_datetime_utc,
-        match_method: ownedSet.has(c.sg_event_id) ? "tevo_search_owned_priority" : "tevo_search_autotrack",
+        match_method: c.owned ? "tevo_search_owned_priority" : "tevo_search_autotrack",
         match_confidence: bestScore >= 70 ? 0.95 : 0.80,
         matched_at: new Date().toISOString(),
       }, { onConflict: "tevo_event_id" });
 
       await sb.from("sg_events_canonical").update({
         tevo_event_id: best.id,
-        match_method: ownedSet.has(c.sg_event_id) ? "tevo_search_owned_priority" : "tevo_search_autotrack",
+        match_method: c.owned ? "tevo_search_owned_priority" : "tevo_search_autotrack",
         match_confidence: bestScore >= 70 ? 0.95 : 0.80,
         matched_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }).eq("sg_event_id", c.sg_event_id);
 
-      await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: "matched", meta: { tevo_event_id: best.id, score: bestScore, name: best.name, owned: ownedSet.has(c.sg_event_id) } }, { onConflict: "sg_event_id" });
+      await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: "matched", meta: { tevo_event_id: best.id, score: bestScore, name: best.name, owned: c.owned } }, { onConflict: "sg_event_id" });
     }
 
     matched++;
-    if (samples.length < 18) samples.push({ sg_event_id: c.sg_event_id, sg_name: c.sg_event_name, sg_venue: c.sg_venue_name, sg_date: c.sg_event_date, owned: ownedSet.has(c.sg_event_id), matched_to: { id: best.id, name: best.name, venue: best.venue?.name, occurs_at: best.occurs_at_local }, score: bestScore });
+    if (samples.length < 18) samples.push({ sg_event_id: c.sg_event_id, sg_name: c.sg_event_name, sg_venue: c.sg_venue_name, sg_date: c.sg_event_date, owned: c.owned, matched_to: { id: best.id, name: best.name, venue: best.venue?.name, occurs_at: best.occurs_at_local }, score: bestScore });
   }
 
   return new Response(JSON.stringify({
-    ok: true, dry_run: dryRun, limit, min_score: minScore,
+    ok: true, dry_run: dryRun, limit, min_score: minScore, backoff_hours: backoffHours,
     owned_first: ownedFirst, owned_only: ownedOnly,
-    owned_pool_size: ownedCandidates.length, owned_attempted: ownedAttempted,
+    owned_in_pool: filtered.filter((c: any) => c.owned).length, owned_attempted: ownedAttempted,
     attempted: filtered.length, matched, no_results: noResults, errored, samples,
   }, null, 2), { headers: { "content-type": "application/json" } });
 });

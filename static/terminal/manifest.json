@@ -1,0 +1,15 @@
+{
+  "name": "S4K Terminal",
+  "short_name": "Terminal",
+  "description": "S4K broker terminal — cross-source event pricing, movers, and your tracked-event watchlist.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

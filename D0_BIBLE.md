@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.5.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected); v1.5.0 2026-06-02 (D0) — §B2 file map refresh + new §B11 Seat Map (multi-source Tevomaps overlay, PRs #406-410). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.5.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected); v1.5.0 2026-06-02 (D0) — §B2 file map refresh + new §B11 Seat Map (multi-source Tevomaps overlay, PRs #406-410); v1.6.0 2026-06-03 (D0) — §B9 chart rebuilt: retention-aware hybrid backbone (durable daily spliced under fine-grained series) + UI cleanup. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -165,9 +165,14 @@ Two services, both deploy from `branch: main`:
 - **Optional**: `AUTH_DISABLED=true` to bypass JWT verification in dev (`app.py:224`; ignored in prod `:240`); `CORS_ALLOWED_ORIGINS` (defaults to localhost — fine for same-origin dev).
 - **Static**: FastAPI mounts `/static` from `STATIC_DIR` (`app.py:7940`); the terminal is served same-origin, so `API_BASE` resolves to `''` on localhost (`app.js:32`) and no CORS config is needed locally.
 
-## B9. Charting (uPlot)
+## B9. Charting (uPlot) *(v1.1 · D0 · 2026-06-03)*
 
-Loaded **only on `event.html`** (`event.html:11` css, `:381` js). Two independent uPlot instances render into `#chart-price` and `#chart-inventory` (`event.html:143-183`), each with 6h/24h/3d/7d/30d/ALL range selects. Built in `event.js`: `renderChartPrice` (`:630`), `renderChartInventory` (`:734`), Y-range guard `robustYRange` (`:711`), bar-path drawing (`:764`). Series originate from the `get_broker_event_page_v3/v2` payload's chart block (Path-A equivalent: `…/chart-data?hours=720`), mapped through `adaptChart` over `event_metrics_series` columns (`event.js:294`).
+Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite `#composite-chart` section with two stacked uPlot panes — **price** (`#chartHostPrice`, medians on a $-axis) + **inventory** (`#chartHostInv`, qty lines + SG sale bars) — sharing one range selector (6h/24h/3d/7d/30d/90d/1y/ALL) + per-source pill toggles. Built in `event.js`: `renderChartPrice`, `renderChartInventory`, Y-range guard `robustYRange`, `clipRangeForHours` (fit-to-history x-axis).
+
+**Retention-aware hybrid backbone (rebuilt 2026-06-03).** Each median/count line is **two data layers spliced into one continuous series** via `mergeDurable(fine, daily)`:
+- **fine** (recent, high-res) — `event_metrics_series` for TEvo (from `get_broker_event_page_v3/v2`, loaded at `V3_LOAD_HOURS=720`≈30d) + SG firehose series from `get_event_chart_extended`. Capped by the source's sweep window (firehoses 30d, `event_metrics` 120d — see RESOURCES_BIBLE retention ladder).
+- **daily** (long-horizon, durable) — `event_listing_snapshot_daily` (**indefinite** retention, 3 slots/day; EVO+SG+TD medians/getins/counts). Fetched in `loadTdFreshness` (limit 1200 ≈ 2yr), exposed via `durMed()`/`durCnt()`.
+- `mergeDurable` keeps every fine point and prepends only daily points **older than** the earliest fine point → one line whose depth = max(both layers), so SG no longer dead-ends at 30d while TEvo runs to 120d. The `#chartLayerHint` pill flips to "○ daily history" when the window > 30d. **Caveat:** the durable table only started **2026-05-27**, so long-range depth is shallow today and deepens as it fills; EVO daily coverage ~97%, SG ~6% (sparse but honest — `spanGaps` handles it). TD lines (SH/GT/VD) are the daily series natively.
 
 ## B10. Cold-start gaps (resolved here so you aren't blocked)
 

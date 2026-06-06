@@ -1,0 +1,162 @@
+<!--
+  watchlist-daily-summary.html — Daily Watchlist Summary email template (D0 / notifications).
+
+  WHAT THIS IS
+    The HTML body for the once-a-day watchlist digest. Rendered server-side by
+    filling the {{TOKENS}} below, then queued into public.exos_mail (to_email,
+    subject, html) and sent by the exos-mail-drain edge fn via Resend — the same
+    transactional path exos uses today. This file is the *template*; the render +
+    per-user enqueue + daily cron are the Phase-2 wiring (gated, see footer note).
+
+  RENDER CONTRACT (tokens)
+    Scalars:
+      {{RECIPIENT_NAME}}     greeting name (fallback: "there")
+      {{SUMMARY_DATE}}       e.g. "Friday, June 5"
+      {{WATCHED_COUNT}}      # events on the watchlist this digest covers
+      {{ALERTS_FIRED}}       # of the user's alert rules that fired in last 24h
+      {{MANAGE_URL}}         link to the terminal watchlist/alerts page
+      {{UNSUBSCRIBE_URL}}    one-click unsubscribe (CAN-SPAM, required)
+      {{SENDER_ADDRESS}}     physical mailing address (CAN-SPAM, required)
+    Conditional blocks — render the inner HTML only when the condition holds,
+    otherwise drop the whole block:
+      <!-- IF:ALERTS_FIRED -->     ... <!-- ENDIF:ALERTS_FIRED -->
+      <!-- IF:HAS_EVENTS -->       ... <!-- ENDIF:HAS_EVENTS -->
+      <!-- IF:EMPTY -->            ... <!-- ENDIF:EMPTY -->
+    Repeatable event row — emit one copy of the block between the markers per
+    watched event, substituting the per-row tokens:
+      <!-- ROW:START --> ... <!-- ROW:END -->
+        {{EV_NAME}}        event name
+        {{EV_WHEN}}        date + time, e.g. "Sat Jun 7 · 7:30 PM"
+        {{EV_VENUE}}       venue + city
+        {{EV_URL}}         deep link to the event page
+        {{EV_GETIN}}       current get-in price, formatted "$123" (or "—")
+        {{EV_GETIN_DELTA}} 24h change, formatted "▼ 12%" / "▲ 5%" / "—"
+        {{EV_DELTA_COLOR}} hex for the delta text: green #16a34a (cheaper),
+                           red #dc2626 (pricier), grey #737373 (flat/none)
+        {{EV_LISTINGS}}    active listing count, e.g. "412"
+        {{EV_LISTINGS_DELTA}} 24h listings change, e.g. "+38" / "-12" / "—"
+        {{EV_SIGNAL}}      short badge text or "" (e.g. "TOP MOVER",
+                           "NEW LOW", "SELLING FAST", "ALERT HIT")
+        {{EV_SIGNAL_BG}}   badge background hex (accent #fbbf24 for alert hits,
+                           else #2a2a2a)
+  NOTE: every dynamic value must be HTML-escaped by the renderer (event names
+  are user/upstream data). Layout is table-based + inline-styled for email-client
+  compatibility (no fl/grid, no <style> reliance).
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Daily Watchlist Summary</title>
+</head>
+<body style="margin:0; padding:0; background:#0a0a0a; -webkit-text-size-adjust:100%;">
+
+  <!-- preheader (hidden preview line) -->
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:#0a0a0a; font-size:1px; line-height:1px;">
+    Your watchlist for {{SUMMARY_DATE}} — {{WATCHED_COUNT}} events, {{ALERTS_FIRED}} alerts fired.
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px; max-width:600px; background:#141414; border:1px solid #2a2a2a; border-radius:8px; overflow:hidden;">
+
+          <!-- ===== header ===== -->
+          <tr>
+            <td style="padding:24px 28px 16px 28px; border-bottom:1px solid #2a2a2a;">
+              <div style="font-family:'SF Mono',Menlo,Consolas,monospace; font-size:12px; letter-spacing:1px; color:#fbbf24; text-transform:uppercase;">TERMINAL</div>
+              <div style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:22px; font-weight:700; color:#e5e5e5; padding-top:6px;">Daily Watchlist Summary</div>
+              <div style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:13px; color:#737373; padding-top:4px;">{{SUMMARY_DATE}} · {{WATCHED_COUNT}} events watched</div>
+            </td>
+          </tr>
+
+          <!-- ===== alerts-fired band (conditional) ===== -->
+          <!-- IF:ALERTS_FIRED -->
+          <tr>
+            <td style="padding:14px 28px; background:rgba(251,191,36,0.10); border-bottom:1px solid #2a2a2a;">
+              <span style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:14px; color:#fbbf24; font-weight:600;">🔔 {{ALERTS_FIRED}} of your alerts triggered in the last 24h.</span>
+              <span style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:14px; color:#a3a3a3;"> They’re marked below.</span>
+            </td>
+          </tr>
+          <!-- ENDIF:ALERTS_FIRED -->
+
+          <!-- ===== events table (conditional) ===== -->
+          <!-- IF:HAS_EVENTS -->
+          <tr>
+            <td style="padding:8px 16px 4px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+
+                <!-- ROW:START -->
+                <tr>
+                  <td style="padding:14px 12px; border-bottom:1px solid #222;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <!-- left: event identity -->
+                        <td valign="top" style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+                          <a href="{{EV_URL}}" style="color:#e5e5e5; font-size:15px; font-weight:600; text-decoration:none;">{{EV_NAME}}</a>
+                          <span style="display:inline-block; margin-left:8px; padding:1px 7px; border-radius:4px; background:{{EV_SIGNAL_BG}}; color:#0a0a0a; font-size:10px; font-weight:700; letter-spacing:0.5px; vertical-align:middle;">{{EV_SIGNAL}}</span>
+                          <div style="font-size:12px; color:#737373; padding-top:3px;">{{EV_WHEN}} · {{EV_VENUE}}</div>
+                        </td>
+                        <!-- right: price + listings -->
+                        <td valign="top" align="right" style="font-family:'SF Mono',Menlo,Consolas,monospace; white-space:nowrap; padding-left:12px;">
+                          <div style="font-size:16px; color:#e5e5e5; font-weight:600;">{{EV_GETIN}}</div>
+                          <div style="font-size:12px; color:{{EV_DELTA_COLOR}}; padding-top:2px;">{{EV_GETIN_DELTA}}</div>
+                          <div style="font-size:11px; color:#737373; padding-top:4px;">{{EV_LISTINGS}} listings ({{EV_LISTINGS_DELTA}})</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <!-- ROW:END -->
+
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:18px 28px 8px 28px;">
+              <a href="{{MANAGE_URL}}" style="display:inline-block; background:#fbbf24; color:#0a0a0a; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:13px; font-weight:700; text-decoration:none; padding:10px 22px; border-radius:6px;">View full watchlist →</a>
+            </td>
+          </tr>
+          <!-- ENDIF:HAS_EVENTS -->
+
+          <!-- ===== empty state (conditional) ===== -->
+          <!-- IF:EMPTY -->
+          <tr>
+            <td align="center" style="padding:36px 28px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+              <div style="font-size:15px; color:#a3a3a3;">No movement on your watchlist today.</div>
+              <div style="font-size:13px; color:#737373; padding-top:6px;">We’ll keep watching and ping you when something moves.</div>
+              <div style="padding-top:18px;">
+                <a href="{{MANAGE_URL}}" style="display:inline-block; background:#2a2a2a; color:#e5e5e5; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:13px; font-weight:600; text-decoration:none; padding:10px 22px; border-radius:6px;">Manage watchlist →</a>
+              </div>
+            </td>
+          </tr>
+          <!-- ENDIF:EMPTY -->
+
+          <!-- ===== footer ===== -->
+          <tr>
+            <td style="padding:18px 28px 24px 28px; border-top:1px solid #2a2a2a;">
+              <div style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:12px; color:#737373; line-height:1.6;">
+                You’re receiving this daily summary because you added events to your Terminal watchlist.
+                <br>
+                <a href="{{MANAGE_URL}}" style="color:#9ca3af; text-decoration:underline;">Manage preferences</a>
+                &nbsp;·&nbsp;
+                <a href="{{UNSUBSCRIBE_URL}}" style="color:#9ca3af; text-decoration:underline;">Unsubscribe</a>
+              </div>
+              <div style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:11px; color:#525252; padding-top:10px;">{{SENDER_ADDRESS}}</div>
+            </td>
+          </tr>
+
+        </table>
+
+        <div style="font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:11px; color:#404040; padding-top:16px;">Terminal · market intelligence</div>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

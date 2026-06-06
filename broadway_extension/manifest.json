@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Broadway Availability Collector (D3)",
+  "version": "0.1.0",
+  "description": "Observes checkout.broadway.com availability XHR (data.tickets[]) in your real Chrome and ships it to Supabase. READ-ONLY: observes the page's own requests, never issues any POST to broadway.com.",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://checkout.broadway.com/*",
+    "https://*.supabase.co/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Broadway Collector",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://checkout.broadway.com/*"],
+      "js": ["inject_capture.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://checkout.broadway.com/*"],
+      "js": ["relay.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ]
+}

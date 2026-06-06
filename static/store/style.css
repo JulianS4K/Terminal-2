@@ -486,6 +486,23 @@ a { color: inherit; }
   justify-content: center;
 }
 
+/* Interactive TEvo seat map host. The bundle renders an inline SVG that
+   fills the container width; we give it a fixed-ish height + light backdrop
+   (TEvo maps are drawn for light surfaces) so the section shading reads. When
+   it mounts successfully store.js hides the static .map img above it. */
+.seatmap-host {
+  width: 100%;
+  min-height: 320px;
+  border-radius: 6px;
+  background: #f6f7f9;
+  overflow: hidden;
+  position: relative;
+}
+.seatmap-host svg { display: block; width: 100%; height: auto; }
+/* TEvo injects its own controls/legend; keep them inside the rounded host. */
+.seatmap-host .legend,
+.seatmap-host .controls { font-size: 12px; }
+
 .listings h2 {
   font-size: 18px;
   margin: 0 0 12px;
