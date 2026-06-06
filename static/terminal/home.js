@@ -47,6 +47,7 @@
   const WL_PAGE_SIZE = 50;
   let _wlItems = [];
   let _wlPage = 0;
+  let _wlBasis = null;   // 'bell' (since today's 12:00 ET open) | '24h' — drives the Δ caption
 
   async function loadWatchlist() {
     const body = document.getElementById('watchlistBody');
@@ -67,6 +68,7 @@
       return;
     }
     _wlItems = (res.data && res.data.items) || [];
+    _wlBasis = (res.data && res.data.basis) || null;
     _wlPage = 0;
     renderWatchlistPage();
   }
@@ -77,7 +79,11 @@
     const pager = document.getElementById('watchlistPager');
     if (!body) return;
 
-    if (countEl) countEl.textContent = _wlItems.length ? `${_wlItems.length} events` : '';
+    if (countEl) {
+      const dLbl = _wlBasis === 'bell' ? ' · Δ since opening bell (12:00 ET)'
+                 : _wlBasis === '24h'  ? ' · Δ vs 24h ago' : '';
+      countEl.textContent = _wlItems.length ? `${_wlItems.length} events${dLbl}` : '';
+    }
     if (!_wlItems.length) {
       body.innerHTML = '<div class="empty">No tracked events yet — open an event and tap ★ Track to add it.</div>';
       if (pager) pager.hidden = true;
@@ -88,25 +94,45 @@
     _wlPage = Math.max(0, Math.min(_wlPage, pages - 1));
     const slice = _wlItems.slice(_wlPage * WL_PAGE_SIZE, (_wlPage + 1) * WL_PAGE_SIZE);
 
+    const dHint = _wlBasis === 'bell' ? 'since today’s 12:00 ET open' : 'vs 24h ago';
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
         <th>Event</th>
         <th class="num">T-days</th>
-        <th>Venue</th>
+        <th class="num" title="Cheapest listing — TEvo market">Get-in</th>
+        <th class="num" title="Change in get-in ${dHint}">Δ Get-in</th>
+        <th class="num" title="Median listing price — TEvo market">Median</th>
+        <th class="num" title="90th-percentile price — TEvo market">P90</th>
+        <th class="num" title="Tickets available — TEvo market">Tickets</th>
         <th class="num">Alerts</th>
         <th class="num"></th>
       </tr></thead>
       <tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
     slice.forEach(it => {
       const d = T.daysUntil(it.occurs_at_local);
+      const m = it.metrics || null;
+      const venueLine = [it.venue_name || it.venue_location, it.performer].filter(Boolean).join(' · ');
+      // Headline Δ on the get-in (resale floor). pos/neg class on the <td> (matches
+      // the table td.pos/.neg rule); abs $ + %; flat/no-baseline → muted dash.
+      let dCls = '', dInner = '<span class="muted">—</span>';
+      if (m && m.d_getin != null) {
+        dCls = pctCls(+m.d_getin);
+        const pct = (m.d_getin_pct != null) ? ` <span class="small">(${T.fmtPct(+m.d_getin_pct, 1)})</span>` : '';
+        dInner = `${fmtDelta(+m.d_getin)}${pct}`;
+      }
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>
-            ${it.performer ? `<div class="muted small">${escapeHtml(it.performer)}</div>` : ''}</td>
+            ${venueLine ? `<div class="muted small">${escapeHtml(venueLine)}</div>` : ''}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="muted small">${escapeHtml(it.venue_name || it.venue_location || '—')}</td>
+        <td class="num">${money(m && m.getin)}</td>
+        <td class="num ${dCls}" title="${escapeHtml(dHint)}">${dInner}</td>
+        <td class="num">${money(m && m.median)}</td>
+        <td class="num">${money(m && m.p90)}</td>
+        <td class="num">${m && m.tickets != null ? T.fmtNum(m.tickets) : '—'}</td>
         <td class="num">
           <button class="wl-alert-btn ${it.alert_enabled ? 'on' : 'off'}" data-id="${it.tevo_event_id}"
                   title="${it.alert_enabled ? 'Alerts on — click to mute' : 'Alerts muted — click to enable'}">
