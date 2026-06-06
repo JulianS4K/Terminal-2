@@ -3308,15 +3308,22 @@
   let _seatmapConfigName = '';
   let _seatmapVenueLabel = '';
   const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
-  // Source registry — TP excluded (zone-only, no section granularity); TM excluded
-  // (primary/box-office, no section-level resale listings for these events).
+  // Source registry — TM excluded (primary/box-office, no section-level resale
+  // listings for these events). TP is INCLUDED but is ZONE-ONLY: it lists whole
+  // bands ("100s"/"Lower"/"Suites"), not sections, so it colors by zone expansion
+  // (see _seatmapZoneKeys) rather than the per-section matcher. _seatmapIsZoneSource
+  // flags which sources take the zone path.
   const SEATMAP_SOURCES = [
     { key: 'EVO', label: 'TEvo' },
     { key: 'SG',  label: 'SeatGeek' },
     { key: 'SH',  label: 'StubHub' },
     { key: 'GT',  label: 'GameTime' },
     { key: 'VD',  label: 'VividSeats' },
+    { key: 'TP',  label: 'TickPick' },
   ];
+  // Sources whose `section` is a ZONE label, not a seat section — colored by
+  // expanding each zone to the manifest sections it covers (TickPick only today).
+  function _seatmapIsZoneSource(key) { return key === 'TP'; }
 
   // Fetch one source's listings (by tevo event id — every RPC resolves the bridge itself)
   // and normalize to a common shape. Prices use each source's all-in field where available.
@@ -3454,6 +3461,15 @@
     }
     const bowl = cands.filter(c => !_SM_PREMIUM.test(c.key));
     if (bowl.length === 1) return bowl[0].key; // T4 — unique non-premium = the seating bowl
+    // T4b — Floor N wins a bowl collision. Arenas number the courtside FLOOR 1..N AND
+    // carry a parallel "VIP N" (also non-premium, so it survives the bowl filter) for the
+    // SAME numbers → two non-premium candidates and we'd give up. Per the documented
+    // tie-rule ("tail collisions prefer the Floor N key"), the bare/numeric listing is the
+    // floor, so prefer the unique Floor-named candidate. (Fixes MSG floor 2/4/6/8/10/11/12.)
+    if (bowl.length > 1) {
+      const floor = bowl.filter(c => /(^|[^a-z])floor([^a-z]|$)/i.test(c.key));
+      if (floor.length === 1) return floor[0].key;
+    }
     return null;                               // still ambiguous → leave grey
   }
 
@@ -3494,20 +3510,79 @@
     return key;
   }
 
+  // ----- Zone expansion (for zone-only sources like TickPick) -----
+  // TickPick lists whole ZONES, not seat sections: a hundreds band ("100s"/"200s"/
+  // "400s"/"100 level"), a named tier ("Lower"/"Upper"/"Middle"/"Floor"/"Suites"/
+  // "Club"/"Lounge"/"Balcony"), or a bare section number. To color it we expand each
+  // zone label to the SET of manifest section keys it covers and paint them all at the
+  // zone's floor. Venue-agnostic: a band maps by the section number's hundreds digit;
+  // a named tier maps by a word the manifest key contains; anything else falls back to
+  // the single-section matcher. Overlapping zones resolve to the lowest floor per key.
+  const _SM_ZONE_WORDS = {
+    lower: 'lower', upper: 'upper', middle: 'middle', mezz: 'middle', mezzanine: 'middle',
+    floor: 'floor', court: 'floor', courtside: 'floor', field: 'field',
+    suite: 'suite', suites: 'suite', club: 'club', lounge: 'lounge', lounges: 'lounge',
+    balcony: 'balcony', bridge: 'bridge', bridges: 'bridge', vip: 'vip', terrace: 'terrace',
+  };
+  function _seatmapAllKeys(idx) {
+    if (idx._allKeys) return idx._allKeys;
+    const keys = [];
+    idx.byNum.forEach(arr => arr.forEach(r => keys.push(r.key)));
+    (idx.named || []).forEach(x => keys.push(x.key));
+    idx._allKeys = Array.from(new Set(keys));
+    return idx._allKeys;
+  }
+  function _seatmapZoneKeys(label, idx) {
+    if (!idx) return [];
+    const cache = idx._zoneCache || (idx._zoneCache = new Map());
+    if (cache.has(label)) return cache.get(label);
+    const norm = _smNorm(label);
+    let out = [];
+    // hundreds band: "100", "100s", "100 level", "400s"
+    const band = norm.match(/(^|\s)([1-9])0{2}\s*(s|level|lvl)?(\s|$)/);
+    if (band) {
+      const lo = parseInt(band[2], 10) * 100, hi = lo + 99;
+      idx.byNum.forEach((arr, num) => {
+        const v = parseInt(num, 10);
+        if (v >= lo && v <= hi) arr.forEach(r => out.push(r.key));
+      });
+    }
+    if (!out.length) {                                   // named tier
+      const wants = new Set();
+      norm.split(' ').filter(Boolean).forEach(t => { if (_SM_ZONE_WORDS[t]) wants.add(_SM_ZONE_WORDS[t]); });
+      if (wants.size) {
+        _seatmapAllKeys(idx).forEach(k => {
+          const kn = _smNorm(k);
+          for (const w of wants) { if (kn.indexOf(w) !== -1) { out.push(k); break; } }
+        });
+      }
+    }
+    if (!out.length) {                                   // bare number / unknown → one section
+      const k = _seatmapMatchSection(label, idx);
+      if (k) out = [k];
+    }
+    out = Array.from(new Set(out));
+    cache.set(label, out);
+    return out;
+  }
+
   // Collapse listing rows → one ticketGroup per matched manifest section at its lowest floor
   // (what the map colors by). Unmatched sections are skipped (grey) but still appear in the
   // listing table. No manifest (fetch failed) → fall back to the raw section as the key.
-  function _seatmapTicketGroups(rows, idx) {
+  // zoneSrc=true (TickPick) expands each row's zone label to every section it covers.
+  function _seatmapTicketGroups(rows, idx, zoneSrc) {
     const floorByKey = new Map();
     rows.forEach(r => {
       const sec = (r.section || '').trim();
       if (!sec || _seatmapIsParking(sec)) return;
       const price = Number(r.retail_price);
       if (!isFinite(price) || price <= 0) return;
-      const key = idx ? _seatmapMatchSection(sec, idx) : sec;
-      if (!key) return;
-      const prev = floorByKey.get(key);
-      if (prev == null || price < prev) floorByKey.set(key, price);
+      const keys = idx ? (zoneSrc ? _seatmapZoneKeys(sec, idx) : [_seatmapMatchSection(sec, idx)]) : [sec];
+      keys.forEach(key => {
+        if (!key) return;
+        const prev = floorByKey.get(key);
+        if (prev == null || price < prev) floorByKey.set(key, price);
+      });
     });
     return Array.from(floorByKey, ([key, price]) => ({ tevo_section_name: key, retail_price: price }));
   }
@@ -3629,7 +3704,7 @@
       rows = await _seatmapFetchSource(_seatmapEventId, key);
       _seatmapRowsBySource[key] = rows;
     }
-    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap);
+    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap, _seatmapIsZoneSource(key));
     if (typeof _seatmapApi.updateTicketGroups === 'function') {
       try { _seatmapApi.updateTicketGroups(ticketGroups); } catch (_) { /* ignore */ }
     }
@@ -3679,6 +3754,7 @@
     const tie = { SG: 0, EVO: 1, VD: 2, SH: 3, GT: 4 };   // lower = preferred on ties
     let best = _seatmapSource, bestN = -1;
     for (const s of SEATMAP_SOURCES) {
+      if (_seatmapIsZoneSource(s.key)) continue;   // zone sources over-paint (whole bands) — never auto-win
       const rows = _seatmapRowsBySource[s.key];
       if (!rows || !rows.length) continue;
       const n = _seatmapTicketGroups(rows, _seatmapRemap).length;
@@ -3706,24 +3782,43 @@
     if (!meta) return;
     const rows = _seatmapRowsBySource[_seatmapSource] || [];
     const sections = new Set(rows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => r.section));
+    const isZone = _seatmapIsZoneSource(_seatmapSource);
     const mapped = _seatmapRemap
-      ? `${mappedCount}/${sections.size} sections on map`
+      ? (isZone
+          ? `${sections.size} zone${sections.size === 1 ? '' : 's'} → ${mappedCount} sections painted`
+          : `${mappedCount}/${sections.size} sections on map`)
       : `${mappedCount} sections (manifest unavailable — no coloring)`;
     meta.textContent = `${_seatmapVenueLabel} · ${_seatmapSrcLabel(_seatmapSource)} · ${mapped}`;
   }
 
+  // Does this row's section resolve to a manifest key (i.e. does the map color it)?
+  // Zone sources resolve via zone expansion; section sources via the single matcher.
+  // Returns null when there's no manifest to judge against (don't label as unmapped).
+  function _seatmapRowMapped(r, zoneSrc) {
+    if (!_seatmapRemap) return null;
+    const keys = zoneSrc
+      ? _seatmapZoneKeys(r.section, _seatmapRemap)
+      : [_seatmapMatchSection(r.section, _seatmapRemap)];
+    return keys.some(Boolean);
+  }
+
   // Renders the CURRENT source's listings; clicking a map section filters by matched key
   // (the library returns full manifest names — we match each row's section the same way).
+  // Any listing whose section does NOT resolve to a manifest section (so the map leaves it
+  // grey) is tagged with an `unmapped` pill + row highlight so we can spot-check the misses.
   function renderSeatmapList() {
     const body = document.getElementById('seatmapListBody');
     if (!body) return;
     const sel = _seatmapSelected.map(s => String(s).toLowerCase());
     const all = _seatmapRowsBySource[_seatmapSource] || [];
+    const zoneSrc = _seatmapIsZoneSource(_seatmapSource);
     let rows = all.filter(r => r.section && !_seatmapIsParking(r.section));
     if (sel.length) {
       rows = rows.filter(r => {
-        const k = _seatmapMatchSection(r.section, _seatmapRemap);
-        return k && sel.includes(String(k).toLowerCase());
+        const keys = zoneSrc
+          ? _seatmapZoneKeys(r.section, _seatmapRemap)
+          : [_seatmapMatchSection(r.section, _seatmapRemap)];
+        return keys.some(k => k && sel.includes(String(k).toLowerCase()));
       });
     }
     rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
@@ -3743,17 +3838,30 @@
         <th class="num">Price</th><th>Type</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
+    let unmappedCount = 0;
     rows.slice(0, 300).forEach(r => {
       const tr = document.createElement('tr');
-      if (r.is_owned) tr.className = 'owned-row';
+      const mapped = _seatmapRowMapped(r, zoneSrc);   // true | false | null (no manifest)
+      const cls = [];
+      if (r.is_owned) cls.push('owned-row');
+      if (mapped === false) { cls.push('unmapped-row'); unmappedCount++; }
+      if (cls.length) tr.className = cls.join(' ');
+      const ownPill = r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>';
+      const unmappedPill = mapped === false ? ' <span class="pill unmapped" title="section not on the venue map — not colored">unmapped</span>' : '';
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${T.fmtNum(r.quantity)}</td>
         <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
-        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>'}</td>`;
+        <td>${ownPill}${unmappedPill}</td>`;
       tb.appendChild(tr);
     });
+    if (unmappedCount) {
+      const cap = document.createElement('div');
+      cap.className = 'sm-unmapped-note';
+      cap.textContent = `${unmappedCount} listing${unmappedCount === 1 ? '' : 's'} not on the venue map (grey — spot-check)`;
+      host.appendChild(cap);
+    }
     host.appendChild(tbl);
     body.innerHTML = '';
     body.appendChild(host);

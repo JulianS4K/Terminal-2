@@ -1746,6 +1746,9 @@ body[data-page="login"] {
 .full-list-tbl .pill.owned { color: var(--pos); border-color: var(--pos); }
 .full-list-tbl .pill.market { color: var(--muted); }
 .full-list-tbl .pill.broker { color: var(--accent); border-color: var(--accent); }
+.full-list-tbl .pill.unmapped { color: var(--warn); border-color: var(--warn); }
+.full-list-tbl tr.unmapped-row td { background: rgba(245, 158, 11, 0.07); }
+.sm-unmapped-note { font-size: 11px; color: var(--warn); padding: 4px 2px 6px; }
 .full-list-host { max-height: 70vh; overflow-y: auto; }
 
 .sales-window-ctrl {
