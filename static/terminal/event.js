@@ -890,7 +890,18 @@
     return [0, top > 0 ? top : 1];
   }
 
-  // ---------- INVENTORY CHART ----------
+  // Count-axis range — for the inventory pane's integer count scales (left 'y'
+  // lines + right 'yr' bars). uPlot's initMax is already per-scale + in-view, so
+  // this is adaptive and (unlike robustYRange) never folds the other axis's
+  // series into the range. 8% headroom keeps the tallest line/bar off the frame.
+  function countYRange(u, initMin, initMax) {
+    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
+    return [0, mx > 0 ? mx * 1.08 : 1];
+  }
+
+  // Integer-only tick increments for count axes — prevents uPlot from picking
+  // fractional steps (0.5, 0.2…) that round to duplicate labels ("1,1,2,2").
+  const COUNT_INCRS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
   // 3 line series on left Y-axis (integer ticket counts) + 1 bar series on
   // right Y-axis (SG sale count). uPlot supports per-series scales natively;
   // right axis registered as scale 'yr' with side=1.
@@ -933,19 +944,21 @@
       cursor: { drag: { x: true, y: false } },
       scales: {
         x:  { time: true, range: xRange ? (() => xRange) : undefined },
-        y:  { range: robustYRange },
-        yr: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] },
+        y:  { range: countYRange },
+        yr: { range: countYRange },
       },
       axes: [
         X_AXIS,
         { scale: 'y',  side: 3, stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
+          incrs: COUNT_INCRS,
           values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
           size: 56 },
         { scale: 'yr', side: 1, stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { show: false },
           ticks: { stroke: AXIS_TICKS, size: 6 },
+          incrs: COUNT_INCRS,
           values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
           size: 48 },
       ],
