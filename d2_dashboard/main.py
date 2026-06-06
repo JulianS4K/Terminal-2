@@ -40,6 +40,7 @@ Start: uvicorn d2_dashboard.main:app --host 0.0.0.0 --port $PORT
 from __future__ import annotations
 
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -73,19 +74,44 @@ D2_CANONICAL_ORIGIN = (os.environ.get("D2_CANONICAL_ORIGIN") or "").rstrip("/")
 D2_PHASE = os.environ.get("D2_PHASE", "data-collection")
 D2_UI_STATUS = os.environ.get("D2_UI_STATUS", "rebuild-pending")
 
-# Auth-on by default (2026-05-13: operator re-enabled Google OAuth after
-# wiring the Supabase Auth redirect URI). Set AUTH_DISABLED=true on the
-# service env for a one-off testing bypass. No production self-disable —
-# the operator opts in explicitly when they want the gate off.
-AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
+# AUTH_DISABLED is a testing-only kill switch. To prevent a misconfig from
+# accidentally opening the whole API on a live deploy, it ONLY takes effect
+# when AUTH_DISABLED=true is set explicitly AND no production indicator is
+# present. Hardened 2026-06-06 to mirror app.py:_is_production() — previously
+# d2 honored the flag unconditionally, so a stray AUTH_DISABLED=true on the
+# Render service would have served all /api/d2/* order data unauthenticated.
+_AUTH_DISABLED_REQUESTED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
 
-if AUTH_DISABLED:
+
+def _is_production() -> bool:
+    """Conservative production detector — if ANY indicator says production we
+    treat it as production and refuse the kill switch. Mirrors app.py."""
+    railway = (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
+    generic = (os.environ.get("ENVIRONMENT") or "").lower() == "production"
+    node = (os.environ.get("NODE_ENV") or "").lower() == "production"
+    py = (os.environ.get("PYTHON_ENV") or "").lower() == "production"
+    fly = bool(os.environ.get("FLY_APP_NAME"))  # Fly.io
+    render = bool(os.environ.get("RENDER"))     # Render
+    return railway or generic or node or py or fly or render
+
+
+AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
+
+if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+    import sys as _sys
+    print(
+        "WARNING: d2_dashboard AUTH_DISABLED=true ignored — production "
+        "indicator detected (RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / "
+        "PYTHON_ENV / FLY_APP_NAME / RENDER). Supabase JWT gate stays ON.",
+        file=_sys.stderr,
+        flush=True,
+    )
+elif AUTH_DISABLED:
     import sys as _sys
     print(
         "d2_dashboard: AUTH_DISABLED=true — /api/d2/* endpoints serve "
-        "unauthenticated reads of merged broker order data. Set "
-        "AUTH_DISABLED=false (the default) on the service env to restore "
-        "the Supabase JWT gate.",
+        "unauthenticated reads of merged broker order data. Local-dev/testing "
+        "bypass only; it self-disables on prod platforms.",
         file=_sys.stderr,
         flush=True,
     )
@@ -93,10 +119,10 @@ if AUTH_DISABLED:
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-# Boot-time sanity check. Only meaningful when AUTH_DISABLED is *false* — in
-# that mode the JWT gate needs Supabase env vars; surface their absence loudly
-# instead of silently serving a "Server misconfigured" panel after JS boot.
-# With AUTH_DISABLED=true (the new default), Supabase env vars are unused.
+# Boot-time sanity check. The JWT gate needs Supabase env vars; surface their
+# absence loudly instead of silently serving a "Server misconfigured" panel
+# after JS boot. AUTH_DISABLED is production-locked (above), so on a prod
+# platform the gate is always on and these env vars are always required.
 PROD_MISSING_SUPABASE = (
     (not AUTH_DISABLED)
     and bool(os.environ.get("RENDER") or os.environ.get("FLY_APP_NAME"))
@@ -180,7 +206,11 @@ def require_auth(authorization: str | None = Header(None)):
             timeout=5,
         )
     except Exception as e:
-        raise HTTPException(502, f"auth check failed: {e}")
+        # Don't surface internal exception detail externally — may expose
+        # Supabase hostnames, connection error strings, or timeout messages
+        # useful to an attacker mapping our internal topology. Mirrors app.py.
+        logging.getLogger(__name__).error("Auth check against Supabase failed: %s", e)
+        raise HTTPException(502, "auth check failed — upstream auth service unreachable")
     if not r.ok:
         raise HTTPException(401, "invalid session")
     user = r.json()
