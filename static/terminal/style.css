@@ -480,6 +480,15 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .blind-spots-tbl .num.warn { color: var(--warn); font-weight: 600; }
 .blind-spots-tbl tbody tr:hover td { background: var(--shade); }
 
+/* TOP 50 — SG SELLING, WE'RE NOT IN (Billboard-style chart) */
+.sg-chart-tabs { margin-bottom: 8px; }
+.chart-tbl .chart-rank { font-weight: 700; color: var(--text); width: 32px; }
+.chart-move { font-family: var(--mono); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.chart-move.up   { color: var(--pos); }
+.chart-move.down { color: var(--neg); }
+.chart-move.new  { color: var(--accent); }
+.chart-move.flat { color: var(--dim); }
+
 /* Amber-cued SG sales cell on movers table when blind-spot conditions met
    (sg > threshold AND owned_tix = 0) */
 .movers-tbl .warn-cell {
