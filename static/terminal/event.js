@@ -3790,8 +3790,21 @@
     meta.textContent = `${_seatmapVenueLabel} · ${_seatmapSrcLabel(_seatmapSource)} · ${mapped}`;
   }
 
+  // Does this row's section resolve to a manifest key (i.e. does the map color it)?
+  // Zone sources resolve via zone expansion; section sources via the single matcher.
+  // Returns null when there's no manifest to judge against (don't label as unmapped).
+  function _seatmapRowMapped(r, zoneSrc) {
+    if (!_seatmapRemap) return null;
+    const keys = zoneSrc
+      ? _seatmapZoneKeys(r.section, _seatmapRemap)
+      : [_seatmapMatchSection(r.section, _seatmapRemap)];
+    return keys.some(Boolean);
+  }
+
   // Renders the CURRENT source's listings; clicking a map section filters by matched key
   // (the library returns full manifest names — we match each row's section the same way).
+  // Any listing whose section does NOT resolve to a manifest section (so the map leaves it
+  // grey) is tagged with an `unmapped` pill + row highlight so we can spot-check the misses.
   function renderSeatmapList() {
     const body = document.getElementById('seatmapListBody');
     if (!body) return;
@@ -3824,17 +3837,30 @@
         <th class="num">Price</th><th>Type</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
+    let unmappedCount = 0;
     rows.slice(0, 300).forEach(r => {
       const tr = document.createElement('tr');
-      if (r.is_owned) tr.className = 'owned-row';
+      const mapped = _seatmapRowMapped(r, zoneSrc);   // true | false | null (no manifest)
+      const cls = [];
+      if (r.is_owned) cls.push('owned-row');
+      if (mapped === false) { cls.push('unmapped-row'); unmappedCount++; }
+      if (cls.length) tr.className = cls.join(' ');
+      const ownPill = r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>';
+      const unmappedPill = mapped === false ? ' <span class="pill unmapped" title="section not on the venue map — not colored">unmapped</span>' : '';
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${T.fmtNum(r.quantity)}</td>
         <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
-        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>'}</td>`;
+        <td>${ownPill}${unmappedPill}</td>`;
       tb.appendChild(tr);
     });
+    if (unmappedCount) {
+      const cap = document.createElement('div');
+      cap.className = 'sm-unmapped-note';
+      cap.textContent = `${unmappedCount} listing${unmappedCount === 1 ? '' : 's'} not on the venue map (grey — spot-check)`;
+      host.appendChild(cap);
+    }
     host.appendChild(tbl);
     body.innerHTML = '';
     body.appendChild(host);
