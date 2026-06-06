@@ -12,6 +12,7 @@
 import { Timestamp } from './timestamp';
 import { supabase } from './supabase';
 import { Organization, OrgMembership, OrgRole } from '../types';
+import { publicUrl } from './utils';
 
 // --- Slug helpers (pure) ---------------------------------------------------
 
@@ -359,8 +360,7 @@ export async function createOrgInvite(
     .single();
   if (error) throw error;
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const inviteUrl = `${origin}/invite/${data.token}`;
+  const inviteUrl = publicUrl(`invite/${data.token}`);
   // exos_org_invites PK is `token` — there is no `id` column.
   return { token: data.token as string, inviteUrl };
 }

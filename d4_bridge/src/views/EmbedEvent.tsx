@@ -30,10 +30,11 @@ import { getPublicEvent } from '../lib/events';
 import { getPublicOrg } from '../lib/orgs';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
 import { formatInTz } from '../lib/datetime';
+import { publicUrl } from '../lib/utils';
 
 function EmbedInner({ event, org }: { event: Event; org: Organization | null }) {
   const { theme } = useTheme();
-  const buyHref = `${window.location.origin}/event/${event.id}?utm_source=embed&utm_medium=iframe&utm_content=${org?.slug ?? 'unknown'}`;
+  const buyHref = `${publicUrl(`event/${event.id}`)}?utm_source=embed&utm_medium=iframe&utm_content=${org?.slug ?? 'unknown'}`;
 
   // Self-resize: tell the parent how tall the embed is so it can set
   // the iframe height. We measure on mount + on every window resize.

@@ -3,7 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
@@ -18,6 +25,15 @@
   </header>
 
   <main class="wrap home">
+    <section id="watchlist-panel">
+      <div class="panel-title row">
+        <span>MY WATCHLIST — TRACKED EVENTS</span>
+        <span class="muted small" id="watchlistCount"></span>
+      </div>
+      <div id="watchlistBody"><div class="empty">loading…</div></div>
+      <div id="watchlistPager" class="wl-pager" hidden></div>
+    </section>
+
     <section id="coverage-band">
       <div class="panel-title">COVERAGE — ACTIVE FUTURE SPORTS</div>
       <div class="coverage-grid">
@@ -28,12 +44,16 @@
       </div>
     </section>
 
-    <section id="blind-spots">
+    <section id="sg-chart">
       <div class="panel-title row">
-        <span>BLIND SPOTS — SG SELLING, WE'RE NOT</span>
-        <span class="muted small" id="blindSpotsCount"></span>
+        <span>TOP 50 — SG SELLING, WE'RE NOT IN</span>
+        <span class="muted small" id="sgChartMeta"></span>
       </div>
-      <div id="blindSpotsBody"><div class="empty">loading…</div></div>
+      <div class="ctrl-group sg-chart-tabs">
+        <button class="ctrl-btn is-active" data-chart-tab="top">Top 50</button>
+        <button class="ctrl-btn" data-chart-tab="rest">The Rest</button>
+      </div>
+      <div id="sgChartBody"><div class="empty">loading…</div></div>
     </section>
 
     <section id="movers-panel">

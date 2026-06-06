@@ -2,7 +2,7 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v1.1.0 · baseline v1.0.0 2026-05-28 (A1); v1.1.0 2026-05-28 (A1) — §5 adds the forward-only SKILL.md structure standard. Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline v1.0.0 2026-05-28 (A1); v1.1.0 2026-05-28 (A1) — §5 adds the forward-only SKILL.md structure standard; v1.2.0 2026-06-01 (B1) — §2 makes the listing-source lockdown explicit (EVO/SG prices unchangeable; force-pulls read-only and cannot influence upstream; enforced by `check_readonly.py` + `test_readonly_guards.py`, no bypass). Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -50,7 +50,7 @@ A `bot_chat` reply with `event_type='status'` and `p_in_reply_to` set is the **c
 - If you are still working on a thread (acknowledging without fixing), use `event_type='flag'` or `'question'`. These do NOT close the parent — the unresolved view still surfaces it.
 - Premature `status` replies that conflate "I saw this" with "I fixed this" defeat the resolve hygiene. When in doubt, use `flag`.
 
-### 2. Upstream third-party APIs are read-only
+### 2. Upstream third-party APIs are read-only *(v1.1 · B1 · 2026-06-01)*
 
 Applies to **every** external API the project integrates with — TEvo, SeatGeek, SeatData, TickPick, Vivid, and any future client (`*_client.py`).
 
@@ -62,6 +62,11 @@ OK: search / suggestions / events / performers / venues / ticket_groups / listin
 - Any write / mutation endpoint on any upstream API
 - Webhook subscription changes
 - Account / seller-side configuration changes
+
+**Listing-source lockdown — price changes + force-pulls cannot influence upstream, no bypass *(operator directive 2026-06-01)*:**
+- **EVO and SeatGeek (and every listing source) listing prices cannot be changed.** There is no reprice / set-price / update-listing code path anywhere, and none may be added. Each `*_client.py` is GET-only *by construction* — `ALLOWED_HTTP_METHODS = frozenset({"GET"})` + `_assert_readonly_method()` that **raises** on any non-GET — so a price/inventory mutation is impossible, not merely discouraged. (Lone carve-out: SeatData permits one non-data metadata POST, `/event-request-add`, which writes none of our data and touches no price/inventory.)
+- **On-demand / "force-pull" refresh paths may READ but must NEVER influence a listing-source API.** The force/sync triggers (`raw-tevo?force=true`, `/api/seatgeek/.../sync-listings`, `/sync-sales`, `/api/seatdata/.../sync-sales`, `/auto-search`, `/api/collect/run`, `/api/admin/collect-*`) pull data **in**; they never push an order, hold, write, or price/inventory change **out** to TEvo / SG / SeatData / TP / Vivid. Refreshing the data is fine; influencing the source is forbidden.
+- **No bypass — enforced mechanically.** `scripts/check_readonly.py` (CI static audit: fails the build on any write to a broker host, or a removed guard token) + `tests/test_readonly_guards.py` (asserts every client raises on POST/PUT/PATCH/DELETE). Weakening, deleting, or routing around either guard is a **security-CRIT** change (B1) and is forbidden without explicit operator authorization.
 
 ### 3. Free reign on HTML / wiring within your lane
 

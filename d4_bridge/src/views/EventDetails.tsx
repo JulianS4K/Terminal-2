@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Event } from '../types';
+import { Event, Organization } from '../types';
 import { getPublicEvent, getEventForEdit } from '../lib/events';
-import { mintTickets } from '../lib/tickets';
+import { mintTickets, claimFreeTickets } from '../lib/tickets';
+import { startCheckout } from '../lib/checkout';
+import SocialLinks from '../components/SocialLinks';
+import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
 import { Calendar, MapPin, Ticket, ShieldCheck, Share2, ArrowLeft, CheckCircle2, Copy, Send, Instagram, Minus, Plus, Tag } from 'lucide-react';
-import { formatCurrency, generateBarcodeContent, handleFirestoreError, OperationType } from '../lib/utils';
+import { formatCurrency, generateBarcodeContent, handleFirestoreError, OperationType, publicUrl } from '../lib/utils';
 import { getStripe } from '../lib/stripe';
 import { formatInTz } from '../lib/datetime';
 import { motion } from 'motion/react';
@@ -22,6 +25,7 @@ export default function EventDetails() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [event, setEvent] = useState<Event | null>(null);
+  const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
   const [selectedTierId, setSelectedTierId] = useState<string | null>(null);
@@ -67,7 +71,7 @@ export default function EventDetails() {
             title: data.title,
             description: (data.description || '').slice(0, 200),
             imageUrl: data.image || undefined,
-            canonicalUrl: `${window.location.origin}/event/${data.id}`,
+            canonicalUrl: publicUrl(`event/${data.id}`),
             event: startIso
               ? {
                   name: data.title,
@@ -87,7 +91,7 @@ export default function EventDetails() {
                     price: data.price,
                     currency: data.currency || 'USD',
                     availability: remaining > 0 ? 'InStock' : 'SoldOut',
-                    url: `${window.location.origin}/event/${data.id}`,
+                    url: publicUrl(`event/${data.id}`),
                   },
                 }
               : undefined,
@@ -101,8 +105,9 @@ export default function EventDetails() {
         // orgId, so fetch the public org for its marketing config.
         if (data.orgId) {
           getPublicOrg(data.orgId)
-            .then((org) => {
-              initOrgPixels(org?.marketing?.pixels);
+            .then((o) => {
+              setOrg(o ?? null);
+              initOrgPixels(o?.marketing?.pixels);
               trackPixelEvent('ViewContent', { content_name: data.title, content_ids: [data.id] });
             })
             .catch(() => {/* non-fatal */});
@@ -198,16 +203,80 @@ export default function EventDetails() {
 
   const maxPerOrder = event?.purchaseLimits?.maxPerOrder || 8;
   const maxPerAccount = event?.purchaseLimits?.maxPerAccount || 8;
+  // Paid checkout is gated on the Stripe publishable key — the backend
+  // (exos-checkout + exos_fulfill_checkout) is built but stays dormant until
+  // payments are switched on. No key → paid tiers show "Coming soon".
+  const stripeEnabled = !!(import.meta as { env?: { VITE_STRIPE_PUBLISHABLE_KEY?: string } }).env?.VITE_STRIPE_PUBLISHABLE_KEY;
 
   const handlePurchase = async () => {
-    // Checkout (Stripe Checkout + server-side ticket minting) lands in phase-2 —
-    // it needs the exos_tickets table + a Stripe webhook fulfillment path.
     if (!user) {
-      toast({ kind: 'info', message: 'Sign in to be ready when ticketing opens.' });
+      toast({ kind: 'info', message: 'Sign in to grab your ticket.' });
       await signIn();
       return;
     }
-    toast({ kind: 'info', title: 'Coming soon', message: 'Ticket purchase is being wired up (phase-2).' });
+    if (!event) return;
+    const tier = event.ticketTiers?.find((t) => t.id === selectedTierId) || event.ticketTiers?.[0];
+    if (!tier?.id) {
+      toast({ kind: 'error', message: 'No ticket tier available for this event yet.' });
+      return;
+    }
+    const unitPrice = tier.price ?? event.price ?? 0;
+
+    // Paid tiers → Stripe Checkout (edge fn + webhook fulfillment built; dormant
+    // until the publishable key is set). Free tiers fall through to claim below.
+    if (unitPrice > 0) {
+      if (!stripeEnabled) {
+        toast({ kind: 'info', title: 'Coming soon', message: 'Paid checkout is being wired up.' });
+        return;
+      }
+      setPurchasing(true);
+      try {
+        const url = await startCheckout({
+          eventId: event.id,
+          tierId: tier.id,
+          quantity,
+          successUrl: publicUrl('my-tickets?checkout=success'),
+          cancelUrl: publicUrl(`event/${event.id}`),
+        });
+        window.location.href = url; // leave the SPA for Stripe-hosted checkout
+      } catch (err: any) {
+        console.error('Checkout failed:', err);
+        toast({ kind: 'error', message: err?.message || 'Could not start checkout.' });
+        setPurchasing(false);
+      }
+      return;
+    }
+
+    // Free claim — mint to the buyer, capturing campaign attribution off the URL
+    // (?promoter / ?utm_source) so it lands in the event's Sales report.
+    setPurchasing(true);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const ids = await claimFreeTickets({
+        eventId: event.id,
+        tierId: tier.id,
+        quantity,
+        promoterId: params.get('promoter'),
+        channel: params.get('utm_source'),
+        // Idempotency key for this claim attempt — a network retry returns the
+        // same tickets instead of minting twice (button is disabled meanwhile).
+        orderRef: crypto.randomUUID(),
+      });
+      trackPixelEvent('Purchase', {
+        content_name: event.title,
+        content_ids: [event.id],
+        value: 0,
+        currency: event.currency || 'USD',
+        num_items: ids.length,
+      });
+      toast({ kind: 'success', title: "You're in!", message: `${ids.length} ticket(s) reserved — find them in My Tickets.` });
+      navigate('/my-tickets');
+    } catch (err: any) {
+      console.error('Free claim failed:', err);
+      toast({ kind: 'error', message: err?.message || 'Could not reserve tickets. Please try again.' });
+    } finally {
+      setPurchasing(false);
+    }
   };
 
   const handleShare = async () => {
@@ -279,92 +348,13 @@ export default function EventDetails() {
   };
 
   const handleInstagramStory = async () => {
-    // Goal: get the event poster image into Instagram's story camera
-    // with the URL preloaded on clipboard so the user can paste a link
-    // sticker. Implementation:
-    //   1. Fetch the event image as a Blob (Firebase Storage download
-    //      URLs are CORS-friendly).
-    //   2. Wrap as a File and pass to navigator.share with the file
-    //      array. On mobile this opens the OS share sheet — picking
-    //      Instagram lands the image directly in a Story draft.
-    //   3. Copy the event URL to clipboard in parallel so the user can
-    //      paste it into the Link Sticker UI inside Instagram.
-    //   4. Toast with the next step ("Add a link sticker and paste").
-    //
-    // Falls back to the old copy-link behaviour on:
-    //   * desktop browsers that don't support file-share
-    //   * events without an image
-    //   * fetch / blob errors (CORS, missing image, etc.)
-    //
-    // Why we can't auto-attach the link as a Story link sticker:
-    // Instagram's Story sticker UI is closed — only Meta's Sharing
-    // API for verified Business accounts can attach stickers from
-    // outside the IG app, and that's beyond the scope of a buyer-side
-    // share flow. The clipboard hand-off is the realistic path.
     if (!event) return;
-    const eventUrl = window.location.href;
-    const imageUrl = event.image;
-
-    // Always copy URL — that's the link-sticker hand-off, regardless
-    // of which path the share takes.
-    try {
-      await navigator.clipboard.writeText(eventUrl);
-    } catch {
-      /* clipboard may be unavailable in some contexts; non-fatal */
-    }
-
-    // Try the file-share path when both the OS share sheet supports
-    // files and we have an image to share.
-    if (
-      imageUrl &&
-      typeof navigator !== 'undefined' &&
-      'share' in navigator &&
-      typeof (navigator as any).canShare === 'function'
-    ) {
-      try {
-        const res = await fetch(imageUrl);
-        if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-        const blob = await res.blob();
-        // Pick a sensible filename + extension from the blob type.
-        const ext = blob.type === 'image/png' ? 'png'
-          : blob.type === 'image/webp' ? 'webp'
-          : blob.type === 'image/svg+xml' ? 'svg'
-          : 'jpg';
-        const file = new File([blob], `${event.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}.${ext}`, {
-          type: blob.type || 'image/jpeg',
-        });
-        const shareData: any = { files: [file], title: event.title, text: `${event.title} — get tickets`, url: eventUrl };
-        if ((navigator as any).canShare(shareData)) {
-          await (navigator as any).share(shareData);
-          toast({
-            kind: 'success',
-            title: 'Image ready to post',
-            message: 'In Instagram: pick this image, then add a link sticker and paste — the URL is on your clipboard.',
-            duration: 8000,
-          });
-          return;
-        }
-      } catch (err) {
-        // fetch / canShare / share errors all fall through to the
-        // link-only path below. AbortError = user cancelled — quiet.
-        const msg = err instanceof Error ? err.message : '';
-        if (!/abort/i.test(msg)) {
-          console.warn('Story image share failed, falling back to link copy:', err);
-        } else {
-          // User dismissed — don't toast.
-          return;
-        }
-      }
-    }
-
-    // Fallback: link copied (already done above), tell the user.
-    toast({
-      kind: 'success',
-      message: imageUrl
-        ? 'Link copied. On mobile, long-press the event image to save it, then paste the link into your Story.'
-        : 'Link copied — paste it into your Story.',
-      duration: 7000,
-    });
+    // Share the event POSTER image to the OS share sheet (→ Instagram Story),
+    // with the URL copied for the link sticker. Shared impl in lib/poster.ts.
+    await shareEventToStory(
+      { title: event.title, url: publicUrl(`event/${event.id}`), imageUrl: event.image },
+      toast,
+    );
   };
 
   const handleSMSShare = () => {
@@ -583,11 +573,14 @@ export default function EventDetails() {
             <div className="mb-16 bg-[#111111] border border-white/10 p-8 flex items-center justify-between group">
                <div className="flex items-center space-x-6">
                   <div className="w-16 h-16 bg-brand-primary flex items-center justify-center text-2xl font-black text-black italic">
-                    {event.organizerId ? 'O' : '?'}
+                    {(org?.name || 'O').charAt(0).toUpperCase()}
                   </div>
                   <div>
                     <p className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-1">Presented By</p>
-                    <h3 className="text-2xl font-black italic uppercase tracking-tighter">Event Organizer</h3>
+                    <h3 className="text-2xl font-black italic uppercase tracking-tighter">{org?.name || 'Event Organizer'}</h3>
+                    {org?.marketing?.socials && Object.values(org.marketing.socials).some(Boolean) ? (
+                      <SocialLinks socials={org.marketing.socials} className="flex items-center gap-3 mt-2" />
+                    ) : null}
                   </div>
                </div>
                <Link to={`/organizer/${event.orgId ?? ''}`} className="px-6 py-3 bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest group-hover:bg-brand-primary group-hover:text-black transition-all">
