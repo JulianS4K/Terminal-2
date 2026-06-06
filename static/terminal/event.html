@@ -187,6 +187,9 @@
         </div>
       </div>
       <div class="overlay-legend" id="chartOverlayLegend"></div>
+      <!-- ESPN context strip (WP-ESPN, 2026-06-06): standings + last game per
+           team, styled distinct from the market chart. Hidden when no ESPN xref. -->
+      <div class="espn-strip" id="espnChartStrip" hidden></div>
 
       <div class="composite-pane-block">
         <div class="pane-label row">
@@ -432,6 +435,14 @@
     </div>
 
     <div class="tab-pane" id="paneOurOrders" role="tabpanel" hidden>
+      <section id="sg-seller-listings-full">
+        <div class="panel-title row">
+          <span>OUR SG INVENTORY — SellerDirect listings (our account, AQ-mapped)</span>
+          <span class="muted small" id="sgSellerListingsFullMeta">tap tab to load</span>
+        </div>
+        <div id="sgSellerListingsFullBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+
       <section id="evo-orders-full">
         <div class="panel-title row">
           <span>OUR TEVO ORDERS — FULL (evo_orders ⨯ items, newest first)</span>
@@ -443,7 +454,7 @@
 
       <section id="sg-seller-orders-full">
         <div class="panel-title row">
-          <span>OUR SG SALES — SellerDirect orders (our account)</span>
+          <span>OUR SG SALES — SellerDirect orders (our account) · OBSOLETE (stale feed)</span>
           <span id="tabCountSgSellerOrders" hidden></span>
           <span class="muted small" id="sgSellerOrdersFullMeta">tap tab to load</span>
         </div>

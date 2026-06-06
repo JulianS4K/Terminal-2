@@ -38,6 +38,13 @@
   // localStorage so the preference survives reloads.
   const _ALERTS_LS_KEY = 'd0_chart_show_alerts';
   let _showAlerts = (typeof localStorage !== 'undefined' && localStorage.getItem(_ALERTS_LS_KEY) === '1');
+  // ESPN overlay markers (injury / game-state) ON by default; toggle via the
+  // ESPN chip in the overlay legend, persisted in localStorage.
+  const _ESPN_LS_KEY = 'd0_chart_show_espn';
+  let _showEspn = !(typeof localStorage !== 'undefined' && localStorage.getItem(_ESPN_LS_KEY) === '0');
+  // Cached v2 `espn` payload (team_standings / injuries / recent_results) — used
+  // by the chart's ESPN context strip + marker tooltips for team-name lookup.
+  let _espnInfo = null;
   // Legend toggle state (session-scope, shared map — keys are globally unique).
   const _chartVisible = new Map();
   // Per-chart build caches so each tooltip can read its own series at cursor.idx.
@@ -541,6 +548,7 @@
     document.getElementById('evTitle').textContent = ev.name || `Event ${ev.id || ''}`;
     document.getElementById('evVenue').textContent = ev.venue_name || ev.venue || '—';
     document.getElementById('evDate').textContent  = T.fmtDate(ev.occurs_at_local || ev.occurs_at);
+    _eventStartMs = Date.parse(ev.occurs_at_local || ev.occurs_at || '') || NaN;
 
     const badges = document.getElementById('evBadges');
     badges.innerHTML = '';
@@ -744,6 +752,13 @@
     grid: { stroke: AXIS_GRID, width: 1 },
     ticks: { stroke: AXIS_TICKS, size: 6 },
   };
+  // Top (price) pane x-axis: keep the vertical gridlines + ticks for alignment,
+  // but blank the date labels — only the bottom (inventory) pane shows the date
+  // row, so the shared time axis isn't printed twice between the stacked panes.
+  const X_AXIS_TOP = Object.assign({}, X_AXIS, {
+    values: (u, splits) => splits.map(() => ''),
+    size: 16,
+  });
 
   // Helpers shared by both chart renderers
   function buildSeriesData(specs) {
@@ -837,6 +852,27 @@
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
     ];
     const { xs } = buildSeriesData(specs);
+
+    // "Overall median" — quantity-weighted, carry-forward consensus across all
+    // listing sources: EVO (live) + SG (live) + the six TicketsData books
+    // (SH/GT/VD/TP/TM/TMr, carried at their own cadence). Weighted by each
+    // source's listing count; slow books are assumed-till-next-refresh and only
+    // dropped when stranded past 3×τ. Drawn last (bold white) as the headline.
+    const tdF = _tdFamily || {};
+    const tdSrc = (k) => ({ med: (tdF[k] && tdF[k].med) || [], cnt: (tdF[k] && tdF[k].cnt) || [] });
+    const overallProjected = buildOverallConsensus(xs, [
+      { cad: 'EVO', med: chart.prices_market || [],               cnt: chart.counts_market || [] },
+      { cad: 'SG',  med: extSeries.sg_listings_median || [],       cnt: extSeries.sg_listings_count || [] },
+      { cad: 'SH',  ...tdSrc('sh') },
+      { cad: 'GT',  ...tdSrc('gt') },
+      { cad: 'VD',  ...tdSrc('vd') },
+      { cad: 'TP',  ...tdSrc('tp') },
+      { cad: 'TM',  ...tdSrc('tm') },
+      { cad: 'TMr', ...tdSrc('tmr') },
+    ]);
+    specs.push({ key: 'overall_med', label: 'Overall median', color: '#ffffff',
+                 width: 3, dash: null, data: [], projected: overallProjected });
+
     _chartLastBuildPrice = { specs, xs };
 
     const xRange = clipRangeForHours(_chartPriceHours, xs);
@@ -850,7 +886,7 @@
         y: { range: robustYRange },
       },
       axes: [
-        X_AXIS,
+        X_AXIS_TOP,
         { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
@@ -867,14 +903,18 @@
       ],
       hooks: {
         draw: [
+          // Off-peak (after-hours) shading first so it sits under the markers.
+          (u) => drawOffPeakBands(u),
           // Read _showAlerts at draw time so the toggle takes effect via redraw()
           // without rebuilding the chart instance.
           (u) => drawAlertsMarkers(u, _showAlerts ? (_chartExtAlerts || []) : []),
-          (u) => drawInjuryMarkers(u, ext && ext.annotations && ext.annotations.injuries),
-          (u) => drawGameStateMarkers(u, ext && ext.annotations && ext.annotations.game_state),
         ],
-        ready:   [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
-        setSize: [(u) => renderAnnotationTooltips(u, host, ext && ext.annotations)],
+        // ESPN markers are visible + hoverable DOM glyphs (not canvas) so the
+        // hit-target always lines up with the glyph. Re-place them on ready /
+        // resize / scale-change (drag-zoom) so they track the data.
+        ready:    [(u) => renderEspnMarkers(u, host)],
+        setSize:  [(u) => renderEspnMarkers(u, host)],
+        setScale: [(u) => renderEspnMarkers(u, host)],
         setCursor: [(u) => updateChartTooltipFor('price', u)],
       },
     };
@@ -890,31 +930,136 @@
     }
   }
 
-  // Robust Y-axis range. uPlot's default auto-scale spans data min→max, so a
-  // single outlier (e.g. a $500+ suite sale spiking a median bucket) blows the
-  // axis out and compresses the $4-60 trading band into an unreadable sliver.
-  // This clips the top to ~p95 ONLY when a real outlier exists (real max > 1.5×
-  // p95); otherwise it shows the full range. Lines above the cap clip off-top.
+  // Y-axis range — always 10% above the maximum value currently in view.
+  //
+  // `initMax` is supplied by uPlot already scoped to (a) only the series on THIS
+  // scale and (b) only the points inside the current x-window, so the top tracks
+  // the on-screen data as the time range changes or prices climb toward the
+  // event — no line is ever clipped, and a single spike just lifts the top.
   function robustYRange(u, initMin, initMax) {
-    var fallback = [0, (initMax == null || !isFinite(initMax)) ? 1 : initMax];
-    if (!u || !u.series || !u.data) return fallback;
-    var vals = [];
-    for (var i = 1; i < u.series.length; i++) {
-      if (u.series[i] && u.series[i].show === false) continue;
-      var d = u.data[i]; if (!d) continue;
-      for (var j = 0; j < d.length; j++) {
-        var v = d[j]; if (v != null && isFinite(v)) vals.push(v);
-      }
-    }
-    if (!vals.length) return fallback;
-    vals.sort(function (a, b) { return a - b; });
-    var p95 = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.95))];
-    var realMax = vals[vals.length - 1];
-    var top = (realMax <= p95 * 1.5) ? realMax * 1.08 : Math.max(p95 * 1.1, 1);
-    return [0, top > 0 ? top : 1];
+    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
+    return [0, mx > 0 ? mx * 1.1 : 1];
   }
 
-  // ---------- INVENTORY CHART ----------
+  // Count-axis range — for the inventory pane's integer count scales (left 'y'
+  // lines + right 'yr' bars). uPlot's initMax is already per-scale + in-view, so
+  // this is adaptive and (unlike robustYRange) never folds the other axis's
+  // series into the range. 10% headroom (matches the price pane) keeps the
+  // tallest line/bar off the frame.
+  function countYRange(u, initMin, initMax) {
+    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
+    return [0, mx > 0 ? mx * 1.1 : 1];
+  }
+
+  // Integer-only tick increments for count axes — prevents uPlot from picking
+  // fractional steps (0.5, 0.2…) that round to duplicate labels ("1,1,2,2").
+  const COUNT_INCRS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+
+  // ---------- Overall (cross-source) market median ----------
+  // Quantity-weighted consensus across all listing sources, with after-hours
+  // carry-forward: each source contributes its LATEST reading (assumed to hold
+  // until its next refresh), weighted by its listing count. A source drops out
+  // only once it's stale past 3× its expected refresh interval τ — and τ is
+  // per-source from OBSERVED cadence (EVO 15min live · SG ~1h · TicketsData
+  // SH~90m/VD~180m/GT·TM~6h/TP·TMr~8h), not the cron schedule. Off-peak (ET
+  // 0-11) the slow books are simply carried = the "after-hours" session.
+  let _tdFamily = null;     // { sh:{med,cnt}, gt, vd, tp, tm, tmr } from loadTdFreshness
+  let _eventStartMs = NaN;  // event start (horizon-aware τ for EVO/SG)
+  let _overallShade = null; // [{x0,x1}] off-peak spans (sec) for the draw hook
+
+  function _isPeakEt(ms) {
+    // Peak = ET 12:00–23:59 (matches collector_band). DST-correct via Intl.
+    const h = parseInt(new Date(ms).toLocaleString('en-US',
+      { timeZone: 'America/New_York', hour: 'numeric', hour12: false }), 10);
+    return h >= 12 && h <= 23;
+  }
+  // Expected refresh interval (minutes) — the basis for the stranded cut-off
+  // (stranded once age > 3×τ). NOTE: these are tuned to the data the CLIENT
+  // actually has: EVO/SG from the live payloads, but TicketsData from the
+  // 3-slot/day DAILY ROLLUP (≈14 h overnight gap), so TD τ must be loose enough
+  // to carry overnight rather than strand. The SERVER/firehose version (which
+  // reads ticketsdata_listings_snapshots at the real per-platform 3–19×/day
+  // cadence) uses the tighter per-platform τ. Values err toward CARRYING so the
+  // line stays continuous; a source drops only on genuine multi-cycle absence.
+  function _tauMin(cad, hrs, isPeak) {
+    if (cad === 'EVO') {
+      if (hrs <= 168) return 120;          // ~2 h grace ⇒ stranded ~6 h
+      if (hrs <= 336) return isPeak ? 180 : 240;
+      if (hrs <= 720) return 360;
+      return 1440;
+    }
+    if (cad === 'SG') {
+      if (hrs <= 168) return 180;          // stranded ~9 h
+      if (hrs <= 336) return 360;
+      return 1440;
+    }
+    return 600;                            // TicketsData (rollup) ⇒ stranded ~30 h
+  }
+  // Forward-fill (carry) a [{t,v}] series onto the seconds axis xs, tracking the
+  // timestamp of the last real observation per bucket (for staleness/age).
+  function _carryProject(pts, xs) {
+    const obs = (pts || [])
+      .map(p => ({ t: Math.round(new Date(p.t).getTime() / 1000), v: +p.v }))
+      .filter(o => isFinite(o.v))
+      .sort((a, b) => a.t - b.t);
+    const val = new Array(xs.length).fill(null);
+    const obsT = new Array(xs.length).fill(null);
+    let j = 0, lv = null, lt = null;
+    for (let i = 0; i < xs.length; i++) {
+      while (j < obs.length && obs[j].t <= xs[i]) { lv = obs[j].v; lt = obs[j].t; j++; }
+      val[i] = lv; obsT[i] = lt;
+    }
+    return { val, obsT };
+  }
+  function _wMedian(pairs) {   // pairs: [{m, w}] — lower weighted median
+    if (!pairs.length) return null;
+    pairs.sort((a, b) => a.m - b.m);
+    const total = pairs.reduce((s, p) => s + p.w, 0);
+    if (total <= 0) return null;
+    let cum = 0;
+    for (const p of pairs) { cum += p.w; if (cum >= total / 2) return p.m; }
+    return pairs[pairs.length - 1].m;
+  }
+  // sources: [{ cad, med:[{t,v}], cnt:[{t,v}] }] → per-bucket quantity-weighted
+  // median (null where no source is live). Also records off-peak spans for shading.
+  function buildOverallConsensus(xs, sources) {
+    const K = 3; // grace: drop a source once age > K×τ (stranded)
+    const prep = sources.map(s => ({ cad: s.cad, mP: _carryProject(s.med, xs), cP: _carryProject(s.cnt, xs) }));
+    const med = new Array(xs.length).fill(null);
+    const shade = [];
+    let runStart = null;
+    for (let i = 0; i < xs.length; i++) {
+      const ms = xs[i] * 1000;
+      const isPeak = _isPeakEt(ms);
+      const hrs = isFinite(_eventStartMs) ? Math.max(0, (_eventStartMs - ms) / 3600000) : 9999;
+      const pairs = [];
+      for (const p of prep) {
+        const m = p.mP.val[i], c = p.cP.val[i], ot = p.mP.obsT[i];
+        if (m == null || c == null || c <= 0 || ot == null) continue;
+        if ((xs[i] - ot) / 60 > K * _tauMin(p.cad, hrs, isPeak)) continue; // stranded
+        pairs.push({ m: m, w: c });
+      }
+      med[i] = _wMedian(pairs);
+      if (!isPeak && med[i] != null) { if (runStart == null) runStart = xs[i]; }
+      else if (runStart != null) { shade.push({ x0: runStart, x1: xs[i] }); runStart = null; }
+    }
+    if (runStart != null) shade.push({ x0: runStart, x1: xs[xs.length - 1] });
+    _overallShade = shade;
+    return med;
+  }
+  // Faint background tint over off-peak (after-hours) spans on the price pane.
+  function drawOffPeakBands(u) {
+    if (!_overallShade || !_overallShade.length || !u.ctx) return;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.fillStyle = 'rgba(120,130,170,0.05)';
+    _overallShade.forEach(b => {
+      const x0 = u.valToPos(b.x0, 'x', true);
+      const x1 = u.valToPos(b.x1, 'x', true);
+      ctx.fillRect(x0, u.bbox.top, Math.max(1, x1 - x0), u.bbox.height);
+    });
+    ctx.restore();
+  }
   // 3 line series on left Y-axis (integer ticket counts) + 1 bar series on
   // right Y-axis (SG sale count). uPlot supports per-series scales natively;
   // right axis registered as scale 'yr' with side=1.
@@ -957,19 +1102,21 @@
       cursor: { drag: { x: true, y: false } },
       scales: {
         x:  { time: true, range: xRange ? (() => xRange) : undefined },
-        y:  { range: robustYRange },
-        yr: { range: (u, dataMin, dataMax) => [0, Math.max(dataMax || 1, 1)] },
+        y:  { range: countYRange },
+        yr: { range: countYRange },
       },
       axes: [
         X_AXIS,
         { scale: 'y',  side: 3, stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
+          incrs: COUNT_INCRS,
           values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
           size: 56 },
         { scale: 'yr', side: 1, stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { show: false },
           ticks: { stroke: AXIS_TICKS, size: 6 },
+          incrs: COUNT_INCRS,
           values: (u, v) => v.map(x => x == null ? '' : Math.round(x)),
           size: 48 },
       ],
@@ -1091,54 +1238,24 @@
     return '#60a5fa';
   }
 
-  // Injury transition canvas marker — small "+" near top of chart, magenta.
-  // Same canvas-px coordinate convention as drawAlertsMarkers (canPos=true).
-  function drawInjuryMarkers(u, injuries) {
-    if (!injuries || !injuries.length || !u.ctx) return;
-    const ctx = u.ctx;
-    ctx.save();
-    ctx.strokeStyle = '#ec4899'; // pink/magenta — distinct from yellow/red alert palette
-    ctx.lineWidth = 2;
-    injuries.forEach(a => {
-      if (!a.at) return;
-      const tSec = Math.round(new Date(a.at).getTime() / 1000);
-      const x = u.valToPos(tSec, 'x', true);
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const y = u.bbox.top + 14;
-      // small cross
-      ctx.beginPath();
-      ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y);
-      ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3);
-      ctx.stroke();
-    });
-    ctx.restore();
+  // ESPN annotation markers — pink "+" (injury status change) + teal "◆" (game
+  // state change) near the top of the price pane. Rendered as VISIBLE, hoverable
+  // DOM glyphs in the .chart-anno-host overlay (the prior implementation drew a
+  // canvas glyph but put the hover hit-target in a host-spanning overlay WITHOUT
+  // the y-axis-gutter offset, so the target sat ~1 axis-width left of the glyph
+  // and hover almost never landed). Positioning now adds u.over's offset so the
+  // glyph == the hit-target, and it is re-placed on ready/setSize/setScale.
+  function injMarkerTip(a) {
+    const team = espnTeamName(a.espn_team_id);
+    return `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'}${team ? ' · ' + team : ''}): ` +
+           `${a.prev_status || '—'} → ${a.new_status || '—'}`;
   }
-
-  // Game-state transition canvas marker — small square near top of chart, teal.
-  function drawGameStateMarkers(u, states) {
-    if (!states || !states.length || !u.ctx) return;
-    const ctx = u.ctx;
-    ctx.save();
-    ctx.fillStyle = '#14b8a6'; // teal
-    states.forEach(s => {
-      if (!s.at) return;
-      const tSec = Math.round(new Date(s.at).getTime() / 1000);
-      const x = u.valToPos(tSec, 'x', true);
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const y = u.bbox.top + 26;
-      ctx.fillRect(x - 3, y - 3, 6, 6);
-    });
-    ctx.restore();
+  function gsMarkerTip(s) {
+    return `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`;
   }
-
-  // DOM-overlay tooltips for annotations (canvas can't host hover tooltips natively).
-  // Sibling absolute-positioned dots over the chart canvas; native title= attribute
-  // for hover text. Cheap + zero plugin deps. Re-run on uPlot ready + setSize.
-  function renderAnnotationTooltips(u, host, annotations) {
-    if (!annotations) return;
+  function renderEspnMarkers(u, host) {
     let overlay = host.querySelector('.chart-anno-host');
     if (!overlay) {
-      // Ensure host is positioned for absolute children
       const cs = window.getComputedStyle(host);
       if (cs.position === 'static') host.style.position = 'relative';
       overlay = document.createElement('div');
@@ -1146,25 +1263,29 @@
       host.appendChild(overlay);
     }
     overlay.innerHTML = '';
-    const inj = annotations.injuries || [];
-    const gs  = annotations.game_state || [];
-    const addDot = (t, kind, tip) => {
+    if (!_showEspn || !u.over) return;
+    const ext = _chartExtStatePrice.payload;
+    const ann = ext && ext.annotations;
+    if (!ann) return;
+    const ox = u.over.offsetLeft, oy = u.over.offsetTop, ow = u.over.offsetWidth;
+    const place = (t, cls, glyph, tip) => {
+      if (!t) return;
       const tSec = Math.round(new Date(t).getTime() / 1000);
-      // canPos=false → CSS pixels (matches DOM coordinate space)
-      const x = u.valToPos(tSec, 'x');
-      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-      const yOffset = kind === 'inj' ? 12 : 24;
-      const dot = document.createElement('div');
-      dot.className = 'chart-anno-dot anno-' + kind;
-      dot.style.left = (x - 5) + 'px';
-      dot.style.top = (u.bbox.top + yOffset - 5) + 'px';
-      dot.title = tip;
-      overlay.appendChild(dot);
+      const px = u.valToPos(tSec, 'x'); // CSS px relative to the plot area
+      if (px < 0 || px > ow) return;
+      const el = document.createElement('div');
+      el.className = 'espn-marker ' + cls;
+      el.style.left = (ox + px) + 'px';
+      el.style.top  = (oy + (cls === 'em-gs' ? 22 : 7)) + 'px';
+      el.title = tip;
+      el.textContent = glyph;
+      overlay.appendChild(el);
     };
-    inj.forEach(a => addDot(a.at, 'inj',
-      `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'} · team ${a.espn_team_id || '?'}): ${a.prev_status || '—'} → ${a.new_status || '—'}`));
-    gs.forEach(s => addDot(s.at, 'gs',
-      `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`));
+    // De-noise: skip first-seen "transitions" (prev_status == null) — those are
+    // just players already injured when the window opened, not status-change
+    // events, and they pile into an indistinct cluster at the window's left edge.
+    (ann.injuries || []).forEach(a => { if (a.prev_status != null) place(a.at, 'em-inj', '+', injMarkerTip(a)); });
+    (ann.game_state || []).forEach(s => place(s.at, 'em-gs', '◆', gsMarkerTip(s)));
   }
 
   // Shared legend renderer — chartKey selects which build cache + DOM target.
@@ -1305,14 +1426,30 @@
       (ann.injuries && ann.injuries.length) ||
       (ann.game_state && ann.game_state.length)));
     const slots = [
-      { label: 'ESPN',    live: hasEspn, hint: hasEspn ? 'injury / game-state markers on price pane' : 'no ESPN markers for this event' },
-      { label: 'Weather', live: false,   hint: 'reserved — NWS alert windows (pending)' },
-      { label: 'Macro',   live: false,   hint: 'reserved — UMCSENT background band (pending)' },
-      { label: 'Signals', live: false,   hint: 'reserved — movers / gap markers (pending)' },
+      { key: 'espn', label: 'ESPN', live: hasEspn, toggle: hasEspn, on: _showEspn,
+        hint: hasEspn ? (_showEspn ? 'ESPN markers ON — click to hide' : 'ESPN markers HIDDEN — click to show')
+                      : 'no ESPN markers for this event' },
+      { label: 'Weather', live: false, hint: 'reserved — NWS alert windows (pending)' },
+      { label: 'Macro',   live: false, hint: 'reserved — UMCSENT background band (pending)' },
+      { label: 'Signals', live: false, hint: 'reserved — movers / gap markers (pending)' },
     ];
-    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s =>
-      `<span class="overlay-chip ${s.live ? 'live' : 'pending'}" title="${escapeHtml(s.hint)}">` +
-      `${escapeHtml(s.label)} ${s.live ? '●' : '○'}</span>`).join('');
+    el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s => {
+      const cls = s.toggle ? (s.on ? 'live' : 'off') + ' toggleable' : (s.live ? 'live' : 'pending');
+      const dot = !s.live ? '○' : (s.toggle && !s.on ? '◍' : '●');
+      return `<span class="overlay-chip ${cls}"${s.key ? ` data-overlay="${s.key}"` : ''} title="${escapeHtml(s.hint)}">` +
+             `${escapeHtml(s.label)} ${dot}</span>`;
+    }).join('');
+    const espnChip = el.querySelector('.overlay-chip.toggleable[data-overlay="espn"]');
+    if (espnChip) {
+      espnChip.addEventListener('click', () => {
+        _showEspn = !_showEspn;
+        try { localStorage.setItem(_ESPN_LS_KEY, _showEspn ? '1' : '0'); } catch (_) {}
+        const inst = _chartInstances.price;
+        const host = document.getElementById('chartHostPrice');
+        if (inst && host) renderEspnMarkers(inst, host);
+        renderChartOverlayLegend();
+      });
+    }
   }
 
   // Refresh every chart legend surface at once — the two detailed per-series
@@ -1611,7 +1748,91 @@
 
   // ---------- ESPN ----------
 
+  // Resolve team names from the event title ("AWAY at HOME") + the espn payload's
+  // home/away ids, so ESPN surfaces show "Yankees" not "team 10". No RPC needed.
+  function espnTeams() {
+    const info = _espnInfo || {};
+    const titleEl = document.getElementById('evTitle');
+    const title = titleEl ? (titleEl.textContent || '') : '';
+    let awayName = '', homeName = '';
+    const parts = title.split(/\s+at\s+/i);
+    if (parts.length === 2) { awayName = parts[0].trim(); homeName = parts[1].trim(); }
+    return {
+      homeId: String(info.home_team_id != null ? info.home_team_id : ''),
+      awayId: String(info.away_team_id != null ? info.away_team_id : ''),
+      homeName, awayName,
+    };
+  }
+  function espnTeamName(teamId) {
+    if (teamId == null) return '';
+    const id = String(teamId), t = espnTeams();
+    if (id === t.homeId && t.homeName) return t.homeName;
+    if (id === t.awayId && t.awayName) return t.awayName;
+    return 'team ' + id;
+  }
+  function espnShortName(n) {
+    if (!n) return '';
+    const parts = n.trim().split(/\s+/);
+    return parts[parts.length - 1]; // nickname, e.g. "Yankees"
+  }
+
+  // ESPN context strip in the chart section — per-team record / win% / seed /
+  // streak / injuries + last game, styled distinct from the market chart.
+  function renderEspnChartStrip() {
+    const el = document.getElementById('espnChartStrip');
+    if (!el) return;
+    const info = _espnInfo;
+    if (!info || info.hidden) { el.hidden = true; el.innerHTML = ''; return; }
+    const t = espnTeams();
+    const byId = {};
+    (info.team_standings || []).forEach(s => { byId[String(s.espn_team_id)] = s; });
+    const results = info.recent_results || [];
+    const injuries = info.injuries || [];
+    const injCount = id => injuries.filter(i => String(i.espn_team_id) === id).length;
+    const lastGame = id => {
+      const g = results.find(r => String(r.home_team_id) === id || String(r.away_team_id) === id);
+      if (!g) return '';
+      const isHome = String(g.home_team_id) === id;
+      const me = isHome ? g.home_score : g.away_score;
+      const opp = isHome ? g.away_score : g.home_score;
+      if (me == null || opp == null) return '';
+      const wl = me > opp ? 'w' : me < opp ? 'l' : 't';
+      const oppName = espnShortName(espnTeamName(isHome ? g.away_team_id : g.home_team_id));
+      return `<span class="espn-wl espn-wl-${wl}">${wl.toUpperCase()}</span> ${me}-${opp} ` +
+             `<span class="muted">${isHome ? 'vs' : '@'} ${escapeHtml(oppName)}</span>`;
+    };
+    const card = (id, name, tag) => {
+      const s = byId[id] || {};
+      const rec = s.record_summary || `${s.wins || 0}-${s.losses || 0}`;
+      const wp = s.win_pct != null ? Number(s.win_pct).toFixed(3).replace(/^0/, '') : '';
+      const seed = s.playoff_seed != null ? '#' + s.playoff_seed : '';
+      const inj = injCount(id);
+      const last = lastGame(id);
+      return `<div class="espn-team">` +
+        `<div class="espn-team-hd"><span class="espn-tag">${tag}</span> <span class="espn-team-nm">${escapeHtml(name || ('team ' + id))}</span></div>` +
+        `<div class="espn-team-line">` +
+          `<span class="espn-rec">${escapeHtml(rec)}</span>` +
+          (wp ? `<span class="muted">${wp}</span>` : '') +
+          (seed ? `<span class="espn-seed">${escapeHtml(seed)}</span>` : '') +
+          (s.streak ? `<span class="espn-streak">${escapeHtml(s.streak)}</span>` : '') +
+          (inj ? `<span class="espn-inj-chip" title="${inj} active injuries">&oplus; ${inj}</span>` : '') +
+        `</div>` +
+        `<div class="espn-team-last">${last || '<span class="muted">—</span>'}</div>` +
+      `</div>`;
+    };
+    const lg = info.espn_league ? String(info.espn_league).toUpperCase() : '';
+    el.innerHTML =
+      `<span class="espn-strip-badge">ESPN</span>` +
+      (lg ? `<span class="espn-strip-lg">${escapeHtml(lg)}</span>` : '') +
+      card(t.awayId, t.awayName, 'AWAY') +
+      `<span class="espn-strip-at">@</span>` +
+      card(t.homeId, t.homeName, 'HOME');
+    el.hidden = false;
+  }
+
   function renderEspn(espn) {
+    _espnInfo = (espn && !espn.hidden) ? espn : null;
+    renderEspnChartStrip();
     const section = document.getElementById('espn');
     const body = document.getElementById('espnBody');
     const subtitle = document.getElementById('espnSubtitle');
@@ -2379,6 +2600,26 @@
       // Reverse so series are chronological (we fetched newest-first)
       _tdChartSeries    = { sh: sh.reverse(),  gt: gt.reverse(),  vd: vd.reverse() };
       _tdInvCountSeries = { sh: ish.reverse(), gt: igt.reverse(), vd: ivd.reverse() };
+      // Full TicketsData family (median + count per platform) for the overall
+      // consensus — includes TP / TM primary / TM resale, which the chart
+      // overlays don't draw but the weighted median should weigh in.
+      const fam = { sh:{med:[],cnt:[]}, gt:{med:[],cnt:[]}, vd:{med:[],cnt:[]},
+                    tp:{med:[],cnt:[]}, tm:{med:[],cnt:[]}, tmr:{med:[],cnt:[]} };
+      for (const r of rows) {
+        const ts = rowTs(r);
+        const add = (k, mv, cv) => {
+          if (mv != null) fam[k].med.push({ t: ts, v: +mv });
+          if (cv != null) fam[k].cnt.push({ t: ts, v: +cv });
+        };
+        add('sh',  r.td_sh_median,        r.td_sh_listings);
+        add('gt',  r.td_gt_median,        r.td_gt_listings);
+        add('vd',  r.td_vd_median,        r.td_vd_listings);
+        add('tp',  r.td_tp_median,        r.td_tp_listings);
+        add('tm',  r.td_tm_median,        r.td_tm_listings);
+        add('tmr', r.td_tm_resale_median, r.td_tm_resale_listings);
+      }
+      Object.values(fam).forEach(o => { o.med.reverse(); o.cnt.reverse(); });
+      _tdFamily = fam;
       Object.keys(dm).forEach(k => dm[k].reverse());
       Object.keys(dc).forEach(k => dc[k].reverse());
       _dailyDurable = { med: dm, cnt: dc };
@@ -2957,6 +3198,7 @@
         // into its own stacked sub-section inside #paneOurOrders.
         _tabState.loaded['our-orders'] = true;
         await Promise.all([
+          loadSgSellerListingsFull(eventId),
           loadEvoOrdersFull(eventId),
           loadSgSellerOrdersFull(eventId),
           loadCrossBrokerFull(eventId),
@@ -3216,15 +3458,22 @@
   let _seatmapConfigName = '';
   let _seatmapVenueLabel = '';
   const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
-  // Source registry — TP excluded (zone-only, no section granularity); TM excluded
-  // (primary/box-office, no section-level resale listings for these events).
+  // Source registry — TM excluded (primary/box-office, no section-level resale
+  // listings for these events). TP is INCLUDED but is ZONE-ONLY: it lists whole
+  // bands ("100s"/"Lower"/"Suites"), not sections, so it colors by zone expansion
+  // (see _seatmapZoneKeys) rather than the per-section matcher. _seatmapIsZoneSource
+  // flags which sources take the zone path.
   const SEATMAP_SOURCES = [
     { key: 'EVO', label: 'TEvo' },
     { key: 'SG',  label: 'SeatGeek' },
     { key: 'SH',  label: 'StubHub' },
     { key: 'GT',  label: 'GameTime' },
     { key: 'VD',  label: 'VividSeats' },
+    { key: 'TP',  label: 'TickPick' },
   ];
+  // Sources whose `section` is a ZONE label, not a seat section — colored by
+  // expanding each zone to the manifest sections it covers (TickPick only today).
+  function _seatmapIsZoneSource(key) { return key === 'TP'; }
 
   // Fetch one source's listings (by tevo event id — every RPC resolves the bridge itself)
   // and normalize to a common shape. Prices use each source's all-in field where available.
@@ -3362,6 +3611,15 @@
     }
     const bowl = cands.filter(c => !_SM_PREMIUM.test(c.key));
     if (bowl.length === 1) return bowl[0].key; // T4 — unique non-premium = the seating bowl
+    // T4b — Floor N wins a bowl collision. Arenas number the courtside FLOOR 1..N AND
+    // carry a parallel "VIP N" (also non-premium, so it survives the bowl filter) for the
+    // SAME numbers → two non-premium candidates and we'd give up. Per the documented
+    // tie-rule ("tail collisions prefer the Floor N key"), the bare/numeric listing is the
+    // floor, so prefer the unique Floor-named candidate. (Fixes MSG floor 2/4/6/8/10/11/12.)
+    if (bowl.length > 1) {
+      const floor = bowl.filter(c => /(^|[^a-z])floor([^a-z]|$)/i.test(c.key));
+      if (floor.length === 1) return floor[0].key;
+    }
     return null;                               // still ambiguous → leave grey
   }
 
@@ -3402,20 +3660,79 @@
     return key;
   }
 
+  // ----- Zone expansion (for zone-only sources like TickPick) -----
+  // TickPick lists whole ZONES, not seat sections: a hundreds band ("100s"/"200s"/
+  // "400s"/"100 level"), a named tier ("Lower"/"Upper"/"Middle"/"Floor"/"Suites"/
+  // "Club"/"Lounge"/"Balcony"), or a bare section number. To color it we expand each
+  // zone label to the SET of manifest section keys it covers and paint them all at the
+  // zone's floor. Venue-agnostic: a band maps by the section number's hundreds digit;
+  // a named tier maps by a word the manifest key contains; anything else falls back to
+  // the single-section matcher. Overlapping zones resolve to the lowest floor per key.
+  const _SM_ZONE_WORDS = {
+    lower: 'lower', upper: 'upper', middle: 'middle', mezz: 'middle', mezzanine: 'middle',
+    floor: 'floor', court: 'floor', courtside: 'floor', field: 'field',
+    suite: 'suite', suites: 'suite', club: 'club', lounge: 'lounge', lounges: 'lounge',
+    balcony: 'balcony', bridge: 'bridge', bridges: 'bridge', vip: 'vip', terrace: 'terrace',
+  };
+  function _seatmapAllKeys(idx) {
+    if (idx._allKeys) return idx._allKeys;
+    const keys = [];
+    idx.byNum.forEach(arr => arr.forEach(r => keys.push(r.key)));
+    (idx.named || []).forEach(x => keys.push(x.key));
+    idx._allKeys = Array.from(new Set(keys));
+    return idx._allKeys;
+  }
+  function _seatmapZoneKeys(label, idx) {
+    if (!idx) return [];
+    const cache = idx._zoneCache || (idx._zoneCache = new Map());
+    if (cache.has(label)) return cache.get(label);
+    const norm = _smNorm(label);
+    let out = [];
+    // hundreds band: "100", "100s", "100 level", "400s"
+    const band = norm.match(/(^|\s)([1-9])0{2}\s*(s|level|lvl)?(\s|$)/);
+    if (band) {
+      const lo = parseInt(band[2], 10) * 100, hi = lo + 99;
+      idx.byNum.forEach((arr, num) => {
+        const v = parseInt(num, 10);
+        if (v >= lo && v <= hi) arr.forEach(r => out.push(r.key));
+      });
+    }
+    if (!out.length) {                                   // named tier
+      const wants = new Set();
+      norm.split(' ').filter(Boolean).forEach(t => { if (_SM_ZONE_WORDS[t]) wants.add(_SM_ZONE_WORDS[t]); });
+      if (wants.size) {
+        _seatmapAllKeys(idx).forEach(k => {
+          const kn = _smNorm(k);
+          for (const w of wants) { if (kn.indexOf(w) !== -1) { out.push(k); break; } }
+        });
+      }
+    }
+    if (!out.length) {                                   // bare number / unknown → one section
+      const k = _seatmapMatchSection(label, idx);
+      if (k) out = [k];
+    }
+    out = Array.from(new Set(out));
+    cache.set(label, out);
+    return out;
+  }
+
   // Collapse listing rows → one ticketGroup per matched manifest section at its lowest floor
   // (what the map colors by). Unmatched sections are skipped (grey) but still appear in the
   // listing table. No manifest (fetch failed) → fall back to the raw section as the key.
-  function _seatmapTicketGroups(rows, idx) {
+  // zoneSrc=true (TickPick) expands each row's zone label to every section it covers.
+  function _seatmapTicketGroups(rows, idx, zoneSrc) {
     const floorByKey = new Map();
     rows.forEach(r => {
       const sec = (r.section || '').trim();
       if (!sec || _seatmapIsParking(sec)) return;
       const price = Number(r.retail_price);
       if (!isFinite(price) || price <= 0) return;
-      const key = idx ? _seatmapMatchSection(sec, idx) : sec;
-      if (!key) return;
-      const prev = floorByKey.get(key);
-      if (prev == null || price < prev) floorByKey.set(key, price);
+      const keys = idx ? (zoneSrc ? _seatmapZoneKeys(sec, idx) : [_seatmapMatchSection(sec, idx)]) : [sec];
+      keys.forEach(key => {
+        if (!key) return;
+        const prev = floorByKey.get(key);
+        if (prev == null || price < prev) floorByKey.set(key, price);
+      });
     });
     return Array.from(floorByKey, ([key, price]) => ({ tevo_section_name: key, retail_price: price }));
   }
@@ -3537,7 +3854,7 @@
       rows = await _seatmapFetchSource(_seatmapEventId, key);
       _seatmapRowsBySource[key] = rows;
     }
-    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap);
+    const ticketGroups = _seatmapTicketGroups(rows, _seatmapRemap, _seatmapIsZoneSource(key));
     if (typeof _seatmapApi.updateTicketGroups === 'function') {
       try { _seatmapApi.updateTicketGroups(ticketGroups); } catch (_) { /* ignore */ }
     }
@@ -3587,6 +3904,7 @@
     const tie = { SG: 0, EVO: 1, VD: 2, SH: 3, GT: 4 };   // lower = preferred on ties
     let best = _seatmapSource, bestN = -1;
     for (const s of SEATMAP_SOURCES) {
+      if (_seatmapIsZoneSource(s.key)) continue;   // zone sources over-paint (whole bands) — never auto-win
       const rows = _seatmapRowsBySource[s.key];
       if (!rows || !rows.length) continue;
       const n = _seatmapTicketGroups(rows, _seatmapRemap).length;
@@ -3614,24 +3932,43 @@
     if (!meta) return;
     const rows = _seatmapRowsBySource[_seatmapSource] || [];
     const sections = new Set(rows.filter(r => r.section && !_seatmapIsParking(r.section)).map(r => r.section));
+    const isZone = _seatmapIsZoneSource(_seatmapSource);
     const mapped = _seatmapRemap
-      ? `${mappedCount}/${sections.size} sections on map`
+      ? (isZone
+          ? `${sections.size} zone${sections.size === 1 ? '' : 's'} → ${mappedCount} sections painted`
+          : `${mappedCount}/${sections.size} sections on map`)
       : `${mappedCount} sections (manifest unavailable — no coloring)`;
     meta.textContent = `${_seatmapVenueLabel} · ${_seatmapSrcLabel(_seatmapSource)} · ${mapped}`;
   }
 
+  // Does this row's section resolve to a manifest key (i.e. does the map color it)?
+  // Zone sources resolve via zone expansion; section sources via the single matcher.
+  // Returns null when there's no manifest to judge against (don't label as unmapped).
+  function _seatmapRowMapped(r, zoneSrc) {
+    if (!_seatmapRemap) return null;
+    const keys = zoneSrc
+      ? _seatmapZoneKeys(r.section, _seatmapRemap)
+      : [_seatmapMatchSection(r.section, _seatmapRemap)];
+    return keys.some(Boolean);
+  }
+
   // Renders the CURRENT source's listings; clicking a map section filters by matched key
   // (the library returns full manifest names — we match each row's section the same way).
+  // Any listing whose section does NOT resolve to a manifest section (so the map leaves it
+  // grey) is tagged with an `unmapped` pill + row highlight so we can spot-check the misses.
   function renderSeatmapList() {
     const body = document.getElementById('seatmapListBody');
     if (!body) return;
     const sel = _seatmapSelected.map(s => String(s).toLowerCase());
     const all = _seatmapRowsBySource[_seatmapSource] || [];
+    const zoneSrc = _seatmapIsZoneSource(_seatmapSource);
     let rows = all.filter(r => r.section && !_seatmapIsParking(r.section));
     if (sel.length) {
       rows = rows.filter(r => {
-        const k = _seatmapMatchSection(r.section, _seatmapRemap);
-        return k && sel.includes(String(k).toLowerCase());
+        const keys = zoneSrc
+          ? _seatmapZoneKeys(r.section, _seatmapRemap)
+          : [_seatmapMatchSection(r.section, _seatmapRemap)];
+        return keys.some(k => k && sel.includes(String(k).toLowerCase()));
       });
     }
     rows = rows.slice().sort((a, b) => Number(a.retail_price) - Number(b.retail_price));
@@ -3651,17 +3988,30 @@
         <th class="num">Price</th><th>Type</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
+    let unmappedCount = 0;
     rows.slice(0, 300).forEach(r => {
       const tr = document.createElement('tr');
-      if (r.is_owned) tr.className = 'owned-row';
+      const mapped = _seatmapRowMapped(r, zoneSrc);   // true | false | null (no manifest)
+      const cls = [];
+      if (r.is_owned) cls.push('owned-row');
+      if (mapped === false) { cls.push('unmapped-row'); unmappedCount++; }
+      if (cls.length) tr.className = cls.join(' ');
+      const ownPill = r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>';
+      const unmappedPill = mapped === false ? ' <span class="pill unmapped" title="section not on the venue map — not colored">unmapped</span>' : '';
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${T.fmtNum(r.quantity)}</td>
         <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
-        <td>${r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>'}</td>`;
+        <td>${ownPill}${unmappedPill}</td>`;
       tb.appendChild(tr);
     });
+    if (unmappedCount) {
+      const cap = document.createElement('div');
+      cap.className = 'sm-unmapped-note';
+      cap.textContent = `${unmappedCount} listing${unmappedCount === 1 ? '' : 's'} not on the venue map (grey — spot-check)`;
+      host.appendChild(cap);
+    }
     host.appendChild(tbl);
     body.innerHTML = '';
     body.appendChild(host);
@@ -4121,6 +4471,76 @@
         <td>${firstOfOrder ? holdExp : ''}</td>
         <td>${firstOfOrder ? escapeHtml(r.buyer_brokerage_name || '—') : ''}</td>
         <td>${firstOfOrder ? escapeHtml(r.fraud_check_status || '—') : ''}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Our SG SellerDirect Listings (our inventory, AQ-mapped) ----------
+  async function loadSgSellerListingsFull(eventId) {
+    const body = document.getElementById('sgSellerListingsFullBody');
+    const meta = document.getElementById('sgSellerListingsFullMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading our SG SellerDirect inventory…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_sg_seller_listings_full', { p_event_id: eventId, p_limit: 500 });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['sg-seller-listings'] = true;
+    renderSgSellerListingsFull(res.data, performance.now() - t0);
+  }
+
+  function renderSgSellerListingsFull(d, ms) {
+    const body = document.getElementById('sgSellerListingsFullBody');
+    const meta = document.getElementById('sgSellerListingsFullMeta');
+    if (!body) return;
+    if (!d || d.hidden) {
+      const reason = d && d.reason === 'no_seller_listings'
+        ? 'no SG SellerDirect inventory mapped to this event' : 'hidden';
+      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+      if (meta) meta.textContent = '0 listings';
+      return;
+    }
+    const rows = d.rows || [];
+    const s = d.summary || {};
+    if (meta) {
+      const med = s.median_cost != null ? '$' + T.fmtNum(Math.round(s.median_cost)) : '—';
+      meta.textContent = `${s.total_listings || rows.length} listings · ${s.total_tickets || 0} tix · median cost ${med} · ${ms.toFixed(0)}ms`;
+    }
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no SG SellerDirect inventory for this event</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Cost</th>
+        <th>In-Hand</th><th>Delivery</th><th>Notes</th>
+        <th>Pulled</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const deliv = [r.is_instant ? 'instant' : null, r.is_edelivery ? 'edeliv' : null]
+        .filter(Boolean).join('·') || '—';
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.cost != null ? '$' + T.fmtNum(Math.round(r.cost)) : '—'}</td>
+        <td>${r.in_hand_date ? T.fmtDate(r.in_hand_date) : '—'}</td>
+        <td>${escapeHtml(deliv)}</td>
+        <td class="muted">${escapeHtml(r.notes || '')}</td>
+        <td>${r.pulled_at ? T.fmtDate(r.pulled_at) : '—'}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);

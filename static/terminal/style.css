@@ -330,6 +330,60 @@ main.wrap {
   border-color: rgba(20, 184, 166, 0.6);
 }
 
+/* ESPN markers (2026-06-06) — visible + hoverable DOM glyphs on the price pane.
+   Replaces the old canvas glyph + invisible hit-dot pair (which mis-aligned the
+   hover target by one axis-gutter). The element IS both the glyph and the target. */
+.espn-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 14px; min-height: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font: 700 13px/1 var(--mono);
+  pointer-events: auto; cursor: help; user-select: none;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.85);
+}
+.espn-marker.em-inj { color: #ec4899; }   /* injury status change — pink */
+.espn-marker.em-gs  { color: #14b8a6; font-size: 10px; } /* game-state change — teal */
+.espn-marker:hover  { filter: brightness(1.45); }
+
+/* toggleable overlay chip (ESPN) */
+.overlay-chip.off { color: var(--muted); border-color: var(--line); opacity: 0.85; }
+.overlay-chip.toggleable { cursor: pointer; }
+.overlay-chip.toggleable:hover { border-color: var(--accent); color: var(--text); }
+
+/* ESPN context strip — deliberately styled UNLIKE the market chart (ESPN-red
+   accent + team cards) so sports context reads as distinct from price data. */
+.espn-strip {
+  display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap;
+  margin: 0 8px 8px; padding: 8px 12px;
+  background: linear-gradient(180deg, rgba(204, 0, 0, 0.07), rgba(204, 0, 0, 0.02));
+  border: 1px solid rgba(204, 0, 0, 0.30);
+  border-left: 3px solid #cc0000;
+  border-radius: 4px;
+  font-family: var(--mono); font-size: 11px;
+}
+.espn-strip[hidden] { display: none; }
+.espn-strip-badge {
+  align-self: center; font-weight: 700; letter-spacing: 0.5px; font-size: 10px;
+  background: #cc0000; color: #fff; padding: 2px 7px; border-radius: 3px;
+}
+.espn-strip-lg { align-self: center; color: var(--muted); }
+.espn-strip-at { align-self: center; color: var(--dim); font-weight: 700; }
+.espn-team { display: flex; flex-direction: column; gap: 3px; min-width: 150px; }
+.espn-team-hd { display: flex; align-items: center; gap: 6px; }
+.espn-tag { font-size: 9px; color: var(--dim); border: 1px solid var(--line); border-radius: 2px; padding: 0 3px; }
+.espn-team-nm { font-weight: 600; color: var(--text); }
+.espn-team-line { display: flex; align-items: center; gap: 8px; }
+.espn-rec { color: var(--text); font-weight: 600; }
+.espn-seed { color: var(--info); }
+.espn-streak { color: var(--muted); }
+.espn-inj-chip { color: #ec4899; }
+.espn-team-last { color: var(--muted); }
+.espn-wl { font-weight: 700; }
+.espn-wl-w { color: var(--pos); }
+.espn-wl-l { color: var(--neg); }
+.espn-wl-t { color: var(--warn); }
+
 /* ---------- Zones table ---------- */
 
 #zones {
@@ -479,6 +533,15 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .blind-spots-tbl .num { text-align: right; }
 .blind-spots-tbl .num.warn { color: var(--warn); font-weight: 600; }
 .blind-spots-tbl tbody tr:hover td { background: var(--shade); }
+
+/* TOP 50 — SG SELLING, WE'RE NOT IN (Billboard-style chart) */
+.sg-chart-tabs { margin-bottom: 8px; }
+.chart-tbl .chart-rank { font-weight: 700; color: var(--text); width: 32px; }
+.chart-move { font-family: var(--mono); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.chart-move.up   { color: var(--pos); }
+.chart-move.down { color: var(--neg); }
+.chart-move.new  { color: var(--accent); }
+.chart-move.flat { color: var(--dim); }
 
 /* Amber-cued SG sales cell on movers table when blind-spot conditions met
    (sg > threshold AND owned_tix = 0) */
@@ -1683,6 +1746,9 @@ body[data-page="login"] {
 .full-list-tbl .pill.owned { color: var(--pos); border-color: var(--pos); }
 .full-list-tbl .pill.market { color: var(--muted); }
 .full-list-tbl .pill.broker { color: var(--accent); border-color: var(--accent); }
+.full-list-tbl .pill.unmapped { color: var(--warn); border-color: var(--warn); }
+.full-list-tbl tr.unmapped-row td { background: rgba(245, 158, 11, 0.07); }
+.sm-unmapped-note { font-size: 11px; color: var(--warn); padding: 4px 2px 6px; }
 .full-list-host { max-height: 70vh; overflow-y: auto; }
 
 .sales-window-ctrl {

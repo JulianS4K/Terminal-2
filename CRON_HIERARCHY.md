@@ -1,6 +1,6 @@
 # CRON_HIERARCHY.md
 
-> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §1 job-count + §4b rewritten for the per-event collector-cadence model (`collector_cadence`-driven scan per source; EVO/SG horizon bands; ~12 horizon/blindspot collectors retired, 2–3 pollers added); v1.2.0 2026-06-03 (A1) — §4b: SG `/listings` poller split into owned (`sg_listings_poll_owned_1min`, ON) / non-owned (`sg_listings_poll_nonowned_5min`, once-daily, OFF); `sg_listings_poll_2min` retired; raw listings retention 30d→15d. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §1 job-count + §4b rewritten for the per-event collector-cadence model (`collector_cadence`-driven scan per source; EVO/SG horizon bands; ~12 horizon/blindspot collectors retired, 2–3 pollers added); v1.2.0 2026-06-03 (A1) — §4b: SG `/listings` poller split into owned (`sg_listings_poll_owned_1min`, ON) / non-owned (`sg_listings_poll_nonowned_5min`, once-daily, OFF); `sg_listings_poll_2min` retired; raw listings retention 30d→15d; v1.3.0 2026-06-06 (A1) — **§4c** adds the trading-hours cadence redesign (market-timed two-format + metronome firing across SG `/listings`+`/sales`+SellerDirect + TD 5 platforms), the **peak/off-peak derivation methodology**, and the cadence/budget/firing **reference tables** (design of record, pending migrations). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Tiered cron-scheduling policy for Terminal-2. Maximize data freshness within bounded concurrency, with explicit headroom for future bot lanes (B2-B4).**
 
@@ -162,6 +162,8 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ## 4b. Listings collection — per-event poller model *(v1.2 · A1 · 2026-06-03)*
 
+> **Forward note (2026-06-06):** the SG listings/sales + TD cadences in this section were **superseded by the trading-hours redesign in §4c** (market-timed, metronome firing) — **migrations #1–#3 applied to prod 2026-06-06**. The owned/non split below still holds; the per-event *intervals* and TD firing model are now governed by §4c. SellerDirect pagination (#4) remains pending.
+
 **The horizon-windowed collectors are RETIRED.** Before 2026-05-31, both EVO and SG pulled listings via fixed time-window crons (`collect-listings-0-24h/1-7d/7-30d/30-60d/60d+`, the SG `sg_listings_*` `/v2` jobs, and the `sg_listings_floor_sweep` round-robin). The **collector-cadence cutover** (migs `20260531140000`–`170000`) replaces all of them with **one ≈2-min scan per source** that fires per-event based on each event's date-horizon, driven by config in **`public.collector_cadence`**.
 
 **How it works:** each source has a single tick cron that reads `collector_cadence` (via helper `collector_band(source,scope,hours)` → `(band, required_min)`, peak-aware for ET 12-23), finds events whose per-event clock is due for their horizon band, and fires the collect call for those only. Per-event clocks live in new state tables (see RESOURCES_BIBLE §2.2).
@@ -193,6 +195,129 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 **Owned/non split (2026-06-03):** SG *listings* cadence is now keyed on `owned_kind`. **OWNED** events (we hold inventory, `owned_count_last_7d>0`) use the tight per-horizon bands in `collector_cadence` (≤7d 45/90 min · 8-14d 150/300 min · 15-30d 600/1200 min · 31d+ 1200/1320 min) via `sg_listings_poll_owned_1min` (**ACTIVE**). **NON-OWNED** events are a flat **once-daily (1440 min)** floor via `sg_listings_poll_nonowned_5min` (**OFF for now** — `cron_policy.enabled=false`). The SG column in the table above reflects the pre-split values; SG *sales* (`sg_sales_poll_5min`) is unchanged.
 
 **Shared-token note (unchanged):** all SG broker crons **+ a separate external prod program** draw on ONE SeatGeek token. Watch `v_sg_token_budget` + `v_sg_broker_429_health`.
+
+---
+
+## 4c. Trading-hours cadence redesign — market-timed, distributed firing *(v1.3 · A1 · 2026-06-06)*
+
+> **Status: migrations #1–#4 APPLIED to prod 2026-06-06** (operator-authorized; versions `20260606191854` / `192104` / `192416` / `194100` + `get_event_sg_seller_listings_full` RPC). These supersede the §4b SG/TD cadences (now **live**). #4 = SellerDirect full-book pull + AQ map + D0 FE (operator reversed the earlier hold) — see *SellerDirect finding* below. **EVO is unchanged** (sole TEvo consumer, ≈unlimited → keep §4b bands). Scope: SG broker `/listings` (owned), SG `/sales`, TicketsData (TD) 5 platforms (SH/VD/GT/TP/TM — covered; SeatGeek incl. any TD→SG discovery stays on its native feeds, never routed through TD).
+
+### Problem
+TD's flat "≤4×/day per event" enqueue is **horizon-blind** → ~950 credits/day of demand against a **300/day cap** → exhausts ~12:24 ET, starving US afternoon/evening (the highest-activity window). SG sales fired **20-request bursts every 5 min** → concurrent token hits → 429s. Both ignored *when* the market actually trades.
+
+### How the peak/off-peak + cadence metrics were generated *(reproducible)*
+All figures below come from two read-only sample weeks (**2026-05-05→11** and **2026-05-19→25**), analyzed in **`America/New_York`** (the US resale clock). Run via MCP `execute_sql` (service_role; `SET statement_timeout`):
+
+- **Sales timing** — `seatgeek_sales_snapshots`, **deduped by `sg_sale_id`** (mandatory — 11–23× re-insert factor, PROJECT_BIBLE §3) on `sale_at_utc`; bucket by `extract(hour FROM sale_at_utc AT TIME ZONE 'America/New_York')` and `isodow`.
+- **Time-to-event** — join deduped sales → `sg_events_canonical.sg_datetime_utc`; bucket `floor((sg_datetime_utc - sale_at)/86400)` days (0–30); per-event = `count(*) / count(DISTINCT sg_event_id)`.
+- **Price-change timing (cheap proxy)** — do **NOT** scan the 70M-row `seatgeek_listings_snapshots` firehose (a 2-week scan blows the MCP 60s limit). Instead detect **median moves** on the precomputed `seatgeek_event_metrics` series (~27k rows/wk): `listings_all_median IS DISTINCT FROM lag(listings_all_median) OVER (PARTITION BY sg_event_id ORDER BY captured_at)`. A median move = a real repricing event; bucket by ET hour and by days-to-event.
+
+### Findings — market-timing reference
+
+**Hour-of-day (ET), sales — peak/trough ≈ 19×:**
+
+| ET window | Activity | Share |
+|---|---|---|
+| 1–8am (after-hours) | 340–1,000/hr (3–6am dead) | ~7% |
+| 9am–noon | ramp 3.2k→5k/hr | — |
+| noon–7pm | plateau ~5.5–5.9k/hr | — |
+| 8–10pm (peak) | 6.3–6.5k/hr | 20% in 3h |
+| **net: 9am–1am ET** | | **~93%** |
+
+**Day-of-week:** flat (~16% spread, Fri high / Wed low) → **not** a scheduling factor.
+
+**Time-to-event (≤30d) — dominant signal:**
+
+| Days to event | Sales/event | Median moves/event/day |
+|---|---|---|
+| 0 | 39 | 3.9 (≈ every capture) |
+| 1 / 2 / 3 | 21 / 18 / 13 | 3.7–3.9 |
+| 4 → 7 | 12 → 7 | 1.7 → 1.0 |
+| 8–14 | ~5 | ≤1.0 |
+| 15–30 | ~3.5 | rare |
+
+→ ~10× heavier at ≤2 days than 3+ weeks out; repricing collapses past ~day 4–5.
+
+### Model — two formats × metronome firing
+- **TRADING (peak):** 09:00–00:59 ET = `13-23,0-4 UTC` → use `peak_interval_min`.
+- **AFTER-HOURS (off):** 01:00–08:59 ET = `5-12 UTC` → use `offpeak_interval_min`.
+- Peak/off boundary stays in `collector_band()` (TZ-aware → **DST-safe**); widen its peak-hour set `{12–23}` → **`{9–23,0}` ET**.
+- **No concurrency per shared limit:** each rate-limited account = one serial metronome; consumers **phase-offset by minute**. TD account and SG token are independent upstreams → may overlap freely.
+
+### Reference — `collector_cadence` target (peak / off-peak minutes)
+
+**SG broker `/listings` (owned_kind=`owned`):**
+
+| Band | Hrs | Peak | Off |
+|---|---|---|---|
+| le3d | 0–72 | 30 | 90 |
+| d4_7 | 72–168 | 60 | 180 |
+| d8_14 | 168–336 | 150 | 480 |
+| d15_30 | 336–720 | 600 | 1440 |
+| d31p | 720+ | 1200 | 1440 |
+
+**SG `/sales` (owned_kind=`any`):**
+
+| Band | Hrs | Peak | Off |
+|---|---|---|---|
+| le3d | 0–72 | 30 | 90 |
+| d4_7 | 72–168 | 90 | 240 |
+| d8_14 | 168–336 | 240 | 720 |
+| d15_30 | 336–720 | 720 | 1440 |
+
+**TD — new rows (owned_kind=`any`), after-hours off:**
+
+| Band | Hrs | Peak | Off |
+|---|---|---|---|
+| le3d | 0–72 | 240 | 1× floor @04:00 ET |
+| d4_7 | 72–168 | 480 | off |
+| d8_14 | 168–336 | 720 | off |
+| d15_30 | 336–720 | 1440 | off |
+| d31p | 720+ | 2880 | off |
+
+- SG **non-owned** listings: stays **OFF / once-daily** (unchanged). `le3d`=0–72h, `d4_7`=72–168h split the old flat `le7d` band.
+
+### Reference — TD per-platform budget (recalculated)
+Trading-hours only (after-hours off); pulls/day = `960 ÷ peak_interval`. Active events by platform × band → **~220 credits/day total** (vs the 300 cap; today's ~950 demand caps out at noon):
+
+| Platform | le3d | d4_7 | d8_14 | d15_30 | d31p | ~cr/day | (today) |
+|---|---|---|---|---|---|---|---|
+| VD | 6 | 2 | 8 | 11 | 39 | ~59 | 96 |
+| SH | 6 | 2 | 8 | 10 | 38 | ~58 | 133 |
+| GT | 3 | 1 | 6 | 7 | 5 | ~28 | 26 |
+| TM | 3 | 0 | 6 | 7 | 6 | ~27 | 22 |
+| TP | 3 | 0 | 6 | 7 | 6 | ~27 | 23 |
+| **Total** | | | | | | **~220** | 300 (capped) |
+
+Savings come entirely from SH/VD no longer pulling their ~38 cold `d31p` events 4×/day.
+
+### Reference — firing / phase map (no concurrent draws on a shared limit)
+
+**TD account — one serial metronome:** drain `* 13-23,0-4 * * *`, `td_pull_drain(1)`, ordered hottest-band-first → **≤1 `/fetch`/min**. Per-platform enqueue (queue-fill only; `collector_band('TD',…)` throttles), staggered: SH `:00/10` · VD `:02/12` · GT `:04/14` · TM `:06/16` · TP `:08/18`.
+
+**SG brokerdata token — interleaved (fixes 429 bursts):**
+
+| Consumer | Trading | Batch | Phase |
+|---|---|---|---|
+| Broker `/listings` (owned) | `*/2 13-23,0-4` | `tick(4,3)` | even min |
+| `/sales` | `1-59/2 13-23,0-4` | `tick(4)` ← was burst-20/5min | odd min |
+| Floor sweep | `5-59/10 13-23,0-4` | small, gated | `:05,:15…` |
+| SellerDirect #3 (separate host) | `7-59/10 13-23,0-4` | bulk 1 | `:07,:17…` |
+
+Token now sees **≤1 small batch/min** (~4 ≪ 10/8s budget), alternating listings/sales. **Process** crons `sg_priority_*_process` → `*/2` (was `*/5`) so snapshots land continuously (DB-only). After-hours: same phases, sparse (`*/10` listings, `*/12` sales).
+
+**SellerDirect (#3) — full-book pull + AQ map (operator directive 2026-06-06, APPLIED `20260606194100`).** The feed is *our own* **~290,710** listings (fields carry `cost`/`barcodes`/`seller_subaccount_id`), cursor-paginated; we'd been ingesting page 1 only (~0.17%). Implemented a **rolling keyset cursor** in `sg_seller_listings_queue` — advances one page/tick via the prior page's `meta.next_page`, loops at end, self-heals stale pendings, and does **not** touch the working `sg_seller_process`. Plus `sg_seller_sync_and_map()`: registers seller events into `sg_events_canonical` (`has_seller_listings`) + backfills `seatgeek_seller_listings.tevo_event_id` from canonical (SG→TEvo resolved by `auto_match_sg_canonical_v3_hourly`). Crons: queue `*/2` (guarded), process `1-59/2`, sync+map `*/15`. **FE:** `get_event_sg_seller_listings_full(p_event_id)` RPC + an "OUR SG INVENTORY" sub-section in the event page Our-Orders tab. First map run mapped **1,825/1,977** listings; the full book fills over ~1 day. **`/orders` (`seatgeek_orders`) is OBSOLETE** (stale to 2025-06, no payment data) — not maintained; UI label tagged obsolete. The push-based **webhook receiver (D2-OPS-3, merged/undeployed)** remains the eventual real-time upgrade over this polling. *Watch `v_sg_token_budget` / 429 health — SellerDirect shares `SEATGEEK_API_TOKEN`.*
+
+### Safeguards retained
+TD 300/day + 9,000/mo caps · SG `ratelimit-remaining` / `v_sg_token_budget` gate · `cron_should_fire` · clock-advance-on-200 strand-safety. `collector_cadence` is **data** → instant revert by row update; no schema drops; firehose tables untouched.
+
+### Migration staging
+1. ✅ **APPLIED** `20260606191854` — `collector_cadence` re-tune + widen peak window `{9–23,0}` ET (SG listings/sales bands).
+2. ✅ **APPLIED** `20260606192104` — SG token interleave: `/sales`→`tick(4)` odd-min, `/listings` even-min, `*_process`→`*/2` (429-burst fix).
+3. ✅ **APPLIED** `20260606192416` — TD fold: `td_enqueue_peak`→`collector_band`-driven; metronome drain `p_max=1` (+resolved_at guard); staggered per-platform enqueue; retire flat 4×/day; add TD bands.
+4. ✅ **APPLIED** `20260606194100` + `get_event_sg_seller_listings_full` RPC — SellerDirect full-book rolling-cursor pull + AQ map + D0 event-page "OUR SG INVENTORY" panel. `/orders` marked obsolete. (Operator reversed the earlier hold; webhook D2-OPS-3 remains the eventual real-time upgrade.)
+
+**Cutover note:** TD budget was already exhausted (300/300) under the old flat system when #3 landed, so TD firing resumes under the new horizon cadence at the next 00:00 UTC budget reset — clean, no double-spend. SG changes take effect on the next tick.
 
 ---
 
