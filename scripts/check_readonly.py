@@ -2,7 +2,7 @@
 """RULE 2 enforcement scan — fail the build on any code that could push to
 TEvo, SeatGeek, TickPick, or Vivid Seats.
 
-We integrate with five external read-only data sources for our orders /
+We integrate with these external read-only data sources for our orders /
 sales / listings feeds:
   - api.ticketevolution.com           (TEvo orders + listings)
   - brokerdata.seatgeek.com           (SG broker data — listings + sales)
@@ -10,6 +10,9 @@ sales / listings feeds:
   - api.tickpick.com                  (TickPick broker orders)
   - brokers.vividseats.com            (Vivid Seats broker orders)
   - sc.gotickets.com                  (GoTickets broker sales)
+  - seatdata.io                       (SeatData market analytics)
+  - ticketsdata.com                   (TicketsData cross-platform feed)
+  - www.broadway.com / checkout.broadway.com  (Broadway.com availability)
 
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
@@ -46,24 +49,45 @@ FORBIDDEN_HOSTS = (
     "api.tickpick.com",
     "brokers.vividseats.com",
     "sc.gotickets.com",
+    "seatdata.io",
+    "ticketsdata.com",
+    "www.broadway.com",
+    "checkout.broadway.com",
 )
 
-# Files that legitimately reference these hosts (i.e. the client modules).
-# Other files can mention the hosts in comments/docs only.
+# Client modules that legitimately reference these hosts, mapped to the HTTP
+# methods each is permitted to use. Other files can mention the hosts in
+# comments/docs only.
+#
+# All clients are GET-only EXCEPT seatdata_client.py, which has ONE sanctioned
+# metadata POST (/v0.4/events/event-request-add) that writes none of our data
+# and touches no price/inventory — see CLAUDE.md §2 listing-source lockdown.
 CLIENT_FILES = {
-    "evo_client.py",
-    "seatgeek_client.py",
-    "tickpick_client.py",
-    "vivid_client.py",
-    "gotickets_client.py",
+    "evo_client.py": frozenset({"GET"}),
+    "seatgeek_client.py": frozenset({"GET"}),
+    "tickpick_client.py": frozenset({"GET"}),
+    "vivid_client.py": frozenset({"GET"}),
+    "gotickets_client.py": frozenset({"GET"}),
+    "seatdata_client.py": frozenset({"GET", "POST"}),
+    "ticketsdata_client.py": frozenset({"GET"}),
+    "broadway_client.py": frozenset({"GET"}),
 }
 
-# Required guard tokens that must appear in each client module.
-REQUIRED_GUARD_TOKENS = (
+# Guard tokens that must appear in EVERY client module, regardless of which
+# HTTP methods it permits.
+COMMON_GUARD_TOKENS = (
     "_assert_readonly_method",
     "ALLOWED_HTTP_METHODS",
-    'frozenset({"GET"})',
 )
+
+
+def _frozenset_token(methods: frozenset[str]) -> str:
+    """Render the exact `frozenset({...})` literal a client must declare for
+    its allowed-methods set, e.g. frozenset({"GET"}) or
+    frozenset({"GET", "POST"}). Mirrors the source spelling so the token
+    check verifies the client hasn't widened its method allowlist."""
+    inner = ", ".join(f'"{m}"' for m in sorted(methods))
+    return f"frozenset({{{inner}}})"
 
 # Patterns that signal a write attempt in Python.
 PY_FORBIDDEN_PATTERNS = (
@@ -234,17 +258,18 @@ def check_plpgsql_writes() -> list[str]:
 def check_guard_tokens() -> list[str]:
     """Each client module must contain the runtime guard tokens."""
     violations: list[str] = []
-    for client in CLIENT_FILES:
+    for client, methods in CLIENT_FILES.items():
         p = ROOT / client
         if not p.exists():
             violations.append(f"{client}: file missing — guard cannot be verified")
             continue
         text = p.read_text(encoding="utf-8", errors="ignore")
-        for tok in REQUIRED_GUARD_TOKENS:
+        required = (*COMMON_GUARD_TOKENS, _frozenset_token(methods))
+        for tok in required:
             if tok not in text:
                 violations.append(
                     f"{client}: guard token {tok!r} not present "
-                    "(RULE 2 enforcement removed?)"
+                    "(RULE 2 enforcement removed or method allowlist widened?)"
                 )
     return violations
 
