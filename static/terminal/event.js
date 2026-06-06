@@ -722,6 +722,13 @@
     grid: { stroke: AXIS_GRID, width: 1 },
     ticks: { stroke: AXIS_TICKS, size: 6 },
   };
+  // Top (price) pane x-axis: keep the vertical gridlines + ticks for alignment,
+  // but blank the date labels — only the bottom (inventory) pane shows the date
+  // row, so the shared time axis isn't printed twice between the stacked panes.
+  const X_AXIS_TOP = Object.assign({}, X_AXIS, {
+    values: (u, splits) => splits.map(() => ''),
+    size: 16,
+  });
 
   // Helpers shared by both chart renderers
   function buildSeriesData(specs) {
@@ -798,7 +805,7 @@
         y: { range: robustYRange },
       },
       axes: [
-        X_AXIS,
+        X_AXIS_TOP,
         { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
