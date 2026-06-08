@@ -79,7 +79,7 @@
 | B1-NEXT-19 | D1 | Render `ipAllowList: 0.0.0.0/0` on `d2-orders-dashboard` + `vibepass-terminal-test`. Both auth-gated at app layer. | PR comment to D1 — optional tightening. R-1. |
 | B1-NEXT-20 | D1 | Render services `autoDeploy: yes`. Consider manual approval gate for `vibepass-storefront-test`. | PR comment to D1. R-2. |
 | B1-NEXT-21 | Op | No active Slack MCP in repo. | Operator decides Slack MCP install |
-| B1-NEXT-24 | B1 | Periodic full-pass drift audit of `PROJECT_BIBLE.md` §4 RPC table. | Quarterly cadence |
+| B1-NEXT-24 | B1 🔍 AUDITED 2026-06-08 (0 drift) | Periodic full-pass drift audit of `PROJECT_BIBLE.md` §4 RPC table. | 🔍 **AUDIT DONE 2026-06-08** (read-only `pg_proc` check of all 36 documented §4 RPCs): **36/36 present, exactly 1 overload each — 0 missing, 0 ambiguous duplicates** (the §7 drop-old-overload discipline is holding; `match_to_aq_event_id` is the single 8-arg form, the old 7-arg overload is gone). Signatures match the documented args (minor doc-shorthand only: `bot_chat_resolve` params are `p_resolver_level`/`p_resolver_lane` vs the table's `level`/`lane`). **§4 table is accurate — no edits needed.** Next quarterly pass due ~2026-09. |
 | B1-NEXT-25 | B1 | Periodic full-pass drift audit of `RESOURCES_BIBLE.md` §1. | Quarterly |
 | B1-NEXT-26 | B1 | bot_chat thread-closure rate dashboard — add to `release_health_check()` as `coordination.thread_closure_rate_7d`. | 1 SQL migration |
 | B1-NEXT-27 | B1 | Cross-bible consistency check (PROJECT_BIBLE.md vs BOT_HIERARCHY.md — `LANE_DISCIPLINE.md` folded into BOT_HIERARCHY 2026-05-28). | Periodic full diff |
