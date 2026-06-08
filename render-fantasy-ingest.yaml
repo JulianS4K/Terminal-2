@@ -1,0 +1,48 @@
+# Render.com Infrastructure-as-Code blueprint — Fantasy player-stats ingest.
+#
+# OWNER: D0 (Terminal FE lane — Fantasy feature).
+# Phase 1 of the Fantasy League feature.
+#
+# A dedicated CRON service (not a web dyno) that runs fantasy_ingest.py to pull
+# per-player box scores from the open-source sportsdataverse packages into the
+# `player_game_stats` table. Isolated from the request-serving services because
+# pandas + sportsdataverse are heavy and the ingest is bursty — running it on
+# the web dyno would bloat that build and its memory footprint.
+#
+# Usage:
+#   1. New → Blueprint in the Render dashboard, point at the branch carrying
+#      this file.
+#   2. Render prompts for the two `sync: false` secrets (Supabase URL + service
+#      role key).
+#   3. The cron fires daily at 09:10 UTC — after the prior day's North-American
+#      games have settled (latest West-coast finals ~07:00 UTC) — running an
+#      incremental pull of recent finished games across all v1 leagues.
+#
+# READ-ONLY posture: the job only reads open stat sources and writes to our own
+# Supabase Postgres. It never touches a broker API. (CLAUDE.md §2.)
+
+services:
+  - type: cron
+    name: vibepass-fantasy-ingest
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    # Daily incremental sweep. Cron prefix `fantasy_*` cadence is also recorded
+    # in CRON_HIERARCHY.md alongside the in-DB scoring cron.
+    schedule: "10 9 * * *"
+
+    buildCommand: pip install -r requirements-fantasy.txt
+    startCommand: python -m fantasy_ingest --mode incremental
+
+    envVars:
+      # Pin Python 3.12 — matches the web services; sportsdataverse/pandas have
+      # mature cp312 wheels (cp314 is still baking on some deps).
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # NOTE: deliberately NO broker credentials here — the ingest never calls a
+      # broker API. Adding TEVO_*/SEATGEEK_* etc. would be a lane/lockdown smell.

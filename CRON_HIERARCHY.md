@@ -113,6 +113,7 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 | 20 | `sweep_tevo_ticket_groups_cache` | `24 * * * *` (hourly; was every 4 hours) |
 | 21 | `refresh-chat-corpus` | `26 * * * *` (hourly) |
 | 29 | `refresh-chat-term-freq-split-hourly` | `28 * * * *` (hourly) |
+| — | `fantasy-score-hourly` | `48 * * * *` (hourly; pure in-DB SQL `fantasy_score_due_periods()` — no HTTP. Scores settled weekly fantasy periods, idempotent. Fantasy Phase 2, mig 20260608210400. Plus a separate Render cron `vibepass-fantasy-ingest` runs `10 9 * * *` for player-stat ingest — NOT a pg_cron job, see render-fantasy-ingest.yaml.) |
 
 ### T3 (20 max) — daily 03:00-05:59 UTC
 | jobid | name | cadence |

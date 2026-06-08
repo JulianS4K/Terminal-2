@@ -8014,6 +8014,130 @@ def store_test_trip_page(_=Depends(_require_non_prod)):
 
 
 # ============================================================
+# Fantasy League — read API (Phase 2)
+# ============================================================
+# Thin, read-mostly convenience layer for global/aggregate views (league
+# detail, standings, rosters with ESPN joins, draft board, scores). All
+# user-scoped WRITES go through SECDEF RPCs called from the browser
+# (TerminalAuth.client.rpc('fantasy_*')) where auth.uid() resolves — NOT here,
+# because require_sb() uses the service_role key which bypasses RLS and cannot
+# see auth.uid(). Exposing per-league reads to any authenticated @s4kent.com
+# user is intentional (the terminal is an internal tool). Data model:
+# migrations 20260608210000..20260608210400.
+
+@app.get("/api/fantasy/leagues/{league_id}")
+def fantasy_league_detail(league_id: str, _=Depends(require_auth)):
+    """League settings + member list."""
+    db = require_sb()
+    league = (db.table("fantasy_leagues").select("*").eq("id", league_id)
+                .limit(1).execute().data or [])
+    if not league:
+        raise HTTPException(404, "league not found")
+    members = (db.table("fantasy_memberships")
+                 .select("id, team_name, role, draft_position, user_id, joined_at")
+                 .eq("league_id", league_id).order("draft_position").execute().data or [])
+    return {"league": league[0], "members": members}
+
+
+@app.get("/api/fantasy/leagues/{league_id}/standings")
+def fantasy_standings(league_id: str, _=Depends(require_auth)):
+    """H2H standings (wins/losses/ties + points for/against + rank)."""
+    db = require_sb()
+    rows = (db.table("v_fantasy_standings").select("*")
+              .eq("league_id", league_id).order("rank").execute().data or [])
+    return {"standings": rows}
+
+
+@app.get("/api/fantasy/leagues/{league_id}/rosters")
+def fantasy_rosters(league_id: str, _=Depends(require_auth)):
+    """All rosters in a league, each player joined to espn_athletes (name,
+    position, headshot) + latest injury status. Reuses the per-athlete latest-
+    snapshot pattern (one query, deduped in Python)."""
+    db = require_sb()
+    rosters = (db.table("fantasy_rosters").select("id, membership_id")
+                 .eq("league_id", league_id).execute().data or [])
+    players = (db.table("fantasy_roster_players")
+                 .select("id, roster_id, espn_athlete_id, espn_team_id, slot, is_starter, acquired_via")
+                 .eq("league_id", league_id).execute().data or [])
+    athlete_ids = sorted({p["espn_athlete_id"] for p in players})
+    athletes = {}
+    injuries = {}
+    if athlete_ids:
+        for a in (db.table("espn_athletes")
+                    .select("espn_athlete_id, full_name, position_abbr, jersey, status, headshot_url")
+                    .in_("espn_athlete_id", athlete_ids).execute().data or []):
+            athletes[a["espn_athlete_id"]] = a
+        # latest injury per athlete (snapshots are time-series → keep newest)
+        for inj in (db.table("espn_injuries_snapshots")
+                      .select("athlete_id, status, injury_type, short_comment, captured_at")
+                      .in_("athlete_id", athlete_ids)
+                      .order("captured_at", desc=True).execute().data or []):
+            injuries.setdefault(inj["athlete_id"], inj)
+    for p in players:
+        p["athlete"] = athletes.get(p["espn_athlete_id"])
+        p["injury"] = injuries.get(p["espn_athlete_id"])
+    by_roster: dict = {r["id"]: {"membership_id": r["membership_id"], "players": []} for r in rosters}
+    for p in players:
+        if p["roster_id"] in by_roster:
+            by_roster[p["roster_id"]]["players"].append(p)
+    return {"rosters": list(by_roster.values())}
+
+
+@app.get("/api/fantasy/leagues/{league_id}/draft")
+def fantasy_draft_state(league_id: str, _=Depends(require_auth)):
+    """Draft board: order/clock + picks so far (for FE polling)."""
+    db = require_sb()
+    draft = (db.table("fantasy_draft").select("*").eq("league_id", league_id)
+               .limit(1).execute().data or [])
+    picks = (db.table("fantasy_draft_picks")
+               .select("pick_no, round, membership_id, espn_athlete_id, auto_picked, picked_at")
+               .eq("league_id", league_id).order("pick_no").execute().data or [])
+    return {"draft": draft[0] if draft else None, "picks": picks}
+
+
+@app.get("/api/fantasy/available")
+def fantasy_available(league_id: str, position: str | None = None,
+                      q: str | None = None, limit: int = 50, _=Depends(require_auth)):
+    """Draftable player pool for a league (delegates to the SECDEF RPC)."""
+    db = require_sb()
+    rows = db.rpc("fantasy_available_players", {
+        "p_league_id": league_id, "p_position": position, "p_q": q,
+        "p_limit": max(1, min(int(limit), 200)),
+    }).execute().data or []
+    return {"players": rows}
+
+
+@app.get("/api/fantasy/leagues/{league_id}/scores")
+def fantasy_scores(league_id: str, period: int | None = None, _=Depends(require_auth)):
+    """Per-team + per-player scores for a period (defaults to the latest scored
+    period). Returns the explainable `components` breakdown per player."""
+    db = require_sb()
+    periods = (db.table("fantasy_scoring_periods")
+                 .select("id, period_no, starts_at, ends_at, status, scored_at")
+                 .eq("league_id", league_id).order("period_no").execute().data or [])
+    if not periods:
+        return {"period": None, "team_scores": [], "player_scores": [], "matchups": []}
+    if period is not None:
+        sel = next((p for p in periods if p["period_no"] == period), None)
+    else:
+        scored = [p for p in periods if p["status"] == "scored"]
+        sel = (scored[-1] if scored else periods[0])
+    if not sel:
+        raise HTTPException(404, "period not found")
+    pid = sel["id"]
+    team_scores = (db.table("fantasy_team_scores").select("membership_id, points")
+                     .eq("period_id", pid).execute().data or [])
+    player_scores = (db.table("fantasy_player_scores")
+                       .select("roster_player_id, espn_athlete_id, points, components")
+                       .eq("period_id", pid).order("points", desc=True).execute().data or [])
+    matchups = (db.table("fantasy_matchups")
+                  .select("home_membership_id, away_membership_id, home_points, away_points, winner_membership_id")
+                  .eq("period_id", pid).execute().data or [])
+    return {"period": sel, "periods": periods, "team_scores": team_scores,
+            "player_scores": player_scores, "matchups": matchups}
+
+
+# ============================================================
 # D2 dashboard mount (unified-for-testing architecture, 2026-05-16)
 # ============================================================
 # Operator directive: keep 3 services alive (terminal-test, storefront-test,

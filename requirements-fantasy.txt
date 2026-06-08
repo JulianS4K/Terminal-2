@@ -1,0 +1,16 @@
+# Fantasy League — Phase 1 player-stats ingest dependencies.
+#
+# Installed ONLY by the dedicated `vibepass-fantasy-ingest` Render cron service
+# (render-fantasy-ingest.yaml), NOT by the web dyno — these are heavy and only
+# fantasy_ingest.py imports them. Keeps the request-serving build slim.
+#
+# All READ-ONLY data sources (sportsdataverse pulls parquet/GET from the open
+# sportsdataverse data releases + official league stat APIs). No broker-API
+# writes — scripts/check_readonly.py stays clean.
+#
+# Pinned compatible-release ranges per requirements.txt convention.
+-r requirements.txt           # supabase client (service-role upsert) + base deps
+sportsdataverse>=0.0.39,<1.0  # NFL/NBA/MLB/NHL/WNBA per-player box scores
+pandas>=2.2.0,<3.0            # DataFrame normalization in fantasy_ingest.py
+# Optional MLB refinement (cleaner per-game lines than sportsdataverse mlb):
+pybaseball>=2.2.7,<3.0

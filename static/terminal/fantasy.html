@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Fantasy</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .fl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .fl-card { background: var(--panel, #14141b); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 12px 14px; cursor: pointer; }
+    .fl-card:hover { border-color: rgba(255,255,255,.22); }
+    .fl-card h3 { margin: 0 0 4px; font-size: 14px; }
+    .fl-card .meta { font-size: 11px; color: var(--muted, #9aa); }
+    .fl-pill { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 10px; background: rgba(255,255,255,.08); margin-left: 6px; text-transform: uppercase; letter-spacing: .04em; }
+    .fl-forms { display: flex; gap: 14px; flex-wrap: wrap; margin: 6px 0 18px; }
+    .fl-forms form { background: var(--panel, #14141b); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
+    .fl-forms input, .fl-forms select { padding: 7px 9px; background: #0c0c12; color: inherit; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; font: inherit; }
+    .fl-forms button { padding: 8px; }
+    .fl-row { display: flex; gap: 12px; padding: 5px 4px; border-bottom: 1px solid rgba(255,255,255,.06); align-items: baseline; font-size: 12px; }
+    .fl-row .name { font-weight: 600; min-width: 160px; }
+    .fl-row .sub { color: var(--muted, #9aa); }
+    .fl-row .pts { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; }
+    .fl-clock { color: var(--good, #4ade80); font-weight: 700; }
+    .fl-out { color: #f87171; }
+    .fl-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .fl-draftpick { font-size: 12px; padding: 3px 4px; border-bottom: 1px solid rgba(255,255,255,.05); display: flex; gap: 8px; }
+    .fl-draftpick .pno { color: var(--muted, #9aa); width: 34px; }
+    table.fl-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.fl-tbl th, table.fl-tbl td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,.06); }
+    table.fl-tbl td.num, table.fl-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .fl-note { font-size: 11px; color: var(--muted, #9aa); margin: 4px 0 12px; }
+    @media (max-width: 720px) { .fl-cols { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body data-page="fantasy">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap fantasy">
+
+    <!-- LOBBY: my leagues + create/join (shown when no ?league=<uuid>) -->
+    <section id="fl-lobby" hidden>
+      <div class="panel-title row"><span>FANTASY — MY LEAGUES</span></div>
+      <div class="fl-forms">
+        <form id="fl-create">
+          <strong>Create a league</strong>
+          <input name="name" placeholder="League name" required />
+          <select name="espn_league" required>
+            <option value="">League…</option>
+            <option>NFL</option><option>NBA</option><option>MLB</option>
+            <option>NHL</option><option>WNBA</option>
+          </select>
+          <input name="team_name" placeholder="Your team name" required />
+          <button type="submit">Create</button>
+        </form>
+        <form id="fl-join">
+          <strong>Join a league</strong>
+          <input name="join_code" placeholder="Join code (e.g. A1B2C3)" required />
+          <input name="team_name" placeholder="Your team name" required />
+          <button type="submit">Join</button>
+        </form>
+      </div>
+      <div id="fl-mine" class="fl-grid"><div class="empty">loading…</div></div>
+    </section>
+
+    <!-- LEAGUE VIEW (shown when ?league=<uuid>) -->
+    <section id="fl-league" hidden>
+      <div class="panel-title row">
+        <span id="fl-title">—</span>
+        <span class="muted small" id="fl-sub"></span>
+      </div>
+      <p class="fl-note" id="fl-join-hint" hidden></p>
+
+      <nav class="event-tabs" id="fl-tabs" role="tablist">
+        <button class="event-tab active" data-tab="draft" role="tab">Draft</button>
+        <button class="event-tab" data-tab="rosters" role="tab">Rosters</button>
+        <button class="event-tab" data-tab="standings" role="tab">Standings</button>
+        <button class="event-tab" data-tab="scores" role="tab">Scores</button>
+      </nav>
+
+      <div class="tab-pane active" id="fl-pane-draft" role="tabpanel">
+        <div class="row" style="gap:10px; margin-bottom:10px;">
+          <button id="fl-startdraft" class="event-tab" hidden>Start draft (commissioner)</button>
+          <span id="fl-draftstatus" class="muted small"></span>
+        </div>
+        <div class="fl-cols">
+          <div>
+            <div class="panel-title">AVAILABLE PLAYERS</div>
+            <input id="fl-search" placeholder="search player…" style="width:100%;padding:7px 9px;background:#0c0c12;color:inherit;border:1px solid rgba(255,255,255,.12);border-radius:6px;margin:6px 0;" />
+            <div id="fl-available"><div class="empty">—</div></div>
+          </div>
+          <div>
+            <div class="panel-title">DRAFT BOARD</div>
+            <div id="fl-board"><div class="empty">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="fl-pane-rosters" role="tabpanel" hidden>
+        <div id="fl-rosters"><div class="empty">tap tab to load</div></div>
+      </div>
+
+      <div class="tab-pane" id="fl-pane-standings" role="tabpanel" hidden>
+        <div id="fl-standings"><div class="empty">tap tab to load</div></div>
+      </div>
+
+      <div class="tab-pane" id="fl-pane-scores" role="tabpanel" hidden>
+        <p class="fl-note">Scores are computed weekly from real player box scores (player_box_v1); when a player's stats aren't yet ingested the engine falls back to a team-result approximation.</p>
+        <div id="fl-scores"><div class="empty">tap tab to load</div></div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+  <script src="nav.js"></script>
+  <script src="fantasy.js"></script>
+</body>
+</html>

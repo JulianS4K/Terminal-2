@@ -27,6 +27,9 @@
     // "what to watch" surface. Wired 2026-05-19 (PR A1 blindspot stack).
     { id: 'discovery', label: 'DISCOVERY', href: 'discovery.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
+    // Fantasy — H2H leagues drafted from ESPN rosters, scored from real player
+    // box scores (player_game_stats). Wired 2026-06-08 (D0 fantasy stack).
+    { id: 'fantasy',   label: 'FANTASY',   href: 'fantasy.html' },
   ];
 
   function inject() {
