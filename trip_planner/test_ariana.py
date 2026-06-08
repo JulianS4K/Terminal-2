@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from .city_centroids import centroid_for
 from .gigtrip.model import Constraints
 from .gigtrip.optimizer import brute_force_optimal, plan_optimal
 from .planner import plan_from_rows, row_to_event
@@ -56,6 +57,29 @@ def test_optimal_beats_baseline_at_binding_budget():
     assert p["shows_gained"] >= 1
 
 
+def test_city_centroid_fallback():
+    # The two real venues the planner was silently dropping (no precise geocode) are now
+    # recoverable from their EVO "City, ST" text via the centroid gazetteer.
+    assert centroid_for("Inglewood, CA") is not None
+    assert centroid_for("Brooklyn, NY") is not None
+    assert centroid_for("Brooklyn, NY, USA") is not None        # tolerant of trailing country
+    assert centroid_for("Nowhere, ZZ") is None
+
+    # A row with no precise coords but a city-centroid fill is counted + included; a row that
+    # resolves to neither is reported as dropped (not silently lost).
+    rows = list(ROWS) + [
+        {"tevo_event_id": 9001, "primary_performer_name": "Ariana Grande", "venue_name": "Kia Forum",
+         "venue_city": "Inglewood", "event_date": "2026-06-20",
+         "venue_lat": 33.9617, "venue_lon": -118.3531, "_coord_source": "city"},
+        {"tevo_event_id": 9002, "primary_performer_name": "Ariana Grande", "venue_name": "Mystery Hall",
+         "venue_city": None, "event_date": "2026-06-21", "venue_lat": None, "venue_lon": None},
+    ]
+    p = plan_from_rows(rows, HOME, 14000, START, END)
+    assert p["coord_coverage"]["city_fallback"] == 1
+    assert p["coord_coverage"]["dropped_no_coords"] == 1
+    assert p["tour_date_count"] == len(ROWS) + 1   # the centroid row counts, the coord-less one doesn't
+
+
 def main():
     print(f"\nPer-performer trip planner — Ariana Grande (home {HOME['name']})")
     print(f"window {START}..{END}  ·  {len(ROWS)} geocoded tour dates\n")
@@ -68,7 +92,9 @@ def main():
               f"  -> +{p['shows_gained']} shows  [{cities}]")
     test_optimal_matches_oracle()
     test_optimal_beats_baseline_at_binding_budget()
-    print("\n  asserts passed: optimal == brute-force oracle; optimal > baseline at 9000 km\n")
+    test_city_centroid_fallback()
+    print("\n  asserts passed: optimal == brute-force oracle; optimal > baseline at 9000 km;")
+    print("  city-centroid fallback recovers un-geocoded shows (Inglewood/Brooklyn)\n")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,23 @@ GET /api/store/performers/{performer_id}/trip-plan
       ?home_lat=&home_lon=&budget_km=6000&home_name=&days=365&max_events=
 ```
 Returns `{ performer, performer_id, home, budget_km, window, tour_date_count,
+coord_coverage:{venue,city_fallback,dropped_no_coords},
 optimal:{count,value,travel_km,events[]}, baseline_by_date:{...}, shows_gained, all_dates[] }`.
+Each event carries `coord_source` = `"venue"` (precise geocode) or `"city"` (centroid fallback).
+
+### Location data + the city-centroid fallback
+EVO/TEvo gives an event only **text** location (`venue_name` + `venue_location` "City, ST" +
+`venue_id`) — **no coordinates**. The lat/lon the planner needs is geocoded separately into
+`venue_assets` (`geocode_source='nominatim_osm'`), which has gaps (un-geocoded venues, some
+mis-citied rows). Without a fallback those shows get NULL coords and are silently dropped
+(e.g. Ariana Grande: 17 of 25 dates routable, Kia Forum + Barclays shows lost).
+
+`city_centroids.py` closes most of that gap: for any event missing a precise geocode, it
+resolves EVO's reliable `events.venue_location` "City, ST" text to an approximate city
+centroid (static gazetteer of North American touring markets — no external call). Such shows
+are tagged `coord_source="city"` and still routed; a few km of imprecision is negligible
+against inter-city legs. Cities not in the gazetteer fall through to `dropped_no_coords`
+(reported, not silent).
 
 `optimal.events` is the recommended itinerary (date order); `all_dates` is the full tour so
 the UI can show selected vs skipped. `baseline_by_date` is the naive sort-by-date trip, kept
