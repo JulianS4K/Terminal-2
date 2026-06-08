@@ -15,7 +15,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Orders</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260608" />
 </head>
 <body data-page="orders">
 
@@ -114,9 +114,10 @@
   </main>
 
   <script src="lib/supabase.js"></script>
-  <script src="auth.js"></script>
-  <script src="app.js"></script>
-  <script src="nav.js"></script>
-  <script src="orders.js"></script>
+  <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260608"></script>
+  <script src="orders.js?v=20260608"></script>
 </body>
 </html>
