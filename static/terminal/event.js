@@ -1081,11 +1081,14 @@
       { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
       { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
       { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
-      { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.sg_sales_count || [] },
-      // SeatData market sales (right axis count) — parallel to SG sale ct.
-      // Keyed on tevo_event_id server-side, so present even when SG is hidden.
-      { key: 'sd_sale_ct',    label: 'SeatData sale ct', color: '#f59e0b', width: 1, dash: null, scale: 'yr', bars: true, data: extSeries.sd_sales_count || [] },
-      // OUR sell-through — combined EVO+TickPick+Vivid tickets sold per bucket.
+      // Market sales (right axis) — STACKED: SG (bottom) + SeatData (top) per
+      // bucket. SeatData is listed first so it draws BEHIND at the cumulative
+      // height (SG+SeatData); SG draws after with an opaque fill, overdrawing the
+      // lower segment → a 2-colour stacked bar. Cumulative value is computed
+      // post-build (see below); the tooltip still shows each source's own count.
+      { key: 'sd_sale_ct',    label: 'SeatData sale ct', color: '#f59e0b', width: 1, dash: null, scale: 'yr', bars: true, stack: 'mktSales', data: extSeries.sd_sales_count || [] },
+      { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, stack: 'mktSales', data: extSeries.sg_sales_count || [] },
+      // OUR sell-through — combined EVO+TickPick+Vivid tickets sold per bucket (not stacked).
       { key: 'our_sale_ct',   label: 'Our sales ct',   color: '#ec4899', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.orders_count || [] },
     ];
     // Overlay TD listing-count series (dashed, hidden by default — user-togglable)
@@ -1110,6 +1113,24 @@
         { key: 'td-tmr-cnt', label: 'TMr listings', color: '#fb7185', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tmr') });
     }
     const { xs } = buildSeriesData(specs);
+    // Stack the two market-sales bar series (SeatData on top of SG): SeatData's
+    // DRAWN value becomes SG+SeatData while SG keeps its own; with opaque fills
+    // and SG drawn after (overdraw), each bar reads as SG (bottom) + SeatData
+    // (top). tipProjected preserves the raw per-source counts for the tooltip.
+    const _sgB = specs.find(s => s.key === 'sg_sale_ct');
+    const _sdB = specs.find(s => s.key === 'sd_sale_ct');
+    if (_sgB && _sdB && _sgB.projected && _sdB.projected) {
+      _sdB.tipProjected = _sdB.projected.slice();   // raw SeatData counts (tooltip)
+      // Only fold SG into SeatData's height when SG is actually drawn — otherwise
+      // (SG hidden) the SeatData bar would over-represent. Applies on every full
+      // render (initial + resize), so the stack stays truthful per visibility.
+      if (_chartVisible.get('sg_sale_ct') !== false) {
+        _sdB.projected = _sdB.projected.map((v, i) => {
+          const sg = _sgB.projected[i];
+          return (v == null && sg == null) ? null : (v || 0) + (sg || 0);
+        });
+      }
+    }
     _chartLastBuildInv = { specs, xs };
 
     const xRange = clipRangeForHours(_chartInvHours, xs);
@@ -1197,7 +1218,9 @@
     const rows = [];
     build.specs.forEach(s => {
       if (_chartVisible.get(s.key) === false) return;
-      const v = s.projected[idx];
+      // Stacked series carry a cumulative `projected` for drawing; tipProjected
+      // (when present) holds the raw per-source value so the tooltip is truthful.
+      const v = (s.tipProjected || s.projected)[idx];
       if (v == null) return;
       const fmt = chartKey === 'price' ? '$' + Math.round(v) : Math.round(v).toString();
       rows.push(
