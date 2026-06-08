@@ -1159,6 +1159,49 @@ def broker_performer_assets(performer_id: int, _=Depends(require_auth)):
     return row[0] if row else {"performer_id": performer_id, "logo_default_url": None}
 
 
+def _trip_plan_payload(performer_id: int, home_lat: float, home_lon: float,
+                       budget_km: float, home_name: str, days: int,
+                       max_events: int | None) -> dict:
+    """Shared body for the D0/D1 per-performer trip-plan routes.
+
+    Plans the maximum-value multi-city itinerary around a performer's upcoming dates within
+    a round-trip km budget. Pure read (v_event_base) + compute — no writes, no upstream API.
+    Engine + planner live in the shared `trip_planner` package.
+    """
+    from datetime import date, timedelta
+
+    from trip_planner import plan_performer_trip
+
+    db = require_sb()
+    start = date.today()
+    end = start + timedelta(days=max(1, min(int(days), 730)))
+    budget = max(100.0, min(float(budget_km), 50000.0))
+    return plan_performer_trip(
+        db, int(performer_id), float(home_lat), float(home_lon), budget,
+        start, end, home_name=(home_name or "Home").strip()[:60], max_events=max_events,
+    )
+
+
+@app.get("/api/broker/performers/{performer_id}/trip-plan")
+def broker_performer_trip_plan(
+    performer_id: int,
+    home_lat: float,
+    home_lon: float,
+    budget_km: float = 6000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    max_events: int | None = None,
+    _=Depends(require_auth),
+):
+    """D0 terminal: optimal trip around a touring performer's upcoming concert dates.
+
+    Given a home location + round-trip travel budget, returns the maximum-value itinerary
+    (which shows to attend, in date order) plus the sort-by-date baseline for comparison.
+    """
+    return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
+                              home_name, days, max_events)
+
+
 def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
     """Fetch performer_metadata for many performer_ids at once. Returns map
     {performer_id: {logo_default_url, color_primary, ...}}. Used by event
@@ -6640,6 +6683,28 @@ def store_events_near(
     }
 
 
+@app.get("/api/store/performers/{performer_id}/trip-plan")
+def store_performer_trip_plan(
+    performer_id: int,
+    home_lat: float,
+    home_lon: float,
+    budget_km: float = 6000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    max_events: int | None = None,
+):
+    """D1 store: 'plan a trip around <performer>'.
+
+    Consumer-facing. Given a fan's home location + how far they're willing to travel
+    (round-trip km budget), returns the best set of this performer's upcoming shows to
+    attend, in date order, alongside the naive sort-by-date plan for comparison.
+
+    Shares the optimizer with the D0 broker route via `trip_planner`.
+    """
+    return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
+                              home_name, days, max_events)
+
+
 def _section_sort_key(s: str) -> tuple:
     """Sort key for venue sections. Letters before digits (Floor, Courtside,
     GA come before 100, 101, etc.); within each group, natural-numeric for
@@ -7928,6 +7993,13 @@ def store_test_media_test_page(_=Depends(_require_non_prod)):
     # primary_performer_logo / primary_performer_color (already in the
     # /api/store/events payload) actually render through the test harness.
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "media_test.html"))
+
+
+@app.get("/store/test/trip")
+def store_test_trip_page(_=Depends(_require_non_prod)):
+    """Sandbox for the per-performer trip planner (/api/store/performers/{id}/trip-plan).
+    Pick a performer + home + travel budget → optimal multi-city itinerary vs sort-by-date."""
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "trip.html"))
 
 
 # ============================================================
