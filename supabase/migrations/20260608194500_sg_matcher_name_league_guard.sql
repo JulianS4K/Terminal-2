@@ -31,8 +31,11 @@
 -- leave unmatched — never re-mislink). Not run inline to avoid broad side
 -- effects during apply.
 --
--- ⏳ NOT YET APPLIED — pending operator apply_migration (no prod mutation here).
---    After apply, change this banner to "Already applied to prod  Applied via MCP YYYY-MM-DD".
+-- ✅ Already applied to prod  Applied via MCP 2026-06-08.
+--    Post-apply verified: mislinked_remaining = 0 (detector), guard live on
+--    sg_attempt_event_xref_v3. NOTE: applied without the outer BEGIN/COMMIT
+--    (apply_migration manages the transaction); the wrapper is retained below
+--    for documentation / db-reset fidelity.
 -- ============================================================================
 
 BEGIN;
