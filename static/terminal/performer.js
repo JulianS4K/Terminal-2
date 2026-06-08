@@ -241,11 +241,14 @@
       const src = l.unit_price == null ? '' : `<span class="tsrc ${l.sourcing === 'owned' ? 'owned' : 'market'}">${l.sourcing}</span>`;
       const px = l.unit_price == null ? '<span class="tr-px">n/a</span>' : `<span class="tr-px">${_money(l.unit_price)}</span>`;
       const mm = l.market_median != null ? `<span class="tr-mm">mkt ${_money(l.market_median)}</span>` : '<span class="tr-mm"></span>';
+      const s = l.seats;
+      const seat = s ? `<span class="muted small" title="auto-selected ticket group${s.is_owned ? ' (ours)' : ''}">${escapeHtml(s.section || 'GA')}${s.row ? ' ' + escapeHtml(s.row) : ''}${s.is_owned ? ' ·ours' : ''}</span>`
+        : (l.selection === 'estimate' ? '<span class="muted small" style="opacity:.55">est</span>' : '');
       return `<div class="trip-row${on ? '' : ' skip'}">`
         + `<span class="tr-date">${escapeHtml(_tripDate(l.date))}</span>`
         + `<span class="tr-city">${escapeHtml(l.city || '—')}</span>`
         + `<span>${escapeHtml(l.event_name || l.venue || '')}</span>`
-        + src + px + mm + '</div>';
+        + seat + src + px + mm + '</div>';
     }).join('');
     body.innerHTML = `<div class="trip-list">${rows}</div>`;
   }

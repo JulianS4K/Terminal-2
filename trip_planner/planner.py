@@ -10,7 +10,7 @@ Split so the planning logic is testable offline:
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from .budget_optimizer import plan_by_date_2b, plan_optimal_2b
 from .city_centroids import centroid_for
@@ -294,6 +294,58 @@ def fetch_event_pricing(db, ids: list[int], lookback_days: int = 21) -> dict[int
     return out
 
 
+def fetch_event_listings(db, ids: list[int], qty: int, lookback_hours: int = 36,
+                         cap: int = 12000) -> dict[int, dict]:
+    """Auto-select a concrete listing per event that satisfies `qty` and is cheapest.
+
+    From the EVO firehose (`listings_snapshots`): qualifying = `quantity >= qty` AND
+    `qty in splits` (the listing can be sold in exactly that size). Returns the latest,
+    cheapest qualifying ticket group per event (ties prefer our owned inventory), with seat
+    detail — the real tickets the package binds to. Events with no qualifying listing are
+    absent (the planner falls back to the model price).
+    """
+    if not ids:
+        return {}
+    since = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
+    rows = (db.table("listings_snapshots")
+            .select("event_id, tevo_ticket_group_id, section, row, quantity, retail_price, "
+                    "is_owned, eticket, instant_delivery, format, captured_at")
+            .in_("event_id", ids)
+            .gte("captured_at", since)
+            .gte("quantity", qty)
+            .contains("splits", [qty])
+            .not_.is_("retail_price", "null")
+            .order("captured_at", desc=True)
+            .limit(cap)
+            .execute().data) or []
+
+    seen: set[tuple] = set()
+    best: dict[int, dict] = {}
+    counts: dict[int, int] = {}
+    for r in rows:
+        key = (r["event_id"], r["tevo_ticket_group_id"])
+        if key in seen:                       # first seen = latest snapshot of this group
+            continue
+        seen.add(key)
+        eid = int(r["event_id"])
+        counts[eid] = counts.get(eid, 0) + 1
+        price = float(r["retail_price"])
+        owned = bool(r.get("is_owned"))
+        cur = best.get(eid)
+        if cur is None or price < cur["unit_price"] - 1e-9 or (
+                abs(price - cur["unit_price"]) <= 1e-9 and owned and not cur["is_owned"]):
+            best[eid] = {
+                "ticket_group_id": int(r["tevo_ticket_group_id"]),
+                "section": r.get("section"), "row": r.get("row"),
+                "available_qty": int(r["quantity"]), "unit_price": round(price, 2),
+                "is_owned": owned, "eticket": bool(r.get("eticket")),
+                "instant": bool(r.get("instant_delivery")), "format": r.get("format"),
+            }
+    for eid, c in best.items():
+        c["candidates"] = counts.get(eid, 0)
+    return best
+
+
 def fetch_tour_events(db, performer_id: int, start: date, end: date,
                       side: str = "auto") -> tuple[list[dict], str]:
     """Return (rows, mode). For a TEAM performer the tour defaults to AWAY games (the team is
@@ -340,8 +392,25 @@ def plan_tour_package(rows: list[dict], home: dict, qty: int, budget_km: float,
     costs: dict[int, float] = {}
     for r in usable:
         eid = int(r["tevo_event_id"])
-        pl = price_leg(qty, r.get("_owned"), r.get("_our_ask"), r.get("_getin"),
-                       r.get("_med"), r.get("_qty"), clear_at, away_margin)
+        listing = r.get("_listing")
+        if listing and listing.get("unit_price") is not None:
+            # auto-selected a real ticket group that fits qty -> bind to those seats
+            pl = {
+                "unit_price": listing["unit_price"],
+                "sourcing": "owned" if listing.get("is_owned") else "market",
+                "selection": "listing",
+                "owned": r.get("_owned") or 0,
+                "market_median": round(float(r["_med"]), 2) if r.get("_med") is not None else None,
+                "seats": {k: listing.get(k) for k in
+                          ("ticket_group_id", "section", "row", "available_qty",
+                           "is_owned", "eticket", "instant", "format", "candidates")},
+                "moved": qty if listing.get("is_owned") else 0,
+            }
+        else:
+            # no live qualifying listing -> fall back to the model price (estimate)
+            pl = price_leg(qty, r.get("_owned"), r.get("_our_ask"), r.get("_getin"),
+                           r.get("_med"), r.get("_qty"), clear_at, away_margin)
+            pl["selection"] = "estimate"
         pl["city"] = r.get("venue_city")
         pl["event_name"] = r.get("event_name")
         pl["coord_source"] = r.get("_coord_source", "venue")
@@ -393,12 +462,16 @@ def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
     """End-to-end retail tour package: detect concert vs team-away, route + dual-mode price."""
     rows, mode = fetch_tour_events(db, performer_id, start, end, side)
     _apply_coord_fallback(db, rows)
-    pricing = fetch_event_pricing(db, [int(r["tevo_event_id"]) for r in rows])
+    ids = [int(r["tevo_event_id"]) for r in rows]
+    pricing = fetch_event_pricing(db, ids)
+    listings = fetch_event_listings(db, ids, max(1, int(qty)))   # auto-select real seats
     for r in rows:
-        p = pricing.get(int(r["tevo_event_id"]))
+        eid = int(r["tevo_event_id"])
+        p = pricing.get(eid)
         if p:
             r["_owned"], r["_our_ask"] = p["owned"], p["our_ask"]
             r["_getin"], r["_med"], r["_qty"] = p["getin"], p["med"], p["qty"]
+        r["_listing"] = listings.get(eid)
     home = {"name": home_name, "lat": home_lat, "lon": home_lon}
     payload = plan_tour_package(rows, home, qty, budget_km, start, end,
                                 budget_usd=budget_usd, max_events=max_events,
