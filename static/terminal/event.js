@@ -68,8 +68,11 @@
   // (started 2026-05-27) so depth is shallow today and deepens as it fills.
   // Shape: { med:{evo_owned,evo_mkt,sg_list,sg_own,sh,gt,vd}, cnt:{evo_own,evo_tix,sg_tix,sh,gt,vd} }.
   let _dailyDurable = null;
-  // Initialize TD inv series as hidden by default (user-togglable in legend).
-  ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt'].forEach(k => _chartVisible.set(k, false));
+  // TD inv listing-count series: StubHub shows by default; the other five
+  // (GT/VD/TP/TM/TMr) start hidden and are user-togglable in the legend
+  // (operator request 2026-06-08 — keep first paint clean, SH as the reference).
+  ['td-gt-cnt', 'td-vd-cnt',
+   'td-tp-cnt', 'td-tm-cnt', 'td-tmr-cnt'].forEach(k => _chartVisible.set(k, false));
   // Declutter the default view (UI rebuild 2026-06-03): the redundant/secondary
   // medians start hidden — the user opts them in from the legend. Keeps the
   // first paint to one clean line per source instead of 9 overlapping lines.
@@ -1093,6 +1096,18 @@
         { key: 'td-gt-cnt', label: 'GT listings', color: '#2dd4bf', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.gt });
       if (_tdInvCountSeries.vd.length) specs.push(
         { key: 'td-vd-cnt', label: 'VD listings', color: '#a855f7', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.vd });
+    }
+    // TP / TM / TM-resale listing-count overlays (from the full TD family, hidden
+    // by default — user-togglable). Counts live in _tdFamily[*].cnt, not the
+    // sh/gt/vd-only _tdInvCountSeries above.
+    if (_tdFamily) {
+      const famCnt = (k) => (_tdFamily[k] && _tdFamily[k].cnt) || [];
+      if (famCnt('tp').length) specs.push(
+        { key: 'td-tp-cnt',  label: 'TP listings',  color: '#eab308', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tp') });
+      if (famCnt('tm').length) specs.push(
+        { key: 'td-tm-cnt',  label: 'TM listings',  color: '#38bdf8', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tm') });
+      if (famCnt('tmr').length) specs.push(
+        { key: 'td-tmr-cnt', label: 'TMr listings', color: '#fb7185', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tmr') });
     }
     const { xs } = buildSeriesData(specs);
     _chartLastBuildInv = { specs, xs };
