@@ -192,6 +192,8 @@
       home_lon: document.getElementById('tripLon').value,
       home_name: document.getElementById('tripHome').value,
       budget_km: document.getElementById('tripBudget').value,
+      budget_usd: document.getElementById('tripUsd').value || '0',
+      qty: document.getElementById('tripQty').value || '1',
       days: '365',
     });
     body.innerHTML = '<div class="empty">planning…</div>';
@@ -274,10 +276,12 @@
     if (meta) {
       const cov = d.coord_coverage || {};
       const extra = [];
+      if (d.qty_per_show) extra.push(`${d.qty_per_show} tix/show`);
       if (cov.city_fallback) extra.push(`${cov.city_fallback} ≈ city`);
       if (cov.dropped_no_coords) extra.push(`${cov.dropped_no_coords} no-coords dropped`);
+      if (d.unpriced_events) extra.push(`${d.unpriced_events} no price`);
       meta.textContent = d.tour_date_count
-        ? `${d.tour_date_count} dates · budget ${Math.round(d.budget_km)} km${extra.length ? ' · ' + extra.join(', ') : ''}`
+        ? `${d.tour_date_count} dates · ${Math.round(d.budget_km)} km${d.budget_usd != null ? ' · $' + Math.round(d.budget_usd) : ''}${extra.length ? ' · ' + extra.join(', ') : ''}`
         : '';
     }
     if (!d.tour_date_count) {
@@ -293,9 +297,11 @@
       else { mapEl.hidden = true; }
     }
     if (stats) {
+      const spendLbl = `ticket spend${d.budget_usd != null ? ' / $' + Math.round(d.budget_usd) : ''}`;
       stats.hidden = false;
       stats.innerHTML =
         `<div><span class="ts-num">${o.count}</span><span class="ts-lbl">optimal shows · ${Math.round(o.travel_km)} km</span></div>` +
+        `<div><span class="ts-num">$${Math.round(o.spend_usd || 0).toLocaleString()}</span><span class="ts-lbl">${spendLbl}</span></div>` +
         `<div><span class="ts-num">${b.count}</span><span class="ts-lbl">sort-by-date · ${Math.round(b.travel_km)} km</span></div>` +
         `<div><span class="ts-num gain">+${d.shows_gained}</span><span class="ts-lbl">shows gained</span></div>`;
     }
@@ -304,10 +310,16 @@
     const rows = (d.all_dates || []).map(e => {
       const on = picked.has(e.event_id);
       const approx = e.coord_source === 'city' ? ' <span class="muted small" title="approximate city-centroid location">≈</span>' : '';
+      const owned = e.owned ? `<span class="tr-own" title="EVO owned tickets">own ${e.owned}</span>` : '';
+      const price = e.getin != null ? `$${Math.round(e.getin)}` : (e.cost_known ? '' : '<span class="muted">n/a</span>');
+      const cost = e.ticket_cost != null
+        ? `<span class="tr-cost" title="get-in × max(0, qty − owned)">${e.ticket_cost === 0 ? 'free' : '$' + Math.round(e.ticket_cost).toLocaleString()}</span>`
+        : '';
       return `<div class="trip-row${on ? '' : ' skip'}">`
         + `<span class="tr-date">${escapeHtml(_tripDate(e.date))}</span>`
         + `<span class="tr-city">${escapeHtml(e.city || '')}${approx}</span>`
         + `<span class="tr-venue">${escapeHtml(e.venue || '')}</span>`
+        + `<span class="tr-px">${price}</span>${owned}${cost}`
         + (on ? '<span class="tr-go">● going</span>' : '')
         + '</div>';
     }).join('');
