@@ -68,9 +68,9 @@
   // (started 2026-05-27) so depth is shallow today and deepens as it fills.
   // Shape: { med:{evo_owned,evo_mkt,sg_list,sg_own,sh,gt,vd}, cnt:{evo_own,evo_tix,sg_tix,sh,gt,vd} }.
   let _dailyDurable = null;
-  // Initialize TD inv series as hidden by default (user-togglable in legend).
-  ['td-sh-cnt', 'td-gt-cnt', 'td-vd-cnt',
-   'td-tp-cnt', 'td-tm-cnt', 'td-tmr-cnt'].forEach(k => _chartVisible.set(k, false));
+  // TD inv listing-count series (SH/GT/VD/TP/TM/TMr) are VISIBLE by default
+  // (operator request 2026-06-08) — all six platforms' market qty show on first
+  // paint alongside SG/TEvo. Still individually togglable from the legend.
   // Declutter the default view (UI rebuild 2026-06-03): the redundant/secondary
   // medians start hidden — the user opts them in from the legend. Keeps the
   // first paint to one clean line per source instead of 9 overlapping lines.
