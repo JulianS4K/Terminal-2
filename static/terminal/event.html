@@ -77,6 +77,7 @@
            TM Listings is its replacement. Opted-in TP rows still surface in the TD Markets tab. -->
       <button class="event-tab" data-tab="tm-listings" role="tab" aria-selected="false">TM Listings <span class="tab-count" id="tabCountTmListings"></span></button>
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
+      <button class="event-tab" data-tab="seatdata-sales" role="tab" aria-selected="false">SeatData Sales <span class="tab-count" id="tabCountSeatdataSales"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
@@ -374,6 +375,26 @@
           </span>
         </div>
         <div id="sgSalesFullBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <div class="tab-pane" id="paneSeatdataSales" role="tabpanel" hidden>
+      <section id="seatdata-sales-full">
+        <div class="panel-title row">
+          <span>SEATDATA SALES — FULL (DISTINCT ON content_hash)</span>
+          <span class="sales-window-ctrl">
+            <label class="muted small" for="seatdataSalesWindow">window</label>
+            <select id="seatdataSalesWindow" class="range-select">
+              <option value="1">1d</option>
+              <option value="7">7d</option>
+              <option value="30" selected>30d</option>
+              <option value="60">60d</option>
+              <option value="90">90d</option>
+            </select>
+            <span class="muted small" id="seatdataSalesFullMeta">tap tab to load</span>
+          </span>
+        </div>
+        <div id="seatdataSalesFullBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 

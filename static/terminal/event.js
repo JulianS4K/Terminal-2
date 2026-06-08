@@ -130,6 +130,7 @@
     wireAlertsToggle();
     wireTabs(eventId);
     wireSalesWindow(eventId);
+    wireSeatdataSalesWindow(eventId);
     // Path-C-only enrichment RPCs fire in parallel — render even when
     // fetchPayload (Path A / Path C v3) fails. PR #205 cross-source +
     // PR redesign localized weather + SG zones/splits all independent.
@@ -847,6 +848,7 @@
       { key: 'sg_list_med',     label: 'SG market',   color: '#22d3ee', width: 1.5, dash: null,    data: mergeDurable(extSeries.sg_listings_median       || [], durMed('sg_list')) },
       { key: 'sg_own_med',      label: 'SG owned',    color: '#fb7185', width: 1,   dash: [2, 3],  data: mergeDurable(extSeries.sg_listings_owned_median || [], durMed('sg_own')) },
       { key: 'sg_sale_med',     label: 'SG sales',    color: '#84cc16', width: 1.5, dash: [6, 3],  data: extSeries.sg_sales_median          || [] },
+      { key: 'sd_sale_med',     label: 'SeatData sales', color: '#f59e0b', width: 1.5, dash: [6, 3], data: extSeries.sd_sales_median        || [] },
       { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
       { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
@@ -1077,6 +1079,11 @@
       { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
       { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
       { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.sg_sales_count || [] },
+      // SeatData market sales (right axis count) — parallel to SG sale ct.
+      // Keyed on tevo_event_id server-side, so present even when SG is hidden.
+      { key: 'sd_sale_ct',    label: 'SeatData sale ct', color: '#f59e0b', width: 1, dash: null, scale: 'yr', bars: true, data: extSeries.sd_sales_count || [] },
+      // OUR sell-through — combined EVO+TickPick+Vivid tickets sold per bucket.
+      { key: 'our_sale_ct',   label: 'Our sales ct',   color: '#ec4899', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.orders_count || [] },
     ];
     // Overlay TD listing-count series (dashed, hidden by default — user-togglable)
     if (_tdInvCountSeries) {
@@ -3149,7 +3156,7 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
-    'sg-sales': false, 'our-orders': false, 'alerts': false,
+    'sg-sales': false, 'seatdata-sales': false, 'our-orders': false, 'alerts': false,
   } };
 
   function wireTabs(eventId) {
@@ -3182,6 +3189,8 @@
         updateTdListingsTabCount();
       } else if (tabId === 'sg-sales' && !_tabState.loaded['sg-sales']) {
         await loadSgSalesFull(eventId);
+      } else if (tabId === 'seatdata-sales' && !_tabState.loaded['seatdata-sales']) {
+        await loadSeatdataSalesFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
       } else if (tabId === 'alerts') {
@@ -3223,6 +3232,7 @@
       'vd-listings':  'paneVdListings',
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
+      'seatdata-sales': 'paneSeatdataSales',
       'td-markets':   'paneTdMarkets',
       'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
@@ -3261,6 +3271,17 @@
       const body = document.getElementById('sgSalesFullBody');
       if (body) body.innerHTML = '<div class="empty">Loading…</div>';
       await loadSgSalesFull(eventId);
+    });
+  }
+
+  function wireSeatdataSalesWindow(eventId) {
+    const sel = document.getElementById('seatdataSalesWindow');
+    if (!sel) return;
+    sel.addEventListener('change', async () => {
+      _tabState.loaded['seatdata-sales'] = false;
+      const body = document.getElementById('seatdataSalesFullBody');
+      if (body) body.innerHTML = '<div class="empty">Loading…</div>';
+      await loadSeatdataSalesFull(eventId);
     });
   }
 
@@ -4388,6 +4409,72 @@
         <td class="num">${r.broadcast_price != null ? '$' + T.fmtNum(Math.round(r.broadcast_price)) : '—'}</td>
         <td>${escapeHtml(r.stock_type || '—')}</td>
         <td class="num">${r.days_to_event_at_sale != null ? T.fmtNum(r.days_to_event_at_sale) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- SeatData Sales (full) — clone of SG Sales, keyed on tevo_event_id ----------
+  async function loadSeatdataSalesFull(eventId) {
+    const body = document.getElementById('seatdataSalesFullBody');
+    const meta = document.getElementById('seatdataSalesFullMeta');
+    const sel = document.getElementById('seatdataSalesWindow');
+    const windowDays = sel ? (parseInt(sel.value, 10) || 30) : 30;
+    if (body) body.innerHTML = '<div class="empty">Loading SeatData sales…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_seatdata_sales_full', {
+      p_event_id: eventId, p_window_days: windowDays
+    });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['seatdata-sales'] = true;
+    renderSeatdataSalesFull(res.data, performance.now() - t0, windowDays);
+  }
+
+  function renderSeatdataSalesFull(d, ms, windowDays) {
+    const body = document.getElementById('seatdataSalesFullBody');
+    const meta = document.getElementById('seatdataSalesFullMeta');
+    const countChip = document.getElementById('tabCountSeatdataSales');
+    if (!body) return;
+    if (!d || d.hidden) {
+      body.innerHTML = '<div class="empty">no SeatData sales for this event</div>';
+      if (meta) meta.textContent = '0 rows';
+      if (countChip) countChip.textContent = '0';
+      return;
+    }
+    const rows = d.rows || [];
+    const sdId = d.sd_event_id != null ? ` · sd_event_id ${d.sd_event_id}` : '';
+    if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · ${windowDays}d window${sdId}`;
+    if (countChip) countChip.textContent = String(rows.length);
+    if (!rows.length) {
+      body.innerHTML = `<div class="empty">no SeatData sales in last ${windowDays} days</div>`;
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Sold</th><th>Zone</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">Price</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${T.fmtDate(r.sale_timestamp)}</td>
+        <td>${escapeHtml(r.zone || '—')}</td>
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${T.fmtNum(r.quantity)}</td>
+        <td class="num">${r.price != null ? '$' + T.fmtNum(Math.round(r.price)) : '—'}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
