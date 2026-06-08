@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trip planner — VibePass</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+  <style>
+    .trip-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 16px 0 8px; }
+    .trip-form label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .trip-form input { width: 100%; padding: 10px 12px; font-size: 14px; box-sizing: border-box; }
+    .budget-row { margin: 8px 0 20px; }
+    .budget-row input[type=range] { width: 100%; }
+    .stat { display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0; padding: 14px 16px; background: var(--card, #15151c); border-radius: 10px; }
+    .stat b { font-size: 22px; display: block; }
+    .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .gain { color: var(--accent-2, #4ade80); }
+    ul.itin { list-style: none; padding: 0; margin: 0; }
+    ul.itin li { display: flex; gap: 12px; padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,.06); align-items: baseline; }
+    ul.itin li.skip { opacity: .38; }
+    ul.itin li .d { width: 96px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+    ul.itin li .c { width: 120px; font-weight: 600; }
+    ul.itin li .badge { margin-left: auto; font-size: 11px; color: var(--accent-2, #4ade80); }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">sandbox</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+      <a href="/store/test/trip"><span class="num"></span> Trip planner</a>
+    </nav>
+
+    <main class="content">
+      <h1>Plan a trip around a performer</h1>
+      <p class="subtitle">Pick how far you'll travel — we find the most shows you can catch within that budget. Exact optimizer, not a sort-by-date list.</p>
+
+      <div class="trip-form">
+        <div>
+          <label for="pid">Performer ID (tevo)</label>
+          <input id="pid" type="number" value="27474" />
+        </div>
+        <div>
+          <label for="hlat">Home latitude</label>
+          <input id="hlat" type="number" step="0.0001" value="40.7128" />
+        </div>
+        <div>
+          <label for="hlon">Home longitude</label>
+          <input id="hlon" type="number" step="0.0001" value="-74.0060" />
+        </div>
+        <div>
+          <label for="hname">Home label</label>
+          <input id="hname" type="text" value="New York City" />
+        </div>
+      </div>
+
+      <div class="budget-row">
+        <label for="budget" style="font-size:12px;color:var(--muted)">Round-trip travel budget: <b id="budgetLabel">6000</b> km</label>
+        <input id="budget" type="range" min="1000" max="16000" step="500" value="6000" />
+      </div>
+
+      <button id="go" style="padding: 11px 22px">Plan my trip</button>
+      <span style="font-size:12px;color:var(--muted);margin-left:10px">Default = Ariana Grande (27474), home NYC.</span>
+
+      <div id="status" style="color: var(--muted); font-size: 13px; margin: 16px 0"></div>
+
+      <div id="result" hidden>
+        <div class="stat">
+          <div><span class="lbl">Optimal trip</span><b id="oCount">–</b><span class="lbl" id="oKm"></span></div>
+          <div><span class="lbl">Sort-by-date</span><b id="bCount">–</b><span class="lbl" id="bKm"></span></div>
+          <div><span class="lbl">Optimizer adds</span><b class="gain" id="gain">–</b><span class="lbl">more shows</span></div>
+        </div>
+        <h2 style="margin:18px 0 6px" id="itinHead">Itinerary</h2>
+        <p class="subtitle" id="itinSub"></p>
+        <ul class="itin" id="itin"></ul>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const budget = $('budget');
+      budget.addEventListener('input', () => { $('budgetLabel').textContent = budget.value; });
+
+      function fmtDate(iso) {
+        const d = new Date(iso + 'T00:00:00');
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+
+      async function plan() {
+        const pid = parseInt($('pid').value, 10);
+        const params = new URLSearchParams({
+          home_lat: $('hlat').value, home_lon: $('hlon').value,
+          home_name: $('hname').value, budget_km: budget.value, days: '365',
+        });
+        $('status').textContent = 'Planning…';
+        $('result').hidden = true;
+        try {
+          const r = await fetch(`/api/store/performers/${pid}/trip-plan?` + params);
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+          render(await r.json());
+        } catch (e) {
+          $('status').textContent = 'Error: ' + e.message;
+        }
+      }
+
+      function render(d) {
+        if (!d.tour_date_count) {
+          $('status').textContent = `No upcoming geocoded dates for performer ${d.performer_id}.`;
+          return;
+        }
+        $('status').textContent =
+          `${d.performer} · ${d.tour_date_count} upcoming dates · budget ${d.budget_km.toFixed(0)} km from ${d.home.name}`;
+        const o = d.optimal, b = d.baseline_by_date;
+        $('oCount').textContent = o.count;
+        $('oKm').textContent = o.travel_km.toFixed(0) + ' km';
+        $('bCount').textContent = b.count;
+        $('bKm').textContent = b.travel_km.toFixed(0) + ' km';
+        $('gain').textContent = (d.shows_gained >= 0 ? '+' : '') + d.shows_gained;
+
+        const picked = new Set(o.events.map((e) => e.event_id));
+        $('itinHead').textContent = `Your trip — ${o.count} shows`;
+        const cities = [...new Set(o.events.map((e) => e.city))].join(' → ');
+        $('itinSub').textContent = cities || '—';
+
+        const ul = $('itin');
+        ul.innerHTML = '';
+        for (const e of d.all_dates) {
+          const on = picked.has(e.event_id);
+          const li = document.createElement('li');
+          if (!on) li.className = 'skip';
+          li.innerHTML =
+            `<span class="d">${fmtDate(e.date)}</span>` +
+            `<span class="c">${e.city || ''}</span>` +
+            `<span>${e.venue || ''}</span>` +
+            (on ? `<span class="badge">● going</span>` : '');
+          ul.appendChild(li);
+        }
+        $('result').hidden = false;
+      }
+
+      $('go').addEventListener('click', plan);
+      plan();
+    })();
+  </script>
+</body>
+</html>

@@ -11,12 +11,12 @@
   <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
   <link rel="manifest" href="/manifest.json" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://maps.ticketevolution.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com https://maps.ticketevolution.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Event</title>
   <link rel="stylesheet" href="lib/uplot.min.css" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260608" />
 </head>
 <body data-page="event">
 
@@ -232,13 +232,6 @@
       <div id="splitsBody"></div>
     </section>
 
-    <section id="zones">
-      <div class="panel-title">ZONES — LATEST SNAPSHOT</div>
-      <!-- WP-4: plain block — renderZones() builds the source-column grid inside
-           so the "omitted sources" note can sit full-width below the columns. -->
-      <div id="zonesBody"></div>
-    </section>
-
     <section id="espn">
       <div class="panel-title row">
         <span>ESPN — STANDINGS · INJURIES · RECENT</span>
@@ -260,30 +253,9 @@
       <div id="salesTapeBody"></div>
     </section>
 
-    <section id="all-orders">
-      <div class="panel-title row">
-        <span>ORDERS — ALL SOURCES (EVO + TickPick + Vivid)</span>
-        <span class="muted small" id="allOrdersCount"></span>
-      </div>
-      <div id="allOrdersBody"></div>
-    </section>
-
-    <section id="alerts">
-      <div class="panel-title row">
-        <span>EVENT ALERTS — LAST <span id="alertsWindow">7d</span></span>
-        <span class="muted small" id="alertsCount"></span>
-      </div>
-      <div id="alertsBody"></div>
-    </section>
-
     <section id="competing-events">
       <div class="panel-title">COMPETING EVENTS — +/-24H × 20MI</div>
       <div id="competingEventsBody"></div>
-    </section>
-
-    <section id="recent-listings">
-      <div class="panel-title">RECENT TEVO LISTINGS — LAST 24H × 10</div>
-      <div id="recentListingsBody"></div>
     </section>
 
     <section id="performer-espn">
@@ -521,10 +493,11 @@
   <script src="lib/supabase.js"></script>
   <script src="lib/uplot.iife.min.js"></script>
   <script src="lib/tevomaps.bundle.js"></script>
-  <script src="auth.js"></script>
-  <script src="app.js"></script>
-  <script src="nav.js"></script>
-  <script src="alerts.js"></script>
-  <script src="event.js"></script>
+  <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260608"></script>
+  <script src="alerts.js?v=20260608"></script>
+  <script src="event.js?v=20260608"></script>
 </body>
 </html>

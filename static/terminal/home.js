@@ -423,10 +423,10 @@
         <th title="Movement vs yesterday's chart">+/-</th>
         <th>Event</th><th>Venue</th>
         <th class="num">T-days</th>
-        <th class="num" title="7-day moving average of daily sales (distinct sg_sale_id / day)">Vol/day</th>
-        <th class="num" title="7-day moving average of daily sales median price">Med px</th>
-        <th class="num" title="7-day MA daily gross (volume × median, approx)">GMV/day</th>
-        <th class="num" title="Chart score = percentile(volume) + percentile(median), 0–2">Score</th>
+        <th class="num" title="Blended 7-day MA daily sales: SeatGeek + SeatData (treats unknown SeatData qty as 1)">Vol/day</th>
+        <th class="num" title="Volume-weighted blended 7-day MA median price across SeatGeek + SeatData">Med px</th>
+        <th class="num" title="Blended 7-day MA daily gross: SeatGeek + SeatData sold comps">GMV/day</th>
+        <th class="num" title="Chart score = percentile(volume) + percentile(median), 0–2. Blended percentiles when SeatData present, else SeatGeek-only.">Score</th>
         <th class="num" title="Best rank achieved · days on chart">Peak·On</th>
       </tr></thead>
       <tbody></tbody>`;
@@ -441,7 +441,18 @@
         : escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id));
 
       const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
-      const score = (r.chart_score == null) ? '—' : (+r.chart_score).toFixed(2);
+      const hasSd = (r.score_basis === 'blended');
+      const effScore = hasSd ? r.blended_score : r.chart_score;
+      const score = (effScore == null) ? '—' : (+effScore).toFixed(2);
+      // tooltip breakdowns: SG raw vs SD raw (the single columns show the blend)
+      const volTip   = `SG ${r.ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume))}` +
+                       ` · SD ${r.sd_ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.sd_ma7_volume))}`;
+      const medTip   = `SG ${money(r.ma7_median)} · SD ${money(r.sd_ma7_median)}`;
+      const grossTip = `SG ${money(r.ma7_gross)} · SD ${money(r.sd_ma7_gross)}` +
+                       (r.sd_sales_7d == null ? ' (no SeatData sales yet)' : ` · ${r.sd_sales_7d} SD rows/7d`);
+      const scoreTip = hasSd
+        ? `blended ${(r.blended_score == null ? '—' : (+r.blended_score).toFixed(2))} · SG-only ${(r.chart_score == null ? '—' : (+r.chart_score).toFixed(2))}`
+        : `SG-only ${(r.chart_score == null ? '—' : (+r.chart_score).toFixed(2))} (no SeatData)`;
       const peakOn = `${r.peak_rank ?? '—'}·${r.days_on_chart ?? '—'}`;
 
       tr.innerHTML = `
@@ -450,10 +461,10 @@
         <td>${eventLabel}</td>
         <td>${escapeHtml(r.sg_venue_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="num">${r.ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume))}</td>
-        <td class="num">${money(r.ma7_median)}</td>
-        <td class="num">${money(r.ma7_gross)}</td>
-        <td class="num" title="vol pct ${r.pct_volume} · med pct ${r.pct_median}"><strong>${score}</strong></td>
+        <td class="num" title="${volTip}">${r.ma7_volume_blended == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume_blended))}</td>
+        <td class="num" title="${medTip}">${money(r.ma7_median_blended)}</td>
+        <td class="num" title="${grossTip}">${money(r.ma7_gross_blended)}</td>
+        <td class="num" title="${scoreTip}"><strong>${score}</strong>${hasSd ? '' : '<sup title="SeatGeek-only basis">sg</sup>'}</td>
         <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
       tb.appendChild(tr);
     });

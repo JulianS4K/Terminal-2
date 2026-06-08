@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tour agent — VibePass</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+  <style>
+    .tour-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 16px 0 8px; }
+    .tour-form label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .tour-form input, .tour-form select { width: 100%; padding: 9px 11px; font-size: 14px; box-sizing: border-box; }
+    .modebar { margin: 14px 0 6px; font-size: 13px; }
+    .pill2 { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .pill2.owned { background: rgba(74,222,128,.15); color: #4ade80; }
+    .pill2.market { background: rgba(96,165,250,.15); color: #60a5fa; }
+    .stat { display: flex; gap: 24px; flex-wrap: wrap; margin: 12px 0; padding: 14px 16px; background: var(--card,#15151c); border-radius: 10px; }
+    .stat b { font-size: 22px; display: block; }
+    .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .save { color: #4ade80; } .prem { color: #fbbf24; }
+    ul.legs { list-style: none; padding: 0; margin: 8px 0 0; }
+    ul.legs li { display: flex; gap: 12px; padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,.06); align-items: baseline; }
+    ul.legs li.skip { opacity: .4; }
+    ul.legs .d { width: 92px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    ul.legs .c { width: 130px; font-weight: 600; }
+    ul.legs .src { font-size: 10px; }
+    ul.legs .px { margin-left: auto; font-variant-numeric: tabular-nums; }
+    ul.legs .mm { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; width: 64px; text-align: right; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">sandbox</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/trip"><span class="num"></span> Trip planner</a>
+      <a href="/store/test/tour"><span class="num"></span> Tour agent</a>
+    </nav>
+
+    <main class="content">
+      <h1>Tour with the artist</h1>
+      <p class="subtitle">Follow a performer across cities — one curated package, priced off our own inventory. For a team it defaults to <b>away games</b> (the road trip).</p>
+
+      <div class="tour-form">
+        <div><label>Performer ID</label><input id="pid" type="number" value="87567" /></div>
+        <div><label>Home lat</label><input id="hlat" type="number" step="0.0001" value="40.7128" /></div>
+        <div><label>Home lon</label><input id="hlon" type="number" step="0.0001" value="-74.0060" /></div>
+        <div><label>Home label</label><input id="hname" type="text" value="New York City" /></div>
+        <div><label>Tickets / show</label><input id="qty" type="number" min="1" max="12" value="3" /></div>
+        <div><label>Travel budget (km)</label><input id="bkm" type="number" step="500" value="6000" /></div>
+        <div><label>Spend cap ($, optional)</label><input id="busd" type="number" step="250" placeholder="none" /></div>
+        <div><label>Side</label><select id="side"><option value="auto">auto</option><option value="away">away (team)</option><option value="home">home / primary</option></select></div>
+      </div>
+      <button id="go" style="padding: 11px 22px">Build tour</button>
+      <span style="font-size:12px;color:var(--muted);margin-left:10px">Default: Megan Moroney (87567). Try a team, e.g. Yankees 15533.</span>
+
+      <div id="status" style="color: var(--muted); font-size: 13px; margin: 16px 0"></div>
+      <div id="result" hidden>
+        <div class="modebar" id="modebar"></div>
+        <div class="stat" id="stat"></div>
+        <h2 style="margin:16px 0 4px" id="legsHead">Your tour</h2>
+        <ul class="legs" id="legs"></ul>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const money = (n) => '$' + Math.round(n).toLocaleString();
+      function fmtDate(iso) { try { return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (_) { return iso; } }
+
+      async function build() {
+        const pid = parseInt($('pid').value, 10);
+        const p = new URLSearchParams({
+          home_lat: $('hlat').value, home_lon: $('hlon').value, home_name: $('hname').value,
+          qty: $('qty').value || '3', budget_km: $('bkm').value || '6000',
+          side: $('side').value, days: '365',
+        });
+        if ($('busd').value) p.set('budget_usd', $('busd').value);
+        $('status').textContent = 'Building tour…';
+        $('result').hidden = true;
+        try {
+          const r = await fetch(`/api/store/performers/${pid}/tour-package?` + p);
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+          render(await r.json());
+        } catch (e) { $('status').textContent = 'Error: ' + e.message; }
+      }
+
+      function render(d) {
+        const pk = d.package || {};
+        if (!d.stops_available || !pk.count) {
+          $('status').textContent = `No routable tour for performer ${d.performer_id} (${d.mode}).`;
+          $('result').hidden = true;
+          return;
+        }
+        const modeLabel = d.mode === 'team_away' ? 'team · away games · market-sourced'
+          : d.mode === 'team_home' ? 'team · home stand · owned-splits'
+          : 'concert · owned-splits';
+        $('status').textContent = `${d.mode} · ${d.stops_available} candidate stops · ${d.qty_per_show} tix/show`;
+        $('modebar').innerHTML = `mode: <b>${modeLabel}</b>`;
+
+        const fan = pk.fan_total_bundled, vsm = pk.vs_market;
+        const cells = [
+          `<div><span class="lbl">Package (${pk.count * d.qty_per_show} tix)</span><b>${money(fan)}</b></div>`,
+          `<div><span class="lbl">${vsm < 0 ? 'fan saves vs market' : 'premium vs market'}</span><b class="${vsm < 0 ? 'save' : 'prem'}">${vsm < 0 ? money(-vsm) : '+' + money(vsm)}</b></div>`,
+          `<div><span class="lbl">${pk.owned_moved ? 'owned tickets moved' : 'fulfillment margin'}</span><b>${pk.owned_moved ? pk.owned_moved : money(pk.gross_margin || 0)}</b></div>`,
+          `<div><span class="lbl">cities / travel</span><b>${pk.cities} / ${Math.round(pk.travel_km)} km</b></div>`,
+        ];
+        $('stat').innerHTML = cells.join('');
+
+        $('legsHead').textContent = `Your tour — ${pk.count} cities, ${d.qty_per_show} each`;
+        const picked = new Set((pk.legs || []).map(l => l.event_id));
+        $('legs').innerHTML = (d.all_stops || []).map(l => {
+          const on = picked.has(l.event_id);
+          const srcCls = l.sourcing === 'owned' ? 'owned' : 'market';
+          const src = l.unit_price == null ? '' : `<span class="pill2 ${srcCls} src">${l.sourcing}</span>`;
+          const price = l.unit_price == null ? '<span class="mm">n/a</span>' : `<span class="px">${money(l.unit_price)}</span>`;
+          const mm = l.market_median != null ? `<span class="mm">mkt ${money(l.market_median)}</span>` : '<span class="mm"></span>';
+          return `<li class="${on ? '' : 'skip'}">`
+            + `<span class="d">${fmtDate(l.date)}</span>`
+            + `<span class="c">${(l.city || '—')}</span>`
+            + `<span>${l.event_name || l.venue || ''}</span>`
+            + src + price + mm
+            + `</li>`;
+        }).join('');
+        $('result').hidden = false;
+      }
+
+      $('go').addEventListener('click', build);
+      build();
+    })();
+  </script>
+</body>
+</html>

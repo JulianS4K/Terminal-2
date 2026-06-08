@@ -592,7 +592,10 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         # Skip CORS preflight + healthcheck — preflights aren't load-bearing.
-        if request.method == "OPTIONS" or path in ("/", "/health"):
+        # Render polls /healthz (render.yaml healthCheckPath) frequently from one
+        # IP; exempt the REAL liveness path so those polls don't trip the per-IP
+        # rate cap. (/health never existed as a route — A1-OPS-5.)
+        if request.method == "OPTIONS" or path in ("/", "/healthz"):
             return await call_next(request)
         # Trust X-Forwarded-For when present (Railway sets it). Fall back to
         # request.client. First entry of XFF is the original client.
@@ -1157,6 +1160,103 @@ def broker_performer_assets(performer_id: int, _=Depends(require_auth)):
                      "espn_team_url, espn_roster_url, espn_schedule_url, espn_fetched_at")
              .eq("performer_id", performer_id).limit(1).execute().data or [])
     return row[0] if row else {"performer_id": performer_id, "logo_default_url": None}
+
+
+def _trip_plan_payload(performer_id: int, home_lat: float, home_lon: float,
+                       budget_km: float, home_name: str, days: int,
+                       max_events: int | None,
+                       budget_usd: float | None = None, qty: int = 1) -> dict:
+    """Shared body for the D0/D1 per-performer trip-plan routes.
+
+    Plans the maximum-value multi-city itinerary around a performer's upcoming dates within
+    a round-trip km budget — and, when `budget_usd` is given, also within a ticket-spend
+    budget (get-in x max(0, qty - owned), owned tickets free). Pure read (v_event_base +
+    event_listing_snapshot_daily) + compute — no writes, no upstream API.
+    """
+    from datetime import date, timedelta
+
+    from trip_planner import plan_performer_trip
+
+    db = require_sb()
+    start = date.today()
+    end = start + timedelta(days=max(1, min(int(days), 730)))
+    budget = max(100.0, min(float(budget_km), 50000.0))
+    spend = None if budget_usd is None else max(0.0, min(float(budget_usd), 10_000_000.0))
+    return plan_performer_trip(
+        db, int(performer_id), float(home_lat), float(home_lon), budget,
+        start, end, home_name=(home_name or "Home").strip()[:60], max_events=max_events,
+        budget_usd=spend, qty=max(1, min(int(qty), 50)),
+    )
+
+
+@app.get("/api/broker/performers/{performer_id}/trip-plan")
+def broker_performer_trip_plan(
+    performer_id: int,
+    home_lat: float,
+    home_lon: float,
+    budget_km: float = 6000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    max_events: int | None = None,
+    budget_usd: float | None = None,
+    qty: int = 1,
+    _=Depends(require_auth),
+):
+    """D0 terminal: optimal trip around a touring performer's upcoming concert dates.
+
+    Given a home location + travel budget (and optional ticket-spend budget + tickets/show),
+    returns the maximum-value itinerary plus the sort-by-date baseline for comparison.
+    """
+    return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
+                              home_name, days, max_events, budget_usd, qty)
+
+
+def _tour_package_payload(performer_id: int, home_lat: float, home_lon: float,
+                          qty: int, budget_km: float, home_name: str, days: int,
+                          budget_usd: float | None, side: str,
+                          clear_at: float, away_margin: float) -> dict:
+    """Shared body for the retail 'tour with the artist' routes (D0 + store).
+
+    Dual-mode: owned-splits where we hold inventory (concerts), market-sourced buy-to-fulfill
+    for a team's away games (road owned ~ 0). Pure read + compute — no writes, no upstream API.
+    """
+    from datetime import date, timedelta
+
+    from trip_planner import plan_performer_tour
+
+    db = require_sb()
+    start = date.today()
+    end = start + timedelta(days=max(1, min(int(days), 730)))
+    spend = None if budget_usd is None else max(0.0, min(float(budget_usd), 10_000_000.0))
+    return plan_performer_tour(
+        db, int(performer_id), float(home_lat), float(home_lon),
+        max(1, min(int(qty), 50)), max(100.0, min(float(budget_km), 50000.0)),
+        start, end, home_name=(home_name or "Home").strip()[:60], budget_usd=spend,
+        side=(side if side in ("auto", "away", "home", "concert") else "auto"),
+        clear_at=min(max(float(clear_at), 0.01), 1.0),
+        away_margin=min(max(float(away_margin), 0.0), 2.0),
+    )
+
+
+@app.get("/api/broker/performers/{performer_id}/tour-package")
+def broker_performer_tour_package(
+    performer_id: int,
+    home_lat: float,
+    home_lon: float,
+    qty: int = 3,
+    budget_km: float = 8000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    budget_usd: float | None = None,
+    side: str = "auto",
+    clear_at: float = 0.15,
+    away_margin: float = 0.18,
+    _=Depends(require_auth),
+):
+    """D0: retail 'tour with the artist' package — routed multi-city tour priced via the
+    dual-mode model (owned-splits for concerts, market-sourced for a team's away games)."""
+    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km,
+                                 home_name, days, budget_usd, side, clear_at, away_margin)
 
 
 def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
@@ -6640,6 +6740,51 @@ def store_events_near(
     }
 
 
+@app.get("/api/store/performers/{performer_id}/trip-plan")
+def store_performer_trip_plan(
+    performer_id: int,
+    home_lat: float,
+    home_lon: float,
+    budget_km: float = 6000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    max_events: int | None = None,
+    budget_usd: float | None = None,
+    qty: int = 1,
+):
+    """D1 store: 'plan a trip around <performer>'.
+
+    Consumer-facing. Given a fan's home location + how far they're willing to travel
+    (and optionally a ticket-spend budget + tickets/show), returns the best set of this
+    performer's upcoming shows to attend, alongside the naive sort-by-date plan.
+
+    Shares the optimizer with the D0 broker route via `trip_planner`.
+    """
+    return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
+                              home_name, days, max_events, budget_usd, qty)
+
+
+@app.get("/api/store/performers/{performer_id}/tour-package")
+def store_performer_tour_package(
+    performer_id: int,
+    home_lat: float,
+    home_lon: float,
+    qty: int = 3,
+    budget_km: float = 8000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    budget_usd: float | None = None,
+    side: str = "auto",
+    clear_at: float = 0.15,
+    away_margin: float = 0.18,
+):
+    """D1 store: retail 'tour with the artist' agent. Builds a routed multi-city package and
+    prices it — owned-splits where we hold inventory (concerts), market-sourced for a team's
+    away games. Shares the engine with the D0 route via `trip_planner`."""
+    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km,
+                                 home_name, days, budget_usd, side, clear_at, away_margin)
+
+
 def _section_sort_key(s: str) -> tuple:
     """Sort key for venue sections. Letters before digits (Floor, Courtside,
     GA come before 100, 101, etc.); within each group, natural-numeric for
@@ -7928,6 +8073,20 @@ def store_test_media_test_page(_=Depends(_require_non_prod)):
     # primary_performer_logo / primary_performer_color (already in the
     # /api/store/events payload) actually render through the test harness.
     return FileResponse(os.path.join(STATIC_DIR, "store", "test", "media_test.html"))
+
+
+@app.get("/store/test/trip")
+def store_test_trip_page(_=Depends(_require_non_prod)):
+    """Sandbox for the per-performer trip planner (/api/store/performers/{id}/trip-plan).
+    Pick a performer + home + travel budget → optimal multi-city itinerary vs sort-by-date."""
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "trip.html"))
+
+
+@app.get("/store/test/tour")
+def store_test_tour_page(_=Depends(_require_non_prod)):
+    """Sandbox for the retail 'tour with the artist' agent
+    (/api/store/performers/{id}/tour-package). Dual-mode priced multi-city package."""
+    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "tour.html"))
 
 
 # ============================================================

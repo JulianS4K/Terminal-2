@@ -95,10 +95,10 @@
   }
 
   // ============================================================
-  // DETAIL mode — hero + rollup + tabs (Market Carpet default)
+  // DETAIL mode — hero + rollup + tabs (Overview default)
   // ============================================================
   function showDetailMode(performerId) {
-    // Unhide DETAIL chrome; Market Carpet pane is already active in HTML
+    // Unhide DETAIL chrome; Overview pane is already active in HTML
     document.getElementById('perf-hero').removeAttribute('hidden');
     document.getElementById('perfTabs').removeAttribute('hidden');
 
@@ -118,15 +118,14 @@
       _tabState.portfolio = (portfolio && !portfolio.__err) ? portfolio : null;
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
+      try { initDailyMetrics(performerId, portfolio); } catch (e) { console.error('dailyMetrics', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
       try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
-      // Auto-load Market Carpet (default view) now that portfolio is available
-      loadMarketCarpet().catch(e => console.error('marketCarpet', e));
     });
   }
 
   // ---------- Tab nav ----------
-  const _tabState = { loaded: { espn: false, market: false, alerts: false }, performerId: null, portfolio: null };
+  const _tabState = { loaded: { espn: false, alerts: false, trip: false }, performerId: null, portfolio: null };
 
   function wireTabs(performerId) {
     _tabState.performerId = performerId;
@@ -139,8 +138,8 @@
       activateTab(tabId);
       if (tabId === 'espn' && !_tabState.loaded.espn) {
         await loadEspnContext(performerId);
-      } else if (tabId === 'market' && !_tabState.loaded.market) {
-        await loadMarketCarpet();
+      } else if (tabId === 'upcoming' && !_tabState.loaded.trip) {
+        initTripPlanner(performerId);
       } else if (tabId === 'alerts' && !_tabState.loaded.alerts) {
         _tabState.loaded.alerts = true;
         const label = document.getElementById('phName')?.textContent || '';
@@ -153,7 +152,6 @@
     overview:   'paneOverview',
     upcoming:   'paneUpcoming',
     blindspots: 'paneBlindspots',
-    market:     'paneMarket',
     espn:       'paneEspn',
     alerts:     'panePerfAlerts',
   };
@@ -170,6 +168,229 @@
       if (id === tabId) { pane.removeAttribute('hidden'); pane.classList.add('active'); }
       else { pane.setAttribute('hidden', ''); pane.classList.remove('active'); }
     });
+  }
+
+  // ---------- Trip Planner (lazy-loaded tab) ----------
+  // Calls /api/broker/performers/{id}/trip-plan (shared trip_planner module) and shows
+  // the optimal multi-city itinerary vs the naive sort-by-date baseline.
+
+  function initTripPlanner(performerId) {
+    _tabState.loaded.trip = true;
+    const slider = document.getElementById('tripBudget');
+    const label = document.getElementById('tripBudgetLabel');
+    if (slider && label) slider.addEventListener('input', () => { label.textContent = slider.value; });
+    const go = document.getElementById('tripGo');
+    if (go) go.addEventListener('click', () => runTripPlan(performerId));
+    const tourGo = document.getElementById('tourGo');
+    if (tourGo) tourGo.addEventListener('click', () => priceTour(performerId));
+    runTripPlan(performerId);
+  }
+
+  // ---------- Retail tour package (dual-mode pricing) ----------
+  async function priceTour(performerId) {
+    const body = document.getElementById('tourBody');
+    const stats = document.getElementById('tourStats');
+    if (!body) return;
+    const q = new URLSearchParams({
+      home_lat: document.getElementById('tripLat').value,
+      home_lon: document.getElementById('tripLon').value,
+      home_name: document.getElementById('tripHome').value,
+      qty: document.getElementById('tripQty').value || '3',
+      budget_km: document.getElementById('tripBudget').value,
+      side: document.getElementById('tourSide').value,
+      days: '365',
+    });
+    body.innerHTML = '<div class="empty">pricing tour…</div>';
+    if (stats) stats.hidden = true;
+    try {
+      const d = await T.api(`/api/broker/performers/${performerId}/tour-package?` + q.toString());
+      renderTour(d);
+    } catch (e) {
+      body.innerHTML = `<div class="empty">error: ${escapeHtml(e.message || String(e))}</div>`;
+    }
+  }
+
+  function _money(n) { return '$' + Math.round(n || 0).toLocaleString(); }
+
+  function renderTour(d) {
+    const body = document.getElementById('tourBody');
+    const stats = document.getElementById('tourStats');
+    const meta = document.getElementById('tourMeta');
+    const pk = d.package || {};
+    const modeLabel = d.mode === 'team_away' ? 'team · away games · market-sourced'
+      : d.mode === 'team_home' ? 'team · home stand · owned-splits'
+      : 'concert · owned-splits';
+    if (meta) meta.textContent = `${modeLabel} · ${d.stops_available || 0} stops · ${d.qty_per_show} tix/show`;
+    if (!d.stops_available || !pk.count) {
+      if (stats) stats.hidden = true;
+      body.innerHTML = '<div class="empty">no routable tour for this performer</div>';
+      return;
+    }
+    const vsm = pk.vs_market;
+    if (stats) {
+      stats.hidden = false;
+      stats.innerHTML =
+        `<div><span class="ts-num">${_money(pk.fan_total_bundled)}</span><span class="ts-lbl">package · ${pk.count * d.qty_per_show} tix</span></div>` +
+        `<div><span class="ts-num ${vsm < 0 ? 'gain' : ''}">${vsm < 0 ? _money(-vsm) : '+' + _money(vsm)}</span><span class="ts-lbl">${vsm < 0 ? 'fan saves vs market' : 'premium vs market'}</span></div>` +
+        `<div><span class="ts-num">${pk.owned_moved ? pk.owned_moved : _money(pk.gross_margin || 0)}</span><span class="ts-lbl">${pk.owned_moved ? 'owned tix moved' : 'fulfillment margin'}</span></div>` +
+        `<div><span class="ts-num">${pk.cities} / ${Math.round(pk.travel_km)}</span><span class="ts-lbl">cities / km</span></div>`;
+    }
+    const picked = new Set((pk.legs || []).map(l => l.event_id));
+    const rows = (d.all_stops || []).map(l => {
+      const on = picked.has(l.event_id);
+      const src = l.unit_price == null ? '' : `<span class="tsrc ${l.sourcing === 'owned' ? 'owned' : 'market'}">${l.sourcing}</span>`;
+      const px = l.unit_price == null ? '<span class="tr-px">n/a</span>' : `<span class="tr-px">${_money(l.unit_price)}</span>`;
+      const mm = l.market_median != null ? `<span class="tr-mm">mkt ${_money(l.market_median)}</span>` : '<span class="tr-mm"></span>';
+      return `<div class="trip-row${on ? '' : ' skip'}">`
+        + `<span class="tr-date">${escapeHtml(_tripDate(l.date))}</span>`
+        + `<span class="tr-city">${escapeHtml(l.city || '—')}</span>`
+        + `<span>${escapeHtml(l.event_name || l.venue || '')}</span>`
+        + src + px + mm + '</div>';
+    }).join('');
+    body.innerHTML = `<div class="trip-list">${rows}</div>`;
+  }
+
+  async function runTripPlan(performerId) {
+    const body = document.getElementById('tripBody');
+    const stats = document.getElementById('tripStats');
+    if (!body) return;
+    const q = new URLSearchParams({
+      home_lat: document.getElementById('tripLat').value,
+      home_lon: document.getElementById('tripLon').value,
+      home_name: document.getElementById('tripHome').value,
+      budget_km: document.getElementById('tripBudget').value,
+      budget_usd: document.getElementById('tripUsd').value || '0',
+      qty: document.getElementById('tripQty').value || '1',
+      days: '365',
+    });
+    body.innerHTML = '<div class="empty">planning…</div>';
+    if (stats) stats.hidden = true;
+    try {
+      const d = await T.api(`/api/broker/performers/${performerId}/trip-plan?` + q.toString());
+      renderTripPlan(d);
+    } catch (e) {
+      body.innerHTML = `<div class="empty">error: ${escapeHtml(e.message || String(e))}</div>`;
+    }
+  }
+
+  function _tripDate(iso) {
+    try { return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch (_) { return iso; }
+  }
+
+  // Build a self-contained SVG route map (no tiles / external libs — CSP-safe).
+  // A simplified continental-US silhouette is drawn as the basemap on a FIXED
+  // equirectangular frame, so the route always reads against a recognizable map.
+  // Coarse lower-48 outline (clockwise [lat, lon]); approximate, for context only.
+  const _US_OUTLINE = [
+    [48.4, -124.7], [46.2, -124.1], [43.3, -124.4], [40.4, -124.4], [38.0, -123.0], [36.6, -121.9],
+    [34.4, -120.5], [33.7, -118.4], [32.5, -117.1], [32.7, -114.5], [31.3, -111.1], [31.3, -108.2],
+    [31.8, -106.5], [29.8, -104.0], [29.2, -102.8], [26.0, -99.2], [25.9, -97.1], [27.8, -97.0],
+    [29.7, -93.8], [29.1, -90.1], [30.2, -88.0], [30.4, -86.5], [29.7, -84.0], [28.0, -82.8],
+    [25.8, -81.5], [25.2, -80.3], [27.0, -80.1], [29.9, -81.3], [32.0, -80.9], [33.9, -78.0],
+    [36.9, -76.0], [38.9, -75.0], [40.5, -74.0], [41.4, -71.5], [42.4, -70.6], [43.7, -70.0],
+    [44.8, -67.0], [45.2, -67.8], [45.0, -71.5], [45.0, -74.7], [44.0, -76.5], [43.3, -79.2],
+    [42.3, -83.0], [46.0, -84.4], [46.6, -88.4], [47.4, -90.5], [48.0, -89.5], [49.0, -95.2],
+    [49.0, -104.0], [49.0, -114.0], [49.0, -122.8], [48.4, -124.7],
+  ];
+
+  function buildTripMap(d) {
+    if (!d.all_dates || !d.all_dates.length) return '';
+    const minLon = -125, maxLon = -66, minLat = 24, maxLat = 50;   // fixed continental frame
+    const k = Math.cos(37 * Math.PI / 180);
+    const pad = 8, W = 600;
+    const scale = (W - 2 * pad) / ((maxLon - minLon) * k);
+    const H = Math.round((maxLat - minLat) * scale + 2 * pad);
+    const proj = (lat, lon) => [pad + (lon - minLon) * k * scale, pad + (maxLat - lat) * scale];
+
+    const land = 'M' + _US_OUTLINE.map(p => { const [x, y] = proj(p[0], p[1]); return x.toFixed(1) + ' ' + y.toFixed(1); }).join(' L ') + ' Z';
+
+    const [hx, hy] = proj(+d.home.lat, +d.home.lon);
+    const going = d.optimal.events || [];
+    const picked = new Set(going.map(e => e.event_id));
+
+    const route = [[hx, hy], ...going.map(e => proj(+e.lat, +e.lon)), [hx, hy]];
+    const routeD = route.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+
+    let dots = '';
+    d.all_dates.forEach(e => {
+      const [x, y] = proj(+e.lat, +e.lon);
+      const on = picked.has(e.event_id);
+      dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 4.5 : 3}" class="${on ? 'tm-go' : 'tm-skip'}">`
+        + `<title>${escapeHtml((e.city || '') + ' · ' + (e.venue || '') + ' · ' + e.date)}</title></circle>`;
+    });
+
+    let labels = ''; const seen = new Set();
+    going.forEach(e => {
+      if (seen.has(e.city)) return;
+      seen.add(e.city);
+      const [x, y] = proj(+e.lat, +e.lon);
+      labels += `<text x="${(x + 6).toFixed(1)}" y="${(y + 3).toFixed(1)}" class="tm-lbl">${escapeHtml(e.city || '')}</text>`;
+    });
+
+    const home = `<g class="tm-home"><circle cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="4.5"/>`
+      + `<text x="${(hx + 6).toFixed(1)}" y="${(hy + 3).toFixed(1)}" class="tm-lbl tm-home-lbl">${escapeHtml(d.home.name || 'Home')}</text></g>`;
+
+    return `<svg viewBox="0 0 ${W} ${H}" class="trip-map-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Trip route map">`
+      + `<path d="${land}" class="tm-land"/><path d="${routeD}" class="tm-route"/>${dots}${home}${labels}</svg>`;
+  }
+
+  function renderTripPlan(d) {
+    const body = document.getElementById('tripBody');
+    const stats = document.getElementById('tripStats');
+    const mapEl = document.getElementById('tripMap');
+    const meta = document.getElementById('tripMeta');
+    if (meta) {
+      const cov = d.coord_coverage || {};
+      const extra = [];
+      if (d.qty_per_show) extra.push(`${d.qty_per_show} tix/show`);
+      if (cov.city_fallback) extra.push(`${cov.city_fallback} ≈ city`);
+      if (cov.dropped_no_coords) extra.push(`${cov.dropped_no_coords} no-coords dropped`);
+      if (d.unpriced_events) extra.push(`${d.unpriced_events} no price`);
+      meta.textContent = d.tour_date_count
+        ? `${d.tour_date_count} dates · ${Math.round(d.budget_km)} km${d.budget_usd != null ? ' · $' + Math.round(d.budget_usd) : ''}${extra.length ? ' · ' + extra.join(', ') : ''}`
+        : '';
+    }
+    if (!d.tour_date_count) {
+      if (stats) stats.hidden = true;
+      if (mapEl) mapEl.hidden = true;
+      body.innerHTML = '<div class="empty">no upcoming geocoded dates for this performer</div>';
+      return;
+    }
+    const o = d.optimal, b = d.baseline_by_date;
+    if (mapEl) {
+      const svg = buildTripMap(d);
+      if (svg) { mapEl.innerHTML = svg; mapEl.hidden = false; }
+      else { mapEl.hidden = true; }
+    }
+    if (stats) {
+      const spendLbl = `ticket spend${d.budget_usd != null ? ' / $' + Math.round(d.budget_usd) : ''}`;
+      stats.hidden = false;
+      stats.innerHTML =
+        `<div><span class="ts-num">${o.count}</span><span class="ts-lbl">optimal shows · ${Math.round(o.travel_km)} km</span></div>` +
+        `<div><span class="ts-num">$${Math.round(o.spend_usd || 0).toLocaleString()}</span><span class="ts-lbl">${spendLbl}</span></div>` +
+        `<div><span class="ts-num">${b.count}</span><span class="ts-lbl">sort-by-date · ${Math.round(b.travel_km)} km</span></div>` +
+        `<div><span class="ts-num gain">+${d.shows_gained}</span><span class="ts-lbl">shows gained</span></div>`;
+    }
+    const picked = new Set(o.events.map(e => e.event_id));
+    const cities = [...new Set(o.events.map(e => e.city))].filter(Boolean).join(' → ');
+    const rows = (d.all_dates || []).map(e => {
+      const on = picked.has(e.event_id);
+      const approx = e.coord_source === 'city' ? ' <span class="muted small" title="approximate city-centroid location">≈</span>' : '';
+      const owned = e.owned ? `<span class="tr-own" title="EVO owned tickets">own ${e.owned}</span>` : '';
+      const price = e.getin != null ? `$${Math.round(e.getin)}` : (e.cost_known ? '' : '<span class="muted">n/a</span>');
+      const cost = e.ticket_cost != null
+        ? `<span class="tr-cost" title="get-in × max(0, qty − owned)">${e.ticket_cost === 0 ? 'free' : '$' + Math.round(e.ticket_cost).toLocaleString()}</span>`
+        : '';
+      return `<div class="trip-row${on ? '' : ' skip'}">`
+        + `<span class="tr-date">${escapeHtml(_tripDate(e.date))}</span>`
+        + `<span class="tr-city">${escapeHtml(e.city || '')}${approx}</span>`
+        + `<span class="tr-venue">${escapeHtml(e.venue || '')}</span>`
+        + `<span class="tr-px">${price}</span>${owned}${cost}`
+        + (on ? '<span class="tr-go">● going</span>' : '')
+        + '</div>';
+    }).join('');
+    body.innerHTML = (cities ? `<div class="muted small" style="margin:4px 0 6px">${escapeHtml(cities)}</div>` : '') + `<div class="trip-list">${rows}</div>`;
   }
 
   // ---------- Hero ----------
@@ -212,6 +433,145 @@
     setText('ruOwnedShare',     ag.owned_share_weighted != null ? T.fmtPct(ag.owned_share_weighted * 100, 1) : '—');
     setText('ruRetailMedAvg',   ag.retail_median_avg_weighted ? '$' + T.fmtNum(Math.round(ag.retail_median_avg_weighted)) : '—');
     setText('ruEventsWithOwned', T.fmtNum(ag.events_with_owned));
+  }
+
+  // ---------- Cross-event daily metrics (Overview) ----------
+  //
+  // Surfaces the STORED performer-level timeseries (performer_metrics_daily,
+  // refreshed every 4h) via get_performer_metrics_daily(id, days, split). Unlike
+  // the live PORTFOLIO ROLLUP above (computed from /api/portfolio at request time),
+  // this is the persisted daily roll-up across ALL of the performer's events:
+  // per-source inventory (EVO/SG, all + owned), amalgam price band (get-in
+  // min/median, price min/median/p90), and owned-book notional — with day-over-day
+  // deltas + 90d sparklines. Sports performers also get home/away splits.
+
+  function initDailyMetrics(performerId, portfolio) {
+    const isSports = !!(portfolio && !portfolio.__err && portfolio.is_sports_performer);
+    const splitNav = document.getElementById('pdmSplit');
+    if (splitNav) {
+      if (isSports) {
+        splitNav.removeAttribute('hidden');
+        splitNav.addEventListener('click', (e) => {
+          const b = e.target.closest('.event-tab');
+          if (!b) return;
+          splitNav.querySelectorAll('.event-tab').forEach((x) => {
+            const on = x === b;
+            x.classList.toggle('active', on);
+            x.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+          loadDailyMetrics(performerId, b.dataset.split);
+        });
+      } else {
+        splitNav.setAttribute('hidden', '');
+      }
+    }
+    loadDailyMetrics(performerId, 'all');
+  }
+
+  async function loadDailyMetrics(performerId, split) {
+    const sec = document.getElementById('perf-daily-metrics');
+    const body = document.getElementById('pdmBody');
+    if (!sec || !body) return;
+    sec.removeAttribute('hidden');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">daily metrics need auth — sign in with @s4kent.com</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading daily metrics…</div>';
+    const res = await Auth.client.rpc('get_performer_metrics_daily', {
+      p_performer_id: performerId, p_days: 90, p_split: split || 'all',
+    });
+    if (res.error) {
+      body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
+      return;
+    }
+    renderDailyMetrics(res.data || [], split || 'all');
+  }
+
+  function renderDailyMetrics(rows, split) {
+    const body = document.getElementById('pdmBody');
+    const meta = document.getElementById('pdmMeta');
+    if (!body) return;
+    if (!rows.length) {
+      if (meta) meta.textContent = '';
+      body.innerHTML = `<div class="empty">no daily metrics stored yet for this performer${split && split !== 'all' ? ' (' + escapeHtml(split) + ')' : ''}</div>`;
+      return;
+    }
+    const latest = rows[rows.length - 1];
+    const prev = rows.length > 1 ? rows[rows.length - 2] : null;
+    if (meta) meta.textContent = `${rows.length} day${rows.length === 1 ? '' : 's'} · latest ${dayLabel(latest.snapshot_date)} · split: ${split || 'all'}`;
+
+    const usd = (v) => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+    const cell = (num, lbl, extra) => `<div class="ru-cell"><span class="ru-num">${num}${extra || ''}</span><span class="ru-lbl">${lbl}</span></div>`;
+    const d = (cur, prv) => prv ? deltaChip(cur, prv) : '';
+
+    const kpis = [
+      cell(T.fmtNum(latest.event_count), 'events'),
+      cell(T.fmtNum(latest.evo_tickets_total), 'EVO tix (all)'),
+      cell(T.fmtNum(latest.evo_owned_tickets_total), 'EVO tix (owned)'),
+      cell(T.fmtNum(latest.sg_all_tickets_total), 'SG tix (all)'),
+      cell(T.fmtNum(latest.sg_owned_tickets_total), 'SG tix (owned)'),
+      cell(usd(latest.getin_min), 'get-in min', d(latest.getin_min, prev && prev.getin_min)),
+      cell(usd(latest.getin_median), 'get-in median'),
+      cell(usd(latest.price_min), 'price min'),
+      cell(usd(latest.price_median), 'price median', d(latest.price_median, prev && prev.price_median)),
+      cell(usd(latest.price_p90), 'price p90'),
+      cell(usd(latest.owned_book_notional), 'owned book notional', d(latest.owned_book_notional, prev && prev.owned_book_notional)),
+    ].join('');
+
+    const sparkPrice = sparkline(rows.map((r) => numOrNull(r.price_median)));
+    const sparkGetin = sparkline(rows.map((r) => numOrNull(r.getin_min)));
+    const sparkInv   = sparkline(rows.map((r) => numOrNull(r.evo_owned_tickets_total)));
+    const n = rows.length;
+    const trends = `
+      <div class="pdm-trends">
+        ${sparkPrice ? `<div class="pdm-trend"><div class="pt-lbl">price median · last ${n}d</div><div class="pt-val">${usd(latest.price_median)}</div>${sparkPrice}</div>` : ''}
+        ${sparkGetin ? `<div class="pdm-trend"><div class="pt-lbl">get-in min · last ${n}d</div><div class="pt-val">${usd(latest.getin_min)}</div>${sparkGetin}</div>` : ''}
+        ${sparkInv   ? `<div class="pdm-trend"><div class="pt-lbl">owned EVO tix · last ${n}d</div><div class="pt-val">${T.fmtNum(latest.evo_owned_tickets_total)}</div>${sparkInv}</div>` : ''}
+      </div>`;
+
+    body.innerHTML = `<div class="rollup-grid">${kpis}</div>${trends}`;
+  }
+
+  function numOrNull(v) {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Day-over-day percent-change chip (direction-coloured, like .chart-move).
+  function deltaChip(cur, prv) {
+    const a = numOrNull(cur), b = numOrNull(prv);
+    if (a === null || b === null || b === 0) return '';
+    const pct = (a - b) / Math.abs(b) * 100;
+    if (Math.abs(pct) < 0.05) return '';
+    const cls = pct >= 0 ? 'up' : 'down';
+    return ` <span class="pdm-delta ${cls}">${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%</span>`;
+  }
+
+  // Minimal CSP-safe inline sparkline (no external libs). Skips null gaps.
+  function sparkline(series, w, h) {
+    w = w || 240; h = h || 40;
+    const pts = series.map((v, i) => [i, v]).filter((p) => p[1] !== null);
+    if (pts.length < 2) return '';
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+    const pad = 3;
+    const proj = (x, y) => [pad + (x - minX) / spanX * (w - 2 * pad), h - pad - (y - minY) / spanY * (h - 2 * pad)];
+    const dPath = pts.map((p, i) => { const [px, py] = proj(p[0], p[1]); return (i ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1); }).join(' ');
+    const lastP = pts[pts.length - 1];
+    const [lx, ly] = proj(lastP[0], lastP[1]);
+    return `<svg class="pdm-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="trend">`
+      + `<path d="${dPath}"/><circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2"/></svg>`;
+  }
+
+  function dayLabel(d) {
+    if (!d) return '—';
+    try { return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch (_) { return d; }
   }
 
   // ---------- Events list ----------
@@ -466,210 +826,6 @@
       meta.textContent = [d.espn_league || '', out ? 'out: ' + out : ''].filter(Boolean).join(' · ');
     }
     sec.removeAttribute('hidden');
-  }
-
-  // ---------- Market Carpet — performer as stock ticker ----------
-  // Auto-loaded on page open (default tab). Builds:
-  //   1. Stock-ticker KPI strip: aggregate price, owned position, signals
-  //   2. Per-event cross-source medians table
-  async function loadMarketCarpet() {
-    _tabState.loaded.market = true;
-    const tickerBody = document.getElementById('perfMarketTickerBody');
-    const body       = document.getElementById('perfMarketBody');
-    const meta       = document.getElementById('perfMarketMeta');
-    const countEl    = document.getElementById('tabCountMarket');
-    if (tickerBody) tickerBody.innerHTML = '<div class="empty">loading…</div>';
-    if (body)       body.innerHTML       = '<div class="empty">Loading market data…</div>';
-
-    const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-      if (tickerBody) tickerBody.innerHTML = '<div class="empty">not signed in</div>';
-      if (body)       body.innerHTML       = '<div class="empty">not signed in</div>';
-      return;
-    }
-    const portfolio = _tabState.portfolio;
-    const events = (portfolio && portfolio.events) || [];
-    if (!events.length) {
-      if (tickerBody) tickerBody.innerHTML = '<div class="empty">no events to analyze</div>';
-      if (body)       body.innerHTML       = '<div class="empty">no events to analyze</div>';
-      return;
-    }
-    const eventIds = events.map(e => e.id).filter(Boolean);
-
-    // Parallel fetch: snapshots + movers + gaps
-    const [snapRes, moversRes, gapsRes] = await Promise.all([
-      Auth.client
-        .from('event_listing_snapshot_daily')
-        .select('event_id,snapshot_date,snapshot_slot,evo_retail_median,sg_all_median,td_sh_listings,td_sh_median,td_gt_listings,td_gt_median,td_vd_listings,td_vd_median,td_tp_listings,td_tp_median,td_tm_listings,td_tm_median,td_tm_resale_listings,td_tm_resale_median,td_combined_median')
-        .in('event_id', eventIds)
-        .order('snapshot_date', { ascending: false })
-        .order('snapshot_slot', { ascending: false }),
-      Auth.client
-        .from('event_movers_index')
-        .select('event_id,source,window_days,category,rank,price_delta_pct,signal_score')
-        .in('event_id', eventIds)
-        .order('signal_score', { ascending: false }),
-      Auth.client
-        .from('discovery_gap_alerts')
-        .select('event_id,gap_type,detail,signal_score')
-        .in('event_id', eventIds)
-        .is('resolved_at', null),
-    ]);
-
-    // JS-dedup snapshots: keep first (latest) per event_id
-    const snapByEvent = {};
-    for (const r of (snapRes.data || [])) {
-      if (!snapByEvent[r.event_id]) snapByEvent[r.event_id] = r;
-    }
-
-    // Group movers + gaps by event
-    const moversByEvent = {};
-    for (const r of (moversRes.data || [])) {
-      (moversByEvent[r.event_id] = moversByEvent[r.event_id] || []).push(r);
-    }
-    const gapsByEvent = {};
-    for (const r of (gapsRes.data || [])) {
-      (gapsByEvent[r.event_id] = gapsByEvent[r.event_id] || []).push(r);
-    }
-
-    const snapCount = Object.keys(snapByEvent).length;
-    if (meta) meta.textContent = `${events.length} events · ${snapCount} with snapshots`;
-    if (countEl) countEl.textContent = String(events.length);
-
-    // ── Stock Ticker: aggregate metrics ──────────────────────────────────────
-    const ag = (portfolio && portfolio.aggregate) || {};
-    // Weighted-avg medians across events that have snapshots
-    let sumEvo = 0, sumSg = 0, sumSh = 0, sumGt = 0, sumVd = 0, sumTp = 0, sumTm = 0, wCount = 0;
-    events.forEach(e => {
-      const sn = snapByEvent[e.id];
-      if (!sn) return;
-      const w = 1; // equal weight per event; can weight by owned_qty if preferred
-      if (sn.evo_retail_median != null) sumEvo += +sn.evo_retail_median * w;
-      if (sn.sg_all_median    != null) sumSg  += +sn.sg_all_median    * w;
-      if (sn.td_sh_median     != null) sumSh  += +sn.td_sh_median     * w;
-      if (sn.td_gt_median     != null) sumGt  += +sn.td_gt_median     * w;
-      if (sn.td_vd_median     != null) sumVd  += +sn.td_vd_median     * w;
-      if (sn.td_tp_median     != null) sumTp  += +sn.td_tp_median     * w;
-      if (sn.td_tm_median     != null) sumTm  += +sn.td_tm_median     * w;
-      wCount += w;
-    });
-    const wavg = (sum) => wCount > 0 ? Math.round(sum / wCount) : null;
-    const avgEvo = wavg(sumEvo), avgSg = wavg(sumSg);
-    const avgSh  = wavg(sumSh),  avgGt = wavg(sumGt), avgVd = wavg(sumVd);
-    const avgTp  = wavg(sumTp),  avgTm = wavg(sumTm);
-
-    // Signal counts
-    const allMovers = Object.values(moversByEvent).flat();
-    const priceUp   = allMovers.filter(m => m.category === 'price_up').length;
-    const priceDown = allMovers.filter(m => m.category === 'price_down').length;
-    const allGaps   = Object.values(gapsByEvent).flat();
-    const gapCount  = allGaps.length;
-
-    const sgSpreadPct = (avgEvo && avgSg) ? ((avgSg - avgEvo) / avgEvo * 100) : null;
-    const $p = v => (v != null ? '$' + T.fmtNum(v) : '—');
-    const pct = (v, decimals=0) => v != null ? (v >= 0 ? '+' : '') + v.toFixed(decimals) + '%' : '';
-
-    if (tickerBody) {
-      tickerBody.innerHTML = `
-        <div class="market-ticker-strip">
-          <div class="ticker-cell ticker-price">
-            <span class="ticker-lbl">EVO MEDIAN</span>
-            <span class="ticker-val">${$p(avgEvo)}</span>
-            ${avgSg ? `<span class="ticker-sub ${sgSpreadPct && sgSpreadPct > 0 ? 'pos' : sgSpreadPct && sgSpreadPct < 0 ? 'neg' : ''}">${pct(sgSpreadPct, 1)} vs SG</span>` : ''}
-          </div>
-          <div class="ticker-cell">
-            <span class="ticker-lbl">PLATFORM MED</span>
-            <span class="ticker-val">${$p(avgSg)}<span class="ticker-src"> SG</span></span>
-            <span class="ticker-sub">${avgSh ? $p(avgSh) + ' SH' : '—'} · ${avgGt ? $p(avgGt) + ' GT' : '—'} · ${avgVd ? $p(avgVd) + ' VD' : '—'} · ${avgTp ? $p(avgTp) + ' TP' : '—'} · ${avgTm ? $p(avgTm) + ' TM' : '—'}</span>
-          </div>
-          <div class="ticker-cell">
-            <span class="ticker-lbl">POSITION</span>
-            <span class="ticker-val">${ag.owned_tickets_total ? T.fmtNum(ag.owned_tickets_total) + ' tix' : '—'}</span>
-            <span class="ticker-sub">${ag.owned_retail_value_total ? '$' + T.fmtNum(Math.round(+ag.owned_retail_value_total)) + ' notional' : ''}</span>
-          </div>
-          <div class="ticker-cell">
-            <span class="ticker-lbl">MARKET DEPTH</span>
-            <span class="ticker-val">${events.length} events</span>
-            <span class="ticker-sub">${ag.events_with_owned ? ag.events_with_owned + ' with position' : 'no positions'}</span>
-          </div>
-          <div class="ticker-cell">
-            <span class="ticker-lbl">SIGNALS</span>
-            <span class="ticker-val ${priceUp > priceDown ? 'pos' : priceDown > priceUp ? 'neg' : ''}">${priceUp > 0 ? '↑' + priceUp : ''}${priceDown > 0 ? ' ↓' + priceDown : ''}${!priceUp && !priceDown ? '—' : ''}</span>
-            <span class="ticker-sub">${gapCount ? gapCount + ' gap' + (gapCount > 1 ? 's' : '') : 'no gaps'}</span>
-          </div>
-        </div>`;
-    }
-
-    // ── Per-event table ───────────────────────────────────────────────────────
-    const spread = (a, b) => {
-      if (a == null || b == null || +b === 0) return '';
-      const v = ((+a - +b) / +b) * 100;
-      return `<span class="${v > 2 ? 'pos' : v < -2 ? 'neg' : 'muted small'}">${v > 0 ? '+' : ''}${v.toFixed(0)}%</span>`;
-    };
-
-    const tbl = document.createElement('table');
-    tbl.className = 'market-carpet-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Event</th>
-        <th class="num">T-days</th>
-        <th class="num">EVO</th>
-        <th class="num">SG</th>
-        <th class="num">SH</th>
-        <th class="num">GT</th>
-        <th class="num">VD</th>
-        <th class="num">TP</th>
-        <th class="num">TM</th>
-        <th class="num" title="Ticketmaster verified resale (secondary market)">TM-R</th>
-        <th class="num">SH÷EVO</th>
-        <th class="num">GT÷SH</th>
-        <th class="num">VD÷SH</th>
-        <th class="num" title="resale premium over TM primary face">TM-R÷TM</th>
-        <th>Movers</th>
-        <th>Gaps</th>
-      </tr></thead><tbody></tbody>`;
-    const tb = tbl.querySelector('tbody');
-
-    events.forEach(e => {
-      const sn  = snapByEvent[e.id]  || {};
-      const mvs = moversByEvent[e.id] || [];
-      const gps = gapsByEvent[e.id]  || [];
-      const d   = T.daysUntil(e.occurs_at_local);
-      const hasSn = !!snapByEvent[e.id];
-
-      const moverHtml = mvs.slice(0, 3).map(m => {
-        const mPct = m.price_delta_pct != null ? (m.price_delta_pct > 0 ? '+' : '') + (+m.price_delta_pct).toFixed(0) + '%' : '';
-        const cls = m.category === 'price_up' ? 'pos' : m.category === 'price_down' ? 'neg' : 'muted small';
-        return `<span class="badge ${cls}" title="${escapeHtml(m.source + ' ' + m.window_days + 'd')}">${escapeHtml(m.category.replace('_',' '))}${mPct ? ' ' + mPct : ''}</span>`;
-      }).join(' ') || '—';
-
-      const gapHtml = gps.slice(0, 4).map(g =>
-        `<span class="badge" title="${escapeHtml(g.detail || '')}">${escapeHtml(g.gap_type.replace(/_/g,' '))}</span>`
-      ).join(' ') || '—';
-
-      const tr = document.createElement('tr');
-      tr.className = hasSn ? '' : 'muted';
-      tr.innerHTML = `
-        <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a></td>
-        <td class="num">${d === null ? '—' : d}</td>
-        <td class="num">${$p(sn.evo_retail_median)}</td>
-        <td class="num">${$p(sn.sg_all_median)}</td>
-        <td class="num">${$p(sn.td_sh_median)}</td>
-        <td class="num">${$p(sn.td_gt_median)}</td>
-        <td class="num">${$p(sn.td_vd_median)}</td>
-        <td class="num">${$p(sn.td_tp_median)}</td>
-        <td class="num">${$p(sn.td_tm_median)}</td>
-        <td class="num">${$p(sn.td_tm_resale_median)}</td>
-        <td class="num">${spread(sn.td_sh_median, sn.evo_retail_median)}</td>
-        <td class="num">${spread(sn.td_gt_median, sn.td_sh_median)}</td>
-        <td class="num">${spread(sn.td_vd_median, sn.td_sh_median)}</td>
-        <td class="num">${spread(sn.td_tm_resale_median, sn.td_tm_median)}</td>
-        <td>${moverHtml}</td>
-        <td>${gapHtml}</td>`;
-      tb.appendChild(tr);
-    });
-
-    if (body) { body.innerHTML = ''; body.appendChild(tbl); }
   }
 
   // ---------- Util ----------

@@ -78,6 +78,26 @@
   // first paint to one clean line per source instead of 9 overlapping lines.
   ['prices_nonowned', 'sg_own_med'].forEach(k => _chartVisible.set(k, false));
 
+  // D0-PROD-3: persist legend visibility across reloads. `_chartVisible` is a
+  // single shared map across both panes (keys are globally unique), so one
+  // localStorage key holds the whole map — a display preference that's global
+  // across events, not per-event. Rehydrate AFTER the default seeds above so a
+  // saved pref wins over the default; keys the user never touched stay default.
+  // Same pattern as _showAlerts / _showEspn above.
+  const _CHART_VIS_LS_KEY = 'd0_chart_visible';
+  function _persistChartVisible() {
+    try { localStorage.setItem(_CHART_VIS_LS_KEY, JSON.stringify(Object.fromEntries(_chartVisible))); } catch (_) {}
+  }
+  (function _rehydrateChartVisible() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const obj = JSON.parse(localStorage.getItem(_CHART_VIS_LS_KEY) || 'null');
+      if (obj && typeof obj === 'object') {
+        Object.entries(obj).forEach(([k, v]) => { if (typeof v === 'boolean') _chartVisible.set(k, v); });
+      }
+    } catch (_) {}
+  })();
+
   // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
   // event is currently in the merged-7d slot of event_movers_index. Async +
   // best-effort; no chip if the event is not in the index or preload fails.
@@ -186,19 +206,20 @@
       // module-level cache populated by loadSgZonesSplits (parallel fetch);
       // each panel re-renders whenever either side updates.
       safe('splits',     () => setSplitsTevo(data.splits));
-      safe('zones',      () => setZonesTevo(zones, data.zone_deltas));
+      // Zones panel removed (2026-06-08) — splits remain; SG zone/split data still
+      // loads via loadSgZonesSplits (renderZones no-ops without its DOM node).
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
       // Weather now lazy-loaded via loadWeatherLocalized (drops global-alert path).
-      safe('allOrders',  () => renderAllOrders(orders, data.cross_source_orders));
+      // ORDERS — ALL SOURCES panel removed (2026-06-08) — covered by the Our Orders tab.
       safe('coverage',   () => renderCoverage(cadences, overview, data.freshness, bridge));
       safe('freshness',  () => renderFreshness(data.freshness));
-      safe('alerts',     () => renderAlerts(data.event_alerts));
+      // EVENT ALERTS panel removed (2026-06-08); chart alert markers still use data.event_alerts above.
       // v3 enrichments
       safe('brokerSales',      () => setBrokerSalesData(data));
       safe('velocityChips',    () => renderVelocityChips(data.velocity));
       safe('competingEvents',  () => renderCompetingEvents(data.competing_events));
-      safe('recentListings',   () => renderRecentListings(data.recent_listings));
+      // RECENT TEVO LISTINGS panel removed (2026-06-08).
       safe('performerEspn',    () => renderPerformerEspn(data.performer_espn_context, data.performer));
       safe('lastSnapshot',     () => renderLastSnapshot(data.chart_data));
       // Cross-source panel: re-render now that we have v3's sg_broker_sales
@@ -323,8 +344,6 @@
       const lblTxt = sel.options[sel.selectedIndex].textContent;
       const lbl = document.getElementById('chartCompositeRangeLabel');
       if (lbl) lbl.textContent = lblTxt;
-      const aw = document.getElementById('alertsWindow');
-      if (aw) aw.textContent = lblTxt;
       updateLayerHint(hrs);
       _chartExtStatePrice.payload = undefined;
       _chartExtStateInv.payload   = undefined;
@@ -1379,6 +1398,7 @@
         const key = node.getAttribute('data-key');
         const cur = _chartVisible.get(key) !== false;
         _chartVisible.set(key, !cur);
+        _persistChartVisible();            // D0-PROD-3: survive reloads
         if (instance && build) {
           const idx = build.specs.findIndex(s => s.key === key);
           if (idx >= 0) instance.setSeries(idx + 1 /* +1 for time series */, { show: !cur });
@@ -1420,6 +1440,7 @@
   // Toggle one series' visibility on whichever pane owns it (price or inv).
   function setSeriesVisible(key, show) {
     _chartVisible.set(key, show);
+    _persistChartVisible();              // D0-PROD-3: survive reloads (source-group toggles)
     const tryPane = (build, inst) => {
       if (!build || !build.specs || !inst) return false;
       const i = build.specs.findIndex(s => s.key === key);
@@ -1517,9 +1538,6 @@
 
   function setSplitsTevo(splits)   { _splitsState.tevo = splits; renderSplits(); }
   function setSplitsSg(sgSplits)   { _splitsState.sg   = sgSplits; renderSplits(); }
-  function setZonesTevo(zones, deltas) {
-    _zonesState.tevo = zones; _zonesState.deltas = deltas; renderZones();
-  }
   function setZonesSg(sgZones)     { _zonesState.sg   = sgZones; renderZones(); }
 
   // Renders TEvo splits + SG splits + TD splits side-by-side from the module state cache.
@@ -2054,108 +2072,6 @@
         kEl.setAttribute('hidden', '');
       }
     }
-  }
-
-  // ---------- All Orders (unified — EVO + TickPick + Vivid) ----------
-  //
-  // Replaces the legacy #order-strip (EVO state-mix bar) + #cross-source-orders
-  // (TP+Vivid separate panel). Single sortable table with a Source column.
-  // Shows ALL order states (pending/accepted/completed/rejected/etc.), not
-  // just pending. Sorted by created_at DESC, capped 30.
-
-  function renderAllOrders(orders, crossSource) {
-    const body = document.getElementById('allOrdersBody');
-    const countEl = document.getElementById('allOrdersCount');
-    if (!body) return;
-    const rows = [];
-    // EVO line-items
-    const items   = (orders && orders.items) || [];
-    const ordList = (orders && orders.orders) || [];
-    const stateById = new Map(ordList.map(o => [o.evo_order_id, o]));
-    items.forEach(it => {
-      const o = stateById.get(it.evo_order_id) || {};
-      rows.push({
-        source: 'evo',
-        order_id: it.evo_order_id,
-        status: o.state || 'unknown',
-        section: it.ticket_group_section || it.section,
-        row:     it.ticket_group_row     || it.row,
-        quantity: it.quantity,
-        total:    it.price != null && it.quantity != null ? Number(it.price) * Number(it.quantity) : null,
-        created_at: o.evo_created_at || o.evo_updated_at || it.pulled_at,
-      });
-    });
-    // TickPick
-    ((crossSource && crossSource.tickpick) || []).forEach(o => {
-      rows.push({
-        source: 'tickpick',
-        order_id: o.tp_order_id || o.order_id,
-        status: o.status || o.order_status || 'unknown',
-        section: o.section, row: o.row,
-        quantity: o.quantity,
-        total: o.total,
-        created_at: o.ordered_at,
-      });
-    });
-    // Vivid
-    ((crossSource && crossSource.vivid) || []).forEach(o => {
-      rows.push({
-        source: 'vivid',
-        order_id: o.vivid_order_id || o.order_id,
-        status: o.status || 'unknown',
-        section: o.section, row: o.row,
-        quantity: o.quantity,
-        total: o.total,
-        created_at: o.ordered_at,
-      });
-    });
-    rows.sort((a, b) => {
-      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return tb - ta;
-    });
-    if (countEl) {
-      const evoN = rows.filter(r => r.source === 'evo').length;
-      const tpN  = rows.filter(r => r.source === 'tickpick').length;
-      const vvN  = rows.filter(r => r.source === 'vivid').length;
-      const parts = [];
-      if (evoN) parts.push(`EVO ${evoN}`);
-      if (tpN)  parts.push(`TP ${tpN}`);
-      if (vvN)  parts.push(`Vivid ${vvN}`);
-      if (rows.length) parts.push(`· ${rows.length} total`);
-      countEl.textContent = parts.join(' · ');
-    }
-    body.innerHTML = '';
-    if (!rows.length) {
-      body.innerHTML = '<div class="empty">no orders for this event from any source</div>';
-      return;
-    }
-    const tbl = document.createElement('table');
-    tbl.className = 'orders-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Source</th><th>Order</th><th>Status</th>
-        <th>Section</th><th>Row</th>
-        <th class="num">Qty</th><th class="num">Total</th>
-        <th>Created</th>
-      </tr></thead><tbody></tbody>`;
-    const tb = tbl.querySelector('tbody');
-    rows.slice(0, 30).forEach(r => {
-      const tr = document.createElement('tr');
-      const statusCls = r.status ? 'status-' + String(r.status).toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
-      const srcCls = 'src-' + r.source;
-      tr.innerHTML = `
-        <td><span class="src-pill ${srcCls}">${escapeHtml(r.source)}</span></td>
-        <td>${escapeHtml(String(r.order_id || '—'))}</td>
-        <td><span class="status-pill ${statusCls}">${escapeHtml(r.status || '—')}</span></td>
-        <td>${escapeHtml(r.section || '—')}</td>
-        <td>${escapeHtml(r.row || '—')}</td>
-        <td class="num">${T.fmtNum(r.quantity)}</td>
-        <td class="num">${r.total != null ? '$' + T.fmtNum(Math.round(r.total)) : '—'}</td>
-        <td class="muted">${T.fmtDate(r.created_at)}</td>`;
-      tb.appendChild(tr);
-    });
-    body.appendChild(tbl);
   }
 
   // ---------- Coverage + freshness ----------
@@ -2759,89 +2675,6 @@
     body.innerHTML = html;
   }
 
-  // ---------- Event alerts list ----------
-
-  function renderAlerts(alerts) {
-    const body = document.getElementById('alertsBody');
-    const count = document.getElementById('alertsCount');
-    body.innerHTML = '';
-    if (!alerts || !alerts.length) {
-      body.innerHTML = '<div class="empty">no event alerts in window</div>';
-      if (count) count.textContent = '0 alerts';
-      return;
-    }
-
-    // Operator audit 2026-05-17: alerts panel listed 5×(competing_event_added)
-    // + 4×(tevo_getin_drop/surge_1h) with near-identical messages. Visual noise.
-    // Group by rule_key + collapse messages with the same dollar pattern; show
-    // count chip per group + the most recent firing time. Expand-on-click via
-    // <details> so the raw list is still one click away.
-    const groups = new Map();  // rule_key → { rule, severity, items: [], latest_at }
-    for (const a of alerts) {
-      const rule = a.rule_key || 'unknown';
-      if (!groups.has(rule)) {
-        groups.set(rule, {
-          rule,
-          severity: a.severity || 'info',
-          items: [],
-          latest_at: a.fired_at,
-        });
-      }
-      const g = groups.get(rule);
-      g.items.push(a);
-      if (a.fired_at && (!g.latest_at || a.fired_at > g.latest_at)) {
-        g.latest_at = a.fired_at;
-        // Severity worsens over time? Track max severity per group.
-        if (severityRank(a.severity) > severityRank(g.severity)) g.severity = a.severity;
-      }
-    }
-    // Sort groups by latest firing desc.
-    const groupArr = Array.from(groups.values())
-      .sort((x, y) => (y.latest_at || '').localeCompare(x.latest_at || ''));
-
-    if (count) {
-      count.textContent = `${alerts.length} alert${alerts.length === 1 ? '' : 's'} · ${groupArr.length} rule${groupArr.length === 1 ? '' : 's'}`;
-    }
-
-    groupArr.forEach(g => {
-      const det = document.createElement('details');
-      det.className = 'alerts-group sev-' + g.severity;
-      // Auto-expand when only 1 item — same UX as flat list before
-      if (g.items.length === 1) det.open = true;
-      const summary = document.createElement('summary');
-      // Dedup messages: surface the latest message + " ×N" if N>1 same-pattern firings
-      const latestMsg = g.items
-        .slice()
-        .sort((a, b) => (b.fired_at || '').localeCompare(a.fired_at || ''))[0].message || '';
-      summary.innerHTML = `
-        <span class="al-rule">${escapeHtml(g.rule)}</span>
-        ${g.items.length > 1 ? `<span class="al-count">×${g.items.length}</span>` : ''}
-        <span class="al-msg">${escapeHtml(latestMsg)}</span>
-        <span class="al-time muted">latest ${T.fmtDate(g.latest_at)}</span>`;
-      det.appendChild(summary);
-      // Expanded body — full chronological list
-      const ul = document.createElement('ul');
-      ul.className = 'alerts-list';
-      g.items
-        .slice()
-        .sort((a, b) => (b.fired_at || '').localeCompare(a.fired_at || ''))
-        .forEach(a => {
-          const li = document.createElement('li');
-          li.className = 'alert-row sev-' + (a.severity || 'info');
-          li.innerHTML = `
-            <span class="al-time muted">${T.fmtDate(a.fired_at)}</span>
-            <span class="al-msg">${escapeHtml(a.message || '')}</span>`;
-          ul.appendChild(li);
-        });
-      det.appendChild(ul);
-      body.appendChild(det);
-    });
-  }
-
-  function severityRank(sev) {
-    return { info: 0, low: 1, medium: 2, warn: 2, high: 3, critical: 4 }[sev] || 0;
-  }
-
   // ============================================================
   // v3 enrichment renderers (PR pending; v3 RPC adds 6 new panels)
   // ============================================================
@@ -3080,42 +2913,6 @@
     body.innerHTML = '';
     body.appendChild(ul);
   }
-
-  // ---------- Recent TEvo listings (firehose snippet) ----------
-  function renderRecentListings(rows) {
-    const body = document.getElementById('recentListingsBody');
-    if (!body) return;
-    if (!rows || !rows.length) {
-      body.innerHTML = '<div class="empty">no listings in last 24h</div>';
-      return;
-    }
-    const tbl = document.createElement('table');
-    tbl.className = 'recent-listings-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Captured</th><th>Section</th><th>Row</th>
-        <th class="num">Qty</th><th class="num">Retail</th><th>Source</th>
-      </tr></thead><tbody></tbody>`;
-    const tb = tbl.querySelector('tbody');
-    rows.forEach(r => {
-      const tr = document.createElement('tr');
-      const sourceLabel = r.is_owned ? 'ours' : (r.brokerage_name || 'market');
-      tr.innerHTML = `
-        <td>${T.fmtDate(r.captured_at)}</td>
-        <td>${escapeHtml(r.section || '—')}</td>
-        <td>${escapeHtml(r.row || '—')}</td>
-        <td class="num">${T.fmtNum(r.quantity)}</td>
-        <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
-        <td class="${r.is_owned ? 'ours' : 'muted'}">${escapeHtml(sourceLabel)}</td>`;
-      tb.appendChild(tr);
-    });
-    body.innerHTML = '';
-    body.appendChild(tbl);
-  }
-
-  // (renderCrossSourceOrders removed — folded into renderAllOrders which
-  // unifies EVO + TickPick + Vivid into a single sortable table.)
-
 
   // ---------- Performer ESPN context (next 5 games) ----------
   function renderPerformerEspn(ctx, performer) {
@@ -4098,7 +3895,7 @@
   }
 
   // ---------- TD Listings per-platform (full) ----------
-  // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD), last 26h ordered
+  // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD|TM), last 26h ordered
   // newest-first so the limit captures the most-recent collection batch. Client-side filter
   // keeps only rows within 15 minutes of max(captured_at) for that platform — timing-agnostic
   // so both the 03:00 UTC and 16:20 UTC SH batches work correctly regardless of query time.
@@ -4136,12 +3933,30 @@
     }
     const maxAt = rows.reduce((m, r) => (r.captured_at > m ? r.captured_at : m), rows[0].captured_at);
     const batchDate = T.fmtDate ? T.fmtDate(maxAt) : maxAt.slice(0, 16).replace('T', ' ') + ' UTC';
-    // Compute summary stats
-    const prices = rows.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
-    const med = prices.length ? prices[Math.floor(prices.length / 2)] : null;
-    const getIn = prices.length ? prices[0] : null;
-    if (meta) meta.textContent =
-      `${rows.length} rows · get-in ${getIn != null ? '$' + Math.round(getIn) : '—'} · med ${med != null ? '$' + Math.round(med) : '—'} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+    // Compute summary stats. TM (Ticketmaster) rows carry an inventory_type
+    // discriminator from the RPC — 'primary' = box-office FACE value vs 'resale'
+    // = verified fan-to-fan (PROJECT_BIBLE §3 landmine). Split the stats so the
+    // face value isn't blended with the resale floor (they're different markets).
+    // SH/GT/VD/TP have no split (inventory_type null) → single stat as before.
+    const statFor = (subset) => {
+      const p = subset.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+      return { n: p.length, getIn: p.length ? p[0] : null, med: p.length ? p[Math.floor(p.length / 2)] : null };
+    };
+    const $r = v => (v != null ? '$' + Math.round(v) : '—');
+    const hasInv = rows.some(r => r.inventory_type);
+    if (meta) {
+      let line;
+      if (hasInv) {
+        const prim = statFor(rows.filter(r => r.inventory_type !== 'resale'));
+        const res  = statFor(rows.filter(r => r.inventory_type === 'resale'));
+        line = `${rows.length} rows · FACE ${prim.n}: get-in ${$r(prim.getIn)} med ${$r(prim.med)}` +
+               ` · RESALE ${res.n}: get-in ${$r(res.getIn)} med ${$r(res.med)}`;
+      } else {
+        const s = statFor(rows);
+        line = `${rows.length} rows · get-in ${$r(s.getIn)} · med ${$r(s.med)}`;
+      }
+      meta.textContent = `${line} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+    }
 
     const host = document.createElement('div');
     host.className = 'full-list-host';
@@ -4151,18 +3966,23 @@
       <thead><tr>
         <th>Section</th><th>Row</th>
         <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        ${hasInv ? '<th>Inv</th>' : ''}
         <th>Captured</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
     const $p = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
     rows.forEach(r => {
       const tr = document.createElement('tr');
+      // Inv column: only when the platform carries the split (TM). Mapped to two
+      // safe literals (Face/Resale) — not raw data — so no escaping needed.
+      const invCell = hasInv ? `<td>${r.inventory_type === 'resale' ? 'Resale' : 'Face'}</td>` : '';
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${r.quantity != null ? T.fmtNum(+r.quantity) : '—'}</td>
         <td class="num">${$p(r.list_price)}</td>
         <td class="num">${$p(r.price_with_fees)}</td>
+        ${invCell}
         <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
       tb.appendChild(tr);
     });
