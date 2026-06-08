@@ -126,7 +126,7 @@
   }
 
   // ---------- Tab nav ----------
-  const _tabState = { loaded: { espn: false, market: false, alerts: false }, performerId: null, portfolio: null };
+  const _tabState = { loaded: { espn: false, market: false, alerts: false, trip: false }, performerId: null, portfolio: null };
 
   function wireTabs(performerId) {
     _tabState.performerId = performerId;
@@ -141,6 +141,8 @@
         await loadEspnContext(performerId);
       } else if (tabId === 'market' && !_tabState.loaded.market) {
         await loadMarketCarpet();
+      } else if (tabId === 'trip' && !_tabState.loaded.trip) {
+        initTripPlanner(performerId);
       } else if (tabId === 'alerts' && !_tabState.loaded.alerts) {
         _tabState.loaded.alerts = true;
         const label = document.getElementById('phName')?.textContent || '';
@@ -156,6 +158,7 @@
     market:     'paneMarket',
     espn:       'paneEspn',
     alerts:     'panePerfAlerts',
+    trip:       'paneTrip',
   };
 
   function activateTab(tabId) {
@@ -170,6 +173,78 @@
       if (id === tabId) { pane.removeAttribute('hidden'); pane.classList.add('active'); }
       else { pane.setAttribute('hidden', ''); pane.classList.remove('active'); }
     });
+  }
+
+  // ---------- Trip Planner (lazy-loaded tab) ----------
+  // Calls /api/broker/performers/{id}/trip-plan (shared trip_planner module) and shows
+  // the optimal multi-city itinerary vs the naive sort-by-date baseline.
+
+  function initTripPlanner(performerId) {
+    _tabState.loaded.trip = true;
+    const slider = document.getElementById('tripBudget');
+    const label = document.getElementById('tripBudgetLabel');
+    if (slider && label) slider.addEventListener('input', () => { label.textContent = slider.value; });
+    const go = document.getElementById('tripGo');
+    if (go) go.addEventListener('click', () => runTripPlan(performerId));
+    runTripPlan(performerId);
+  }
+
+  async function runTripPlan(performerId) {
+    const body = document.getElementById('tripBody');
+    const stats = document.getElementById('tripStats');
+    if (!body) return;
+    const q = new URLSearchParams({
+      home_lat: document.getElementById('tripLat').value,
+      home_lon: document.getElementById('tripLon').value,
+      home_name: document.getElementById('tripHome').value,
+      budget_km: document.getElementById('tripBudget').value,
+      days: '365',
+    });
+    body.innerHTML = '<div class="empty">planning…</div>';
+    if (stats) stats.hidden = true;
+    try {
+      const d = await T.api(`/api/broker/performers/${performerId}/trip-plan?` + q.toString());
+      renderTripPlan(d);
+    } catch (e) {
+      body.innerHTML = `<div class="empty">error: ${escapeHtml(e.message || String(e))}</div>`;
+    }
+  }
+
+  function _tripDate(iso) {
+    try { return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch (_) { return iso; }
+  }
+
+  function renderTripPlan(d) {
+    const body = document.getElementById('tripBody');
+    const stats = document.getElementById('tripStats');
+    const meta = document.getElementById('tripMeta');
+    if (meta) meta.textContent = d.tour_date_count ? `${d.tour_date_count} dates · budget ${Math.round(d.budget_km)} km` : '';
+    if (!d.tour_date_count) {
+      if (stats) stats.hidden = true;
+      body.innerHTML = '<div class="empty">no upcoming geocoded dates for this performer</div>';
+      return;
+    }
+    const o = d.optimal, b = d.baseline_by_date;
+    if (stats) {
+      stats.hidden = false;
+      stats.innerHTML =
+        `<div><span class="ts-num">${o.count}</span><span class="ts-lbl">optimal shows · ${Math.round(o.travel_km)} km</span></div>` +
+        `<div><span class="ts-num">${b.count}</span><span class="ts-lbl">sort-by-date · ${Math.round(b.travel_km)} km</span></div>` +
+        `<div><span class="ts-num gain">+${d.shows_gained}</span><span class="ts-lbl">shows gained</span></div>`;
+    }
+    const picked = new Set(o.events.map(e => e.event_id));
+    const cities = [...new Set(o.events.map(e => e.city))].filter(Boolean).join(' → ');
+    const rows = (d.all_dates || []).map(e => {
+      const on = picked.has(e.event_id);
+      return `<div class="trip-row${on ? '' : ' skip'}">`
+        + `<span class="tr-date">${escapeHtml(_tripDate(e.date))}</span>`
+        + `<span class="tr-city">${escapeHtml(e.city || '')}</span>`
+        + `<span class="tr-venue">${escapeHtml(e.venue || '')}</span>`
+        + (on ? '<span class="tr-go">● going</span>' : '')
+        + '</div>';
+    }).join('');
+    body.innerHTML = (cities ? `<div class="muted small" style="margin:4px 0 8px">${escapeHtml(cities)}</div>` : '') + rows;
   }
 
   // ---------- Hero ----------
