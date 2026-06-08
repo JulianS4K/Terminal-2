@@ -226,7 +226,7 @@
   }
 
   function buildTripMap(d) {
-    const W = 600, H = 340, pad = 42;
+    const W = 560, H = 250, pad = 30;
     const pts = [{ lat: +d.home.lat, lon: +d.home.lon }];
     (d.all_dates || []).forEach(e => pts.push({ lat: +e.lat, lon: +e.lon }));
     if (pts.length < 2) return '';
@@ -306,7 +306,7 @@
         + (on ? '<span class="tr-go">● going</span>' : '')
         + '</div>';
     }).join('');
-    body.innerHTML = (cities ? `<div class="muted small" style="margin:4px 0 8px">${escapeHtml(cities)}</div>` : '') + rows;
+    body.innerHTML = (cities ? `<div class="muted small" style="margin:4px 0 6px">${escapeHtml(cities)}</div>` : '') + `<div class="trip-list">${rows}</div>`;
   }
 
   // ---------- Hero ----------
