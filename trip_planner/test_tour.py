@@ -61,6 +61,22 @@ def test_team_away_market_sourced():
     assert pk["gross_margin"] > 0                     # we earn the fulfillment spread
 
 
+def test_listing_selection():
+    # when a real qualifying listing is attached, the leg binds to those seats + that price
+    rows = [dict(r) for r in CONCERT]
+    rows[0]["_listing"] = {"unit_price": 180.0, "is_owned": True, "section": "FLOOR1",
+                           "row": "G", "available_qty": 6, "eticket": True, "instant": True,
+                           "format": "Physical", "candidates": 12}
+    pk = plan_tour_package(rows, HOME, 3, 20000, START, END)["package"]
+    leg = next(l for l in pk["legs"] if l["event_id"] == 1)
+    assert leg["selection"] == "listing"
+    assert leg["unit_price"] == 180.0
+    assert leg["seats"]["section"] == "FLOOR1" and leg["seats"]["available_qty"] == 6
+    # legs without a listing fall back to the model estimate
+    other = next(l for l in pk["legs"] if l["event_id"] == 2)
+    assert other["selection"] == "estimate"
+
+
 def main():
     print("\nRetail tour-package — dual mode, qty=3\n")
     for label, rows, mode in [("concert", CONCERT, "concert"), ("team-away", AWAY, "team_away")]:
@@ -72,6 +88,7 @@ def main():
     test_price_leg_modes()
     test_concert_owned_splits()
     test_team_away_market_sourced()
+    test_listing_selection()
     print("\n  asserts passed: owned-splits premium (concert) + market-sourced spread (team away)\n")
 
 

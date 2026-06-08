@@ -25,6 +25,8 @@
     ul.legs .src { font-size: 10px; }
     ul.legs .px { margin-left: auto; font-variant-numeric: tabular-nums; }
     ul.legs .mm { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; width: 64px; text-align: right; }
+    ul.legs .seat { font-size: 11px; color: #cbd5e1; }
+    ul.legs .seat.est { opacity: .55; }
   </style>
 </head>
 <body>
@@ -44,7 +46,7 @@
 
     <main class="content">
       <h1>Tour with the artist</h1>
-      <p class="subtitle">Follow a performer across cities — one curated package, priced off our own inventory. For a team it defaults to <b>away games</b> (the road trip).</p>
+      <p class="subtitle">Follow a performer across cities — one curated package. On <b>Build</b> we auto-select real tickets (your quantity, together) at each stop that fit your budget, priced off our own inventory. For a team it defaults to <b>away games</b> (the road trip).</p>
 
       <div class="tour-form">
         <div><label>Performer ID</label><input id="pid" type="number" value="87567" /></div>
@@ -72,6 +74,7 @@
   <script>
     (function () {
       const $ = (id) => document.getElementById(id);
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       const money = (n) => '$' + Math.round(n).toLocaleString();
       function fmtDate(iso) { try { return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (_) { return iso; } }
 
@@ -122,11 +125,14 @@
           const src = l.unit_price == null ? '' : `<span class="pill2 ${srcCls} src">${l.sourcing}</span>`;
           const price = l.unit_price == null ? '<span class="mm">n/a</span>' : `<span class="px">${money(l.unit_price)}</span>`;
           const mm = l.market_median != null ? `<span class="mm">mkt ${money(l.market_median)}</span>` : '<span class="mm"></span>';
+          const s = l.seats;
+          const seat = s ? `<span class="seat">${esc(s.section || 'GA')}${s.row ? ' ' + esc(s.row) : ''}${s.is_owned ? ' ·ours' : ''}</span>`
+            : (l.selection === 'estimate' ? '<span class="seat est">est. price</span>' : '');
           return `<li class="${on ? '' : 'skip'}">`
             + `<span class="d">${fmtDate(l.date)}</span>`
-            + `<span class="c">${(l.city || '—')}</span>`
-            + `<span>${l.event_name || l.venue || ''}</span>`
-            + src + price + mm
+            + `<span class="c">${esc(l.city || '—')}</span>`
+            + `<span>${esc(l.event_name || l.venue || '')}</span>`
+            + seat + src + price + mm
             + `</li>`;
         }).join('');
         $('result').hidden = false;
