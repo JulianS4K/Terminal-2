@@ -210,27 +210,32 @@
   }
 
   // Build a self-contained SVG route map (no tiles / external libs — CSP-safe).
-  // Equirectangular projection with a cos(lat) longitude correction so the spread
-  // looks geographically sane; plots home, every stop, and the optimizer's route.
-  function _tripProjector(points, W, H, pad) {
-    const lats = points.map(p => p.lat), lons = points.map(p => p.lon);
-    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-    const k = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180) || 1;
-    const minX = minLon * k, maxX = maxLon * k;
-    const xr = (maxX - minX) || 1e-6, yr = (maxLat - minLat) || 1e-6;
-    return (lat, lon) => [
-      pad + (lon * k - minX) / xr * (W - 2 * pad),
-      pad + (maxLat - lat) / yr * (H - 2 * pad),
-    ];
-  }
+  // A simplified continental-US silhouette is drawn as the basemap on a FIXED
+  // equirectangular frame, so the route always reads against a recognizable map.
+  // Coarse lower-48 outline (clockwise [lat, lon]); approximate, for context only.
+  const _US_OUTLINE = [
+    [48.4, -124.7], [46.2, -124.1], [43.3, -124.4], [40.4, -124.4], [38.0, -123.0], [36.6, -121.9],
+    [34.4, -120.5], [33.7, -118.4], [32.5, -117.1], [32.7, -114.5], [31.3, -111.1], [31.3, -108.2],
+    [31.8, -106.5], [29.8, -104.0], [29.2, -102.8], [26.0, -99.2], [25.9, -97.1], [27.8, -97.0],
+    [29.7, -93.8], [29.1, -90.1], [30.2, -88.0], [30.4, -86.5], [29.7, -84.0], [28.0, -82.8],
+    [25.8, -81.5], [25.2, -80.3], [27.0, -80.1], [29.9, -81.3], [32.0, -80.9], [33.9, -78.0],
+    [36.9, -76.0], [38.9, -75.0], [40.5, -74.0], [41.4, -71.5], [42.4, -70.6], [43.7, -70.0],
+    [44.8, -67.0], [45.2, -67.8], [45.0, -71.5], [45.0, -74.7], [44.0, -76.5], [43.3, -79.2],
+    [42.3, -83.0], [46.0, -84.4], [46.6, -88.4], [47.4, -90.5], [48.0, -89.5], [49.0, -95.2],
+    [49.0, -104.0], [49.0, -114.0], [49.0, -122.8], [48.4, -124.7],
+  ];
 
   function buildTripMap(d) {
-    const W = 560, H = 250, pad = 30;
-    const pts = [{ lat: +d.home.lat, lon: +d.home.lon }];
-    (d.all_dates || []).forEach(e => pts.push({ lat: +e.lat, lon: +e.lon }));
-    if (pts.length < 2) return '';
-    const proj = _tripProjector(pts, W, H, pad);
+    if (!d.all_dates || !d.all_dates.length) return '';
+    const minLon = -125, maxLon = -66, minLat = 24, maxLat = 50;   // fixed continental frame
+    const k = Math.cos(37 * Math.PI / 180);
+    const pad = 8, W = 600;
+    const scale = (W - 2 * pad) / ((maxLon - minLon) * k);
+    const H = Math.round((maxLat - minLat) * scale + 2 * pad);
+    const proj = (lat, lon) => [pad + (lon - minLon) * k * scale, pad + (maxLat - lat) * scale];
+
+    const land = 'M' + _US_OUTLINE.map(p => { const [x, y] = proj(p[0], p[1]); return x.toFixed(1) + ' ' + y.toFixed(1); }).join(' L ') + ' Z';
+
     const [hx, hy] = proj(+d.home.lat, +d.home.lon);
     const going = d.optimal.events || [];
     const picked = new Set(going.map(e => e.event_id));
@@ -239,10 +244,10 @@
     const routeD = route.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
 
     let dots = '';
-    (d.all_dates || []).forEach(e => {
+    d.all_dates.forEach(e => {
       const [x, y] = proj(+e.lat, +e.lon);
       const on = picked.has(e.event_id);
-      dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 5 : 3.5}" class="${on ? 'tm-go' : 'tm-skip'}">`
+      dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 4.5 : 3}" class="${on ? 'tm-go' : 'tm-skip'}">`
         + `<title>${escapeHtml((e.city || '') + ' · ' + (e.venue || '') + ' · ' + e.date)}</title></circle>`;
     });
 
@@ -251,14 +256,14 @@
       if (seen.has(e.city)) return;
       seen.add(e.city);
       const [x, y] = proj(+e.lat, +e.lon);
-      labels += `<text x="${(x + 7).toFixed(1)}" y="${(y + 3).toFixed(1)}" class="tm-lbl">${escapeHtml(e.city || '')}</text>`;
+      labels += `<text x="${(x + 6).toFixed(1)}" y="${(y + 3).toFixed(1)}" class="tm-lbl">${escapeHtml(e.city || '')}</text>`;
     });
 
-    const home = `<g class="tm-home"><circle cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="5"/>`
-      + `<text x="${(hx + 7).toFixed(1)}" y="${(hy + 3).toFixed(1)}" class="tm-lbl tm-home-lbl">${escapeHtml(d.home.name || 'Home')}</text></g>`;
+    const home = `<g class="tm-home"><circle cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="4.5"/>`
+      + `<text x="${(hx + 6).toFixed(1)}" y="${(hy + 3).toFixed(1)}" class="tm-lbl tm-home-lbl">${escapeHtml(d.home.name || 'Home')}</text></g>`;
 
     return `<svg viewBox="0 0 ${W} ${H}" class="trip-map-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Trip route map">`
-      + `<path d="${routeD}" class="tm-route"/>${dots}${home}${labels}</svg>`;
+      + `<path d="${land}" class="tm-land"/><path d="${routeD}" class="tm-route"/>${dots}${home}${labels}</svg>`;
   }
 
   function renderTripPlan(d) {
