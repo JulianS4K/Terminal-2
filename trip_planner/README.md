@@ -59,5 +59,9 @@ budget.
 ## Notes / next
 - Single performer = uniform preference weights (every show valued 1.0); the engine already
   supports a `prefs` map for the multi-performer "plan my whole summer" case.
-- The km budget can become a **$ budget** by making `prize`/cost price-aware — the cost model
-  is isolated in `gigtrip/distance.py` by design.
+- **Two-budget mode** (`budget_optimizer.py`): pass `budget_usd` + `qty` and the trip must fit
+  BOTH the travel-km budget and a ticket-spend budget. Per-show cost = `evo_retail_getin ×
+  max(0, qty − evo_owned_tickets)` (owned tickets free), pulled from
+  `event_listing_snapshot_daily`. The 2-budget solver is an exact Pareto label-setting DP
+  (cross-checked against a brute-force oracle in `test_ariana.py`). The vendored gigtrip
+  engine is untouched — this is a sibling module reusing its geometry helpers.

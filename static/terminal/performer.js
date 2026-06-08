@@ -118,6 +118,7 @@
       _tabState.portfolio = (portfolio && !portfolio.__err) ? portfolio : null;
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
+      try { initDailyMetrics(performerId, portfolio); } catch (e) { console.error('dailyMetrics', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
       try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
     });
@@ -192,6 +193,8 @@
       home_lon: document.getElementById('tripLon').value,
       home_name: document.getElementById('tripHome').value,
       budget_km: document.getElementById('tripBudget').value,
+      budget_usd: document.getElementById('tripUsd').value || '0',
+      qty: document.getElementById('tripQty').value || '1',
       days: '365',
     });
     body.innerHTML = '<div class="empty">planning…</div>';
@@ -210,27 +213,32 @@
   }
 
   // Build a self-contained SVG route map (no tiles / external libs — CSP-safe).
-  // Equirectangular projection with a cos(lat) longitude correction so the spread
-  // looks geographically sane; plots home, every stop, and the optimizer's route.
-  function _tripProjector(points, W, H, pad) {
-    const lats = points.map(p => p.lat), lons = points.map(p => p.lon);
-    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-    const k = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180) || 1;
-    const minX = minLon * k, maxX = maxLon * k;
-    const xr = (maxX - minX) || 1e-6, yr = (maxLat - minLat) || 1e-6;
-    return (lat, lon) => [
-      pad + (lon * k - minX) / xr * (W - 2 * pad),
-      pad + (maxLat - lat) / yr * (H - 2 * pad),
-    ];
-  }
+  // A simplified continental-US silhouette is drawn as the basemap on a FIXED
+  // equirectangular frame, so the route always reads against a recognizable map.
+  // Coarse lower-48 outline (clockwise [lat, lon]); approximate, for context only.
+  const _US_OUTLINE = [
+    [48.4, -124.7], [46.2, -124.1], [43.3, -124.4], [40.4, -124.4], [38.0, -123.0], [36.6, -121.9],
+    [34.4, -120.5], [33.7, -118.4], [32.5, -117.1], [32.7, -114.5], [31.3, -111.1], [31.3, -108.2],
+    [31.8, -106.5], [29.8, -104.0], [29.2, -102.8], [26.0, -99.2], [25.9, -97.1], [27.8, -97.0],
+    [29.7, -93.8], [29.1, -90.1], [30.2, -88.0], [30.4, -86.5], [29.7, -84.0], [28.0, -82.8],
+    [25.8, -81.5], [25.2, -80.3], [27.0, -80.1], [29.9, -81.3], [32.0, -80.9], [33.9, -78.0],
+    [36.9, -76.0], [38.9, -75.0], [40.5, -74.0], [41.4, -71.5], [42.4, -70.6], [43.7, -70.0],
+    [44.8, -67.0], [45.2, -67.8], [45.0, -71.5], [45.0, -74.7], [44.0, -76.5], [43.3, -79.2],
+    [42.3, -83.0], [46.0, -84.4], [46.6, -88.4], [47.4, -90.5], [48.0, -89.5], [49.0, -95.2],
+    [49.0, -104.0], [49.0, -114.0], [49.0, -122.8], [48.4, -124.7],
+  ];
 
   function buildTripMap(d) {
-    const W = 560, H = 250, pad = 30;
-    const pts = [{ lat: +d.home.lat, lon: +d.home.lon }];
-    (d.all_dates || []).forEach(e => pts.push({ lat: +e.lat, lon: +e.lon }));
-    if (pts.length < 2) return '';
-    const proj = _tripProjector(pts, W, H, pad);
+    if (!d.all_dates || !d.all_dates.length) return '';
+    const minLon = -125, maxLon = -66, minLat = 24, maxLat = 50;   // fixed continental frame
+    const k = Math.cos(37 * Math.PI / 180);
+    const pad = 8, W = 600;
+    const scale = (W - 2 * pad) / ((maxLon - minLon) * k);
+    const H = Math.round((maxLat - minLat) * scale + 2 * pad);
+    const proj = (lat, lon) => [pad + (lon - minLon) * k * scale, pad + (maxLat - lat) * scale];
+
+    const land = 'M' + _US_OUTLINE.map(p => { const [x, y] = proj(p[0], p[1]); return x.toFixed(1) + ' ' + y.toFixed(1); }).join(' L ') + ' Z';
+
     const [hx, hy] = proj(+d.home.lat, +d.home.lon);
     const going = d.optimal.events || [];
     const picked = new Set(going.map(e => e.event_id));
@@ -239,10 +247,10 @@
     const routeD = route.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
 
     let dots = '';
-    (d.all_dates || []).forEach(e => {
+    d.all_dates.forEach(e => {
       const [x, y] = proj(+e.lat, +e.lon);
       const on = picked.has(e.event_id);
-      dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 5 : 3.5}" class="${on ? 'tm-go' : 'tm-skip'}">`
+      dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 4.5 : 3}" class="${on ? 'tm-go' : 'tm-skip'}">`
         + `<title>${escapeHtml((e.city || '') + ' · ' + (e.venue || '') + ' · ' + e.date)}</title></circle>`;
     });
 
@@ -251,14 +259,14 @@
       if (seen.has(e.city)) return;
       seen.add(e.city);
       const [x, y] = proj(+e.lat, +e.lon);
-      labels += `<text x="${(x + 7).toFixed(1)}" y="${(y + 3).toFixed(1)}" class="tm-lbl">${escapeHtml(e.city || '')}</text>`;
+      labels += `<text x="${(x + 6).toFixed(1)}" y="${(y + 3).toFixed(1)}" class="tm-lbl">${escapeHtml(e.city || '')}</text>`;
     });
 
-    const home = `<g class="tm-home"><circle cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="5"/>`
-      + `<text x="${(hx + 7).toFixed(1)}" y="${(hy + 3).toFixed(1)}" class="tm-lbl tm-home-lbl">${escapeHtml(d.home.name || 'Home')}</text></g>`;
+    const home = `<g class="tm-home"><circle cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="4.5"/>`
+      + `<text x="${(hx + 6).toFixed(1)}" y="${(hy + 3).toFixed(1)}" class="tm-lbl tm-home-lbl">${escapeHtml(d.home.name || 'Home')}</text></g>`;
 
     return `<svg viewBox="0 0 ${W} ${H}" class="trip-map-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Trip route map">`
-      + `<path d="${routeD}" class="tm-route"/>${dots}${home}${labels}</svg>`;
+      + `<path d="${land}" class="tm-land"/><path d="${routeD}" class="tm-route"/>${dots}${home}${labels}</svg>`;
   }
 
   function renderTripPlan(d) {
@@ -269,10 +277,12 @@
     if (meta) {
       const cov = d.coord_coverage || {};
       const extra = [];
+      if (d.qty_per_show) extra.push(`${d.qty_per_show} tix/show`);
       if (cov.city_fallback) extra.push(`${cov.city_fallback} ≈ city`);
       if (cov.dropped_no_coords) extra.push(`${cov.dropped_no_coords} no-coords dropped`);
+      if (d.unpriced_events) extra.push(`${d.unpriced_events} no price`);
       meta.textContent = d.tour_date_count
-        ? `${d.tour_date_count} dates · budget ${Math.round(d.budget_km)} km${extra.length ? ' · ' + extra.join(', ') : ''}`
+        ? `${d.tour_date_count} dates · ${Math.round(d.budget_km)} km${d.budget_usd != null ? ' · $' + Math.round(d.budget_usd) : ''}${extra.length ? ' · ' + extra.join(', ') : ''}`
         : '';
     }
     if (!d.tour_date_count) {
@@ -288,9 +298,11 @@
       else { mapEl.hidden = true; }
     }
     if (stats) {
+      const spendLbl = `ticket spend${d.budget_usd != null ? ' / $' + Math.round(d.budget_usd) : ''}`;
       stats.hidden = false;
       stats.innerHTML =
         `<div><span class="ts-num">${o.count}</span><span class="ts-lbl">optimal shows · ${Math.round(o.travel_km)} km</span></div>` +
+        `<div><span class="ts-num">$${Math.round(o.spend_usd || 0).toLocaleString()}</span><span class="ts-lbl">${spendLbl}</span></div>` +
         `<div><span class="ts-num">${b.count}</span><span class="ts-lbl">sort-by-date · ${Math.round(b.travel_km)} km</span></div>` +
         `<div><span class="ts-num gain">+${d.shows_gained}</span><span class="ts-lbl">shows gained</span></div>`;
     }
@@ -299,10 +311,16 @@
     const rows = (d.all_dates || []).map(e => {
       const on = picked.has(e.event_id);
       const approx = e.coord_source === 'city' ? ' <span class="muted small" title="approximate city-centroid location">≈</span>' : '';
+      const owned = e.owned ? `<span class="tr-own" title="EVO owned tickets">own ${e.owned}</span>` : '';
+      const price = e.getin != null ? `$${Math.round(e.getin)}` : (e.cost_known ? '' : '<span class="muted">n/a</span>');
+      const cost = e.ticket_cost != null
+        ? `<span class="tr-cost" title="get-in × max(0, qty − owned)">${e.ticket_cost === 0 ? 'free' : '$' + Math.round(e.ticket_cost).toLocaleString()}</span>`
+        : '';
       return `<div class="trip-row${on ? '' : ' skip'}">`
         + `<span class="tr-date">${escapeHtml(_tripDate(e.date))}</span>`
         + `<span class="tr-city">${escapeHtml(e.city || '')}${approx}</span>`
         + `<span class="tr-venue">${escapeHtml(e.venue || '')}</span>`
+        + `<span class="tr-px">${price}</span>${owned}${cost}`
         + (on ? '<span class="tr-go">● going</span>' : '')
         + '</div>';
     }).join('');
@@ -349,6 +367,145 @@
     setText('ruOwnedShare',     ag.owned_share_weighted != null ? T.fmtPct(ag.owned_share_weighted * 100, 1) : '—');
     setText('ruRetailMedAvg',   ag.retail_median_avg_weighted ? '$' + T.fmtNum(Math.round(ag.retail_median_avg_weighted)) : '—');
     setText('ruEventsWithOwned', T.fmtNum(ag.events_with_owned));
+  }
+
+  // ---------- Cross-event daily metrics (Overview) ----------
+  //
+  // Surfaces the STORED performer-level timeseries (performer_metrics_daily,
+  // refreshed every 4h) via get_performer_metrics_daily(id, days, split). Unlike
+  // the live PORTFOLIO ROLLUP above (computed from /api/portfolio at request time),
+  // this is the persisted daily roll-up across ALL of the performer's events:
+  // per-source inventory (EVO/SG, all + owned), amalgam price band (get-in
+  // min/median, price min/median/p90), and owned-book notional — with day-over-day
+  // deltas + 90d sparklines. Sports performers also get home/away splits.
+
+  function initDailyMetrics(performerId, portfolio) {
+    const isSports = !!(portfolio && !portfolio.__err && portfolio.is_sports_performer);
+    const splitNav = document.getElementById('pdmSplit');
+    if (splitNav) {
+      if (isSports) {
+        splitNav.removeAttribute('hidden');
+        splitNav.addEventListener('click', (e) => {
+          const b = e.target.closest('.event-tab');
+          if (!b) return;
+          splitNav.querySelectorAll('.event-tab').forEach((x) => {
+            const on = x === b;
+            x.classList.toggle('active', on);
+            x.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+          loadDailyMetrics(performerId, b.dataset.split);
+        });
+      } else {
+        splitNav.setAttribute('hidden', '');
+      }
+    }
+    loadDailyMetrics(performerId, 'all');
+  }
+
+  async function loadDailyMetrics(performerId, split) {
+    const sec = document.getElementById('perf-daily-metrics');
+    const body = document.getElementById('pdmBody');
+    if (!sec || !body) return;
+    sec.removeAttribute('hidden');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">daily metrics need auth — sign in with @s4kent.com</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading daily metrics…</div>';
+    const res = await Auth.client.rpc('get_performer_metrics_daily', {
+      p_performer_id: performerId, p_days: 90, p_split: split || 'all',
+    });
+    if (res.error) {
+      body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
+      return;
+    }
+    renderDailyMetrics(res.data || [], split || 'all');
+  }
+
+  function renderDailyMetrics(rows, split) {
+    const body = document.getElementById('pdmBody');
+    const meta = document.getElementById('pdmMeta');
+    if (!body) return;
+    if (!rows.length) {
+      if (meta) meta.textContent = '';
+      body.innerHTML = `<div class="empty">no daily metrics stored yet for this performer${split && split !== 'all' ? ' (' + escapeHtml(split) + ')' : ''}</div>`;
+      return;
+    }
+    const latest = rows[rows.length - 1];
+    const prev = rows.length > 1 ? rows[rows.length - 2] : null;
+    if (meta) meta.textContent = `${rows.length} day${rows.length === 1 ? '' : 's'} · latest ${dayLabel(latest.snapshot_date)} · split: ${split || 'all'}`;
+
+    const usd = (v) => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+    const cell = (num, lbl, extra) => `<div class="ru-cell"><span class="ru-num">${num}${extra || ''}</span><span class="ru-lbl">${lbl}</span></div>`;
+    const d = (cur, prv) => prv ? deltaChip(cur, prv) : '';
+
+    const kpis = [
+      cell(T.fmtNum(latest.event_count), 'events'),
+      cell(T.fmtNum(latest.evo_tickets_total), 'EVO tix (all)'),
+      cell(T.fmtNum(latest.evo_owned_tickets_total), 'EVO tix (owned)'),
+      cell(T.fmtNum(latest.sg_all_tickets_total), 'SG tix (all)'),
+      cell(T.fmtNum(latest.sg_owned_tickets_total), 'SG tix (owned)'),
+      cell(usd(latest.getin_min), 'get-in min', d(latest.getin_min, prev && prev.getin_min)),
+      cell(usd(latest.getin_median), 'get-in median'),
+      cell(usd(latest.price_min), 'price min'),
+      cell(usd(latest.price_median), 'price median', d(latest.price_median, prev && prev.price_median)),
+      cell(usd(latest.price_p90), 'price p90'),
+      cell(usd(latest.owned_book_notional), 'owned book notional', d(latest.owned_book_notional, prev && prev.owned_book_notional)),
+    ].join('');
+
+    const sparkPrice = sparkline(rows.map((r) => numOrNull(r.price_median)));
+    const sparkGetin = sparkline(rows.map((r) => numOrNull(r.getin_min)));
+    const sparkInv   = sparkline(rows.map((r) => numOrNull(r.evo_owned_tickets_total)));
+    const n = rows.length;
+    const trends = `
+      <div class="pdm-trends">
+        ${sparkPrice ? `<div class="pdm-trend"><div class="pt-lbl">price median · last ${n}d</div><div class="pt-val">${usd(latest.price_median)}</div>${sparkPrice}</div>` : ''}
+        ${sparkGetin ? `<div class="pdm-trend"><div class="pt-lbl">get-in min · last ${n}d</div><div class="pt-val">${usd(latest.getin_min)}</div>${sparkGetin}</div>` : ''}
+        ${sparkInv   ? `<div class="pdm-trend"><div class="pt-lbl">owned EVO tix · last ${n}d</div><div class="pt-val">${T.fmtNum(latest.evo_owned_tickets_total)}</div>${sparkInv}</div>` : ''}
+      </div>`;
+
+    body.innerHTML = `<div class="rollup-grid">${kpis}</div>${trends}`;
+  }
+
+  function numOrNull(v) {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Day-over-day percent-change chip (direction-coloured, like .chart-move).
+  function deltaChip(cur, prv) {
+    const a = numOrNull(cur), b = numOrNull(prv);
+    if (a === null || b === null || b === 0) return '';
+    const pct = (a - b) / Math.abs(b) * 100;
+    if (Math.abs(pct) < 0.05) return '';
+    const cls = pct >= 0 ? 'up' : 'down';
+    return ` <span class="pdm-delta ${cls}">${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%</span>`;
+  }
+
+  // Minimal CSP-safe inline sparkline (no external libs). Skips null gaps.
+  function sparkline(series, w, h) {
+    w = w || 240; h = h || 40;
+    const pts = series.map((v, i) => [i, v]).filter((p) => p[1] !== null);
+    if (pts.length < 2) return '';
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+    const pad = 3;
+    const proj = (x, y) => [pad + (x - minX) / spanX * (w - 2 * pad), h - pad - (y - minY) / spanY * (h - 2 * pad)];
+    const dPath = pts.map((p, i) => { const [px, py] = proj(p[0], p[1]); return (i ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1); }).join(' ');
+    const lastP = pts[pts.length - 1];
+    const [lx, ly] = proj(lastP[0], lastP[1]);
+    return `<svg class="pdm-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="trend">`
+      + `<path d="${dPath}"/><circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2"/></svg>`;
+  }
+
+  function dayLabel(d) {
+    if (!d) return '—';
+    try { return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch (_) { return d; }
   }
 
   // ---------- Events list ----------

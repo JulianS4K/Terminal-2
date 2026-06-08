@@ -10,10 +10,17 @@ from __future__ import annotations
 
 from datetime import date
 
+from .budget_optimizer import plan_optimal_2b
 from .city_centroids import centroid_for
 from .gigtrip.model import Constraints
-from .gigtrip.optimizer import brute_force_optimal, plan_optimal
-from .planner import plan_from_rows, row_to_event
+from .gigtrip.optimizer import (
+    brute_force_optimal,
+    candidates,
+    plan_optimal,
+    route_km,
+)
+from .gigtrip.optimizer import _legs_feasible
+from .planner import _ticket_cost, plan_from_rows, row_to_event
 
 ROWS = [
     {"tevo_event_id": 3094846, "primary_performer_name": "Ariana Grande", "venue_name": "Crypto.com Arena",   "venue_city": "Los Angeles", "event_date": "2026-06-14", "venue_lat": 34.042998, "venue_lon": -118.267135},
@@ -80,6 +87,56 @@ def test_city_centroid_fallback():
     assert p["tour_date_count"] == len(ROWS) + 1   # the centroid row counts, the coord-less one doesn't
 
 
+def _brute_2b(events, prefs, c, costs, budget_usd):
+    """Ground-truth 2-budget optimum (max value within km AND spend) by enumeration."""
+    from itertools import combinations
+    cand = candidates(events, c)
+    best_val, best_km = 0.0, 0.0
+    for r in range(1, len(cand) + 1):
+        for combo in combinations(cand, r):
+            if not _legs_feasible(combo, c):
+                continue
+            km = route_km(combo, c)
+            if km > c.max_travel_km + 1e-9:
+                continue
+            if sum(costs.get(int(e.id), 0.0) for e in combo) > budget_usd + 1e-9:
+                continue
+            val = sum(prefs.get(e.title.lower(), 0.0) for e in combo)
+            if val > best_val + 1e-12 or (abs(val - best_val) <= 1e-12 and km < best_km - 1e-12):
+                best_val, best_km = val, km
+    return best_val
+
+
+def test_two_budget():
+    # attach EVO price + owned to the real fixture: $500 get-in, we own 2 at every 5th show.
+    rows = [dict(r) for r in ROWS]
+    for i, r in enumerate(rows):
+        r["_getin"] = 500.0
+        r["_owned"] = 2 if i % 5 == 0 else 0
+    qty = 1
+
+    # owned >= qty -> that show is free (ticket_cost 0); otherwise getin * (qty - owned).
+    assert _ticket_cost(500.0, 2, 1) == (0.0, True)
+    assert _ticket_cost(500.0, 0, 2) == (1000.0, True)
+    assert _ticket_cost(None, 0, 1) == (0.0, False)      # unknown price doesn't block
+
+    p = plan_from_rows(rows, HOME, 14000, START, END, budget_usd=2000, qty=qty)
+    assert p["budget_usd"] == 2000 and p["qty_per_show"] == 1
+    assert p["optimal"]["spend_usd"] <= 2000 + 1e-6           # spend budget respected
+    assert p["baseline_by_date"]["spend_usd"] <= 2000 + 1e-6
+    owned_ev = next(e for e in p["all_dates"] if (e["owned"] or 0) >= 1)
+    assert owned_ev["ticket_cost"] == 0.0                     # owned tickets are free
+
+    # exact 2-budget optimum matches the brute-force oracle on value.
+    events = [row_to_event(r) for r in rows]
+    prefs = {"ariana grande": 1.0}
+    costs = {int(r["tevo_event_id"]): _ticket_cost(r["_getin"], r["_owned"], qty)[0] for r in rows}
+    c = Constraints(HOME["name"], HOME["lat"], HOME["lon"], START, END, 14000)
+    opt, spend = plan_optimal_2b(events, prefs, c, costs, 2000)
+    assert abs(opt.value - _brute_2b(events, prefs, c, costs, 2000)) < 1e-9
+    assert spend <= 2000 + 1e-6
+
+
 def main():
     print(f"\nPer-performer trip planner — Ariana Grande (home {HOME['name']})")
     print(f"window {START}..{END}  ·  {len(ROWS)} geocoded tour dates\n")
@@ -93,6 +150,7 @@ def main():
     test_optimal_matches_oracle()
     test_optimal_beats_baseline_at_binding_budget()
     test_city_centroid_fallback()
+    test_two_budget()
     print("\n  asserts passed: optimal == brute-force oracle; optimal > baseline at 9000 km;")
     print("  city-centroid fallback recovers un-geocoded shows (Inglewood/Brooklyn)\n")
 
