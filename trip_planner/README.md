@@ -48,6 +48,20 @@ against inter-city legs. Cities not in the gazetteer fall through to `dropped_no
 the UI can show selected vs skipped. `baseline_by_date` is the naive sort-by-date trip, kept
 so the UI can show the value the optimizer adds.
 
+## Retail "tour with the artist" agent (`retail.py`)
+`GET /api/{store,broker}/performers/{id}/tour-package` turns the routed itinerary into a
+priced consumer package via two **auto-selected** sourcing modes:
+- **owned-splits** (we hold ≥ qty): price our inventory, clearing toward market median in
+  proportion to our share of listed supply. Moderate overhang → hold a premium (concerts);
+  heavy overhang → clear to market (team home stands).
+- **market-sourced** (we hold < qty — e.g. a team's away games): buy-to-fulfill at get-in +
+  fulfillment margin; fan beats the browse-median, we earn the spread.
+
+**Team performers default to away games** (`<pid> = ANY(performer_ids) AND
+primary_performer_id ≠ <pid>`) — the away schedule is the multi-city road trip; home games
+are one city. `side=auto|away|home`. Dials: `clear_at` (0.15), `away_margin` (0.18).
+Offline test: `python3 -m trip_planner.test_tour` (owned-splits premium + market-sourced spread).
+
 ## Test
 ```bash
 python3 -m trip_planner.test_ariana

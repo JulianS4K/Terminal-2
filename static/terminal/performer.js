@@ -181,7 +181,73 @@
     if (slider && label) slider.addEventListener('input', () => { label.textContent = slider.value; });
     const go = document.getElementById('tripGo');
     if (go) go.addEventListener('click', () => runTripPlan(performerId));
+    const tourGo = document.getElementById('tourGo');
+    if (tourGo) tourGo.addEventListener('click', () => priceTour(performerId));
     runTripPlan(performerId);
+  }
+
+  // ---------- Retail tour package (dual-mode pricing) ----------
+  async function priceTour(performerId) {
+    const body = document.getElementById('tourBody');
+    const stats = document.getElementById('tourStats');
+    if (!body) return;
+    const q = new URLSearchParams({
+      home_lat: document.getElementById('tripLat').value,
+      home_lon: document.getElementById('tripLon').value,
+      home_name: document.getElementById('tripHome').value,
+      qty: document.getElementById('tripQty').value || '3',
+      budget_km: document.getElementById('tripBudget').value,
+      side: document.getElementById('tourSide').value,
+      days: '365',
+    });
+    body.innerHTML = '<div class="empty">pricing tour…</div>';
+    if (stats) stats.hidden = true;
+    try {
+      const d = await T.api(`/api/broker/performers/${performerId}/tour-package?` + q.toString());
+      renderTour(d);
+    } catch (e) {
+      body.innerHTML = `<div class="empty">error: ${escapeHtml(e.message || String(e))}</div>`;
+    }
+  }
+
+  function _money(n) { return '$' + Math.round(n || 0).toLocaleString(); }
+
+  function renderTour(d) {
+    const body = document.getElementById('tourBody');
+    const stats = document.getElementById('tourStats');
+    const meta = document.getElementById('tourMeta');
+    const pk = d.package || {};
+    const modeLabel = d.mode === 'team_away' ? 'team · away games · market-sourced'
+      : d.mode === 'team_home' ? 'team · home stand · owned-splits'
+      : 'concert · owned-splits';
+    if (meta) meta.textContent = `${modeLabel} · ${d.stops_available || 0} stops · ${d.qty_per_show} tix/show`;
+    if (!d.stops_available || !pk.count) {
+      if (stats) stats.hidden = true;
+      body.innerHTML = '<div class="empty">no routable tour for this performer</div>';
+      return;
+    }
+    const vsm = pk.vs_market;
+    if (stats) {
+      stats.hidden = false;
+      stats.innerHTML =
+        `<div><span class="ts-num">${_money(pk.fan_total_bundled)}</span><span class="ts-lbl">package · ${pk.count * d.qty_per_show} tix</span></div>` +
+        `<div><span class="ts-num ${vsm < 0 ? 'gain' : ''}">${vsm < 0 ? _money(-vsm) : '+' + _money(vsm)}</span><span class="ts-lbl">${vsm < 0 ? 'fan saves vs market' : 'premium vs market'}</span></div>` +
+        `<div><span class="ts-num">${pk.owned_moved ? pk.owned_moved : _money(pk.gross_margin || 0)}</span><span class="ts-lbl">${pk.owned_moved ? 'owned tix moved' : 'fulfillment margin'}</span></div>` +
+        `<div><span class="ts-num">${pk.cities} / ${Math.round(pk.travel_km)}</span><span class="ts-lbl">cities / km</span></div>`;
+    }
+    const picked = new Set((pk.legs || []).map(l => l.event_id));
+    const rows = (d.all_stops || []).map(l => {
+      const on = picked.has(l.event_id);
+      const src = l.unit_price == null ? '' : `<span class="tsrc ${l.sourcing === 'owned' ? 'owned' : 'market'}">${l.sourcing}</span>`;
+      const px = l.unit_price == null ? '<span class="tr-px">n/a</span>' : `<span class="tr-px">${_money(l.unit_price)}</span>`;
+      const mm = l.market_median != null ? `<span class="tr-mm">mkt ${_money(l.market_median)}</span>` : '<span class="tr-mm"></span>';
+      return `<div class="trip-row${on ? '' : ' skip'}">`
+        + `<span class="tr-date">${escapeHtml(_tripDate(l.date))}</span>`
+        + `<span class="tr-city">${escapeHtml(l.city || '—')}</span>`
+        + `<span>${escapeHtml(l.event_name || l.venue || '')}</span>`
+        + src + px + mm + '</div>';
+    }).join('');
+    body.innerHTML = `<div class="trip-list">${rows}</div>`;
   }
 
   async function runTripPlan(performerId) {
