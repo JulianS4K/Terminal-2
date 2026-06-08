@@ -14,6 +14,7 @@ from datetime import date, timedelta
 
 from .budget_optimizer import plan_by_date_2b, plan_optimal_2b
 from .city_centroids import centroid_for
+from .retail import DEFAULT_AWAY_MARGIN, DEFAULT_CLEAR_AT, price_leg, summarize_package
 from .gigtrip.model import Constraints, Event, Itinerary
 from .gigtrip.optimizer import plan_by_date, plan_optimal
 
@@ -251,5 +252,156 @@ def plan_performer_trip(db, performer_id: int, home_lat: float, home_lon: float,
     payload = plan_from_rows(rows, home, budget_km, start, end,
                              max_events=max_events, max_km_per_day=max_km_per_day,
                              budget_usd=budget_usd, qty=qty)
+    payload["performer_id"] = int(performer_id)
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+# Retail "tour with the artist" agent — dual-mode (owned-splits / market-sourced)
+# --------------------------------------------------------------------------- #
+_TOUR_SELECT = ("tevo_event_id, event_name, primary_performer_name, venue_name, "
+                "venue_city, venue_state, event_date, venue_lat, venue_lon")
+
+
+def fetch_event_pricing(db, ids: list[int], lookback_days: int = 21) -> dict[int, dict]:
+    """Latest EVO owned + ask + market context per event (event_listing_snapshot_daily)."""
+    if not ids:
+        return {}
+    since = (date.today() - timedelta(days=lookback_days)).isoformat()
+    rows = (db.table("event_listing_snapshot_daily")
+            .select("event_id, evo_owned_tickets, evo_owned_median, evo_retail_getin, "
+                    "evo_retail_median, evo_tickets_count, captured_at")
+            .in_("event_id", ids)
+            .gte("snapshot_date", since)
+            .order("captured_at", desc=True)
+            .limit(6000)
+            .execute().data) or []
+    out: dict[int, dict] = {}
+    for r in rows:
+        eid = int(r["event_id"])
+        if eid in out:
+            continue
+        def _f(k):
+            v = r.get(k)
+            return float(v) if v is not None else None
+        out[eid] = {
+            "owned": int(r.get("evo_owned_tickets") or 0),
+            "our_ask": _f("evo_owned_median"),
+            "getin": _f("evo_retail_getin"),
+            "med": _f("evo_retail_median"),
+            "qty": int(r.get("evo_tickets_count") or 0),
+        }
+    return out
+
+
+def fetch_tour_events(db, performer_id: int, start: date, end: date,
+                      side: str = "auto") -> tuple[list[dict], str]:
+    """Return (rows, mode). For a TEAM performer the tour defaults to AWAY games (the team is
+    a participant but not the host/primary) — that's the multi-city road trip. For a concert
+    performer there are no away appearances, so we use its own (primary) events.
+
+    side: 'auto' (team->away, else concert), 'away' (force away), 'home'/'concert' (primary).
+    """
+    end_excl = (end + timedelta(days=1)).isoformat()
+    away_ids: list[int] = []
+    if side in ("auto", "away"):
+        away = (db.table("events").select("id")
+                .contains("performer_ids", [performer_id])
+                .neq("primary_performer_id", performer_id)
+                .gte("occurs_at_local", start.isoformat())
+                .lt("occurs_at_local", end_excl)
+                .limit(300).execute().data) or []
+        away_ids = [int(r["id"]) for r in away]
+
+    use_away = side == "away" or (side == "auto" and len(away_ids) >= 3)
+    if use_away and away_ids:
+        rows = (db.table("v_event_base").select(_TOUR_SELECT)
+                .in_("tevo_event_id", away_ids)
+                .order("event_date").limit(500).execute().data) or []
+        return rows, "team_away"
+
+    return fetch_performer_rows(db, performer_id, start, end), (
+        "team_home" if away_ids else "concert")
+
+
+def plan_tour_package(rows: list[dict], home: dict, qty: int, budget_km: float,
+                      start: date, end: date, budget_usd: float | None = None,
+                      max_events: int | None = None, max_km_per_day: float = 1200.0,
+                      clear_at: float = DEFAULT_CLEAR_AT,
+                      away_margin: float = DEFAULT_AWAY_MARGIN, mode: str = "concert") -> dict:
+    """Pure: route the multi-city tour (within travel + fan-$ budget) and price every leg via
+    the dual-mode retail model. Rows carry `_owned/_our_ask/_getin/_med/_qty` + coords."""
+    qty = max(1, int(qty))
+    usable = [r for r in rows if r.get("venue_lat") is not None and r.get("venue_lon") is not None]
+    events = [row_to_event(r) for r in usable]
+    prefs = {e.title.lower(): 1.0 for e in events}
+
+    legmeta: dict[int, dict] = {}
+    costs: dict[int, float] = {}
+    for r in usable:
+        eid = int(r["tevo_event_id"])
+        pl = price_leg(qty, r.get("_owned"), r.get("_our_ask"), r.get("_getin"),
+                       r.get("_med"), r.get("_qty"), clear_at, away_margin)
+        pl["city"] = r.get("venue_city")
+        pl["event_name"] = r.get("event_name")
+        pl["coord_source"] = r.get("_coord_source", "venue")
+        legmeta[eid] = pl
+        u = pl.get("unit_price")
+        costs[eid] = (u * qty) if u is not None else 0.0    # the fan's spend at this stop
+
+    c = Constraints(home_name=home["name"], home_lat=float(home["lat"]), home_lon=float(home["lon"]),
+                    start=start, end=end, max_travel_km=float(budget_km),
+                    max_events=max_events, max_km_per_day=max_km_per_day)
+    spend_cap = float(budget_usd) if budget_usd is not None else 1e12
+    optimal, _ = plan_optimal_2b(events, prefs, c, costs, spend_cap)
+    picked = {int(e.id) for e in optimal.events}
+
+    def _leg(e, selected):
+        m = dict(legmeta[int(e.id)])
+        m.update(event_id=int(e.id), date=e.day.isoformat(),
+                 city=(e.city or m.get("city")), venue=e.venue, selected=selected)
+        return m
+
+    pkg_legs = [_leg(e, True) for e in optimal.events]
+    summ = summarize_package(pkg_legs, qty)
+    return {
+        "mode": mode,
+        "qty_per_show": qty,
+        "home": home,
+        "budget_km": float(budget_km),
+        "budget_usd": budget_usd,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "stops_available": len(events),
+        "package": {
+            "legs": pkg_legs,
+            "count": len(pkg_legs),
+            "cities": len({l["city"] for l in pkg_legs if l.get("city")}),
+            "travel_km": round(optimal.travel_km, 1),
+            **summ,
+        },
+        "all_stops": [_leg(e, int(e.id) in picked)
+                      for e in sorted(events, key=lambda e: (e.day, e.id))],
+    }
+
+
+def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
+                        qty: int, budget_km: float, start: date, end: date,
+                        home_name: str = "Home", budget_usd: float | None = None,
+                        side: str = "auto", clear_at: float = DEFAULT_CLEAR_AT,
+                        away_margin: float = DEFAULT_AWAY_MARGIN,
+                        max_events: int | None = None) -> dict:
+    """End-to-end retail tour package: detect concert vs team-away, route + dual-mode price."""
+    rows, mode = fetch_tour_events(db, performer_id, start, end, side)
+    _apply_coord_fallback(db, rows)
+    pricing = fetch_event_pricing(db, [int(r["tevo_event_id"]) for r in rows])
+    for r in rows:
+        p = pricing.get(int(r["tevo_event_id"]))
+        if p:
+            r["_owned"], r["_our_ask"] = p["owned"], p["our_ask"]
+            r["_getin"], r["_med"], r["_qty"] = p["getin"], p["med"], p["qty"]
+    home = {"name": home_name, "lat": home_lat, "lon": home_lon}
+    payload = plan_tour_package(rows, home, qty, budget_km, start, end,
+                                budget_usd=budget_usd, max_events=max_events,
+                                clear_at=clear_at, away_margin=away_margin, mode=mode)
     payload["performer_id"] = int(performer_id)
     return payload

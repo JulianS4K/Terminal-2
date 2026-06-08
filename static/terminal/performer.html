@@ -43,6 +43,11 @@
     .tm-home circle { fill: #fff; stroke: var(--good, #4ade80); stroke-width: 2; }
     .tm-lbl { fill: var(--muted, #cbd5e1); font-size: 10px; }
     .tm-home-lbl { fill: #fff; font-weight: 600; }
+    .trip-controls select { padding: 7px 9px; background: var(--panel, #14141b); color: inherit; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; font: inherit; }
+    .tsrc { font-size: 10px; padding: 1px 6px; border-radius: 999px; }
+    .tsrc.owned { background: rgba(74,222,128,.15); color: var(--good, #4ade80); }
+    .tsrc.market { background: rgba(96,165,250,.15); color: #60a5fa; }
+    .trip-row .tr-mm { color: var(--muted, #9aa); font-size: 11px; font-variant-numeric: tabular-nums; width: 70px; text-align: right; }
     /* Cross-event daily metrics (Overview tab) */
     #pdmSplit { display: flex; gap: 6px; }
     .pdm-delta { font-size: 11px; margin-left: 6px; font-weight: 600; }
@@ -163,6 +168,23 @@
         <div id="tripStats" class="trip-stats" hidden></div>
         <div id="tripMap" class="trip-map" hidden></div>
         <div id="tripBody"><div class="empty">tap Plan to compute</div></div>
+      </section>
+
+      <section id="perf-tour" style="margin-top: 18px;">
+        <div class="panel-title row">
+          <span>RETAIL TOUR PACKAGE — dual-mode pricing</span>
+          <span class="muted small" id="tourMeta"></span>
+        </div>
+        <div class="muted small" style="margin-bottom: 8px;">
+          "Tour with the artist", priced off our inventory: <b>owned-splits</b> for concerts,
+          <b>market-sourced</b> for a team's away games. Uses the home + tickets/show above.
+        </div>
+        <div class="trip-controls">
+          <label>side<select id="tourSide"><option value="auto">auto</option><option value="away">away (team)</option><option value="home">home / primary</option></select></label>
+          <button id="tourGo" class="event-tab">Price tour</button>
+        </div>
+        <div id="tourStats" class="trip-stats" hidden></div>
+        <div id="tourBody"></div>
       </section>
 
       <section id="perf-events" style="margin-top: 18px;">
