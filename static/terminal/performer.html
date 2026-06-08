@@ -30,6 +30,14 @@
     .trip-row .tr-date { width: 110px; color: var(--muted, #9aa); font-variant-numeric: tabular-nums; }
     .trip-row .tr-city { width: 120px; font-weight: 600; }
     .trip-row .tr-go { margin-left: auto; color: var(--good, #4ade80); font-size: 11px; }
+    .trip-map { margin: 6px 0 14px; background: var(--panel, #14141b); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 6px; }
+    .trip-map-svg { width: 100%; height: auto; display: block; }
+    .tm-route { fill: none; stroke: var(--good, #4ade80); stroke-width: 1.6; stroke-opacity: .75; stroke-linejoin: round; stroke-dasharray: 5 3; }
+    .tm-go { fill: var(--good, #4ade80); stroke: #0a0a0a; stroke-width: 1; }
+    .tm-skip { fill: none; stroke: var(--muted, #9aa); stroke-width: 1.3; opacity: .55; }
+    .tm-home circle { fill: #fff; stroke: var(--good, #4ade80); stroke-width: 2; }
+    .tm-lbl { fill: var(--muted, #cbd5e1); font-size: 10px; }
+    .tm-home-lbl { fill: #fff; font-weight: 600; }
   </style>
 </head>
 <body data-page="performer">
@@ -115,6 +123,7 @@
           <button id="tripGo" class="event-tab">Plan</button>
         </div>
         <div id="tripStats" class="trip-stats" hidden></div>
+        <div id="tripMap" class="trip-map" hidden></div>
         <div id="tripBody"><div class="empty">tap Plan to compute</div></div>
       </section>
 

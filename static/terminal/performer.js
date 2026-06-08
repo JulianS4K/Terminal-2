@@ -209,9 +209,62 @@
     catch (_) { return iso; }
   }
 
+  // Build a self-contained SVG route map (no tiles / external libs — CSP-safe).
+  // Equirectangular projection with a cos(lat) longitude correction so the spread
+  // looks geographically sane; plots home, every stop, and the optimizer's route.
+  function _tripProjector(points, W, H, pad) {
+    const lats = points.map(p => p.lat), lons = points.map(p => p.lon);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+    const k = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180) || 1;
+    const minX = minLon * k, maxX = maxLon * k;
+    const xr = (maxX - minX) || 1e-6, yr = (maxLat - minLat) || 1e-6;
+    return (lat, lon) => [
+      pad + (lon * k - minX) / xr * (W - 2 * pad),
+      pad + (maxLat - lat) / yr * (H - 2 * pad),
+    ];
+  }
+
+  function buildTripMap(d) {
+    const W = 600, H = 340, pad = 42;
+    const pts = [{ lat: +d.home.lat, lon: +d.home.lon }];
+    (d.all_dates || []).forEach(e => pts.push({ lat: +e.lat, lon: +e.lon }));
+    if (pts.length < 2) return '';
+    const proj = _tripProjector(pts, W, H, pad);
+    const [hx, hy] = proj(+d.home.lat, +d.home.lon);
+    const going = d.optimal.events || [];
+    const picked = new Set(going.map(e => e.event_id));
+
+    const route = [[hx, hy], ...going.map(e => proj(+e.lat, +e.lon)), [hx, hy]];
+    const routeD = route.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+
+    let dots = '';
+    (d.all_dates || []).forEach(e => {
+      const [x, y] = proj(+e.lat, +e.lon);
+      const on = picked.has(e.event_id);
+      dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 5 : 3.5}" class="${on ? 'tm-go' : 'tm-skip'}">`
+        + `<title>${escapeHtml((e.city || '') + ' · ' + (e.venue || '') + ' · ' + e.date)}</title></circle>`;
+    });
+
+    let labels = ''; const seen = new Set();
+    going.forEach(e => {
+      if (seen.has(e.city)) return;
+      seen.add(e.city);
+      const [x, y] = proj(+e.lat, +e.lon);
+      labels += `<text x="${(x + 7).toFixed(1)}" y="${(y + 3).toFixed(1)}" class="tm-lbl">${escapeHtml(e.city || '')}</text>`;
+    });
+
+    const home = `<g class="tm-home"><circle cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="5"/>`
+      + `<text x="${(hx + 7).toFixed(1)}" y="${(hy + 3).toFixed(1)}" class="tm-lbl tm-home-lbl">${escapeHtml(d.home.name || 'Home')}</text></g>`;
+
+    return `<svg viewBox="0 0 ${W} ${H}" class="trip-map-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Trip route map">`
+      + `<path d="${routeD}" class="tm-route"/>${dots}${home}${labels}</svg>`;
+  }
+
   function renderTripPlan(d) {
     const body = document.getElementById('tripBody');
     const stats = document.getElementById('tripStats');
+    const mapEl = document.getElementById('tripMap');
     const meta = document.getElementById('tripMeta');
     if (meta) {
       const cov = d.coord_coverage || {};
@@ -224,10 +277,16 @@
     }
     if (!d.tour_date_count) {
       if (stats) stats.hidden = true;
+      if (mapEl) mapEl.hidden = true;
       body.innerHTML = '<div class="empty">no upcoming geocoded dates for this performer</div>';
       return;
     }
     const o = d.optimal, b = d.baseline_by_date;
+    if (mapEl) {
+      const svg = buildTripMap(d);
+      if (svg) { mapEl.innerHTML = svg; mapEl.hidden = false; }
+      else { mapEl.hidden = true; }
+    }
     if (stats) {
       stats.hidden = false;
       stats.innerHTML =
