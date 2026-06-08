@@ -40,6 +40,18 @@
     .tm-home circle { fill: #fff; stroke: var(--good, #4ade80); stroke-width: 2; }
     .tm-lbl { fill: var(--muted, #cbd5e1); font-size: 10px; }
     .tm-home-lbl { fill: #fff; font-weight: 600; }
+    /* Cross-event daily metrics (Overview tab) */
+    #pdmSplit { display: flex; gap: 6px; }
+    .pdm-delta { font-size: 11px; margin-left: 6px; font-weight: 600; }
+    .pdm-delta.up { color: var(--pos, #4ade80); }
+    .pdm-delta.down { color: var(--neg, #f87171); }
+    .pdm-trends { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 14px; }
+    .pdm-trend { flex: 1 1 200px; min-width: 180px; background: var(--panel, #14141b); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 10px 12px; }
+    .pdm-trend .pt-lbl { font-size: 11px; color: var(--muted, #9aa); text-transform: uppercase; letter-spacing: .04em; }
+    .pdm-trend .pt-val { font-size: 18px; font-weight: 700; margin: 2px 0 6px; }
+    .pdm-spark { width: 100%; height: 40px; display: block; }
+    .pdm-spark path { fill: none; stroke: var(--accent, #4ade80); stroke-width: 1.4; }
+    .pdm-spark circle { fill: var(--accent, #4ade80); }
   </style>
 </head>
 <body data-page="performer">
@@ -98,6 +110,25 @@
           <div class="ru-cell"><span class="ru-num" id="ruRetailMedAvg">—</span><span class="ru-lbl">retail median (wt)</span></div>
           <div class="ru-cell"><span class="ru-num" id="ruEventsWithOwned">—</span><span class="ru-lbl">events with position</span></div>
         </div>
+      </section>
+
+      <!-- Cross-event metrics rolled up daily across ALL of this performer's events
+           (stored timeseries: performer_metrics_daily via get_performer_metrics_daily). -->
+      <section id="perf-daily-metrics" hidden>
+        <div class="panel-title row">
+          <span>CROSS-EVENT METRICS — DAILY</span>
+          <span class="muted small" id="pdmMeta"></span>
+        </div>
+        <div class="muted small" style="margin-bottom: 8px;">
+          Performer-level totals rolled up across every one of this performer's events, stored daily.
+          Inventory is kept per source (units never mixed); prices use the cross-source blended amalgam.
+        </div>
+        <nav id="pdmSplit" class="event-tabs" role="tablist" hidden style="margin-bottom: 10px;">
+          <button class="event-tab active" data-split="all" role="tab" aria-selected="true">All</button>
+          <button class="event-tab" data-split="home" role="tab" aria-selected="false">Home</button>
+          <button class="event-tab" data-split="away" role="tab" aria-selected="false">Away</button>
+        </nav>
+        <div id="pdmBody"><div class="empty">loading…</div></div>
       </section>
 
       <section id="perf-espn-summary" hidden>
