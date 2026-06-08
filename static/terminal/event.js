@@ -3895,7 +3895,7 @@
   }
 
   // ---------- TD Listings per-platform (full) ----------
-  // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD), last 26h ordered
+  // Queries ticketsdata_listings_snapshots for one platform (SH|GT|VD|TM), last 26h ordered
   // newest-first so the limit captures the most-recent collection batch. Client-side filter
   // keeps only rows within 15 minutes of max(captured_at) for that platform — timing-agnostic
   // so both the 03:00 UTC and 16:20 UTC SH batches work correctly regardless of query time.
@@ -3933,12 +3933,30 @@
     }
     const maxAt = rows.reduce((m, r) => (r.captured_at > m ? r.captured_at : m), rows[0].captured_at);
     const batchDate = T.fmtDate ? T.fmtDate(maxAt) : maxAt.slice(0, 16).replace('T', ' ') + ' UTC';
-    // Compute summary stats
-    const prices = rows.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
-    const med = prices.length ? prices[Math.floor(prices.length / 2)] : null;
-    const getIn = prices.length ? prices[0] : null;
-    if (meta) meta.textContent =
-      `${rows.length} rows · get-in ${getIn != null ? '$' + Math.round(getIn) : '—'} · med ${med != null ? '$' + Math.round(med) : '—'} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+    // Compute summary stats. TM (Ticketmaster) rows carry an inventory_type
+    // discriminator from the RPC — 'primary' = box-office FACE value vs 'resale'
+    // = verified fan-to-fan (PROJECT_BIBLE §3 landmine). Split the stats so the
+    // face value isn't blended with the resale floor (they're different markets).
+    // SH/GT/VD/TP have no split (inventory_type null) → single stat as before.
+    const statFor = (subset) => {
+      const p = subset.map(r => +r.list_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+      return { n: p.length, getIn: p.length ? p[0] : null, med: p.length ? p[Math.floor(p.length / 2)] : null };
+    };
+    const $r = v => (v != null ? '$' + Math.round(v) : '—');
+    const hasInv = rows.some(r => r.inventory_type);
+    if (meta) {
+      let line;
+      if (hasInv) {
+        const prim = statFor(rows.filter(r => r.inventory_type !== 'resale'));
+        const res  = statFor(rows.filter(r => r.inventory_type === 'resale'));
+        line = `${rows.length} rows · FACE ${prim.n}: get-in ${$r(prim.getIn)} med ${$r(prim.med)}` +
+               ` · RESALE ${res.n}: get-in ${$r(res.getIn)} med ${$r(res.med)}`;
+      } else {
+        const s = statFor(rows);
+        line = `${rows.length} rows · get-in ${$r(s.getIn)} · med ${$r(s.med)}`;
+      }
+      meta.textContent = `${line} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+    }
 
     const host = document.createElement('div');
     host.className = 'full-list-host';
@@ -3948,18 +3966,23 @@
       <thead><tr>
         <th>Section</th><th>Row</th>
         <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        ${hasInv ? '<th>Inv</th>' : ''}
         <th>Captured</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
     const $p = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
     rows.forEach(r => {
       const tr = document.createElement('tr');
+      // Inv column: only when the platform carries the split (TM). Mapped to two
+      // safe literals (Face/Resale) — not raw data — so no escaping needed.
+      const invCell = hasInv ? `<td>${r.inventory_type === 'resale' ? 'Resale' : 'Face'}</td>` : '';
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${r.quantity != null ? T.fmtNum(+r.quantity) : '—'}</td>
         <td class="num">${$p(r.list_price)}</td>
         <td class="num">${$p(r.price_with_fees)}</td>
+        ${invCell}
         <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
       tb.appendChild(tr);
     });
