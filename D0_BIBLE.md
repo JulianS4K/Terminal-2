@@ -469,7 +469,7 @@ Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a
 |---|---|---|---|
 | `event_metrics` | 87,785 | TEvo listing metrics (agg) | event_id (=tevo_event_id), captured_at, retail_min/median/max, tickets_count |
 | `listings_snapshots` | 8M+ | TEvo listing firehose | event_id, tevo_ticket_group_id, section, row, retail_price, is_owned, brokerage_id |
-| `event_listing_snapshot_daily` | 3,054 | Daily cross-source snapshot | event_id, snapshot_date, evo_*/sg_*/td_* price+count columns |
+| `event_listing_snapshot_daily` | 3,054 | Daily cross-source snapshot | event_id, snapshot_date, evo_*/sg_*/td_* price+count cols, **amalgam_getin/median/source_count** (cross-source blend; auto-uses sources present). Live: `get_event_amalgam(event_id)` RPC |
 | `event_movers_index` | ~5K | Price velocity index | event_id, source, window_days, category (+ 5 computed cols) |
 | `event_movers_index_history` | ~30K | Movers history | same schema |
 | `discovery_gap_alerts` | — | SG coverage gaps by market | alert_type, market, event_id |
