@@ -1164,12 +1164,14 @@ def broker_performer_assets(performer_id: int, _=Depends(require_auth)):
 
 def _trip_plan_payload(performer_id: int, home_lat: float, home_lon: float,
                        budget_km: float, home_name: str, days: int,
-                       max_events: int | None) -> dict:
+                       max_events: int | None,
+                       budget_usd: float | None = None, qty: int = 1) -> dict:
     """Shared body for the D0/D1 per-performer trip-plan routes.
 
     Plans the maximum-value multi-city itinerary around a performer's upcoming dates within
-    a round-trip km budget. Pure read (v_event_base) + compute — no writes, no upstream API.
-    Engine + planner live in the shared `trip_planner` package.
+    a round-trip km budget — and, when `budget_usd` is given, also within a ticket-spend
+    budget (get-in x max(0, qty - owned), owned tickets free). Pure read (v_event_base +
+    event_listing_snapshot_daily) + compute — no writes, no upstream API.
     """
     from datetime import date, timedelta
 
@@ -1179,9 +1181,11 @@ def _trip_plan_payload(performer_id: int, home_lat: float, home_lon: float,
     start = date.today()
     end = start + timedelta(days=max(1, min(int(days), 730)))
     budget = max(100.0, min(float(budget_km), 50000.0))
+    spend = None if budget_usd is None else max(0.0, min(float(budget_usd), 10_000_000.0))
     return plan_performer_trip(
         db, int(performer_id), float(home_lat), float(home_lon), budget,
         start, end, home_name=(home_name or "Home").strip()[:60], max_events=max_events,
+        budget_usd=spend, qty=max(1, min(int(qty), 50)),
     )
 
 
@@ -1194,15 +1198,17 @@ def broker_performer_trip_plan(
     home_name: str = "Home",
     days: int = 365,
     max_events: int | None = None,
+    budget_usd: float | None = None,
+    qty: int = 1,
     _=Depends(require_auth),
 ):
     """D0 terminal: optimal trip around a touring performer's upcoming concert dates.
 
-    Given a home location + round-trip travel budget, returns the maximum-value itinerary
-    (which shows to attend, in date order) plus the sort-by-date baseline for comparison.
+    Given a home location + travel budget (and optional ticket-spend budget + tickets/show),
+    returns the maximum-value itinerary plus the sort-by-date baseline for comparison.
     """
     return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
-                              home_name, days, max_events)
+                              home_name, days, max_events, budget_usd, qty)
 
 
 def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
@@ -6695,17 +6701,19 @@ def store_performer_trip_plan(
     home_name: str = "Home",
     days: int = 365,
     max_events: int | None = None,
+    budget_usd: float | None = None,
+    qty: int = 1,
 ):
     """D1 store: 'plan a trip around <performer>'.
 
     Consumer-facing. Given a fan's home location + how far they're willing to travel
-    (round-trip km budget), returns the best set of this performer's upcoming shows to
-    attend, in date order, alongside the naive sort-by-date plan for comparison.
+    (and optionally a ticket-spend budget + tickets/show), returns the best set of this
+    performer's upcoming shows to attend, alongside the naive sort-by-date plan.
 
     Shares the optimizer with the D0 broker route via `trip_planner`.
     """
     return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
-                              home_name, days, max_events)
+                              home_name, days, max_events, budget_usd, qty)
 
 
 def _section_sort_key(s: str) -> tuple:

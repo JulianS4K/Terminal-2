@@ -10,8 +10,9 @@ Split so the planning logic is testable offline:
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
+from .budget_optimizer import plan_by_date_2b, plan_optimal_2b
 from .city_centroids import centroid_for
 from .gigtrip.model import Constraints, Event, Itinerary
 from .gigtrip.optimizer import plan_by_date, plan_optimal
@@ -39,7 +40,8 @@ def row_to_event(r: dict) -> Event:
     )
 
 
-def _event_dict(e: Event, csrc: dict[int, str]) -> dict:
+def _event_dict(e: Event, meta: dict[int, dict]) -> dict:
+    m = meta.get(int(e.id), {})
     return {
         "event_id": int(e.id),
         "performer": e.title,
@@ -48,17 +50,34 @@ def _event_dict(e: Event, csrc: dict[int, str]) -> dict:
         "date": e.day.isoformat(),
         "lat": e.lat,
         "lon": e.lon,
-        "coord_source": csrc.get(int(e.id), "venue"),  # "venue" (precise) | "city" (centroid)
+        "coord_source": m.get("coord_source", "venue"),  # "venue" (precise) | "city" (centroid)
+        "owned": m.get("owned"),                          # EVO owned tickets at this event
+        "getin": m.get("getin"),                          # EVO retail get-in price
+        "ticket_cost": m.get("ticket_cost"),              # getin x max(0, qty - owned)
+        "cost_known": m.get("cost_known", True),
     }
 
 
-def _itin_dict(it: Itinerary, csrc: dict[int, str]) -> dict:
+def _itin_dict(it: Itinerary, meta: dict[int, dict]) -> dict:
     return {
         "count": it.count,
         "value": round(it.value, 4),
         "travel_km": round(it.travel_km, 1),
-        "events": [_event_dict(e, csrc) for e in it.events],
+        "spend_usd": round(sum((meta.get(int(e.id), {}).get("ticket_cost") or 0.0)
+                               for e in it.events), 2),
+        "events": [_event_dict(e, meta) for e in it.events],
     }
+
+
+def _ticket_cost(getin, owned, qty: int):
+    """Cost to attend a show with `qty` tickets — owned tickets are free.
+    Returns (cost, known); an unknown price with a remaining buy-need -> (0.0, False)."""
+    need = max(0, qty - int(owned or 0))
+    if need == 0:
+        return 0.0, True                 # fully covered by tickets we already own
+    if getin is None:
+        return 0.0, False                # price unknown -> don't let it block the budget
+    return round(float(getin) * need, 2), True
 
 
 # --------------------------------------------------------------------------- #
@@ -66,37 +85,65 @@ def _itin_dict(it: Itinerary, csrc: dict[int, str]) -> dict:
 # --------------------------------------------------------------------------- #
 def plan_from_rows(rows: list[dict], home: dict, budget_km: float,
                    start: date, end: date, prefs: dict[str, float] | None = None,
-                   max_events: int | None = None,
-                   max_km_per_day: float = 1200.0) -> dict:
+                   max_events: int | None = None, max_km_per_day: float = 1200.0,
+                   budget_usd: float | None = None, qty: int = 1) -> dict:
     """Build the optimal itinerary (and the sort-by-date baseline) from raw rows.
 
     `home` is {"name", "lat", "lon"}. `prefs` maps lowercased performer title -> weight;
-    when omitted every distinct performer is weighted 1.0 (the single-performer case is
-    just the uniform-weight degenerate of the general multi-performer optimizer).
+    when omitted every distinct performer is weighted 1.0.
+
+    When `budget_usd` is given, the trip must also fit a ticket-spend budget: each show
+    costs `getin x max(0, qty - owned)` (owned tickets free), pulled from `_getin`/`_owned`
+    attached to the rows. Travel-km and spend are then BOTH enforced by the 2-budget solver.
     """
     usable = [r for r in rows if r.get("venue_lat") is not None
               and r.get("venue_lon") is not None]
     events = [row_to_event(r) for r in usable]
-    csrc = {int(r["tevo_event_id"]): r.get("_coord_source", "venue") for r in usable}
     if prefs is None:
         prefs = {e.title.lower(): 1.0 for e in events}
+
+    qty = max(1, int(qty or 1))
+    costs: dict[int, float] = {}
+    meta: dict[int, dict] = {}
+    n_unpriced = 0
+    for r in usable:
+        eid = int(r["tevo_event_id"])
+        getin, owned = r.get("_getin"), r.get("_owned")
+        cst, known = _ticket_cost(getin, owned, qty)
+        if not known:
+            n_unpriced += 1
+        costs[eid] = cst
+        meta[eid] = {
+            "coord_source": r.get("_coord_source", "venue"),
+            "owned": int(owned) if owned is not None else None,
+            "getin": round(float(getin), 2) if getin is not None else None,
+            "ticket_cost": cst,
+            "cost_known": known,
+        }
 
     c = Constraints(
         home_name=home["name"], home_lat=float(home["lat"]), home_lon=float(home["lon"]),
         start=start, end=end, max_travel_km=float(budget_km),
         max_events=max_events, max_km_per_day=max_km_per_day,
     )
-    optimal = plan_optimal(events, prefs, c)
-    baseline = plan_by_date(events, prefs, c)
+
+    if budget_usd is not None:
+        optimal, _ = plan_optimal_2b(events, prefs, c, costs, float(budget_usd))
+        baseline, _ = plan_by_date_2b(events, prefs, c, costs, float(budget_usd))
+    else:
+        optimal = plan_optimal(events, prefs, c)
+        baseline = plan_by_date(events, prefs, c)
 
     titles = sorted({e.title for e in events})
     performer_label = titles[0] if len(titles) == 1 else f"{len(titles)} performers"
-    n_city = sum(1 for v in csrc.values() if v == "city")
+    n_city = sum(1 for m in meta.values() if m["coord_source"] == "city")
 
     return {
         "performer": performer_label,
         "home": home,
         "budget_km": float(budget_km),
+        "budget_usd": float(budget_usd) if budget_usd is not None else None,
+        "qty_per_show": qty,
         "window": {"start": start.isoformat(), "end": end.isoformat()},
         "tour_date_count": len(events),
         "coord_coverage": {
@@ -104,10 +151,11 @@ def plan_from_rows(rows: list[dict], home: dict, budget_km: float,
             "city_fallback": n_city,              # approximated to city centroid
             "dropped_no_coords": len(rows) - len(usable),  # neither available -> excluded
         },
-        "optimal": _itin_dict(optimal, csrc),
-        "baseline_by_date": _itin_dict(baseline, csrc),
+        "unpriced_events": n_unpriced,
+        "optimal": _itin_dict(optimal, meta),
+        "baseline_by_date": _itin_dict(baseline, meta),
         "shows_gained": optimal.count - baseline.count,
-        "all_dates": [_event_dict(e, csrc) for e in sorted(events, key=lambda e: (e.day, e.id))],
+        "all_dates": [_event_dict(e, meta) for e in sorted(events, key=lambda e: (e.day, e.id))],
     }
 
 
@@ -157,15 +205,51 @@ def _apply_coord_fallback(db, rows: list[dict]) -> None:
             r["venue_lat"], r["venue_lon"], r["_coord_source"] = c[0], c[1], "city"
 
 
+def fetch_event_costs(db, ids: list[int], lookback_days: int = 21) -> dict[int, dict]:
+    """Latest EVO get-in price + owned-ticket count per event, from event_listing_snapshot_daily.
+
+    Returns {event_id: {"getin": float|None, "owned": int}}; events with no recent snapshot
+    are simply absent (treated as no price / 0 owned downstream).
+    """
+    if not ids:
+        return {}
+    since = (date.today() - timedelta(days=lookback_days)).isoformat()
+    rows = (db.table("event_listing_snapshot_daily")
+            .select("event_id, evo_retail_getin, evo_owned_tickets, captured_at")
+            .in_("event_id", ids)
+            .gte("snapshot_date", since)
+            .order("captured_at", desc=True)
+            .limit(4000)
+            .execute().data) or []
+    out: dict[int, dict] = {}
+    for r in rows:
+        eid = int(r["event_id"])
+        if eid in out:                       # first seen = latest (ordered captured_at desc)
+            continue
+        g = r.get("evo_retail_getin")
+        out[eid] = {
+            "getin": float(g) if g is not None else None,
+            "owned": int(r.get("evo_owned_tickets") or 0),
+        }
+    return out
+
+
 def plan_performer_trip(db, performer_id: int, home_lat: float, home_lon: float,
                         budget_km: float, start: date, end: date,
                         home_name: str = "Home", max_events: int | None = None,
-                        max_km_per_day: float = 1200.0) -> dict:
-    """End-to-end: pull a performer's upcoming dates and plan the optimal trip."""
+                        max_km_per_day: float = 1200.0,
+                        budget_usd: float | None = None, qty: int = 1) -> dict:
+    """End-to-end: pull a performer's upcoming dates (+ EVO price/owned) and plan the trip."""
     rows = fetch_performer_rows(db, performer_id, start, end)
     _apply_coord_fallback(db, rows)
+    costs = fetch_event_costs(db, [int(r["tevo_event_id"]) for r in rows])
+    for r in rows:
+        c = costs.get(int(r["tevo_event_id"]))
+        if c:
+            r["_getin"], r["_owned"] = c["getin"], c["owned"]
     home = {"name": home_name, "lat": home_lat, "lon": home_lon}
     payload = plan_from_rows(rows, home, budget_km, start, end,
-                             max_events=max_events, max_km_per_day=max_km_per_day)
+                             max_events=max_events, max_km_per_day=max_km_per_day,
+                             budget_usd=budget_usd, qty=qty)
     payload["performer_id"] = int(performer_id)
     return payload
