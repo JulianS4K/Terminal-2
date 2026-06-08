@@ -2433,7 +2433,7 @@
     { pane: 'paneShListings', label: 'StubHub',      url: d => d.td && d.td.SH },
     { pane: 'paneGtListings', label: 'GameTime',     url: d => d.td && d.td.GT },
     { pane: 'paneVdListings', label: 'VividSeats',   url: d => d.td && d.td.VD },
-    { pane: 'paneTpListings', label: 'TickPick',     url: d => d.td && d.td.TP },
+    // TP source-link removed 2026-06-07: paneTpListings deleted (TickPick demoted to opt-in)
     { pane: 'paneTmListings', label: 'Ticketmaster', url: d => d.td && d.td.TM },
   ];
 
@@ -3148,7 +3148,7 @@
   const _tabState = { loaded: {
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
-    'tp-listings': false, 'tm-listings': false,
+    'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
     'sg-sales': false, 'our-orders': false, 'alerts': false,
   } };
 
@@ -3175,10 +3175,6 @@
       } else if (tabId === 'vd-listings' && !_tabState.loaded['vd-listings']) {
         _tabState.loaded['vd-listings'] = true;
         await loadTdPlatformListings(eventId, 'VD');
-        updateTdListingsTabCount();
-      } else if (tabId === 'tp-listings' && !_tabState.loaded['tp-listings']) {
-        _tabState.loaded['tp-listings'] = true;
-        await loadTdPlatformListings(eventId, 'TP');
         updateTdListingsTabCount();
       } else if (tabId === 'tm-listings' && !_tabState.loaded['tm-listings']) {
         _tabState.loaded['tm-listings'] = true;
@@ -3225,7 +3221,6 @@
       'sh-listings':  'paneShListings',
       'gt-listings':  'paneGtListings',
       'vd-listings':  'paneVdListings',
-      'tp-listings':  'paneTpListings',
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'td-markets':   'paneTdMarkets',
@@ -4120,7 +4115,7 @@
   // count each loadTdPlatformListings() writes into its section meta ("<n> rows · …").
   // Idempotent: updates all three chips on every call.
   function updateTdListingsTabCount() {
-    for (const plat of ['Sh', 'Gt', 'Vd', 'Tp', 'Tm']) {
+    for (const plat of ['Sh', 'Gt', 'Vd', 'Tm']) {  // Tp removed 2026-06-07 (demoted to opt-in)
       const chip = document.getElementById('tabCount' + plat + 'Listings');
       if (!chip) continue;
       const meta = document.getElementById('tdListings' + plat + 'Meta');
