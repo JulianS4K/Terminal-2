@@ -592,7 +592,10 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         # Skip CORS preflight + healthcheck — preflights aren't load-bearing.
-        if request.method == "OPTIONS" or path in ("/", "/health"):
+        # Render polls /healthz (render.yaml healthCheckPath) frequently from one
+        # IP; exempt the REAL liveness path so those polls don't trip the per-IP
+        # rate cap. (/health never existed as a route — A1-OPS-5.)
+        if request.method == "OPTIONS" or path in ("/", "/healthz"):
             return await call_next(request)
         # Trust X-Forwarded-For when present (Railway sets it). Fall back to
         # request.client. First entry of XFF is the original client.
