@@ -12,8 +12,9 @@
 -- reproduced verbatim from the live prod definition (pg_get_functiondef,
 -- 2026-06-08) so CREATE OR REPLACE is a faithful one-line edit.
 --
--- ⏳ NOT YET APPLIED — pending operator apply_migration (no prod mutation here).
---    After apply, change this banner to "Already applied to prod  Applied via MCP YYYY-MM-DD".
+-- ✅ Already applied to prod  Applied via MCP 2026-06-08.
+--    Verified: td_normalize_drain 402-branch jobname list now includes
+--    td_enqueue_peak_tp + td_enqueue_peak_tm.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.td_normalize_drain(p_max integer DEFAULT 50)
