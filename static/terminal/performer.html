@@ -25,12 +25,13 @@
     .trip-stats .ts-num { font-size: 22px; font-weight: 700; display: block; line-height: 1.1; }
     .trip-stats .ts-num.gain { color: var(--good, #4ade80); }
     .trip-stats .ts-lbl { font-size: 11px; color: var(--muted, #9aa); }
-    .trip-row { display: flex; gap: 14px; padding: 7px 4px; border-bottom: 1px solid rgba(255,255,255,.06); align-items: baseline; font-size: 13px; }
+    .trip-row { display: flex; gap: 14px; padding: 4px 4px; border-bottom: 1px solid rgba(255,255,255,.06); align-items: baseline; font-size: 12px; }
     .trip-row.skip { opacity: .4; }
-    .trip-row .tr-date { width: 110px; color: var(--muted, #9aa); font-variant-numeric: tabular-nums; }
-    .trip-row .tr-city { width: 120px; font-weight: 600; }
+    .trip-row .tr-date { width: 104px; color: var(--muted, #9aa); font-variant-numeric: tabular-nums; }
+    .trip-row .tr-city { width: 116px; font-weight: 600; }
     .trip-row .tr-go { margin-left: auto; color: var(--good, #4ade80); font-size: 11px; }
-    .trip-map { margin: 6px 0 14px; background: var(--panel, #14141b); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 6px; }
+    .trip-list { max-height: 280px; overflow-y: auto; margin-top: 4px; }
+    .trip-map { max-width: 460px; margin: 6px 0 14px; background: var(--panel, #14141b); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 5px; }
     .trip-map-svg { width: 100%; height: auto; display: block; }
     .tm-route { fill: none; stroke: var(--good, #4ade80); stroke-width: 1.6; stroke-opacity: .75; stroke-linejoin: round; stroke-dasharray: 5 3; }
     .tm-go { fill: var(--good, #4ade80); stroke: #0a0a0a; stroke-width: 1; }
