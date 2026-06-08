@@ -78,6 +78,26 @@
   // first paint to one clean line per source instead of 9 overlapping lines.
   ['prices_nonowned', 'sg_own_med'].forEach(k => _chartVisible.set(k, false));
 
+  // D0-PROD-3: persist legend visibility across reloads. `_chartVisible` is a
+  // single shared map across both panes (keys are globally unique), so one
+  // localStorage key holds the whole map — a display preference that's global
+  // across events, not per-event. Rehydrate AFTER the default seeds above so a
+  // saved pref wins over the default; keys the user never touched stay default.
+  // Same pattern as _showAlerts / _showEspn above.
+  const _CHART_VIS_LS_KEY = 'd0_chart_visible';
+  function _persistChartVisible() {
+    try { localStorage.setItem(_CHART_VIS_LS_KEY, JSON.stringify(Object.fromEntries(_chartVisible))); } catch (_) {}
+  }
+  (function _rehydrateChartVisible() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const obj = JSON.parse(localStorage.getItem(_CHART_VIS_LS_KEY) || 'null');
+      if (obj && typeof obj === 'object') {
+        Object.entries(obj).forEach(([k, v]) => { if (typeof v === 'boolean') _chartVisible.set(k, v); });
+      }
+    } catch (_) {}
+  })();
+
   // Phase 1b: <MoverChip> — appends a movers-index chip to evBadges if this
   // event is currently in the merged-7d slot of event_movers_index. Async +
   // best-effort; no chip if the event is not in the index or preload fails.
@@ -1378,6 +1398,7 @@
         const key = node.getAttribute('data-key');
         const cur = _chartVisible.get(key) !== false;
         _chartVisible.set(key, !cur);
+        _persistChartVisible();            // D0-PROD-3: survive reloads
         if (instance && build) {
           const idx = build.specs.findIndex(s => s.key === key);
           if (idx >= 0) instance.setSeries(idx + 1 /* +1 for time series */, { show: !cur });
@@ -1419,6 +1440,7 @@
   // Toggle one series' visibility on whichever pane owns it (price or inv).
   function setSeriesVisible(key, show) {
     _chartVisible.set(key, show);
+    _persistChartVisible();              // D0-PROD-3: survive reloads (source-group toggles)
     const tryPane = (build, inst) => {
       if (!build || !build.specs || !inst) return false;
       const i = build.specs.findIndex(s => s.key === key);
