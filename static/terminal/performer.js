@@ -118,6 +118,7 @@
       _tabState.portfolio = (portfolio && !portfolio.__err) ? portfolio : null;
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
+      try { initDailyMetrics(performerId, portfolio); } catch (e) { console.error('dailyMetrics', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
       try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
     });
@@ -366,6 +367,145 @@
     setText('ruOwnedShare',     ag.owned_share_weighted != null ? T.fmtPct(ag.owned_share_weighted * 100, 1) : '—');
     setText('ruRetailMedAvg',   ag.retail_median_avg_weighted ? '$' + T.fmtNum(Math.round(ag.retail_median_avg_weighted)) : '—');
     setText('ruEventsWithOwned', T.fmtNum(ag.events_with_owned));
+  }
+
+  // ---------- Cross-event daily metrics (Overview) ----------
+  //
+  // Surfaces the STORED performer-level timeseries (performer_metrics_daily,
+  // refreshed every 4h) via get_performer_metrics_daily(id, days, split). Unlike
+  // the live PORTFOLIO ROLLUP above (computed from /api/portfolio at request time),
+  // this is the persisted daily roll-up across ALL of the performer's events:
+  // per-source inventory (EVO/SG, all + owned), amalgam price band (get-in
+  // min/median, price min/median/p90), and owned-book notional — with day-over-day
+  // deltas + 90d sparklines. Sports performers also get home/away splits.
+
+  function initDailyMetrics(performerId, portfolio) {
+    const isSports = !!(portfolio && !portfolio.__err && portfolio.is_sports_performer);
+    const splitNav = document.getElementById('pdmSplit');
+    if (splitNav) {
+      if (isSports) {
+        splitNav.removeAttribute('hidden');
+        splitNav.addEventListener('click', (e) => {
+          const b = e.target.closest('.event-tab');
+          if (!b) return;
+          splitNav.querySelectorAll('.event-tab').forEach((x) => {
+            const on = x === b;
+            x.classList.toggle('active', on);
+            x.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+          loadDailyMetrics(performerId, b.dataset.split);
+        });
+      } else {
+        splitNav.setAttribute('hidden', '');
+      }
+    }
+    loadDailyMetrics(performerId, 'all');
+  }
+
+  async function loadDailyMetrics(performerId, split) {
+    const sec = document.getElementById('perf-daily-metrics');
+    const body = document.getElementById('pdmBody');
+    if (!sec || !body) return;
+    sec.removeAttribute('hidden');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">daily metrics need auth — sign in with @s4kent.com</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading daily metrics…</div>';
+    const res = await Auth.client.rpc('get_performer_metrics_daily', {
+      p_performer_id: performerId, p_days: 90, p_split: split || 'all',
+    });
+    if (res.error) {
+      body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
+      return;
+    }
+    renderDailyMetrics(res.data || [], split || 'all');
+  }
+
+  function renderDailyMetrics(rows, split) {
+    const body = document.getElementById('pdmBody');
+    const meta = document.getElementById('pdmMeta');
+    if (!body) return;
+    if (!rows.length) {
+      if (meta) meta.textContent = '';
+      body.innerHTML = `<div class="empty">no daily metrics stored yet for this performer${split && split !== 'all' ? ' (' + escapeHtml(split) + ')' : ''}</div>`;
+      return;
+    }
+    const latest = rows[rows.length - 1];
+    const prev = rows.length > 1 ? rows[rows.length - 2] : null;
+    if (meta) meta.textContent = `${rows.length} day${rows.length === 1 ? '' : 's'} · latest ${dayLabel(latest.snapshot_date)} · split: ${split || 'all'}`;
+
+    const usd = (v) => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+    const cell = (num, lbl, extra) => `<div class="ru-cell"><span class="ru-num">${num}${extra || ''}</span><span class="ru-lbl">${lbl}</span></div>`;
+    const d = (cur, prv) => prv ? deltaChip(cur, prv) : '';
+
+    const kpis = [
+      cell(T.fmtNum(latest.event_count), 'events'),
+      cell(T.fmtNum(latest.evo_tickets_total), 'EVO tix (all)'),
+      cell(T.fmtNum(latest.evo_owned_tickets_total), 'EVO tix (owned)'),
+      cell(T.fmtNum(latest.sg_all_tickets_total), 'SG tix (all)'),
+      cell(T.fmtNum(latest.sg_owned_tickets_total), 'SG tix (owned)'),
+      cell(usd(latest.getin_min), 'get-in min', d(latest.getin_min, prev && prev.getin_min)),
+      cell(usd(latest.getin_median), 'get-in median'),
+      cell(usd(latest.price_min), 'price min'),
+      cell(usd(latest.price_median), 'price median', d(latest.price_median, prev && prev.price_median)),
+      cell(usd(latest.price_p90), 'price p90'),
+      cell(usd(latest.owned_book_notional), 'owned book notional', d(latest.owned_book_notional, prev && prev.owned_book_notional)),
+    ].join('');
+
+    const sparkPrice = sparkline(rows.map((r) => numOrNull(r.price_median)));
+    const sparkGetin = sparkline(rows.map((r) => numOrNull(r.getin_min)));
+    const sparkInv   = sparkline(rows.map((r) => numOrNull(r.evo_owned_tickets_total)));
+    const n = rows.length;
+    const trends = `
+      <div class="pdm-trends">
+        ${sparkPrice ? `<div class="pdm-trend"><div class="pt-lbl">price median · last ${n}d</div><div class="pt-val">${usd(latest.price_median)}</div>${sparkPrice}</div>` : ''}
+        ${sparkGetin ? `<div class="pdm-trend"><div class="pt-lbl">get-in min · last ${n}d</div><div class="pt-val">${usd(latest.getin_min)}</div>${sparkGetin}</div>` : ''}
+        ${sparkInv   ? `<div class="pdm-trend"><div class="pt-lbl">owned EVO tix · last ${n}d</div><div class="pt-val">${T.fmtNum(latest.evo_owned_tickets_total)}</div>${sparkInv}</div>` : ''}
+      </div>`;
+
+    body.innerHTML = `<div class="rollup-grid">${kpis}</div>${trends}`;
+  }
+
+  function numOrNull(v) {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Day-over-day percent-change chip (direction-coloured, like .chart-move).
+  function deltaChip(cur, prv) {
+    const a = numOrNull(cur), b = numOrNull(prv);
+    if (a === null || b === null || b === 0) return '';
+    const pct = (a - b) / Math.abs(b) * 100;
+    if (Math.abs(pct) < 0.05) return '';
+    const cls = pct >= 0 ? 'up' : 'down';
+    return ` <span class="pdm-delta ${cls}">${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%</span>`;
+  }
+
+  // Minimal CSP-safe inline sparkline (no external libs). Skips null gaps.
+  function sparkline(series, w, h) {
+    w = w || 240; h = h || 40;
+    const pts = series.map((v, i) => [i, v]).filter((p) => p[1] !== null);
+    if (pts.length < 2) return '';
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+    const pad = 3;
+    const proj = (x, y) => [pad + (x - minX) / spanX * (w - 2 * pad), h - pad - (y - minY) / spanY * (h - 2 * pad)];
+    const dPath = pts.map((p, i) => { const [px, py] = proj(p[0], p[1]); return (i ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1); }).join(' ');
+    const lastP = pts[pts.length - 1];
+    const [lx, ly] = proj(lastP[0], lastP[1]);
+    return `<svg class="pdm-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="trend">`
+      + `<path d="${dPath}"/><circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2"/></svg>`;
+  }
+
+  function dayLabel(d) {
+    if (!d) return '—';
+    try { return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch (_) { return d; }
   }
 
   // ---------- Events list ----------
