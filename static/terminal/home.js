@@ -425,7 +425,8 @@
         <th class="num">T-days</th>
         <th class="num" title="7-day moving average of daily sales (distinct sg_sale_id / day)">Vol/day</th>
         <th class="num" title="7-day moving average of daily sales median price">Med px</th>
-        <th class="num" title="7-day MA daily gross (volume × median, approx)">GMV/day</th>
+        <th class="num" title="SeatGeek 7-day MA daily gross (volume × median, approx)">GMV/day SG</th>
+        <th class="num" title="SeatData (StubHub-primary) sold comps: 7-day MA of daily gross (Σ price×qty). Blank until SeatData has sales for the event.">GMV/day SD</th>
         <th class="num" title="Chart score = percentile(volume) + percentile(median), 0–2">Score</th>
         <th class="num" title="Best rank achieved · days on chart">Peak·On</th>
       </tr></thead>
@@ -453,6 +454,7 @@
         <td class="num">${r.ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume))}</td>
         <td class="num">${money(r.ma7_median)}</td>
         <td class="num">${money(r.ma7_gross)}</td>
+        <td class="num" title="${r.sd_sales_7d == null ? 'no SeatData sales yet' : r.sd_sales_7d + ' SeatData sale rows in last 7d'}">${money(r.sd_ma7_gross)}</td>
         <td class="num" title="vol pct ${r.pct_volume} · med pct ${r.pct_median}"><strong>${score}</strong></td>
         <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
       tb.appendChild(tr);
