@@ -186,19 +186,20 @@
       // module-level cache populated by loadSgZonesSplits (parallel fetch);
       // each panel re-renders whenever either side updates.
       safe('splits',     () => setSplitsTevo(data.splits));
-      safe('zones',      () => setZonesTevo(zones, data.zone_deltas));
+      // Zones panel removed (2026-06-08) — splits remain; SG zone/split data still
+      // loads via loadSgZonesSplits (renderZones no-ops without its DOM node).
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
       // Weather now lazy-loaded via loadWeatherLocalized (drops global-alert path).
-      safe('allOrders',  () => renderAllOrders(orders, data.cross_source_orders));
+      // ORDERS — ALL SOURCES panel removed (2026-06-08) — covered by the Our Orders tab.
       safe('coverage',   () => renderCoverage(cadences, overview, data.freshness, bridge));
       safe('freshness',  () => renderFreshness(data.freshness));
-      safe('alerts',     () => renderAlerts(data.event_alerts));
+      // EVENT ALERTS panel removed (2026-06-08); chart alert markers still use data.event_alerts above.
       // v3 enrichments
       safe('brokerSales',      () => setBrokerSalesData(data));
       safe('velocityChips',    () => renderVelocityChips(data.velocity));
       safe('competingEvents',  () => renderCompetingEvents(data.competing_events));
-      safe('recentListings',   () => renderRecentListings(data.recent_listings));
+      // RECENT TEVO LISTINGS panel removed (2026-06-08).
       safe('performerEspn',    () => renderPerformerEspn(data.performer_espn_context, data.performer));
       safe('lastSnapshot',     () => renderLastSnapshot(data.chart_data));
       // Cross-source panel: re-render now that we have v3's sg_broker_sales
@@ -323,8 +324,6 @@
       const lblTxt = sel.options[sel.selectedIndex].textContent;
       const lbl = document.getElementById('chartCompositeRangeLabel');
       if (lbl) lbl.textContent = lblTxt;
-      const aw = document.getElementById('alertsWindow');
-      if (aw) aw.textContent = lblTxt;
       updateLayerHint(hrs);
       _chartExtStatePrice.payload = undefined;
       _chartExtStateInv.payload   = undefined;
