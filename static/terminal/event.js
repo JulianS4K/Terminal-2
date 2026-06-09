@@ -23,6 +23,7 @@
   // each pane keeps its own state cache + tooltip. No cursor sync.
   let _chartInstances = { price: null, inv: null };
   let _lastPayload = null;
+  let _axsSeries = null;   // {prices_axs:[{t,v}], counts_axs:[{t,v}]} — AXS box office, fetched out-of-band
   // Per-chart window (hours). Default 168h (7d) on first load.
   let _chartPriceHours = DEFAULT_HOURS;
   let _chartInvHours   = DEFAULT_HOURS;
@@ -225,6 +226,8 @@
       // Cross-source panel: re-render now that we have v3's sg_broker_sales
       // available (overrides sold_price_median for "Realized sale median" row).
       safe('crossSourceRerender', () => rerenderCrossSourceWithV3(data));
+      // AXS box-office chart series (fire-and-forget; merges into both charts on land)
+      loadAxsChartSeries(eventId).catch(e => console.error('[axs-series]', e));
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
     } catch (e) {
@@ -476,7 +479,12 @@
   }
 
   function adaptChart(c) {
-    if (!c) return { prices_owned: [], prices_market: [], prices_nonowned: [], counts_owned: [], counts_market: [] };
+    // AXS box-office series are fetched out-of-band (separate source from the v2
+    // event_metrics payload) and stashed in _axsSeries; merge them in here so
+    // every adaptChart caller renders them on the price + inventory charts.
+    const axs = _axsSeries || { prices_axs: [], counts_axs: [] };
+    if (!c) return { prices_owned: [], prices_market: [], prices_nonowned: [], counts_owned: [], counts_market: [],
+                     prices_axs: axs.prices_axs || [], counts_axs: axs.counts_axs || [] };
     const rows = c.event_metrics_series || [];
     const slice = (col) => rows.map(r => ({ t: r.captured_at, v: r[col] == null ? null : Number(r[col]) }));
     return {
@@ -485,6 +493,8 @@
       prices_nonowned: slice('nonowned_median_retail'),
       counts_owned:    slice('owned_tickets_count'),
       counts_market:   slice('tickets_count'),
+      prices_axs:      axs.prices_axs || [],
+      counts_axs:      axs.counts_axs || [],
       range: c.range || null,
     };
   }
@@ -874,6 +884,7 @@
       { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
       { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
+      { key: 'prices_axs',      label: 'AXS box office', color: '#38bdf8', width: 1.75, dash: null, data: chart.prices_axs || [] },
     ];
     const { xs } = buildSeriesData(specs);
 
@@ -1100,6 +1111,7 @@
       { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
       { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
       { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
+      { key: 'counts_axs',    label: 'AXS listings',   color: '#38bdf8', width: 1.75, dash: null,  scale: 'y',  data: chart.counts_axs || [] },
       // Market sales (right axis) — STACKED: SG (bottom) + SeatData (top) per
       // bucket. SeatData is listed first so it draws BEHIND at the cumulative
       // height (SG+SeatData); SG draws after with an opaque fill, overdrawing the
@@ -1421,6 +1433,7 @@
     { src: 'SH',   color: '#f97316', keys: ['td_sh_med', 'td-sh-cnt'] },
     { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
     { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
+    { src: 'AXS',  color: '#38bdf8', keys: ['prices_axs', 'counts_axs'] },
   ];
 
   // Which series keys currently carry real data (scanning both build caches).
@@ -4342,6 +4355,23 @@
     host.appendChild(tbl);
     body.innerHTML = '';
     body.appendChild(host);
+  }
+
+  // ---------- AXS Box Office — chart series (median price + listing count) ----------
+  async function loadAxsChartSeries(eventId) {
+    try {
+      const d = await T.api(`/api/axs/event/${eventId}/series`);
+      _axsSeries = { prices_axs: (d && d.prices_axs) || [], counts_axs: (d && d.counts_axs) || [] };
+    } catch (e) {
+      _axsSeries = { prices_axs: [], counts_axs: [] };
+    }
+    // Re-render both charts now that AXS series are available.
+    if (_lastPayload && _lastPayload.chart_data) {
+      const chart = adaptChart(_lastPayload.chart_data);
+      safe('chartPrice',     () => renderChartPrice(chart, _lastPayload.event_alerts));
+      safe('chartInventory', () => renderChartInventory(chart));
+      safe('chartLegends',   () => refreshChartLegends());
+    }
   }
 
   // ---------- AXS Box Office — sections (latest snapshot) ----------
