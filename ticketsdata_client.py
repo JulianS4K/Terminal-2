@@ -48,7 +48,14 @@ SUPPORTED_PLATFORMS = frozenset({
 # broker crons), so we must NOT pay TicketsData to re-fetch them. fetch()/events()
 # reject these — use the native pipeline instead. (/match is unaffected: its value
 # is the cross-market comparison, which legitimately includes SeatGeek.)
-EXCLUDED_PLATFORMS = frozenset({"seatgeek"})
+NATIVE_PLATFORMS = frozenset({"seatgeek"})
+
+# Operator-disabled markets (directive 2026-06-09): not pulled on any source
+# sweep. /fetch rejects them; /match callers should filter them from the
+# comparison via OPERATOR_DISABLED_PLATFORMS.
+OPERATOR_DISABLED_PLATFORMS = frozenset({"dice", "eventbrite"})
+
+EXCLUDED_PLATFORMS = NATIVE_PLATFORMS | OPERATOR_DISABLED_PLATFORMS
 
 # Credit cost per endpoint, per the TicketsData docs. Used by callers and the
 # MVP budget guard to project spend BEFORE making a call.
@@ -86,10 +93,14 @@ def _validate_platform(platform: str) -> str:
         raise TicketsDataError(
             f"unsupported platform {platform!r}; one of {sorted(SUPPORTED_PLATFORMS)}"
         )
-    if plat in EXCLUDED_PLATFORMS:
+    if plat in NATIVE_PLATFORMS:
         raise TicketsDataError(
             f"{plat} is sourced natively, not via TicketsData — excluded to avoid "
             "duplicate paid fetches. Use the native pipeline (seatgeek_client)."
+        )
+    if plat in OPERATOR_DISABLED_PLATFORMS:
+        raise TicketsDataError(
+            f"{plat} is operator-disabled (2026-06-09) — not pulled on any source sweep."
         )
     return plat
 
