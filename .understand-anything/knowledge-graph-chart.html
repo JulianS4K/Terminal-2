@@ -9,7 +9,7 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden}
   #app{position:fixed;inset:0}
-  canvas{display:block;position:absolute;inset:0;cursor:grab}
+  canvas{display:block;position:absolute;top:0;left:0;width:100%;height:100%;cursor:grab}
   canvas.drag{cursor:grabbing}
   .top{position:absolute;top:0;left:0;right:0;height:50px;display:flex;align-items:center;gap:14px;padding:0 16px;background:rgba(22,27,34,.92);border-bottom:1px solid var(--border);backdrop-filter:blur(6px);z-index:5}
   .top h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.3px}
@@ -80,17 +80,17 @@ let scale=0.5, tx=0, ty=0, DPR=1;
 function fit(){
   let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
   for(const n of N){ if(n.x<minx)minx=n.x; if(n.y<miny)miny=n.y; if(n.x>maxx)maxx=n.x; if(n.y>maxy)maxy=n.y; }
-  const w=cv.clientWidth||window.innerWidth,h=cv.clientHeight||window.innerHeight,gw=(maxx-minx)||1,gh=(maxy-miny)||1;
+  const w=window.innerWidth,h=window.innerHeight,gw=(maxx-minx)||1,gh=(maxy-miny)||1;
   scale=Math.min(w/(gw+240), h/(gh+240))*0.95;
   if(!isFinite(scale)||scale<=0) scale=0.15;
   tx=w/2-(minx+maxx)/2*scale; ty=h/2-(miny+maxy)/2*scale;
 }
 const visible=n=> !hidden[n.l] && (showFns || !isFn(n.t));
-function resize(){ DPR=window.devicePixelRatio||1; cv.width=cv.clientWidth*DPR; cv.height=cv.clientHeight*DPR; draw(); }
+function resize(){ DPR=window.devicePixelRatio||1; cv.width=window.innerWidth*DPR; cv.height=window.innerHeight*DPR; draw(); }
 let hlNode=null, selNode=null;
 function draw(){
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);
+  ctx.clearRect(0,0,window.innerWidth,window.innerHeight);
   ctx.save(); ctx.translate(tx,ty); ctx.scale(scale,scale);
   if(showEdges && scale>0.1){
     ctx.lineWidth=0.6/scale;
@@ -169,7 +169,7 @@ function focusIds(ids){
   const set=new Set(ids), pts=N.filter(n=>set.has(n.id)); if(!pts.length)return;
   pts.forEach(n=>{hidden[n.l]=false;}); if(pts.some(n=>isFn(n.t))){showFns=true;document.getElementById("showFns").checked=true;}
   let cx=0,cy=0; pts.forEach(n=>{cx+=n.x;cy+=n.y;}); cx/=pts.length; cy/=pts.length;
-  scale=1.5; tx=cv.clientWidth/2-cx*scale; ty=cv.clientHeight/2-cy*scale;
+  scale=1.5; tx=window.innerWidth/2-cx*scale; ty=window.innerHeight/2-cy*scale;
   select(pts[0]);
   document.querySelectorAll(".lrow").forEach((r,i)=>r.classList.toggle("off",!!hidden[Layers[i].id]));
   draw();
