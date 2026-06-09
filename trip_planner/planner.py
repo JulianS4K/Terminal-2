@@ -11,6 +11,7 @@ Split so the planning logic is testable offline:
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from math import cos, radians
 
 from .budget_optimizer import plan_by_date_2b, plan_optimal_2b
 from .city_centroids import centroid_for
@@ -546,3 +547,90 @@ def plan_multi_performer_tour(db, performer_ids: list[int], home_lat: float, hom
                                clear_at, away_margin, max_events, section_like, prefer_owned)
     payload["performer_ids"] = [int(p) for p in performer_ids]
     return payload
+
+
+# --------------------------------------------------------------------------- #
+# Reverse discovery — "what tours can I catch near me?" (location-first)
+# --------------------------------------------------------------------------- #
+def _miles(lat1, lon1, lat2, lon2) -> float:
+    from .gigtrip.distance import haversine_km
+    return haversine_km(lat1, lon1, lat2, lon2) * 0.621371
+
+
+def rank_tours_near(events: list[dict], lat: float, lon: float, within_mi: float,
+                    min_shows: int) -> list[dict]:
+    """Pure: group nearby events by performer into candidate 'tours' (>= min_shows reachable)."""
+    by_perf: dict = {}
+    for e in events:
+        vl, vo = e.get("venue_lat"), e.get("venue_lon")
+        if vl is None or vo is None:
+            continue
+        mi = _miles(lat, lon, float(vl), float(vo))
+        if mi > within_mi:
+            continue
+        by_perf.setdefault(e.get("tevo_performer_id"), []).append({**e, "_mi": mi})
+
+    tours: list[dict] = []
+    for pid, evs in by_perf.items():
+        if pid is None or len(evs) < min_shows:
+            continue
+        evs.sort(key=lambda x: str(x.get("event_date")))
+        cities = sorted({x.get("venue_city") for x in evs if x.get("venue_city")})
+        tours.append({
+            "performer": evs[0].get("primary_performer_name"),
+            "performer_id": int(pid),
+            "event_type": evs[0].get("event_type"),
+            "nearby_shows": len(evs),
+            "cities": len(cities) or 1,
+            "nearest_mi": round(min(x["_mi"] for x in evs)),
+            "soonest": str(min(str(x.get("event_date")) for x in evs))[:10],
+            "events": [{"event_id": int(x["tevo_event_id"]), "city": x.get("venue_city"),
+                        "date": str(x.get("event_date"))[:10], "miles": round(x["_mi"])}
+                       for x in evs[:8]],
+        })
+    return tours
+
+
+def discover_tours_near(db, lat: float, lon: float, within_mi: float, start: date, end: date,
+                        min_shows: int = 2, limit: int = 20,
+                        event_types: list[str] | None = None) -> dict:
+    """Location-first discovery: performers with >= min_shows within `within_mi` of home,
+    enriched with price-from + popularity + whether we hold inventory. Read-only."""
+    dlat = within_mi / 69.0
+    dlon = within_mi / (69.0 * max(0.2, cos(radians(lat))))
+    q = (db.table("v_event_base")
+         .select("tevo_event_id, tevo_performer_id, primary_performer_name, venue_city, "
+                 "event_date, venue_lat, venue_lon, event_type")
+         .gte("venue_lat", lat - dlat).lte("venue_lat", lat + dlat)
+         .gte("venue_lon", lon - dlon).lte("venue_lon", lon + dlon)
+         .gte("event_date", start.isoformat()).lte("event_date", end.isoformat())
+         .not_.is_("venue_lat", "null").limit(5000))
+    if event_types:
+        q = q.in_("event_type", event_types)
+    events = q.execute().data or []
+
+    tours = rank_tours_near(events, lat, lon, within_mi, min_shows)
+    all_ids = [ev["event_id"] for t in tours for ev in t["events"]]
+    pop = fetch_event_popularity(db, all_ids)
+    pricing = fetch_event_pricing(db, all_ids)
+    for t in tours:
+        eids = [ev["event_id"] for ev in t["events"]]
+        t["popularity"] = round(max((pop.get(i, 0.0) for i in eids), default=0.0), 4)
+        getins = [pricing[i]["getin"] for i in eids
+                  if pricing.get(i) and pricing[i].get("getin") is not None]
+        t["price_from"] = round(min(getins)) if getins else None
+        t["we_own"] = any((pricing.get(i) or {}).get("owned", 0) > 0 for i in eids)
+
+    pops = sorted(t["popularity"] for t in tours)
+    thr = max(0.4, pops[min(len(pops) - 1, len(pops) * 2 // 3)]) if pops else None
+    for t in tours:
+        t["hot"] = bool(thr is not None and t["popularity"] >= thr)
+
+    tours.sort(key=lambda t: (-t["nearby_shows"], -t["popularity"], t["nearest_mi"]))
+    return {
+        "home": {"lat": lat, "lon": lon},
+        "within_mi": within_mi,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "count": len(tours),
+        "tours": tours[:limit],
+    }
