@@ -12,10 +12,15 @@ other *_client.py (evo/seatgeek/tickpick/vivid/seatdata/ticketsdata/broadway)
 we enforce GET-only at the transport layer so scripts/check_readonly.py +
 tests/test_readonly_guards.py can prove the read-only contract (CLAUDE.md §2).
 
+Endpoint (confirmed live 2026-06-09): TicketsData /fetch with platform=axs and
+the axs.com event URL — GET https://ticketsdata.com/fetch?platform=axs&
+event_url=<axs url>&username=&password= . Uses the SHARED TicketsData account.
+
 Config (never hardcoded; env -> Supabase Vault, never logged):
-  AXS_ENDPOINT_URL   full GET endpoint that takes an axs.com event URL
-  AXS_USERNAME       account email   (TicketsData-style query-param auth)
-  AXS_PASSWORD       account password
+  TICKETSDATA_USERNAME / TICKETSDATA_PASSWORD   shared account (preferred)
+  AXS_USERNAME / AXS_PASSWORD   AXS-specific override (optional)
+  AXS_ENDPOINT_URL   override (default https://ticketsdata.com/fetch)
+  AXS_PLATFORM       override (default 'axs')
   AXS_API_KEY        alternative bearer/key auth (used if no user/pass)
 
 Pegging: pull() resolves the event's venue against public.axs_venues (the
@@ -300,6 +305,10 @@ def normalize(
 
 
 class AXSClient:
+    # Confirmed live 2026-06-09: AXS is served by TicketsData's /fetch with
+    # platform=axs, using the SAME TICKETSDATA_* account creds.
+    DEFAULT_ENDPOINT = "https://ticketsdata.com/fetch"
+
     def __init__(
         self,
         endpoint: str | None = None,
@@ -308,29 +317,35 @@ class AXSClient:
         api_key: str | None = None,
         *,
         db: Any = None,
-        timeout: int = 60,            # AXS generation is slow (20–40s)
+        timeout: int = 90,            # AXS generation is slow (20–40s, sometimes more)
+        platform: str | None = None,
         url_param: str | None = None,
     ):
-        # Resolution order mirrors the other clients: arg -> env -> Vault.
+        # Resolution order mirrors the other clients: arg -> env -> Vault, then
+        # the confirmed default endpoint.
         self.endpoint = (
-            endpoint or os.environ.get("AXS_ENDPOINT_URL") or _vault_secret(db, "AXS_ENDPOINT_URL")
+            endpoint or os.environ.get("AXS_ENDPOINT_URL")
+            or _vault_secret(db, "AXS_ENDPOINT_URL") or self.DEFAULT_ENDPOINT
         )
-        if not self.endpoint:
-            raise AXSConfigError(
-                "AXS endpoint required. Set AXS_ENDPOINT_URL (env) or store it in "
-                "Vault: SELECT public.upsert_app_secret('AXS_ENDPOINT_URL', '<url>');"
-            )
-        self._user = username or os.environ.get("AXS_USERNAME") or _vault_secret(db, "AXS_USERNAME")
-        self._pass = password or os.environ.get("AXS_PASSWORD") or _vault_secret(db, "AXS_PASSWORD")
+        # AXS shares the TicketsData account — fall back to TICKETSDATA_* creds.
+        self._user = (username or os.environ.get("AXS_USERNAME")
+                      or os.environ.get("TICKETSDATA_USERNAME")
+                      or _vault_secret(db, "AXS_USERNAME")
+                      or _vault_secret(db, "TICKETSDATA_USERNAME"))
+        self._pass = (password or os.environ.get("AXS_PASSWORD")
+                      or os.environ.get("TICKETSDATA_PASSWORD")
+                      or _vault_secret(db, "AXS_PASSWORD")
+                      or _vault_secret(db, "TICKETSDATA_PASSWORD"))
         self._key = api_key or os.environ.get("AXS_API_KEY") or _vault_secret(db, "AXS_API_KEY")
         if not (self._user and self._pass) and not self._key:
             raise AXSConfigError(
-                "AXS credentials required. Set AXS_USERNAME + AXS_PASSWORD, or "
-                "AXS_API_KEY (env or Vault)."
+                "AXS credentials required. Set TICKETSDATA_USERNAME + "
+                "TICKETSDATA_PASSWORD (shared account), AXS_USERNAME/AXS_PASSWORD, "
+                "or AXS_API_KEY (env or Vault)."
             )
         self.timeout = timeout
-        # The event URL is passed as this query param (default mirrors the
-        # TicketsData /fetch convention; override if the endpoint differs).
+        self.platform = platform or os.environ.get("AXS_PLATFORM", "axs")
+        # The event URL is passed as this query param (TicketsData /fetch uses event_url).
         self.url_param = url_param or os.environ.get("AXS_URL_PARAM", "event_url")
         self._db = db
 
@@ -391,7 +406,7 @@ class AXSClient:
                 f"unsupported AXS event URL {event_url!r}; expected "
                 "https://www.axs.com/events/<id>/<slug>-event-tickets"
             )
-        return self._get({self.url_param: event_url.strip()})
+        return self._get({self.url_param: event_url.strip(), "platform": self.platform})
 
     # ---------- pegging to the axs_venues catalog ----------
 

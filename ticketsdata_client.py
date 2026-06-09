@@ -3,7 +3,8 @@
 Host: https://ticketsdata.com
 Aggregates live inventory + pricing across 9 marketplaces (Ticketmaster,
 StubHub, SeatGeek, VividSeats, Gametime, TickPick, Viagogo, Dice, Eventbrite)
-behind a single GET API. There is NO write surface — every endpoint is a
+plus AXS primary box-office (platform=axs, via /fetch with an axs.com event
+URL — slow + in development) behind a single GET API. NO write surface — a
 read — so this honors the read-only-upstream contract (CLAUDE.md §2).
 
 Auth: account email + password are passed as query params (their scheme).
@@ -36,6 +37,11 @@ ALLOWED_HTTP_METHODS = frozenset({"GET"})
 SUPPORTED_PLATFORMS = frozenset({
     "ticketmaster", "stubhub", "seatgeek", "vividseats", "gametime",
     "tickpick", "viagogo", "dice", "eventbrite",
+    # AXS — primary box-office ("veritix"), reached via /fetch with an
+    # axs.com/events/<id>/... URL. Slow (~20-40s) + in development, but live
+    # (confirmed 2026-06-09). Not in TicketsData's public platform list; use
+    # axs_client.AXSClient for the distill/normalize/venue-peg layer.
+    "axs",
 })
 
 # Marketplaces we already source natively (SeatGeek via seatgeek_client + the SG
