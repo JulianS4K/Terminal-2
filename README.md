@@ -2,11 +2,11 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Jointly maintained by a small set of specialized bot lanes coordinating through `public.bot_chat`.
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
+> **Doc version:** v1.1.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`). The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
 
 ---
 
-## Start here (reading order)
+## Start here (reading order) *(v1.1 · C1 · 2026-06-09)*
 
 A cold-started bot should read these four, in order. The first is loaded for you automatically every session; the rest you read once at session start.
 
@@ -16,6 +16,8 @@ A cold-started bot should read these four, in order. The first is loaded for you
 4. **[`D0_BIBLE.md`](D0_BIBLE.md)** — cross-source ID architecture **+ the full cold-start manual for building the D0 terminal frontend** (PART 1).
 
 Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't claim a row marked `[IN PROGRESS by <lane>]`).
+
+**New to the code?** Generate an interactive **code knowledge graph** to orient fast — `/understand` builds it, `/understand-dashboard` explores it (architectural layers, file/function relationships, guided tour). Outputs are gitignored/regenerable — see **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md) §8** *("I want to understand the codebase fast")*.
 
 ---
 

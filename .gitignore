@@ -33,3 +33,15 @@ supabase/.temp/
 .claude/
 
 .scratch/
+
+# Understand-Anything — generated analysis outputs are NOT versioned.
+# Regenerate locally with the Understand-Anything plugin (/understand).
+# Only the .understandignore config is tracked (the scaffolding).
+.understand-anything/intermediate/
+.understand-anything/tmp/
+.understand-anything/.trash-*/
+.understand-anything/fingerprints.json
+.understand-anything/chart-data.json
+.understand-anything/knowledge-graph.json
+.understand-anything/knowledge-graph-chart.html
+.understand-anything/meta.json
