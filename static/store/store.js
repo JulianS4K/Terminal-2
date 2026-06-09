@@ -2707,11 +2707,13 @@
           .map((ev) => `<a href="/store/event/${ev.event_id}">${esc(ev.city || "")} ${fmtD(ev.date)}</a>`)
           .join("");
         const price = t.price_from != null ? ` · from ${money(t.price_from)}` : "";
+        const isTeam = t.kind === "sports";
         const follow = `/store/tour?performer=${t.performer_id}`
-          + `&home_lat=${encodeURIComponent($("dLat").value)}&home_lon=${encodeURIComponent($("dLon").value)}`;
+          + `&home_lat=${encodeURIComponent($("dLat").value)}&home_lon=${encodeURIComponent($("dLon").value)}`
+          + (isTeam ? "&side=home" : "");
         return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
-          + `<div class="tour-meta">${t.nearby_shows} shows · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
-          + `<div style="margin:6px 0"><a href="${follow}"><b>Follow this tour →</b></a></div>`
+          + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? "home games" : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
+          + `<div style="margin:6px 0"><a href="${follow}"><b>${isTeam ? "Follow this team →" : "Follow this tour →"}</b></a></div>`
           + `<div class="tour-shows">${shows}</div></div>`;
       }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";
     }
@@ -2743,6 +2745,7 @@
     };
     const u = new URLSearchParams(location.search);
     const performer = parseInt(u.get("performer"), 10);
+    let side = u.get("side") || "auto";   // teams: away (road trip) vs home (home stand)
     if (u.get("home_lat")) $("ftLat").value = u.get("home_lat");
     if (u.get("home_lon")) $("ftLon").value = u.get("home_lon");
     if (u.get("qty")) $("ftQty").value = u.get("qty");
@@ -2754,7 +2757,7 @@
       }
       const p = new URLSearchParams({
         home_lat: $("ftLat").value, home_lon: $("ftLon").value,
-        qty: $("ftQty").value || "2", budget_km: "50000", days: "365",
+        qty: $("ftQty").value || "2", budget_km: "50000", days: "365", side: side,
       });
       if ($("ftBudget").value) p.set("budget_usd", $("ftBudget").value);
       $("ftStatus").textContent = "Building your tour…";
@@ -2769,15 +2772,38 @@
     function render(d) {
       const pk = (d && d.package) || {};
       const qty = d.qty_per_show;
-      const name = (pk.legs && pk.legs[0] && pk.legs[0].performer)
-        || (d.all_stops && d.all_stops[0] && d.all_stops[0].performer) || "this performer";
-      $("ftTitle").textContent = `Follow ${name}'s tour`;
+      const isTeam = String(d.mode || "").indexOf("team") === 0;
+      const away = d.mode === "team_away";
+      let name;
+      if (isTeam) {
+        const ev = (d.all_stops && d.all_stops[0]) || {};
+        const parts = String(ev.event_name || "").split(" at ");   // "Away at Home"
+        name = parts.length === 2 ? (away ? parts[0] : parts[1]) : (ev.performer || "this team");
+      } else {
+        name = (pk.legs && pk.legs[0] && pk.legs[0].performer)
+          || (d.all_stops && d.all_stops[0] && d.all_stops[0].performer) || "this performer";
+      }
+      $("ftTitle").textContent = isTeam
+        ? `Follow ${name} ${away ? "on the road" : "at home"}`
+        : `Follow ${name}'s tour`;
+      // team -> show the away/home toggle, highlight current side
+      const sideEl = $("ftSide");
+      if (sideEl) {
+        sideEl.hidden = !isTeam;
+        sideEl.querySelectorAll(".ftside").forEach((b) => {
+          b.classList.toggle("active", away ? b.dataset.side === "away" : b.dataset.side === "home");
+        });
+      }
       if (!d.stops_available || !pk.count) {
-        $("ftStatus").textContent = "No routable tour right now — try a wider budget.";
+        $("ftStatus").textContent = isTeam
+          ? `No ${away ? "away" : "home"} games in range — try the other side.`
+          : "No routable tour right now — try a wider budget.";
         $("ftResult").hidden = true;
         return;
       }
-      $("ftStatus").textContent = `${d.stops_available} tour dates available`;
+      $("ftStatus").textContent = isTeam
+        ? `${away ? "Away games · road trip" : "Home stand"} · ${d.stops_available} dates`
+        : `${d.stops_available} tour dates available`;
       $("ftStat").innerHTML =
         `<div><span class="l">Total</span><b>${money(pk.fan_total_bundled)}</b></div>` +
         `<div><span class="l">Tickets</span><b>${pk.count * qty}</b></div>` +
@@ -2805,6 +2831,13 @@
     }
 
     $("ftGo").addEventListener("click", run);
+    const sideToggle = $("ftSide");
+    if (sideToggle) sideToggle.addEventListener("click", (e) => {
+      const b = e.target.closest(".ftside");
+      if (!b) return;
+      side = b.dataset.side;     // "away" | "home"
+      run();
+    });
     $("ftGeo").addEventListener("click", () => {
       if (!navigator.geolocation) return;
       $("ftStatus").textContent = "Locating…";
