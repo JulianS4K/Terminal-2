@@ -2668,6 +2668,64 @@
 
   window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
 
+  // Reverse discovery — "what tours can I catch near me". Location-first:
+  // performers with >= min_shows within a radius of home in the window.
+  // Backed by /api/store/tours/near; each show links to its /store/event page.
+  function mountDiscover() {
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (n) => "$" + Math.round(n).toLocaleString();
+    const fmtD = (iso) => {
+      try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+      catch (_) { return iso; }
+    };
+
+    async function run() {
+      const p = new URLSearchParams({
+        home_lat: $("dLat").value, home_lon: $("dLon").value,
+        within_mi: $("dMi").value || "250", days: $("dDays").value || "120",
+        min_shows: $("dMin").value || "2",
+      });
+      if ($("dKind").value) p.set("concerts_only", "true");
+      $("dStatus").textContent = "Searching…";
+      $("dResults").innerHTML = "";
+      try {
+        render(await api("/api/store/tours/near?" + p.toString()));
+      } catch (e) {
+        $("dStatus").textContent = "Error: " + e.message;
+      }
+    }
+
+    function render(d) {
+      const tours = (d && d.tours) || [];
+      $("dStatus").textContent = `${tours.length} tour${tours.length === 1 ? "" : "s"} within ${d.within_mi} mi`;
+      $("dResults").innerHTML = tours.map((t) => {
+        const badges = (t.hot ? '<span class="pill3 hot">🔥 hot</span>' : "")
+          + (t.we_own ? '<span class="pill3 own">in stock</span>' : "");
+        const shows = (t.events || [])
+          .map((ev) => `<a href="/store/event/${ev.event_id}">${esc(ev.city || "")} ${fmtD(ev.date)}</a>`)
+          .join("");
+        const price = t.price_from != null ? ` · from ${money(t.price_from)}` : "";
+        return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
+          + `<div class="tour-meta">${t.nearby_shows} shows · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
+          + `<div class="tour-shows">${shows}</div></div>`;
+      }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";
+    }
+
+    $("dGo").addEventListener("click", run);
+    $("dGeo").addEventListener("click", () => {
+      if (!navigator.geolocation) return;
+      $("dStatus").textContent = "Locating…";
+      navigator.geolocation.getCurrentPosition((pos) => {
+        $("dLat").value = pos.coords.latitude.toFixed(4);
+        $("dLon").value = pos.coords.longitude.toFixed(4);
+        run();
+      }, () => { $("dStatus").textContent = "Couldn't get your location — enter it manually."; });
+    });
+    run();
+  }
+
   // Auto-mount based on body data-page. Lets HTML pages drop their inline
   // `<script>Store.mountX()</script>` so we can ship a strict CSP without
   // 'unsafe-inline'. Added 2026-05-11 (security chat).
@@ -2676,6 +2734,7 @@
     if (page === "catalog") mountCatalog();
     else if (page === "event") mountEvent();
     else if (page === "shares") mountSharesAdmin();
+    else if (page === "discover") mountDiscover();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _autoMount);

@@ -1319,6 +1319,35 @@ def broker_multi_tour(
                                section_like, prefer_owned)
 
 
+def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: int,
+                      min_shows: int, concerts_only: bool) -> dict:
+    """Shared body for reverse-discovery ('tours near me'). Read-only."""
+    from trip_planner import discover_tours_near
+
+    db = require_sb()
+    start, end = _tour_dates(days)
+    return discover_tours_near(
+        db, float(home_lat), float(home_lon),
+        max(5.0, min(float(within_mi), 1000.0)), start, end,
+        min_shows=max(1, min(int(min_shows), 6)),
+        event_types=["concert"] if concerts_only else None,
+    )
+
+
+@app.get("/api/broker/tours/near")
+def broker_tours_near(
+    home_lat: float,
+    home_lon: float,
+    within_mi: float = 250.0,
+    days: int = 120,
+    min_shows: int = 2,
+    concerts_only: bool = False,
+    _=Depends(require_auth),
+):
+    """D0 reverse discovery — performers with >= min_shows within `within_mi` of home."""
+    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
+
+
 def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
     """Fetch performer_metadata for many performer_ids at once. Returns map
     {performer_id: {logo_default_url, color_primary, ...}}. Used by event
@@ -6871,6 +6900,20 @@ def store_multi_tour(
                                section_like, prefer_owned)
 
 
+@app.get("/api/store/tours/near")
+def store_tours_near(
+    home_lat: float,
+    home_lon: float,
+    within_mi: float = 250.0,
+    days: int = 120,
+    min_shows: int = 2,
+    concerts_only: bool = False,
+):
+    """D1 store reverse discovery — 'what tours can I catch near me'. Performers with
+    >= min_shows within `within_mi` of home in the window, with price-from + demand."""
+    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
+
+
 def _section_sort_key(s: str) -> tuple:
     """Sort key for venue sections. Letters before digits (Floor, Courtside,
     GA come before 100, 101, etc.); within each group, natural-numeric for
@@ -7802,6 +7845,13 @@ def store_index_page():
 @app.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
     return _render_storefront_page("event.html")
+
+
+@app.api_route("/store/discover", methods=["GET", "HEAD"])
+def store_discover_page():
+    """Reverse discovery — 'what tours can I catch near me'. Backed by
+    /api/store/tours/near; mounts via store.js (data-page=discover)."""
+    return _render_storefront_page("discover.html")
 
 
 # ---------- Static informational pages (Sprint 3 trust + legal) ----------
