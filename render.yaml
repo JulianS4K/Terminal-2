@@ -74,6 +74,30 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      # ---- Render deploy-webhook → GitHub Actions bridge ----
+      # Powers POST /webhooks/render (app.py + render_webhook.py), which fires
+      # the post-deploy.yml smoke test on deploy-end. All optional: with none
+      # set the route fails closed (401) and no workflow is dispatched.
+      #   RENDER_WEBHOOK_SECRET — Standard Webhooks signing secret (`whsec_...`)
+      #     from the Render webhook you create (Settings → Webhooks → DeployEnded).
+      #   RENDER_API_KEY        — Render API token; enables the authoritative
+      #     deploy-status + repo-match check (else falls back to payload status).
+      #   GITHUB_API_TOKEN      — PAT with `actions:write` to dispatch the workflow.
+      # The Render webhook itself (DeployEnded → /webhooks/render) is created
+      # out-of-band via the Render API; its id is whk-d8jmmhcm0tmc73fflsk0.
+      - key: RENDER_WEBHOOK_SECRET
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: GITHUB_API_TOKEN
+        sync: false
+      # Non-secret targets — plain IaC values (target repo for workflow_dispatch).
+      - key: GITHUB_OWNER_NAME
+        value: JulianS4K
+      - key: GITHUB_REPO_NAME
+        value: Terminal-2
+      # GITHUB_WORKFLOW_ID defaults to "post-deploy.yml" in code; override here
+      # only to dispatch a different workflow.
       # ---- DO NOT set TEVO_TOKEN / TEVO_SECRET here ----
       # The app reads them from Supabase `settings` table at boot. Setting
       # them as env vars would override Supabase, which we don't want.
