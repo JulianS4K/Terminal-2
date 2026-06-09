@@ -4102,6 +4102,71 @@ def seatdata_event_sales(event_id: int, limit: int = 500, _=Depends(require_auth
     }
 
 
+@app.get("/api/axs/event/{event_id}")
+def axs_event(event_id: int, _=Depends(require_auth)):
+    """AXS box-office state for a TEvo event_id (latest persisted snapshot).
+    Free — reads axs_event_snapshots; no AXS API call. Null fields if not yet
+    AQ-linked / pulled. is_axs_primary reflects the /fetch probe classifier."""
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots")
+        .select("id,captured_at,axs_event_id,event_url,event_name,venue_name,"
+                "occurs_at_local,currency,price_min,price_max,getin,listings_count,"
+                "sections_count,offers_count,seats_primary,seats_resale,onsale_now,"
+                "in_axs_list,response_s")
+        .eq("tevo_event_id", event_id)
+        .order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"tevo_event_id": event_id, "linked": False, "latest": None,
+                "captured_at": None}
+    return {"tevo_event_id": event_id, "linked": True, "latest": snap[0],
+            "captured_at": snap[0]["captured_at"]}
+
+
+@app.get("/api/axs/event/{event_id}/sections")
+def axs_event_sections(event_id: int, limit: int = 1000, _=Depends(require_auth)):
+    """Per-section availability + pricing from the latest AXS snapshot. Free —
+    no AXS API call. Sorted cheapest-first. Mirrors the SeatData sales shape."""
+    limit = max(1, min(int(limit), 5000))
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots")
+        .select("id,captured_at,event_name,venue_name,currency,price_min,price_max,getin")
+        .eq("tevo_event_id", event_id)
+        .order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"event_id": event_id, "count": 0, "sections": [], "summary": None,
+                "captured_at": None}
+    s0 = snap[0]
+    rows = (
+        db.table("axs_section_snapshots")
+        .select("section_label,neighborhood,is_ga,sold_out,avail_qty,price_min,"
+                "price_max,seat_types,has_resale,connection_fee")
+        .eq("snapshot_id", s0["id"])
+        .order("price_min", desc=False).limit(limit).execute()
+    ).data or []
+    prices = sorted(r["price_min"] for r in rows if r.get("price_min") is not None)
+    return {
+        "event_id": event_id,
+        "count": len(rows),
+        "captured_at": s0["captured_at"],
+        "event_name": s0.get("event_name"),
+        "venue_name": s0.get("venue_name"),
+        "currency": s0.get("currency"),
+        "sections": rows,
+        "summary": {
+            "total_sections": len(rows),
+            "available_qty": sum(int(r.get("avail_qty") or 0) for r in rows),
+            "resale_sections": sum(1 for r in rows if r.get("has_resale")),
+            "sold_out_sections": sum(1 for r in rows if r.get("sold_out")),
+            "min_price": prices[0] if prices else s0.get("getin"),
+            "max_price": prices[-1] if prices else s0.get("price_max"),
+        },
+    }
+
+
 @app.post("/api/seatdata/event/{event_id}/link")
 def seatdata_link_event(event_id: int, sd_event_id: int = Query(..., description="SeatData event_id"),
                         _=Depends(require_auth)):

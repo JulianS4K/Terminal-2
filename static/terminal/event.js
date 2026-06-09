@@ -2991,7 +2991,8 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
-    'sg-sales': false, 'seatdata-sales': false, 'our-orders': false, 'alerts': false,
+    'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
+    'our-orders': false, 'alerts': false,
   } };
 
   function wireTabs(eventId) {
@@ -3026,6 +3027,8 @@
         await loadSgSalesFull(eventId);
       } else if (tabId === 'seatdata-sales' && !_tabState.loaded['seatdata-sales']) {
         await loadSeatdataSalesFull(eventId);
+      } else if (tabId === 'axs-sections' && !_tabState.loaded['axs-sections']) {
+        await loadAxsSectionsFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
       } else if (tabId === 'alerts') {
@@ -3068,6 +3071,7 @@
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'seatdata-sales': 'paneSeatdataSales',
+      'axs-sections': 'paneAxsSections',
       'td-markets':   'paneTdMarkets',
       'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
@@ -4333,6 +4337,77 @@
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${T.fmtNum(r.quantity)}</td>
         <td class="num">${r.price != null ? '$' + T.fmtNum(Math.round(r.price)) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- AXS Box Office — sections (latest snapshot) ----------
+  async function loadAxsSectionsFull(eventId) {
+    const body = document.getElementById('axsSectionsBody');
+    const meta = document.getElementById('axsSectionsMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading AXS box office…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    let d = null;
+    try {
+      d = await T.api(`/api/axs/event/${eventId}/sections`);
+    } catch (err) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">load error: ${escapeHtml(String(err && err.message || err))}</div>`;
+      return;
+    }
+    _tabState.loaded['axs-sections'] = true;
+    renderAxsSectionsFull(d, performance.now() - t0);
+  }
+
+  function renderAxsSectionsFull(d, ms) {
+    const body = document.getElementById('axsSectionsBody');
+    const meta = document.getElementById('axsSectionsMeta');
+    const countChip = document.getElementById('tabCountAxsSections');
+    if (!body) return;
+    const sections = (d && d.sections) || [];
+    if (countChip) countChip.textContent = String(sections.length);
+    if (!sections.length) {
+      body.innerHTML = '<div class="empty">no AXS box-office snapshot for this event yet</div>';
+      if (meta) meta.textContent = '0 sections';
+      return;
+    }
+    const cur = (d.currency || 'USD') === 'USD' ? '$' : '';
+    const sm = d.summary || {};
+    const cap = d.captured_at ? T.fmtDate(d.captured_at) : '—';
+    if (meta) {
+      meta.textContent = `${sections.length} sections · ${sm.available_qty != null ? T.fmtNum(sm.available_qty) + ' seats · ' : ''}`
+        + `${cur}${sm.min_price != null ? T.fmtNum(Math.round(sm.min_price)) : '—'}–`
+        + `${cur}${sm.max_price != null ? T.fmtNum(Math.round(sm.max_price)) : '—'} · `
+        + `${ms.toFixed(0)}ms · snap ${cap}`;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Neighborhood</th><th>Type</th><th>GA</th>
+        <th class="num">Avail</th><th class="num">Min</th><th class="num">Max</th>
+        <th>Resale</th><th class="num">Fee</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    sections.forEach(s => {
+      const tr = document.createElement('tr');
+      if (s.sold_out) tr.classList.add('row-muted');
+      tr.innerHTML = `
+        <td>${escapeHtml(s.section_label || '—')}</td>
+        <td>${escapeHtml(s.neighborhood || '—')}</td>
+        <td>${escapeHtml(s.seat_types || '—')}</td>
+        <td>${s.is_ga ? '●' : '—'}</td>
+        <td class="num">${s.sold_out ? 'SOLD' : (s.avail_qty != null ? T.fmtNum(s.avail_qty) : '—')}</td>
+        <td class="num">${s.price_min != null ? cur + T.fmtNum(Math.round(s.price_min)) : '—'}</td>
+        <td class="num">${s.price_max != null ? cur + T.fmtNum(Math.round(s.price_max)) : '—'}</td>
+        <td>${s.has_resale ? 'Yes' : '—'}</td>
+        <td class="num">${s.connection_fee != null ? cur + T.fmtNum(Math.round(s.connection_fee)) : '—'}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
