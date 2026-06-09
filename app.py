@@ -17,6 +17,7 @@ Optional:
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import math
 import os
@@ -34,6 +35,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+import render_webhook
 from evo_client import EvoClient
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -859,6 +861,50 @@ def healthz():
             # Truncate so we don't leak full traces over a public endpoint.
             out["supabase_smoke_error"] = str(e)[:300]
     return out
+
+
+# ---------------------------------------------------------------------------
+# Render webhook receiver → GitHub Actions bridge
+# ---------------------------------------------------------------------------
+# Incorporates render-examples/webhook-receiver + webhook-github-action into
+# the unified service: Render POSTs a Standard-Webhooks-signed payload here on
+# deploy/service/db events; we verify it, ACK 200 fast, then (in the
+# background) dispatch on event type — a successful deploy_ended triggers the
+# post-deploy GitHub workflow; other types are enriched + logged. Pure logic
+# lives in render_webhook.py (unit-tested in tests/test_render_webhook.py).
+
+@app.post("/webhooks/render")
+async def render_deploy_webhook(request: Request, background: BackgroundTasks):
+    """Receive + verify a Render webhook, then handle it asynchronously. Always
+    answers fast so Render doesn't time out and retry; verification failures
+    return 401 (so a misconfigured secret is visible in Render's webhook
+    delivery log).
+
+    Fails closed: if RENDER_WEBHOOK_SECRET is unset, every request is rejected
+    — we never accept an unsigned/unverifiable webhook.
+    """
+    cfg = render_webhook.load_config()
+    body = await request.body()
+    try:
+        render_webhook.verify_signature(cfg["webhook_secret"], body, dict(request.headers))
+    except render_webhook.WebhookVerificationError as e:
+        raise HTTPException(status_code=401, detail=f"webhook verification failed: {e}")
+
+    try:
+        payload = json.loads(body)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+
+    # Process after the 200 is sent — the Render API + GitHub calls can take a
+    # few seconds and must not block the webhook ACK.
+    def _process(p, c):
+        try:
+            logging.getLogger("render_webhook").info("webhook handled: %s", render_webhook.handle_webhook(p, c))
+        except Exception:  # background task — never let it escape
+            logging.getLogger("render_webhook").exception("webhook handler crashed")
+
+    background.add_task(_process, payload, cfg)
+    return {"ok": True, "received": payload.get("type")}
 
 
 @app.get("/api/public/config")
