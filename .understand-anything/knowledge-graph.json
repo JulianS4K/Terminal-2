@@ -51815,6 +51815,713 @@
       "type": "related",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260508015000_performer_metadata_and_genre_map.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509520000_north_america_sporting_rivalries.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509470000_mlb_game_series_detection.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260510010000_espn_tournament_events.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509270000_weather_climatology_fallback.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509540000_holiday_school_calendar.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260425000003_latest_event_metrics_view.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509050000_event_lifecycle.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260506000002_performer_zones.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260507000002_zone_metrics.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509060000_seatdata_integration.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509060000_seatdata_integration.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260507000012_espn_athletes_and_history.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260509380000_pricing_intel_unified_and_arbitrage.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260510120400_phase5_date_venue_overlay_views.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260507000022_event_configuration_and_seating_chart.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260510120150_share_links.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "table:supabase/migrations/20260510120150_share_links.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:d2_dashboard/main.py",
+      "target": "table:supabase/migrations/20260510120400_phase5_date_venue_overlay_views.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:d2_dashboard/main.py",
+      "target": "table:supabase/migrations/20260509140000_order_status_canonical.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:d2_dashboard/main.py",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:d2_dashboard/main.py",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:d2_dashboard/main.py",
+      "target": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/aq-to-tevo-search-bridge/index.ts",
+      "target": "table:supabase/migrations/20260605133500_aq_tevo_search_bridge.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/aq-to-tevo-search-bridge/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/aq-to-tevo-search-bridge/index.ts",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/backfill-event-configurations/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/backfill-event-configurations/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/bulk-add-watchlist/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect-listings/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect-listings/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect-listings/index.ts",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect-listings/index.ts",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect-listings/index.ts",
+      "target": "table:supabase/migrations/20260506000001_event_pulls.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect-listings/index.ts",
+      "target": "table:supabase/migrations/20260425000003_latest_event_metrics_view.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/collect/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-espn-team-assets/index.ts",
+      "target": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-espn-team-assets/index.ts",
+      "target": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-espn-team-assets/index.ts",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-espn-team-assets/index.ts",
+      "target": "table:supabase/migrations/20260508015000_performer_metadata_and_genre_map.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-espn-team-assets/index.ts",
+      "target": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-venues-and-performers/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-venues-and-performers/index.ts",
+      "target": "table:supabase/migrations/20260508015000_performer_metadata_and_genre_map.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-venues-and-performers/index.ts",
+      "target": "table:supabase/migrations/20260508015000_performer_metadata_and_genre_map.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/crawl-venues-and-performers/index.ts",
+      "target": "table:supabase/migrations/20260508012000_venue_crawl_state_and_helpers.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn-collect/index.ts",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn-collect/index.ts",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn-collect/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn-collect/index.ts",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn-rosters/index.ts",
+      "target": "table:supabase/migrations/20260507000012_team_xref.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn-rosters/index.ts",
+      "target": "table:supabase/migrations/20260507000012_espn_athletes_and_history.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn-rosters/index.ts",
+      "target": "table:supabase/migrations/20260507000012_espn_athletes_and_history.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/exos-distribute/index.ts",
+      "target": "table:supabase/migrations/20260523190000_exos_distribution.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/exos-distribute/index.ts",
+      "target": "table:supabase/migrations/20260523190000_exos_distribution.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/match-sg-performers-to-tevo/index.ts",
+      "target": "table:supabase/migrations/20260510140000_phase8_sg_candidate_performer_view.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/seed-home-venues/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/seed-home-venues/index.ts",
+      "target": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/sg-to-tevo-search-bridge/index.ts",
+      "target": "table:supabase/migrations/20260516250000_sg_to_tevo_search_bridge_cron.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/sg-to-tevo-search-bridge/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/sg-to-tevo-search-bridge/index.ts",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/sg-to-tevo-search-bridge/index.ts",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/tevo-blindspot-discovery/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/tevo-blindspot-discovery/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/tevo-blindspot-discovery/index.ts",
+      "target": "table:supabase/migrations/20260519190000_tevo_blindspot_crons.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/why-noaa-weather-alerts/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/why-noaa-weather-alerts/index.ts",
+      "target": "table:supabase/migrations/20260508017000_why_signals_schema.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/wiki-collect/index.ts",
+      "target": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/wiki-collect/index.ts",
+      "target": "table:supabase/migrations/20260507000014_wiki_context.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/wiki-collect/index.ts",
+      "target": "table:supabase/migrations/20260507000014_wiki_context.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "table:supabase/migrations/20260506000002_performer_zones.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "table:supabase/migrations/20260506000000_bot_tables.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn/index.ts",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn/index.ts",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn/index.ts",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/espn/index.ts",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/exos-checkout/index.ts",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/exos-checkout/index.ts",
+      "target": "table:supabase/migrations/20260523170000_exos_stripe_checkout.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/exos-connect-onboard/index.ts",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/seatdata-poll/index.ts",
+      "target": "table:supabase/migrations/20260509060000_seatdata_integration.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/seatmap-manifest-sync/index.ts",
+      "target": "table:supabase/migrations/20260603160000_seatmap_manifest_sync.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/sg-seller-webhook/index.ts",
+      "target": "table:supabase/migrations/20260516210000_sg_webhook_secret_and_audit.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/stripe-webhook/index.ts",
+      "target": "table:supabase/migrations/20260523170000_exos_stripe_checkout.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/stripe-webhook/index.ts",
+      "target": "table:supabase/migrations/20260523170000_exos_stripe_checkout.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
