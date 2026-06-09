@@ -1,0 +1,29 @@
+# Terminal-2 gitleaks configuration.
+#
+# Extends gitleaks' full default ruleset (no detection weakened) and adds a
+# single scoped allowlist for the generated Understand-Anything analysis
+# outputs under .understand-anything/.
+#
+# Why this path is exempt:
+#   The knowledge graph + interactive chart are tree-sitter/LLM-derived
+#   artifacts that contain ONLY source identifiers — file paths, function and
+#   class names, doc titles. Some of those names coincidentally match secret
+#   regexes (e.g. the test function `test_discover_against_fastly_403` trips
+#   the `fastly-api-token` rule). These are never credentials, and the
+#   directory is generated/regenerable, so line-pinned fingerprints would be
+#   brittle across regenerations. Scoping the allowlist to this one generated
+#   directory keeps full secret detection everywhere real code lives.
+#
+# Owner: B1 (Security Manager). Added 2026-06-09 under operator directive to
+# version the code knowledge-graph chart. Do NOT broaden this allowlist.
+
+title = "Terminal-2 gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated Understand-Anything code knowledge-graph + chart (source identifiers only, no secrets)."
+paths = [
+  '''\.understand-anything/''',
+]
