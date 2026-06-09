@@ -43457,6 +43457,524 @@
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "file:static/store/about.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/discover.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/event.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/index.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/privacy.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/shares.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/terms.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/tour.html",
+      "target": "file:static/store/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/discover.html",
+      "target": "file:static/store/store.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/event.html",
+      "target": "file:static/store/store.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/index.html",
+      "target": "file:static/store/store.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/shares.html",
+      "target": "file:static/store/store.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/tour.html",
+      "target": "file:static/store/store.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/event.html",
+      "target": "file:static/store/lib/tevomaps.bundle.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/event.html",
+      "target": "file:static/store/lib/seatmap.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/lib/seatmap.js",
+      "target": "file:static/store/lib/tevomaps.bundle.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/store.js",
+      "target": "file:static/store/lib/seatmap.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:static/store/lib/tevomaps.bundle.NOTICE.md",
+      "target": "file:static/store/lib/tevomaps.bundle.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/store/test/event.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/index.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/media_test.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/performer.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/search.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/share.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/tour.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/trip.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/venue.html",
+      "target": "file:static/store/test/test.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/store/test/event.html",
+      "target": "file:static/store/test/test.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/test/index.html",
+      "target": "file:static/store/test/test.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/test/media_test.html",
+      "target": "file:static/store/test/test.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/test/performer.html",
+      "target": "file:static/store/test/test.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/test/search.html",
+      "target": "file:static/store/test/test.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/test/share.html",
+      "target": "file:static/store/test/test.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/store/test/venue.html",
+      "target": "file:static/store/test/test.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:static/store/index.html",
+      "type": "serves",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:d2_dashboard/main.py",
+      "target": "file:d2_dashboard/templates/dashboard.html",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:d2_dashboard/templates/dashboard.html",
+      "target": "file:d2_dashboard/static/dashboard.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:d2_dashboard/templates/dashboard.html",
+      "target": "file:d2_dashboard/static/dashboard.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:d2_dashboard/DEPLOY.md",
+      "target": "file:d2_dashboard/main.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:d2_dashboard/main.py",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:d4_bridge/index.html",
+      "target": "file:d4_bridge/src/main.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:d4_bridge/src/App.tsx",
+      "target": "file:d4_bridge/src/views/Privacy.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:d4_bridge/src/App.tsx",
+      "target": "file:d4_bridge/src/views/Terms.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:d4_bridge/src/App.tsx",
+      "target": "file:d4_bridge/src/views/Status.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "config:d4_bridge/tsconfig.json",
+      "target": "file:d4_bridge/src/main.tsx",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/package.json",
+      "target": "file:d4_bridge/src/main.tsx",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/eslint.config.js",
+      "target": "file:d4_bridge/src/App.tsx",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/vite.config.ts",
+      "target": "file:d4_bridge/index.html",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/metadata.json",
+      "target": "file:d4_bridge/index.html",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/public/manifest.json",
+      "target": "file:d4_bridge/index.html",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:d4_bridge/public/sw.js",
+      "target": "file:d4_bridge/index.html",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/.env.example",
+      "target": "file:d4_bridge/server.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/firebase.json",
+      "target": "file:d4_bridge/server.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/.firebaserc",
+      "target": "file:d4_bridge/server.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/firestore.rules",
+      "target": "file:d4_bridge/server.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/firestore.indexes.json",
+      "target": "file:d4_bridge/server.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/storage.rules",
+      "target": "file:d4_bridge/server.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:d4_bridge/README.md",
+      "target": "file:d4_bridge/src/App.tsx",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:d4_bridge/KANBAN.md",
+      "target": "file:d4_bridge/src/App.tsx",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:d4_bridge/security_spec.md",
+      "target": "file:d4_bridge/server.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:d4_bridge/scripts/grant-admin.cjs",
+      "target": "file:d4_bridge/server.ts",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:d4_bridge/scripts/migrate-to-orgs.ts",
+      "target": "file:d4_bridge/server.ts",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:d4_bridge/scripts/stress-test.cjs",
+      "target": "file:d4_bridge/server.ts",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:d4_bridge/scripts/loadtest_checkin.sql",
+      "target": "file:d4_bridge/server.ts",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:d4_bridge/bridge-extras-sim.ts",
+      "target": "file:d4_bridge/server.ts",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:d4_bridge/vite.config.ts",
+      "target": "file:static/bridge/index.html",
+      "type": "deploys",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/bridge/index.html",
+      "target": "file:static/bridge/assets/index-C747K8Em.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/bridge/index.html",
+      "target": "file:static/bridge/assets/qr-DNGM2SHf.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/bridge/index.html",
+      "target": "file:static/bridge/assets/motion-CQhsUiTf.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/bridge/index.html",
+      "target": "file:static/bridge/assets/index-CHHu2czV.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/bridge/assets/index-C747K8Em.js",
+      "target": "file:static/bridge/assets/stripe-l0sNRNKZ.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:static/bridge/manifest.json",
+      "target": "file:static/bridge/index.html",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/bridge/sw.js",
+      "target": "file:static/bridge/index.html",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/bridge/sw.js",
+      "target": "file:static/bridge/assets/index-C747K8Em.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
     }
   ],
   "layers": [
