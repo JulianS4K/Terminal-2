@@ -47006,6 +47006,4556 @@
       "type": "related",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260425000000_app_users.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260425000001_owned_and_dispersion.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260425000002_store_github_pat.sql",
+      "target": "table:supabase/migrations/20260425000001_owned_and_dispersion.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260425000003_latest_event_metrics_view.sql",
+      "target": "table:supabase/migrations/20260425000002_store_github_pat.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260428000001_drop_bid_ask_recreate_views_drop_app_users.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000000_bot_tables.sql",
+      "target": "table:supabase/migrations/20260428000001_drop_bid_ask_recreate_views_drop_app_users.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000001_event_pulls.sql",
+      "target": "table:supabase/migrations/20260506000000_bot_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000002_performer_zones.sql",
+      "target": "table:supabase/migrations/20260506000001_event_pulls.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000002_zone_rules.sql",
+      "target": "table:supabase/migrations/20260506000002_performer_zones.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000003_bot_users_is_internal.sql",
+      "target": "table:supabase/migrations/20260506000000_bot_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000003_layered_zones_curated_first_keyword_fallback.sql",
+      "target": "table:supabase/migrations/20260506000002_zone_rules.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000004_get_event_zones_rollup.sql",
+      "target": "table:supabase/migrations/20260506000003_layered_zones_curated_first_keyword_fallback.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000005_drop_zone_rules_use_performer_zones.sql",
+      "target": "table:supabase/migrations/20260506000002_zone_rules.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260506000006_bot_messages_web_channel.sql",
+      "target": "table:supabase/migrations/20260506000000_bot_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000000_capture_derive_zone_fallback.sql",
+      "target": "table:supabase/migrations/20260506000003_layered_zones_curated_first_keyword_fallback.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000001_chat_rate_limit_and_cron.sql",
+      "target": "table:supabase/migrations/20260507000000_capture_derive_zone_fallback.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000002_zone_metrics.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000003_section_metrics_full_depth.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000004_product_separation_views.sql",
+      "target": "table:supabase/migrations/20260507000003_section_metrics_full_depth.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000005_fix_section_metrics_groupby.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "target": "table:supabase/migrations/20260507000005_fix_section_metrics_groupby.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000007_chat_tracked_events.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "target": "table:supabase/migrations/20260507000007_chat_tracked_events.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000009_chat_corpus_word_pool.sql",
+      "target": "table:supabase/migrations/20260506000000_bot_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000010_chat_aliases_and_extractor.sql",
+      "target": "table:supabase/migrations/20260507000009_chat_corpus_word_pool.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000011_fifa_aliases.sql",
+      "target": "table:supabase/migrations/20260507000010_chat_aliases_and_extractor.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000012_espn_athletes_and_history.sql",
+      "target": "table:supabase/migrations/20260507000011_fifa_aliases.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000012_team_xref.sql",
+      "target": "table:supabase/migrations/20260507000012_espn_athletes_and_history.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000013_team_playoff_context.sql",
+      "target": "table:supabase/migrations/20260507000012_espn_athletes_and_history.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000014_espn_bridge_to_performer_external_ids.sql",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000014_wiki_context.sql",
+      "target": "table:supabase/migrations/20260507000014_espn_bridge_to_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000015_espn_extend_to_all_leagues.sql",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000015_team_context_with_wiki.sql",
+      "target": "table:supabase/migrations/20260507000012_espn_athletes_and_history.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000016_broker_dashboard_helpers_v2.sql",
+      "target": "table:supabase/migrations/20260507000015_team_context_with_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000016_espn_world_cup_team_mapping.sql",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000017_espn_change_only_ingest.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000017_tevo_ticket_groups_cache.sql",
+      "target": "table:supabase/migrations/20260507000017_espn_change_only_ingest.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000018_espn_fix_sport_slug.sql",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000019_drop_redundant_unique_constraints.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000020_drop_team_xref.sql",
+      "target": "table:supabase/migrations/20260507000012_team_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000021_espn_collect_cron_schedules.sql",
+      "target": "table:supabase/migrations/20260507000020_drop_team_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000022_event_configuration_and_seating_chart.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000023_broker_event_map_rpcs.sql",
+      "target": "table:supabase/migrations/20260507000022_event_configuration_and_seating_chart.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000024_schedule_event_config_backfill.sql",
+      "target": "table:supabase/migrations/20260507000023_broker_event_map_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000025_system_placeholder_zones.sql",
+      "target": "table:supabase/migrations/20260506000002_performer_zones.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000026_canonical_zone_names.sql",
+      "target": "table:supabase/migrations/20260506000002_performer_zones.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000027_hybrid_zone_coexistence.sql",
+      "target": "table:supabase/migrations/20260506000002_performer_zones.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000028_chat_audit_findings.sql",
+      "target": "table:supabase/migrations/20260506000000_bot_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000029_fix_audit_ordinality.sql",
+      "target": "table:supabase/migrations/20260507000028_chat_audit_findings.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260507000030_team_xref_compat_view.sql",
+      "target": "table:supabase/migrations/20260507000012_team_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508010000_corpus_mining_v2_direction_split.sql",
+      "target": "table:supabase/migrations/20260507000030_team_xref_compat_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508011500_seed_dictionary_from_unmapped_queue_v2.sql",
+      "target": "table:supabase/migrations/20260507000009_chat_corpus_word_pool.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508012000_venue_crawl_state_and_helpers.sql",
+      "target": "table:supabase/migrations/20260507000010_chat_aliases_and_extractor.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508013000_event_type_5w_search.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508014000_chat_suggestion_chips.sql",
+      "target": "table:supabase/migrations/20260508013000_event_type_5w_search.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508014500_chat_chips_min_200_tickets.sql",
+      "target": "table:supabase/migrations/20260508014000_chat_suggestion_chips.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508015000_performer_metadata_and_genre_map.sql",
+      "target": "table:supabase/migrations/20260508014500_chat_chips_min_200_tickets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508015500_classify_performer_categories_helper.sql",
+      "target": "table:supabase/migrations/20260508015000_performer_metadata_and_genre_map.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508016000_schedule_venue_crawl.sql",
+      "target": "table:supabase/migrations/20260508015500_classify_performer_categories_helper.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508017000_why_signals_schema.sql",
+      "target": "table:supabase/migrations/20260508016000_schedule_venue_crawl.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508018000_stopwords_cleanup_round2.sql",
+      "target": "table:supabase/migrations/20260507000009_chat_corpus_word_pool.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508019000_s4k_popularity_boost_and_athlete_aliases.sql",
+      "target": "table:supabase/migrations/20260507000010_chat_aliases_and_extractor.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508020000_manual_search_rpcs_for_frontend.sql",
+      "target": "table:supabase/migrations/20260508019000_s4k_popularity_boost_and_athlete_aliases.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508021000_s4k_inventory_only_filters.sql",
+      "target": "table:supabase/migrations/20260508014000_chat_suggestion_chips.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508022000_expand_user_zone_token_to_curated.sql",
+      "target": "table:supabase/migrations/20260508021000_s4k_inventory_only_filters.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508023000_leads_and_rest_wrappers.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508023500_fix_get_event_zones_public_numeric_cast.sql",
+      "target": "table:supabase/migrations/20260508023000_leads_and_rest_wrappers.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508023700_simplify_submit_lead_drop_bot_messages_mirror.sql",
+      "target": "table:supabase/migrations/20260508023000_leads_and_rest_wrappers.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508040000_broker_movers_rpc.sql",
+      "target": "table:supabase/migrations/20260508023700_simplify_submit_lead_drop_bot_messages_mirror.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508050000_performers_by_league_rpc.sql",
+      "target": "table:supabase/migrations/20260508040000_broker_movers_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508060000_performers_by_league_v2_with_deltas.sql",
+      "target": "table:supabase/migrations/20260508050000_performers_by_league_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508070000_performers_by_league_v3_exclude_tournaments.sql",
+      "target": "table:supabase/migrations/20260508050000_performers_by_league_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508080000_event_movers_v2_parking_net.sql",
+      "target": "table:supabase/migrations/20260508040000_broker_movers_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508090000_filter_ghost_events_from_dashboards.sql",
+      "target": "table:supabase/migrations/20260508040000_broker_movers_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508091000_tighten_ghost_filter_48h.sql",
+      "target": "table:supabase/migrations/20260508050000_performers_by_league_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508100000_event_movers_v3_owned_share.sql",
+      "target": "table:supabase/migrations/20260508040000_broker_movers_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508110000_storage_chat_bucket.sql",
+      "target": "table:supabase/migrations/20260508100000_event_movers_v3_owned_share.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508120000_test_schemas_per_agent.sql",
+      "target": "table:supabase/migrations/20260508110000_storage_chat_bucket.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508130000_sync_check_helper_rpc.sql",
+      "target": "table:supabase/migrations/20260508120000_test_schemas_per_agent.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "target": "table:supabase/migrations/20260507000022_event_configuration_and_seating_chart.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508220000_auto_link_event_xref.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508230000_event_splits_metrics.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508240000_crawl_espn_assets_cron.sql",
+      "target": "table:supabase/migrations/20260508230000_event_splits_metrics.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260508250000_ensure_major_league_watchlist.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509000000_zone_metrics_backfill_cron.sql",
+      "target": "table:supabase/migrations/20260508250000_ensure_major_league_watchlist.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509010000_major_event_calendar.sql",
+      "target": "table:supabase/migrations/20260509000000_zone_metrics_backfill_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509020000_midnight_catchup_sweep.sql",
+      "target": "table:supabase/migrations/20260509010000_major_event_calendar.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509030000_nonowned_median_metric.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509040000_master_cascade_cron.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509050000_event_lifecycle.sql",
+      "target": "table:supabase/migrations/20260509040000_master_cascade_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509060000_seatdata_integration.sql",
+      "target": "table:supabase/migrations/20260509050000_event_lifecycle.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "target": "table:supabase/migrations/20260509060000_seatdata_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509110000_seatgeek_metrics_xref_categorization.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509120000_cross_source_entity_maps.sql",
+      "target": "table:supabase/migrations/20260509110000_seatgeek_metrics_xref_categorization.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509130000_matchup_sentiment_baselines.sql",
+      "target": "table:supabase/migrations/20260509120000_cross_source_entity_maps.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509140000_order_status_canonical.sql",
+      "target": "table:supabase/migrations/20260509130000_matchup_sentiment_baselines.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509160000_sg_canonical_auto_match_cron.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509170000_performer_wikipedia_enrichment.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509180000_sg_canonical_orders_sales_sync.sql",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509190000_seatgeek_historic_sales.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509200000_seatgeek_historic_views.sql",
+      "target": "table:supabase/migrations/20260509190000_seatgeek_historic_sales.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509210000_canonical_data_map.sql",
+      "target": "table:supabase/migrations/20260509200000_seatgeek_historic_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509220000_full_field_map_coverage.sql",
+      "target": "table:supabase/migrations/20260509210000_canonical_data_map.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509230000_record_level_cross_source.sql",
+      "target": "table:supabase/migrations/20260509210000_canonical_data_map.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509240000_home_away_espn_state_zone_auto.sql",
+      "target": "table:supabase/migrations/20260509230000_record_level_cross_source.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509250000_team_at_venue_history.sql",
+      "target": "table:supabase/migrations/20260509240000_home_away_espn_state_zone_auto.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509260000_weather_integration.sql",
+      "target": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509270000_weather_climatology_fallback.sql",
+      "target": "table:supabase/migrations/20260509260000_weather_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509280000_server_side_pulls_evo_orders_sg_listings_sales.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509290000_consolidate_orders_crons_our_orders_view.sql",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509300000_competing_events_radius.sql",
+      "target": "table:supabase/migrations/20260509290000_consolidate_orders_crons_our_orders_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509310000_competing_events_time_window.sql",
+      "target": "table:supabase/migrations/20260509300000_competing_events_radius.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509320000_audit_fixes_phase1_cleanup.sql",
+      "target": "table:supabase/migrations/20260507000014_wiki_context.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509330000_unmatched_events_bucket_wiki_pageviews.sql",
+      "target": "table:supabase/migrations/20260509320000_audit_fixes_phase1_cleanup.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509340000_revert_wiki_pageviews_pipeline.sql",
+      "target": "table:supabase/migrations/20260509330000_unmatched_events_bucket_wiki_pageviews.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509350000_wiki_lean_xref_match_competitor_snapshot.sql",
+      "target": "table:supabase/migrations/20260507000014_wiki_context.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509360000_orphan_event_auto_backfill.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "target": "table:supabase/migrations/20260507000014_wiki_context.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509380000_pricing_intel_unified_and_arbitrage.sql",
+      "target": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509390000_alerts_engine.sql",
+      "target": "table:supabase/migrations/20260509380000_pricing_intel_unified_and_arbitrage.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509400000_weather_for_all_venues.sql",
+      "target": "table:supabase/migrations/20260509260000_weather_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509410000_betting_odds_and_reddit_signals.sql",
+      "target": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509420000_x_accounts_keywords_full_subreddits.sql",
+      "target": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509430000_unified_news_source_mapping.sql",
+      "target": "table:supabase/migrations/20260509410000_betting_odds_and_reddit_signals.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509440000_sg_sale_section_row_recording.sql",
+      "target": "table:supabase/migrations/20260509290000_consolidate_orders_crons_our_orders_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509450000_fix_cron_on_conflict.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509460000_coworker_readonly_role.sql",
+      "target": "table:supabase/migrations/20260509450000_fix_cron_on_conflict.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509470000_mlb_game_series_detection.sql",
+      "target": "table:supabase/migrations/20260509460000_coworker_readonly_role.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509480000_tournament_event_backfill.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509490000_tournament_pull_by_category_north_america.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509500000_concerts_broadway_tours_residencies.sql",
+      "target": "table:supabase/migrations/20260509490000_tournament_pull_by_category_north_america.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509510000_venue_specific_pulls_residency_venues.sql",
+      "target": "table:supabase/migrations/20260509490000_tournament_pull_by_category_north_america.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509520000_north_america_sporting_rivalries.sql",
+      "target": "table:supabase/migrations/20260509510000_venue_specific_pulls_residency_venues.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509530000_rivalry_performer_ids_and_overlay_view.sql",
+      "target": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509540000_holiday_school_calendar.sql",
+      "target": "table:supabase/migrations/20260509530000_rivalry_performer_ids_and_overlay_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509550000_holiday_school_calendar_localized.sql",
+      "target": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260509560000_nws_active_weather_alerts.sql",
+      "target": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510000000_event_injuries_overlay.sql",
+      "target": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510010000_espn_tournament_events.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510020000_dashboard_coverage_and_writes_views.sql",
+      "target": "table:supabase/migrations/20260510010000_espn_tournament_events.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510030000_sg_seller_api_2026_contract_fix.sql",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510040000_dashboard_writes_24h_materialized.sql",
+      "target": "table:supabase/migrations/20260510020000_dashboard_coverage_and_writes_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510050000_dashboard_freshness_view.sql",
+      "target": "table:supabase/migrations/20260510040000_dashboard_writes_24h_materialized.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510060000_dashboard_signal_health_fixes.sql",
+      "target": "table:supabase/migrations/20260509390000_alerts_engine.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510070000_nws_alerts_scope_to_venue_states.sql",
+      "target": "table:supabase/migrations/20260509560000_nws_active_weather_alerts.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510080000_cron_cascade_alignment.sql",
+      "target": "table:supabase/migrations/20260510070000_nws_alerts_scope_to_venue_states.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510090000_v_cron_health.sql",
+      "target": "table:supabase/migrations/20260510080000_cron_cascade_alignment.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510100000_event_xref_phi_nyk_series_patch_and_collision_guard.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510110000_espn_team_canonical_and_performer_xref.sql",
+      "target": "table:supabase/migrations/20260510100000_event_xref_phi_nyk_series_patch_and_collision_guard.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120000_in_db_event_matcher_v1.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120030_phase1_backfill_event_xrefs.sql",
+      "target": "table:supabase/migrations/20260509060000_seatdata_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120100_phase2_backfill_performer_external_ids.sql",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120150_share_links.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120200_phase3_backfill_canonical_external_ids.sql",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120300_phase4_drift_prevention_triggers.sql",
+      "target": "table:supabase/migrations/20260507000008_performer_external_ids.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120400_phase5_date_venue_overlay_views.sql",
+      "target": "table:supabase/migrations/20260509260000_weather_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510120500_phase6_audit_views_and_rpc.sql",
+      "target": "table:supabase/migrations/20260510120400_phase5_date_venue_overlay_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510130000_fred_macro_indicators_umcsent.sql",
+      "target": "table:supabase/migrations/20260510120500_phase6_audit_views_and_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510130030_phase7_drift_hardening_and_extra_overlays.sql",
+      "target": "table:supabase/migrations/20260509210000_canonical_data_map.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510140000_phase8_sg_candidate_performer_view.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510150000_phase9_one_to_one_constraints.sql",
+      "target": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510160000_phase10_candidate_normalization.sql",
+      "target": "table:supabase/migrations/20260510140000_phase8_sg_candidate_performer_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510170000_phase11_sg_event_matcher_by_venue_date.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510180000_phase12_sg_stitching_and_match_queue.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510190000_phase13_v_event_sales_combined.sql",
+      "target": "table:supabase/migrations/20260510180000_phase12_sg_stitching_and_match_queue.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510200000_phase14_event_view_support_views.sql",
+      "target": "table:supabase/migrations/20260510190000_phase13_v_event_sales_combined.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510210000_phase15_performer_view_support_views.sql",
+      "target": "table:supabase/migrations/20260510200000_phase14_event_view_support_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260510210050_phase15_security_hardening_anon_revokes.sql",
+      "target": "table:supabase/migrations/20260510210000_phase15_performer_view_support_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260511000000_security_coworker_readonly_nologin.sql",
+      "target": "table:supabase/migrations/20260510210050_phase15_security_hardening_anon_revokes.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260511000100_security_search_path_definer_funcs.sql",
+      "target": "table:supabase/migrations/20260511000000_security_coworker_readonly_nologin.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260511000200_security_anon_jwt_to_vault.sql",
+      "target": "table:supabase/migrations/20260511000100_security_search_path_definer_funcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260511000300_security_rls_internal_tables.sql",
+      "target": "table:supabase/migrations/20260508023000_leads_and_rest_wrappers.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260511010000_bot_chat.sql",
+      "target": "table:supabase/migrations/20260511000300_security_rls_internal_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100000_c1_prereqs_extensions_and_helpers.sql",
+      "target": "table:supabase/migrations/20260511010000_bot_chat.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100030_c1_entity_xref_governance.sql",
+      "target": "table:supabase/migrations/20260512100000_c1_prereqs_extensions_and_helpers.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100060_c1_seatgeek_orders_resolved.sql",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100090_c1_broker_xref.sql",
+      "target": "table:supabase/migrations/20260512100060_c1_seatgeek_orders_resolved.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100120_c1_listing_xref.sql",
+      "target": "table:supabase/migrations/20260512100090_c1_broker_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100150_c1_event_section_row_snapshots.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100180_c1_v_pg_net_queue_health.sql",
+      "target": "table:supabase/migrations/20260512100150_c1_event_section_row_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512100210_c1_stop_cron_on_inactive_events.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512200000_c1_pg_net_retention_sweep.sql",
+      "target": "table:supabase/migrations/20260512100210_c1_stop_cron_on_inactive_events.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512210000_listings_snapshots_ttl_30d.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512220000_listings_snapshots_dedup_sweep.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512230000_terminal_event_listings_keep5.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260512240000_sg_to_tevo_listing_matcher.sql",
+      "target": "table:supabase/migrations/20260512100120_c1_listing_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513000000_security_lock_pr66_definer_fns.sql",
+      "target": "table:supabase/migrations/20260512240000_sg_to_tevo_listing_matcher.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513000050_c1_sd_fns_body_assert.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513000100_security_c1_invoker_fns_lockdown.sql",
+      "target": "table:supabase/migrations/20260513000050_c1_sd_fns_body_assert.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513001000_lem_matview.sql",
+      "target": "table:supabase/migrations/20260425000003_latest_event_metrics_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513002000_stop_reddit_crons.sql",
+      "target": "table:supabase/migrations/20260513001000_lem_matview.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513185058_cron_io_diet.sql",
+      "target": "table:supabase/migrations/20260513002000_stop_reddit_crons.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513185248_security_get_app_secret_lockdown.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513194124_secdef_anon_lockdown_round_2.sql",
+      "target": "table:supabase/migrations/20260513185248_security_get_app_secret_lockdown.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513194134_fix_leads_rls.sql",
+      "target": "table:supabase/migrations/20260508023000_leads_and_rest_wrappers.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513194143_drop_duplicate_indexes.sql",
+      "target": "table:supabase/migrations/20260507000003_section_metrics_full_depth.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "target": "table:supabase/migrations/20260509140000_order_status_canonical.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513230100_unified_orders_with_tickpick_vivid.sql",
+      "target": "table:supabase/migrations/20260509140000_order_status_canonical.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513230200_tickpick_orders_cron.sql",
+      "target": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513230300_d2_cron_freshness_function.sql",
+      "target": "table:supabase/migrations/20260513230200_tickpick_orders_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260513230400_get_app_secret_add_tickpick_vivid.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514000000_unified_orders_native_event_columns.sql",
+      "target": "table:supabase/migrations/20260509140000_order_status_canonical.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514120000_phase15b_revision_recent_results.sql",
+      "target": "table:supabase/migrations/20260510110000_espn_team_canonical_and_performer_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514180000_security_invoker_view_sweep.sql",
+      "target": "table:supabase/migrations/20260514120000_phase15b_revision_recent_results.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514181000_fn_search_path_sweep.sql",
+      "target": "table:supabase/migrations/20260514180000_security_invoker_view_sweep.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514182000_asset_fns_security_invoker.sql",
+      "target": "table:supabase/migrations/20260514181000_fn_search_path_sweep.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514183000_rls_deny_all_bulk.sql",
+      "target": "table:supabase/migrations/20260514182000_asset_fns_security_invoker.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514185000_espn_gameday_cron.sql",
+      "target": "table:supabase/migrations/20260514183000_rls_deny_all_bulk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514185100_espn_roster_cron.sql",
+      "target": "table:supabase/migrations/20260514185000_espn_gameday_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514190000_cross_source_fk_declarations.sql",
+      "target": "table:supabase/migrations/20260510110000_espn_team_canonical_and_performer_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260514210000_cron_hierarchy_schedules.sql",
+      "target": "table:supabase/migrations/20260514190000_cross_source_fk_declarations.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515100000_vivid_pull_machinery.sql",
+      "target": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515110000_cross_source_order_fks.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515120000_tickpick_orders_ingest_from_apps_script.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515130000_fix_pgcrypto_search_path_regression.sql",
+      "target": "table:supabase/migrations/20260515120000_tickpick_orders_ingest_from_apps_script.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515140000_phase15b_security_invoker_views.sql",
+      "target": "table:supabase/migrations/20260515130000_fix_pgcrypto_search_path_regression.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515150000_tickpick_order_status_and_wholesale_price.sql",
+      "target": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515160000_tickpick_orders_coord_matcher_v1.sql",
+      "target": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515170000_release_health_check_function.sql",
+      "target": "table:supabase/migrations/20260515160000_tickpick_orders_coord_matcher_v1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515190000_aq_event_map_revert_pk_to_bigserial.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515210000_universal_aq_matcher_sweep.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515220000_aq_venue_performer_maps.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515230000_matcher_v2_tier_1_5.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515240000_listings_aq_linkage.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "target": "table:supabase/migrations/20260515240000_listings_aq_linkage.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515250001_cron_policy_max_staleness_floor.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515250002_sales_freshness_60min.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515250003_listings_cadence_halve.sql",
+      "target": "table:supabase/migrations/20260515250002_sales_freshness_60min.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515270000_sg_classifier_v2_owned_via_tevo_xref.sql",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515270100_listings_delta_columns.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515280000_tevo_to_sg_matcher.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515290000_release_health_check_format_fix.sql",
+      "target": "table:supabase/migrations/20260515170000_release_health_check_function.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515300000_cron_resume_with_gate_trailing_semicolon_fix.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515300000_security_secdef_post_pr101_compliance.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515300000_vivid_orders_aq_linkage.sql",
+      "target": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515310000_get_broker_event_page_rpc.sql",
+      "target": "table:supabase/migrations/20260515300000_vivid_orders_aq_linkage.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515320000_d0_read_access_grants.sql",
+      "target": "table:supabase/migrations/20260515310000_get_broker_event_page_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515320000_d2_metrics_rpcs.sql",
+      "target": "table:supabase/migrations/20260515320000_d0_read_access_grants.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515330000_health_check_pg_net_errors.sql",
+      "target": "table:supabase/migrations/20260515320000_d2_metrics_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515340000_fix_listings_deltas_backfill_id_bug.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515340000_security_release_health_aging_and_pgnet.sql",
+      "target": "table:supabase/migrations/20260515170000_release_health_check_function.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515340050_v_bot_chat_unresolved_status_close.sql",
+      "target": "table:supabase/migrations/20260511010000_bot_chat.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515350000_sg_seller_resume_at_evo_cadence.sql",
+      "target": "table:supabase/migrations/20260515340050_v_bot_chat_unresolved_status_close.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515360000_pause_tickpick_broken_crons.sql",
+      "target": "table:supabase/migrations/20260515350000_sg_seller_resume_at_evo_cadence.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515365000_apply_d2_metrics_rpcs.sql",
+      "target": "table:supabase/migrations/20260515320000_d2_metrics_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515370000_sg_seller_orders_drop_status_filter.sql",
+      "target": "table:supabase/migrations/20260509290000_consolidate_orders_crons_our_orders_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515380000_cluster_b2_orphan_event_backfill_fixes.sql",
+      "target": "table:supabase/migrations/20260509360000_orphan_event_auto_backfill.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260515390000_sg_classify_events_timeout_bump.sql",
+      "target": "table:supabase/migrations/20260515380000_cluster_b2_orphan_event_backfill_fixes.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516000000_sg_priority_poll_tick_split_budget.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516010000_cron_cluster_fixes.sql",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516020000_sg_broker_backstops_align_to_4_34.sql",
+      "target": "table:supabase/migrations/20260516010000_cron_cluster_fixes.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516030000_d0_phase2a_prep.sql",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516040000_resume_listings_aq_backfill.sql",
+      "target": "table:supabase/migrations/20260516030000_d0_phase2a_prep.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516050000_get_broker_event_page_v2.sql",
+      "target": "table:supabase/migrations/20260516040000_resume_listings_aq_backfill.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516060000_sg_event_id_indexes.sql",
+      "target": "table:supabase/migrations/20260516050000_get_broker_event_page_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516070000_espn_nfl_bridge_backfill.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516080000_espn_multi_sport_bridge.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516090000_espn_scoreboard_queue_lookahead_270d.sql",
+      "target": "table:supabase/migrations/20260510120000_in_db_event_matcher_v1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516100000_evo_orders_event_mapping_columns.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516110000_sg_broker_sales_event_metrics.sql",
+      "target": "table:supabase/migrations/20260509110000_seatgeek_metrics_xref_categorization.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516120000_event_price_arbitrage_views.sql",
+      "target": "table:supabase/migrations/20260516110000_sg_broker_sales_event_metrics.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516200000_d2_metrics_swap_sg_to_sg_sales.sql",
+      "target": "table:supabase/migrations/20260515320000_d2_metrics_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516200100_d2_cron_freshness_swap_sg_to_sg_sales.sql",
+      "target": "table:supabase/migrations/20260513230300_d2_cron_freshness_function.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516210000_sg_webhook_secret_and_audit.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516210100_sg_webhook_per_type_tables.sql",
+      "target": "table:supabase/migrations/20260516210000_sg_webhook_secret_and_audit.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516210200_sg_webhook_ingest_rpcs.sql",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516220000_v_sg_broker_sales_by_section.sql",
+      "target": "table:supabase/migrations/20260516210200_sg_webhook_ingest_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516220100_v_sg_broker_sales_by_event.sql",
+      "target": "table:supabase/migrations/20260516220000_v_sg_broker_sales_by_section.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516230000_security_release_health_cron_heartbeat.sql",
+      "target": "table:supabase/migrations/20260515170000_release_health_check_function.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516230000_sg_canonical_refresh_v2_pull.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516240000_matcher_v3_venue_map_parking_skip.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516250000_sg_to_tevo_search_bridge_cron.sql",
+      "target": "table:supabase/migrations/20260509350000_wiki_lean_xref_match_competitor_snapshot.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516260000_drop_match_to_aq_event_id_v1_overload.sql",
+      "target": "table:supabase/migrations/20260516250000_sg_to_tevo_search_bridge_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516270000_fix_queue_performer_wiki_orphan_filter.sql",
+      "target": "table:supabase/migrations/20260509170000_performer_wikipedia_enrichment.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516280000_a1_1_seatgeek_sales_dedup_and_tevo_backfill.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516290000_a1_2_3_4_6_d0_audit_batch.sql",
+      "target": "table:supabase/migrations/20260513230000_tickpick_vivid_orders_tables.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260516290001_a1_6_get_broker_event_page_v2_weather_forecast_fallback.sql",
+      "target": "table:supabase/migrations/20260516050000_get_broker_event_page_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517000000_fix_listings_deltas_backfill_timeout.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517010000_get_broker_event_page_v3.sql",
+      "target": "table:supabase/migrations/20260517000000_fix_listings_deltas_backfill_timeout.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517020000_rls_close_gaps_c1_272.sql",
+      "target": "table:supabase/migrations/20260514183000_rls_deny_all_bulk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517030000_v3_sg_broker_sales_inline_hotfix.sql",
+      "target": "table:supabase/migrations/20260517010000_get_broker_event_page_v3.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517160000_sg_broker_process_bounded_drain.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517160001_listings_deltas_null_indexes.sql",
+      "target": "table:supabase/migrations/20260515220000_aq_venue_performer_maps.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517160002_match_listings_to_sg_narrow.sql",
+      "target": "table:supabase/migrations/20260512100120_c1_listing_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517160003_sweep_sg_broker_pending_zombies.sql",
+      "target": "table:supabase/migrations/20260512200000_c1_pg_net_retention_sweep.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517160004_sg_broker_process_drop_zero_arg_overload.sql",
+      "target": "table:supabase/migrations/20260517160003_sweep_sg_broker_pending_zombies.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517170000_sg_broker_sales_views_security_invoker.sql",
+      "target": "table:supabase/migrations/20260517160004_sg_broker_process_drop_zero_arg_overload.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517180000_event_page_tabs_rpcs.sql",
+      "target": "table:supabase/migrations/20260517170000_sg_broker_sales_views_security_invoker.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517220000_event_page_broker_tabs_rpcs.sql",
+      "target": "table:supabase/migrations/20260517180000_event_page_tabs_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517230000_terminal_search_rpc.sql",
+      "target": "table:supabase/migrations/20260517220000_event_page_broker_tabs_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517240000_terminal_search_occurs_at_cast.sql",
+      "target": "table:supabase/migrations/20260517230000_terminal_search_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517250000_parking_bridge_pollution_cleanup.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260517260000_sg_broker_listings_event_metrics.sql",
+      "target": "table:supabase/migrations/20260509110000_seatgeek_metrics_xref_categorization.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518000000_get_event_movers_with_sg_rpc.sql",
+      "target": "table:supabase/migrations/20260517260000_sg_broker_listings_event_metrics.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518010000_event_sentiment_cron.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518010000_get_broker_performer_rpcs.sql",
+      "target": "table:supabase/migrations/20260518010000_event_sentiment_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518020000_event_competitors_cron.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518020000_get_broker_venue_rpcs.sql",
+      "target": "table:supabase/migrations/20260518020000_event_competitors_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518030000_event_page_tabs_uncap.sql",
+      "target": "table:supabase/migrations/20260517180000_event_page_tabs_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518030000_event_section_row_batch_cron.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518040000_cost_readers_migrate_v_event_price_arbitrage.sql",
+      "target": "table:supabase/migrations/20260516120000_event_price_arbitrage_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518040000_get_event_cross_source_metrics_rpc.sql",
+      "target": "table:supabase/migrations/20260518040000_cost_readers_migrate_v_event_price_arbitrage.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518040001_v_event_full_v2_listings_all_swap.sql",
+      "target": "table:supabase/migrations/20260509370000_data_fixes_phase1.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518040002_v_event_velocity_windows_listings_all_swap.sql",
+      "target": "table:supabase/migrations/20260509380000_pricing_intel_unified_and_arbitrage.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518040003_v2_rpc_listings_all_swap.sql",
+      "target": "table:supabase/migrations/20260516050000_get_broker_event_page_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518040004_v3_rpc_listings_all_swap.sql",
+      "target": "table:supabase/migrations/20260517010000_get_broker_event_page_v3.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518050000_cost_columns_drop.sql",
+      "target": "table:supabase/migrations/20260509110000_seatgeek_metrics_xref_categorization.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260518060000_event_metrics_owned_distribution.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519000000_event_page_weather_localized_rpc.sql",
+      "target": "table:supabase/migrations/20260518060000_event_metrics_owned_distribution.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519010000_event_page_sg_zones_splits_rpc.sql",
+      "target": "table:supabase/migrations/20260519000000_event_page_weather_localized_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519100000_sg_sales_distinct_on_view_cleanup.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519110000_d2_cron_freshness_body_guard_and_sg_broker_mapping.sql",
+      "target": "table:supabase/migrations/20260513230300_d2_cron_freshness_function.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519110000_sg_broker_429_aware_pipeline.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519120000_sg_priority_crons_5min_cadence.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519130000_sg_broker_429_monitoring_protocol.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519140000_sg_broker_burst_size_fix.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519150000_get_event_chart_extended_rpc.sql",
+      "target": "table:supabase/migrations/20260519140000_sg_broker_burst_size_fix.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519160000_fix_get_event_movers_with_sg_perf.sql",
+      "target": "table:supabase/migrations/20260518000000_get_event_movers_with_sg_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519170000_sg_classify_events_tbd_bridge_exception.sql",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519180000_espn_league_scope_sweep.sql",
+      "target": "table:supabase/migrations/20260507000013_team_playoff_context.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519180000_tevo_blindspot_detection.sql",
+      "target": "table:supabase/migrations/20260519180000_espn_league_scope_sweep.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519190000_tevo_blindspot_crons.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519200000_returning_entities_discovery.sql",
+      "target": "table:supabase/migrations/20260519190000_tevo_blindspot_crons.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519210000_security_secdef_guard_retrofit_3_fns.sql",
+      "target": "table:supabase/migrations/20260509110000_seatgeek_metrics_xref_categorization.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519240000_cron_policy_collect_listings_backfill.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519270000_c1_security_invoker_views_phase_a.sql",
+      "target": "table:supabase/migrations/20260519240000_cron_policy_collect_listings_backfill.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260519300000_c1_d0_read_initplan_fix.sql",
+      "target": "table:supabase/migrations/20260519270000_c1_security_invoker_views_phase_a.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520000000_sg_priority_policy_watch_tier.sql",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "target": "table:supabase/migrations/20260520000000_sg_priority_policy_watch_tier.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520130000_exos_phase2_tickets.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520140000_exos_org_follows.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520150000_exos_storage.sql",
+      "target": "table:supabase/migrations/20260520140000_exos_org_follows.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520160000_exos_mail.sql",
+      "target": "table:supabase/migrations/20260520150000_exos_storage.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520200000_sg_broker_60d_plus_polling.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520210000_sg_classifier_24h_window_hotfix.sql",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520220000_broadway_listings_pipeline.sql",
+      "target": "table:supabase/migrations/20260520210000_sg_classifier_24h_window_hotfix.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520220000_fix_get_event_chart_injuries_partition.sql",
+      "target": "table:supabase/migrations/20260519150000_get_event_chart_extended_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520230000_broadway_run_log_and_closure_tracking.sql",
+      "target": "table:supabase/migrations/20260520220000_broadway_listings_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520230000_security_revoke_anon_secdef_exec.sql",
+      "target": "table:supabase/migrations/20260519190000_tevo_blindspot_crons.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520250000_fix_get_event_chart_listings_per_bucket_dedup.sql",
+      "target": "table:supabase/migrations/20260519150000_get_event_chart_extended_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520260000_matcher_cron_aliases_classify_365d.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520290000_blindspot_tier_classify_step1.sql",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520310000_blindspot_polling_step2.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520330000_sg_sales_poll_rewire.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520360000_blindspot_detection_step3.sql",
+      "target": "table:supabase/migrations/20260520330000_sg_sales_poll_rewire.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520370000_blindspot_detection_step3_composite_score.sql",
+      "target": "table:supabase/migrations/20260520360000_blindspot_detection_step3.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520400000_collect_listings_featured_10min.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520410000_compute_event_breakdowns_non_fatal.sql",
+      "target": "table:supabase/migrations/20260507000003_section_metrics_full_depth.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260520420000_backfill_breakdowns_reenable.sql",
+      "target": "table:supabase/migrations/20260509000000_zone_metrics_backfill_cron.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523120000_exos_realtime_checkins.sql",
+      "target": "table:supabase/migrations/20260520420000_backfill_breakdowns_reenable.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523130000_exos_mail_drainer.sql",
+      "target": "table:supabase/migrations/20260520160000_exos_mail.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523150000_exos_mint_event_cap.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523160000_exos_check_in_verify.sql",
+      "target": "table:supabase/migrations/20260520130000_exos_phase2_tickets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523170000_exos_stripe_checkout.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523180000_exos_purchase_limits.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523190000_exos_distribution.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523200000_exos_growth_primitives.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523210000_exos_mail_ticket_issued.sql",
+      "target": "table:supabase/migrations/20260520160000_exos_mail.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523220000_exos_notify_holders.sql",
+      "target": "table:supabase/migrations/20260520160000_exos_mail.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260523230000_exos_issue_to_email.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260524120000_sg_blindspot_movers_matview.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260524130000_fix_performer_index_league_scope.sql",
+      "target": "table:supabase/migrations/20260518010000_get_broker_performer_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260524140000_v3_sg_broker_sales_7d_window.sql",
+      "target": "table:supabase/migrations/20260517010000_get_broker_event_page_v3.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260524150000_exos_public_marketing.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260524160000_exos_security_hardening.sql",
+      "target": "table:supabase/migrations/20260524150000_exos_public_marketing.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260525120000_venue_mlb_resilience.sql",
+      "target": "table:supabase/migrations/20260518020000_get_broker_venue_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260525130000_v2_sales_tape_7d_window.sql",
+      "target": "table:supabase/migrations/20260525120000_venue_mlb_resilience.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260525170000_security_revoke_anon_view_select.sql",
+      "target": "table:supabase/migrations/20260525130000_v2_sales_tape_7d_window.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260525180000_security_health_check_anon_exposed_relations.sql",
+      "target": "table:supabase/migrations/20260525170000_security_revoke_anon_view_select.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260525190000_security_revoke_anon_secdef_residual.sql",
+      "target": "table:supabase/migrations/20260525180000_security_health_check_anon_exposed_relations.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526000000_fix_broken_crons.sql",
+      "target": "table:supabase/migrations/20260525190000_security_revoke_anon_secdef_residual.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526010000_sg_429_rate_mitigation.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526020000_fix_checkins_scanned_by_nullable.sql",
+      "target": "table:supabase/migrations/20260520130000_exos_phase2_tickets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526030000_fix_sg_blindspot_cron_statement_timeout.sql",
+      "target": "table:supabase/migrations/20260526020000_fix_checkins_scanned_by_nullable.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526040000_tevo_blindspot_movers_matview.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526050000_security_revoke_confirmed_anon_policies.sql",
+      "target": "table:supabase/migrations/20260508140000_espn_team_and_venue_assets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526060000_fix_sg_blindspot_cron_non_concurrent.sql",
+      "target": "table:supabase/migrations/20260526050000_security_revoke_confirmed_anon_policies.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526070000_broker_movers_home_rpc.sql",
+      "target": "table:supabase/migrations/20260526060000_fix_sg_blindspot_cron_non_concurrent.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "target": "table:supabase/migrations/20260526070000_broker_movers_home_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527040000_get_app_secret_add_ticketsdata.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527050000_ticketsdata_complete_foundation.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527100000_ticketsdata_crons.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527110000_ticketsdata_drop_sh_add_ticketmaster.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527120000_ticketsdata_reactivate_sh_build_gt_tp.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527130000_ticketsdata_monthly_budget_gt_discovery.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527140000_ticketsdata_unified_listings_cross_source.sql",
+      "target": "table:supabase/migrations/20260509210000_canonical_data_map.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527150000_ticketsdata_daily_budget_cap_300.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527160000_ticketsdata_enqueue_limit_37_for_4x_daily.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527170000_ticketsdata_stagger_enqueue_by_platform.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527180000_ticketsdata_hourly_coverage_stagger.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527190000_peak_crons_data_retention.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527200000_td_owned_tickets_fix_reschedule.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527210000_event_listing_snapshot_daily.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527220000_evo_listing_cadence_discovery.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527230000_sg_peak_capacity_retention.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527240000_sg_classify_events_fix_snapshot_basis.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527250000_event_movers_index_v2.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527260000_movers_index_rpc_api.sql",
+      "target": "table:supabase/migrations/20260527250000_event_movers_index_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260527270000_event_listing_snapshot_daily_broker_read_access.sql",
+      "target": "table:supabase/migrations/20260527260000_movers_index_rpc_api.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528280000_td_listing_snapshots_broker_read_access.sql",
+      "target": "table:supabase/migrations/20260527270000_event_listing_snapshot_daily_broker_read_access.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528290000_fix_movers_past_event_filter.sql",
+      "target": "table:supabase/migrations/20260527250000_event_movers_index_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528300000_sg_null_listings_fix.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528310000_td_xref_backfill_via_aq_mapper.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528320000_sg_lifetime_sales_and_fill_rate.sql",
+      "target": "table:supabase/migrations/20260509110000_seatgeek_metrics_xref_categorization.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528330000_aq_maps_backfill_and_tevo_link.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528340000_fix_td_snapshot_12h_window.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528350000_fix_sg_peak_burst.sql",
+      "target": "table:supabase/migrations/20260528340000_fix_td_snapshot_12h_window.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528360000_fix_sweep_functions.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260528370000_fix_movers_horizon_dedup.sql",
+      "target": "table:supabase/migrations/20260527250000_event_movers_index_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529120000_td_focus_yankees_home_knicks_playoff.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529170000_sg_listings_floor_sweep.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529180000_td_tickpick_platform.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529190000_td_listing_metrics_tp_tm.sql",
+      "target": "table:supabase/migrations/20260527210000_event_listing_snapshot_daily.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529200000_td_ticketmaster_platform.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529210000_td_tm_fixes.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529220000_td_tm_resale_split.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529230000_td_listings_rpc_and_snapshot_gate_fix.sql",
+      "target": "table:supabase/migrations/20260527210000_event_listing_snapshot_daily.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260529240000_fix_evo_listings_full_timeout.sql",
+      "target": "table:supabase/migrations/20260517180000_event_page_tabs_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530120000_terminal_event_page_timeout_audit.sql",
+      "target": "table:supabase/migrations/20260529240000_fix_evo_listings_full_timeout.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530140000_td_reconcile_split_knicks_finals_aq.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530160000_td_gt_knicks_performer.sql",
+      "target": "table:supabase/migrations/20260527130000_ticketsdata_monthly_budget_gt_discovery.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530180000_schedule_td_reconcile_knicks_finals_cron.sql",
+      "target": "table:supabase/migrations/20260530160000_td_gt_knicks_performer.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530200000_backfill_order_tevo_from_aq.sql",
+      "target": "table:supabase/migrations/20260509070000_seatdata_xref_extended_and_evo_orders.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530220000_aq_hub_resolver_tevo_from_sources.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530230000_link_aq_tevo_from_events.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260530240000_d0_td_getin_columns.sql",
+      "target": "table:supabase/migrations/20260527210000_event_listing_snapshot_daily.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531120000_d0_get_event_td_pull_health.sql",
+      "target": "table:supabase/migrations/20260530240000_d0_td_getin_columns.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531130000_d0_get_performer_narrative.sql",
+      "target": "table:supabase/migrations/20260531120000_d0_get_event_td_pull_health.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531131000_d0_get_macro_series.sql",
+      "target": "table:supabase/migrations/20260531130000_d0_get_performer_narrative.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531140000_collector_cadence.sql",
+      "target": "table:supabase/migrations/20260531131000_d0_get_macro_series.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531150000_evo_listings_poller.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531160000_sg_poller_bands.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531170000_cron_cutover_bands.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531180000_retention_wave1.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531200000_cutover_p0_fixes.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531210000_wave3_sg_change_detection.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260531214306_amalgam_cross_source_value.sql",
+      "target": "table:supabase/migrations/20260527210000_event_listing_snapshot_daily.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120000_d0_event_realtime_dirty_ping.sql",
+      "target": "table:supabase/migrations/20260531214306_amalgam_cross_source_value.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120000_disable_listings_aq_backfill_overnight.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120000_fix_td_gt_truetc_match_and_automap_check.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120000_stop_tracking_cancelled_events.sql",
+      "target": "table:supabase/migrations/20260509050000_event_lifecycle.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120100_sec_p1_revoke_anon_internal_funcs_views.sql",
+      "target": "table:supabase/migrations/20260601120000_stop_tracking_cancelled_events.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120200_sec_p2_supporting_hardening.sql",
+      "target": "table:supabase/migrations/20260601120100_sec_p1_revoke_anon_internal_funcs_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120300_sec_p1b_revoke_public_exec.sql",
+      "target": "table:supabase/migrations/20260601120200_sec_p2_supporting_hardening.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120400_sec_p2b_pin_aq_name_consistent_search_path.sql",
+      "target": "table:supabase/migrations/20260601120300_sec_p1b_revoke_public_exec.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120500_sec_p3_document_exos_public_views_accepted.sql",
+      "target": "table:supabase/migrations/20260601120400_sec_p2b_pin_aq_name_consistent_search_path.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601120600_sec_p2c_pin_aq_league_consistent_search_path.sql",
+      "target": "table:supabase/migrations/20260601120500_sec_p3_document_exos_public_views_accepted.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601130000_fix_movers_index_timeout.sql",
+      "target": "table:supabase/migrations/20260527250000_event_movers_index_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601140000_movers_two_tier_agg_cache.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601173000_aq_event_map_name_guard.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601181500_aq_event_map_league_guard.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601184500_aq_backfill_step13_name_guard.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260601190000_aq_name_consistent_lead_fix.sql",
+      "target": "table:supabase/migrations/20260601173000_aq_event_map_name_guard.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260602130000_sg_listings_poll_priority_fix.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260602140000_sg_ownership_aware_cadence.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603120000_get_event_all_source_listing_metrics.sql",
+      "target": "table:supabase/migrations/20260602140000_sg_ownership_aware_cadence.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603160000_seatmap_manifest_sync.sql",
+      "target": "table:supabase/migrations/20260603120000_get_event_all_source_listing_metrics.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603170000_seatmap_manifest_s4kent_read.sql",
+      "target": "table:supabase/migrations/20260603160000_seatmap_manifest_sync.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603180000_get_event_source_links.sql",
+      "target": "table:supabase/migrations/20260603170000_seatmap_manifest_s4kent_read.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603180000_sg_listings_owned_nonowned_split.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603190000_event_watchlist.sql",
+      "target": "table:supabase/migrations/20260603180000_sg_listings_owned_nonowned_split.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603190000_halve_listings_snapshot_retention.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603200000_audit_fixes_seller_fk_dedup_evodiscover.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603210000_dedup_bound_per_event_window.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260603220000_seller_drop_remaining_fks.sql",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260604120000_alert_email_template.sql",
+      "target": "table:supabase/migrations/20260603220000_seller_drop_remaining_fks.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260604125000_alert_mail_queue.sql",
+      "target": "table:supabase/migrations/20260604120000_alert_email_template.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260604130000_alert_dispatch_cadence.sql",
+      "target": "table:supabase/migrations/20260603190000_event_watchlist.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260604160000_world_cup_price_logger.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605120000_concert_venue_watchlist_batch.sql",
+      "target": "table:supabase/migrations/20260423000000_init.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605130000_optimize_zone_section_metrics_dedup.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605130500_drop_td_enqueue_peak_old_overload.sql",
+      "target": "table:supabase/migrations/20260605130000_optimize_zone_section_metrics_dedup.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605131000_exos_media_restrict_anon_listing.sql",
+      "target": "table:supabase/migrations/20260520150000_exos_storage.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605131500_exos_checkins_scanned_by_email.sql",
+      "target": "table:supabase/migrations/20260520130000_exos_phase2_tickets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605132000_exos_check_in_event_scope.sql",
+      "target": "table:supabase/migrations/20260520130000_exos_phase2_tickets.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605132500_exos_claim_free_tickets.sql",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605133000_td_sg_event_linkage_and_aq_tevo_fill.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605133500_aq_tevo_search_bridge.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605140000_td_concert_venue_tracking.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150000_disable_listings_aq_backfill_overnight.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150100_fix_td_gt_truetc_match_and_automap_check.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150200_sec_p0_rls_exposed_tables.sql",
+      "target": "table:supabase/migrations/20260527250000_event_movers_index_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150300_sg_listings_full_last_pull.sql",
+      "target": "table:supabase/migrations/20260517180000_event_page_tabs_rpcs.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150400_stop_tracking_cancelled_events.sql",
+      "target": "table:supabase/migrations/20260509050000_event_lifecycle.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150500_sg_poller_soonest_first.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150600_sg_tevo_search_candidates.sql",
+      "target": "table:supabase/migrations/20260605150500_sg_poller_soonest_first.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150700_sg_listings_owned_nonowned_split.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150800_user_alerts.sql",
+      "target": "table:supabase/migrations/20260605150700_sg_listings_owned_nonowned_split.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605150900_halve_listings_snapshot_retention.sql",
+      "target": "table:supabase/migrations/20260424000000_listings_v2.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605151000_email_template_shell.sql",
+      "target": "table:supabase/migrations/20260605150900_halve_listings_snapshot_retention.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605151100_entity_metrics_daily.sql",
+      "target": "table:supabase/migrations/20260605151000_email_template_shell.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605160000_alert_evaluator_and_track_all.sql",
+      "target": "table:supabase/migrations/20260604125000_alert_mail_queue.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605160000_td_concert_venue_tevo_link_fix.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605170000_alert_evaluator_performer_venue.sql",
+      "target": "table:supabase/migrations/20260604125000_alert_mail_queue.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605180000_alert_signal_evaluator.sql",
+      "target": "table:supabase/migrations/20260604125000_alert_mail_queue.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605180000_td_bok_preseason_manual_map.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605190000_event_daily_digest_renderer.sql",
+      "target": "table:supabase/migrations/20260605180000_td_bok_preseason_manual_map.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260605200000_watchlist_daily_digest_dispatch.sql",
+      "target": "table:supabase/migrations/20260604125000_alert_mail_queue.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606120000_evo_only_autotag.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606120000_fix_espn_event_xref_collisions.sql",
+      "target": "table:supabase/migrations/20260507000013_event_xref_and_espn_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606120000_rls_and_anon_execute_lockdown.sql",
+      "target": "table:supabase/migrations/20260606120000_fix_espn_event_xref_collisions.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606120000_sg_market_chart_top50.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606120000_sg_primary_td_seatgeek_killswitch.sql",
+      "target": "table:supabase/migrations/20260527100000_ticketsdata_crons.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606120500_lock_v_wc_price_latest_view.sql",
+      "target": "table:supabase/migrations/20260606120000_sg_primary_td_seatgeek_killswitch.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606130000_venue_alias_bridge_fixes.sql",
+      "target": "table:supabase/migrations/20260516240000_matcher_v3_venue_map_parking_skip.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606140000_f1_vegas_multiday_disambig.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606150000_sj_earthquakes_stanford_link.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606160000_arrowhead_geha_alias.sql",
+      "target": "table:supabase/migrations/20260516240000_matcher_v3_venue_map_parking_skip.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606160000_fix_td_tp_median_price_with_fees.sql",
+      "target": "table:supabase/migrations/20260527210000_event_listing_snapshot_daily.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606160000_sg_sales_poll_priority_and_pending_sweep.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606170000_td_seatgeek_discovery.sql",
+      "target": "table:supabase/migrations/20260509150000_sg_events_canonical_and_performer_wiki.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606170000_watchlist_list_metrics.sql",
+      "target": "table:supabase/migrations/20260603190000_event_watchlist.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606180000_splits_exclude_ancillary.sql",
+      "target": "table:supabase/migrations/20260606170000_watchlist_list_metrics.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606191854_cron_redesign_1_collector_cadence_trading_hours.sql",
+      "target": "table:supabase/migrations/20260531140000_collector_cadence.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606192104_cron_redesign_2_sg_token_interleave.sql",
+      "target": "table:supabase/migrations/20260606191854_cron_redesign_1_collector_cadence_trading_hours.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606192416_cron_redesign_3_td_fold_metronome.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606195118_cron_redesign_4_seller_full_pull_aq_map.sql",
+      "target": "table:supabase/migrations/20260509100000_seatgeek_sellerdirect.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260606195432_get_event_sg_seller_listings_full_rpc.sql",
+      "target": "table:supabase/migrations/20260606195118_cron_redesign_4_seller_full_pull_aq_map.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260607170000_demote_tickpick_opt_in_tm_takeover.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608030000_sg_owned_focus_and_full_count.sql",
+      "target": "table:supabase/migrations/20260509090000_seatgeek_broker_rebuild.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608031000_fix_movers_agg_timeout.sql",
+      "target": "table:supabase/migrations/20260608030000_sg_owned_focus_and_full_count.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608032000_bot_chat_autoresolve_and_noise_sweep.sql",
+      "target": "table:supabase/migrations/20260511010000_bot_chat.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608120000_venue_section_map_evo.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608130000_venue_section_map_config_aware.sql",
+      "target": "table:supabase/migrations/20260608120000_venue_section_map_evo.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608140000_get_event_section_map_rpc.sql",
+      "target": "table:supabase/migrations/20260608130000_venue_section_map_config_aware.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608170000_chart_ext_seatdata_orders.sql",
+      "target": "table:supabase/migrations/20260519150000_get_event_chart_extended_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608193000_td_402_disable_tp_tm_enqueue.sql",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608194500_sg_matcher_name_league_guard.sql",
+      "target": "table:supabase/migrations/20260509080000_seatgeek_integration.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608200000_seatdata_due_owned25_chart40.sql",
+      "target": "table:supabase/migrations/20260608194500_sg_matcher_name_league_guard.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608201500_aq_consolidate_safe_dups_fn.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608203000_rls_enable_two_ungated_tables.sql",
+      "target": "table:supabase/migrations/20260514183000_rls_deny_all_bulk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608204500_lockdown_event_xref_cleanup_archive.sql",
+      "target": "table:supabase/migrations/20260514183000_rls_deny_all_bulk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608210000_backfill_home_venues_modal.sql",
+      "target": "table:supabase/migrations/20260507000006_performer_home_venues.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608210000_sg_market_chart_seatdata_gmv.sql",
+      "target": "table:supabase/migrations/20260606120000_sg_market_chart_top50.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608220000_sg_market_chart_blended.sql",
+      "target": "table:supabase/migrations/20260606120000_sg_market_chart_top50.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260608230000_fix_aq_consolidate_ambiguous_col.sql",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260509130000_matchup_sentiment_baselines.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260509350000_wiki_lean_xref_match_competitor_snapshot.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260510110000_espn_team_canonical_and_performer_xref.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260510130000_fred_macro_indicators_umcsent.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260512100150_c1_event_section_row_snapshots.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516030000_d0_phase2a_prep.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516040000_resume_listings_aq_backfill.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516050000_get_broker_event_page_v2.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516060000_sg_event_id_indexes.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516070000_espn_nfl_bridge_backfill.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516080000_espn_multi_sport_bridge.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516090000_espn_scoreboard_queue_lookahead_270d.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516100000_evo_orders_event_mapping_columns.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516110000_sg_broker_sales_event_metrics.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260516120000_event_price_arbitrage_views.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260517160000_sg_broker_process_bounded_drain.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260517160001_listings_deltas_null_indexes.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260517160002_match_listings_to_sg_narrow.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260517160003_sweep_sg_broker_pending_zombies.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260517160004_sg_broker_process_drop_zero_arg_overload.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260517260000_sg_broker_listings_event_metrics.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518010000_event_sentiment_cron.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518010000_get_broker_performer_rpcs.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518020000_event_competitors_cron.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518020000_get_broker_venue_rpcs.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518030000_event_page_tabs_uncap.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518030000_event_section_row_batch_cron.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518040000_cost_readers_migrate_v_event_price_arbitrage.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518040000_get_event_cross_source_metrics_rpc.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518050000_cost_columns_drop.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260518060000_event_metrics_owned_distribution.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519000000_event_page_weather_localized_rpc.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519010000_event_page_sg_zones_splits_rpc.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519100000_sg_sales_distinct_on_view_cleanup.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519110000_d2_cron_freshness_body_guard_and_sg_broker_mapping.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519110000_sg_broker_429_aware_pipeline.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519120000_sg_priority_crons_5min_cadence.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519130000_sg_broker_429_monitoring_protocol.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519140000_sg_broker_burst_size_fix.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260519150000_get_event_chart_extended_rpc.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520130000_exos_phase2_tickets.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520140000_exos_org_follows.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520150000_exos_storage.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520160000_exos_mail.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520200000_sg_broker_60d_plus_polling.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520230000_broadway_run_log_and_closure_tracking.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520230000_security_revoke_anon_secdef_exec.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520400000_collect_listings_featured_10min.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520410000_compute_event_breakdowns_non_fatal.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260520420000_backfill_breakdowns_reenable.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523120000_exos_realtime_checkins.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523130000_exos_mail_drainer.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523150000_exos_mint_event_cap.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523160000_exos_check_in_verify.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523170000_exos_stripe_checkout.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523180000_exos_purchase_limits.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523200000_exos_growth_primitives.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523210000_exos_mail_ticket_issued.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523220000_exos_notify_holders.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260523230000_exos_issue_to_email.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260524150000_exos_public_marketing.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260524160000_exos_security_hardening.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260525170000_security_revoke_anon_view_select.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260525180000_security_health_check_anon_exposed_relations.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260525190000_security_revoke_anon_secdef_residual.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260526000000_fix_broken_crons.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260526010000_sg_429_rate_mitigation.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260526020000_fix_checkins_scanned_by_nullable.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260527240000_sg_classify_events_fix_snapshot_basis.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260527250000_event_movers_index_v2.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260527260000_movers_index_rpc_api.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260527270000_event_listing_snapshot_daily_broker_read_access.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260528280000_td_listing_snapshots_broker_read_access.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260528290000_fix_movers_past_event_filter.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260528300000_sg_null_listings_fix.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260528310000_td_xref_backfill_via_aq_mapper.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260528350000_fix_sg_peak_burst.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260528360000_fix_sweep_functions.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260528370000_fix_movers_horizon_dedup.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260529120000_td_focus_yankees_home_knicks_playoff.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260529170000_sg_listings_floor_sweep.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260529180000_td_tickpick_platform.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260529190000_td_listing_metrics_tp_tm.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260529200000_td_ticketmaster_platform.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260529210000_td_tm_fixes.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260529220000_td_tm_resale_split.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260530120000_terminal_event_page_timeout_audit.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260531140000_collector_cadence.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260531150000_evo_listings_poller.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260531160000_sg_poller_bands.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260531170000_cron_cutover_bands.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260531180000_retention_wave1.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260531200000_cutover_p0_fixes.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260531214306_amalgam_cross_source_value.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260603180000_get_event_source_links.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260603180000_sg_listings_owned_nonowned_split.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260603190000_event_watchlist.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260603190000_halve_listings_snapshot_retention.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260603200000_audit_fixes_seller_fk_dedup_evodiscover.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260603210000_dedup_bound_per_event_window.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260603220000_seller_drop_remaining_fks.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260608030000_sg_owned_focus_and_full_count.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260608031000_fix_movers_agg_timeout.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "table:supabase/migrations/20260608032000_bot_chat_autoresolve_and_noise_sweep.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
