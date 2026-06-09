@@ -40,12 +40,19 @@
 --   token) -> token_ambiguous (token hits >1 key, flagged) -> token_base (unique
 --   leading-integer core) -> unmatched.
 --
---   Authored by D0 2026-06-08. NOT YET APPLIED — staged rollout:
---     (a) A1 applies this migration.
---     (b) A1 runs  SELECT public.build_venue_section_map_all('evo');  once.
---     (c) Review  SELECT * FROM public.v_venue_section_map_coverage ORDER BY unmapped_pct DESC;
---     (d) Follow-up migration adds the refresh cron once coverage is confirmed.
---   No cron is scheduled in this migration.
+--   Authored by D0 2026-06-08.
+--
+-- ## Already applied to prod  Applied via MCP 2026-06-08 (operator-authorized, "do 1-5 in order").
+--   Branch-tested end-to-end first (all 5 tiers + parking-exclusion + platform guard +
+--   idempotency on a copy-on-write branch). One prod-data bug then surfaced + fixed:
+--   venues have MULTIPLE seatmap configs repeating the same section_key, so the
+--   exact-match join fanned out and the upsert hit the same PK twice ("ON CONFLICT
+--   cannot affect row a second time"). Fixed by SELECT DISTINCT on the keys CTE
+--   (applied as venue_section_map_evo_distinct_fix). Sample populate (real prod):
+--   Dodger 96.8% / Yankee 85.1% / Citi 81.1% / Fenway 46.4% (alpha-named sections).
+--   NOTE: full 366-venue backfill is NOT done one-shot — per-venue firehose scans are
+--   too heavy for an MCP call. It is delegated to the refresh cron (follow-up migration),
+--   which builds the stalest venues per tick server-side (pg_cron, no connector limit).
 --
 -- KEY ARCHITECTURE NOTE (do not re-discover):
 --   The venue map's canonical section namespace = seatmap_manifest.section_keys
@@ -152,8 +159,12 @@ BEGIN
       USING ERRCODE = '0A000';
   END IF;
 
-  WITH keys AS (  -- seatmap namespace for this venue
-    SELECT public.venue_section_token(k)      AS tok,
+  WITH keys AS (  -- seatmap namespace for this venue (DISTINCT: a venue has
+                  -- multiple seatmap configs that repeat the same section_key —
+                  -- without DISTINCT the exact-match join fans out and the upsert
+                  -- hits the same PK twice: "ON CONFLICT cannot affect row a second time")
+    SELECT DISTINCT
+           public.venue_section_token(k)      AS tok,
            public.venue_section_token_base(k) AS tok_base,
            lower(btrim(k))                    AS seatmap_key
     FROM public.seatmap_manifest sm
