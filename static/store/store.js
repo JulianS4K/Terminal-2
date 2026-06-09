@@ -2668,6 +2668,188 @@
 
   window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
 
+  // Reverse discovery — "what tours can I catch near me". Location-first:
+  // performers with >= min_shows within a radius of home in the window.
+  // Backed by /api/store/tours/near; each show links to its /store/event page.
+  function mountDiscover() {
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (n) => "$" + Math.round(n).toLocaleString();
+    const fmtD = (iso) => {
+      try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+      catch (_) { return iso; }
+    };
+
+    async function run() {
+      const p = new URLSearchParams({
+        home_lat: $("dLat").value, home_lon: $("dLon").value,
+        within_mi: $("dMi").value || "250", days: $("dDays").value || "120",
+        min_shows: $("dMin").value || "2",
+      });
+      if ($("dKind").value) p.set("concerts_only", "true");
+      $("dStatus").textContent = "Searching…";
+      $("dResults").innerHTML = "";
+      try {
+        render(await api("/api/store/tours/near?" + p.toString()));
+      } catch (e) {
+        $("dStatus").textContent = "Error: " + e.message;
+      }
+    }
+
+    function render(d) {
+      const tours = (d && d.tours) || [];
+      $("dStatus").textContent = `${tours.length} tour${tours.length === 1 ? "" : "s"} within ${d.within_mi} mi`;
+      $("dResults").innerHTML = tours.map((t) => {
+        const badges = (t.hot ? '<span class="pill3 hot">🔥 hot</span>' : "")
+          + (t.we_own ? '<span class="pill3 own">in stock</span>' : "");
+        const shows = (t.events || [])
+          .map((ev) => `<a href="/store/event/${ev.event_id}">${esc(ev.city || "")} ${fmtD(ev.date)}</a>`)
+          .join("");
+        const price = t.price_from != null ? ` · from ${money(t.price_from)}` : "";
+        const isTeam = t.kind === "sports";
+        const follow = `/store/tour?performer=${t.performer_id}`
+          + `&home_lat=${encodeURIComponent($("dLat").value)}&home_lon=${encodeURIComponent($("dLon").value)}`
+          + (isTeam ? "&side=home" : "");
+        return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
+          + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? "home games" : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
+          + `<div style="margin:6px 0"><a href="${follow}"><b>${isTeam ? "Follow this team →" : "Follow this tour →"}</b></a></div>`
+          + `<div class="tour-shows">${shows}</div></div>`;
+      }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";
+    }
+
+    $("dGo").addEventListener("click", run);
+    $("dGeo").addEventListener("click", () => {
+      if (!navigator.geolocation) return;
+      $("dStatus").textContent = "Locating…";
+      navigator.geolocation.getCurrentPosition((pos) => {
+        $("dLat").value = pos.coords.latitude.toFixed(4);
+        $("dLon").value = pos.coords.longitude.toFixed(4);
+        run();
+      }, () => { $("dStatus").textContent = "Couldn't get your location — enter it manually."; });
+    });
+    run();
+  }
+
+  // Follow-the-tour — pick a ticket count, attend a performer's whole tour;
+  // seats auto-selected per date. Backed by /api/store/performers/{id}/tour-package.
+  // Performer id + home come from the URL (set by the Discover page).
+  function mountTourFollow() {
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (n) => "$" + Math.round(n).toLocaleString();
+    const fmtD = (iso) => {
+      try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+      catch (_) { return iso; }
+    };
+    const u = new URLSearchParams(location.search);
+    const performer = parseInt(u.get("performer"), 10);
+    let side = u.get("side") || "auto";   // teams: away (road trip) vs home (home stand)
+    if (u.get("home_lat")) $("ftLat").value = u.get("home_lat");
+    if (u.get("home_lon")) $("ftLon").value = u.get("home_lon");
+    if (u.get("qty")) $("ftQty").value = u.get("qty");
+
+    async function run() {
+      if (!Number.isFinite(performer) || performer <= 0) {
+        $("ftStatus").textContent = "No performer selected — start from Discover.";
+        return;
+      }
+      const p = new URLSearchParams({
+        home_lat: $("ftLat").value, home_lon: $("ftLon").value,
+        qty: $("ftQty").value || "2", budget_km: "50000", days: "365", side: side,
+      });
+      if ($("ftBudget").value) p.set("budget_usd", $("ftBudget").value);
+      $("ftStatus").textContent = "Building your tour…";
+      $("ftResult").hidden = true;
+      try {
+        render(await api(`/api/store/performers/${performer}/tour-package?` + p.toString()));
+      } catch (e) {
+        $("ftStatus").textContent = "Error: " + e.message;
+      }
+    }
+
+    function render(d) {
+      const pk = (d && d.package) || {};
+      const qty = d.qty_per_show;
+      const isTeam = String(d.mode || "").indexOf("team") === 0;
+      const away = d.mode === "team_away";
+      let name;
+      if (isTeam) {
+        const ev = (d.all_stops && d.all_stops[0]) || {};
+        const parts = String(ev.event_name || "").split(" at ");   // "Away at Home"
+        name = parts.length === 2 ? (away ? parts[0] : parts[1]) : (ev.performer || "this team");
+      } else {
+        name = (pk.legs && pk.legs[0] && pk.legs[0].performer)
+          || (d.all_stops && d.all_stops[0] && d.all_stops[0].performer) || "this performer";
+      }
+      $("ftTitle").textContent = isTeam
+        ? `Follow ${name} ${away ? "on the road" : "at home"}`
+        : `Follow ${name}'s tour`;
+      // team -> show the away/home toggle, highlight current side
+      const sideEl = $("ftSide");
+      if (sideEl) {
+        sideEl.hidden = !isTeam;
+        sideEl.querySelectorAll(".ftside").forEach((b) => {
+          b.classList.toggle("active", away ? b.dataset.side === "away" : b.dataset.side === "home");
+        });
+      }
+      if (!d.stops_available || !pk.count) {
+        $("ftStatus").textContent = isTeam
+          ? `No ${away ? "away" : "home"} games in range — try the other side.`
+          : "No routable tour right now — try a wider budget.";
+        $("ftResult").hidden = true;
+        return;
+      }
+      $("ftStatus").textContent = isTeam
+        ? `${away ? "Away games · road trip" : "Home stand"} · ${d.stops_available} dates`
+        : `${d.stops_available} tour dates available`;
+      $("ftStat").innerHTML =
+        `<div><span class="l">Total</span><b>${money(pk.fan_total_bundled)}</b></div>` +
+        `<div><span class="l">Tickets</span><b>${pk.count * qty}</b></div>` +
+        `<div><span class="l">Shows</span><b>${pk.count}</b></div>` +
+        `<div><span class="l">Cities</span><b>${pk.cities}</b></div>`;
+      $("ftHead").textContent = `Your shows — ${qty} ticket${qty === 1 ? "" : "s"} at each of ${pk.count}`;
+      const picked = new Set((pk.legs || []).map((l) => l.event_id));
+      $("ftLegs").innerHTML = (d.all_stops || []).map((l) => {
+        const on = picked.has(l.event_id);
+        const s = l.seats;
+        const seat = s
+          ? `<span class="seat">${esc(s.section || "GA")}${s.row ? " " + esc(s.row) : ""}${s.is_owned ? " · in stock" : ""}</span>`
+          : (l.selection === "estimate" ? '<span class="seat">est. price</span>' : '<span class="seat">no group of that size</span>');
+        const hot = l.hot ? '<span class="hot" title="high demand">🔥</span>' : "";
+        const line = l.unit_price != null
+          ? `<span class="line">${money(l.unit_price * qty)} <span class="ea">(${money(l.unit_price)} ea)</span></span>`
+          : "";
+        return `<li class="${on ? "" : "skip"}">`
+          + `<span class="d">${fmtD(l.date)}</span>`
+          + `<span class="c">${esc(l.city || "—")}${hot}</span>`
+          + `<span>${esc(l.event_name || l.venue || "")}</span>`
+          + seat + line + "</li>";
+      }).join("");
+      $("ftResult").hidden = false;
+    }
+
+    $("ftGo").addEventListener("click", run);
+    const sideToggle = $("ftSide");
+    if (sideToggle) sideToggle.addEventListener("click", (e) => {
+      const b = e.target.closest(".ftside");
+      if (!b) return;
+      side = b.dataset.side;     // "away" | "home"
+      run();
+    });
+    $("ftGeo").addEventListener("click", () => {
+      if (!navigator.geolocation) return;
+      $("ftStatus").textContent = "Locating…";
+      navigator.geolocation.getCurrentPosition((pos) => {
+        $("ftLat").value = pos.coords.latitude.toFixed(4);
+        $("ftLon").value = pos.coords.longitude.toFixed(4);
+        run();
+      }, () => { $("ftStatus").textContent = "Couldn't get your location — enter it manually."; });
+    });
+    run();
+  }
+
   // Auto-mount based on body data-page. Lets HTML pages drop their inline
   // `<script>Store.mountX()</script>` so we can ship a strict CSP without
   // 'unsafe-inline'. Added 2026-05-11 (security chat).
@@ -2676,6 +2858,8 @@
     if (page === "catalog") mountCatalog();
     else if (page === "event") mountEvent();
     else if (page === "shares") mountSharesAdmin();
+    else if (page === "discover") mountDiscover();
+    else if (page === "tour") mountTourFollow();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _autoMount);
