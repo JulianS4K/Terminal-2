@@ -379,3 +379,50 @@ COMMENT ON VIEW public.v_venue_section_map_coverage IS
   'Per-venue/platform seat-map coverage: sections, mapped, unmapped, ambiguous, unmapped_pct. The meaningful "unmapped percentage" surface (parking already excluded by the builder). Order by unmapped_pct DESC to find the venues where the seat map plots the least inventory.';
 
 GRANT SELECT ON public.v_venue_section_map_coverage TO authenticated;
+
+-- ── PART 6: refresh batch + cron (Step 3) ────────────────────────────────────
+-- Applied live to prod 2026-06-08. Drives the initial backfill AND ongoing
+-- freshness: a one-shot build_venue_section_map_all over ~366 venues is too heavy
+-- for one transaction, so a cron builds the stalest combos per tick instead.
+CREATE OR REPLACE FUNCTION public.build_venue_section_map_batch(
+  p_batch integer DEFAULT 25, p_window interval DEFAULT interval '7 days'
+) RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE r record; v_n integer := 0;
+BEGIN
+  FOR r IN
+    WITH cand AS (
+      SELECT v.venue_id, p.platform
+      FROM (SELECT DISTINCT sm.venue_id FROM public.seatmap_manifest sm
+            WHERE sm.has_map AND EXISTS(SELECT 1 FROM public.events e WHERE e.venue_id=sm.venue_id)) v
+      CROSS JOIN (VALUES ('evo'),('sg')) p(platform)
+    ),
+    last AS (SELECT tevo_venue_id, platform, max(updated_at) AS lb FROM public.venue_section_map GROUP BY 1,2)
+    SELECT c.venue_id, c.platform
+    FROM cand c LEFT JOIN last l ON l.tevo_venue_id=c.venue_id AND l.platform=c.platform
+    ORDER BY l.lb ASC NULLS FIRST, c.venue_id           -- never-built first, then oldest
+    LIMIT p_batch
+  LOOP
+    PERFORM public.build_venue_section_map(r.venue_id, r.platform, p_window);
+    v_n := v_n + 1;
+  END LOOP;
+  RETURN v_n;
+END; $function$;
+COMMENT ON FUNCTION public.build_venue_section_map_batch(integer, interval) IS
+  'Refresh batch: builds the p_batch stalest (venue,platform) combos across evo+sg (never-built first, then oldest updated_at). Drives initial backfill + ongoing freshness from the venue_section_map_refresh cron.';
+REVOKE EXECUTE ON FUNCTION public.build_venue_section_map_batch(integer, interval) FROM public;
+
+-- cron_policy row (gate) + schedule. cron.schedule is idempotent by jobname.
+INSERT INTO public.cron_policy (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min, work_check_sql, daily_max_fires, enabled, notes)
+VALUES ('venue_section_map_refresh',
+  ARRAY[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23],
+  10, 10, NULL, 144, true,
+  'Seat-map crosswalk refresh. 25 stalest (venue,platform) combos/tick across evo+sg.')
+ON CONFLICT (jobname) DO UPDATE SET enabled=excluded.enabled, peak_min_interval_min=excluded.peak_min_interval_min, notes=excluded.notes, updated_at=now();
+
+SELECT cron.schedule('venue_section_map_refresh', '*/10 * * * *', $cron$
+DO $body$ BEGIN
+  IF NOT public.cron_should_fire('venue_section_map_refresh') THEN RETURN; END IF;
+  PERFORM public.build_venue_section_map_batch(25);
+END $body$;
+$cron$);
