@@ -7282,6 +7282,31 @@ def _fetch_owned_ticket_groups(
     return groups, "live"
 
 
+# Map an EvoClient RuntimeError to a semantically correct HTTP status.
+# evo_client raises RuntimeError("TEvo API returned <code>") for a non-2xx
+# upstream response, or "TEvo API returned no response" for a connection/
+# timeout/DNS failure. A 400/404 from TEvo means the event id doesn't
+# resolve → that's a client-facing 404 (Not Found), NOT a gateway error.
+# Everything else (5xx, no-response) is a genuine upstream failure → 502;
+# 429/503 surface as 503 so callers/crawlers back off ("try again") rather
+# than treating it as a hard gateway break. Never echoes upstream body/URL —
+# only the mapped status + a caller-supplied generic detail reach the client
+# (the evo_client already scrubbed everything but the status into the message).
+_TEVO_STATUS_RE = re.compile(r"\b(\d{3})\b")
+
+
+def _tevo_runtime_to_http(
+    e: Exception, *, not_found_detail: str, failure_detail: str
+) -> HTTPException:
+    m = _TEVO_STATUS_RE.search(str(e))
+    upstream = int(m.group(1)) if m else None
+    if upstream in (400, 404):
+        return HTTPException(404, not_found_detail)
+    if upstream in (429, 503):
+        return HTTPException(503, failure_detail)
+    return HTTPException(502, failure_detail)
+
+
 def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: bool = False) -> dict:
     """Fetch event + owned listings, apply filters, return the same shape
     /api/store/events/{id} returns. Shared by the public detail endpoint
@@ -7315,9 +7340,16 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
             # Log full upstream error server-side; return a stable generic
             # string so TEvo's response text + upstream status codes never
             # reach the public detail page. Mirrors the /api/store/events
-            # 502 scrub at line ~4194.
+            # 502 scrub at line ~4194. Status is normalized: a 400/404 from
+            # TEvo means the event doesn't exist → 404 (not a 502 gateway
+            # error, which previously made cycling-id scans + dead share
+            # links look like outages); 5xx/timeout → 502, 429/503 → 503.
             print(f"[store_event_detail] TEvo event lookup failed for {event_id}: {e!r}")
-            raise HTTPException(502, "event lookup failed")
+            raise _tevo_runtime_to_http(
+                e,
+                not_found_detail="event not found",
+                failure_detail="event lookup failed",
+            ) from e
 
         # Storefront freshness contract: 10s. Tighter than broker's 90s because
         # this is the buy-decision page — stale availability => bad UX.

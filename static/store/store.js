@@ -758,8 +758,14 @@
           status.replaceChildren();
           status.style.color = "var(--bad)";
           status.hidden = false;
+          const spec = describeFetchError(err);
           const msg = document.createElement("div");
-          msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
+          // Same normalized voice as the event-detail screen. Catalog load
+          // never hits a true 404 (the home/events endpoints always answer),
+          // so this is almost always the retryable "temporarily unavailable"
+          // copy — but routing through describeFetchError keeps the wording
+          // consistent if that ever changes.
+          msg.textContent = `${spec.title}. ${spec.message}`;
           const retry = document.createElement("button");
           retry.type = "button";
           retry.className = "btn ghost";
@@ -2462,12 +2468,9 @@
           renderZoneChips(initialFilters.zones);
         }
       } catch (err) {
-        if (err.message && err.message.includes("410")) {
-          status.textContent = "This share link is no longer active.";
-        } else {
-          status.textContent = `Couldn't load event: ${err.message}`;
-        }
-        status.style.color = "var(--bad)";
+        // Normalized full-page error screen (404 dead-end vs retryable
+        // upstream blip vs expired-share). Retry re-runs bootstrap.
+        renderEventError(err, bootstrap);
       }
     }
 
@@ -2507,6 +2510,92 @@
     ));
   }
   function escapeAttr(s) { return escapeHtml(s); }
+
+  // ---------- Normalized error messaging ----------
+  // Single source of truth for turning a fetch failure from api() into a
+  // user-facing error. api() throws "<status> <tag>: <detail>" for HTTP
+  // errors and "timeout <tag>: …" for aborts; network failures surface the
+  // raw fetch error. Maps to { code, title, message, retryable } so every
+  // store surface (event detail screen, catalog inline error) speaks the
+  // same language: not-found is a calm dead-end, an upstream blip offers a
+  // retry. Keeps the backend's status normalization (404 vs 502/503) honest
+  // on the UI side — a 404 must never read as "outage."
+  function describeFetchError(err) {
+    const raw = (err && err.message) ? String(err.message) : "";
+    const m = raw.match(/^(\d{3})\b/);
+    const code = m ? Number(m[1]) : null;
+    const isTimeout = /\btimeout\b/i.test(raw) || (err && err.name === "AbortError");
+    if (code === 404) return {
+      code, retryable: false, title: "Event not found",
+      message: "This event isn’t available — it may have ended, sold out, or been removed. Browse what’s on sale now.",
+    };
+    if (code === 410) return {
+      code, retryable: false, title: "Share link expired",
+      message: "This share link is no longer active — the seller may have revoked it or it passed its expiry. You can still browse all events.",
+    };
+    if (code === 429) return {
+      code, retryable: true, title: "Too many requests",
+      message: "We’re seeing heavy traffic right now. Give it a moment, then try again.",
+    };
+    if (isTimeout) return {
+      code, retryable: true, title: "This is taking too long",
+      message: "The server didn’t respond in time — it may be waking up. Try again in a few seconds.",
+    };
+    if (code === 502 || code === 503 || code === 504) return {
+      code, retryable: true, title: "Temporarily unavailable",
+      message: "We couldn’t reach our inventory provider just now. This is usually brief — try again in a moment.",
+    };
+    return {
+      code, retryable: true, title: "Couldn’t load this event",
+      message: "Something went wrong loading this event. Try again, or head back to the catalog.",
+    };
+  }
+
+  // Render the full-page event-detail error screen (event.html #errorScreen).
+  // Hides the loading/header/body sections and reveals a normalized error
+  // panel. Retryable errors expose a "Try again" button wired to onRetry
+  // (re-runs bootstrap). Falls back to the legacy inline #status line if the
+  // markup isn't present (older cached event.html).
+  function renderEventError(err, onRetry) {
+    const spec = describeFetchError(err);
+    const status = $("#status");
+    const screen = $("#errorScreen");
+    [$("#header"), $("#body"), $("#sharedBanner")].forEach((el) => { if (el) el.hidden = true; });
+    if (!screen) {
+      if (status) {
+        status.hidden = false;
+        status.textContent = `${spec.title}: ${spec.message}`;
+        status.style.color = "var(--bad)";
+      }
+      return;
+    }
+    if (status) status.hidden = true;
+    const icon = $("#errIcon", screen);
+    const title = $("#errTitle", screen);
+    const msg = $("#errMsg", screen);
+    const retry = $("#errRetry", screen);
+    const codeEl = $("#errCode", screen);
+    screen.classList.toggle("is-unavailable", spec.retryable);
+    screen.classList.toggle("is-notfound", !spec.retryable);
+    if (icon) icon.textContent = spec.retryable ? "⚠️" : "🎟️";
+    if (title) title.textContent = spec.title;
+    if (msg) msg.textContent = spec.message;
+    if (codeEl) {
+      codeEl.hidden = !spec.code;
+      if (spec.code) codeEl.textContent = `error ${spec.code}`;
+    }
+    if (retry) {
+      retry.hidden = !spec.retryable;
+      retry.onclick = (spec.retryable && typeof onRetry === "function")
+        ? () => {
+            screen.hidden = true;
+            if (status) { status.hidden = false; status.textContent = "Loading event…"; status.style.color = ""; }
+            onRetry();
+          }
+        : null;
+    }
+    screen.hidden = false;
+  }
 
   // ---------- Shares admin page ----------
   function mountSharesAdmin() {

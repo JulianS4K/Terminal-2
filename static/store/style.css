@@ -449,7 +449,11 @@ a { color: inherit; }
 .event-meta.sub { margin-top: 4px; font-size: 13px; }
 .dot { margin: 0 8px; opacity: 0.4; }
 
-.event-body {
+/* :not([hidden]) guard — without it `display: grid` overrides the `hidden`
+   attribute, so renderEventError() can't hide the body behind the error
+   screen (and the empty map/listings grid leaked through). Same fix the
+   modal uses. */
+.event-body:not([hidden]) {
   display: grid;
   grid-template-columns: 360px 1fr;
   gap: 24px;
@@ -766,6 +770,39 @@ a { color: inherit; }
 }
 .btn.ghost:hover { border-color: var(--accent); background: rgba(255,92,42,0.06); }
 
+/* ----- Error screen (event-detail load failure) -----
+   Normalized error state rendered by store.js renderEventError(): a centered
+   panel with icon + title + message + actions. Reuses the --panel/--line
+   surface + --shadow so a failed load reads as a designed dead-end, not a
+   crash. .is-unavailable (retryable upstream blip) keeps the warn-tinted ⚠️;
+   .is-notfound (event gone / share expired) shows a calm 🎟️ glyph. */
+.error-screen {
+  max-width: 460px;
+  margin: 48px auto;
+  padding: 32px 24px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.error-screen .error-icon { font-size: 40px; line-height: 1; margin-bottom: 12px; }
+.error-screen.is-notfound .error-icon { opacity: 0.85; }
+.error-title { margin: 0 0 8px; font-size: 20px; color: var(--text); }
+.error-msg { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.error-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+/* :not([hidden]) guard so the inline-flex doesn't override `hidden` on the
+   retry button (it's hidden for non-retryable 404/410). Same trap the modal
+   guards against at .modal:not([hidden]). */
+.error-actions .btn { text-decoration: none; }
+.error-actions .btn:not([hidden]) { display: inline-flex; align-items: center; }
+.error-code {
+  margin: 16px 0 0;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.6;
+}
+
 .notes {
   font-size: 12px;
   color: var(--muted);
@@ -949,7 +986,10 @@ a.perf-chip:hover {
 }
 
 /* ----- Shared-view banner ----- */
-.banner {
+/* :not([hidden]) guard so `display: flex` doesn't override the `hidden`
+   attribute — the share banner must stay hidden on a normal (non-shared)
+   view and behind the error screen. */
+.banner:not([hidden]) {
   background: rgba(255,160,102,0.1);
   border: 1px solid rgba(255,160,102,0.3);
   color: var(--accent-2);
