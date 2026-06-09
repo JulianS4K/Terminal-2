@@ -7,6 +7,7 @@ axiom-orion/gigtrip (MIT) — see NOTICE.md.
 from .planner import (
     fetch_performer_rows,
     plan_from_rows,
+    plan_multi_performer_tour,
     plan_performer_tour,
     plan_performer_trip,
     plan_tour_package,
@@ -16,6 +17,7 @@ from .planner import (
 __all__ = [
     "plan_performer_trip",
     "plan_performer_tour",
+    "plan_multi_performer_tour",
     "plan_tour_package",
     "plan_from_rows",
     "fetch_performer_rows",
