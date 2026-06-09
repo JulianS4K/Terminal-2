@@ -5198,7 +5198,7 @@ def _clean_opt_url(v) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
-    if s.lower() in ("null", "none", ""):
+    if s.lower() in ("null", "none", "undefined", ""):
         return None
     return v
 
