@@ -189,6 +189,116 @@ def distill(doc: dict) -> dict:
     }
 
 
+# --------------------------------------------------------------------------
+# Normalization — distilled payload -> rows for public.axs_event_snapshots +
+# public.axs_section_snapshots (fits the per-source snapshot convention).
+# --------------------------------------------------------------------------
+
+AXS_EVENT_ID_RE = re.compile(r"/events/(\d+)", re.I)
+
+
+def axs_event_id_from_url(url: str | None) -> str | None:
+    m = AXS_EVENT_ID_RE.search(url or "")
+    return m.group(1) if m else None
+
+
+def _parse_dt(s: Any) -> str | None:
+    """AXS on-sale dates look like '2026-05-29 14:00:00 +0000' -> ISO tz string."""
+    if not s:
+        return None
+    from datetime import datetime
+    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            return datetime.strptime(str(s), fmt).isoformat()
+        except ValueError:
+            continue
+    return str(s)
+
+
+def _occurs_at_local(event_date: Any, tz: Any) -> str | None:
+    """Render the event's local datetime offset-bearing, matching public.events
+    .occurs_at_local. meta.event_date is naive local ('2026-10-04T19:00:00');
+    apply the IANA tz to get the offset. Falls back to the naive text."""
+    if not event_date:
+        return None
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromisoformat(str(event_date).replace("Z", ""))
+        if tz:
+            dt = dt.replace(tzinfo=ZoneInfo(str(tz)))
+        return dt.isoformat()
+    except Exception:
+        return str(event_date)
+
+
+def normalize(
+    doc: dict,
+    *,
+    event_url: str | None = None,
+    tevo_venue_id: int | None = None,
+    tevo_event_id: int | None = None,
+    aq_short_event_id: str | None = None,
+    venue_short_id: str | None = None,
+    in_axs_list: bool | None = None,
+    canonical_matched: bool | None = None,
+) -> dict[str, Any]:
+    """Turn a raw AXS document into insert-ready rows:
+    {"event_snapshot": {<axs_event_snapshots cols>},
+     "sections":       [<axs_section_snapshots cols>, ...]}."""
+    s = distill(doc)
+    t = s.get("totals", {})
+    onsale = s.get("onsale_status") or {}
+    axs_event_id = axs_event_id_from_url(event_url)
+
+    event_snapshot = {
+        "axs_event_id": axs_event_id,
+        "event_url": event_url,
+        "tevo_event_id": tevo_event_id,
+        "tevo_venue_id": tevo_venue_id,
+        "aq_short_event_id": aq_short_event_id,
+        "venue_short_id": venue_short_id,
+        "event_name": s.get("event"),
+        "venue_name": s.get("venue"),
+        "occurs_at_local": _occurs_at_local(s.get("event_date"), s.get("tz")),
+        "event_tz": s.get("tz"),
+        "api": s.get("api"),
+        "onsale_now": onsale.get("onSaleNow"),
+        "onsale_at": _parse_dt(onsale.get("onSaleDate")),
+        "offsale_at": _parse_dt(onsale.get("offSaleDate")),
+        "currency": s.get("currency"),
+        "price_min": t.get("price_min"),
+        "price_max": t.get("price_max"),
+        "getin": t.get("get_in_available"),
+        "listings_count": t.get("listings"),
+        "sections_count": t.get("sections"),
+        "offers_count": t.get("offers"),
+        "seats_primary": t.get("seats_primary"),
+        "seats_resale": t.get("seats_resale"),
+        "in_axs_list": in_axs_list,
+        "canonical_matched": canonical_matched,
+        "response_s": s.get("response_s"),
+        "quota_remaining": s.get("quota_remaining"),
+        "raw": doc,
+    }
+    sections = [{
+        "tevo_event_id": tevo_event_id,
+        "tevo_venue_id": tevo_venue_id,
+        "axs_event_id": axs_event_id,
+        "section_label": r["section"],
+        "neighborhood": r["neighborhood"],
+        "is_ga": r["ga"],
+        "sold_out": r["sold_out"],
+        "avail_qty": r["avail_qty"],
+        "price_min": r["price_min"],
+        "price_max": r["price_max"],
+        "seat_types": r["seat_types"],
+        "has_resale": r["has_resale"],
+        "connection_fee": r["connection_fee"],
+    } for r in s.get("sections", [])]
+    return {"event_snapshot": event_snapshot, "sections": sections}
+
+
 class AXSClient:
     def __init__(
         self,
@@ -318,10 +428,39 @@ class AXSClient:
             "venue_norm": norm,
         }
 
-    def pull(self, event_url: str, *, db: Any = None) -> dict[str, Any]:
-        """Fetch -> distill -> peg to axs_venues. One call, fully resolved."""
+    def pull(self, event_url: str, *, db: Any = None, with_rows: bool = False) -> dict[str, Any]:
+        """Fetch -> distill -> peg to axs_venues. One call, fully resolved.
+        with_rows=True also attaches `normalized` (insert-ready snapshot rows)."""
         raw = self.fetch(event_url)
         summary = distill(raw)
-        summary["event_url"] = event_url.strip()
-        summary["axs_venue"] = self.resolve_venue(summary.get("venue") or "", db=db)
+        url = event_url.strip()
+        summary["event_url"] = url
+        peg = self.resolve_venue(summary.get("venue") or "", db=db)
+        summary["axs_venue"] = peg
+        if with_rows:
+            summary["normalized"] = normalize(
+                raw,
+                event_url=url,
+                tevo_venue_id=peg.get("tevo_venue_id"),
+                in_axs_list=peg.get("in_axs_list"),
+                canonical_matched=peg.get("canonical_matched"),
+            )
         return summary
+
+    def persist(self, db: Any, normalized: dict) -> int:
+        """Insert one normalized pull into public.axs_event_snapshots (+ section
+        rows). Returns the new snapshot_id. Requires a service-role db client.
+        Writes to OUR Supabase only — never back to AXS."""
+        if db is None:
+            raise AXSConfigError("persist() requires a service-role db client")
+        res = db.table("axs_event_snapshots").insert(normalized["event_snapshot"]).execute()
+        rows = getattr(res, "data", None) or []
+        snap_id = rows[0]["id"] if rows else None
+        if snap_id is None:
+            raise AXSError("axs_event_snapshots insert returned no id")
+        secs = normalized.get("sections") or []
+        if secs:
+            db.table("axs_section_snapshots").insert(
+                [{**r, "snapshot_id": snap_id} for r in secs]
+            ).execute()
+        return snap_id
