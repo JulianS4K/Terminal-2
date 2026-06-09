@@ -557,6 +557,11 @@ def _miles(lat1, lon1, lat2, lon2) -> float:
     return haversine_km(lat1, lon1, lat2, lon2) * 0.621371
 
 
+_SPORTS_TYPES = {"game", "mlb", "wnba", "nwsl", "mls-major-league-soccer", "ncaa", "ncaa--2",
+                 "formula-1", "world-cup", "miscellaneous-sports", "horse-racing",
+                 "independent-league-baseball"}
+
+
 def rank_tours_near(events: list[dict], lat: float, lon: float, within_mi: float,
                     min_shows: int) -> list[dict]:
     """Pure: group nearby events by performer into candidate 'tours' (>= min_shows reachable)."""
@@ -576,10 +581,12 @@ def rank_tours_near(events: list[dict], lat: float, lon: float, within_mi: float
             continue
         evs.sort(key=lambda x: str(x.get("event_date")))
         cities = sorted({x.get("venue_city") for x in evs if x.get("venue_city")})
+        et = (evs[0].get("event_type") or "").lower()
         tours.append({
             "performer": evs[0].get("primary_performer_name"),
             "performer_id": int(pid),
             "event_type": evs[0].get("event_type"),
+            "kind": "sports" if et in _SPORTS_TYPES else "live",
             "nearby_shows": len(evs),
             "cities": len(cities) or 1,
             "nearest_mi": round(min(x["_mi"] for x in evs)),

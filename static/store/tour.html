@@ -17,6 +17,8 @@
     .ft-controls input { padding: 9px 10px; box-sizing: border-box; }
     .ft-controls input[type=number] { width: 110px; }
     .ft-wrap button { padding: 9px 18px; margin: 0 8px 8px 0; cursor: pointer; }
+    .ftside { padding: 6px 14px !important; border: 1px solid rgba(127,127,127,.4); border-radius: 999px; background: transparent; }
+    .ftside.active { background: #2563eb; color: #fff; border-color: #2563eb; }
     .ft-stat { display: flex; gap: 24px; flex-wrap: wrap; margin: 14px 0; padding: 14px 16px; border: 1px solid rgba(127,127,127,.22); border-radius: 10px; }
     .ft-stat b { font-size: 22px; display: block; line-height: 1.1; }
     .ft-stat .l { font-size: 11px; color: #8a93a6; text-transform: uppercase; letter-spacing: .04em; }
@@ -47,6 +49,11 @@
       <div><label>Max spend ($, optional)</label><input id="ftBudget" type="number" step="250" placeholder="whole tour" /></div>
       <button id="ftGo">Follow tour</button>
       <button id="ftGeo">Use my location</button>
+    </div>
+    <div id="ftSide" hidden style="margin: 2px 0 6px">
+      <span style="font-size:12px;color:#8a93a6;margin-right:8px">This is a team — follow them:</span>
+      <button class="ftside" data-side="away">Away · road trip</button>
+      <button class="ftside" data-side="home">Home stand</button>
     </div>
     <div id="ftStatus" style="color:#8a93a6;font-size:13px;margin:12px 0"></div>
     <div id="ftResult" hidden>
