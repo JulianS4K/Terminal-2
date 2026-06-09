@@ -71,6 +71,7 @@ CLIENT_FILES = {
     "seatdata_client.py": frozenset({"GET", "POST"}),
     "ticketsdata_client.py": frozenset({"GET"}),
     "broadway_client.py": frozenset({"GET"}),
+    "axs_client.py": frozenset({"GET"}),
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
