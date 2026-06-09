@@ -351,9 +351,12 @@ $function$;
 COMMENT ON FUNCTION public.build_venue_section_map_all(text, integer, interval) IS
   'Bounded driver: rebuilds venue_section_map (EVO) for every has_map venue present in events. Per-venue work is bounded (one venue per build call), avoiding a firehose-wide scan. Returns venue count processed. Run by A1 post-apply; a future cron will call it on a cadence.';
 
--- builder fns are admin/cron-only — never anon/authenticated executable
-REVOKE EXECUTE ON FUNCTION public.build_venue_section_map(bigint, text, interval)   FROM public;
-REVOKE EXECUTE ON FUNCTION public.build_venue_section_map_all(text, integer, interval) FROM public;
+-- builder fns are admin/cron-only — never anon/authenticated executable.
+-- NOTE: REVOKE FROM public alone is NOT enough — Supabase grants EXECUTE to anon +
+-- authenticated on public functions by default, so they must be revoked explicitly
+-- (else callable via /rest/v1/rpc). Caught by the security advisor 2026-06-08.
+REVOKE EXECUTE ON FUNCTION public.build_venue_section_map(bigint, text, interval)      FROM anon, authenticated, public;
+REVOKE EXECUTE ON FUNCTION public.build_venue_section_map_all(text, integer, interval) FROM anon, authenticated, public;
 
 -- ── PART 5: coverage surface ─────────────────────────────────────────────────
 CREATE OR REPLACE VIEW public.v_venue_section_map_coverage
@@ -403,14 +406,19 @@ BEGIN
     ORDER BY l.lb ASC NULLS FIRST, c.venue_id           -- never-built first, then oldest
     LIMIT p_batch
   LOOP
-    PERFORM public.build_venue_section_map(r.venue_id, r.platform, p_window);
-    v_n := v_n + 1;
+    BEGIN  -- per-venue subtransaction: a single failing venue can't roll back the
+           -- whole tick and stall the backfill (it would always be the stalest).
+      PERFORM public.build_venue_section_map(r.venue_id, r.platform, p_window);
+      v_n := v_n + 1;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'build_venue_section_map_batch: skipped venue % platform %: %', r.venue_id, r.platform, SQLERRM;
+    END;
   END LOOP;
   RETURN v_n;
 END; $function$;
 COMMENT ON FUNCTION public.build_venue_section_map_batch(integer, interval) IS
-  'Refresh batch: builds the p_batch stalest (venue,platform) combos across evo+sg (never-built first, then oldest updated_at). Drives initial backfill + ongoing freshness from the venue_section_map_refresh cron.';
-REVOKE EXECUTE ON FUNCTION public.build_venue_section_map_batch(integer, interval) FROM public;
+  'Refresh batch: builds the p_batch stalest (venue,platform) combos across evo+sg (never-built first, then oldest updated_at). Per-venue subtransaction so one poison venue cannot stall the backfill. Drives initial backfill + ongoing freshness from the venue_section_map_refresh cron.';
+REVOKE EXECUTE ON FUNCTION public.build_venue_section_map_batch(integer, interval) FROM anon, authenticated, public;
 
 -- cron_policy row (gate) + schedule. cron.schedule is idempotent by jobname.
 INSERT INTO public.cron_policy (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min, work_check_sql, daily_max_fires, enabled, notes)
