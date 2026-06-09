@@ -7854,6 +7854,14 @@ def store_discover_page():
     return _render_storefront_page("discover.html")
 
 
+@app.api_route("/store/tour", methods=["GET", "HEAD"])
+def store_tour_page():
+    """Follow-the-tour — pick a ticket count and attend a performer's whole tour;
+    tickets auto-selected per date. Backed by /api/store/performers/{id}/tour-package;
+    mounts via store.js (data-page=tour). Performer id read from ?performer=."""
+    return _render_storefront_page("tour.html")
+
+
 # ---------- Static informational pages (Sprint 3 trust + legal) ----------
 # Plain HTML shells with no JS. Same Cache-Control: no-cache pattern as
 # the rest of the storefront so future edits propagate without browser
