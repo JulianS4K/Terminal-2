@@ -33,3 +33,8 @@ supabase/.temp/
 .claude/
 
 .scratch/
+
+# Understand-Anything knowledge-graph scratch (keep only the final graph + meta)
+.understand-anything/intermediate/
+.understand-anything/tmp/
+.understand-anything/.trash-*/
