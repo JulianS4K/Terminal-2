@@ -51556,6 +51556,265 @@
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/2026-06-07-c1-checkpoint.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/2026-06-08-seatmap-terminal-panel.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/A1_HANDOFF_2026-05-15.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/INSTRUCTIONS_FOR_CLAUDE_DESIGN.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/INSTRUCTIONS_FOR_COPILOT.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/SESSION_2026-05-07.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/SESSION_2026-05-13.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/SESSION_2026-05-14_HANDOFF.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/audit-2026-05-15-schema-sprawl.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/c1-checkpoint-2026-05-15.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/c1-checkpoint-2026-05-20.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/c1-checkpoint-2026-05-25.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/c1-ownership-takeover-2026-05-14.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/canonical-data-map-2026-05-09.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/canonical-mapping-notes-2026-05-10.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/checkpoint-2026-05-15-evening.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/checkpoint-2026-05-15-friday.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/cross-source-entity-resolution-2026-05-11.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/d1-render-perf-2026-05-15.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/database-map-2026-05-09.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/evo-seatgeek-field-mapping-2026-05-09.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/historical-data-and-multi-view-strategy-2026-05-09.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/knicks-next-home-event-snapshot-2026-05-09.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/project-kanban-2026-05-14.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/seatdata-blocker-2026-05-09.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/state-delta-since-c1-audit-2026-05-12.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/table-inventory-and-gaps-2026-05-11.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/terminal-redesign-2026-05-09.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/view-deps-and-rls-2026-05-11.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/weather-sources-2026-05-09.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/wikipedia-usage-2026-05-09.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/coworker-handoff/DATA_QUALITY_DASHBOARD.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/coworker-handoff/HANDOFF_INSTRUCTIONS.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/coworker-handoff/PHASE_2_HANDOFF.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/coworker-handoff/QUERY_CATALOG.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/coworker-handoff/QUERY_COOKBOOK.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/coworker-handoff/SCOPE.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
