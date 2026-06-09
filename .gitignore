@@ -34,14 +34,11 @@ supabase/.temp/
 
 .scratch/
 
-# Understand-Anything — generated analysis outputs are NOT versioned.
-# Regenerate locally with the Understand-Anything plugin (/understand).
-# Only the .understandignore config is tracked (the scaffolding).
+# Understand-Anything — versioned: the knowledge graph, interactive chart,
+# and meta snapshot (see PROJECT_BIBLE.md §8). Only the heavy/transient
+# scratch + derivatives stay out of git.
 .understand-anything/intermediate/
 .understand-anything/tmp/
 .understand-anything/.trash-*/
 .understand-anything/fingerprints.json
 .understand-anything/chart-data.json
-.understand-anything/knowledge-graph.json
-.understand-anything/knowledge-graph-chart.html
-.understand-anything/meta.json
