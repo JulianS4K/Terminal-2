@@ -36,6 +36,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
 AS $fn$
+#variable_conflict use_column
 BEGIN
   -- Candidate owned events (highest-value first), expanded to SH + VD rows.
   -- event_metrics is a time-series (PK event_id, captured_at) — take the LATEST
