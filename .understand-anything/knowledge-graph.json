@@ -44661,6 +44661,2351 @@
       "type": "related",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:.github/SECURITY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:.github/PULL_REQUEST_TEMPLATE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "file:.github/CODEOWNERS",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:docs/pr_governance.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/PULL_REQUEST_TEMPLATE.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/PULL_REQUEST_TEMPLATE.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/PULL_REQUEST_TEMPLATE.md",
+      "target": "document:SYNC_PROTOCOL.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/SECURITY.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/SECURITY.md",
+      "target": "document:docs/b1_operating_constraints.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:BOT_HIERARCHY.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:BOT_HIERARCHY.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:BOT_HIERARCHY.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:BOT_HIERARCHY.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:BOT_HIERARCHY.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:BOT_HIERARCHY.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:BOT_HIERARCHY.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:CHANGELOG.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CRON_HIERARCHY.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:docs/d0_frontend_consolidation_plan.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:docs/d0_operating_constraints.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:docs/edit_coordination_protocol.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "table:supabase/migrations/20260515230000_matcher_v2_tier_1_5.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:docs/release-discipline.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:docs/git_repo_security_posture.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:docs/render_security_posture.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:KANBAN.md",
+      "target": "document:CHANGELOG.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:CRON_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:docs/pr_governance.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:MIGRATION_CONVENTIONS.md",
+      "target": "document:CHANGELOG.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:CRON_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:CHANGELOG.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:PROJECT_BIBLE.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:CRON_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:SYNC_PROTOCOL.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:CHANGELOG.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:RESOURCES_BIBLE.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:RESOURCES_BIBLE.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:RESOURCES_BIBLE.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:RESOURCES_BIBLE.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:RESOURCES_BIBLE.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:RESOURCES_BIBLE.md",
+      "target": "document:D0_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:SYNC_PROTOCOL.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:SYNC_PROTOCOL.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:SYNC_PROTOCOL.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:SYNC_PROTOCOL.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:broadway_extension/README.md",
+      "target": "document:docs/broadway-scale-plan.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:broadway_extension/README.md",
+      "target": "document:docs/broadway-live-testing.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:broadway_extension/README.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:d4_bridge/README.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/DATA_ARCHITECTURE.md",
+      "target": "document:CRON_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/anon_callable_surface_inventory.md",
+      "target": "document:docs/b1_operating_constraints.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/anon_callable_surface_inventory.md",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/anon_callable_surface_inventory.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:docs/git_repo_security_posture.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:docs/render_security_posture.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:SYNC_PROTOCOL.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/b1_operating_constraints.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/bot_chat_conventions.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/bot_chat_conventions.md",
+      "target": "document:docs/edit_coordination_protocol.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/bot_chat_conventions.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/bot_chat_conventions.md",
+      "target": "document:docs/c1_daily_checkpoint_runbook.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/c1_operating_constraints.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/c1_operating_constraints.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/c1_operating_constraints.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:docs/pr_governance.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:docs/release-discipline.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:docs/bot_chat_conventions.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:docs/c1_daily_checkpoint_runbook.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:docs/c1_operating_constraints.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/current-state-index.md",
+      "target": "document:docs/c1_quality_continuity_charter.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_frontend_consolidation_plan.md",
+      "target": "document:docs/d0_operating_constraints.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_frontend_consolidation_plan.md",
+      "target": "document:docs/edit_coordination_protocol.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_frontend_consolidation_plan.md",
+      "target": "document:docs/d1_retail_finish_punchlist.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_frontend_consolidation_plan.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_operating_constraints.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_operating_constraints.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_operating_constraints.md",
+      "target": "document:docs/event-view-wireframe-v4.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_terminal_analyst_skill.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d1_operating_constraints.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d1_operating_constraints.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d1_operating_constraints.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d1_operating_constraints.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d1_retail_finish_punchlist.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_bridge_charter.md",
+      "target": "document:docs/d4_intake_platform_eval.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_bridge_charter.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_bridge_charter.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_bridge_charter.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_bridge_charter.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_exos_rls_b1_review.md",
+      "target": "table:supabase/migrations/20260520120000_exos_phase1_schema.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_intake_platform_eval.md",
+      "target": "document:docs/d4_bridge_charter.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_operating_constraints.md",
+      "target": "document:docs/d4_bridge_charter.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_operating_constraints.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_operating_constraints.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_operating_constraints.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_operating_constraints.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d_tier_goals.md",
+      "target": "document:docs/d_tier_unification_plan.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d_tier_goals.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d_tier_unification_plan.md",
+      "target": "document:docs/d_tier_unification_map.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d_tier_unification_plan.md",
+      "target": "document:docs/d_tier_goals.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/edit_coordination_protocol.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/edit_coordination_protocol.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/git_repo_security_posture.md",
+      "target": "document:docs/b1_operating_constraints.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "document:.github/SECURITY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "config:.github/dependabot.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "pipeline:.github/workflows/dependency-review.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "pipeline:.github/workflows/scorecard.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "config:.github/ISSUE_TEMPLATE/bug.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "config:.github/ISSUE_TEMPLATE/feature.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "config:.github/ISSUE_TEMPLATE/config.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "pipeline:.github/workflows/labeler.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "pipeline:.github/workflows/pr-title-lint.yml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/github_features_plan.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/pr_governance.md",
+      "target": "document:docs/token-discipline-rules.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/pr_governance.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/pr_governance.md",
+      "target": "document:docs/edit_coordination_protocol.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/pr_governance.md",
+      "target": "document:docs/current-state-index.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/pr_governance.md",
+      "target": "document:docs/bot_chat_conventions.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/release-discipline.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/release-discipline.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/release-discipline.md",
+      "target": "document:CRON_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/release-discipline.md",
+      "target": "document:SYNC_PROTOCOL.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/render_security_posture.md",
+      "target": "document:docs/b1_operating_constraints.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/render_security_posture.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/render_security_posture.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/render_security_posture.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/token-discipline-rules.md",
+      "target": "table:supabase/migrations/20260515330000_health_check_pg_net_errors.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/token-discipline-rules.md",
+      "target": "document:docs/c1_daily_checkpoint_runbook.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/war_games_playbook.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/war_games_playbook.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/AGENTS.md",
+      "target": "document:docs/archive/COWORKER_ONBOARDING.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/AGENTS.md",
+      "target": "document:docs/archive/SCHEMA.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/AGENTS.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/AGENTS.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/DOCUMENTATION_INDEX.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/DOCUMENTATION_INDEX.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/DOCUMENTATION_INDEX.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/DOCUMENTATION_INDEX.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/DOCUMENTATION_INDEX.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/DOCUMENTATION_INDEX.md",
+      "target": "document:SYNC_PROTOCOL.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/DOCUMENTATION_INDEX.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/LANE_DISCIPLINE.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/LANE_DISCIPLINE.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/LANE_DISCIPLINE.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/LANE_DISCIPLINE.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/README.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/README.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/README.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/README.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/SCHEMA.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/START_HERE.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/START_HERE.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/START_HERE.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/START_HERE.md",
+      "target": "document:SYNC_PROTOCOL.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/START_HERE.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/audit-2026-05-15-consolidation-plan.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/audit-2026-05-15-consolidation-plan.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/audit-2026-05-15-merge-token-leakage.md",
+      "target": "document:docs/token-discipline-rules.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/audit-2026-05-15-merge-token-leakage.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/audit-2026-05-15-merge-token-leakage.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/audit-2026-05-15-migration-header-bloat.md",
+      "target": "document:docs/token-discipline-rules.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/checkpoint-2026-05-16-evening.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/checkpoint-2026-05-16-evening.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/checkpoint-2026-05-16-evening.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/d4_prod_apply_handoff.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/function-inventory-2026-05-11.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/github_discussions_seed_2026-05-18.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/github_discussions_seed_2026-05-18.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/github_discussions_seed_2026-05-18.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/github_discussions_seed_2026-05-18.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/github_discussions_seed_2026-05-18.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:RESOURCES_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:SYNC_PROTOCOL.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:CRON_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/security-runbook-2026-05-11.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/cron-landscape-2026-05-09.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/cron-and-queue-health-2026-05-11.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/D0_PHASE_2A_HANDOFF.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:bin/sync-check.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:d2_dashboard/DEPLOY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/audit-2026-05-09.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/audit-2026-05-14-data-stability.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/audit-handoff-2026-05-11.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/broker-audit-2026-05-08.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/data-sources-audit-2026-05-11.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/database-audit-2026-05-09.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/full-audit-2026-05-09.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/storage-audit-2026-05-08.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/sync-audit-2026-05-08.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/markdown_inventory.md",
+      "target": "document:docs/archive/workflow-audit-2026-05-08.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/proposed-tables-2026-05-11.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "document:docs/archive/audit-2026-05-14-data-stability.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515100000_vivid_pull_machinery.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515120000_tickpick_orders_ingest_from_apps_script.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515140000_phase15b_security_invoker_views.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515150000_tickpick_order_status_and_wholesale_price.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515170000_release_health_check_function.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515180000_aq_event_map_short_id_pk.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515190000_aq_event_map_revert_pk_to_bigserial.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515210000_universal_aq_matcher_sweep.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515220000_aq_venue_performer_maps.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515230000_matcher_v2_tier_1_5.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515240000_listings_aq_linkage.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515250000_cron_policy_gate.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515260000_sg_tiered_polling.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515270000_sg_classifier_v2_owned_via_tevo_xref.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515270100_listings_delta_columns.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515280000_tevo_to_sg_matcher.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260515290000_release_health_check_format_fix.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260513230300_d2_cron_freshness_function.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260514183000_rls_deny_all_bulk.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "table:supabase/migrations/20260513230400_get_app_secret_add_tickpick_vivid.sql",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-14-post-pr101.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "function:supabase/functions/_shared/cron-auth.ts:constantTimeEqual",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "function:supabase/functions/espn/index.ts:pluckHeader",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "file:d2_dashboard/main.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "file:static/store/index.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "file:static/store/event.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "file:static/store/shares.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "file:static/store/test/share.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-audit-2026-05-16-code-review.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-review-2026-05-26-post-pr369.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-runbook-2026-05-11.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/archive/security-runbook-2026-05-11.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/bot-hierarchy.mermaid",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/seatgeek/kanban-tasks.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/seatgeek/migration-guide.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/templates/bot_lane_constraints_template.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/templates/bot_lane_constraints_template.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/templates/LANE_DISCIPLINE.template.md",
+      "target": "document:BOT_HIERARCHY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/templates/LANE_DISCIPLINE.template.md",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/templates/LANE_DISCIPLINE.template.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:static/store/lib/tevomaps.bundle.NOTICE.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:static/terminal/lib/tevomaps.bundle.NOTICE.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:trip_planner/NOTICE.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:trip_planner/README.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:trip_planner/README.md",
+      "target": "document:PROJECT_BIBLE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/README.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/main.fig.md",
+      "target": "file:static/terminal/index.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/CODE_NOTES_2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/MEDIA_ASSETS_2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/alert-email-preview.html",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/auto-populate-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/code-reply-mapping-and-coverage-2026-05-09.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/code-reply-seatgeek-v2-listings-2026-05-09.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/data-reality-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/media-placement-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/preliminary-event-views-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/retail-site-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/simulations-edge-and-ui-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/simulations-non-sports-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/simulations-sports-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/terminal-only-redesign-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:design/undelivered-window-2026-05-08.md",
+      "target": "document:design/main.fig.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/concerts-broadway-tours-residencies.md",
+      "target": "file:broadway_client.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d0_llm_analysis_layer_spec.md",
+      "target": "file:static/terminal/index.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d1_pending_merge_back.md",
+      "target": "file:static/store/index.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/d4_live_fe_test_plan.md",
+      "target": "file:d4_bridge/src/App.tsx",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/data-sources-terminal-uses.md",
+      "target": "file:static/terminal/index.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/event-view-wireframe-v3.md",
+      "target": "file:static/terminal/event.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/evo_store_next_steps.md",
+      "target": "file:evo_client.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/interactive-venue-maps-options.md",
+      "target": "file:static/terminal/lib/tevomaps.bundle.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/mlb-game-series-detection.md",
+      "target": "file:app.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/performer-view-wireframe-v5.md",
+      "target": "file:static/terminal/performer.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/phase2-ui-kanban.md",
+      "target": "document:KANBAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/retail-ui-kit.md",
+      "target": "file:static/store/style.css",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/terminal-data-inventory.md",
+      "target": "file:static/terminal/index.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/tevo-api-workflow.md",
+      "target": "file:evo_client.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/tournament-event-detection.md",
+      "target": "file:app.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:docs/proposed-migrations/20260511000400_security_rls_domain_tables_draft.sql",
+      "target": "document:MIGRATION_CONVENTIONS.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
