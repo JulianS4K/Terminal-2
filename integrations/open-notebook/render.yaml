@@ -1,0 +1,102 @@
+# Render Blueprint for open-notebook (https://github.com/lfnovo/open-notebook)
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> select this file (or repo path
+# integrations/open-notebook/render.yaml). Fill the sync:false secrets when prompted.
+#
+# Topology mirrors the upstream docker-compose:
+#   - open-notebook-db  : SurrealDB (private, persistent disk) -- not internet-exposed
+#   - open-notebook-api : FastAPI REST API on :5055 (public)  -- the publisher POSTs here
+#   - open-notebook-ui  : Next.js web UI on :8502 (public)    -- chat / podcasts
+#
+# Persistent disks require a paid instance (Starter+); SurrealDB + uploaded files
+# are stateful and MUST NOT run on an ephemeral/free instance.
+
+services:
+  # ---- SurrealDB (private) --------------------------------------------------
+  - type: pserv
+    name: open-notebook-db
+    runtime: image
+    plan: starter
+    image:
+      url: docker.io/surrealdb/surrealdb:v2
+    dockerCommand: start --log info --user root --pass ${SURREAL_PASSWORD} rocksdb:/mydata/mydatabase.db
+    disk:
+      name: surreal-data
+      mountPath: /mydata
+      sizeGB: 5
+    envVars:
+      - key: SURREAL_PASSWORD
+        generateValue: true   # 32-char random; consumed by the app services below
+
+  # ---- REST API (public) ----------------------------------------------------
+  - type: web
+    name: open-notebook-api
+    runtime: image
+    plan: starter
+    image:
+      url: docker.io/lfnovo/open_notebook:v1-latest
+    healthCheckPath: /health        # falls back to /docs if /health is absent
+    disk:
+      name: notebook-data
+      mountPath: /app/data
+      sizeGB: 5
+    envVars:
+      - key: PORT
+        value: "5055"               # expose the API as this service's web port
+      - key: SURREAL_URL
+        value: ws://open-notebook-db:8000/rpc
+      - key: SURREAL_USER
+        value: root
+      - key: SURREAL_PASSWORD
+        fromService:
+          name: open-notebook-db
+          type: pserv
+          envVarKey: SURREAL_PASSWORD
+      - key: SURREAL_NAMESPACE
+        value: open_notebook
+      - key: SURREAL_DATABASE
+        value: open_notebook
+      - key: OPEN_NOTEBOOK_ENCRYPTION_KEY
+        generateValue: true
+      - key: OPEN_NOTEBOOK_PASSWORD
+        sync: false                 # app login password — set at deploy time
+      - key: ANTHROPIC_API_KEY
+        sync: false                 # Claude models (recommended); optional
+      - key: OPENAI_API_KEY
+        sync: false                 # optional (embeddings / alt provider)
+
+  # ---- Web UI (public) ------------------------------------------------------
+  - type: web
+    name: open-notebook-ui
+    runtime: image
+    plan: starter
+    image:
+      url: docker.io/lfnovo/open_notebook:v1-latest
+    envVars:
+      - key: PORT
+        value: "8502"
+      - key: API_URL                # browser calls the API directly -> must be the PUBLIC api url
+        fromService:
+          name: open-notebook-api
+          type: web
+          property: host            # https://open-notebook-api.onrender.com
+      - key: SURREAL_URL
+        value: ws://open-notebook-db:8000/rpc
+      - key: SURREAL_USER
+        value: root
+      - key: SURREAL_PASSWORD
+        fromService:
+          name: open-notebook-db
+          type: pserv
+          envVarKey: SURREAL_PASSWORD
+      - key: SURREAL_NAMESPACE
+        value: open_notebook
+      - key: SURREAL_DATABASE
+        value: open_notebook
+      - key: OPEN_NOTEBOOK_ENCRYPTION_KEY
+        fromService:
+          name: open-notebook-api
+          type: web
+          envVarKey: OPEN_NOTEBOOK_ENCRYPTION_KEY
+      - key: OPEN_NOTEBOOK_PASSWORD
+        sync: false
