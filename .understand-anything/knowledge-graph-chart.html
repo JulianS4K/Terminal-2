@@ -80,8 +80,9 @@ let scale=0.5, tx=0, ty=0, DPR=1;
 function fit(){
   let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
   for(const n of N){ if(n.x<minx)minx=n.x; if(n.y<miny)miny=n.y; if(n.x>maxx)maxx=n.x; if(n.y>maxy)maxy=n.y; }
-  const w=cv.clientWidth,h=cv.clientHeight,gw=(maxx-minx)||1,gh=(maxy-miny)||1;
+  const w=cv.clientWidth||window.innerWidth,h=cv.clientHeight||window.innerHeight,gw=(maxx-minx)||1,gh=(maxy-miny)||1;
   scale=Math.min(w/(gw+240), h/(gh+240))*0.95;
+  if(!isFinite(scale)||scale<=0) scale=0.15;
   tx=w/2-(minx+maxx)/2*scale; ty=h/2-(miny+maxy)/2*scale;
 }
 const visible=n=> !hidden[n.l] && (showFns || !isFn(n.t));
@@ -96,28 +97,28 @@ function draw(){
     for(const e of Edg){
       const a=N[e[0]], b=N[e[1]]; if(!visible(a)||!visible(b))continue;
       const conn = hlNode&&(a===hlNode||b===hlNode);
-      ctx.strokeStyle = conn?"rgba(79,140,255,0.55)":"rgba(140,150,165,0.09)";
+      ctx.strokeStyle = conn?"rgba(79,140,255,0.6)":"rgba(140,150,165,0.14)";
       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
     }
   }
   const q=query.toLowerCase();
   for(const n of N){
     if(!visible(n))continue;
-    const r=SIZE[n.t]||3;
+    const r=(SIZE[n.t]||3)*1.5/scale;
     const match=q&&(n.n.toLowerCase().includes(q)||n.p.toLowerCase().includes(q)||(n.g||"").toLowerCase().includes(q));
     ctx.globalAlpha=q?(match?1:0.1):1;
     ctx.beginPath(); ctx.arc(n.x,n.y,r,0,6.283); ctx.fillStyle=colorOf(n.l); ctx.fill();
     if(match){ ctx.globalAlpha=1; ctx.lineWidth=1.4/scale; ctx.strokeStyle="#fff"; ctx.stroke(); }
   }
   ctx.globalAlpha=1;
-  if(hlNode&&visible(hlNode)){ const r=(SIZE[hlNode.t]||3)+2.5/scale; ctx.beginPath(); ctx.arc(hlNode.x,hlNode.y,r,0,6.283); ctx.lineWidth=1.6/scale; ctx.strokeStyle="#fff"; ctx.stroke(); }
-  if(selNode){ const r=(SIZE[selNode.t]||3)+4/scale; ctx.beginPath(); ctx.arc(selNode.x,selNode.y,r,0,6.283); ctx.lineWidth=2.2/scale; ctx.strokeStyle="#4f8cff"; ctx.stroke(); }
+  if(hlNode&&visible(hlNode)){ const r=((SIZE[hlNode.t]||3)*1.5+3)/scale; ctx.beginPath(); ctx.arc(hlNode.x,hlNode.y,r,0,6.283); ctx.lineWidth=1.6/scale; ctx.strokeStyle="#fff"; ctx.stroke(); }
+  if(selNode){ const r=((SIZE[selNode.t]||3)*1.5+4)/scale; ctx.beginPath(); ctx.arc(selNode.x,selNode.y,r,0,6.283); ctx.lineWidth=2.2/scale; ctx.strokeStyle="#4f8cff"; ctx.stroke(); }
   ctx.restore();
 }
 const worldFromScreen=(sx,sy)=>({x:(sx-tx)/scale,y:(sy-ty)/scale});
 function pick(sx,sy){
   const w=worldFromScreen(sx,sy); let best=null,bd=1e9;
-  for(const n of N){ if(!visible(n))continue; const dx=n.x-w.x,dy=n.y-w.y,d=dx*dx+dy*dy,rr=(SIZE[n.t]||3)+5/scale; if(d<rr*rr&&d<bd){bd=d;best=n;} }
+  for(const n of N){ if(!visible(n))continue; const dx=n.x-w.x,dy=n.y-w.y,d=dx*dx+dy*dy,rr=((SIZE[n.t]||3)*1.5+6)/scale; if(d<rr*rr&&d<bd){bd=d;best=n;} }
   return best;
 }
 const tip=document.getElementById("tip");
@@ -178,7 +179,7 @@ document.getElementById("showFns").addEventListener("change",e=>{showFns=e.targe
 document.getElementById("showEdges").addEventListener("change",e=>{showEdges=e.target.checked;draw();});
 document.getElementById("stats").textContent=N.length.toLocaleString()+" nodes · "+Edg.length.toLocaleString()+" edges · "+Layers.length+" layers";
 window.addEventListener("resize",resize);
-fit(); resize();
+fit(); resize(); window.addEventListener("load",()=>{ fit(); resize(); });
 </script>
 </body>
 </html>
