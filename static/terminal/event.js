@@ -23,6 +23,7 @@
   // each pane keeps its own state cache + tooltip. No cursor sync.
   let _chartInstances = { price: null, inv: null };
   let _lastPayload = null;
+  let _axsSeries = null;   // {prices_axs:[{t,v}], counts_axs:[{t,v}]} — AXS box office, fetched out-of-band
   // Per-chart window (hours). Default 168h (7d) on first load.
   let _chartPriceHours = DEFAULT_HOURS;
   let _chartInvHours   = DEFAULT_HOURS;
@@ -225,6 +226,8 @@
       // Cross-source panel: re-render now that we have v3's sg_broker_sales
       // available (overrides sold_price_median for "Realized sale median" row).
       safe('crossSourceRerender', () => rerenderCrossSourceWithV3(data));
+      // AXS box-office chart series (fire-and-forget; merges into both charts on land)
+      loadAxsChartSeries(eventId).catch(e => console.error('[axs-series]', e));
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
     } catch (e) {
@@ -476,7 +479,12 @@
   }
 
   function adaptChart(c) {
-    if (!c) return { prices_owned: [], prices_market: [], prices_nonowned: [], counts_owned: [], counts_market: [] };
+    // AXS box-office series are fetched out-of-band (separate source from the v2
+    // event_metrics payload) and stashed in _axsSeries; merge them in here so
+    // every adaptChart caller renders them on the price + inventory charts.
+    const axs = _axsSeries || { prices_axs: [], counts_axs: [] };
+    if (!c) return { prices_owned: [], prices_market: [], prices_nonowned: [], counts_owned: [], counts_market: [],
+                     prices_axs: axs.prices_axs || [], counts_axs: axs.counts_axs || [] };
     const rows = c.event_metrics_series || [];
     const slice = (col) => rows.map(r => ({ t: r.captured_at, v: r[col] == null ? null : Number(r[col]) }));
     return {
@@ -485,6 +493,8 @@
       prices_nonowned: slice('nonowned_median_retail'),
       counts_owned:    slice('owned_tickets_count'),
       counts_market:   slice('tickets_count'),
+      prices_axs:      axs.prices_axs || [],
+      counts_axs:      axs.counts_axs || [],
       range: c.range || null,
     };
   }
@@ -885,6 +895,7 @@
       { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
       { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
+      { key: 'prices_axs',      label: 'AXS box office', color: '#38bdf8', width: 1.75, dash: null, data: chart.prices_axs || [] },
     ];
     const { xs } = buildSeriesData(specs);
 
@@ -1111,6 +1122,7 @@
       { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
       { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
       { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
+      { key: 'counts_axs',    label: 'AXS listings',   color: '#38bdf8', width: 1.75, dash: null,  scale: 'y',  data: chart.counts_axs || [] },
       // Market sales (right axis) — STACKED: SG (bottom) + SeatData (top) per
       // bucket. SeatData is listed first so it draws BEHIND at the cumulative
       // height (SG+SeatData); SG draws after with an opaque fill, overdrawing the
@@ -1432,6 +1444,7 @@
     { src: 'SH',   color: '#f97316', keys: ['td_sh_med', 'td-sh-cnt'] },
     { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
     { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
+    { src: 'AXS',  color: '#38bdf8', keys: ['prices_axs', 'counts_axs'] },
   ];
 
   // Which series keys currently carry real data (scanning both build caches).
@@ -3002,7 +3015,8 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
-    'sg-sales': false, 'seatdata-sales': false, 'our-orders': false, 'alerts': false,
+    'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
+    'our-orders': false, 'alerts': false,
   } };
 
   function wireTabs(eventId) {
@@ -3037,6 +3051,8 @@
         await loadSgSalesFull(eventId);
       } else if (tabId === 'seatdata-sales' && !_tabState.loaded['seatdata-sales']) {
         await loadSeatdataSalesFull(eventId);
+      } else if (tabId === 'axs-sections' && !_tabState.loaded['axs-sections']) {
+        await loadAxsSectionsFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
       } else if (tabId === 'alerts') {
@@ -3079,6 +3095,7 @@
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'seatdata-sales': 'paneSeatdataSales',
+      'axs-sections': 'paneAxsSections',
       'td-markets':   'paneTdMarkets',
       'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
@@ -4344,6 +4361,94 @@
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${T.fmtNum(r.quantity)}</td>
         <td class="num">${r.price != null ? '$' + T.fmtNum(Math.round(r.price)) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- AXS Box Office — chart series (median price + listing count) ----------
+  async function loadAxsChartSeries(eventId) {
+    try {
+      const d = await T.api(`/api/axs/event/${eventId}/series`);
+      _axsSeries = { prices_axs: (d && d.prices_axs) || [], counts_axs: (d && d.counts_axs) || [] };
+    } catch (e) {
+      _axsSeries = { prices_axs: [], counts_axs: [] };
+    }
+    // Re-render both charts now that AXS series are available.
+    if (_lastPayload && _lastPayload.chart_data) {
+      const chart = adaptChart(_lastPayload.chart_data);
+      safe('chartPrice',     () => renderChartPrice(chart, _lastPayload.event_alerts));
+      safe('chartInventory', () => renderChartInventory(chart));
+      safe('chartLegends',   () => refreshChartLegends());
+    }
+  }
+
+  // ---------- AXS Box Office — sections (latest snapshot) ----------
+  async function loadAxsSectionsFull(eventId) {
+    const body = document.getElementById('axsSectionsBody');
+    const meta = document.getElementById('axsSectionsMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading AXS box office…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    let d = null;
+    try {
+      d = await T.api(`/api/axs/event/${eventId}/sections`);
+    } catch (err) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">load error: ${escapeHtml(String(err && err.message || err))}</div>`;
+      return;
+    }
+    _tabState.loaded['axs-sections'] = true;
+    renderAxsSectionsFull(d, performance.now() - t0);
+  }
+
+  function renderAxsSectionsFull(d, ms) {
+    const body = document.getElementById('axsSectionsBody');
+    const meta = document.getElementById('axsSectionsMeta');
+    const countChip = document.getElementById('tabCountAxsSections');
+    if (!body) return;
+    const sections = (d && d.sections) || [];
+    if (countChip) countChip.textContent = String(sections.length);
+    if (!sections.length) {
+      body.innerHTML = '<div class="empty">no AXS box-office snapshot for this event yet</div>';
+      if (meta) meta.textContent = '0 sections';
+      return;
+    }
+    const cur = (d.currency || 'USD') === 'USD' ? '$' : '';
+    const sm = d.summary || {};
+    const cap = d.captured_at ? T.fmtDate(d.captured_at) : '—';
+    if (meta) {
+      meta.textContent = `${sections.length} sections · ${sm.available_qty != null ? T.fmtNum(sm.available_qty) + ' seats · ' : ''}`
+        + `${cur}${sm.min_price != null ? T.fmtNum(Math.round(sm.min_price)) : '—'}–`
+        + `${cur}${sm.max_price != null ? T.fmtNum(Math.round(sm.max_price)) : '—'} · `
+        + `${ms.toFixed(0)}ms · snap ${cap}`;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Neighborhood</th><th>Type</th><th>GA</th>
+        <th class="num">Avail</th><th class="num">Min</th><th class="num">Max</th>
+        <th>Resale</th><th class="num">Fee</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    sections.forEach(s => {
+      const tr = document.createElement('tr');
+      if (s.sold_out) tr.classList.add('row-muted');
+      tr.innerHTML = `
+        <td>${escapeHtml(s.section_label || '—')}</td>
+        <td>${escapeHtml(s.neighborhood || '—')}</td>
+        <td>${escapeHtml(s.seat_types || '—')}</td>
+        <td>${s.is_ga ? '●' : '—'}</td>
+        <td class="num">${s.sold_out ? 'SOLD' : (s.avail_qty != null ? T.fmtNum(s.avail_qty) : '—')}</td>
+        <td class="num">${s.price_min != null ? cur + T.fmtNum(Math.round(s.price_min)) : '—'}</td>
+        <td class="num">${s.price_max != null ? cur + T.fmtNum(Math.round(s.price_max)) : '—'}</td>
+        <td>${s.has_resale ? 'Yes' : '—'}</td>
+        <td class="num">${s.connection_fee != null ? cur + T.fmtNum(Math.round(s.connection_fee)) : '—'}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);

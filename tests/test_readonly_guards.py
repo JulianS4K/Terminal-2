@@ -131,6 +131,43 @@ def test_vivid_allowlist_constant_is_get_only():
     assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
 
 
+# ---------- axs_client ----------
+
+def test_axs_assert_readonly_raises_on_post():
+    from axs_client import _assert_readonly_method, AXSReadOnlyError
+    with pytest.raises(AXSReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+    assert "RULE 2" in str(exc.value)
+
+
+def test_axs_assert_readonly_raises_on_put_patch_delete():
+    from axs_client import _assert_readonly_method, AXSReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
+        with pytest.raises(AXSReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_axs_assert_readonly_allows_get():
+    from axs_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_axs_allowlist_constant_is_get_only():
+    from axs_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
+def test_axs_venue_norm_matches_axs_venues_generated_column():
+    # venue_norm must mirror axs_venues.axs_name_norm so the peg lookup is a
+    # plain equality (lower -> strip leading 'the ' -> drop non-[a-z0-9]).
+    from axs_client import venue_norm
+    assert venue_norm("The HALL at Live!") == "hallatlive"
+    assert venue_norm("Crypto.com Arena") == "cryptocomarena"
+    assert venue_norm("Red Rocks Amphitheatre") == "redrocksamphitheatre"
+
+
 # ---------- audit script catches synthetic violations ----------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

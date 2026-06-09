@@ -3318,6 +3318,20 @@ def broker_event_chart_data(
     counts_owned    = _series("owned_tickets_count")
     counts_market   = _series("tickets_count")
 
+    # AXS box-office series (median section price + listing count over time).
+    # Sourced from axs_event_snapshots via RPC; empty until AXS snapshots are
+    # AQ-linked to this tevo_event_id and ingested. Overlaid on both the
+    # median-price and the listing-count charts alongside TEvo/market.
+    try:
+        axs_rows = (
+            db.rpc("get_axs_event_price_series",
+                   {"p_event_id": event_id, "p_since": since_iso}).execute()
+        ).data or []
+    except Exception:
+        axs_rows = []
+    prices_axs = [{"t": r["captured_at"], "v": r.get("median_price")} for r in axs_rows]
+    counts_axs = [{"t": r["captured_at"], "v": r.get("listings_count")} for r in axs_rows]
+
     # 2) Resolve home + away ESPN team ids from event_xref → espn_event_snapshots
     home_team_id = away_team_id = home_slug = away_slug = home_league = None
     xref = (
@@ -3601,6 +3615,9 @@ def broker_event_chart_data(
             "prices_nonowned": prices_nonowned,    # NEW: "MARKET NOT US" median
             "counts_owned":    counts_owned,
             "counts_market":   counts_market,
+            # ===== AXS box office: median price + listing count =====
+            "prices_axs":      prices_axs,
+            "counts_axs":      counts_axs,
             # ===== TEvo: full retail percentile distribution =====
             "retail_min":     _series("retail_min"),
             "retail_p25":     _series("retail_p25"),
@@ -4099,6 +4116,99 @@ def seatdata_event_sales(event_id: int, limit: int = 500, _=Depends(require_auth
             "first_sale": rows[-1]["sale_timestamp"],
             "last_sale":  rows[0]["sale_timestamp"],
         },
+    }
+
+
+@app.get("/api/axs/event/{event_id}")
+def axs_event(event_id: int, _=Depends(require_auth)):
+    """AXS box-office state for a TEvo event_id (latest persisted snapshot).
+    Free — reads axs_event_snapshots; no AXS API call. Null fields if not yet
+    AQ-linked / pulled. is_axs_primary reflects the /fetch probe classifier."""
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots")
+        .select("id,captured_at,axs_event_id,event_url,event_name,venue_name,"
+                "occurs_at_local,currency,price_min,price_max,getin,listings_count,"
+                "sections_count,offers_count,seats_primary,seats_resale,onsale_now,"
+                "in_axs_list,response_s")
+        .eq("tevo_event_id", event_id)
+        .order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"tevo_event_id": event_id, "linked": False, "latest": None,
+                "captured_at": None}
+    return {"tevo_event_id": event_id, "linked": True, "latest": snap[0],
+            "captured_at": snap[0]["captured_at"]}
+
+
+@app.get("/api/axs/event/{event_id}/sections")
+def axs_event_sections(event_id: int, limit: int = 1000, _=Depends(require_auth)):
+    """Per-section availability + pricing from the latest AXS snapshot. Free —
+    no AXS API call. Sorted cheapest-first. Mirrors the SeatData sales shape."""
+    limit = max(1, min(int(limit), 5000))
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots")
+        .select("id,captured_at,event_name,venue_name,currency,price_min,price_max,getin")
+        .eq("tevo_event_id", event_id)
+        .order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"event_id": event_id, "count": 0, "sections": [], "summary": None,
+                "captured_at": None}
+    s0 = snap[0]
+    rows = (
+        db.table("axs_section_snapshots")
+        .select("section_label,neighborhood,is_ga,sold_out,avail_qty,price_min,"
+                "price_max,seat_types,has_resale,connection_fee")
+        .eq("snapshot_id", s0["id"])
+        .order("price_min", desc=False).limit(limit).execute()
+    ).data or []
+    prices = sorted(r["price_min"] for r in rows if r.get("price_min") is not None)
+    return {
+        "event_id": event_id,
+        "count": len(rows),
+        "captured_at": s0["captured_at"],
+        "event_name": s0.get("event_name"),
+        "venue_name": s0.get("venue_name"),
+        "currency": s0.get("currency"),
+        "sections": rows,
+        "summary": {
+            "total_sections": len(rows),
+            "available_qty": sum(int(r.get("avail_qty") or 0) for r in rows),
+            "resale_sections": sum(1 for r in rows if r.get("has_resale")),
+            "sold_out_sections": sum(1 for r in rows if r.get("sold_out")),
+            "min_price": prices[0] if prices else s0.get("getin"),
+            "max_price": prices[-1] if prices else s0.get("price_max"),
+        },
+    }
+
+
+@app.get("/api/axs/event/{event_id}/series")
+def axs_event_series(event_id: int, range: str | None = None, hours: int | None = None,
+                     days: int = 30, _=Depends(require_auth)):
+    """AXS box-office time series for the event charts: median section price +
+    listing count per snapshot. Free — reads axs_event_snapshots via RPC.
+    Shape mirrors chart-data's {t,v} series so the FE merges it straight in."""
+    rmap = {"6h": 6, "24h": 24, "1d": 24, "3d": 72, "7d": 168, "30d": 720, "all": None}
+    if range is not None:
+        range_hours = rmap.get(range.lower(), 720)
+    elif hours is not None:
+        range_hours = max(6, min(int(hours), 8760))
+    else:
+        range_hours = max(1, min(int(days), 365)) * 24
+    since_iso = ("1970-01-01T00:00:00+00:00" if range_hours is None
+                 else (datetime.now(timezone.utc) - timedelta(hours=range_hours)).isoformat())
+    db = require_sb()
+    try:
+        rows = (db.rpc("get_axs_event_price_series",
+                       {"p_event_id": event_id, "p_since": since_iso}).execute()).data or []
+    except Exception:
+        rows = []
+    return {
+        "event_id": event_id,
+        "prices_axs": [{"t": r["captured_at"], "v": r.get("median_price")} for r in rows],
+        "counts_axs": [{"t": r["captured_at"], "v": r.get("listings_count")} for r in rows],
     }
 
 
