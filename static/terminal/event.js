@@ -830,7 +830,17 @@
   function clipRangeForHours(hours, xs) {
     if (!xs || !xs.length) return undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    const reqMin = nowSec - hours * 3600;
+    // Freeze 2h after the event starts: once a game/show is underway the market
+    // is settled, so the live "now" should stop dragging the axis rightward.
+    // Past the freeze point the whole window anchors to it (left edge included)
+    // so the chart becomes STATIC instead of scrolling into empty post-event
+    // space. Pre-freeze (future event, or first 2h after start) liveEdge === now,
+    // so behaviour is unchanged. No event start → never freeze.
+    const freezeSec = isFinite(_eventStartMs)
+      ? Math.floor(_eventStartMs / 1000) + 2 * 3600
+      : Infinity;
+    const liveEdge = Math.min(nowSec, freezeSec);
+    const reqMin = liveEdge - hours * 3600;
     const dataMin = xs[0];                 // xs is chronological (buildSeriesData sorts)
     const dataMax = xs[xs.length - 1];
     // Fit-to-history (UI rebuild 2026-06-03): when the window is WIDER than the
@@ -839,9 +849,10 @@
     // gutter with the data crammed at the right. When we have MORE history than
     // the window (short ranges), reqMin wins and the window is honored as before.
     const minSec = Math.max(reqMin, dataMin);
-    // Right edge: max(now, dataMax) so a future-dated event still shows its
-    // most recent snapshot inside the window.
-    return [minSec, Math.max(nowSec, dataMax)];
+    // Right edge: max(liveEdge, dataMax) so a future-dated event still shows its
+    // most recent snapshot — but never past the freeze point, so any stray
+    // post-event snapshot can't un-freeze the axis.
+    return [minSec, Math.max(liveEdge, Math.min(dataMax, freezeSec))];
   }
 
   // ---------- PRICE CHART ----------
