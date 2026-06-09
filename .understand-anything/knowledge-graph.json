@@ -43975,6 +43975,692 @@
       "type": "depends_on",
       "direction": "forward",
       "weight": 0.6
+    },
+    {
+      "source": "file:broadway_extension/background.js",
+      "target": "function:broadway_extension/background.js:handleCapture",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:broadway_extension/background.js",
+      "target": "function:broadway_extension/background.js:ship",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:broadway_extension/parse_availability.js",
+      "target": "function:broadway_extension/parse_availability.js:parseAvailability",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:broadway_extension/parse_availability.js",
+      "target": "function:broadway_extension/parse_availability.js:ticketFromRow",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:broadway_extension/popup.js",
+      "target": "function:broadway_extension/popup.js:render",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d2_dashboard/static/dashboard.js",
+      "target": "function:d2_dashboard/static/dashboard.js:bootstrap",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d2_dashboard/static/dashboard.js",
+      "target": "function:d2_dashboard/static/dashboard.js:renderDashboard",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d2_dashboard/static/dashboard.js",
+      "target": "function:d2_dashboard/static/dashboard.js:renderOrders",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d2_dashboard/static/dashboard.js",
+      "target": "function:d2_dashboard/static/dashboard.js:loadOrders",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d2_dashboard/static/dashboard.js",
+      "target": "function:d2_dashboard/static/dashboard.js:loadHealth",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d2_dashboard/static/dashboard.js",
+      "target": "function:d2_dashboard/static/dashboard.js:renderReadableOrder",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d4_bridge/scripts/stress-test.cjs",
+      "target": "function:d4_bridge/scripts/stress-test.cjs:testCapacityCap",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:d4_bridge/scripts/stress-test.cjs",
+      "target": "function:d4_bridge/scripts/stress-test.cjs:main",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:gotickets_client.py",
+      "target": "class:gotickets_client.py:GoTicketsClient",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:seatdata_client.py",
+      "target": "class:seatdata_client.py:SeatDataClient",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:seatgeek_client.py",
+      "target": "class:seatgeek_client.py:SeatGeekClient",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:scripts/check_readonly.py",
+      "target": "function:scripts/check_readonly.py:main",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:scripts/check_readonly.py",
+      "target": "function:scripts/check_readonly.py:check_ts_writes",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "class:supabase/functions/chat/index.ts:Evo",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "function:supabase/functions/chat/index.ts:toolGetEventZones",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:supabase/functions/chat/index.ts",
+      "target": "function:supabase/functions/chat/index.ts:classifyZone",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:supabase/functions/espn/index.ts",
+      "target": "function:supabase/functions/espn/index.ts:getOrPopulateEventXref",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:supabase/functions/espn/index.ts",
+      "target": "function:supabase/functions/espn/index.ts:pluckHeader",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:supabase/functions/sg-seller-webhook/index.ts",
+      "target": "function:supabase/functions/sg-seller-webhook/index.ts:dispatch",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:supabase/functions/_shared/bearer-auth.ts",
+      "target": "function:supabase/functions/_shared/bearer-auth.ts:requireBearer",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:tests/test_d2_dashboard.py",
+      "target": "class:tests/test_d2_dashboard.py:_ReadyzQuery",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "document:trip_planner/NOTICE.md",
+      "target": "file:trip_planner/__init__.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:seatdata_client.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:seatgeek_client.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scripts/check_readonly.py",
+      "target": "file:seatgeek_client.py",
+      "type": "validates",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/check_readonly.py",
+      "target": "file:seatdata_client.py",
+      "type": "validates",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/check_readonly.py",
+      "target": "file:gotickets_client.py",
+      "type": "validates",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:broadway_client.py",
+      "target": "file:tests/test_broadway_client_live.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:tests/test_broadway_client_live.py",
+      "target": "config:tests/fixtures/availability_post_hamilton.json",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tests/test_broadway_client_live.py",
+      "target": "file:tests/fixtures/checkout_sections_six.html",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "pipeline:.github/workflows/docs-registry-check.yml",
+      "target": "file:bin/check-docs.sh",
+      "type": "triggers",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "pipeline:.github/workflows/sync-check.yml",
+      "target": "file:bin/sync-check.sh",
+      "type": "triggers",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:bin/sync-check.md",
+      "target": "file:bin/sync-check.sh",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:bin/permafix-move.ps1",
+      "target": "file:bin/sync-check.sh",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:scripts/check_sync.sh",
+      "target": "file:bin/sync-check.sh",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:scripts/apps_script/tickpick_sync.gs",
+      "target": "file:tickpick_client.py",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/exos-connect-onboard/index.ts",
+      "target": "file:supabase/functions/exos-checkout/index.ts",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/stripe-webhook/index.ts",
+      "target": "file:supabase/functions/exos-checkout/index.ts",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/seatdata-poll/index.ts",
+      "target": "file:seatdata_client.py",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/seatmap-manifest-sync/index.ts",
+      "target": "file:static/terminal/lib/tevomaps.bundle.js",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:supabase/functions/alert-mail-drain/index.ts",
+      "target": "file:supabase/functions/_shared/email-templates/watchlist-daily-summary.html",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:broadway_extension/manifest.json",
+      "target": "file:broadway_extension/background.js",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:broadway_extension/manifest.json",
+      "target": "file:broadway_extension/inject_capture.js",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:broadway_extension/manifest.json",
+      "target": "file:broadway_extension/popup.html",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:broadway_extension/manifest.json",
+      "target": "file:broadway_extension/relay.js",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:broadway_extension/popup.html",
+      "target": "file:broadway_extension/popup.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:broadway_extension/inject_capture.js",
+      "target": "file:broadway_extension/relay.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:broadway_extension/README.md",
+      "target": "config:broadway_extension/manifest.json",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/_shared/design-tokens.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/home/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/home/home.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/terminal/index.html",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/store/index.html",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/undelivered/index.html",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/home/index.html",
+      "target": "file:static/bridge/index.html",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/undelivered/index.html",
+      "target": "file:static/_shared/design-tokens.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/undelivered/index.html",
+      "target": "file:static/undelivered/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/undelivered/index.html",
+      "target": "file:static/undelivered/undelivered.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/undelivered/index.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/undelivered/index.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/nav.js",
+      "target": "config:static/version.json",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:supabase/.temp/cli-latest",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:supabase/.temp/gotrue-version",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:supabase/.temp/pooler-url",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:supabase/.temp/postgres-version",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:supabase/.temp/project-ref",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:supabase/.temp/rest-version",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:supabase/.temp/storage-migration",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:supabase/.temp/storage-version",
+      "target": "config:supabase/.temp/linked-project.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "service:Procfile",
+      "target": "file:app.py",
+      "type": "deploys",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "config:render.yaml",
+      "target": "file:app.py",
+      "type": "deploys",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "config:render-d0-terminal.yaml",
+      "target": "file:static/terminal/index.html",
+      "type": "deploys",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "config:render-d2-dashboard.yaml",
+      "target": "file:d2_dashboard/main.py",
+      "type": "deploys",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "document:requirements.txt",
+      "target": "file:app.py",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:release-please-config.json",
+      "target": "pipeline:.github/workflows/release-please.yml",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:.release-please-manifest.json",
+      "target": "pipeline:.github/workflows/release-please.yml",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:.gitleaksignore",
+      "target": "pipeline:.github/workflows/secret-scan.yml",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:.mcp.json",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:version.txt",
+      "target": "config:.release-please-manifest.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "pipeline:.github/workflows/tests.yml",
+      "target": "file:tests/test_readonly_guards.py",
+      "type": "triggers",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "pipeline:.github/workflows/pr-title-lint.yml",
+      "target": "document:docs/pr_governance.md",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "pipeline:.github/workflows/labeler.yml",
+      "target": "config:.github/labeler.yml",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "pipeline:.github/workflows/dependency-review.yml",
+      "target": "config:.github/dependabot.yml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "pipeline:.github/workflows/scorecard.yml",
+      "target": "document:.github/SECURITY.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "pipeline:.github/workflows/uptime-check.yml",
+      "target": "file:app.py",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/CONTRIBUTING.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/PULL_REQUEST_TEMPLATE.md",
+      "target": "document:docs/pr_governance.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:.github/SECURITY.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:.github/ISSUE_TEMPLATE/bug.yml",
+      "target": "config:.github/ISSUE_TEMPLATE/config.yml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:.github/ISSUE_TEMPLATE/feature.yml",
+      "target": "config:.github/ISSUE_TEMPLATE/config.yml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "pipeline:.github/workflows/forbidden-paths-check.yml",
+      "target": "file:.github/CODEOWNERS",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
