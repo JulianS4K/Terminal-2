@@ -295,7 +295,8 @@ def fetch_event_pricing(db, ids: list[int], lookback_days: int = 21) -> dict[int
 
 
 def fetch_event_listings(db, ids: list[int], qty: int, lookback_hours: int = 36,
-                         cap: int = 12000) -> dict[int, dict]:
+                         cap: int = 12000, section_like: str | None = None,
+                         prefer_owned: bool = False) -> dict[int, dict]:
     """Auto-select a concrete listing per event that satisfies `qty` and is cheapest.
 
     From the EVO firehose (`listings_snapshots`): qualifying = `quantity >= qty` AND
@@ -307,20 +308,21 @@ def fetch_event_listings(db, ids: list[int], qty: int, lookback_hours: int = 36,
     if not ids:
         return {}
     since = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
-    rows = (db.table("listings_snapshots")
-            .select("event_id, tevo_ticket_group_id, section, row, quantity, retail_price, "
-                    "is_owned, eticket, instant_delivery, format, captured_at")
-            .in_("event_id", ids)
-            .gte("captured_at", since)
-            .gte("quantity", qty)
-            .contains("splits", [qty])
-            .not_.is_("retail_price", "null")
-            .order("captured_at", desc=True)
-            .limit(cap)
-            .execute().data) or []
+    q = (db.table("listings_snapshots")
+         .select("event_id, tevo_ticket_group_id, section, row, quantity, retail_price, "
+                 "is_owned, eticket, instant_delivery, format, captured_at")
+         .in_("event_id", ids)
+         .gte("captured_at", since)
+         .gte("quantity", qty)
+         .contains("splits", [qty])
+         .not_.is_("retail_price", "null"))
+    if section_like:                              # seat preference: only matching sections
+        q = q.ilike("section", f"%{section_like}%")
+    rows = q.order("captured_at", desc=True).limit(cap).execute().data or []
 
     seen: set[tuple] = set()
-    best: dict[int, dict] = {}
+    cheapest: dict[int, dict] = {}        # cheapest qualifying overall
+    cheapest_owned: dict[int, dict] = {}  # cheapest qualifying that's ours
     counts: dict[int, int] = {}
     for r in rows:
         key = (r["event_id"], r["tevo_ticket_group_id"])
@@ -331,18 +333,26 @@ def fetch_event_listings(db, ids: list[int], qty: int, lookback_hours: int = 36,
         counts[eid] = counts.get(eid, 0) + 1
         price = float(r["retail_price"])
         owned = bool(r.get("is_owned"))
-        cur = best.get(eid)
-        if cur is None or price < cur["unit_price"] - 1e-9 or (
-                abs(price - cur["unit_price"]) <= 1e-9 and owned and not cur["is_owned"]):
-            best[eid] = {
-                "ticket_group_id": int(r["tevo_ticket_group_id"]),
-                "section": r.get("section"), "row": r.get("row"),
-                "available_qty": int(r["quantity"]), "unit_price": round(price, 2),
-                "is_owned": owned, "eticket": bool(r.get("eticket")),
-                "instant": bool(r.get("instant_delivery")), "format": r.get("format"),
-            }
-    for eid, c in best.items():
-        c["candidates"] = counts.get(eid, 0)
+        cand = {
+            "ticket_group_id": int(r["tevo_ticket_group_id"]),
+            "section": r.get("section"), "row": r.get("row"),
+            "available_qty": int(r["quantity"]), "unit_price": round(price, 2),
+            "is_owned": owned, "eticket": bool(r.get("eticket")),
+            "instant": bool(r.get("instant_delivery")), "format": r.get("format"),
+        }
+        if eid not in cheapest or price < cheapest[eid]["unit_price"] - 1e-9 or (
+                abs(price - cheapest[eid]["unit_price"]) <= 1e-9 and owned and not cheapest[eid]["is_owned"]):
+            cheapest[eid] = cand
+        if owned and (eid not in cheapest_owned or price < cheapest_owned[eid]["unit_price"] - 1e-9):
+            cheapest_owned[eid] = cand
+
+    best: dict[int, dict] = {}
+    for eid in cheapest:
+        # prefer_owned -> our cheapest owned group if we have one, else cheapest overall
+        chosen = (cheapest_owned.get(eid) or cheapest[eid]) if prefer_owned else cheapest[eid]
+        chosen = dict(chosen)
+        chosen["candidates"] = counts.get(eid, 0)
+        best[eid] = chosen
     return best
 
 
@@ -413,10 +423,18 @@ def plan_tour_package(rows: list[dict], home: dict, qty: int, budget_km: float,
             pl["selection"] = "estimate"
         pl["city"] = r.get("venue_city")
         pl["event_name"] = r.get("event_name")
+        pl["performer"] = r.get("primary_performer_name") or ""
+        pl["popularity"] = round(float(r["_pop"]), 4) if r.get("_pop") is not None else None
         pl["coord_source"] = r.get("_coord_source", "venue")
         legmeta[eid] = pl
         u = pl.get("unit_price")
         costs[eid] = (u * qty) if u is not None else 0.0    # the fan's spend at this stop
+
+    # "hot" demand badge: top third of the tour by long-term popularity (and meaningfully high)
+    pops = sorted(v["popularity"] for v in legmeta.values() if v.get("popularity") is not None)
+    thr = max(0.4, pops[min(len(pops) - 1, len(pops) * 2 // 3)]) if pops else None
+    for v in legmeta.values():
+        v["hot"] = bool(thr is not None and v.get("popularity") is not None and v["popularity"] >= thr)
 
     c = Constraints(home_name=home["name"], home_lat=float(home["lat"]), home_lon=float(home["lon"]),
                     start=start, end=end, max_travel_km=float(budget_km),
@@ -453,18 +471,31 @@ def plan_tour_package(rows: list[dict], home: dict, qty: int, budget_km: float,
     }
 
 
-def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
-                        qty: int, budget_km: float, start: date, end: date,
-                        home_name: str = "Home", budget_usd: float | None = None,
-                        side: str = "auto", clear_at: float = DEFAULT_CLEAR_AT,
-                        away_margin: float = DEFAULT_AWAY_MARGIN,
-                        max_events: int | None = None) -> dict:
-    """End-to-end retail tour package: detect concert vs team-away, route + dual-mode price."""
-    rows, mode = fetch_tour_events(db, performer_id, start, end, side)
+def fetch_event_popularity(db, ids: list[int]) -> dict[int, float]:
+    """Long-term popularity score per event (events table) — powers the 'hot' demand badge."""
+    if not ids:
+        return {}
+    rows = (db.table("events").select("id, long_term_popularity_score")
+            .in_("id", ids).execute().data) or []
+    out: dict[int, float] = {}
+    for r in rows:
+        v = r.get("long_term_popularity_score")
+        if v is not None:
+            out[int(r["id"])] = float(v)
+    return out
+
+
+def _enrich_and_plan(db, rows: list[dict], mode: str, qty: int, home: dict,
+                     budget_km: float, start: date, end: date, budget_usd: float | None,
+                     clear_at: float, away_margin: float, max_events: int | None,
+                     section_like: str | None, prefer_owned: bool) -> dict:
+    """Shared: coord fallback + pricing + popularity + auto-selected listings -> tour package."""
     _apply_coord_fallback(db, rows)
     ids = [int(r["tevo_event_id"]) for r in rows]
     pricing = fetch_event_pricing(db, ids)
-    listings = fetch_event_listings(db, ids, max(1, int(qty)))   # auto-select real seats
+    listings = fetch_event_listings(db, ids, max(1, int(qty)),
+                                    section_like=section_like, prefer_owned=prefer_owned)
+    popularity = fetch_event_popularity(db, ids)
     for r in rows:
         eid = int(r["tevo_event_id"])
         p = pricing.get(eid)
@@ -472,9 +503,46 @@ def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
             r["_owned"], r["_our_ask"] = p["owned"], p["our_ask"]
             r["_getin"], r["_med"], r["_qty"] = p["getin"], p["med"], p["qty"]
         r["_listing"] = listings.get(eid)
+        r["_pop"] = popularity.get(eid)
+    return plan_tour_package(rows, home, qty, budget_km, start, end,
+                             budget_usd=budget_usd, max_events=max_events,
+                             clear_at=clear_at, away_margin=away_margin, mode=mode)
+
+
+def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
+                        qty: int, budget_km: float, start: date, end: date,
+                        home_name: str = "Home", budget_usd: float | None = None,
+                        side: str = "auto", clear_at: float = DEFAULT_CLEAR_AT,
+                        away_margin: float = DEFAULT_AWAY_MARGIN, max_events: int | None = None,
+                        section_like: str | None = None, prefer_owned: bool = False) -> dict:
+    """End-to-end retail tour package: detect concert vs team-away, route + dual-mode price."""
+    rows, mode = fetch_tour_events(db, performer_id, start, end, side)
     home = {"name": home_name, "lat": home_lat, "lon": home_lon}
-    payload = plan_tour_package(rows, home, qty, budget_km, start, end,
-                                budget_usd=budget_usd, max_events=max_events,
-                                clear_at=clear_at, away_margin=away_margin, mode=mode)
+    payload = _enrich_and_plan(db, rows, mode, qty, home, budget_km, start, end, budget_usd,
+                               clear_at, away_margin, max_events, section_like, prefer_owned)
     payload["performer_id"] = int(performer_id)
+    return payload
+
+
+def plan_multi_performer_tour(db, performer_ids: list[int], home_lat: float, home_lon: float,
+                              qty: int, budget_km: float, start: date, end: date,
+                              home_name: str = "Home", budget_usd: float | None = None,
+                              side: str = "auto", clear_at: float = DEFAULT_CLEAR_AT,
+                              away_margin: float = DEFAULT_AWAY_MARGIN,
+                              max_events: int | None = None, section_like: str | None = None,
+                              prefer_owned: bool = False) -> dict:
+    """"Plan my summer": route + price one package across SEVERAL performers' events at once."""
+    rows: list[dict] = []
+    seen: set[int] = set()
+    for pid in performer_ids:
+        prows, _ = fetch_tour_events(db, int(pid), start, end, side)
+        for r in prows:
+            eid = int(r["tevo_event_id"])
+            if eid not in seen:
+                seen.add(eid)
+                rows.append(r)
+    home = {"name": home_name, "lat": home_lat, "lon": home_lon}
+    payload = _enrich_and_plan(db, rows, "multi", qty, home, budget_km, start, end, budget_usd,
+                               clear_at, away_margin, max_events, section_like, prefer_owned)
+    payload["performer_ids"] = [int(p) for p in performer_ids]
     return payload
