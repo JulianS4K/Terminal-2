@@ -42827,6 +42827,636 @@
       "direction": "forward",
       "weight": 0.7,
       "recoveredFromImportMap": true
+    },
+    {
+      "source": "file:static/terminal/index.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/index.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/index.html",
+      "target": "file:static/terminal/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/index.html",
+      "target": "file:static/terminal/nav.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/index.html",
+      "target": "file:static/terminal/home.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/index.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/discovery.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/discovery.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/discovery.html",
+      "target": "file:static/terminal/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/discovery.html",
+      "target": "file:static/terminal/nav.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/discovery.html",
+      "target": "file:static/terminal/discovery.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/discovery.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/lib/tevomaps.bundle.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/nav.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/alerts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/event.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/login.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/login.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/login.html",
+      "target": "file:static/terminal/login.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/login.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/movers.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/movers.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/movers.html",
+      "target": "file:static/terminal/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/movers.html",
+      "target": "file:static/terminal/nav.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/movers.html",
+      "target": "file:static/terminal/movers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/movers.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/orders.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/orders.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/orders.html",
+      "target": "file:static/terminal/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/orders.html",
+      "target": "file:static/terminal/nav.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/orders.html",
+      "target": "file:static/terminal/orders.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/orders.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/performer.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/performer.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/performer.html",
+      "target": "file:static/terminal/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/performer.html",
+      "target": "file:static/terminal/nav.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/performer.html",
+      "target": "file:static/terminal/alerts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/performer.html",
+      "target": "file:static/terminal/performer.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/performer.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/venue.html",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/venue.html",
+      "target": "file:static/terminal/auth.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/venue.html",
+      "target": "file:static/terminal/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/venue.html",
+      "target": "file:static/terminal/nav.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/venue.html",
+      "target": "file:static/terminal/alerts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/venue.html",
+      "target": "file:static/terminal/venue.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/venue.html",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:static/terminal/manifest.json",
+      "target": "file:static/terminal/index.html",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/home.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/home.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/event.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/event.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/movers.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/movers.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/orders.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/orders.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/discovery.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/discovery.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/venue.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/venue.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/performer.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/performer.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/login.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/alerts.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/event.js",
+      "target": "file:static/terminal/lib/tevomaps.bundle.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:static/terminal/lib/tevomaps.bundle.NOTICE.md",
+      "target": "file:static/terminal/lib/tevomaps.bundle.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/index.html",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/auth.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/nav.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/home.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/event.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/movers.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/orders.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/discovery.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/venue.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/performer.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/login.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/sw.js",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "file:static/terminal/index.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "file:static/terminal/app.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "file:static/terminal/nav.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "file:static/terminal/auth.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "file:static/terminal/lib/supabase.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "file:static/terminal/event.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:D0_BIBLE.md",
+      "target": "file:static/terminal/style.css",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
