@@ -38,14 +38,20 @@ SET search_path TO 'public', 'pg_temp'
 AS $fn$
 BEGIN
   -- Candidate owned events (highest-value first), expanded to SH + VD rows.
+  -- event_metrics is a time-series (PK event_id, captured_at) — take the LATEST
+  -- row per event via LATERAL so the owned filter + value are current, not summed.
   CREATE TEMP TABLE _seed ON COMMIT DROP AS
   WITH owned AS (
-    SELECT a.aq_short_event_id, a.tevo_event_id, a.sg_event_id,
-           a.sh_event_id, a.vivid_event_id,
+    SELECT a.aq_short_event_id, a.sh_event_id, a.vivid_event_id,
            m.owned_tickets_count, m.owned_median_retail
     FROM public.aq_event_map a
-    JOIN public.event_metrics m
-      ON m.event_id = a.tevo_event_id AND m.owned_tickets_count > 0
+    JOIN LATERAL (
+      SELECT em.owned_tickets_count, em.owned_median_retail
+      FROM public.event_metrics em
+      WHERE em.event_id = a.tevo_event_id
+      ORDER BY em.captured_at DESC
+      LIMIT 1
+    ) m ON m.owned_tickets_count > 0
     WHERE a.tevo_event_id IS NOT NULL
       AND a.event_date >= now()
       AND (a.sh_event_id IS NOT NULL OR a.vivid_event_id IS NOT NULL)
@@ -54,22 +60,21 @@ BEGIN
   )
   SELECT o.sh_event_id AS event_id, 'SH'::text AS platform,
          'https://www.stubhub.com/x/event/' || o.sh_event_id || '/' AS event_url,
-         o.aq_short_event_id, o.tevo_event_id, o.sg_event_id,
-         o.owned_tickets_count, o.owned_median_retail
+         o.aq_short_event_id, o.owned_tickets_count, o.owned_median_retail
   FROM owned o WHERE o.sh_event_id IS NOT NULL
   UNION ALL
   SELECT o.vivid_event_id, 'VD',
          'https://www.vividseats.com/production/' || o.vivid_event_id,
-         o.aq_short_event_id, o.tevo_event_id, o.sg_event_id,
-         o.owned_tickets_count, o.owned_median_retail
+         o.aq_short_event_id, o.owned_tickets_count, o.owned_median_retail
   FROM owned o WHERE o.vivid_event_id IS NOT NULL;
 
   IF p_apply THEN
+    -- xref links to the canonical event via aq_short_event_id (no tevo/sg column).
     INSERT INTO public.ticketsdata_event_xref
-      (event_id, platform, aq_short_event_id, event_url, tevo_event_id, sg_event_id,
+      (event_id, platform, aq_short_event_id, event_url,
        owned_tickets, median_retail_price, active, match_method, meta)
     SELECT s.event_id, s.platform, s.aq_short_event_id, s.event_url,
-           s.tevo_event_id, s.sg_event_id, s.owned_tickets_count, s.owned_median_retail,
+           s.owned_tickets_count, s.owned_median_retail,
            true, 'manual',
            jsonb_build_object('seed','owned_xref','seeded_at', now())
     FROM _seed s

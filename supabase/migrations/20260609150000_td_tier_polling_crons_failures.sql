@@ -129,7 +129,7 @@ BEGIN
                        (a.event_date)::date ) - CURRENT_DATE AS dte
       FROM public.ticketsdata_event_xref x
       LEFT JOIN public.aq_event_map a ON a.aq_short_event_id = x.aq_short_event_id
-      LEFT JOIN public.events e ON e.id = COALESCE(x.tevo_event_id, a.tevo_event_id)
+      LEFT JOIN public.events e ON e.id = a.tevo_event_id   -- xref has no tevo col; link via aq
       WHERE x.platform = p_platform AND x.active AND x.event_url IS NOT NULL
     ),
     tiered AS (
@@ -243,13 +243,23 @@ ORDER BY n DESC;
 -- 5. Per-platform crons — one per platform, individually toggleable via
 --    cron_policy.enabled. SEEDED DISABLED. Staggered 30-min metronome.
 -- ─────────────────────────────────────────────────────────────────────────────
-INSERT INTO public.cron_policy (jobname, enabled, notes) VALUES
-  ('td_tier_enqueue_sh',  false, 'Tiered per-platform enqueue (SH). Toggle to enable. 2026-06-09.'),
-  ('td_tier_enqueue_vd',  false, 'Tiered per-platform enqueue (VD). Toggle to enable. 2026-06-09.'),
-  ('td_tier_enqueue_tm',  false, 'Tiered per-platform enqueue (TM). Toggle to enable. 2026-06-09.'),
-  ('td_tier_enqueue_gt',  false, 'Tiered per-platform enqueue (GT). Toggle to enable. 2026-06-09.'),
-  ('td_tier_enqueue_tp',  false, 'Tiered per-platform enqueue (TP, ≤5d only). Toggle to enable. 2026-06-09.'),
-  ('td_tier_enqueue_axs', false, 'Tiered per-platform enqueue (AXS). Keep OFF until TicketsData ships AXS. 2026-06-09.')
+-- cron_policy requires peak_hours_et / peak_min_interval_min / offpeak_min_interval_min
+-- (all NOT NULL). cron_should_fire uses them as a JOB-LEVEL gate (ET hours + min
+-- interval since last fire, tracked in cron_gate_decisions). We make it a LIGHT gate
+-- — all hours "peak", 15-min interval (< the 30-min pg_cron cadence so it always
+-- passes) — because the real per-event tier cadence + per-event-local peak/off-peak
+-- live in td_poll_policy + td_tier_enqueue, not here.
+INSERT INTO public.cron_policy
+  (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min, enabled, notes)
+SELECT j.jobname, ARRAY(SELECT generate_series(0,23)), 15, 15, false, j.notes
+FROM (VALUES
+  ('td_tier_enqueue_sh',  'Tiered per-platform enqueue (SH). Toggle to enable. 2026-06-09.'),
+  ('td_tier_enqueue_vd',  'Tiered per-platform enqueue (VD). Toggle to enable. 2026-06-09.'),
+  ('td_tier_enqueue_tm',  'Tiered per-platform enqueue (TM). Toggle to enable. 2026-06-09.'),
+  ('td_tier_enqueue_gt',  'Tiered per-platform enqueue (GT). Toggle to enable. 2026-06-09.'),
+  ('td_tier_enqueue_tp',  'Tiered per-platform enqueue (TP, ≤5d only). Toggle to enable. 2026-06-09.'),
+  ('td_tier_enqueue_axs', 'Tiered per-platform enqueue (AXS). Keep OFF until TicketsData ships AXS. 2026-06-09.')
+) AS j(jobname, notes)
 ON CONFLICT (jobname) DO NOTHING;
 
 -- Retire the old flat enqueue crons to prevent double-enqueue (operator enables
