@@ -101,6 +101,36 @@ $function$;
 COMMENT ON FUNCTION public.venue_section_token_base(text) IS
   'Leading-integer core of venue_section_token (e.g. "14b"->"14", "117 a"->"117"). Fallback match tier that bridges a/b sub-section splits to a single parent seatmap polygon. NULL when the token has no leading integer.';
 
+-- vsm_listing_token: PLATFORM-AWARE listing-side tokenizer. The seatmap-key side
+-- always uses venue_section_token (keys are TEvo descriptive names). Listings differ
+-- by platform: EVO uses bare/descriptor-numbered codes ("014b","field infield 112")
+-- -> venue_section_token. SG/TP/VD/SH add alpha-prefix-numeric codes ("BAL316","CL227")
+-- with NO space, so we peel a leading 1-4 letter prefix on '^[a-z]{1,4}\d' strings
+-- ("bal316"->"316"). The peel is NOT applied to EVO (its alphanumerics like "a1" are
+-- distinct suites, not numbered seats — peeling would create false matches).
+CREATE OR REPLACE FUNCTION public.vsm_listing_token(p_section text, p_platform text)
+RETURNS text LANGUAGE sql IMMUTABLE SET search_path TO 'public', 'pg_temp'
+AS $function$
+  SELECT CASE
+    WHEN p_section IS NULL OR btrim(p_section) = '' THEN NULL
+    WHEN p_platform = 'evo' THEN public.venue_section_token(p_section)
+    ELSE nullif(regexp_replace(
+      CASE WHEN lower(btrim(public.td_normalize_section(p_section))) ~ '^[a-z]{1,4}[0-9]'
+           THEN regexp_replace(lower(btrim(public.td_normalize_section(p_section))), '^[a-z]+', '')
+           ELSE lower(btrim(public.td_normalize_section(p_section))) END,
+      '^0+([0-9])', '\1'), '')
+  END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.vsm_listing_token_base(p_section text, p_platform text)
+RETURNS text LANGUAGE sql IMMUTABLE SET search_path TO 'public', 'pg_temp'
+AS $function$
+  SELECT (regexp_match(coalesce(public.vsm_listing_token(p_section, p_platform), ''), '^([0-9]+)'))[1];
+$function$;
+
+COMMENT ON FUNCTION public.vsm_listing_token(text, text) IS
+  'Platform-aware listing-side seat token. evo -> venue_section_token; sg/tp/vd/sh additionally peel a leading 1-4 letter prefix ("BAL316"->"316"). Matched against venue_section_token of the seatmap keys.';
+
 -- ── PART 2: the crosswalk table ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.venue_section_map (
   tevo_venue_id      bigint  NOT NULL,
@@ -153,9 +183,9 @@ DECLARE
   v_now   timestamptz := now();
   v_count integer := 0;
 BEGIN
-  IF p_platform <> 'evo' THEN
+  IF p_platform NOT IN ('evo','sg') THEN
     RAISE EXCEPTION
-      'build_venue_section_map: platform % not yet supported (EVO-first cut). For sg/tp/vd/sh, resolve the venue to tevo_venue_id via cross_source_venue_resolve / aq_venue_map, then extend this function with that platform''s listings source.', p_platform
+      'build_venue_section_map: platform % source not yet wired. evo + sg are live; tp/vd/sh need their per-platform listings source added to the raw CTE (TD pulls / SeatData).', p_platform
       USING ERRCODE = '0A000';
   END IF;
 
@@ -185,27 +215,41 @@ BEGIN
            array_agg(DISTINCT seatmap_key)      AS all_keys
     FROM keys WHERE tok_base IS NOT NULL GROUP BY tok_base
   ),
-  raw AS (  -- distinct EVO seat sections at this venue (parking excluded)
-    SELECT lower(btrim(ls.section)) AS section_raw, count(*) AS seen
-    FROM public.listings_snapshots ls
-    WHERE ls.event_id IN (SELECT id FROM public.events WHERE venue_id = p_venue_id)
-      AND ls.captured_at > v_now - p_window
-      AND ls.type = 'event'
-      AND ls.is_ancillary = false
-      AND ls.section IS NOT NULL AND btrim(ls.section) <> ''
+  raw AS (  -- distinct seat sections at this venue, per platform (parking excluded)
+    SELECT lower(btrim(s)) AS section_raw, count(*) AS seen
+    FROM (
+      -- EVO firehose (type=event drops parking; is_ancillary drops ancillary)
+      SELECT ls.section AS s
+      FROM public.listings_snapshots ls
+      WHERE p_platform = 'evo'
+        AND ls.event_id IN (SELECT id FROM public.events WHERE venue_id = p_venue_id)
+        AND ls.captured_at > v_now - p_window
+        AND ls.type = 'event' AND ls.is_ancillary = false
+      UNION ALL
+      -- SeatGeek listings, joined to the venue's events via aq_event_map.sg_event_id
+      SELECT sl.section AS s
+      FROM public.seatgeek_listings_snapshots sl
+      WHERE p_platform = 'sg'
+        AND sl.sg_event_id IN (
+          SELECT m.sg_event_id FROM public.aq_event_map m
+          JOIN public.events e ON e.id = m.tevo_event_id
+          WHERE e.venue_id = p_venue_id AND m.sg_event_id IS NOT NULL)
+        AND sl.captured_at > v_now - p_window
+    ) u
+    WHERE s IS NOT NULL AND btrim(s) <> ''
     GROUP BY 1
   ),
   scored AS (
     SELECT r.section_raw, r.seen,
-           public.venue_section_token(r.section_raw)      AS tok,
-           public.venue_section_token_base(r.section_raw) AS tok_base,
+           public.vsm_listing_token(r.section_raw, p_platform)      AS tok,
+           public.vsm_listing_token_base(r.section_raw, p_platform) AS tok_base,
            kx.seatmap_key AS exact_key,
            kt.nkeys AS kt_n, kt.first_key AS kt_key, kt.all_keys AS kt_keys,
            kb.nkeys AS kb_n, kb.first_key AS kb_key, kb.all_keys AS kb_keys
     FROM raw r
     LEFT JOIN keys    kx ON kx.seatmap_key = r.section_raw
-    LEFT JOIN keytok  kt ON kt.tok      = public.venue_section_token(r.section_raw)
-    LEFT JOIN keybase kb ON kb.tok_base = public.venue_section_token_base(r.section_raw)
+    LEFT JOIN keytok  kt ON kt.tok      = public.vsm_listing_token(r.section_raw, p_platform)
+    LEFT JOIN keybase kb ON kb.tok_base = public.vsm_listing_token_base(r.section_raw, p_platform)
   ),
   classed AS (
     -- tiers, highest confidence first. token_base* bridge a/b sub-section splits
@@ -238,7 +282,7 @@ BEGIN
     (tevo_venue_id, platform, section_raw, section_token, section_token_base,
      seatmap_key, configuration_id, match_method, confidence,
      candidate_keys, seen_listings, first_seen_at, updated_at)
-  SELECT p_venue_id, 'evo', section_raw, tok, tok_base,
+  SELECT p_venue_id, p_platform, section_raw, tok, tok_base,
          seatmap_key, NULL,
          method,
          CASE method
@@ -283,8 +327,8 @@ DECLARE
   v_venue  bigint;
   v_venues integer := 0;
 BEGIN
-  IF p_platform <> 'evo' THEN
-    RAISE EXCEPTION 'build_venue_section_map_all: platform % not yet supported', p_platform
+  IF p_platform NOT IN ('evo','sg') THEN
+    RAISE EXCEPTION 'build_venue_section_map_all: platform % source not yet wired', p_platform
       USING ERRCODE = '0A000';
   END IF;
 
@@ -296,7 +340,7 @@ BEGIN
     ORDER BY sm.venue_id
     LIMIT p_max_venues
   LOOP
-    PERFORM public.build_venue_section_map(v_venue, 'evo', p_window);
+    PERFORM public.build_venue_section_map(v_venue, p_platform, p_window);
     v_venues := v_venues + 1;
   END LOOP;
 
