@@ -289,7 +289,7 @@ BEGIN
            ) AS rn
     FROM public.td_discovered_events d
     JOIN public.events e
-      ON e.occurs_at_local::date = d.event_date
+      ON (left(e.occurs_at_local,10))::date = d.event_date   -- occurs_at_local is text
     WHERE d.matched_tevo_event_id IS NULL
       AND d.event_date IS NOT NULL
       AND d.venue_name IS NOT NULL
@@ -359,7 +359,9 @@ BEGIN
            primary_performer_name, length(name) AS match_len
     FROM public.events
     WHERE name ILIKE v_pat
-      AND occurs_at_local >= now() - interval '6 hours'
+      -- occurs_at_local is TEXT (ISO8601 w/ offset); text>=timestamptz errors, so
+      -- compare as a string against the formatted cutoff (fixes latent v1 bug).
+      AND occurs_at_local >= to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
       AND coalesce(state, '') <> 'past'
     ORDER BY length(name) ASC, occurs_at_local ASC
     LIMIT v_cap

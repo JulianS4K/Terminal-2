@@ -52,6 +52,10 @@ COMMENT ON COLUMN public.ticketsdata_credit_usage.reports IS
 COMMENT ON COLUMN public.ticketsdata_credit_usage.reports_remaining IS
   'reports_remaining from the /match response envelope (plan-wide, not just this pipeline).';
 
+-- Drop the prior 6-arg overload FIRST — adding params via CREATE OR REPLACE makes
+-- a NEW overload (different signature), leaving the old one to make 6-arg calls
+-- (td_normalize_drain etc.) ambiguous. The 8-arg version is call-compatible.
+DROP FUNCTION IF EXISTS public.td_charge_credit(integer, bigint, text, text, integer, integer);
 CREATE OR REPLACE FUNCTION public.td_charge_credit(
   p_n               integer DEFAULT 1,
   p_event_id        bigint  DEFAULT NULL,
