@@ -1,6 +1,6 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.9.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected); v1.5.0 2026-06-02 (D0) — §B2 file map refresh + new §B11 Seat Map (multi-source Tevomaps overlay, PRs #406-410); v1.6.0 2026-06-03 (D0) — §B9 chart rebuilt: retention-aware hybrid backbone (durable daily spliced under fine-grained series) + UI cleanup; v1.7.0 2026-06-06 (D0) — §B11: TickPick added as a ZONE-MAPPED seatmap source (`_seatmapZoneKeys` band/named-tier expansion) + `Floor N`↔`VIP N` collision fix (`_smPick` T4b prefers the unique Floor key); v1.8.0 2026-06-09 (C1) — intro adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.9.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.10.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected); v1.5.0 2026-06-02 (D0) — §B2 file map refresh + new §B11 Seat Map (multi-source Tevomaps overlay, PRs #406-410); v1.6.0 2026-06-03 (D0) — §B9 chart rebuilt: retention-aware hybrid backbone (durable daily spliced under fine-grained series) + UI cleanup; v1.7.0 2026-06-06 (D0) — §B11: TickPick added as a ZONE-MAPPED seatmap source (`_seatmapZoneKeys` band/named-tier expansion) + `Floor N`↔`VIP N` collision fix (`_smPick` T4b prefers the unique Floor key); v1.8.0 2026-06-09 (C1) — intro adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.9.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.10.0 2026-06-10 (A1) — AXS primary box office: §3d TEvo↔AXS bridge (`axs_aq_match`), new §4b-axs AXS tables (incl. per-seat), §B5 `/api/axs/*` routes + AXS Box Office tab/chart line. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
@@ -134,6 +134,7 @@ Plus 6 parallel enrichment loaders in `init()` (`event.js:78-86`): `loadCrossSou
   - `/api/broker/movers` (`app.py:3517`; handler `broker_movers` `:3518`; v2 helper `_broker_movers_v2` `:3486`)
   - `/api/broker/event/{id}/overview` (`:2200`), `/chart-data` (`:3033`), `/zones` (`:2411`), `/orders` (`:4139`), `/cadences` (`:3737`)
   - `/api/broker/performer/{id}/assets` (`:1126`)
+- **`/api/axs/*` routes** *(v1.0 · A1 · 2026-06-10)* — `/api/axs/event/{id}` (latest snapshot state), `/api/axs/event/{id}/sections` (per-section availability+pricing), `/api/axs/event/{id}/series` (price+listing time series for charts). Keyed by `tevo_event_id`; read-only from `axs_*_snapshots`. FE: **AXS Box Office** tab on the event page + a sky-blue AXS line (legend toggle) on the median-price and listing-count charts. Empty-state until snapshots ingest.
 - **CORS** (`app.py:450-477`): `_CORS_ORIGINS` from env `CORS_ALLOWED_ORIGINS`; **default is localhost-only** (`http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000`, `app.py:452`). Wildcards and non-concrete URLs are rejected at boot (`:459-470`). `allow_credentials=True`; methods `GET/POST/DELETE/OPTIONS`; headers `Authorization/Content-Type/X-Cron-Secret` (`:474-476`). **⚠ The CDN origin is not in the default — see §B10 gap #1.**
 - **Security headers** (`_SecurityHeadersMiddleware`, `app.py:480`): CSP `connect-src 'self' https://*.supabase.co`.
 - **Token verification** (`app.py:425-426`): backend POSTs the incoming bearer to `{SUPABASE_URL}/auth/v1/user` with the anon apikey to validate the session server-side.
@@ -308,6 +309,7 @@ Step 5: TEXT: performer + date match            → sg_events_canonical where pe
 | TEvo ↔ SG | `sg_events_canonical.tevo_event_id` | `sg_to_tevo_search_bridge_30min` cron (API call to TEvo `/v9/events`) |
 | TEvo ↔ ESPN | `event_xref.espn_event_id` | `match_events_to_espn_10min` cron |
 | TEvo ↔ TD | `ticketsdata_event_xref.tevo_event_id` (mig 380000) | `refresh_td_event_links()` daily |
+| TEvo ↔ AXS | `axs_events.tevo_event_id` / `aq_short_event_id` | `axs_aq_match(axs_event_id)` — venue+date+name vs `aq_event_map`, **±48h** window (AXS local date vs TEvo date drifts on reschedules/TZ) + event-name trigram disambiguation. Applied on ingest by `axs_apply_aq()`; backfill `axs_aq_backfill()` |
 | Venue text → tevo_venue_id | `cross_source_venue_map` | `cross_source_venue_resolve(name, city, state)` fn |
 
 ### 3e. aq_venue_map and aq_performer_map
@@ -464,6 +466,19 @@ Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a
 | `ticketsdata_listings_snapshots` | 244K | TD listing firehose | aq_short_event_id, platform, price, quantity, captured_at |
 
 **TD ↔ TEvo linkage warning (pre-mig-380000):** `ticketsdata_event_xref.event_id` is TD's platform-native ID (4.5M–160M range), NOT tevo_event_id. After mig 380000 applied, use `ticketsdata_event_xref.tevo_event_id` directly.
+
+### 4b-axs. AXS tables (primary box office) *(v1.0 · A1 · 2026-06-10)*
+
+| Table | Purpose | Key columns |
+|---|---|---|
+| `axs_events` | Ingest registry (col-D workbook + Red Rocks) | `axs_event_id` (native, from URL), `event_url`, `is_axs_primary`, `probe_status` (axs_ok/not_axs/inconclusive/retry), `tevo_event_id`, `aq_short_event_id`, `tevo_venue_id`, `active`, `last_snapshot_id` |
+| `axs_event_snapshots` | One row per pull | `tevo_event_id`, `event_name`, `venue_name`, `occurs_at_local`, `price_min/max`, `getin`, `listings_count`, `seats_primary/resale`, `raw` jsonb |
+| `axs_section_snapshots` | Per-section rollup (FK `snapshot_id`) | `section_label`, `avail_qty`, `price_min/max`, `seat_types[]`, `has_resale` |
+| `axs_seat_snapshots` | **Per-seat** detail | `section_label`/`row_label`/`seat_number`, `seat_type` (STANDARD/ACCESSIBLE/FLASHSEATS/PREMIUMVIP), `price`, `src` (primary/resale), `raw_item` jsonb |
+| `axs_venues` | AXS-site venue catalog → canonical | `axs_name_norm` (generated), `tevo_venue_id` (341 pegged) |
+| `axs_probe` | Serial probe log | `status`, `attempts`, `snapshot_id`, `last_reason` |
+
+**AXS landmines:** raw amounts are in **cents** (`/100` for $); the `9000000…` offerIDs are **resale** (everything else primary); `axs_event_snapshots.occurs_at_local` is offset-naive AXS-local — expect ±1 day vs TEvo. Snapshots key on `tevo_event_id` (AQ-derived, nullable until `axs_apply_aq` runs). Drained by cron `axs-probe-drain` (jobid 402, every 5 min, serial — single slow upstream worker).
 
 ### 4c. TEvo tables
 

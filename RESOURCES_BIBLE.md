@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md
 
-> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-02 (D0) — Map/config row: `v_broker_configurations.fanvenues_key` flagged as the Seat Map availability signal (→ `D0_BIBLE §B11`); v1.3.0 2026-06-03 (A1) — EVO raw `listings_snapshots` retention **30d→15d** (metrics unchanged 120d); SG `/listings` poller split into owned (`sg_listings_poll_owned_1min`, ON) / non-owned (`sg_listings_poll_nonowned_5min`, OFF), `sg_listings_poll_2min` retired. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — collector-cadence + retention overhaul: §2.2 +`collector_cadence`/`evo_listings_poll_state`; §5.1/§5.2 poller + sweep functions; Snapshot-streams retention block → the 2026-05-31 ladder; v1.2.0 2026-06-02 (D0) — Map/config row: `v_broker_configurations.fanvenues_key` flagged as the Seat Map availability signal (→ `D0_BIBLE §B11`); v1.3.0 2026-06-03 (A1) — EVO raw `listings_snapshots` retention **30d→15d** (metrics unchanged 120d); SG `/listings` poller split into owned (`sg_listings_poll_owned_1min`, ON) / non-owned (`sg_listings_poll_nonowned_5min`, OFF), `sg_listings_poll_2min` retired; v1.4.0 2026-06-10 (A1) — AXS primary box office added: §1 external services row, new §2.18 (`axs_*` tables incl. per-seat `axs_seat_snapshots`), §5.4 cron `axs-probe-drain` (jobid 402). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 **Living inventory of every Terminal-2 resource — what it is, who owns it, who reads it, and where it came from. Also the canonical home for the event-classification taxonomy + cross-cutting data RULES (RULE 0/1/2), absorbed from the retired `SCHEMA.md` — see §2.15–§2.17. Updated 2026-05-28 (absorbed SCHEMA.md taxonomy+RULES into §2.15–§2.17; performer/venue cross-source mapping chains + missing entity_performer_map / entity_venue_map / aq_performer_map / aq_venue_map / cross_source_venue_map entries added to §2.5) | prior: 2026-05-17 (main HEAD `e04387e`+post-#191).**
 
@@ -153,6 +153,7 @@ Conventions:
 | **TEvo** (TicketEvolution v9 API) | Live ticket inventory + (eventually) order placement | D2 (orders), D1 (storefront reads) | `evo_client.py` + `EvoClient` Python | `TEVO_API_TOKEN`, `TEVO_SECRET` |
 | **SeatGeek** | Marketplace data (orders, listings, performers) | D2 | `seatgeek_*` tables + edge fn `collect` | `SEATGEEK_API_TOKEN` |
 | **SeatData** | Wholesale-channel sales feed | D2 | `seatdata_*` tables | `SEATDATA_API_KEY` |
+| **AXS** (primary box office, "veritix") | Primary on-sale inventory for AXS venues — seat-level. Read-only GET via TicketsData `/fetch?platform=axs` with an `axs.com/events/<id>/…` URL. Single slow worker (~60s/pull, sometimes `no_data`→retry). **Primary, not resale.** | A1 | `axs_*` tables + `axs_client.py` + `axs_probe_step()` cron | reuses `TICKETSDATA_USERNAME` / `TICKETSDATA_PASSWORD` |
 | **ESPN** (public APIs) | Sports schedules, scores, injuries, news | C1 | `espn-collect`, `espn-rosters`, `crawl-espn-team-assets` edge fns + `espn_*` tables | none required (public) |
 | **NOAA / NWS** | Weather forecasts + alerts for outdoor events | C1 | `nws_alerts*`, `weather_*` tables + cron pipeline | none required |
 | **Wikipedia** | Performer metadata | C1 | `wiki-collect` edge fn + `performer_wikipedia` | none required |
@@ -490,6 +491,21 @@ Failure mode (real, commit `bbd18ed` 2026-05-09): omitting the league filter for
 
 Adding a new external API: copy the guard pattern from `evo_client.py`, add the module to `CLIENT_FILES` in `scripts/check_readonly.py`, mirror the unit tests, and list the integration in §1.
 
+### 2.18 AXS — primary box office (`axs_*`) *(v1.0 · A1 · 2026-06-10)*
+
+AXS is a **primary ticketer**, not a resale source. axs.com hosts both real AXS-primary (veritix) events and resale/dead pages, so a `/fetch?platform=axs` probe is the only reliable discriminator (`body.meta.api='veritix'` ⇒ primary). Amounts in the raw payload are in **cents**; seat-level detail lives in `offers[].items[]`, price levels in `prices.offerPrices[].zonePrices[].priceLevels[]`.
+
+| Table | Purpose | Origin |
+|---|---|---|
+| `axs_venues` | 8,811 AXS-site venues; `axs_name_norm` generated col mirrors canonical venue norm; **341 pegged** to `tevo_venue_id` (338 exact + 3 trigram) | PR #511 |
+| `axs_events` | Registry of events to ingest (col-D workbook + Red Rocks); `is_axs_primary`/`probe_status`/`tevo_event_id`/`aq_short_event_id`/`active` | PR #511 / #533 |
+| `axs_event_snapshots` | One row per pull — event metrics (`price_min/max`, `getin`, `listings_count`, `seats_primary/resale`) + full `raw` jsonb | PR #511 |
+| `axs_section_snapshots` | Per-section rollup of a pull (FK→event snapshot) | PR #511 |
+| `axs_seat_snapshots` | **Per-seat** rows — section/row/seat#/type/status/price-level/seller + resolved `price` + full `raw_item` | PR #533 |
+| `axs_probe` | Serial probe working log (`status`, `attempts`, `snapshot_id`, `last_reason`) | PR #511 / #533 |
+
+Pipeline: `axs_probe_step()` cron (serial, single slow worker) classifies + **persists** every confirmed veritix pull via `axs_ingest_snapshot()`, then AQ-maps via `axs_aq_match()` (venue+date+name, wide ±48h window for AXS-vs-TEvo date drift) → `tevo_event_id`. Past events + LA Kings are deactivated (`active=false`); past events auto-retire on pull. Lockdown: GET-only (`axs_client.py` + `ticketsdata_client.py` guards). FE: **AXS Box Office** tab + chart lines (see `D0_BIBLE.md`).
+
 ---
 
 ## 3. Materialized views (the matview surface)
@@ -606,6 +622,7 @@ Also modified: `sg_broker_listings_process` advances `last_polled_listings_at` *
 | **120** | `match_listings_to_sg_30min` | `7,37 * * * *` | A1 (**PR #66**) |
 | **124** | `latest_event_metrics_refresh_5min` | `3-58/5` | A1 (**PR #71**) |
 | 91 | `dashboard_writes_24h_refresh_60s` | `* * * * *` | C1 (**bot_chat row 65 flagged for cadence reduction**) |
+| **402** | `axs-probe-drain` (`select public.axs_probe_step();`) | `*/5 * * * *` | A1 (**PR #511/#533**) — serial AXS classify + snapshot ingest + AQ-map; in-flight guard self-throttles to the single worker |
 
 ### 5.5 Performer + venue crawl (C1)
 
