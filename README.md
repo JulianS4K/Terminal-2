@@ -1,8 +1,8 @@
 # Terminal-2
 
-Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN, NWS. Jointly maintained by a small set of specialized bot lanes coordinating through `public.bot_chat`.
+Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by a small set of specialized bot lanes coordinating through `public.bot_chat`.
 
-> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`). The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
+> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.3.0 2026-06-10 (A1) — *Architecture* + *Repo layout* + *Build/run* refreshed against the tree: full nine-client list, `broadway_extension/` + `trip_planner/` added, dead `.env.example` step replaced. The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
 
 ---
 
@@ -61,13 +61,14 @@ Mirrors `CLAUDE.md §6` (loaded every session) — repeated here because this is
 
 ---
 
-## Architecture at a glance
+## Architecture at a glance *(v1.1 · A1 · 2026-06-10)*
 
 ```
 Browser ─► Render (FastAPI + static) ─► Supabase (Postgres + Auth + Edge Functions)
                  │         │                        ▲
                  │         └─ same-origin session ──┘
-                 ├─► TEvo / SG / TickPick / Vivid    (read-only — no writes, CLAUDE.md §2)
+                 ├─► TEvo / SG / TickPick / Vivid / SeatData / TicketsData /
+                 │   GoTickets / AXS / Broadway     (read-only — no writes, CLAUDE.md §2)
                  │
            ┌── pg_cron jobs ─► Edge Functions ─► upstream APIs ─┐
            │                                                    │
@@ -76,37 +77,45 @@ Browser ─► Render (FastAPI + static) ─► Supabase (Postgres + Auth + Edge
 
 Full deploy chain (Render services, IDs, testing-unified shell) → `BOT_HIERARCHY.md §7` and `D0_BIBLE.md` (PART 1, deploy chain).
 
-## Repo layout
+## Repo layout *(v1.1 · A1 · 2026-06-10)*
 
 ```
 .
 ├── app.py                  FastAPI shell — all /api/* routes; mounts D2 router
-├── *_client.py             TEvo / SeatGeek / TickPick / Vivid / SeatData clients (read-only)
+├── *_client.py             9 read-only listing-source clients: evo · seatgeek ·
+│                           tickpick · vivid · seatdata · ticketsdata · gotickets ·
+│                           axs · broadway (GET-only by construction, CLAUDE.md §2)
 ├── d2_dashboard/           D2 orders dashboard + APIRouter (mounted on app.py)
-├── d4_bridge/              D4 — Exos/Bridge SPA source (Vite → static/bridge/)
+├── d4_bridge/              D4 — Exos/Bridge SPA source + Express server (Vite → static/bridge/)
+├── trip_planner/           shared tour-itinerary optimizer (D0 + D1 trip-plan routes; see its README)
+├── broadway_extension/     browser extension — Broadway.com availability capture (see its README)
 ├── static/
 │   ├── terminal/           D0 — broker terminal (build manual: D0_BIBLE.md PART 1)
-│   ├── store/              D1 — consumer retail storefront
+│   ├── store/              D1 — consumer retail storefront (store/test/ = non-prod sandbox)
 │   ├── home/ undelivered/  D0 hub · D2 undelivered surface
 │   ├── bridge/             D4 — Exos Bridge SPA build artifact (committed)
 │   └── _shared/            cross-surface utilities
 ├── supabase/
 │   ├── migrations/         YYYYMMDDHHMMSS_descriptive.sql (rules: MIGRATION_CONVENTIONS.md)
 │   └── functions/          edge functions
-├── bin/                    CI checks (sync-check.sh, check-docs.sh)
-├── scripts/ tests/         CI helpers · pytest suite
+├── bin/                    CI checks (sync-check.sh, check-docs.sh, graph-drift.mjs)
+├── scripts/                data/ingest tools + check_readonly.py (RULE 2 static audit, CI gate)
+├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards)
 ├── docs/                   active references + docs/archive/ (historical)
 ├── design/                 historical wireframes / proposals
 └── <canonical *.md>        the 11 docs in the registry above
 ```
 
-## Build / run / deploy the terminal
+## Build / run / deploy the terminal *(v1.1 · A1 · 2026-06-10)*
 
 The complete cold-start manual — frontend file map, the `T.api()` data-fetch architecture, per-page endpoint/RPC contracts, the auth flow, local dev, and the exact Render deploy chain — lives in **[`D0_BIBLE.md`](D0_BIBLE.md) PART 1**. Quick local run:
 
 ```powershell
 python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -r requirements.txt
-cp .env.example .env   # fill SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, etc.
+# Config comes from real environment variables (no .env loader in app.py):
+$env:SUPABASE_URL = "https://<project>.supabase.co"
+$env:SUPABASE_ANON_KEY = "<anon key>"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service key>"   # + TEVO_API_TOKEN/SECRET etc. as needed
 uvicorn app:app --reload --port 8765
 ```
 
