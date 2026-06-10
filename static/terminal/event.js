@@ -1948,7 +1948,7 @@
       const rec = t.record_summary || `${t.wins || 0}-${t.losses || 0}${t.ties ? '-' + t.ties : ''}`;
       card.innerHTML = `
         <div class="espn-card-hd">${escapeHtml(t.espn_team_id || '')}</div>
-        <div class="espn-card-row"><span class="lbl">record</span><span class="val">${rec}</span></div>
+        <div class="espn-card-row"><span class="lbl">record</span><span class="val">${escapeHtml(rec)}</span></div>
         <div class="espn-card-row"><span class="lbl">win %</span><span class="val">${t.win_pct != null ? (t.win_pct * 100).toFixed(1) + '%' : '—'}</span></div>
         <div class="espn-card-row"><span class="lbl">streak</span><span class="val">${escapeHtml(t.streak || '—')}</span></div>
         <div class="espn-card-row"><span class="lbl">seed</span><span class="val">${t.playoff_seed || '—'}</span></div>

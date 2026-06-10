@@ -435,6 +435,13 @@ def require_auth(authorization: str | None = Header(None)):
     if not r.ok:
         raise HTTPException(401, "invalid session")
     user = r.json()
+    # Stop-gap hardening, mirrors d2_dashboard/main.py require_auth:
+    #   - aud must be "authenticated"  → rejects service-role / anon tokens
+    #   - email_confirmed_at must be set → rejects unconfirmed signups
+    if user.get("aud") != "authenticated":
+        raise HTTPException(401, "invalid token audience")
+    if not user.get("email_confirmed_at"):
+        raise HTTPException(403, "email not confirmed")
     email = (user.get("email") or "").lower()
     if not email.endswith("@" + ALLOWED_EMAIL_DOMAIN.lower()):
         raise HTTPException(403, f"access restricted to @{ALLOWED_EMAIL_DOMAIN}")
@@ -597,10 +604,13 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         # rate cap. (/health never existed as a route — A1-OPS-5.)
         if request.method == "OPTIONS" or path in ("/", "/healthz"):
             return await call_next(request)
-        # Trust X-Forwarded-For when present (Railway sets it). Fall back to
-        # request.client. First entry of XFF is the original client.
+        # Trust X-Forwarded-For when present (Render/Railway set it). Fall back
+        # to request.client. Use the RIGHTMOST entry: that's the hop appended
+        # by our own edge proxy and is the only one a client can't forge. The
+        # leftmost entry is client-supplied — keying on it let a single client
+        # rotate fake IPs and bypass every per-IP bucket (audit 2026-06-10).
         xff = request.headers.get("x-forwarded-for") or ""
-        ip = (xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")) or "unknown"
+        ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else "unknown")) or "unknown"
         n, w = self._bucket(path)
         # Key is ip + bucket-prefix, NOT the full path. Using the raw path lets
         # a bot cycle resource IDs (e.g. /api/store/events/1, /2, …) to get a

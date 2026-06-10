@@ -57,21 +57,35 @@ API_BASE = "https://seatdata.io/api"
 # coverage. Everything else is GET.
 # NOTE: ALLOWED_HTTP_METHODS uses "POST" (not a sentinel) because the guard
 # function is called with the real HTTP method string ("POST"), not a
-# route-specific label. The docstring above clarifies POST is scoped to
-# event-add only; enforcement is by call-site discipline, not method-name alone.
+# route-specific label. POST is additionally path-scoped: the guard raises on
+# any POST whose path is not in SANCTIONED_POST_PATHS, so the carve-out is
+# enforced mechanically, not by call-site discipline.
 ALLOWED_HTTP_METHODS = frozenset({"GET", "POST"})
 
+# The ONLY path POST may ever target. Adding a path here is a security-CRIT
+# change (CLAUDE.md §2) and requires explicit operator authorization.
+SANCTIONED_POST_PATHS = frozenset({"v0.4/events/event-request-add"})
 
-def _assert_readonly_method(method: str) -> None:
+
+def _assert_readonly_method(method: str, path: str | None = None) -> None:
     """Hard guard: SeatData reads are always GET except for the event-add
     request endpoint (/v0.4/events/event-request-add), which is metadata-only.
-    Any other write method (PUT, DELETE, PATCH) is a bug and raises."""
+    Any other write method (PUT, DELETE, PATCH) is a bug and raises, as is a
+    POST to any path other than the sanctioned event-add endpoint."""
     if method.upper() not in ALLOWED_HTTP_METHODS:
         raise SeatDataError(
             f"READ-ONLY violation: method {method} is not allowed. "
             "SeatData integration is strictly read-only (RULE 2 in SCHEMA.md). "
             "The only POST we use is /v0.4/events/event-request-add (metadata only)."
         )
+    if method.upper() == "POST":
+        normalized = (path or "").strip().lstrip("/").split("?", 1)[0]
+        if normalized not in SANCTIONED_POST_PATHS:
+            raise SeatDataError(
+                f"READ-ONLY violation: POST to {path!r} is not sanctioned. "
+                "SeatData POST is scoped to /v0.4/events/event-request-add "
+                "only (RULE 2 / CLAUDE.md §2 listing-source lockdown)."
+            )
 
 # === BASIC-PLAN HARD CAPS — DO NOT BUMP WITHOUT UPDATING MIGRATION ===
 # Both values are also persisted in seatdata_pull_budget table defaults.
@@ -190,7 +204,7 @@ class SeatDataClient:
     def _request(self, method: str, path: str, *, params: dict | None = None,
                  json_body: dict | None = None, max_429_retries: int = 3,
                  expect_gzip: bool = False) -> tuple[int, dict | list | bytes, dict]:
-        _assert_readonly_method(method)  # RULE 2 enforcement
+        _assert_readonly_method(method, path)  # RULE 2 enforcement
         """Low-level HTTP. Returns (status, parsed_json, response_headers).
         Handles 429 with exponential backoff respecting Retry-After.
         """

@@ -39,6 +39,12 @@ jobs:
           # Tolerate missing requirements.txt early in repo lifecycle.
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: RULE 2 read-only static audit
+        # Standalone invocation so the audit survives even if the pytest case
+        # that shells out to it (test_readonly_guards.py) is ever skipped or
+        # deleted. CLAUDE.md §2: this gate is mandatory, no bypass.
+        run: python scripts/check_readonly.py
+
       - name: Run pytest
         env:
           AUTH_DISABLED: "true"

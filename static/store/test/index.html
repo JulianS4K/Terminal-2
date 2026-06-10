@@ -81,6 +81,8 @@
 
   <script src="/static/store/test/test.js"></script>
   <script>
+    // HTML-escape API-sourced strings before innerHTML interpolation (XSS).
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const { $, fmtMoney, fmtWhen } = Test;
 
     // Hero search -> hand off to the search page.
@@ -141,8 +143,8 @@
                 : "distance n/a";
               c.innerHTML = `
                 <div class="when">${fmtWhen(ev.occurs_at_local)} · ${distLabel}</div>
-                <div class="name">${ev.name || "—"}</div>
-                <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+                <div class="name">${esc(ev.name || "—")}</div>
+                <div class="where">${esc([ev.venue_name, ev.venue_location].filter(Boolean).join(" · "))}</div>
                 <div class="price">${ev.from_price != null ? "from " + fmtMoney(ev.from_price) : ""}</div>
               `;
               nearGrid.append(c);
@@ -199,8 +201,8 @@
           }
           c.innerHTML = `
             <div class="when">${fmtWhen(ev.occurs_at_local)}</div>
-            <div class="name">${ev.name || "—"}</div>
-            <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+            <div class="name">${esc(ev.name || "—")}</div>
+            <div class="where">${esc([ev.venue_name, ev.venue_location].filter(Boolean).join(" · "))}</div>
             <div class="price">from ${fmtMoney(ev.from_price)}</div>
           `;
           grid.append(c);

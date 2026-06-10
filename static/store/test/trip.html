@@ -86,6 +86,8 @@
   </div>
 
   <script>
+    // HTML-escape API-sourced strings before innerHTML interpolation (XSS).
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     (function () {
       const $ = (id) => document.getElementById(id);
       const budget = $('budget');
@@ -140,8 +142,8 @@
           if (!on) li.className = 'skip';
           li.innerHTML =
             `<span class="d">${fmtDate(e.date)}</span>` +
-            `<span class="c">${e.city || ''}</span>` +
-            `<span>${e.venue || ''}</span>` +
+            `<span class="c">${esc(e.city || '')}</span>` +
+            `<span>${esc(e.venue || '')}</span>` +
             (on ? `<span class="badge">● going</span>` : '');
           ul.appendChild(li);
         }

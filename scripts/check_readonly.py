@@ -53,6 +53,11 @@ FORBIDDEN_HOSTS = (
     "ticketsdata.com",
     "www.broadway.com",
     "checkout.broadway.com",
+    # AXS has order/hold endpoints that must never be touched. All sanctioned
+    # AXS traffic proxies through ticketsdata.com (covered above); a direct
+    # call to axs.com is forbidden outright. Bare "axs.com" substring-matches
+    # www.axs.com / api.axs.com / any future subdomain.
+    "axs.com",
 )
 
 # Client modules that legitimately reference these hosts, mapped to the HTTP
@@ -96,6 +101,11 @@ PY_FORBIDDEN_PATTERNS = (
     re.compile(r"\.session\.\s*(post|put|patch|delete)\s*\("),
     re.compile(r"http\.\s*(post|put|patch|delete)\s*\("),
     re.compile(r"httpx\.\s*(post|put|patch|delete)\s*\("),
+    # method-as-string variants: session.request("POST", ...), requests.request('PUT', ...)
+    re.compile(r"""\.request\s*\(\s*['"](?:POST|PUT|PATCH|DELETE)['"]""", re.IGNORECASE),
+    re.compile(r"""requests\.request\s*\(\s*['"](?:POST|PUT|PATCH|DELETE)['"]""", re.IGNORECASE),
+    # urllib.request.urlopen(..., data=...) silently becomes a POST
+    re.compile(r"urlopen\s*\([^)]*\bdata\s*="),
 )
 
 # Patterns that signal a write attempt in TS/JS edge functions.
@@ -195,7 +205,8 @@ def check_ts_writes() -> list[str]:
     targets a forbidden host either by literal URL or by a variable that
     resolves to one."""
     violations: list[str] = []
-    for f in _walk((".ts", ".js", ".tsx", ".jsx")):
+    # .html covers inline <script> blocks; .mjs/.cjs cover module/CommonJS JS.
+    for f in _walk((".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs", ".html")):
         text = f.read_text(encoding="utf-8", errors="ignore")
         host_vars = _ts_forbidden_host_vars(text)
         for m in TS_FORBIDDEN_PATTERN.finditer(text):
@@ -206,7 +217,20 @@ def check_ts_writes() -> list[str]:
             # 'fetch(' and the next ',' or method keyword.
             i = preceding.rfind("fetch(")
             if i == -1:
-                # No fetch() context — skip (probably XHR or something else).
+                # No fetch() context — axios/XHR/got-style call. We can't parse
+                # the URL arg structurally, so fall back to a proximity check:
+                # flag if a forbidden host (or a var bound to one) appears in
+                # the surrounding window.
+                window = text[max(0, m.start() - 800) : min(len(text), m.end() + 400)]
+                hits = [h for h in FORBIDDEN_HOSTS if h in window]
+                var_hits = [n for n in host_vars if re.search(rf"\b{re.escape(n)}\b", window)]
+                if hits or var_hits:
+                    line_no = text[: m.start()].count("\n") + 1
+                    violations.append(
+                        f"{f.relative_to(ROOT)}:{line_no}: "
+                        f"'{m.group(0)}' (non-fetch HTTP call) near forbidden "
+                        f"host(s) {hits or var_hits}"
+                    )
                 continue
             url_arg_region = preceding[i + len("fetch(") :]
             # Strip leading whitespace / quotes context up to the comma.
@@ -296,7 +320,7 @@ def main() -> int:
     mig_count = len(list((ROOT / "supabase" / "migrations").glob("*.sql"))) if (ROOT / "supabase" / "migrations").exists() else 0
     print("RULE 2 clean — no write paths detected to TEvo, SeatGeek, TickPick, or Vivid Seats hosts.")
     print(f"  - Python files scanned   : {len(_walk(('.py',)))}")
-    print(f"  - TS/JS files scanned    : {len(_walk(('.ts', '.js', '.tsx', '.jsx')))}")
+    print(f"  - TS/JS/HTML files scanned: {len(_walk(('.ts', '.js', '.tsx', '.jsx', '.mjs', '.cjs', '.html')))}")
     print(f"  - plpgsql migrations     : {mig_count}")
     print(f"  - Client guards present  : {', '.join(sorted(CLIENT_FILES))}")
     return 0
