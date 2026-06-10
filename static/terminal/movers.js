@@ -197,7 +197,7 @@
       const cov = s.data_coverage_pct != null ? ` · ${Math.round(s.data_coverage_pct)}% cov` : '';
       const turn = ((s.entries_24h || 0) + (s.exits_24h || 0));
       const turnStr = turn ? ` · ${turn} Δ/24h` : '';
-      return `<span class="badge" title="source=${s.source} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category||'')}: ${sz}${cov}${turnStr}</span>`;
+      return `<span class="badge" title="source=${escapeHtml(s.source)} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category||'')}: ${sz}${cov}${turnStr}</span>`;
     }).join(' ');
   }
 

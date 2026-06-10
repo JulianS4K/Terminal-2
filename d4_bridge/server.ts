@@ -188,13 +188,23 @@ async function startServer() {
     res.status(200).json({ status: "ok", uptime: process.uptime() });
   });
 
+  // Canonical public base URL for crawler-facing absolute links. Pinned to
+  // VITE_APP_URL (same env Stripe redirect URLs use) so a forged Host /
+  // X-Forwarded-Proto header can't poison robots.txt or the cached sitemap.
+  // Request-header fallback is dev-only convenience when the env is unset.
+  const publicBase = (req: express.Request): string => {
+    const configured = (process.env.VITE_APP_URL || '').replace(/\/$/, '');
+    if (configured) return configured;
+    const host = req.get('host') || 'localhost';
+    const proto = (req.get('x-forwarded-proto') || req.protocol || 'https') as string;
+    return `${proto}://${host}`;
+  };
+
   // -- robots.txt -----------------------------------------------------------
   // Allow indexing of public surfaces, deny embed routes (those are
   // for iframe consumption, not for crawler ingestion). Points at the
   // sitemap so Googlebot finds the full event list.
   app.get('/robots.txt', (req, res) => {
-    const host = req.get('host') || 'localhost';
-    const proto = (req.get('x-forwarded-proto') || req.protocol || 'https') as string;
     res.type('text/plain').send(
       [
         'User-agent: *',
@@ -207,7 +217,7 @@ async function startServer() {
         'Disallow: /checkin/',
         'Disallow: /onboarding',
         '',
-        `Sitemap: ${proto}://${host}/sitemap.xml`,
+        `Sitemap: ${publicBase(req)}/sitemap.xml`,
         '',
       ].join('\n'),
     );
@@ -245,9 +255,7 @@ async function startServer() {
         sb.from('exos_public_orgs').select('slug').limit(500),
       ]);
 
-      const host = req.get('host') || 'localhost';
-      const proto = (req.get('x-forwarded-proto') || req.protocol || 'https') as string;
-      const base = `${proto}://${host}`;
+      const base = publicBase(req);
       const urls: string[] = [
         `<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`,
       ];

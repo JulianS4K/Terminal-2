@@ -25,8 +25,22 @@
   //
   // Override via localStorage.terminalApiBase for ad-hoc preview/staging.
   const API_BASE = (function () {
+    // The override is allowlist-pinned: a planted localStorage value must not
+    // be able to redirect authenticated calls (Bearer token attached in
+    // getAuthHeader) to an arbitrary host. Same-origin, localhost, and
+    // *.onrender.com preview/staging hosts only (audit 2026-06-10).
     const override = (typeof localStorage !== 'undefined') && localStorage.getItem('terminalApiBase');
-    if (override) return override.replace(/\/$/, '');
+    if (override) {
+      let ok = false;
+      try {
+        const u = new URL(override, location.origin);
+        ok = u.origin === location.origin ||
+             u.hostname === 'localhost' || u.hostname === '127.0.0.1' ||
+             (u.protocol === 'https:' && u.hostname.endsWith('.onrender.com'));
+      } catch (_) { ok = false; }
+      if (ok) return override.replace(/\/$/, '');
+      console.warn('terminalApiBase override ignored (host not in allowlist):', override);
+    }
     const h = location.hostname;
     // Topology 1: localhost dev.
     if (h === 'localhost' || h === '127.0.0.1' || h === '') return '';

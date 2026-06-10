@@ -165,7 +165,11 @@ app.add_middleware(
         "https://vibepass-terminal-test.onrender.com",  # if D0 terminal also fetches /api/d2/*
         "https://d2-orders-dashboard.onrender.com",      # same-origin is fine without CORS, but listing keeps the matrix explicit
     ],
-    allow_origin_regex=r"https?://localhost(:\d+)?",
+    # Localhost origins are a dev convenience only — on a production deploy a
+    # credentialed allow-any-localhost-port grant is broader than needed
+    # (audit 2026-06-10). _is_production() is the same detector the
+    # AUTH_DISABLED kill switch uses.
+    allow_origin_regex=(None if _is_production() else r"https?://localhost(:\d+)?"),
     allow_credentials=True,
     allow_methods=["GET", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],

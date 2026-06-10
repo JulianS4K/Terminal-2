@@ -168,6 +168,133 @@ def test_axs_venue_norm_matches_axs_venues_generated_column():
     assert venue_norm("Red Rocks Amphitheatre") == "redrocksamphitheatre"
 
 
+# ---------- seatdata_client ----------
+#
+# SeatData is the one client with a sanctioned POST — and it is path-scoped:
+# only /v0.4/events/event-request-add may ever receive it (CLAUDE.md §2).
+
+def test_seatdata_assert_readonly_raises_on_put_patch_delete():
+    from seatdata_client import _assert_readonly_method, SeatDataError
+    for method in ("PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
+        with pytest.raises(SeatDataError):
+            _assert_readonly_method(method)
+
+
+def test_seatdata_assert_readonly_allows_get_any_path():
+    from seatdata_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get", "v1/events/search")
+
+
+def test_seatdata_post_allowed_only_for_event_request_add():
+    from seatdata_client import _assert_readonly_method
+    # Sanctioned path passes regardless of leading-slash spelling.
+    _assert_readonly_method("POST", "v0.4/events/event-request-add")
+    _assert_readonly_method("POST", "/v0.4/events/event-request-add")
+
+
+def test_seatdata_post_to_any_other_path_raises():
+    from seatdata_client import _assert_readonly_method, SeatDataError
+    for path in (
+        "v0.1.1/listings/get",
+        "v0.3/salesdata/get",
+        "v9/orders",
+        "v0.4/events/event-request-add/../../orders",
+        "",
+        None,
+    ):
+        with pytest.raises(SeatDataError) as exc:
+            _assert_readonly_method("POST", path)
+        assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_seatdata_allowlist_and_sanctioned_paths_constants():
+    from seatdata_client import ALLOWED_HTTP_METHODS, SANCTIONED_POST_PATHS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET", "POST"})
+    assert SANCTIONED_POST_PATHS == frozenset({"v0.4/events/event-request-add"})
+
+
+# ---------- gotickets_client ----------
+
+def test_gotickets_assert_readonly_raises_on_post():
+    from gotickets_client import _assert_readonly_method, GoTicketsReadOnlyError
+    with pytest.raises(GoTicketsReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_gotickets_assert_readonly_raises_on_put_patch_delete():
+    from gotickets_client import _assert_readonly_method, GoTicketsReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE"):
+        with pytest.raises(GoTicketsReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_gotickets_assert_readonly_allows_get():
+    from gotickets_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_gotickets_allowlist_constant_is_get_only():
+    from gotickets_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
+# ---------- ticketsdata_client ----------
+
+def test_ticketsdata_assert_readonly_raises_on_post():
+    from ticketsdata_client import _assert_readonly_method, TicketsDataReadOnlyError
+    with pytest.raises(TicketsDataReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_ticketsdata_assert_readonly_raises_on_put_patch_delete():
+    from ticketsdata_client import _assert_readonly_method, TicketsDataReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE"):
+        with pytest.raises(TicketsDataReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_ticketsdata_assert_readonly_allows_get():
+    from ticketsdata_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_ticketsdata_allowlist_constant_is_get_only():
+    from ticketsdata_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
+# ---------- broadway_client ----------
+
+def test_broadway_assert_readonly_raises_on_post():
+    from broadway_client import _assert_readonly_method, BroadwayError
+    with pytest.raises(BroadwayError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_broadway_assert_readonly_raises_on_put_patch_delete():
+    from broadway_client import _assert_readonly_method, BroadwayError
+    for method in ("PUT", "PATCH", "DELETE"):
+        with pytest.raises(BroadwayError):
+            _assert_readonly_method(method)
+
+
+def test_broadway_assert_readonly_allows_get():
+    from broadway_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_broadway_allowlist_constant_is_get_only():
+    from broadway_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
 # ---------- audit script catches synthetic violations ----------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -225,6 +352,61 @@ def test_audit_script_catches_ts_post_to_seatgeek(tmp_path: Path):
     finally:
         bad_file.unlink(missing_ok=True)
         bad_file.parent.rmdir()
+
+
+def test_audit_script_catches_method_as_string_request(tmp_path: Path):
+    """session.request('POST', ...) must be flagged — the pre-2026-06 scanner
+    only matched requests.post(...) and missed the method-as-string spelling."""
+    bad_file = REPO_ROOT / "_test_synthetic_request_violation.py"
+    bad_file.write_text(
+        "import requests\n"
+        "# synthetic violation for tests/test_readonly_guards.py\n"
+        "s = requests.Session()\n"
+        "s.request('POST', 'https://seatdata.io/api/v9/orders', json={})\n",
+        encoding="utf-8",
+    )
+    try:
+        rc, out = _run_check()
+        assert rc == 1, f"audit script should flag .request('POST', ...):\n{out}"
+        assert "_test_synthetic_request_violation.py" in out
+    finally:
+        bad_file.unlink(missing_ok=True)
+
+
+def test_audit_script_catches_non_fetch_ts_write(tmp_path: Path):
+    """An axios/XHR-style write near a forbidden host must be flagged — the
+    pre-2026-06 scanner skipped any method:'POST' without a fetch( nearby."""
+    bad_file = REPO_ROOT / "supabase" / "functions" / "_test_synthetic_axios" / "index.ts"
+    bad_file.parent.mkdir(parents=True, exist_ok=True)
+    bad_file.write_text(
+        '// synthetic violation\n'
+        'await axios({ url: "https://api.tickpick.com/orders", method: "POST" });\n',
+        encoding="utf-8",
+    )
+    try:
+        rc, out = _run_check()
+        assert rc == 1, f"audit script should flag non-fetch TS write:\n{out}"
+        assert "_test_synthetic_axios" in out
+    finally:
+        bad_file.unlink(missing_ok=True)
+        bad_file.parent.rmdir()
+
+
+def test_audit_script_scans_inline_html_scripts(tmp_path: Path):
+    """Inline <script> in .html files is scanned — previously a blind spot."""
+    bad_file = REPO_ROOT / "_test_synthetic_inline.html"
+    bad_file.write_text(
+        "<script>\n"
+        'fetch("https://brokers.vividseats.com/orders", { method: "POST" });\n'
+        "</script>\n",
+        encoding="utf-8",
+    )
+    try:
+        rc, out = _run_check()
+        assert rc == 1, f"audit script should flag inline HTML script write:\n{out}"
+        assert "_test_synthetic_inline.html" in out
+    finally:
+        bad_file.unlink(missing_ok=True)
 
 
 def test_audit_script_catches_removed_guard(tmp_path: Path):

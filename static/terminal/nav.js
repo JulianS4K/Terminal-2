@@ -183,7 +183,10 @@
         // track locally yet. No internal page to link to — open the buy URL.
         parts.push('<div class="ts-section"><div class="ts-section-lbl">MARKETPLACE</div>');
         mkt.forEach(m => {
-          const href = m.event_url || '#';
+          // Scheme-validate the third-party URL: TicketsData supplies
+          // event_url verbatim — only http(s) may reach an href (blocks
+          // javascript:/data: if the feed is ever compromised).
+          const href = /^https?:\/\//i.test(m.event_url || '') ? m.event_url : '#';
           const meta = [m.platform, m.venue_name, fmtDateShort(m.event_date)].filter(Boolean).join(' · ');
           flat.push({ href, label: m.event_name, kind: 'marketplace' });
           const ext = href !== '#' ? ' target="_blank" rel="noopener"' : '';
