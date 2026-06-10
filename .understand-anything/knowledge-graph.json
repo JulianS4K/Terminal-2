@@ -26,8 +26,8 @@
       "Docker"
     ],
     "description": "Ticket-trading intelligence + primary-market ticketing platform: a FastAPI backend on Render with Supabase Postgres, edge functions, and cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN and NWS, maintained by coordinated bot lanes.",
-    "analyzedAt": "2026-06-09T17:36:47.695Z",
-    "gitCommitHash": "8c9c54b88ea72beb5e6fa8c983e4cdf002759777"
+    "analyzedAt": "2026-06-10T19:01:34.122Z",
+    "gitCommitHash": "13874250a842086925755980978a417c85939f2d"
   },
   "nodes": [
     {
@@ -28354,6 +28354,619 @@
         "build-system"
       ],
       "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260609000000_axs_venues_reference.sql",
+      "type": "table",
+      "name": "20260609000000_axs_venues_reference.sql",
+      "filePath": "supabase/migrations/20260609000000_axs_venues_reference.sql",
+      "summary": "Supabase migration (2026-06-09): axs venues reference. Defines tables axs_venues.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "schema-definition"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260609001000_axs_venues_review_views.sql",
+      "type": "table",
+      "name": "20260609001000_axs_venues_review_views.sql",
+      "filePath": "supabase/migrations/20260609001000_axs_venues_review_views.sql",
+      "summary": "Supabase migration (2026-06-09): axs venues review views. Defines views v_axs_venues_mapped, v_axs_venues_unmapped.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "view"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260609010000_axs_event_snapshots.sql",
+      "type": "table",
+      "name": "20260609010000_axs_event_snapshots.sql",
+      "filePath": "supabase/migrations/20260609010000_axs_event_snapshots.sql",
+      "summary": "Supabase migration (2026-06-09): axs event snapshots. Defines tables axs_event_snapshots, axs_section_snapshots.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "schema-definition"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609020000_axs_events_registry.sql",
+      "type": "table",
+      "name": "20260609020000_axs_events_registry.sql",
+      "filePath": "supabase/migrations/20260609020000_axs_events_registry.sql",
+      "summary": "Supabase migration (2026-06-09): axs events registry. Defines tables axs_events.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "schema-definition"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "type": "table",
+      "name": "20260609030000_axs_probe_classifier.sql",
+      "filePath": "supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "summary": "Supabase migration (2026-06-09): axs probe classifier. Defines tables axs_probe; views v_axs_events_classified; functions venue_norm, axs_slugify.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609040000_axs_chart_series.sql",
+      "type": "table",
+      "name": "20260609040000_axs_chart_series.sql",
+      "filePath": "supabase/migrations/20260609040000_axs_chart_series.sql",
+      "summary": "Supabase migration (2026-06-09): axs chart series. Defines functions get_axs_event_price_series.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260609120000_td_match_aq_enrichment.sql",
+      "type": "table",
+      "name": "20260609120000_td_match_aq_enrichment.sql",
+      "filePath": "supabase/migrations/20260609120000_td_match_aq_enrichment.sql",
+      "summary": "Supabase migration (2026-06-09): td match aq enrichment. Defines tables td_match_queue, td_match_results; functions td_charge_credit, td_reports_this_month.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "ticketsdata",
+        "function"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "table:supabase/migrations/20260609130000_td_events_discovery_search.sql",
+      "type": "table",
+      "name": "20260609130000_td_events_discovery_search.sql",
+      "filePath": "supabase/migrations/20260609130000_td_events_discovery_search.sql",
+      "summary": "Supabase migration (2026-06-09): td events discovery search. Defines tables td_discover_targets, td_discovered_events; views v_td_unmatched_discovered_events; functions td_events_discover, td_events_discover_drain.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "ticketsdata",
+        "function"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "table:supabase/migrations/20260609140000_td_budget_caps_raise_250k_plan.sql",
+      "type": "table",
+      "name": "20260609140000_td_budget_caps_raise_250k_plan.sql",
+      "filePath": "supabase/migrations/20260609140000_td_budget_caps_raise_250k_plan.sql",
+      "summary": "Supabase migration (2026-06-09): td budget caps raise 250k plan. Defines functions td_daily_budget_ok, td_monthly_budget_ok.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "ticketsdata",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609150000_td_tier_polling_crons_failures.sql",
+      "type": "table",
+      "name": "20260609150000_td_tier_polling_crons_failures.sql",
+      "filePath": "supabase/migrations/20260609150000_td_tier_polling_crons_failures.sql",
+      "summary": "Supabase migration (2026-06-09): td tier polling crons failures. Defines tables td_poll_policy, td_poll_failures; views v_td_poll_health, v_td_poll_failures_recent; functions td_event_tier, td_is_peak.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "ticketsdata",
+        "function"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "table:supabase/migrations/20260609160000_td_seed_owned_xref.sql",
+      "type": "table",
+      "name": "20260609160000_td_seed_owned_xref.sql",
+      "filePath": "supabase/migrations/20260609160000_td_seed_owned_xref.sql",
+      "summary": "Supabase migration (2026-06-09): td seed owned xref. Defines functions td_seed_owned_xref.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "ticketsdata",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609170000_sg_blindspot_evo_tracking.sql",
+      "type": "table",
+      "name": "20260609170000_sg_blindspot_evo_tracking.sql",
+      "filePath": "supabase/migrations/20260609170000_sg_blindspot_evo_tracking.sql",
+      "summary": "Supabase migration (2026-06-09): sg blindspot evo tracking. Defines views v_sg_blindspot_evo_tracking; functions get_sg_blindspot_evo_tracking.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "seatgeek",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609170000_sg_priority_metrics_on_conflict.sql",
+      "type": "table",
+      "name": "20260609170000_sg_priority_metrics_on_conflict.sql",
+      "filePath": "supabase/migrations/20260609170000_sg_priority_metrics_on_conflict.sql",
+      "summary": "Supabase migration (2026-06-09): sg priority metrics on conflict. Defines functions sg_broker_listings_process.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "seatgeek",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609170000_td_pull_drain_throughput.sql",
+      "type": "table",
+      "name": "20260609170000_td_pull_drain_throughput.sql",
+      "filePath": "supabase/migrations/20260609170000_td_pull_drain_throughput.sql",
+      "summary": "Supabase migration (2026-06-09): td pull drain throughput.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "ticketsdata"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260609180000_sg_blindspot_evo_tracking_min14d.sql",
+      "type": "table",
+      "name": "20260609180000_sg_blindspot_evo_tracking_min14d.sql",
+      "filePath": "supabase/migrations/20260609180000_sg_blindspot_evo_tracking_min14d.sql",
+      "summary": "Supabase migration (2026-06-09): sg blindspot evo tracking min14d. Defines views v_sg_blindspot_evo_tracking.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "seatgeek",
+        "view"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609180000_sg_listings_fire_rotation_resilient.sql",
+      "type": "table",
+      "name": "20260609180000_sg_listings_fire_rotation_resilient.sql",
+      "filePath": "supabase/migrations/20260609180000_sg_listings_fire_rotation_resilient.sql",
+      "summary": "Supabase migration (2026-06-09): sg listings fire rotation resilient. Defines functions sg_listings_poll_tick.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "seatgeek",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609190000_force_track_top50_blindspots.sql",
+      "type": "table",
+      "name": "20260609190000_force_track_top50_blindspots.sql",
+      "filePath": "supabase/migrations/20260609190000_force_track_top50_blindspots.sql",
+      "summary": "Supabase migration (2026-06-09): force track top50 blindspots. Defines functions sg_refresh_force_track, sg_listings_poll_tick.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260609200000_wire_td_match_fallback.sql",
+      "type": "table",
+      "name": "20260609200000_wire_td_match_fallback.sql",
+      "filePath": "supabase/migrations/20260609200000_wire_td_match_fallback.sql",
+      "summary": "Supabase migration (2026-06-09): wire td match fallback.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "ticketsdata"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260610000000_axs_seat_snapshots_and_ingest.sql",
+      "type": "table",
+      "name": "20260610000000_axs_seat_snapshots_and_ingest.sql",
+      "filePath": "supabase/migrations/20260610000000_axs_seat_snapshots_and_ingest.sql",
+      "summary": "Supabase migration (2026-06-10): axs seat snapshots and ingest. Defines tables axs_seat_snapshots; functions axs_ingest_snapshot, axs_probe_step.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "table:supabase/migrations/20260610010000_axs_skip_past_and_lakings.sql",
+      "type": "table",
+      "name": "20260610010000_axs_skip_past_and_lakings.sql",
+      "filePath": "supabase/migrations/20260610010000_axs_skip_past_and_lakings.sql",
+      "summary": "Supabase migration (2026-06-10): axs skip past and lakings. Defines functions axs_probe_step.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260610020000_axs_aq_event_mapping.sql",
+      "type": "table",
+      "name": "20260610020000_axs_aq_event_mapping.sql",
+      "filePath": "supabase/migrations/20260610020000_axs_aq_event_mapping.sql",
+      "summary": "Supabase migration (2026-06-10): axs aq event mapping. Defines functions axs_aq_match, axs_apply_aq.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "table:supabase/migrations/20260610030000_axs_probe_step_drop_old_overload.sql",
+      "type": "table",
+      "name": "20260610030000_axs_probe_step_drop_old_overload.sql",
+      "filePath": "supabase/migrations/20260610030000_axs_probe_step_drop_old_overload.sql",
+      "summary": "Supabase migration (2026-06-10): axs probe step drop old overload.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260610040000_axs_safe_jsonb_guard.sql",
+      "type": "table",
+      "name": "20260610040000_axs_safe_jsonb_guard.sql",
+      "filePath": "supabase/migrations/20260610040000_axs_safe_jsonb_guard.sql",
+      "summary": "Supabase migration (2026-06-10): axs safe jsonb guard. Defines functions safe_jsonb, axs_ingest_snapshot.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "table:supabase/migrations/20260610050000_axs_drain_bound_persist_loop.sql",
+      "type": "table",
+      "name": "20260610050000_axs_drain_bound_persist_loop.sql",
+      "filePath": "supabase/migrations/20260610050000_axs_drain_bound_persist_loop.sql",
+      "summary": "Supabase migration (2026-06-10): axs drain bound persist loop. Defines functions axs_probe_step.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260610060000_axs_drain_fix_api_column.sql",
+      "type": "table",
+      "name": "20260610060000_axs_drain_fix_api_column.sql",
+      "filePath": "supabase/migrations/20260610060000_axs_drain_fix_api_column.sql",
+      "summary": "Supabase migration (2026-06-10): axs drain fix api column. Defines functions axs_probe_step.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "function"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "table:supabase/migrations/20260610070000_axs_seat_groups_view.sql",
+      "type": "table",
+      "name": "20260610070000_axs_seat_groups_view.sql",
+      "filePath": "supabase/migrations/20260610070000_axs_seat_groups_view.sql",
+      "summary": "Supabase migration (2026-06-10): axs seat groups view. Defines views v_axs_seat_groups.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "view"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "table:supabase/migrations/20260610080000_axs_listings_evo_standard.sql",
+      "type": "table",
+      "name": "20260610080000_axs_listings_evo_standard.sql",
+      "filePath": "supabase/migrations/20260610080000_axs_listings_evo_standard.sql",
+      "summary": "Supabase migration (2026-06-10): axs listings evo standard. Defines views v_axs_listings.",
+      "tags": [
+        "migration",
+        "database",
+        "sql",
+        "axs",
+        "view"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:axs_client.py",
+      "type": "file",
+      "name": "axs_client.py",
+      "filePath": "axs_client.py",
+      "summary": "GET-only AXS (Veritix) primary-ticketer client: pulls a full event JSON via the TicketsData /fetch endpoint (platform=axs), distills it to a compact summary, and pegs the event venue against public.axs_venues. Enforces the GET-only read-only contract (CLAUDE.md §2).",
+      "tags": [
+        "client",
+        "axs",
+        "read-only",
+        "api-integration",
+        "primary-ticketer"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:axs_client.py:distill",
+      "type": "function",
+      "name": "distill",
+      "filePath": "axs_client.py",
+      "summary": "Parses the ~1.8MB raw AXS endpoint JSON into a compact, storable summary plus a per-section price/seat table (the single source of truth for AXS parsing).",
+      "tags": [
+        "parser",
+        "axs",
+        "serialization",
+        "data-model"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        114,
+        205
+      ]
+    },
+    {
+      "id": "file:scripts/axs_evo_venue_search.py",
+      "type": "file",
+      "name": "axs_evo_venue_search.py",
+      "filePath": "scripts/axs_evo_venue_search.py",
+      "summary": "Tooling: searches unmapped AXS venue names against TEvo's full venue catalog via evo_client (GET /v9/venues/search) and writes review-grade US match candidates. Read-only; must run where EVO egress is allowed.",
+      "tags": [
+        "script",
+        "axs",
+        "venue-matching",
+        "tooling",
+        "tevo"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:scripts/axs_parse.py",
+      "type": "file",
+      "name": "axs_parse.py",
+      "filePath": "scripts/axs_parse.py",
+      "summary": "Thin CLI viewer over axs_client.distill: renders a raw AXS event payload as a compact summary + per-section table. Read-only, no network I/O.",
+      "tags": [
+        "script",
+        "axs",
+        "cli",
+        "tooling"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:scripts/axs_venues_load.py",
+      "type": "file",
+      "name": "axs_venues_load.py",
+      "filePath": "scripts/axs_venues_load.py",
+      "summary": "Tooling: parses the AXS.com venue scrape (axs_venues_raw.txt), normalizes/dedupes names to mirror the Postgres canonical normalization, and emits batched INSERTs for public.axs_venues.",
+      "tags": [
+        "script",
+        "axs",
+        "venue-ingest",
+        "tooling",
+        "data-loader"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:static/terminal/lib/uplot.iife.min.js",
+      "type": "file",
+      "name": "uplot.iife.min.js",
+      "filePath": "static/terminal/lib/uplot.iife.min.js",
+      "summary": "Bundled uPlot charting library (minified IIFE) used by the terminal event page to render the price/snapshot time-series charts.",
+      "tags": [
+        "vendor",
+        "charting",
+        "frontend",
+        "terminal",
+        "minified"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:static/terminal/lib/uplot.min.css",
+      "type": "file",
+      "name": "uplot.min.css",
+      "filePath": "static/terminal/lib/uplot.min.css",
+      "summary": "Stylesheet for the uPlot charting library used on the terminal event page.",
+      "tags": [
+        "vendor",
+        "charting",
+        "styling",
+        "frontend"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:.gitleaks.toml",
+      "type": "config",
+      "name": ".gitleaks.toml",
+      "filePath": ".gitleaks.toml",
+      "summary": "Gitleaks config: extends the full default ruleset and scopes an allowlist to the generated .understand-anything/ artifacts (source identifiers, no secrets).",
+      "tags": [
+        "configuration",
+        "security",
+        "secret-scan",
+        "ci-cd"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:.gitignore",
+      "type": "config",
+      "name": ".gitignore",
+      "filePath": ".gitignore",
+      "summary": "Root gitignore — excludes build/scratch outputs and the heavy generated knowledge-graph artifacts from version control.",
+      "tags": [
+        "configuration",
+        "vcs",
+        "repo-hygiene"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:d4_bridge/.gitignore",
+      "type": "config",
+      "name": ".gitignore",
+      "filePath": "d4_bridge/.gitignore",
+      "summary": "gitignore for the d4_bridge package (build output, local env, dependencies).",
+      "tags": [
+        "configuration",
+        "vcs",
+        "repo-hygiene",
+        "d4-bridge"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:scripts/axs_venues_raw.txt",
+      "type": "config",
+      "name": "axs_venues_raw.txt",
+      "filePath": "scripts/axs_venues_raw.txt",
+      "summary": "Raw AXS.com venue scrape (section-tagged) consumed by axs_venues_load.py to build the public.axs_venues reference.",
+      "tags": [
+        "data",
+        "csv",
+        "axs"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:scripts/axs_venues_unmapped.csv",
+      "type": "config",
+      "name": "axs_venues_unmapped.csv",
+      "filePath": "scripts/axs_venues_unmapped.csv",
+      "summary": "AXS venues with no canonical match yet — input to axs_evo_venue_search.py for live TEvo matching.",
+      "tags": [
+        "data",
+        "csv",
+        "axs"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:scripts/axs_venues_matched.csv",
+      "type": "config",
+      "name": "axs_venues_matched.csv",
+      "filePath": "scripts/axs_venues_matched.csv",
+      "summary": "AXS venues resolved to a canonical/TEvo venue (review output of the matching pass).",
+      "tags": [
+        "data",
+        "csv",
+        "axs"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:scripts/axs_events_from_xlsx.csv",
+      "type": "config",
+      "name": "axs_events_from_xlsx.csv",
+      "filePath": "scripts/axs_events_from_xlsx.csv",
+      "summary": "AXS events worklist exported from a spreadsheet, used to seed the AXS event registry.",
+      "tags": [
+        "data",
+        "csv",
+        "axs"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:top25_sg_future_events_by_sales.csv",
+      "type": "config",
+      "name": "top25_sg_future_events_by_sales.csv",
+      "filePath": "top25_sg_future_events_by_sales.csv",
+      "summary": "Top-25 future SeatGeek events by sales — the blind-spot worklist behind the force-track top-50 SG tracking.",
+      "tags": [
+        "data",
+        "csv",
+        "seatgeek"
+      ],
+      "complexity": "simple"
     }
   ],
   "edges": [
@@ -52522,6 +53135,328 @@
       "type": "reads_from",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "file:axs_client.py",
+      "target": "function:axs_client.py:distill",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:scripts/check_readonly.py",
+      "target": "file:axs_client.py",
+      "type": "validates",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:axs_client.py",
+      "target": "file:tests/test_readonly_guards.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:axs_client.py",
+      "target": "table:supabase/migrations/20260609000000_axs_venues_reference.sql",
+      "type": "reads_from",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:scripts/axs_evo_venue_search.py",
+      "target": "file:evo_client.py",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/axs_evo_venue_search.py",
+      "target": "config:scripts/axs_venues_unmapped.csv",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/axs_parse.py",
+      "target": "file:axs_client.py",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/axs_venues_load.py",
+      "target": "config:scripts/axs_venues_raw.txt",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/axs_venues_load.py",
+      "target": "table:supabase/migrations/20260609000000_axs_venues_reference.sql",
+      "type": "writes_to",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:scripts/axs_evo_venue_search.py",
+      "target": "config:scripts/axs_venues_matched.csv",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:scripts/axs_venues_load.py",
+      "target": "config:scripts/axs_events_from_xlsx.csv",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:top25_sg_future_events_by_sales.csv",
+      "target": "table:supabase/migrations/20260609190000_force_track_top50_blindspots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:seatgeek_client.py",
+      "target": "config:top25_sg_future_events_by_sales.csv",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/lib/uplot.iife.min.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:static/terminal/event.html",
+      "target": "file:static/terminal/lib/uplot.min.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:static/terminal/event.js",
+      "target": "file:static/terminal/lib/uplot.iife.min.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:.gitleaks.toml",
+      "target": "pipeline:.github/workflows/secret-scan.yml",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:.gitignore",
+      "target": "config:.gitleaks.toml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:d4_bridge/.gitignore",
+      "target": "config:d4_bridge/package.json",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609000000_axs_venues_reference.sql",
+      "target": "table:supabase/migrations/20260608230000_fix_aq_consolidate_ambiguous_col.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609001000_axs_venues_review_views.sql",
+      "target": "table:supabase/migrations/20260609000000_axs_venues_reference.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609010000_axs_event_snapshots.sql",
+      "target": "table:supabase/migrations/20260609001000_axs_venues_review_views.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609020000_axs_events_registry.sql",
+      "target": "table:supabase/migrations/20260609010000_axs_event_snapshots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "target": "table:supabase/migrations/20260609020000_axs_events_registry.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609040000_axs_chart_series.sql",
+      "target": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609120000_td_match_aq_enrichment.sql",
+      "target": "table:supabase/migrations/20260526090000_ticketsdata_foundation.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609130000_td_events_discovery_search.sql",
+      "target": "table:supabase/migrations/20260517230000_terminal_search_rpc.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609140000_td_budget_caps_raise_250k_plan.sql",
+      "target": "table:supabase/migrations/20260527130000_ticketsdata_monthly_budget_gt_discovery.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609150000_td_tier_polling_crons_failures.sql",
+      "target": "table:supabase/migrations/20260609140000_td_budget_caps_raise_250k_plan.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609160000_td_seed_owned_xref.sql",
+      "target": "table:supabase/migrations/20260609150000_td_tier_polling_crons_failures.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609170000_sg_blindspot_evo_tracking.sql",
+      "target": "table:supabase/migrations/20260609160000_td_seed_owned_xref.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609170000_sg_priority_metrics_on_conflict.sql",
+      "target": "table:supabase/migrations/20260515200000_sg_broker_data_pipeline.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609170000_td_pull_drain_throughput.sql",
+      "target": "table:supabase/migrations/20260609170000_sg_priority_metrics_on_conflict.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609180000_sg_blindspot_evo_tracking_min14d.sql",
+      "target": "table:supabase/migrations/20260609170000_sg_blindspot_evo_tracking.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609180000_sg_listings_fire_rotation_resilient.sql",
+      "target": "table:supabase/migrations/20260531160000_sg_poller_bands.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609190000_force_track_top50_blindspots.sql",
+      "target": "table:supabase/migrations/20260531160000_sg_poller_bands.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260609200000_wire_td_match_fallback.sql",
+      "target": "table:supabase/migrations/20260609190000_force_track_top50_blindspots.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610000000_axs_seat_snapshots_and_ingest.sql",
+      "target": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610010000_axs_skip_past_and_lakings.sql",
+      "target": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610020000_axs_aq_event_mapping.sql",
+      "target": "table:supabase/migrations/20260610000000_axs_seat_snapshots_and_ingest.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610030000_axs_probe_step_drop_old_overload.sql",
+      "target": "table:supabase/migrations/20260610020000_axs_aq_event_mapping.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610040000_axs_safe_jsonb_guard.sql",
+      "target": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610050000_axs_drain_bound_persist_loop.sql",
+      "target": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610060000_axs_drain_fix_api_column.sql",
+      "target": "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610070000_axs_seat_groups_view.sql",
+      "target": "table:supabase/migrations/20260610060000_axs_drain_fix_api_column.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "table:supabase/migrations/20260610080000_axs_listings_evo_standard.sql",
+      "target": "table:supabase/migrations/20260610070000_axs_seat_groups_view.sql",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
@@ -53075,7 +54010,34 @@
         "table:supabase/migrations/20260608210000_backfill_home_venues_modal.sql",
         "table:supabase/migrations/20260608210000_sg_market_chart_seatdata_gmv.sql",
         "table:supabase/migrations/20260608220000_sg_market_chart_blended.sql",
-        "table:supabase/migrations/20260608230000_fix_aq_consolidate_ambiguous_col.sql"
+        "table:supabase/migrations/20260608230000_fix_aq_consolidate_ambiguous_col.sql",
+        "table:supabase/migrations/20260609000000_axs_venues_reference.sql",
+        "table:supabase/migrations/20260609001000_axs_venues_review_views.sql",
+        "table:supabase/migrations/20260609010000_axs_event_snapshots.sql",
+        "table:supabase/migrations/20260609020000_axs_events_registry.sql",
+        "table:supabase/migrations/20260609030000_axs_probe_classifier.sql",
+        "table:supabase/migrations/20260609040000_axs_chart_series.sql",
+        "table:supabase/migrations/20260609120000_td_match_aq_enrichment.sql",
+        "table:supabase/migrations/20260609130000_td_events_discovery_search.sql",
+        "table:supabase/migrations/20260609140000_td_budget_caps_raise_250k_plan.sql",
+        "table:supabase/migrations/20260609150000_td_tier_polling_crons_failures.sql",
+        "table:supabase/migrations/20260609160000_td_seed_owned_xref.sql",
+        "table:supabase/migrations/20260609170000_sg_blindspot_evo_tracking.sql",
+        "table:supabase/migrations/20260609170000_sg_priority_metrics_on_conflict.sql",
+        "table:supabase/migrations/20260609170000_td_pull_drain_throughput.sql",
+        "table:supabase/migrations/20260609180000_sg_blindspot_evo_tracking_min14d.sql",
+        "table:supabase/migrations/20260609180000_sg_listings_fire_rotation_resilient.sql",
+        "table:supabase/migrations/20260609190000_force_track_top50_blindspots.sql",
+        "table:supabase/migrations/20260609200000_wire_td_match_fallback.sql",
+        "table:supabase/migrations/20260610000000_axs_seat_snapshots_and_ingest.sql",
+        "table:supabase/migrations/20260610010000_axs_skip_past_and_lakings.sql",
+        "table:supabase/migrations/20260610020000_axs_aq_event_mapping.sql",
+        "table:supabase/migrations/20260610030000_axs_probe_step_drop_old_overload.sql",
+        "table:supabase/migrations/20260610040000_axs_safe_jsonb_guard.sql",
+        "table:supabase/migrations/20260610050000_axs_drain_bound_persist_loop.sql",
+        "table:supabase/migrations/20260610060000_axs_drain_fix_api_column.sql",
+        "table:supabase/migrations/20260610070000_axs_seat_groups_view.sql",
+        "table:supabase/migrations/20260610080000_axs_listings_evo_standard.sql"
       ]
     },
     {
@@ -53144,7 +54106,9 @@
         "file:seatdata_client.py",
         "file:seatgeek_client.py",
         "file:tickpick_client.py",
-        "file:vivid_client.py"
+        "file:vivid_client.py",
+        "file:axs_client.py",
+        "function:axs_client.py:distill"
       ]
     },
     {
@@ -53282,7 +54246,8 @@
         "file:d4_bridge/src/views/Status.tsx",
         "file:d4_bridge/src/views/Terms.tsx",
         "config:d4_bridge/storage.rules",
-        "config:d4_bridge/vite.config.ts"
+        "config:d4_bridge/vite.config.ts",
+        "config:d4_bridge/.gitignore"
       ]
     },
     {
@@ -53436,7 +54401,9 @@
         "file:static/terminal/orders.js",
         "file:static/terminal/performer.js",
         "file:static/terminal/sw.js",
-        "file:static/terminal/venue.js"
+        "file:static/terminal/venue.js",
+        "file:static/terminal/lib/uplot.iife.min.js",
+        "file:static/terminal/lib/uplot.min.css"
       ]
     },
     {
@@ -53537,7 +54504,15 @@
         "file:bin/sync-check.sh",
         "file:scripts/apps_script/tickpick_sync.gs",
         "file:scripts/check_readonly.py",
-        "file:scripts/check_sync.sh"
+        "file:scripts/check_sync.sh",
+        "file:scripts/axs_evo_venue_search.py",
+        "file:scripts/axs_parse.py",
+        "file:scripts/axs_venues_load.py",
+        "config:scripts/axs_venues_raw.txt",
+        "config:scripts/axs_venues_unmapped.csv",
+        "config:scripts/axs_venues_matched.csv",
+        "config:scripts/axs_events_from_xlsx.csv",
+        "config:top25_sg_future_events_by_sales.csv"
       ]
     },
     {
@@ -53581,7 +54556,9 @@
         "config:render.yaml",
         "document:requirements.txt",
         "config:.gitleaksignore",
-        "file:version.txt"
+        "file:version.txt",
+        "config:.gitleaks.toml",
+        "config:.gitignore"
       ]
     },
     {
