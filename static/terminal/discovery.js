@@ -1,7 +1,7 @@
 // D0 Terminal — Discovery page (gaps + TEvo blindspot + returning entities).
 // Companion to movers.js; all panels consume Supabase RPCs/tables via TerminalAuth.
 //
-// Three panels:
+// Four panels:
 //   1. DISCOVERY GAPS — cross-platform alert table
 //      Table: discovery_gap_alerts (resolved_at IS NULL)
 //      Backed by mig 20260527250000. Gap types: sg_no_evo, td_*_no_evo,
@@ -11,7 +11,12 @@
 //      RPC: get_blind_spots_tevo_selling(min_conf, horizon, limit, venue, mode, band)
 //      Backed by mig 20260519180000. 3-signal composite over broker pool
 //      where we own 0 tickets, big 5 sports excluded. Confidence-sorted.
-//   3. RETURNING — performers + venues back after dormancy
+//   3. SG SELLING, WE'RE NOT IN — EVO TRACKING
+//      RPC: get_sg_blindspot_evo_tracking(p_limit)
+//      Backed by migs 20260609170000 + 20260609180000. SG-side demand (sold
+//      qty/gross/median) for TRACK_BLINDSPOT events (≥14d out, owned=0)
+//      alongside the EVO/TEvo live book (get-in/median/p90/depth). SG $-ranked.
+//   4. RETURNING — performers + venues back after dormancy
 //      RPC: get_returning_entities(min_gap_days, source, entity_type, limit)
 //      Backed by mig 20260519200000. TEvo perf+venue + SG venue today;
 //      SG performer link deferred to v2.
@@ -20,17 +25,20 @@
   'use strict';
   const T = window.Terminal;
 
-  // ---- State shared across both panels (filter UI -> RPC params) ----
-  const tevoState = { mode: 'selling', band: '', conf: 0.5 };
-  const retState  = { gap: 90, source: '', entityType: '' };
-  const gapState  = { type: '' }; // '' = all gap types
+  // ---- State shared across panels (filter UI -> RPC params) ----
+  const tevoState  = { mode: 'selling', band: '', conf: 0.5 };
+  const sgEvoState = { limit: 50 };
+  const retState   = { gap: 90, source: '', entityType: '' };
+  const gapState   = { type: '' }; // '' = all gap types
 
   function init() {
     wireGapControls();
     wireTevoControls();
+    wireSgEvoControls();
     wireReturningControls();
     refreshDiscoveryGaps().catch(e => console.error('[discovery-gaps]', e));
     refreshTevoBlindSpots().catch(e => console.error('[tevo-blindspots]', e));
+    refreshSgEvoBlindSpots().catch(e => console.error('[sg-evo-blindspots]', e));
     refreshReturning().catch(e => console.error('[returning]', e));
     setStatus('');
   }
@@ -330,6 +338,98 @@
     body.replaceChildren(tbl);
   }
 
+  // -------- SG-selling / EVO-tracking panel ----------------------
+  // RPC get_sg_blindspot_evo_tracking(p_limit) — view v_sg_blindspot_evo_tracking
+  // (migs 20260609170000 + 14d cutoff 20260609180000). SG realized-sales demand
+  // for "we're not in" events alongside the EVO/TEvo live book. SG $-ranked.
+
+  function wireSgEvoControls() {
+    document.querySelectorAll('[data-sgevo-limit]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        sgEvoState.limit = Number(btn.dataset.sgevoLimit);
+        toggleActive(btn, '[data-sgevo-limit]');
+        refreshSgEvoBlindSpots();
+      });
+    });
+  }
+
+  async function refreshSgEvoBlindSpots() {
+    const body    = document.getElementById('sgEvoBlindSpotsBody');
+    const countEl = document.getElementById('sgEvoBlindSpotsCount');
+    if (!body) return;
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+
+    body.innerHTML = '<div class="empty">loading…</div>';
+
+    let rows;
+    try {
+      const res = await Auth.client.rpc('get_sg_blindspot_evo_tracking', {
+        p_limit: sgEvoState.limit,
+      });
+      if (res.error) throw new Error(res.error.message || 'RPC error');
+      rows = res.data || [];
+    } catch (e) {
+      body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+
+    const n = rows.length;
+    if (countEl) countEl.textContent = n ? `${n} event${n === 1 ? '' : 's'}` : '';
+
+    if (!n) {
+      body.innerHTML = '<div class="empty">no SG blind-spot events ≥14 days out</div>';
+      return;
+    }
+
+    const tbl = document.createElement('table');
+    tbl.className = 'blind-spots-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th class="num">#</th>
+        <th>Event</th><th>Venue</th>
+        <th class="num">T-days</th>
+        <th class="num" title="SG tickets sold (deduped)">SG Sold</th>
+        <th class="num" title="SG sold gross $ — the market we're missing">SG $</th>
+        <th class="num" title="SG median sale price">SG Med</th>
+        <th class="num" title="EVO/TEvo live listed tickets">EVO Tix</th>
+        <th class="num" title="EVO get-in (lowest live ask)">Get-in</th>
+        <th class="num" title="EVO median ask">EVO Med</th>
+        <th class="num" title="EVO 90th-percentile ask">EVO p90</th>
+      </tr></thead>
+      <tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const eventLabel = r.tevo_event_id
+        ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(r.event_name || ('Event ' + r.tevo_event_id))}</a>`
+        : escapeHtml(r.event_name || '');
+      const tdays = r.days_to_event != null ? Math.round(Number(r.days_to_event)) : '—';
+
+      tr.innerHTML = `
+        <td class="num muted small">${r.rank ?? ''}</td>
+        <td>${eventLabel}</td>
+        <td>${escapeHtml(r.venue_name || '')}</td>
+        <td class="num">${tdays}</td>
+        <td class="num">${T.fmtNum(r.sg_sold_qty)}</td>
+        <td class="num">${fmtUsdCompact(r.sg_sold_gross)}</td>
+        <td class="num">${r.sg_sold_median != null ? '$' + T.fmtNum(r.sg_sold_median) : '—'}</td>
+        <td class="num">${T.fmtNum(r.evo_tickets)}</td>
+        <td class="num">${r.evo_getin != null ? '$' + T.fmtNum(r.evo_getin) : '—'}</td>
+        <td class="num">${r.evo_median != null ? '$' + T.fmtNum(r.evo_median) : '—'}</td>
+        <td class="num">${r.evo_p90 != null ? '$' + T.fmtNum(r.evo_p90) : '—'}</td>`;
+      tb.appendChild(tr);
+    });
+
+    body.replaceChildren(tbl);
+  }
+
   // -------- Returning-entities panel -----------------------------
 
   function wireReturningControls() {
@@ -448,6 +548,16 @@
   function fmtConf(v) {
     if (v === null || v === undefined) return '—';
     return Number(v).toFixed(2);
+  }
+
+  // Compact USD for large gross figures: $1.94M / $212k / $940.
+  function fmtUsdCompact(v) {
+    if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+    const n = Number(v);
+    const abs = Math.abs(n);
+    if (abs >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+    if (abs >= 1e3) return '$' + Math.round(n / 1e3) + 'k';
+    return '$' + Math.round(n);
   }
 
   function fmtDateShort(iso) {

@@ -78,6 +78,7 @@
       <button class="event-tab" data-tab="tm-listings" role="tab" aria-selected="false">TM Listings <span class="tab-count" id="tabCountTmListings"></span></button>
       <button class="event-tab" data-tab="sg-sales" role="tab" aria-selected="false">SG Sales <span class="tab-count" id="tabCountSgSales"></span></button>
       <button class="event-tab" data-tab="seatdata-sales" role="tab" aria-selected="false">SeatData Sales <span class="tab-count" id="tabCountSeatdataSales"></span></button>
+      <button class="event-tab" data-tab="axs-sections" role="tab" aria-selected="false">AXS Box Office <span class="tab-count" id="tabCountAxsSections"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
@@ -367,6 +368,18 @@
           </span>
         </div>
         <div id="seatdataSalesFullBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <!-- AXS primary box-office (veritix). Per-section availability + pricing from
+         the latest /fetch?platform=axs snapshot. Lazy-load on first click. -->
+    <div class="tab-pane" id="paneAxsSections" role="tabpanel" hidden>
+      <section id="axs-sections-full">
+        <div class="panel-title row">
+          <span>AXS BOX OFFICE — SECTIONS (latest snapshot)</span>
+          <span class="muted small" id="axsSectionsMeta">tap tab to load</span>
+        </div>
+        <div id="axsSectionsBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 

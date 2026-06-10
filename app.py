@@ -1211,22 +1211,31 @@ def broker_performer_trip_plan(
                               home_name, days, max_events, budget_usd, qty)
 
 
+def _clean_section(s: str | None) -> str | None:
+    s = (s or "").strip()[:24]
+    return s or None
+
+
+def _tour_dates(days: int):
+    from datetime import date, timedelta
+    start = date.today()
+    return start, start + timedelta(days=max(1, min(int(days), 730)))
+
+
 def _tour_package_payload(performer_id: int, home_lat: float, home_lon: float,
                           qty: int, budget_km: float, home_name: str, days: int,
-                          budget_usd: float | None, side: str,
-                          clear_at: float, away_margin: float) -> dict:
+                          budget_usd: float | None, side: str, clear_at: float,
+                          away_margin: float, section_like: str | None = None,
+                          prefer_owned: bool = False) -> dict:
     """Shared body for the retail 'tour with the artist' routes (D0 + store).
 
     Dual-mode: owned-splits where we hold inventory (concerts), market-sourced buy-to-fulfill
     for a team's away games (road owned ~ 0). Pure read + compute — no writes, no upstream API.
     """
-    from datetime import date, timedelta
-
     from trip_planner import plan_performer_tour
 
     db = require_sb()
-    start = date.today()
-    end = start + timedelta(days=max(1, min(int(days), 730)))
+    start, end = _tour_dates(days)
     spend = None if budget_usd is None else max(0.0, min(float(budget_usd), 10_000_000.0))
     return plan_performer_tour(
         db, int(performer_id), float(home_lat), float(home_lon),
@@ -1235,6 +1244,31 @@ def _tour_package_payload(performer_id: int, home_lat: float, home_lon: float,
         side=(side if side in ("auto", "away", "home", "concert") else "auto"),
         clear_at=min(max(float(clear_at), 0.01), 1.0),
         away_margin=min(max(float(away_margin), 0.0), 2.0),
+        section_like=_clean_section(section_like), prefer_owned=bool(prefer_owned),
+    )
+
+
+def _multi_tour_payload(performer_ids: str, home_lat: float, home_lon: float, qty: int,
+                        budget_km: float, home_name: str, days: int, budget_usd: float | None,
+                        side: str, clear_at: float, away_margin: float,
+                        section_like: str | None, prefer_owned: bool) -> dict:
+    """'Plan my summer': one routed+priced package across several performers' events."""
+    from trip_planner import plan_multi_performer_tour
+
+    ids = [int(x) for x in str(performer_ids).replace(" ", "").split(",") if x][:8]
+    if not ids:
+        raise HTTPException(400, "performer_ids required (comma-separated, up to 8)")
+    db = require_sb()
+    start, end = _tour_dates(days)
+    spend = None if budget_usd is None else max(0.0, min(float(budget_usd), 10_000_000.0))
+    return plan_multi_performer_tour(
+        db, ids, float(home_lat), float(home_lon),
+        max(1, min(int(qty), 50)), max(100.0, min(float(budget_km), 50000.0)),
+        start, end, home_name=(home_name or "Home").strip()[:60], budget_usd=spend,
+        side=(side if side in ("auto", "away", "home", "concert") else "auto"),
+        clear_at=min(max(float(clear_at), 0.01), 1.0),
+        away_margin=min(max(float(away_margin), 0.0), 2.0),
+        section_like=_clean_section(section_like), prefer_owned=bool(prefer_owned),
     )
 
 
@@ -1251,12 +1285,67 @@ def broker_performer_tour_package(
     side: str = "auto",
     clear_at: float = 0.15,
     away_margin: float = 0.18,
+    section_like: str | None = None,
+    prefer_owned: bool = False,
     _=Depends(require_auth),
 ):
     """D0: retail 'tour with the artist' package — routed multi-city tour priced via the
     dual-mode model (owned-splits for concerts, market-sourced for a team's away games)."""
-    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km,
-                                 home_name, days, budget_usd, side, clear_at, away_margin)
+    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km, home_name,
+                                 days, budget_usd, side, clear_at, away_margin,
+                                 section_like, prefer_owned)
+
+
+@app.get("/api/broker/tours/multi")
+def broker_multi_tour(
+    performer_ids: str,
+    home_lat: float,
+    home_lon: float,
+    qty: int = 3,
+    budget_km: float = 10000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    budget_usd: float | None = None,
+    side: str = "auto",
+    clear_at: float = 0.15,
+    away_margin: float = 0.18,
+    section_like: str | None = None,
+    prefer_owned: bool = False,
+    _=Depends(require_auth),
+):
+    """D0 'plan my summer' — one package across several performers (comma-separated ids)."""
+    return _multi_tour_payload(performer_ids, home_lat, home_lon, qty, budget_km, home_name,
+                               days, budget_usd, side, clear_at, away_margin,
+                               section_like, prefer_owned)
+
+
+def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: int,
+                      min_shows: int, concerts_only: bool) -> dict:
+    """Shared body for reverse-discovery ('tours near me'). Read-only."""
+    from trip_planner import discover_tours_near
+
+    db = require_sb()
+    start, end = _tour_dates(days)
+    return discover_tours_near(
+        db, float(home_lat), float(home_lon),
+        max(5.0, min(float(within_mi), 1000.0)), start, end,
+        min_shows=max(1, min(int(min_shows), 6)),
+        event_types=["concert"] if concerts_only else None,
+    )
+
+
+@app.get("/api/broker/tours/near")
+def broker_tours_near(
+    home_lat: float,
+    home_lon: float,
+    within_mi: float = 250.0,
+    days: int = 120,
+    min_shows: int = 2,
+    concerts_only: bool = False,
+    _=Depends(require_auth),
+):
+    """D0 reverse discovery — performers with >= min_shows within `within_mi` of home."""
+    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
 
 
 def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
@@ -3229,6 +3318,20 @@ def broker_event_chart_data(
     counts_owned    = _series("owned_tickets_count")
     counts_market   = _series("tickets_count")
 
+    # AXS box-office series (median section price + listing count over time).
+    # Sourced from axs_event_snapshots via RPC; empty until AXS snapshots are
+    # AQ-linked to this tevo_event_id and ingested. Overlaid on both the
+    # median-price and the listing-count charts alongside TEvo/market.
+    try:
+        axs_rows = (
+            db.rpc("get_axs_event_price_series",
+                   {"p_event_id": event_id, "p_since": since_iso}).execute()
+        ).data or []
+    except Exception:
+        axs_rows = []
+    prices_axs = [{"t": r["captured_at"], "v": r.get("median_price")} for r in axs_rows]
+    counts_axs = [{"t": r["captured_at"], "v": r.get("listings_count")} for r in axs_rows]
+
     # 2) Resolve home + away ESPN team ids from event_xref → espn_event_snapshots
     home_team_id = away_team_id = home_slug = away_slug = home_league = None
     xref = (
@@ -3512,6 +3615,9 @@ def broker_event_chart_data(
             "prices_nonowned": prices_nonowned,    # NEW: "MARKET NOT US" median
             "counts_owned":    counts_owned,
             "counts_market":   counts_market,
+            # ===== AXS box office: median price + listing count =====
+            "prices_axs":      prices_axs,
+            "counts_axs":      counts_axs,
             # ===== TEvo: full retail percentile distribution =====
             "retail_min":     _series("retail_min"),
             "retail_p25":     _series("retail_p25"),
@@ -4010,6 +4116,142 @@ def seatdata_event_sales(event_id: int, limit: int = 500, _=Depends(require_auth
             "first_sale": rows[-1]["sale_timestamp"],
             "last_sale":  rows[0]["sale_timestamp"],
         },
+    }
+
+
+@app.get("/api/axs/event/{event_id}")
+def axs_event(event_id: int, _=Depends(require_auth)):
+    """AXS box-office state for a TEvo event_id (latest persisted snapshot).
+    Free — reads axs_event_snapshots; no AXS API call. Null fields if not yet
+    AQ-linked / pulled. is_axs_primary reflects the /fetch probe classifier."""
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots")
+        .select("id,captured_at,axs_event_id,event_url,event_name,venue_name,"
+                "occurs_at_local,currency,price_min,price_max,getin,listings_count,"
+                "sections_count,offers_count,seats_primary,seats_resale,onsale_now,"
+                "in_axs_list,response_s")
+        .eq("tevo_event_id", event_id)
+        .order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"tevo_event_id": event_id, "linked": False, "latest": None,
+                "captured_at": None}
+    return {"tevo_event_id": event_id, "linked": True, "latest": snap[0],
+            "captured_at": snap[0]["captured_at"]}
+
+
+@app.get("/api/axs/event/{event_id}/sections")
+def axs_event_sections(event_id: int, limit: int = 1000, _=Depends(require_auth)):
+    """Per-section availability + pricing from the latest AXS snapshot. Free —
+    no AXS API call. Sorted cheapest-first. Mirrors the SeatData sales shape."""
+    limit = max(1, min(int(limit), 5000))
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots")
+        .select("id,captured_at,event_name,venue_name,currency,price_min,price_max,getin")
+        .eq("tevo_event_id", event_id)
+        .order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"event_id": event_id, "count": 0, "sections": [], "summary": None,
+                "captured_at": None}
+    s0 = snap[0]
+    rows = (
+        db.table("axs_section_snapshots")
+        .select("section_label,neighborhood,is_ga,sold_out,avail_qty,price_min,"
+                "price_max,seat_types,has_resale,connection_fee")
+        .eq("snapshot_id", s0["id"])
+        .order("price_min", desc=False).limit(limit).execute()
+    ).data or []
+    prices = sorted(r["price_min"] for r in rows if r.get("price_min") is not None)
+    return {
+        "event_id": event_id,
+        "count": len(rows),
+        "captured_at": s0["captured_at"],
+        "event_name": s0.get("event_name"),
+        "venue_name": s0.get("venue_name"),
+        "currency": s0.get("currency"),
+        "sections": rows,
+        "summary": {
+            "total_sections": len(rows),
+            "available_qty": sum(int(r.get("avail_qty") or 0) for r in rows),
+            "resale_sections": sum(1 for r in rows if r.get("has_resale")),
+            "sold_out_sections": sum(1 for r in rows if r.get("sold_out")),
+            "min_price": prices[0] if prices else s0.get("getin"),
+            "max_price": prices[-1] if prices else s0.get("price_max"),
+        },
+    }
+
+
+@app.get("/api/axs/event/{event_id}/listings")
+def axs_event_listings(event_id: int, limit: int = 3000, _=Depends(require_auth)):
+    """AXS box-office inventory in the EVO listing standard (consecutive-seat
+    blocks), latest snapshot. Free — reads v_axs_listings. Each row is a block:
+    section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only
+    seat_numbers (TEvo ticket groups don't carry exact seats)."""
+    limit = max(1, min(int(limit), 10000))
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots").select("id,captured_at,event_name,venue_name")
+        .eq("tevo_event_id", event_id).order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"event_id": event_id, "count": 0, "listings": [], "summary": None,
+                "captured_at": None}
+    s0 = snap[0]
+    rows = (
+        db.table("v_axs_listings")
+        .select("section,row,quantity,retail_price,type,format,wheelchair,seat_numbers,"
+                "src,neighborhood,is_ga,seat_from,seat_to")
+        .eq("snapshot_id", s0["id"])
+        .order("section").order("row").order("seat_from")
+        .limit(limit).execute()
+    ).data or []
+    prices = [r["retail_price"] for r in rows if r.get("retail_price") is not None]
+    return {
+        "event_id": event_id,
+        "captured_at": s0["captured_at"],
+        "event_name": s0.get("event_name"),
+        "venue_name": s0.get("venue_name"),
+        "count": len(rows),
+        "listings": rows,
+        "summary": {
+            "blocks": len(rows),
+            "total_seats": sum(int(r.get("quantity") or 0) for r in rows),
+            "min_price": min(prices) if prices else None,
+            "max_price": max(prices) if prices else None,
+            "biggest_block": max((int(r.get("quantity") or 0) for r in rows), default=0),
+            "resale_blocks": sum(1 for r in rows if r.get("src") == "resale"),
+        },
+    }
+
+
+@app.get("/api/axs/event/{event_id}/series")
+def axs_event_series(event_id: int, range: str | None = None, hours: int | None = None,
+                     days: int = 30, _=Depends(require_auth)):
+    """AXS box-office time series for the event charts: median section price +
+    listing count per snapshot. Free — reads axs_event_snapshots via RPC.
+    Shape mirrors chart-data's {t,v} series so the FE merges it straight in."""
+    rmap = {"6h": 6, "24h": 24, "1d": 24, "3d": 72, "7d": 168, "30d": 720, "all": None}
+    if range is not None:
+        range_hours = rmap.get(range.lower(), 720)
+    elif hours is not None:
+        range_hours = max(6, min(int(hours), 8760))
+    else:
+        range_hours = max(1, min(int(days), 365)) * 24
+    since_iso = ("1970-01-01T00:00:00+00:00" if range_hours is None
+                 else (datetime.now(timezone.utc) - timedelta(hours=range_hours)).isoformat())
+    db = require_sb()
+    try:
+        rows = (db.rpc("get_axs_event_price_series",
+                       {"p_event_id": event_id, "p_since": since_iso}).execute()).data or []
+    except Exception:
+        rows = []
+    return {
+        "event_id": event_id,
+        "prices_axs": [{"t": r["captured_at"], "v": r.get("median_price")} for r in rows],
+        "counts_axs": [{"t": r["captured_at"], "v": r.get("listings_count")} for r in rows],
     }
 
 
@@ -6777,12 +7019,52 @@ def store_performer_tour_package(
     side: str = "auto",
     clear_at: float = 0.15,
     away_margin: float = 0.18,
+    section_like: str | None = None,
+    prefer_owned: bool = False,
 ):
     """D1 store: retail 'tour with the artist' agent. Builds a routed multi-city package and
     prices it — owned-splits where we hold inventory (concerts), market-sourced for a team's
     away games. Shares the engine with the D0 route via `trip_planner`."""
-    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km,
-                                 home_name, days, budget_usd, side, clear_at, away_margin)
+    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km, home_name,
+                                 days, budget_usd, side, clear_at, away_margin,
+                                 section_like, prefer_owned)
+
+
+@app.get("/api/store/tours/multi")
+def store_multi_tour(
+    performer_ids: str,
+    home_lat: float,
+    home_lon: float,
+    qty: int = 3,
+    budget_km: float = 10000.0,
+    home_name: str = "Home",
+    days: int = 365,
+    budget_usd: float | None = None,
+    side: str = "auto",
+    clear_at: float = 0.15,
+    away_margin: float = 0.18,
+    section_like: str | None = None,
+    prefer_owned: bool = False,
+):
+    """D1 store 'plan my summer' — one routed+priced package across several performers
+    (comma-separated `performer_ids`, up to 8). Shares the engine with the D0 route."""
+    return _multi_tour_payload(performer_ids, home_lat, home_lon, qty, budget_km, home_name,
+                               days, budget_usd, side, clear_at, away_margin,
+                               section_like, prefer_owned)
+
+
+@app.get("/api/store/tours/near")
+def store_tours_near(
+    home_lat: float,
+    home_lon: float,
+    within_mi: float = 250.0,
+    days: int = 120,
+    min_shows: int = 2,
+    concerts_only: bool = False,
+):
+    """D1 store reverse discovery — 'what tours can I catch near me'. Performers with
+    >= min_shows within `within_mi` of home in the window, with price-from + demand."""
+    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
 
 
 def _section_sort_key(s: str) -> tuple:
@@ -7153,6 +7435,31 @@ def _fetch_owned_ticket_groups(
     return groups, "live"
 
 
+# Map an EvoClient RuntimeError to a semantically correct HTTP status.
+# evo_client raises RuntimeError("TEvo API returned <code>") for a non-2xx
+# upstream response, or "TEvo API returned no response" for a connection/
+# timeout/DNS failure. A 400/404 from TEvo means the event id doesn't
+# resolve → that's a client-facing 404 (Not Found), NOT a gateway error.
+# Everything else (5xx, no-response) is a genuine upstream failure → 502;
+# 429/503 surface as 503 so callers/crawlers back off ("try again") rather
+# than treating it as a hard gateway break. Never echoes upstream body/URL —
+# only the mapped status + a caller-supplied generic detail reach the client
+# (the evo_client already scrubbed everything but the status into the message).
+_TEVO_STATUS_RE = re.compile(r"\b(\d{3})\b")
+
+
+def _tevo_runtime_to_http(
+    e: Exception, *, not_found_detail: str, failure_detail: str
+) -> HTTPException:
+    m = _TEVO_STATUS_RE.search(str(e))
+    upstream = int(m.group(1)) if m else None
+    if upstream in (400, 404):
+        return HTTPException(404, not_found_detail)
+    if upstream in (429, 503):
+        return HTTPException(503, failure_detail)
+    return HTTPException(502, failure_detail)
+
+
 def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: bool = False) -> dict:
     """Fetch event + owned listings, apply filters, return the same shape
     /api/store/events/{id} returns. Shared by the public detail endpoint
@@ -7186,9 +7493,16 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
             # Log full upstream error server-side; return a stable generic
             # string so TEvo's response text + upstream status codes never
             # reach the public detail page. Mirrors the /api/store/events
-            # 502 scrub at line ~4194.
+            # 502 scrub at line ~4194. Status is normalized: a 400/404 from
+            # TEvo means the event doesn't exist → 404 (not a 502 gateway
+            # error, which previously made cycling-id scans + dead share
+            # links look like outages); 5xx/timeout → 502, 429/503 → 503.
             print(f"[store_event_detail] TEvo event lookup failed for {event_id}: {e!r}")
-            raise HTTPException(502, "event lookup failed")
+            raise _tevo_runtime_to_http(
+                e,
+                not_found_detail="event not found",
+                failure_detail="event lookup failed",
+            ) from e
 
         # Storefront freshness contract: 10s. Tighter than broker's 90s because
         # this is the buy-decision page — stale availability => bad UX.
@@ -7716,6 +8030,21 @@ def store_index_page():
 @app.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
     return _render_storefront_page("event.html")
+
+
+@app.api_route("/store/discover", methods=["GET", "HEAD"])
+def store_discover_page():
+    """Reverse discovery — 'what tours can I catch near me'. Backed by
+    /api/store/tours/near; mounts via store.js (data-page=discover)."""
+    return _render_storefront_page("discover.html")
+
+
+@app.api_route("/store/tour", methods=["GET", "HEAD"])
+def store_tour_page():
+    """Follow-the-tour — pick a ticket count and attend a performer's whole tour;
+    tickets auto-selected per date. Backed by /api/store/performers/{id}/tour-package;
+    mounts via store.js (data-page=tour). Performer id read from ?performer=."""
+    return _render_storefront_page("tour.html")
 
 
 # ---------- Static informational pages (Sprint 3 trust + legal) ----------

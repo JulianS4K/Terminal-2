@@ -130,11 +130,12 @@
     }
 
     function renderResults(d) {
-      const evs   = d.events     || [];
-      const perfs = d.performers || [];
-      const vens  = d.venues     || [];
+      const evs   = d.events      || [];
+      const perfs = d.performers  || [];
+      const vens  = d.venues      || [];
+      const mkt   = d.marketplace || [];
       flat = [];
-      if (!evs.length && !perfs.length && !vens.length) {
+      if (!evs.length && !perfs.length && !vens.length && !mkt.length) {
         sugg.innerHTML = `<div class="ts-empty">no matches for &ldquo;${escapeHtml(d.q || '')}&rdquo;</div>`;
         return;
       }
@@ -172,6 +173,22 @@
           flat.push({ href, label: v.venue_name, kind: 'venue' });
           parts.push(`<a class="ts-row" href="${href}" data-kind="venue">
               <span class="ts-name">${escapeHtml(v.venue_name || '(unnamed)')}</span>
+              <span class="ts-meta">${escapeHtml(meta)}</span>
+            </a>`);
+        });
+        parts.push('</div>');
+      }
+      if (mkt.length) {
+        // Marketplace events discovered via TicketsData /events that we don't
+        // track locally yet. No internal page to link to — open the buy URL.
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">MARKETPLACE</div>');
+        mkt.forEach(m => {
+          const href = m.event_url || '#';
+          const meta = [m.platform, m.venue_name, fmtDateShort(m.event_date)].filter(Boolean).join(' · ');
+          flat.push({ href, label: m.event_name, kind: 'marketplace' });
+          const ext = href !== '#' ? ' target="_blank" rel="noopener"' : '';
+          parts.push(`<a class="ts-row" href="${escapeHtml(href)}"${ext} data-kind="marketplace">
+              <span class="ts-name">${escapeHtml(m.event_name || '(unnamed)')}</span>
               <span class="ts-meta">${escapeHtml(meta)}</span>
             </a>`);
         });

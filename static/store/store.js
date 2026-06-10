@@ -758,8 +758,14 @@
           status.replaceChildren();
           status.style.color = "var(--bad)";
           status.hidden = false;
+          const spec = describeFetchError(err);
           const msg = document.createElement("div");
-          msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
+          // Same normalized voice as the event-detail screen. Catalog load
+          // never hits a true 404 (the home/events endpoints always answer),
+          // so this is almost always the retryable "temporarily unavailable"
+          // copy — but routing through describeFetchError keeps the wording
+          // consistent if that ever changes.
+          msg.textContent = `${spec.title}. ${spec.message}`;
           const retry = document.createElement("button");
           retry.type = "button";
           retry.className = "btn ghost";
@@ -2462,12 +2468,9 @@
           renderZoneChips(initialFilters.zones);
         }
       } catch (err) {
-        if (err.message && err.message.includes("410")) {
-          status.textContent = "This share link is no longer active.";
-        } else {
-          status.textContent = `Couldn't load event: ${err.message}`;
-        }
-        status.style.color = "var(--bad)";
+        // Normalized full-page error screen (404 dead-end vs retryable
+        // upstream blip vs expired-share). Retry re-runs bootstrap.
+        renderEventError(err, bootstrap);
       }
     }
 
@@ -2507,6 +2510,92 @@
     ));
   }
   function escapeAttr(s) { return escapeHtml(s); }
+
+  // ---------- Normalized error messaging ----------
+  // Single source of truth for turning a fetch failure from api() into a
+  // user-facing error. api() throws "<status> <tag>: <detail>" for HTTP
+  // errors and "timeout <tag>: …" for aborts; network failures surface the
+  // raw fetch error. Maps to { code, title, message, retryable } so every
+  // store surface (event detail screen, catalog inline error) speaks the
+  // same language: not-found is a calm dead-end, an upstream blip offers a
+  // retry. Keeps the backend's status normalization (404 vs 502/503) honest
+  // on the UI side — a 404 must never read as "outage."
+  function describeFetchError(err) {
+    const raw = (err && err.message) ? String(err.message) : "";
+    const m = raw.match(/^(\d{3})\b/);
+    const code = m ? Number(m[1]) : null;
+    const isTimeout = /\btimeout\b/i.test(raw) || (err && err.name === "AbortError");
+    if (code === 404) return {
+      code, retryable: false, title: "Event not found",
+      message: "This event isn’t available — it may have ended, sold out, or been removed. Browse what’s on sale now.",
+    };
+    if (code === 410) return {
+      code, retryable: false, title: "Share link expired",
+      message: "This share link is no longer active — the seller may have revoked it or it passed its expiry. You can still browse all events.",
+    };
+    if (code === 429) return {
+      code, retryable: true, title: "Too many requests",
+      message: "We’re seeing heavy traffic right now. Give it a moment, then try again.",
+    };
+    if (isTimeout) return {
+      code, retryable: true, title: "This is taking too long",
+      message: "The server didn’t respond in time — it may be waking up. Try again in a few seconds.",
+    };
+    if (code === 502 || code === 503 || code === 504) return {
+      code, retryable: true, title: "Temporarily unavailable",
+      message: "We couldn’t reach our inventory provider just now. This is usually brief — try again in a moment.",
+    };
+    return {
+      code, retryable: true, title: "Couldn’t load this event",
+      message: "Something went wrong loading this event. Try again, or head back to the catalog.",
+    };
+  }
+
+  // Render the full-page event-detail error screen (event.html #errorScreen).
+  // Hides the loading/header/body sections and reveals a normalized error
+  // panel. Retryable errors expose a "Try again" button wired to onRetry
+  // (re-runs bootstrap). Falls back to the legacy inline #status line if the
+  // markup isn't present (older cached event.html).
+  function renderEventError(err, onRetry) {
+    const spec = describeFetchError(err);
+    const status = $("#status");
+    const screen = $("#errorScreen");
+    [$("#header"), $("#body"), $("#sharedBanner")].forEach((el) => { if (el) el.hidden = true; });
+    if (!screen) {
+      if (status) {
+        status.hidden = false;
+        status.textContent = `${spec.title}: ${spec.message}`;
+        status.style.color = "var(--bad)";
+      }
+      return;
+    }
+    if (status) status.hidden = true;
+    const icon = $("#errIcon", screen);
+    const title = $("#errTitle", screen);
+    const msg = $("#errMsg", screen);
+    const retry = $("#errRetry", screen);
+    const codeEl = $("#errCode", screen);
+    screen.classList.toggle("is-unavailable", spec.retryable);
+    screen.classList.toggle("is-notfound", !spec.retryable);
+    if (icon) icon.textContent = spec.retryable ? "⚠️" : "🎟️";
+    if (title) title.textContent = spec.title;
+    if (msg) msg.textContent = spec.message;
+    if (codeEl) {
+      codeEl.hidden = !spec.code;
+      if (spec.code) codeEl.textContent = `error ${spec.code}`;
+    }
+    if (retry) {
+      retry.hidden = !spec.retryable;
+      retry.onclick = (spec.retryable && typeof onRetry === "function")
+        ? () => {
+            screen.hidden = true;
+            if (status) { status.hidden = false; status.textContent = "Loading event…"; status.style.color = ""; }
+            onRetry();
+          }
+        : null;
+    }
+    screen.hidden = false;
+  }
 
   // ---------- Shares admin page ----------
   function mountSharesAdmin() {
@@ -2668,6 +2757,188 @@
 
   window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
 
+  // Reverse discovery — "what tours can I catch near me". Location-first:
+  // performers with >= min_shows within a radius of home in the window.
+  // Backed by /api/store/tours/near; each show links to its /store/event page.
+  function mountDiscover() {
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (n) => "$" + Math.round(n).toLocaleString();
+    const fmtD = (iso) => {
+      try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+      catch (_) { return iso; }
+    };
+
+    async function run() {
+      const p = new URLSearchParams({
+        home_lat: $("dLat").value, home_lon: $("dLon").value,
+        within_mi: $("dMi").value || "250", days: $("dDays").value || "120",
+        min_shows: $("dMin").value || "2",
+      });
+      if ($("dKind").value) p.set("concerts_only", "true");
+      $("dStatus").textContent = "Searching…";
+      $("dResults").innerHTML = "";
+      try {
+        render(await api("/api/store/tours/near?" + p.toString()));
+      } catch (e) {
+        $("dStatus").textContent = "Error: " + e.message;
+      }
+    }
+
+    function render(d) {
+      const tours = (d && d.tours) || [];
+      $("dStatus").textContent = `${tours.length} tour${tours.length === 1 ? "" : "s"} within ${d.within_mi} mi`;
+      $("dResults").innerHTML = tours.map((t) => {
+        const badges = (t.hot ? '<span class="pill3 hot">🔥 hot</span>' : "")
+          + (t.we_own ? '<span class="pill3 own">in stock</span>' : "");
+        const shows = (t.events || [])
+          .map((ev) => `<a href="/store/event/${ev.event_id}">${esc(ev.city || "")} ${fmtD(ev.date)}</a>`)
+          .join("");
+        const price = t.price_from != null ? ` · from ${money(t.price_from)}` : "";
+        const isTeam = t.kind === "sports";
+        const follow = `/store/tour?performer=${t.performer_id}`
+          + `&home_lat=${encodeURIComponent($("dLat").value)}&home_lon=${encodeURIComponent($("dLon").value)}`
+          + (isTeam ? "&side=home" : "");
+        return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
+          + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? "home games" : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
+          + `<div style="margin:6px 0"><a href="${follow}"><b>${isTeam ? "Follow this team →" : "Follow this tour →"}</b></a></div>`
+          + `<div class="tour-shows">${shows}</div></div>`;
+      }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";
+    }
+
+    $("dGo").addEventListener("click", run);
+    $("dGeo").addEventListener("click", () => {
+      if (!navigator.geolocation) return;
+      $("dStatus").textContent = "Locating…";
+      navigator.geolocation.getCurrentPosition((pos) => {
+        $("dLat").value = pos.coords.latitude.toFixed(4);
+        $("dLon").value = pos.coords.longitude.toFixed(4);
+        run();
+      }, () => { $("dStatus").textContent = "Couldn't get your location — enter it manually."; });
+    });
+    run();
+  }
+
+  // Follow-the-tour — pick a ticket count, attend a performer's whole tour;
+  // seats auto-selected per date. Backed by /api/store/performers/{id}/tour-package.
+  // Performer id + home come from the URL (set by the Discover page).
+  function mountTourFollow() {
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (n) => "$" + Math.round(n).toLocaleString();
+    const fmtD = (iso) => {
+      try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+      catch (_) { return iso; }
+    };
+    const u = new URLSearchParams(location.search);
+    const performer = parseInt(u.get("performer"), 10);
+    let side = u.get("side") || "auto";   // teams: away (road trip) vs home (home stand)
+    if (u.get("home_lat")) $("ftLat").value = u.get("home_lat");
+    if (u.get("home_lon")) $("ftLon").value = u.get("home_lon");
+    if (u.get("qty")) $("ftQty").value = u.get("qty");
+
+    async function run() {
+      if (!Number.isFinite(performer) || performer <= 0) {
+        $("ftStatus").textContent = "No performer selected — start from Discover.";
+        return;
+      }
+      const p = new URLSearchParams({
+        home_lat: $("ftLat").value, home_lon: $("ftLon").value,
+        qty: $("ftQty").value || "2", budget_km: "50000", days: "365", side: side,
+      });
+      if ($("ftBudget").value) p.set("budget_usd", $("ftBudget").value);
+      $("ftStatus").textContent = "Building your tour…";
+      $("ftResult").hidden = true;
+      try {
+        render(await api(`/api/store/performers/${performer}/tour-package?` + p.toString()));
+      } catch (e) {
+        $("ftStatus").textContent = "Error: " + e.message;
+      }
+    }
+
+    function render(d) {
+      const pk = (d && d.package) || {};
+      const qty = d.qty_per_show;
+      const isTeam = String(d.mode || "").indexOf("team") === 0;
+      const away = d.mode === "team_away";
+      let name;
+      if (isTeam) {
+        const ev = (d.all_stops && d.all_stops[0]) || {};
+        const parts = String(ev.event_name || "").split(" at ");   // "Away at Home"
+        name = parts.length === 2 ? (away ? parts[0] : parts[1]) : (ev.performer || "this team");
+      } else {
+        name = (pk.legs && pk.legs[0] && pk.legs[0].performer)
+          || (d.all_stops && d.all_stops[0] && d.all_stops[0].performer) || "this performer";
+      }
+      $("ftTitle").textContent = isTeam
+        ? `Follow ${name} ${away ? "on the road" : "at home"}`
+        : `Follow ${name}'s tour`;
+      // team -> show the away/home toggle, highlight current side
+      const sideEl = $("ftSide");
+      if (sideEl) {
+        sideEl.hidden = !isTeam;
+        sideEl.querySelectorAll(".ftside").forEach((b) => {
+          b.classList.toggle("active", away ? b.dataset.side === "away" : b.dataset.side === "home");
+        });
+      }
+      if (!d.stops_available || !pk.count) {
+        $("ftStatus").textContent = isTeam
+          ? `No ${away ? "away" : "home"} games in range — try the other side.`
+          : "No routable tour right now — try a wider budget.";
+        $("ftResult").hidden = true;
+        return;
+      }
+      $("ftStatus").textContent = isTeam
+        ? `${away ? "Away games · road trip" : "Home stand"} · ${d.stops_available} dates`
+        : `${d.stops_available} tour dates available`;
+      $("ftStat").innerHTML =
+        `<div><span class="l">Total</span><b>${money(pk.fan_total_bundled)}</b></div>` +
+        `<div><span class="l">Tickets</span><b>${pk.count * qty}</b></div>` +
+        `<div><span class="l">Shows</span><b>${pk.count}</b></div>` +
+        `<div><span class="l">Cities</span><b>${pk.cities}</b></div>`;
+      $("ftHead").textContent = `Your shows — ${qty} ticket${qty === 1 ? "" : "s"} at each of ${pk.count}`;
+      const picked = new Set((pk.legs || []).map((l) => l.event_id));
+      $("ftLegs").innerHTML = (d.all_stops || []).map((l) => {
+        const on = picked.has(l.event_id);
+        const s = l.seats;
+        const seat = s
+          ? `<span class="seat">${esc(s.section || "GA")}${s.row ? " " + esc(s.row) : ""}${s.is_owned ? " · in stock" : ""}</span>`
+          : (l.selection === "estimate" ? '<span class="seat">est. price</span>' : '<span class="seat">no group of that size</span>');
+        const hot = l.hot ? '<span class="hot" title="high demand">🔥</span>' : "";
+        const line = l.unit_price != null
+          ? `<span class="line">${money(l.unit_price * qty)} <span class="ea">(${money(l.unit_price)} ea)</span></span>`
+          : "";
+        return `<li class="${on ? "" : "skip"}">`
+          + `<span class="d">${fmtD(l.date)}</span>`
+          + `<span class="c">${esc(l.city || "—")}${hot}</span>`
+          + `<span>${esc(l.event_name || l.venue || "")}</span>`
+          + seat + line + "</li>";
+      }).join("");
+      $("ftResult").hidden = false;
+    }
+
+    $("ftGo").addEventListener("click", run);
+    const sideToggle = $("ftSide");
+    if (sideToggle) sideToggle.addEventListener("click", (e) => {
+      const b = e.target.closest(".ftside");
+      if (!b) return;
+      side = b.dataset.side;     // "away" | "home"
+      run();
+    });
+    $("ftGeo").addEventListener("click", () => {
+      if (!navigator.geolocation) return;
+      $("ftStatus").textContent = "Locating…";
+      navigator.geolocation.getCurrentPosition((pos) => {
+        $("ftLat").value = pos.coords.latitude.toFixed(4);
+        $("ftLon").value = pos.coords.longitude.toFixed(4);
+        run();
+      }, () => { $("ftStatus").textContent = "Couldn't get your location — enter it manually."; });
+    });
+    run();
+  }
+
   // Auto-mount based on body data-page. Lets HTML pages drop their inline
   // `<script>Store.mountX()</script>` so we can ship a strict CSP without
   // 'unsafe-inline'. Added 2026-05-11 (security chat).
@@ -2676,6 +2947,8 @@
     if (page === "catalog") mountCatalog();
     else if (page === "event") mountEvent();
     else if (page === "shares") mountSharesAdmin();
+    else if (page === "discover") mountDiscover();
+    else if (page === "tour") mountTourFollow();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _autoMount);
