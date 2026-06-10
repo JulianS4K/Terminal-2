@@ -26,8 +26,8 @@
       "Docker"
     ],
     "description": "Ticket-trading intelligence + primary-market ticketing platform: a FastAPI backend on Render with Supabase Postgres, edge functions, and cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, ESPN and NWS, maintained by coordinated bot lanes.",
-    "analyzedAt": "2026-06-10T19:01:34.122Z",
-    "gitCommitHash": "13874250a842086925755980978a417c85939f2d"
+    "analyzedAt": "2026-06-10T19:06:37.116Z",
+    "gitCommitHash": "f714e45c5e1fac4f4ccfa403754ff6fc60842c01"
   },
   "nodes": [
     {
@@ -28967,6 +28967,21 @@
         "seatgeek"
       ],
       "complexity": "simple"
+    },
+    {
+      "id": "file:tests/test_security_hardening.py",
+      "type": "file",
+      "name": "test_security_hardening.py",
+      "filePath": "tests/test_security_hardening.py",
+      "summary": "Pytest suite for the 2026-06-10 app.py security hardening: require_auth rejects wrong-audience/unconfirmed/foreign-domain tokens, and the rate-limit middleware keys on the rightmost (proxy-appended) X-Forwarded-For entry so clients can't rotate fake IPs.",
+      "tags": [
+        "test",
+        "pytest",
+        "security",
+        "auth",
+        "rate-limiting"
+      ],
+      "complexity": "moderate"
     }
   ],
   "edges": [
@@ -53457,6 +53472,20 @@
       "type": "related",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:tests/test_security_hardening.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:tests/test_security_hardening.py",
+      "target": "file:tests/test_readonly_guards.py",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
@@ -54488,7 +54517,8 @@
         "file:tests/test_readonly_guards.py",
         "file:tests/test_sg_seller_webhook_contract.py",
         "file:tests/test_views_and_helpers.py",
-        "file:tests/test_watchlist_metrics.py"
+        "file:tests/test_watchlist_metrics.py",
+        "file:tests/test_security_hardening.py"
       ]
     },
     {
