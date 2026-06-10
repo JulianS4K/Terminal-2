@@ -4392,68 +4392,101 @@
     if (body) body.innerHTML = '<div class="empty">Loading AXS box office…</div>';
     if (meta) meta.textContent = 'loading…';
     const t0 = performance.now();
-    let d = null;
+    let secs = null, lst = null;
     try {
-      d = await T.api(`/api/axs/event/${eventId}/sections`);
+      [secs, lst] = await Promise.all([
+        T.api(`/api/axs/event/${eventId}/sections`),
+        T.api(`/api/axs/event/${eventId}/listings`),
+      ]);
     } catch (err) {
       if (meta) meta.textContent = 'error';
       if (body) body.innerHTML = `<div class="empty">load error: ${escapeHtml(String(err && err.message || err))}</div>`;
       return;
     }
     _tabState.loaded['axs-sections'] = true;
-    renderAxsSectionsFull(d, performance.now() - t0);
+    renderAxsBoxOffice(secs, lst, performance.now() - t0);
   }
 
-  function renderAxsSectionsFull(d, ms) {
+  function renderAxsBoxOffice(secs, lst, ms) {
     const body = document.getElementById('axsSectionsBody');
     const meta = document.getElementById('axsSectionsMeta');
     const countChip = document.getElementById('tabCountAxsSections');
     if (!body) return;
-    const sections = (d && d.sections) || [];
-    if (countChip) countChip.textContent = String(sections.length);
-    if (!sections.length) {
+    const sections = (secs && secs.sections) || [];
+    const listings = (lst && lst.listings) || [];
+    if (countChip) countChip.textContent = String(listings.length || sections.length || 0);
+    if (!sections.length && !listings.length) {
       body.innerHTML = '<div class="empty">no AXS box-office snapshot for this event yet</div>';
-      if (meta) meta.textContent = '0 sections';
+      if (meta) meta.textContent = '0 listings';
       return;
     }
-    const cur = (d.currency || 'USD') === 'USD' ? '$' : '';
-    const sm = d.summary || {};
-    const cap = d.captured_at ? T.fmtDate(d.captured_at) : '—';
+    const cur = ((secs && secs.currency) || 'USD') === 'USD' ? '$' : '';
+    const sm = (secs && secs.summary) || {};
+    const lm = (lst && lst.summary) || {};
+    const cap = secs && secs.captured_at ? T.fmtDate(secs.captured_at) : '—';
+    const seats = lm.total_seats != null ? lm.total_seats : sm.available_qty;
     if (meta) {
-      meta.textContent = `${sections.length} sections · ${sm.available_qty != null ? T.fmtNum(sm.available_qty) + ' seats · ' : ''}`
-        + `${cur}${sm.min_price != null ? T.fmtNum(Math.round(sm.min_price)) : '—'}–`
-        + `${cur}${sm.max_price != null ? T.fmtNum(Math.round(sm.max_price)) : '—'} · `
+      meta.textContent = `${seats != null ? T.fmtNum(seats) + ' seats · ' : ''}`
+        + `${listings.length} blocks · ${sections.length} sections · `
+        + `${cur}${lm.min_price != null ? T.fmtNum(Math.round(lm.min_price)) : (sm.min_price != null ? T.fmtNum(Math.round(sm.min_price)) : '—')}–`
+        + `${cur}${lm.max_price != null ? T.fmtNum(Math.round(lm.max_price)) : (sm.max_price != null ? T.fmtNum(Math.round(sm.max_price)) : '—')} · `
         + `${ms.toFixed(0)}ms · snap ${cap}`;
     }
-    const host = document.createElement('div');
-    host.className = 'full-list-host';
-    const tbl = document.createElement('table');
-    tbl.className = 'full-list-tbl';
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Section</th><th>Neighborhood</th><th>Type</th><th>GA</th>
-        <th class="num">Avail</th><th class="num">Min</th><th class="num">Max</th>
-        <th>Resale</th><th class="num">Fee</th>
-      </tr></thead><tbody></tbody>`;
-    const tb = tbl.querySelector('tbody');
-    sections.forEach(s => {
-      const tr = document.createElement('tr');
-      if (s.sold_out) tr.classList.add('row-muted');
-      tr.innerHTML = `
-        <td>${escapeHtml(s.section_label || '—')}</td>
-        <td>${escapeHtml(s.neighborhood || '—')}</td>
-        <td>${escapeHtml(s.seat_types || '—')}</td>
-        <td>${s.is_ga ? '●' : '—'}</td>
-        <td class="num">${s.sold_out ? 'SOLD' : (s.avail_qty != null ? T.fmtNum(s.avail_qty) : '—')}</td>
-        <td class="num">${s.price_min != null ? cur + T.fmtNum(Math.round(s.price_min)) : '—'}</td>
-        <td class="num">${s.price_max != null ? cur + T.fmtNum(Math.round(s.price_max)) : '—'}</td>
-        <td>${s.has_resale ? 'Yes' : '—'}</td>
-        <td class="num">${s.connection_fee != null ? cur + T.fmtNum(Math.round(s.connection_fee)) : '—'}</td>`;
-      tb.appendChild(tr);
-    });
-    host.appendChild(tbl);
     body.innerHTML = '';
-    body.appendChild(host);
+
+    // 1) by-section rollup
+    if (sections.length) {
+      const h1 = document.createElement('div');
+      h1.className = 'panel-title row'; h1.innerHTML = '<span>BY SECTION</span>';
+      body.appendChild(h1);
+      const host1 = document.createElement('div'); host1.className = 'full-list-host';
+      const t1 = document.createElement('table'); t1.className = 'full-list-tbl';
+      t1.innerHTML = `<thead><tr><th>Section</th><th>Neighborhood</th><th>Type</th><th>GA</th>
+        <th class="num">Avail</th><th class="num">Min</th><th class="num">Max</th><th>Resale</th></tr></thead><tbody></tbody>`;
+      const b1 = t1.querySelector('tbody');
+      sections.forEach(s => {
+        const tr = document.createElement('tr');
+        if (s.sold_out) tr.classList.add('row-muted');
+        tr.innerHTML = `
+          <td>${escapeHtml(s.section_label || '—')}</td>
+          <td>${escapeHtml(s.neighborhood || '—')}</td>
+          <td>${escapeHtml(Array.isArray(s.seat_types) ? s.seat_types.join(',') : (s.seat_types || '—'))}</td>
+          <td>${s.is_ga ? '●' : '—'}</td>
+          <td class="num">${s.sold_out ? 'SOLD' : (s.avail_qty != null ? T.fmtNum(s.avail_qty) : '—')}</td>
+          <td class="num">${s.price_min != null ? cur + T.fmtNum(Math.round(s.price_min)) : '—'}</td>
+          <td class="num">${s.price_max != null ? cur + T.fmtNum(Math.round(s.price_max)) : '—'}</td>
+          <td>${s.has_resale ? 'Yes' : '—'}</td>`;
+        b1.appendChild(tr);
+      });
+      host1.appendChild(t1); body.appendChild(host1);
+    }
+
+    // 2) consecutive-seat listings (EVO standard: section/row/qty/price/type/seats)
+    if (listings.length) {
+      const h2 = document.createElement('div');
+      h2.className = 'panel-title row';
+      h2.innerHTML = `<span>LISTINGS — consecutive-seat blocks${lm.biggest_block ? ' · biggest ' + lm.biggest_block : ''}</span>`;
+      body.appendChild(h2);
+      const host2 = document.createElement('div'); host2.className = 'full-list-host';
+      const t2 = document.createElement('table'); t2.className = 'full-list-tbl';
+      t2.innerHTML = `<thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th>
+        <th class="num">Price</th><th>Type</th><th>Seats</th><th>Src</th></tr></thead><tbody></tbody>`;
+      const b2 = t2.querySelector('tbody');
+      listings.forEach(r => {
+        const tr = document.createElement('tr');
+        if (r.src === 'resale') tr.classList.add('row-muted');
+        tr.innerHTML = `
+          <td>${escapeHtml(r.section || '—')}</td>
+          <td>${escapeHtml(r.row || '—')}</td>
+          <td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>
+          <td class="num">${r.retail_price != null ? cur + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
+          <td>${escapeHtml(r.type || '—')}${r.wheelchair ? ' ♿' : ''}</td>
+          <td>${escapeHtml(r.seat_numbers || '—')}</td>
+          <td>${r.src === 'resale' ? 'resale' : 'primary'}</td>`;
+        b2.appendChild(tr);
+      });
+      host2.appendChild(t2); body.appendChild(host2);
+    }
   }
 
   // ---------- Our TEvo Orders (full) ----------

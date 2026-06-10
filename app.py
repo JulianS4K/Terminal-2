@@ -4184,6 +4184,49 @@ def axs_event_sections(event_id: int, limit: int = 1000, _=Depends(require_auth)
     }
 
 
+@app.get("/api/axs/event/{event_id}/listings")
+def axs_event_listings(event_id: int, limit: int = 3000, _=Depends(require_auth)):
+    """AXS box-office inventory in the EVO listing standard (consecutive-seat
+    blocks), latest snapshot. Free — reads v_axs_listings. Each row is a block:
+    section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only
+    seat_numbers (TEvo ticket groups don't carry exact seats)."""
+    limit = max(1, min(int(limit), 10000))
+    db = require_sb()
+    snap = (
+        db.table("axs_event_snapshots").select("id,captured_at,event_name,venue_name")
+        .eq("tevo_event_id", event_id).order("captured_at", desc=True).limit(1).execute()
+    ).data or []
+    if not snap:
+        return {"event_id": event_id, "count": 0, "listings": [], "summary": None,
+                "captured_at": None}
+    s0 = snap[0]
+    rows = (
+        db.table("v_axs_listings")
+        .select("section,row,quantity,retail_price,type,format,wheelchair,seat_numbers,"
+                "src,neighborhood,is_ga,seat_from,seat_to")
+        .eq("snapshot_id", s0["id"])
+        .order("section").order("row").order("seat_from")
+        .limit(limit).execute()
+    ).data or []
+    prices = [r["retail_price"] for r in rows if r.get("retail_price") is not None]
+    return {
+        "event_id": event_id,
+        "captured_at": s0["captured_at"],
+        "event_name": s0.get("event_name"),
+        "venue_name": s0.get("venue_name"),
+        "count": len(rows),
+        "listings": rows,
+        "summary": {
+            "blocks": len(rows),
+            "total_seats": sum(int(r.get("quantity") or 0) for r in rows),
+            "min_price": min(prices) if prices else None,
+            "max_price": max(prices) if prices else None,
+            "biggest_block": max((int(r.get("quantity") or 0) for r in rows), default=0),
+            "resale_blocks": sum(1 for r in rows if r.get("src") == "resale"),
+        },
+    }
+
+
 @app.get("/api/axs/event/{event_id}/series")
 def axs_event_series(event_id: int, range: str | None = None, hours: int | None = None,
                      days: int = 30, _=Depends(require_auth)):
