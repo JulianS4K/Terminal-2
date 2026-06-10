@@ -2,17 +2,17 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by a small set of specialized bot lanes coordinating through `public.bot_chat`.
 
-> **Doc version:** v1.3.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.3.0 2026-06-10 (A1) — *Architecture* + *Repo layout* + *Build/run* refreshed against the tree: full nine-client list, `broadway_extension/` + `trip_planner/` added, dead `.env.example` step replaced. The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
+> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.3.0 2026-06-10 (A1) — *Architecture* + *Repo layout* + *Build/run* refreshed against the tree: full nine-client list, `broadway_extension/` + `trip_planner/` added, dead `.env.example` step replaced; v1.4.0 2026-06-10 (A1) — bible sweep folded into the entry point: *Start here* surfaces the AQ-mapper #1 fact + lane status, *Conventions* gains cross-source-ID / lane-goals / edge-fn-auth pointers. The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
 
 ---
 
-## Start here (reading order) *(v1.2 · C1 · 2026-06-09)*
+## Start here (reading order) *(v1.3 · A1 · 2026-06-10)*
 
 A cold-started bot should read these four, in order. The first is loaded for you automatically every session; the rest you read once at session start.
 
 1. **[`CLAUDE.md`](CLAUDE.md)** — *(auto-loaded every session)* immutable security + operator lockdown rules. The safety baseline; it directs you to read the bible next.
-2. **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md)** — the per-session playbook: hard rules, SQL macros, §3 column-name landmines, workflow recipes, 10-item self-check. **Read this first** of the things you choose to open.
-3. **[`BOT_HIERARCHY.md`](BOT_HIERARCHY.md)** — who you are, who can push where, per-lane write scope, Render service ownership.
+2. **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md)** — the per-session playbook: hard rules, SQL macros, §3 column-name landmines, workflow recipes, 11-item self-check. **Read this first** of the things you choose to open — and read **its §0 before any cross-source SQL**: source event IDs NEVER line up; everything resolves through the `aq_event_map` hub. It's the #1 fact cold sessions miss.
+3. **[`BOT_HIERARCHY.md`](BOT_HIERARCHY.md)** — who you are, who can push where, per-lane write scope, Render service ownership. At a glance: **A1 · B1 · C1 · D0 are ACTIVE** (D0 is the priority lane); D1–D4 and E1 are **PAUSED** until D0 ships.
 4. **[`D0_BIBLE.md`](D0_BIBLE.md)** — cross-source ID architecture **+ the full cold-start manual for building the D0 terminal frontend** (PART 1).
 
 Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't claim a row marked `[IN PROGRESS by <lane>]`).
@@ -121,14 +121,17 @@ uvicorn app:app --reload --port 8765
 
 `http://localhost:8765` → home hub; `/static/terminal/event.html?event=<id>` → D0 broker view.
 
-## Conventions — quick pointers (don't restate; link)
+## Conventions — quick pointers (don't restate; link) *(v1.1 · A1 · 2026-06-10)*
 
-- **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3`
+- **Cross-source IDs never line up — resolve through the AQ mapper hub** → `PROJECT_BIBLE.md §0` (one-pager) · `D0_BIBLE.md §3` (full architecture)
+- **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3` + `§7`
 - **Migration filename/header/apply rules** → `MIGRATION_CONVENTIONS.md`
 - **Who can push / per-lane scope** → `BOT_HIERARCHY.md` (A1 is sole pusher to `main`)
-- **What exists before you build something new** → `RESOURCES_BIBLE.md`
+- **What exists before you build something new** (tables · views · crons · edge fns · vault) → `RESOURCES_BIBLE.md`
+- **Where each lane is headed** (north-star + endgame per lane) → `docs/d_tier_goals.md`
+- **Edge functions that mutate or burn paid APIs: platform `verify_jwt` is NOT sufficient** → `PROJECT_BIBLE.md §1` rule 7 (`requireCronSecret` pattern)
 - **Credential rotation** → `MIGRATION_CONVENTIONS.md` vault allowlist + `docs/release-discipline.md §7`
-- **Cross-bot coordination** → `public.bot_chat` (durable, append-only) + Slack `#terminal-2-*`
+- **Cross-bot coordination** → `public.bot_chat` (durable, append-only; conventions: `docs/bot_chat_conventions.md`) + Slack `#terminal-2-*`
 
 ---
 
