@@ -1,0 +1,15 @@
+{
+  "extraKnownMarketplaces": {
+    "terminal2": {
+      "source": {
+        "source": "directory",
+        "path": "./"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "terminal2-governance@terminal2": true,
+    "security-guidance@claude-code-plugins": true,
+    "pr-review-toolkit@claude-code-plugins": true
+  }
+}

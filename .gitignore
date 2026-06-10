@@ -30,7 +30,11 @@ build/
 # Supabase local
 supabase/.temp/
 
-.claude/
+# .claude/ stays ignored (session worktrees, local settings) EXCEPT the
+# team-shared plugin/marketplace config — cloud sessions only see what's
+# committed, so settings.json must be in git.
+.claude/*
+!.claude/settings.json
 
 .scratch/
 
