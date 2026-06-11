@@ -309,37 +309,77 @@ async function startServer() {
   app.use('/api/create-checkout-session', checkoutLimiter);
 
   // -- API: Create Stripe Checkout Session --------------------------------
-  // NOTE: This still trusts the client-supplied price. Validating against
-  // the event/tier doc on the server is part of the deferred Stripe phase.
+  // Canonical buyer checkout is the `exos-checkout` Supabase edge function
+  // (the live SPA calls it via supabase.functions.invoke). This Express route
+  // exists only for the future standalone-server deployment; it mirrors the
+  // edge function's security posture: the buyer is authenticated from their
+  // Supabase JWT, and price + currency are read server-side from the DB —
+  // never trusted from the request body.
   app.post("/api/create-checkout-session", async (req, res, next) => {
     try {
-      const { price, eventName, eventId, tierId, userId, quantity, promoCode, currency, promoterId } = req.body;
+      const { eventId, tierId, quantity, promoCode, promoterId } = req.body;
       const stripeClient = getStripe();
       if (!stripeClient) {
         return res.status(503).json({ error: "Stripe not configured" });
       }
+      if (!eventId || !tierId) {
+        return res.status(400).json({ error: "missing eventId / tierId" });
+      }
+
+      const sbUrl = process.env.VITE_SUPABASE_URL;
+      const sbKey = process.env.VITE_SUPABASE_ANON_KEY;
+      if (!sbUrl || !sbKey) {
+        return res.status(503).json({ error: "Supabase not configured" });
+      }
+
+      // Authenticate the buyer from their forwarded Supabase session. Never
+      // trust a client-supplied userId — derive it from the verified token.
+      const { createClient } = await import('@supabase/supabase-js');
+      const authHeader = req.get('authorization') || '';
+      const sb = createClient(sbUrl, sbKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return res.status(401).json({ error: "unauthorized" });
+
+      const qty = Number.isInteger(quantity) && quantity > 0 && quantity <= 10 ? quantity : 1;
+
+      // Authoritative price/capacity from the server-side tier projection
+      // (anon-readable; price/sold/capacity are the source of truth).
+      const { data: tier, error: tierErr } = await sb
+        .from('exos_public_tiers')
+        .select('id, name, price, capacity, sold, event_id')
+        .eq('id', tierId)
+        .eq('event_id', eventId)
+        .maybeSingle();
+      if (tierErr || !tier) return res.status(404).json({ error: "tier not found" });
+      if (tier.capacity > 0 && tier.sold + qty > tier.capacity) {
+        return res.status(409).json({ error: "not enough tickets in this tier" });
+      }
+
+      const { data: ev } = await sb
+        .from('exos_public_events')
+        .select('name, currency')
+        .eq('id', eventId)
+        .maybeSingle();
+      const currency = (ev?.currency && /^[A-Za-z]{3}$/.test(ev.currency))
+        ? ev.currency.toLowerCase()
+        : 'usd';
+      const unitAmount = Math.round(Number(tier.price) * 100);
 
       const session = await stripeClient.checkout.sessions.create({
         payment_method_types: ["card"],
         line_items: [
           {
             price_data: {
-              // Currency comes from the event doc, threaded through by
-              // EventDetails. Stripe accepts ISO 4217 lowercase. We
-              // default to USD when the request omits it (legacy events
-              // pre-currency-field). The phase-2 Stripe rebuild should
-              // validate this against an allowlist of currencies the
-              // platform is enabled for.
-              currency: typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)
-                ? currency.toLowerCase()
-                : 'usd',
+              currency,
               product_data: {
-                name: `${eventName} - Ticket`,
-                metadata: { eventId, tierId, userId },
+                name: `${ev?.name ?? 'Event'} — ${tier.name}`,
+                metadata: { eventId, tierId },
               },
-              unit_amount: Math.round(price * 100),
+              unit_amount: unitAmount,
             },
-            quantity: quantity || 1,
+            quantity: qty,
           },
         ],
         mode: "payment",
@@ -348,8 +388,9 @@ async function startServer() {
         metadata: {
           eventId,
           tierId,
-          userId,
-          quantity: (quantity || 1).toString(),
+          // Authenticated buyer, not a client-supplied id.
+          userId: user.id,
+          quantity: qty.toString(),
           // Promo code passes through metadata so MyTickets fulfillment
           // can increment events/{id}/promoUses/{code} once the buyer
           // actually pays. Stripe rejects null metadata values, so we
