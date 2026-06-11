@@ -34,6 +34,7 @@ Usage:
 """
 from __future__ import annotations
 
+import functools
 import re
 import sys
 from pathlib import Path
@@ -121,6 +122,15 @@ TS_POST_ALLOWLIST = (
 )
 
 # SKIP_DIRS applies only to .py / .ts walks. plpgsql scan opts in supabase/migrations explicitly.
+# File suffixes each scan covers. Exposed as module constants so external
+# callers (e.g. the terminal2-governance edit-time hook) can mirror this
+# scanner's exact scope instead of maintaining a drift-prone parallel list.
+PY_SCAN_SUFFIXES = (".py",)
+WEB_SCAN_SUFFIXES = (".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs", ".html")
+# .sql is scanned ONLY under this dir (see check_plpgsql_writes); .sql edits
+# elsewhere are out of scanner scope.
+MIGRATIONS_REL = "supabase/migrations"
+
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".claude",
              "supabase/migrations", ".next", "dist", "build",
              # tests/ is allowed to embed synthetic violations as test fixtures
@@ -140,7 +150,12 @@ def _is_skipped(path: Path) -> bool:
     )
 
 
+@functools.lru_cache(maxsize=None)
 def _walk(suffixes: tuple[str, ...]) -> list[Path]:
+    # Cached per-process: main()'s success banner re-requests the same suffix
+    # tuples the checkers already walked, and the edit-time hook puts this
+    # script on the per-edit hot path — without the cache a clean run does
+    # two redundant full-tree rglob() traversals just to print counts.
     out: list[Path] = []
     for p in ROOT.rglob("*"):
         if not p.is_file():
@@ -156,7 +171,7 @@ def _walk(suffixes: tuple[str, ...]) -> list[Path]:
 def check_python_writes() -> list[str]:
     """Find any Python file with requests.post/.put/.patch/.delete or similar."""
     violations: list[str] = []
-    for f in _walk((".py",)):
+    for f in _walk(PY_SCAN_SUFFIXES):
         text = f.read_text(encoding="utf-8", errors="ignore")
         for pattern in PY_FORBIDDEN_PATTERNS:
             for m in pattern.finditer(text):
@@ -206,7 +221,7 @@ def check_ts_writes() -> list[str]:
     resolves to one."""
     violations: list[str] = []
     # .html covers inline <script> blocks; .mjs/.cjs cover module/CommonJS JS.
-    for f in _walk((".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs", ".html")):
+    for f in _walk(WEB_SCAN_SUFFIXES):
         text = f.read_text(encoding="utf-8", errors="ignore")
         host_vars = _ts_forbidden_host_vars(text)
         for m in TS_FORBIDDEN_PATTERN.finditer(text):
@@ -319,8 +334,8 @@ def main() -> int:
 
     mig_count = len(list((ROOT / "supabase" / "migrations").glob("*.sql"))) if (ROOT / "supabase" / "migrations").exists() else 0
     print("RULE 2 clean — no write paths detected to TEvo, SeatGeek, TickPick, or Vivid Seats hosts.")
-    print(f"  - Python files scanned   : {len(_walk(('.py',)))}")
-    print(f"  - TS/JS/HTML files scanned: {len(_walk(('.ts', '.js', '.tsx', '.jsx', '.mjs', '.cjs', '.html')))}")
+    print(f"  - Python files scanned   : {len(_walk(PY_SCAN_SUFFIXES))}")
+    print(f"  - TS/JS/HTML files scanned: {len(_walk(WEB_SCAN_SUFFIXES))}")
     print(f"  - plpgsql migrations     : {mig_count}")
     print(f"  - Client guards present  : {', '.join(sorted(CLIENT_FILES))}")
     return 0
