@@ -239,41 +239,99 @@
     const num   = v => (v == null ? '—' : T.fmtNum(v));
     const pane = document.getElementById('paneOverview');
     if (!pane) return;
+
+    // Price-history section (only when the daily rollup has data).
+    let priceSection;
     if (!rows.length) {
-      pane.innerHTML = '<section class="panel"><div class="empty">No SeatGeek price history logged yet for this match.' +
-        '<div class="muted small">It populates as the daily World Cup price logger runs (wc_price_daily).</div></div></section>';
-      return;
+      priceSection = '<section class="panel"><div class="empty">No SeatGeek daily price history yet for this match.' +
+        '<div class="muted small">Populates as the World Cup price logger runs (wc_price_daily).</div></div></section>';
+    } else {
+      const kpis = [
+        ['GET-IN (all-in)', money(latest.allin_min)],
+        ['MEDIAN',          money(latest.allin_median)],
+        ['P90',             money(latest.allin_p90)],
+        ['LISTINGS',        num(latest.listings_count)],
+        ['TICKETS',         num(latest.tickets_count)],
+        ['OWNED LISTINGS',  num(latest.owned_listings)],
+      ];
+      const kpiHtml = kpis.map(([l, v]) =>
+        `<div class="kpi-cell"><span class="kpi-lbl">${l}</span><span class="kpi-val">${v}</span></div>`).join('');
+      const tableRows = rows.slice().reverse().map(r =>
+        '<tr>' +
+        `<td>${escapeHtml(T.fmtDate(r.snapshot_date))}</td>` +
+        `<td class="num">${money(r.allin_min)}</td>` +
+        `<td class="num">${money(r.allin_median)}</td>` +
+        `<td class="num">${money(r.allin_p90)}</td>` +
+        `<td class="num">${num(r.listings_count)}</td>` +
+        `<td class="num">${num(r.tickets_count)}</td>` +
+        '</tr>').join('');
+      const spark = sgSparkline(rows.map(r => +r.allin_median).filter(v => Number.isFinite(v)));
+      priceSection =
+        `<section id="kpi-grid">${kpiHtml}</section>` +
+        '<section id="sg-price-history">' +
+          '<div class="panel-title row"><span>SEATGEEK PRICE HISTORY — daily all-in (wc_price_daily)</span>' +
+          `<span class="muted small">${rows.length} days · sg_event_id ${sgId}</span></div>` +
+          spark +
+          '<table class="wc-daily"><thead><tr><th>Date</th><th class="num">Get-in</th><th class="num">Median</th>' +
+          '<th class="num">P90</th><th class="num">Listings</th><th class="num">Tickets</th></tr></thead>' +
+          `<tbody>${tableRows}</tbody></table>` +
+        '</section>';
     }
-    const kpis = [
-      ['GET-IN (all-in)', money(latest.allin_min)],
-      ['MEDIAN',          money(latest.allin_median)],
-      ['P90',             money(latest.allin_p90)],
-      ['LISTINGS',        num(latest.listings_count)],
-      ['TICKETS',         num(latest.tickets_count)],
-      ['OWNED LISTINGS',  num(latest.owned_listings)],
-    ];
-    const kpiHtml = kpis.map(([l, v]) =>
-      `<div class="kpi-cell"><span class="kpi-lbl">${l}</span><span class="kpi-val">${v}</span></div>`).join('');
-    const tableRows = rows.slice().reverse().map(r =>
-      '<tr>' +
-      `<td>${escapeHtml(T.fmtDate(r.snapshot_date))}</td>` +
-      `<td class="num">${money(r.allin_min)}</td>` +
-      `<td class="num">${money(r.allin_median)}</td>` +
-      `<td class="num">${money(r.allin_p90)}</td>` +
-      `<td class="num">${num(r.listings_count)}</td>` +
-      `<td class="num">${num(r.tickets_count)}</td>` +
+
+    pane.innerHTML = priceSection +
+      '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
+        '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>' +
+      '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
+        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>' +
+      '<section id="other-markets"><div class="panel-title">OTHER MARKETS — via AQ hub</div>' +
+        '<div class="muted small">StubHub + VividSeats collection is being enabled for World Cup matches (listings appear here as they\'re pulled). ' +
+        'Ticketmaster + GameTime use slug-based URLs and require discovery. Seat map / EVO aren\'t available — these events aren\'t in the TEvo market.</div></section>';
+
+    loadSgListingsInline(sgId).catch(e => console.error('[sg listings]', e));
+    loadSgSalesInline(sgId).catch(e => console.error('[sg sales]', e));
+  }
+
+  async function loadSgListingsInline(sgId) {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('sgLstBody'), meta = document.getElementById('sgLstMeta');
+    if (!body || !Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_wc_sg_listings', { p_sg_event_id: sgId, p_limit: 500 });
+    if (res.error) { body.innerHTML = `<div class="empty">${escapeHtml(res.error.message)}</div>`; if (meta) meta.textContent = ''; return; }
+    const rows = res.data || [];
+    if (meta) meta.textContent = rows.length ? `${rows.length} listings` : '';
+    if (!rows.length) { body.innerHTML = '<div class="empty">No current SeatGeek listings.</div>'; return; }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const trs = rows.map(r => '<tr>' +
+      `<td>${escapeHtml(r.section || '—')}</td>` +
+      `<td>${escapeHtml(r.row || '—')}</td>` +
+      `<td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>` +
+      `<td class="num">${money(r.retail_price_all_in)}</td>` +
+      `<td class="num">${money(r.broadcast_price)}</td>` +
+      `<td>${r.is_broker_owned ? '<span class="badge">OURS</span>' : ''}</td>` +
       '</tr>').join('');
-    const spark = sgSparkline(rows.map(r => +r.allin_median).filter(v => Number.isFinite(v)));
-    pane.innerHTML =
-      `<section id="kpi-grid">${kpiHtml}</section>` +
-      '<section id="sg-price-history">' +
-        '<div class="panel-title row"><span>SEATGEEK PRICE HISTORY — daily all-in (wc_price_daily)</span>' +
-        `<span class="muted small">${rows.length} days · sg_event_id ${sgId}</span></div>` +
-        spark +
-        '<table class="wc-daily"><thead><tr><th>Date</th><th class="num">Get-in</th><th class="num">Median</th>' +
-        '<th class="num">P90</th><th class="num">Listings</th><th class="num">Tickets</th></tr></thead>' +
-        `<tbody>${tableRows}</tbody></table>` +
-      '</section>';
+    body.innerHTML = '<table><thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th>' +
+      '<th class="num">All-in</th><th class="num">List</th><th></th></tr></thead><tbody>' + trs + '</tbody></table>';
+  }
+
+  async function loadSgSalesInline(sgId) {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('sgSlsBody'), meta = document.getElementById('sgSlsMeta');
+    if (!body || !Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_wc_sg_sales', { p_sg_event_id: sgId, p_days: 90, p_limit: 200 });
+    if (res.error) { body.innerHTML = `<div class="empty">${escapeHtml(res.error.message)}</div>`; if (meta) meta.textContent = ''; return; }
+    const rows = res.data || [];
+    if (meta) meta.textContent = rows.length ? `${rows.length} sales` : '';
+    if (!rows.length) { body.innerHTML = '<div class="empty">No recent SeatGeek sales.</div>'; return; }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const trs = rows.map(r => '<tr>' +
+      `<td class="muted small">${r.sale_at_utc ? escapeHtml(T.fmtDate(r.sale_at_utc)) : '—'}</td>` +
+      `<td>${escapeHtml(r.section || '—')}</td>` +
+      `<td>${escapeHtml(r.row || '—')}</td>` +
+      `<td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>` +
+      `<td class="num">${money(r.broadcast_price)}</td>` +
+      '</tr>').join('');
+    body.innerHTML = '<table><thead><tr><th>Sold</th><th>Section</th><th>Row</th>' +
+      '<th class="num">Qty</th><th class="num">Price</th></tr></thead><tbody>' + trs + '</tbody></table>';
   }
 
   // Minimal inline-SVG sparkline of the median-price series (no chart lib needed).
