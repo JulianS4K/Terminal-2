@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1200, initial-scale=1" />
+<title>VibePass &middot; hub preview</title>
+<style>
+:root{--bg:#0a0a0a;--panel:#141414;--panel-2:#1a1a1a;--line:#2a2a2a;--line-2:#1f1f1f;--text:#e5e5e5;--muted:#737373;--dim:#4a4a4a;--accent:#fbbf24;--pos:#4ade80;--neg:#ef4444;--warn:#f59e0b;--info:#60a5fa;--shade:rgba(251,191,36,0.08);--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;min-height:100vh;-webkit-font-smoothing:antialiased;}
+.preview-ribbon{background:var(--shade);border-bottom:1px solid var(--accent);color:var(--accent);font-family:var(--mono);font-size:11px;text-align:center;padding:6px 12px;letter-spacing:.5px;}
+.topbar{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;padding:16px 32px;background:var(--panel);border-bottom:1px solid var(--line);}
+.topbar .brand{color:var(--accent);font-family:var(--mono);font-weight:700;font-size:16px;letter-spacing:1px;}
+.topbar .brand-sub{color:var(--muted);font-family:var(--mono);font-size:11px;}
+.topbar #auth-ctrl{font-family:var(--mono);font-size:11px;color:var(--muted);}
+.topbar #auth-ctrl a{color:var(--muted);text-decoration:none;padding:4px 10px;border:1px solid var(--line);}
+main.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;padding:48px 32px;max-width:1400px;margin:0 auto;}
+.card{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-top-width:3px;padding:24px;min-height:220px;text-decoration:none;color:var(--text);transition:border-color 120ms,transform 120ms;}
+.card:hover{border-color:var(--accent);transform:translateY(-2px);}
+.card.terminal{border-top-color:var(--accent);}
+.card.undelivered{border-top-color:var(--warn);}
+.card.store{border-top-color:var(--info);}
+.card.bridge{border-top-color:#c084fc;}
+.card.locked{opacity:.55;pointer-events:none;}
+.card-tag{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--line-2);margin-bottom:12px;}
+.card.terminal .card-tag{color:var(--accent);}
+.card.undelivered .card-tag{color:var(--warn);}
+.card.store .card-tag{color:var(--info);}
+.card.bridge .card-tag{color:#c084fc;}
+.card h2{margin:0 0 8px;font-size:22px;color:var(--text);}
+.card p{margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.6;}
+.card-cta{margin-top:auto;font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);}
+.card.bridge .card-cta{color:#c084fc;}
+.card.locked .card-cta{display:none;}
+.card-note,.card-gate{margin-top:auto;font-family:var(--mono);font-size:11px;color:var(--muted);}
+.card-gate code{background:var(--bg);padding:1px 6px;color:var(--accent);font-size:10px;}
+.foot{display:flex;justify-content:space-between;align-items:center;padding:16px 32px;border-top:1px solid var(--line);background:var(--panel);}
+.muted{color:var(--muted);}.small{font-size:11px;font-family:var(--mono);}
+</style>
+</head>
+<body data-page="home">
+<div class="preview-ribbon">STATIC PREVIEW &middot; local copy of static/home/index.html &middot; signed-out state shown</div>
+<header class="topbar">
+  <span class="brand">VIBEPASS</span>
+  <span class="brand-sub">4-surface frontend &middot; always-on entry</span>
+  <span id="auth-ctrl"><a href="#">sign in</a></span>
+</header>
+<main class="grid">
+  <a class="card terminal locked">
+    <div class="card-tag">D0 &middot; BROKER</div>
+    <h2>Terminal</h2>
+    <p>Broker-level event detail, movers, performer rollup. The pricing decisions desk.</p>
+    <div class="card-gate">Sign in with <code>@s4kent.com</code> to access</div>
+  </a>
+  <a class="card undelivered locked">
+    <div class="card-tag">CS &middot; FULFILLMENT</div>
+    <h2>Undelivered</h2>
+    <p>Customer service + fulfillment + sales tracking across EVO / SeatGeek / TickPick / Vivid / retail. Time-to-event sort, hold-expiry alerts, bulk-deliver-per-event.</p>
+    <div class="card-gate">Sign in with <code>@s4kent.com</code> to access</div>
+  </a>
+  <a class="card store" href="#">
+    <div class="card-tag">PUBLIC &middot; STORE</div>
+    <h2>Store</h2>
+    <p>Customer-facing sales front. Browse events, view inventory, share deep-links. Public &mdash; no sign-in required.</p>
+    <div class="card-cta">Open Store &rarr;</div>
+  </a>
+  <a class="card bridge" href="#">
+    <div class="card-tag">D4 &middot; BRIDGE</div>
+    <h2>Bridge</h2>
+    <p>Independent venue ticketing platform for organizers. Create events, manage tickets, run door check-in, invite your team.</p>
+    <div class="card-cta">Open Bridge &rarr;</div>
+    <div class="card-note">Sign in above &mdash; your session carries over to Bridge automatically.</div>
+  </a>
+</main>
+<footer class="foot">
+  <span class="muted small">Always-on unified entry. Pick a surface &mdash; Render static CDN, no cold-start.</span>
+  <span class="muted small">preview build</span>
+</footer>
+</body>
+</html>
