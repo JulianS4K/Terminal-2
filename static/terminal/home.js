@@ -139,8 +139,9 @@
       // with an "SG" badge. Row actions key on whichever id the row carries.
       const isSg = it.tevo_event_id == null;
       const title = escapeHtml(it.event_name || (isSg ? ('SG ' + it.sg_event_id) : ('Event ' + it.tevo_event_id)));
+      // SG-native rows (e.g. World Cup) open the event page in SeatGeek mode (?sg=).
       const titleHtml = isSg
-        ? `${title} <span class="src-badge sg" title="SeatGeek-native (FIFA primary) — no TEvo page">SG</span>`
+        ? `<a href="event.html?sg=${it.sg_event_id}">${title}</a> <span class="src-badge sg" title="SeatGeek-native (FIFA primary)">SG</span>`
         : `<a href="event.html?event=${it.tevo_event_id}">${title}</a>`;
       const dataAttrs = `data-tevo="${it.tevo_event_id ?? ''}" data-sg="${it.sg_event_id ?? ''}"`;
       const tr = document.createElement('tr');

@@ -141,7 +141,11 @@
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const eventId = T.getEventId();
     if (!eventId) {
-      T.setStatus('No event id — pass ?event=<id>', 'err');
+      // SeatGeek-native events (e.g. 2026 World Cup — FIFA primary inventory with
+      // no TEvo event behind them) open the SAME page in a reduced "SG mode".
+      const sgId = getSgEventId();
+      if (sgId) return initSgEvent(sgId);
+      T.setStatus('No event id — pass ?event=<id> or ?sg=<id>', 'err');
       return;
     }
     const Auth = window.TerminalAuth;
@@ -174,6 +178,145 @@
     // Live updates (Supabase Realtime). Best-effort, post-render: if the socket
     // never connects or no pings arrive the page is unchanged from before.
     safe('realtime', () => wireRealtime(eventId));
+  }
+
+  // ── SeatGeek-native event mode (e.g. 2026 World Cup) ───────────────────────
+  // These events are FIFA primary inventory carried by SeatGeek with no TEvo
+  // event behind them, so the standard TEvo-keyed page (get_broker_event_page_v3)
+  // can't load. We open the SAME event page in a reduced view: hero + the daily
+  // SeatGeek all-in price series we already log (get_wc_price_daily). Gated on
+  // ?sg=<id> with no ?event=, so the TEvo path above is completely untouched.
+  function getSgEventId() {
+    const v = new URLSearchParams(location.search).get('sg');
+    if (!v) return null;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  async function initSgEvent(sgId) {
+    const Auth = window.TerminalAuth;
+    if (Auth && !isLocalhost() && !Auth.isAllowedEmail(Auth.getEmail())) {
+      T.setStatus('Not signed in with @s4kent.com — sign in first', 'err');
+      return;
+    }
+    T.setStatus('Loading SeatGeek event…');
+    // Every tab is TEvo-source-specific — hide the nav and non-overview panes.
+    const tabs = document.getElementById('eventTabs');
+    if (tabs) tabs.hidden = true;
+    document.querySelectorAll('.tab-pane').forEach(p => { if (p.id !== 'paneOverview') p.hidden = true; });
+
+    const res = (Auth && Auth.client)
+      ? await Auth.client.rpc('get_wc_price_daily', { p_sg_event_id: sgId, p_days: 365 })
+      : { error: { message: 'not signed in' } };
+    if (res.error) {
+      T.setStatus(res.error.message, 'err');
+      renderSgEvent(sgId, []);
+      return;
+    }
+    T.setStatus('Loaded', 'ok');
+    renderSgEvent(sgId, res.data || []);
+    wireSgTrackButton(sgId).catch(e => console.error('[sg track]', e));
+  }
+
+  function renderSgEvent(sgId, rows) {
+    const latest = rows.length ? rows[rows.length - 1] : null;
+    const name  = (latest && latest.sg_event_name) || ('SeatGeek event ' + sgId);
+    const venue = latest && latest.venue_name;
+    const date  = latest && (latest.match_date || latest.snapshot_date);
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('evTitle', name);
+    set('evVenue', venue || '—');
+    set('evDate', date ? T.fmtDate(date) : '—');
+    // Coverage: SeatGeek only. Hide TEvo-only freshness + weather strips.
+    document.querySelectorAll('#coverage .light').forEach(l =>
+      l.classList.toggle('on', l.getAttribute('data-src') === 'seatgeek'));
+    const mode = document.getElementById('eventMode');
+    if (mode) mode.textContent = 'SeatGeek · primary inventory (no TEvo market)';
+    const fr = document.getElementById('freshness'); if (fr) fr.hidden = true;
+    const hw = document.getElementById('hero-weather'); if (hw) hw.hidden = true;
+
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const num   = v => (v == null ? '—' : T.fmtNum(v));
+    const pane = document.getElementById('paneOverview');
+    if (!pane) return;
+    if (!rows.length) {
+      pane.innerHTML = '<section class="panel"><div class="empty">No SeatGeek price history logged yet for this match.' +
+        '<div class="muted small">It populates as the daily World Cup price logger runs (wc_price_daily).</div></div></section>';
+      return;
+    }
+    const kpis = [
+      ['GET-IN (all-in)', money(latest.allin_min)],
+      ['MEDIAN',          money(latest.allin_median)],
+      ['P90',             money(latest.allin_p90)],
+      ['LISTINGS',        num(latest.listings_count)],
+      ['TICKETS',         num(latest.tickets_count)],
+      ['OWNED LISTINGS',  num(latest.owned_listings)],
+    ];
+    const kpiHtml = kpis.map(([l, v]) =>
+      `<div class="kpi-cell"><span class="kpi-lbl">${l}</span><span class="kpi-val">${v}</span></div>`).join('');
+    const tableRows = rows.slice().reverse().map(r =>
+      '<tr>' +
+      `<td>${escapeHtml(T.fmtDate(r.snapshot_date))}</td>` +
+      `<td class="num">${money(r.allin_min)}</td>` +
+      `<td class="num">${money(r.allin_median)}</td>` +
+      `<td class="num">${money(r.allin_p90)}</td>` +
+      `<td class="num">${num(r.listings_count)}</td>` +
+      `<td class="num">${num(r.tickets_count)}</td>` +
+      '</tr>').join('');
+    const spark = sgSparkline(rows.map(r => +r.allin_median).filter(v => Number.isFinite(v)));
+    pane.innerHTML =
+      `<section id="kpi-grid">${kpiHtml}</section>` +
+      '<section id="sg-price-history">' +
+        '<div class="panel-title row"><span>SEATGEEK PRICE HISTORY — daily all-in (wc_price_daily)</span>' +
+        `<span class="muted small">${rows.length} days · sg_event_id ${sgId}</span></div>` +
+        spark +
+        '<table class="wc-daily"><thead><tr><th>Date</th><th class="num">Get-in</th><th class="num">Median</th>' +
+        '<th class="num">P90</th><th class="num">Listings</th><th class="num">Tickets</th></tr></thead>' +
+        `<tbody>${tableRows}</tbody></table>` +
+      '</section>';
+  }
+
+  // Minimal inline-SVG sparkline of the median-price series (no chart lib needed).
+  function sgSparkline(vals) {
+    if (!vals || vals.length < 2) return '';
+    const w = 600, h = 72, pad = 4;
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const span = (max - min) || 1;
+    const pts = vals.map((v, i) => {
+      const x = pad + (i / (vals.length - 1)) * (w - 2 * pad);
+      const y = h - pad - ((v - min) / span) * (h - 2 * pad);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    return `<svg class="sg-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="median price trend">` +
+      `<polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${pts}" /></svg>`;
+  }
+
+  async function wireSgTrackButton(sgId) {
+    const btn = document.getElementById('trackBtn');
+    const Auth = window.TerminalAuth;
+    if (!btn || !Auth || !Auth.client) return;
+    btn.hidden = false;
+    let tracked = false;
+    const listRes = await Auth.client.rpc('event_watchlist_list');
+    if (listRes && !listRes.error && listRes.data && Array.isArray(listRes.data.items)) {
+      tracked = listRes.data.items.some(it => String(it.sg_event_id) === String(sgId));
+    }
+    paintSgTrackBtn(btn, tracked);
+    btn.addEventListener('click', async () => {
+      const next = !tracked;
+      btn.disabled = true;
+      const res = await Auth.client.rpc('event_watchlist_set_sg', { p_sg_event_id: sgId, p_on: next });
+      btn.disabled = false;
+      if (res.error) { console.error('[sg track] set', res.error); T.setStatus('Track failed', 'err'); return; }
+      tracked = next;
+      paintSgTrackBtn(btn, tracked);
+    });
+  }
+  function paintSgTrackBtn(btn, tracked) {
+    btn.setAttribute('aria-pressed', tracked ? 'true' : 'false');
+    btn.classList.toggle('on', tracked);
+    btn.textContent = tracked ? '★ Tracking' : '☆ Track';
+    btn.title = tracked ? 'On your watchlist — click to remove' : 'Track this event on your watchlist';
   }
 
   function isLocalhost() {
@@ -2394,8 +2537,11 @@
     const rows = items.slice(0, 50).map(it => {
       const d = T.daysUntil(it.occurs_at_local);
       const cur = String(it.tevo_event_id) === String(eventId);
+      // SG-native rows (no TEvo id) open in SG mode (?sg=); TEvo rows use ?event=.
+      const href = it.tevo_event_id != null ? `event.html?event=${it.tevo_event_id}` : `event.html?sg=${it.sg_event_id}`;
+      const label = escapeHtml(it.event_name || (it.tevo_event_id != null ? ('Event ' + it.tevo_event_id) : ('SG ' + it.sg_event_id)));
       return `<tr${cur ? ' class="wl-cur"' : ''}>` +
-        `<td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>` +
+        `<td><a href="${href}">${label}</a>` +
         `${cur ? ' <span class="muted small">(this event)</span>' : ''}</td>` +
         `<td class="num">${d === null ? '—' : d}</td>` +
         `<td class="muted small">${escapeHtml(it.venue_name || it.venue_location || '—')}</td>` +
