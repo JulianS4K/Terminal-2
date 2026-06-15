@@ -108,6 +108,12 @@ main.wrap {
   color: var(--muted);
   background: var(--panel-2);
 }
+/* Source badge — marks a SeatGeek-native watchlist row (no TEvo deep page) */
+.src-badge.sg {
+  display: inline-block; padding: 0 5px; margin-left: 6px;
+  font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+  border: 1px solid var(--line); border-radius: 2px; color: var(--muted); vertical-align: 1px;
+}
 .badge.lifecycle-active   { border-color: var(--pos); color: var(--pos); }
 .badge.lifecycle-ghost    { border-color: var(--warn); color: var(--warn); }
 .badge.lifecycle-complete { border-color: var(--dim); color: var(--dim); }

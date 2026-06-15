@@ -123,9 +123,18 @@
         const pct = (m.d_getin_pct != null) ? ` <span class="small">(${T.fmtPct(+m.d_getin_pct, 1)})</span>` : '';
         dInner = `${fmtDelta(+m.d_getin)}${pct}`;
       }
+      // EVO/TEvo events deep-link to the event page; SeatGeek-native events
+      // (e.g. World Cup) have no TEvo page, so render the title as plain text
+      // with an "SG" badge. Row actions key on whichever id the row carries.
+      const isSg = it.tevo_event_id == null;
+      const title = escapeHtml(it.event_name || (isSg ? ('SG ' + it.sg_event_id) : ('Event ' + it.tevo_event_id)));
+      const titleHtml = isSg
+        ? `${title} <span class="src-badge sg" title="SeatGeek-native (FIFA primary) — no TEvo page">SG</span>`
+        : `<a href="event.html?event=${it.tevo_event_id}">${title}</a>`;
+      const dataAttrs = `data-tevo="${it.tevo_event_id ?? ''}" data-sg="${it.sg_event_id ?? ''}"`;
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>
+        <td>${titleHtml}
             ${venueLine ? `<div class="muted small">${escapeHtml(venueLine)}</div>` : ''}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${money(m && m.getin)}</td>
@@ -134,11 +143,11 @@
         <td class="num">${money(m && m.p90)}</td>
         <td class="num">${m && m.tickets != null ? T.fmtNum(m.tickets) : '—'}</td>
         <td class="num">
-          <button class="wl-alert-btn ${it.alert_enabled ? 'on' : 'off'}" data-id="${it.tevo_event_id}"
+          <button class="wl-alert-btn ${it.alert_enabled ? 'on' : 'off'}" ${dataAttrs}
                   title="${it.alert_enabled ? 'Alerts on — click to mute' : 'Alerts muted — click to enable'}">
             ${it.alert_enabled ? '🔔' : '🔕'}</button>
         </td>
-        <td class="num"><button class="wl-remove-btn" data-id="${it.tevo_event_id}" title="Remove from watchlist">✕</button></td>`;
+        <td class="num"><button class="wl-remove-btn" ${dataAttrs} title="Remove from watchlist">✕</button></td>`;
       tb.appendChild(tr);
     });
     body.innerHTML = '';
@@ -162,23 +171,35 @@
 
   function wireWatchlistRowActions(scope) {
     const Auth = window.TerminalAuth;
+    // A row is keyed by its TEvo id (EVO primary) when present, else its
+    // SeatGeek id (secondary) — pick the matching RPC variant per row.
+    const rowKey = b => {
+      const tevo = b.getAttribute('data-tevo');
+      const sg = b.getAttribute('data-sg');
+      return tevo ? { isSg: false, id: parseInt(tevo, 10) } : { isSg: true, id: parseInt(sg, 10) };
+    };
+    const matches = (x, k) => k.isSg ? x.sg_event_id === k.id : x.tevo_event_id === k.id;
     scope.querySelectorAll('.wl-remove-btn').forEach(b =>
       b.addEventListener('click', async () => {
-        const id = parseInt(b.getAttribute('data-id'), 10);
+        const k = rowKey(b);
         b.disabled = true;
-        const res = await Auth.client.rpc('event_watchlist_set', { p_event_id: id, p_on: false });
+        const res = k.isSg
+          ? await Auth.client.rpc('event_watchlist_set_sg', { p_sg_event_id: k.id, p_on: false })
+          : await Auth.client.rpc('event_watchlist_set',    { p_event_id: k.id,    p_on: false });
         if (res.error) { b.disabled = false; console.error('[watchlist] remove', res.error); return; }
-        _wlItems = _wlItems.filter(x => x.tevo_event_id !== id);
+        _wlItems = _wlItems.filter(x => !matches(x, k));
         renderWatchlistPage();
       }));
     scope.querySelectorAll('.wl-alert-btn').forEach(b =>
       b.addEventListener('click', async () => {
-        const id = parseInt(b.getAttribute('data-id'), 10);
-        const item = _wlItems.find(x => x.tevo_event_id === id);
+        const k = rowKey(b);
+        const item = _wlItems.find(x => matches(x, k));
         if (!item) return;
         const next = !item.alert_enabled;
         b.disabled = true;
-        const res = await Auth.client.rpc('event_watchlist_set_alert', { p_event_id: id, p_on: next });
+        const res = k.isSg
+          ? await Auth.client.rpc('event_watchlist_set_alert_sg', { p_sg_event_id: k.id, p_on: next })
+          : await Auth.client.rpc('event_watchlist_set_alert',    { p_event_id: k.id,    p_on: next });
         b.disabled = false;
         if (res.error) { console.error('[watchlist] alert', res.error); return; }
         item.alert_enabled = next;
