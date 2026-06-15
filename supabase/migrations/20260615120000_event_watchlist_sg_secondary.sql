@@ -254,10 +254,12 @@ $$;
 -- ============================================================================
 -- 6. Grants (mirror the existing watchlist RPC grants)
 -- ============================================================================
-REVOKE ALL ON FUNCTION public.event_watchlist_set_sg(bigint, boolean)       FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.event_watchlist_set_alert_sg(bigint, boolean) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.event_watchlist_add_world_cup()               FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.event_watchlist_list()                        FROM PUBLIC;
+-- anon is revoked explicitly (not just via PUBLIC) to match the anon-execute
+-- lockdown posture on the other data-mutating watchlist RPCs (mig 20260606120000).
+REVOKE ALL ON FUNCTION public.event_watchlist_set_sg(bigint, boolean)       FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.event_watchlist_set_alert_sg(bigint, boolean) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.event_watchlist_add_world_cup()               FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.event_watchlist_list()                        FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.event_watchlist_set_sg(bigint, boolean)       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.event_watchlist_set_alert_sg(bigint, boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.event_watchlist_add_world_cup()               TO authenticated;

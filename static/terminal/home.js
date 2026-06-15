@@ -79,20 +79,31 @@
     const pager = document.getElementById('watchlistPager');
     if (!body) return;
 
+    // Autohide past events: daysUntil < 0 means the event is more than ~a day
+    // in the past (day-of stays visible at 0). Unknown dates (null) are kept.
+    const items = _wlItems.filter(it => {
+      const d = T.daysUntil(it.occurs_at_local);
+      return d === null || d >= 0;
+    });
+    const hidden = _wlItems.length - items.length;
+
     if (countEl) {
       const dLbl = _wlBasis === 'bell' ? ' · Δ since opening bell (12:00 ET)'
                  : _wlBasis === '24h'  ? ' · Δ vs 24h ago' : '';
-      countEl.textContent = _wlItems.length ? `${_wlItems.length} events${dLbl}` : '';
+      const hLbl = hidden ? ` · ${hidden} past hidden` : '';
+      countEl.textContent = items.length ? `${items.length} events${dLbl}${hLbl}` : '';
     }
-    if (!_wlItems.length) {
-      body.innerHTML = '<div class="empty">No tracked events yet — open an event and tap ★ Track to add it.</div>';
+    if (!items.length) {
+      body.innerHTML = _wlItems.length
+        ? '<div class="empty">All tracked events are in the past.</div>'
+        : '<div class="empty">No tracked events yet — open an event and tap ★ Track to add it.</div>';
       if (pager) pager.hidden = true;
       return;
     }
 
-    const pages = Math.ceil(_wlItems.length / WL_PAGE_SIZE);
+    const pages = Math.ceil(items.length / WL_PAGE_SIZE);
     _wlPage = Math.max(0, Math.min(_wlPage, pages - 1));
-    const slice = _wlItems.slice(_wlPage * WL_PAGE_SIZE, (_wlPage + 1) * WL_PAGE_SIZE);
+    const slice = items.slice(_wlPage * WL_PAGE_SIZE, (_wlPage + 1) * WL_PAGE_SIZE);
 
     const dHint = _wlBasis === 'bell' ? 'since today’s 12:00 ET open' : 'vs 24h ago';
     const tbl = document.createElement('table');
