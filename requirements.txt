@@ -2,7 +2,7 @@
 # bound is the version we know works today; the upper bound prevents major-
 # version drift that could silently break deploys. Dependabot can bump the
 # lower bound — never bump the upper bound without verifying.
-fastapi>=0.136.3,<0.137
+fastapi>=0.137.1,<0.138
 uvicorn[standard]>=0.49.0,<0.50
 requests>=2.34.2,<3.0
 supabase>=2.31.0,<3.0
