@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1440, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Undelivered · VibePass</title>
@@ -30,12 +30,12 @@
       <p>
         Customer service workflow across <strong>Evo · SeatGeek · TickPick · Vivid · SeatData</strong>.
         Per D2's scope decision (<code>bot_chat</code> #199): the unified orders view IS the undelivered surface —
-        D2's <code>/orders</code> tab on <strong>d2-orders-dashboard.onrender.com</strong> evolves into the
+        D2's dashboard at <strong>/d2</strong> evolves into the
         fulfillment-ops workflow described in <code>design/undelivered-window-2026-05-08.md</code>.
         Time-to-event sort · hold-expiry lane · bulk-deliver-per-event · channel logos.
       </p>
       <div class="doorway-cta">
-        <a id="d2Open" class="btn-primary" href="https://d2-orders-dashboard.onrender.com" target="_blank" rel="noopener">
+        <a id="d2Open" class="btn-primary" href="/d2/" target="_blank" rel="noopener">
           Open Orders Dashboard ↗
         </a>
         <span id="d2HealthBadge" class="health-badge dim">checking…</span>
