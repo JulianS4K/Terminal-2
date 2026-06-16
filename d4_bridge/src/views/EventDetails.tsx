@@ -21,9 +21,11 @@ import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
 import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
 import { claimFreeAddons } from '../lib/addons';
+import { useT } from '../context/LanguageContext';
 
 export default function EventDetails() {
   const { id } = useParams();
+  const t = useT();
   const { user, isAdmin, signIn } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -231,7 +233,7 @@ export default function EventDetails() {
 
     if (grandTotalCents > 0) {
       if (!stripeEnabled) {
-        toast({ kind: 'info', title: 'Coming soon', message: 'Paid checkout is being wired up.' });
+        toast({ kind: 'info', title: t('event.comingSoonTitle'), message: t('event.comingSoon') });
         return;
       }
       setPurchasing(true);
@@ -702,7 +704,7 @@ export default function EventDetails() {
                     <div className="flex justify-between text-[10px] py-4 font-black uppercase tracking-tighter">
                       <span className="text-white/30">Status</span>
                       <span className={soldOut ? 'text-brand-accent' : 'text-brand-primary'}>
-                        {soldOut ? 'Sold Out' : 'Available'}
+                        {soldOut ? t('event.soldOut') : t('event.available')}
                       </span>
                     </div>
                     <div className="flex justify-between text-[10px] py-4 font-black uppercase tracking-tighter">
@@ -733,11 +735,11 @@ export default function EventDetails() {
                   className="primary-button w-full flex items-center justify-center space-x-4 disabled:bg-white/10 disabled:text-white/20"
                 >
                   {purchasing ? (
-                    <span className="animate-pulse uppercase tracking-tighter italic text-xs font-black">Processing...</span>
+                    <span className="animate-pulse uppercase tracking-tighter italic text-xs font-black">{t('event.processing')}</span>
                   ) : (
                     <>
                       <Ticket className="w-5 h-5" />
-                      <span className="uppercase tracking-tighter italic text-sm font-black">{soldOut ? 'Sold Out' : 'Buy Tickets'}</span>
+                      <span className="uppercase tracking-tighter italic text-sm font-black">{soldOut ? t('event.soldOut') : t('event.buy')}</span>
                     </>
                   )}
                 </button>

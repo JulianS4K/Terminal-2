@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Minus } from 'lucide-react';
 import { listPublicAddons, type PublicAddon } from '../lib/addons';
 import { formatCurrency } from '../lib/utils';
+import { useT } from '../context/LanguageContext';
 
 export interface AddonSelection {
   items: { addon_id: string; quantity: number }[];
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export default function AddonSelector({ eventId, currency = 'USD', onChange }: Props) {
+  const t = useT();
   const [addons, setAddons] = useState<PublicAddon[]>([]);
   const [qty, setQty] = useState<Record<string, number>>({});
 
@@ -52,7 +54,7 @@ export default function AddonSelector({ eventId, currency = 'USD', onChange }: P
 
   return (
     <div className="mb-6 space-y-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Add-ons</p>
+      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">{t('addon.title')}</p>
       {addons.map((a) => {
         const remaining = a.capacity > 0 ? Math.max(0, a.capacity - a.sold) : Infinity;
         const soldOut = remaining <= 0;
@@ -63,8 +65,8 @@ export default function AddonSelector({ eventId, currency = 'USD', onChange }: P
               <p className="font-black uppercase italic tracking-tighter text-sm truncate">{a.name}</p>
               {a.description && <p className="text-white/40 text-xs font-bold truncate">{a.description}</p>}
               <p className="text-brand-primary text-xs font-black mt-0.5">
-                {a.price > 0 ? formatCurrency(a.price, currency) : 'Free'}
-                {soldOut && <span className="text-brand-accent ml-2">Sold out</span>}
+                {a.price > 0 ? formatCurrency(a.price, currency) : t('event.free')}
+                {soldOut && <span className="text-brand-accent ml-2">{t('event.soldOut')}</span>}
               </p>
             </div>
             <div className="flex items-center space-x-3 shrink-0">

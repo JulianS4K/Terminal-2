@@ -3,6 +3,7 @@ import { lazy, Suspense, ReactNode } from 'react';
 import { AuthProvider } from './context/AuthContext';
 import { OrganizationProvider } from './context/OrganizationContext';
 import { ToastProvider } from './context/ToastContext';
+import { LanguageProvider } from './context/LanguageContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -89,6 +90,7 @@ export default function App() {
       {/* basename matches vite base '/bridge/' so client routes resolve under
           the unified-shell prefix (app.py /bridge → static/bridge/). */}
       <Router basename={((import.meta as any).env?.BASE_URL ?? '/').replace(/\/$/, '')}>
+        <LanguageProvider>
         <ToastProvider>
           <AuthProvider>
             <OrganizationProvider>
@@ -136,6 +138,7 @@ export default function App() {
             </OrganizationProvider>
           </AuthProvider>
         </ToastProvider>
+        </LanguageProvider>
       </Router>
     </ErrorBoundary>
   );
