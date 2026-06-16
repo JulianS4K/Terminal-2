@@ -45,3 +45,13 @@ static/terminal/auth.js:generic-api-key:19
 # present in .env.local whenever a new Bridge build is cut."
 # Commit 198878f is the v1.0.0-beta PR #369 checkpoint; key is still live.
 198878f61f85dcce11a671bc030fda731ec2e089:static/bridge/assets/index-C747K8Em.js:jwt:96
+
+# === generic-api-key false positives (issue #242 triage, 2026-06-16) ===
+# All three are benign string constants whose value contains "key" — not
+# credentials. Verified by inspecting each match:
+#   consent.ts:13     -> KEY = 'exos.consent.marketing.v1'  (localStorage key name)
+#   fixture:18        -> "venue_key": "nam-us-10548-sec"     (synthetic test fixture)
+#   migration:89      -> ea.rule_key = 'tevo_inventory_low_48h' (SQL alert rule_key)
+cac8fad913da6854186d164c01ad48c21051f55b:d4_bridge/src/lib/consent.ts:generic-api-key:13
+c79ea1587751cae7f9e1e0ae8825ffd2b721df33:tests/fixtures/checkout_sections_six.html:generic-api-key:18
+489ac2997a2beac18b0f5b909b6c946be333e07b:supabase/migrations/20260510060000_dashboard_signal_health_fixes.sql:generic-api-key:89
