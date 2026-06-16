@@ -18,6 +18,7 @@ import { getPublicOrg } from '../lib/orgs';
 import { initOrgPixels, trackPixelEvent } from '../lib/pixels';
 import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
+import WaitlistCTA from '../components/WaitlistCTA';
 
 export default function EventDetails() {
   const { id } = useParams();
@@ -716,6 +717,18 @@ export default function EventDetails() {
                     </>
                   )}
                 </button>
+
+                {soldOut && (
+                  <div className="mt-3">
+                    <WaitlistCTA
+                      eventId={event.id}
+                      tierId={selectedTierId}
+                      defaultEmail={user?.email ?? null}
+                      defaultName={user?.displayName ?? null}
+                      accentStyle={accentBgStyle}
+                    />
+                  </div>
+                )}
 
                 {/*
                   TEST-MODE bypass — admin-only. Skips Stripe and mints
