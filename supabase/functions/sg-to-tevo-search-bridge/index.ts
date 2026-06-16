@@ -138,8 +138,22 @@ Deno.serve(async (req) => {
 
   for (const c of filtered) {
     if (c.owned) ownedAttempted++;
-    const teamA = (c.sg_event_name || "").split(" at ")[0]?.trim() || "";
-    const teamB = (c.sg_event_name || "").split(" at ")[1]?.trim() || teamA;
+    // Matchup split. US sports use "Away at Home"; soccer (incl. World Cup,
+    // e.g. "France vs Senegal - World Cup - Match 17 (Group I)") uses "A vs B"
+    // and suffixes the competition/round. Try " vs " first and strip the
+    // " - <competition> ..." tail so team tokens stay clean for scoring +
+    // the name-fallback search; fall back to the legacy " at " split.
+    let teamA: string, teamB: string;
+    const rawName = c.sg_event_name || "";
+    const vsHead = rawName.split(/\s+-\s+/)[0];   // drop "- World Cup - Match N ..."
+    if (/\s+vs\.?\s+/i.test(vsHead)) {
+      const parts = vsHead.split(/\s+vs\.?\s+/i);
+      teamA = (parts[0] || "").trim();
+      teamB = (parts[1] || "").trim() || teamA;
+    } else {
+      teamA = rawName.split(" at ")[0]?.trim() || "";
+      teamB = rawName.split(" at ")[1]?.trim() || teamA;
+    }
     const tevoVenueId = venueMap.get(c.sg_event_id) ?? null;
     const sgT = new Date(c.sg_datetime_utc).getTime();
     const dateGte = new Date(sgT - 24 * 3600000).toISOString().slice(0, 10);

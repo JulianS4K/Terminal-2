@@ -5822,6 +5822,8 @@ def store_world_cup(upcoming_only: bool = True, limit: int = 64):
                        "event_datetime,event_date,venue_name,venue_city,venue_state,"
                        "venue_country,tevo_event_id,we_own,owned_tickets_count,"
                        "sg_url,sg_from_price,sg_median_price,sg_listings_count")
+               # Owned (bookable) matches lead the featured rail, then by kickoff.
+               .order("we_own", desc=True)
                .order("event_datetime"))
         if upcoming_only:
             q = q.gte("event_date", today_iso)
