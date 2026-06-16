@@ -108,8 +108,9 @@ main.wrap {
   color: var(--muted);
   background: var(--panel-2);
 }
-/* SeatGeek-mode event page — median-price sparkline */
+/* SeatGeek-mode event page — price chart + sparkline */
 .sg-spark { display: block; width: 100%; height: 72px; color: var(--accent); margin: 8px 0 12px; }
+.wc-chart { width: 100%; min-height: 240px; margin: 8px 0 12px; }
 table.wc-daily { width: 100%; }
 
 /* Source badge — marks a SeatGeek-native watchlist row (now links to SG mode) */
