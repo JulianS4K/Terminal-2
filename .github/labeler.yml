@@ -31,6 +31,20 @@
   - changed-files:
       - any-glob-to-any-file: "d2_dashboard/**/*"
 
+# D4 / The Bridge (Exos primary-ticketing). Matches ONLY exos-prefixed
+# functions + *exos* migrations, never a bare "*bridge*" glob — several
+# non-D4 migrations/functions (sg_to_tevo_search_bridge, espn_bridge,
+# aq-to-tevo-search-bridge, venue_alias_bridge) carry "bridge" in the name
+# but belong to the A1/D0 cross-source lanes, not D4.
+"area:bridge":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "d4_bridge/**/*"
+          - "static/bridge/**/*"
+          - "supabase/functions/exos-*/**/*"
+          - "supabase/migrations/*exos*.sql"
+          - "docs/d4_*"
+
 "area:docs":
   - changed-files:
       - any-glob-to-any-file:
