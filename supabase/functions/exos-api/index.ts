@@ -34,10 +34,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!keyRow) return json({ error: "invalid or revoked API key" }, 401);
   const orgId = keyRow.org_id as string;
 
-  // Best-effort last-used stamp (don't fail the request if it doesn't write).
-  sb.from("exos_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id).then(
-    () => {}, () => {},
-  );
+  // Best-effort last-used stamp — awaited so it actually lands before the
+  // serverless invocation returns (don't fail the request if it doesn't write).
+  try {
+    await sb.from("exos_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
+  } catch { /* best-effort */ }
 
   // Path after the function name: /exos-api/<...>.
   const path = new URL(req.url).pathname.replace(/^.*\/exos-api/, "").replace(/\/+$/, "");

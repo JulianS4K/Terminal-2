@@ -37,10 +37,10 @@ export async function joinWaitlist(input: {
     p_meta: input.meta ?? null,
   });
   if (error) throw error;
-  // SETOF (id, position) → one row.
+  // SETOF (waitlist_id, queue_position) → one row.
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row?.id) throw new Error('joinWaitlist: no row returned');
-  return { id: row.id as string, position: Number(row.position) || 1 };
+  if (!row?.waitlist_id) throw new Error('joinWaitlist: no row returned');
+  return { id: row.waitlist_id as string, position: Number(row.queue_position) || 1 };
 }
 
 /** Cancel a waitlist entry. Pass the email for signed-out (anon-created) rows. */

@@ -90,27 +90,39 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const addonsForSession: AddonRow[] = [];
   let addonTotal = 0;
   if (addonReq.length > 0) {
-    const ids = [...new Set(addonReq.map((a) => a.addon_id).filter((x): x is string => !!x))];
-    const { data: catalog, error: addErr } = await sb
-      .from("exos_event_addons")
-      .select("id, name, price, capacity, sold, max_per_order, visibility, event_id")
-      .eq("event_id", event_id).in("id", ids);
-    if (addErr) return json({ error: "could not load add-ons" }, 500);
-    const byId = new Map((catalog ?? []).map((a) => [a.id, a]));
+    // Aggregate duplicate addon_ids FIRST so max_per_order + capacity apply to
+    // the COMBINED quantity — otherwise a client could split one add-on across
+    // entries ([{X,N},{X,N}]) and slip past the per-order/stock ceilings (each
+    // entry checked in isolation), then fulfillment bumps sold per entry with no
+    // re-check → oversell.
+    const wanted = new Map<string, number>();
     for (const req of addonReq) {
+      const id = req.addon_id;
       const qty = Number(req.quantity) || 0;
-      if (!req.addon_id || qty < 1) continue;
-      const a = byId.get(req.addon_id);
-      if (!a || a.visibility !== "public") return json({ error: "add-on not available" }, 409);
-      if (a.max_per_order && qty > a.max_per_order) {
-        return json({ error: `add-on "${a.name}" limited to ${a.max_per_order} per order` }, 409);
+      if (!id || qty < 1) continue;
+      wanted.set(id, (wanted.get(id) ?? 0) + qty);
+    }
+    const ids = [...wanted.keys()];
+    if (ids.length > 0) {
+      const { data: catalog, error: addErr } = await sb
+        .from("exos_event_addons")
+        .select("id, name, price, capacity, sold, max_per_order, visibility, event_id")
+        .eq("event_id", event_id).in("id", ids);
+      if (addErr) return json({ error: "could not load add-ons" }, 500);
+      const byId = new Map((catalog ?? []).map((a) => [a.id, a]));
+      for (const [id, qty] of wanted) {
+        const a = byId.get(id);
+        if (!a || a.visibility !== "public") return json({ error: "add-on not available" }, 409);
+        if (a.max_per_order && qty > a.max_per_order) {
+          return json({ error: `add-on "${a.name}" limited to ${a.max_per_order} per order` }, 409);
+        }
+        if (a.capacity > 0 && a.sold + qty > a.capacity) {
+          return json({ error: `add-on "${a.name}" is sold out` }, 409);
+        }
+        const unitCents = Math.round(Number(a.price) * 100);
+        addonsForSession.push({ addon_id: a.id, quantity: qty, unit_price_cents: unitCents, name: a.name });
+        addonTotal += unitCents * qty;
       }
-      if (a.capacity > 0 && a.sold + qty > a.capacity) {
-        return json({ error: `add-on "${a.name}" is sold out` }, 409);
-      }
-      const unitCents = Math.round(Number(a.price) * 100);
-      addonsForSession.push({ addon_id: a.id, quantity: qty, unit_price_cents: unitCents, name: a.name });
-      addonTotal += unitCents * qty;
     }
   }
 

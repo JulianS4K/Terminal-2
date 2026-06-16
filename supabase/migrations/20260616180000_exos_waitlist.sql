@@ -124,7 +124,7 @@ CREATE OR REPLACE FUNCTION public.exos_join_waitlist(
   p_name     text    DEFAULT NULL,
   p_quantity integer DEFAULT 1,
   p_meta     jsonb   DEFAULT NULL
-) RETURNS TABLE (id uuid, position integer)
+) RETURNS TABLE (waitlist_id uuid, queue_position integer)
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = public, pg_temp
 AS $$

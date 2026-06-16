@@ -113,6 +113,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
 // Resolve the host and block private / loopback / link-local / metadata targets.
 // Returns a reason string if blocked, else null.
+//
+// Residual risk (B1, flagged in mig 20260616200000): this resolves DNS, then
+// fetch() resolves again — a DNS-rebinding host could flip to an internal IP
+// between the two lookups. Fully closing it needs IP-pinned connect (impractical
+// with Deno fetch + TLS SNI). Mitigating factors: webhook URLs are set only by
+// authenticated org owner/manager (not anonymous attackers), redirects are
+// disabled (manual), and literal private IPs + localhost/.local/.internal are
+// blocked outright. Treat as a known low residual pending an allowlist/pinning pass.
 async function urlIsBlocked(rawUrl: string): Promise<string | null> {
   let u: URL;
   try { u = new URL(rawUrl); } catch { return "invalid url"; }
