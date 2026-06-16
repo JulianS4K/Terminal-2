@@ -1,6 +1,7 @@
-// VibePass unified homescreen. Auth-aware: signed-in @s4kent.com sees all 4
-// cards; everyone else sees Store + Bridge unlocked and the two operator
-// cards gated. localhost dev is treated as authed (parity with terminal).
+// VibePass unified homescreen. Auth-aware: signed-in @s4kent.com sees all 5
+// cards; everyone else sees Store + Bridge unlocked and the three operator
+// cards (Terminal / Undelivered / Orders) gated. localhost dev is treated as
+// authed (parity with terminal).
 // Bridge runs at /bridge/ on the same Railway origin — same localStorage,
 // so the Supabase session from the hub carries over to Bridge automatically.
 
@@ -9,6 +10,7 @@
 
   const cardTerminal    = document.getElementById('cardTerminal');
   const cardUndelivered = document.getElementById('cardUndelivered');
+  const cardOrders      = document.getElementById('cardOrders');
   const cardBridge      = document.getElementById('cardBridge');
   const bridgeNote      = document.getElementById('bridgeNote');
   const authCtrl        = document.getElementById('auth-ctrl');
@@ -55,6 +57,7 @@
     // supabase-js or auth.js failed to load — treat as not signed in.
     lockCard(cardTerminal);
     lockCard(cardUndelivered);
+    lockCard(cardOrders);
     setBridgeNote(false);
     setFootStatus('auth offline');
     renderAuth(null);
@@ -72,6 +75,7 @@
     } else {
       lockCard(cardTerminal);
       lockCard(cardUndelivered);
+      lockCard(cardOrders);
       setBridgeNote(!!email);
       renderAuth(email);
       setFootStatus(email ? 'not on @s4kent.com — operator surfaces gated' : 'sign in to unlock operator surfaces');
@@ -80,6 +84,7 @@
     console.error('auth ready failed', err);
     lockCard(cardTerminal);
     lockCard(cardUndelivered);
+    lockCard(cardOrders);
     setBridgeNote(false);
     setFootStatus('auth init failed');
   });
