@@ -85,7 +85,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (seg[0] === "orders" && seg.length === 1) {
       const { data, error } = await sb
         .from("exos_checkout_sessions")
-        .select("session_id, event_id, status, quantity, amount_cents, currency, buyer_email, created_at, fulfilled_at")
+        .select("session_id, event_id, status, quantity, amount_cents, tax_cents, currency, buyer_email, created_at, fulfilled_at")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(500);
@@ -93,7 +93,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json({ data });
     }
 
-    return json({ error: "not found", hint: "GET /events, /events/:id, /events/:id/attendees, /orders" }, 404);
+    if (seg[0] === "invoices" && seg.length === 1) {
+      const { data, error } = await sb
+        .from("exos_invoices")
+        .select("number, event_id, session_id, buyer_email, currency, subtotal_cents, tax_cents, total_cents, status, issued_at")
+        .eq("org_id", orgId)
+        .order("issued_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return json({ data });
+    }
+
+    return json({ error: "not found", hint: "GET /events, /events/:id, /events/:id/attendees, /orders, /invoices" }, 404);
   } catch (e) {
     console.error("exos-api error:", e);
     return json({ error: "internal error" }, 500);
