@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
-import { notifyWaitlist, waitlistSummary, type WaitlistSummary } from '../lib/waitlist';
+import { offerWaitlist, waitlistSummary, type WaitlistSummary } from '../lib/waitlist';
 import { useToast } from '../context/ToastContext';
 
 export default function WaitlistPanel({ eventId }: { eventId: string }) {
@@ -32,15 +32,15 @@ export default function WaitlistPanel({ eventId }: { eventId: string }) {
   const release = async () => {
     setReleasing(true);
     try {
-      const n = await notifyWaitlist({ eventId, limit: releaseN });
+      const n = await offerWaitlist({ eventId, count: releaseN });
       toast({
         kind: n > 0 ? 'success' : 'info',
-        message: n > 0 ? `Notified ${n} waitlister(s) — emails queued.` : 'No one waiting to notify.',
+        message: n > 0 ? `Offered ${n} spot(s) — claim vouchers emailed (48h window).` : 'No one waiting to offer.',
       });
       await load();
     } catch (err: any) {
-      console.error('notifyWaitlist failed:', err);
-      toast({ kind: 'error', message: err?.message || 'Could not release spots.' });
+      console.error('offerWaitlist failed:', err);
+      toast({ kind: 'error', message: err?.message || 'Could not offer spots.' });
     } finally {
       setReleasing(false);
     }
@@ -48,7 +48,7 @@ export default function WaitlistPanel({ eventId }: { eventId: string }) {
 
   if (loading) return null;
   // Nothing has ever hit the waitlist — keep the report clean.
-  if (summary && summary.waiting === 0 && summary.notified === 0 && summary.converted === 0) return null;
+  if (summary && summary.waiting === 0 && summary.offered === 0 && summary.converted === 0) return null;
 
   const s = summary!;
   return (
@@ -59,11 +59,12 @@ export default function WaitlistPanel({ eventId }: { eventId: string }) {
       </div>
       <p className="text-xs text-slate-400 mb-4">
         Buyers who registered interest after this event (or a tier) sold out.
+        Offering a spot emails the next person a single-use claim voucher (48h).
       </p>
 
       <div className="grid grid-cols-3 gap-4 mb-5">
         <Stat label="Waiting" value={s.waiting} accent />
-        <Stat label="Notified" value={s.notified} />
+        <Stat label="Offered" value={s.offered} />
         <Stat label="Converted" value={s.converted} />
       </div>
 
@@ -82,7 +83,7 @@ export default function WaitlistPanel({ eventId }: { eventId: string }) {
           onClick={release}
           className="flex-1 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white py-2.5 rounded-lg font-black uppercase tracking-tighter italic text-xs transition-all"
         >
-          {releasing ? 'Releasing…' : `Release ${releaseN} spot${releaseN === 1 ? '' : 's'}`}
+          {releasing ? 'Offering…' : `Offer ${releaseN} spot${releaseN === 1 ? '' : 's'}`}
         </button>
       </div>
     </div>

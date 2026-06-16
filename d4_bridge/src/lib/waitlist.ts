@@ -15,6 +15,7 @@ export interface WaitlistJoinResult {
 export interface WaitlistSummary {
   waiting: number;
   notified: number;
+  offered: number;
   converted: number;
   totalQuantity: number;
 }
@@ -77,7 +78,26 @@ export async function waitlistSummary(eventId: string): Promise<WaitlistSummary>
   return {
     waiting: Number(row?.waiting) || 0,
     notified: Number(row?.notified) || 0,
+    offered: Number(row?.offered) || 0,
     converted: Number(row?.converted) || 0,
     totalQuantity: Number(row?.total_quantity) || 0,
   };
+}
+
+/** Org staff: auto-assign — offer the next N waiting joiners a single-use,
+ *  capacity-bypassing voucher with a claim window (emailed). Returns count. */
+export async function offerWaitlist(input: {
+  eventId: string;
+  count?: number;
+  hours?: number;
+  tierId?: string | null;
+}): Promise<number> {
+  const { data, error } = await supabase.rpc('exos_waitlist_offer_next', {
+    p_event_id: input.eventId,
+    p_count: input.count ?? 1,
+    p_hours: input.hours ?? 48,
+    p_tier_id: input.tierId ?? null,
+  });
+  if (error) throw error;
+  return Number(data) || 0;
 }
