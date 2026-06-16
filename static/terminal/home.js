@@ -22,7 +22,12 @@
 
   const state = {
     source: 'merged',         // 'merged' | 'evo' | 'sg' | 'td_sh' | 'td_gt' | 'td_vd'
-    windowDays: 7,            // 7 | 15 | 30 | 180 (rpc-supported buckets)
+    windowDays: 30,           // 7 | 15 | 30 | 180 | 365 (rpc-supported buckets).
+                              // Default 30d: the event_movers_index compute produces
+                              // all five buckets, but the near-term 7d horizon is often
+                              // empty (no qualifying movers in the next 7 days), so the
+                              // page opened to "no movers". 30d carries the richest set
+                              // (all categories) — see get_event_movers_v2.
     segment: 'all',           // 'all' | 'owned'
     rows: [],
     sortKey: 'delta_market_pct',
