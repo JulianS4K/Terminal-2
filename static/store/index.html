@@ -6,24 +6,20 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>VibePass — direct-inventory tickets for sports + live events</title>
-  <meta name="description" content="Browse sports and live-event tickets we hold directly. Transparent pricing, no daisy chains. New York metro + premium playoffs nationally." />
+  <title>VibePass — your private ticket concierge</title>
+  <meta name="description" content="A private ticket concierge for sports and live events. We hold the seats, price them all-in, and deliver before the gates open. New York metro + premium events nationally." />
 
-  <!-- Open Graph / share-card rendering. iMessage/Slack/WhatsApp/Discord
-       use these tags to build link previews. The image URL must be
-       absolute (preview bots don't resolve relative paths). -->
+  <!-- Open Graph / share-card rendering. -->
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="VibePass" />
-  <meta property="og:title" content="VibePass — direct-inventory tickets" />
-  <meta property="og:description" content="Sports + live-event tickets we hold directly. Transparent pricing." />
+  <meta property="og:title" content="VibePass — your private ticket concierge" />
+  <meta property="og:description" content="We hold the seats, price them all-in, and deliver before the gates open. Transparent, guaranteed, white-glove." />
   <meta property="og:url" content="https://vibepass-storefront-test.onrender.com/store" />
   <meta property="og:image" content="https://vibepass-storefront-test.onrender.com/static/store/og-default.svg" />
 
-  <!-- Twitter Card — falls back to og:* tags when not specified, but
-       summary_large_image renders a wider preview on Twitter / X. -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="VibePass — direct-inventory tickets" />
-  <meta name="twitter:description" content="Sports + live-event tickets we hold directly. Transparent pricing." />
+  <meta name="twitter:title" content="VibePass — your private ticket concierge" />
+  <meta name="twitter:description" content="We hold the seats, price them all-in, and deliver before the gates open." />
 
   <link rel="canonical" href="https://vibepass-storefront-test.onrender.com/store" />
   <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
@@ -32,14 +28,20 @@
 <body data-page="catalog">
   <header class="topbar">
     <a class="brand" href="/store">VibePass</a>
-    <a href="/store/discover" style="margin-left:14px;font-size:14px">Discover tours near you →</a>
-    <div class="badge mvp">MVP · browse only · no real purchases</div>
+    <nav class="topnav" aria-label="Primary">
+      <a href="#concierge">Concierge</a>
+      <a href="#how">How it works</a>
+      <a href="/store/discover">Discover tours</a>
+    </nav>
+    <a class="topcta" href="#concierge">Talk to a specialist</a>
   </header>
 
   <main class="wrap">
-    <section class="hero">
-      <h1>Find tickets to anything we have.</h1>
-      <p class="sub">Direct inventory, transparent pricing.</p>
+    <section class="hero hero-concierge">
+      <p class="hero-eyebrow">Private ticket concierge</p>
+      <h1>The best seats, already in hand.</h1>
+      <p class="sub">Tell us where you want to be. We hold the inventory, price it all-in,
+        and get it to you before the gates open — no daisy chains, no surprises.</p>
       <form id="searchForm" class="search" role="search">
         <label for="q" class="sr-only">Search events, performers, or venues</label>
         <input
@@ -53,39 +55,127 @@
           aria-controls="searchSuggest"
         />
         <button type="submit">Search</button>
-        <!-- Suggestion dropdown — populated as the user types. Calls
-             /api/store/search?q=... debounced at 300ms with a 2-char
-             minimum. Three sections: events you can buy now, performers,
-             venues. Hidden when no q or no results. -->
         <div id="searchSuggest" class="search-suggest" hidden role="listbox"></div>
       </form>
+      <nav class="hero-chips" aria-label="Quick links">
+        <a class="chip chip-gold" href="#worldCup">2026 World Cup</a>
+        <a class="chip" href="#moversSections">Trending now</a>
+        <a class="chip" href="#grid">Browse all events</a>
+        <a class="chip" href="#concierge">Premium &amp; VIP</a>
+      </nav>
+    </section>
+
+    <!-- Trust / guarantee strip. The promises that matter at checkout. -->
+    <section class="trust" aria-label="Our guarantee">
+      <div class="trust-item">
+        <span class="trust-ic" aria-hidden="true">✦</span>
+        <span class="trust-h">All-in pricing</span>
+        <span class="trust-s">The price you see is the price you pay.</span>
+      </div>
+      <div class="trust-item">
+        <span class="trust-ic" aria-hidden="true">✦</span>
+        <span class="trust-h">100% authentic, guaranteed</span>
+        <span class="trust-s">Every seat verified, every order backed.</span>
+      </div>
+      <div class="trust-item">
+        <span class="trust-ic" aria-hidden="true">✦</span>
+        <span class="trust-h">In hand before the gates</span>
+        <span class="trust-s">Delivered ahead of the event, every time.</span>
+      </div>
+      <div class="trust-item">
+        <span class="trust-ic" aria-hidden="true">✦</span>
+        <span class="trust-h">Cancelled? Fully refunded</span>
+        <span class="trust-s">If the event is called off, you're covered.</span>
+      </div>
     </section>
 
     <section id="results" class="results" aria-live="polite">
-      <!-- Filter banner — shown when the catalog was opened via a
-           ?performer_id= or ?venue_id= link from an event page. -->
+      <!-- Filter banner — shown when opened via a ?performer_id= / ?venue_id= link. -->
       <div id="catalogFilterBanner" class="banner" hidden></div>
-      <!-- Themed sliders container — populated dynamically from
-           /api/store/movers (response keys: moving_fast, price_drops,
-           climbing, specials). Each section becomes one horizontal
-           slider with its own header; empty sections are hidden. -->
+      <!-- 2026 FIFA World Cup rail (/api/store/world-cup). Hidden when empty. -->
+      <div id="worldCup" class="movers-sections" hidden></div>
+      <!-- Themed curated rails (/api/store/movers): Featured, moving fast, etc. -->
       <div id="moversSections" class="movers-sections" hidden></div>
-      <div id="status" class="status" aria-live="polite">Loading available events…</div>
+      <div id="status" class="status" aria-live="polite">Curating your events…</div>
       <h2 id="gridHeading" class="grid-heading" hidden>All events</h2>
       <div id="grid" class="grid" hidden></div>
       <div id="empty" class="empty" hidden>
-        No events match. Try a broader search, or clear the box to see all.
+        No events match. Try a broader search, or clear the box to see everything we hold.
       </div>
+    </section>
+
+    <!-- White-glove concierge services. This is where we go past a broker grid. -->
+    <section id="concierge" class="concierge" aria-label="Concierge services">
+      <p class="section-eyebrow">White-glove service</p>
+      <h2 class="section-title">A specialist on every order.</h2>
+      <div class="concierge-grid">
+        <article class="svc">
+          <span class="svc-ic" aria-hidden="true">☎</span>
+          <h3>Talk to a specialist</h3>
+          <p>Real people who know the rooms. Tell us the occasion and we'll find the seat that fits it.</p>
+        </article>
+        <article class="svc">
+          <span class="svc-ic" aria-hidden="true">★</span>
+          <h3>Premium &amp; VIP access</h3>
+          <p>Club level, courtside, suites, and hospitality — including doors most resale sites never see.</p>
+        </article>
+        <article class="svc">
+          <span class="svc-ic" aria-hidden="true">◎</span>
+          <h3>Sightline guidance</h3>
+          <p>We map the view before you buy, so you know exactly what you're paying for in every section.</p>
+        </article>
+        <article class="svc">
+          <span class="svc-ic" aria-hidden="true">✈</span>
+          <h3>Flexible delivery</h3>
+          <p>Mobile transfer, e-delivery, or local pickup — in hand and ready well before the event.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- How it works — three calm steps. -->
+    <section id="how" class="how" aria-label="How it works">
+      <p class="section-eyebrow">How it works</p>
+      <h2 class="section-title">Three steps to your seat.</h2>
+      <ol class="how-steps">
+        <li class="step">
+          <span class="step-n">1</span>
+          <h3>Tell us where</h3>
+          <p>Search an event, or message a specialist with the vibe you're after.</p>
+        </li>
+        <li class="step">
+          <span class="step-n">2</span>
+          <h3>We hand-pick the seats</h3>
+          <p>From inventory we hold directly — verified, all-in priced, no daisy chains.</p>
+        </li>
+        <li class="step">
+          <span class="step-n">3</span>
+          <h3>Show up and enjoy</h3>
+          <p>Tickets delivered before the gates. We're on call right through the event.</p>
+        </li>
+      </ol>
     </section>
   </main>
 
-  <footer class="foot">
-    <nav class="foot-nav" aria-label="Footer">
-      <a href="/store/about">About</a>
-      <a href="/store/privacy">Privacy</a>
-      <a href="/store/terms">Terms</a>
-    </nav>
-    <span class="foot-meta">&copy; 2026 VibePass &middot; MVP preview</span>
+  <footer class="foot foot-rich">
+    <div class="foot-cols">
+      <div class="foot-brand">
+        <a class="brand" href="/store">VibePass</a>
+        <p class="foot-tag">Your private ticket concierge. Direct inventory, transparent pricing,
+          white-glove service.</p>
+      </div>
+      <nav class="foot-nav" aria-label="Footer">
+        <a href="#concierge">Concierge</a>
+        <a href="#how">How it works</a>
+        <a href="/store/discover">Discover tours</a>
+        <a href="/store/about">About</a>
+        <a href="/store/privacy">Privacy</a>
+        <a href="/store/terms">Terms</a>
+      </nav>
+    </div>
+    <div class="foot-base">
+      <span class="badge mvp">MVP · browse only · no real purchases</span>
+      <span class="foot-meta">&copy; 2026 VibePass &middot; MVP preview</span>
+    </div>
   </footer>
 
   <script src="/static/store/store.js" defer></script>

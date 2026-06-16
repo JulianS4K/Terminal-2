@@ -1446,6 +1446,34 @@ def _classify_marquee_competition(event_name: str | None) -> str | None:
     return None
 
 
+# FIFA World Cup 2026 detection (D3, 2026-06-16). EVO/TEvo lists World Cup
+# matches under the performer "World Cup Soccer" with names like
+# "2026 World Cup Soccer - Match 72 (Congo DR vs Uzbekistan) (Group K)".
+# Tight by design so it does NOT catch lookalikes that merely contain the
+# words "world cup": MLB "(World Cup Scarf Giveaway)" promos, "Rugby World
+# Cup", or "World Cup Countdown Concert" — none of which are WC matches.
+_WORLD_CUP_RE = re.compile(
+    r"\bworld\s*cup\s*soccer\b|\bworld\s*cup\b.{0,40}\bmatch\s+\d+", re.I
+)
+
+
+def _classify_world_cup(event_name: str | None,
+                        performer_name: str | None = None) -> bool:
+    """True if the event is a FIFA World Cup soccer match.
+
+    We surface owned World Cup matches in the storefront Featured rail
+    regardless of host city — the rail is NYC-anchored, but the World Cup is
+    a national draw and our owned WC inventory can sit at any host venue
+    (e.g. Match 72 at Mercedes-Benz Stadium, Atlanta). The primary signal is
+    the EVO performer name "World Cup Soccer"; the name regex is a fallback.
+    """
+    if performer_name and performer_name.strip().lower() == "world cup soccer":
+        return True
+    if not event_name:
+        return False
+    return bool(_WORLD_CUP_RE.search(event_name))
+
+
 # Canadian team detection (2026-05-19 v4) — operator directive: Canadian
 # holidays (Canada Day, Civic Holiday, etc.) should only tag events where
 # a Canadian team is visiting an NYC venue. Otherwise the holiday window
@@ -5772,6 +5800,41 @@ def store_search(
     return payload
 
 
+@app.get("/api/store/world-cup")
+def store_world_cup(upcoming_only: bool = True, limit: int = 64):
+    """2026 FIFA World Cup match series for the storefront (D3, 2026-06-16).
+
+    Backed by the `world_cup_2026` mapping table. EVO/TEvo carries only Match 72
+    today, so the rail is driven off the SeatGeek-sourced schedule + market data
+    (from-price / median / listing counts) the table consolidates. Each match
+    carries a link target:
+      - owned EVO match → `tevo_event_id` (deep-links to our /store/event page)
+      - everything else → `sg_url` (the SeatGeek listing)
+
+    Read-only over our own DB; no upstream writes (RULE 2 n/a — no broker call).
+    Ordered by kickoff; `upcoming_only` (default) hides matches already played.
+    """
+    db = require_sb()
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    try:
+        q = (db.table("world_cup_2026")
+               .select("match_number,stage,group_label,team_a,team_b,match_label,"
+                       "event_datetime,event_date,venue_name,venue_city,venue_state,"
+                       "venue_country,tevo_event_id,we_own,owned_tickets_count,"
+                       "sg_url,sg_from_price,sg_median_price,sg_listings_count")
+               # Owned (bookable) matches lead the featured rail, then by kickoff.
+               .order("we_own", desc=True)
+               .order("event_datetime"))
+        if upcoming_only:
+            q = q.gte("event_date", today_iso)
+        rows = q.limit(max(1, min(int(limit), 200))).execute().data or []
+    except Exception as e:
+        # Never break the homepage if the table/columns drift.
+        print(f"store_world_cup query failed: {e}")
+        return {"count": 0, "matches": []}
+    return {"count": len(rows), "matches": rows}
+
+
 @app.get("/api/store/movers")
 def store_movers(
     background_tasks: BackgroundTasks,
@@ -5980,18 +6043,23 @@ def _section_featured(candidates: list,
                       cap: int = 20) -> list:
     """Featured rail — operator directive 2026-05-19 v3. Multi-signal
     curation. All branches require `owned_tickets_count > 100`. Tag
-    selection: playoff > rivalry > holiday > marquee > premium.
+    selection: playoff > world_cup > rivalry > holiday > marquee > premium.
 
       1. Playoff games           — `_classify_playoff()` regex hit
-      2. Holiday calendar games  — date within holiday window (±2 days
+      2. World Cup matches       — `_classify_world_cup()` (D3 2026-06-16).
+                                   FIFA World Cup 2026 soccer matches we own,
+                                   tagged "World Cup". Exempt from the owned>100
+                                   gate (marquee international inventory is thin
+                                   per match, like playoffs).
+      3. Holiday calendar games  — date within holiday window (±2 days
                                    from observed_date; weekend coverage).
                                    Tag = "Memorial Day" for day-of,
                                    "Memorial Day Weekend" for ±1/±2.
-      3. Rivalry games           — `v_rivalry_events` membership
-      4. Marquee competitions    — US Open Tennis / F1 / Inter Miami away
-      5. Other category          — `owned_median_retail > $50` catch-all
+      4. Rivalry games           — `v_rivalry_events` membership
+      5. Marquee competitions    — US Open Tennis / F1 / Inter Miami away
+      6. Other category          — `owned_median_retail > $50` catch-all
                                    (concerts, regular-season home games,
-                                   anything not in 1-4)
+                                   anything not in 1-5)
 
     Premium-only events show no tag (section title "Featured" carries the
     framing). Internal owned-count labels not exposed.
@@ -6007,19 +6075,26 @@ def _section_featured(candidates: list,
             continue
         owned = c.get("owned_tickets_count") or 0
         playoff = _classify_playoff(c.get("name") or "")
-        if owned <= 100 and not playoff:
+        world_cup = _classify_world_cup(c.get("name"), c.get("primary_performer_name"))
+        if owned <= 100 and not playoff and not world_cup:
             # Global depth gate for non-playoff events. Playoff games are
             # exempt (operator directive 2026-05-26) — they're the highest-
             # value NYC inventory even at thin owned counts (e.g. Knicks
             # Game 7 sits at owned ~60, well under the regular-season bar).
+            # World Cup matches share the exemption (D3 2026-06-16): marquee
+            # international inventory is thin per match (e.g. Match 72 owned
+            # ~62) but exactly what the Featured rail is for.
             continue
         rivalry = rivalry_by_eid.get(eid_int)
         holiday = holiday_by_eid.get(eid_int)
         marquee = _classify_marquee_competition(c.get("name") or "")
-        # Branches 1-4: specific narrative signals (any of) → always Featured
+        # Branches 1-5: specific narrative signals (any of) → always Featured
         if playoff:
             c["_featured_tag"] = (playoff.get("label") or "Playoff")
             c["_featured_kind"] = "playoff"
+        elif world_cup:
+            c["_featured_tag"] = "World Cup"
+            c["_featured_kind"] = "world_cup"
         elif rivalry:
             c["_featured_tag"] = rivalry
             c["_featured_kind"] = "rivalry"
@@ -6101,6 +6176,31 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         print(f"store_movers events query failed: {e}")
         return {"city": city, "days": day_cap, "count": 0, "events": []}
 
+    # ----- World Cup inclusion (D3, 2026-06-16) -----
+    # The Featured rail is NYC-anchored (venue_patterns above), but FIFA World
+    # Cup 2026 matches are a national draw and our owned WC inventory can sit
+    # at any host venue (e.g. Match 72 at Mercedes-Benz Stadium, Atlanta —
+    # which the NYC venue filter would exclude). Pull owned World Cup events
+    # regardless of city and merge them into events_rows so they flow through
+    # the same metrics/lifecycle/curation pipeline and can reach Featured.
+    # Wrapped so a failure here degrades to NYC-only behavior, never 500s.
+    try:
+        wc_rows = (db.table("events").select(
+            "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
+            "primary_performer_id,primary_performer_name,performer_ids"
+        ).gte("occurs_at_local", today_iso)
+         .lte("occurs_at_local", horizon_iso + "T23:59:59")
+         .ilike("primary_performer_name", "%World Cup Soccer%")
+         .limit(100).execute().data) or []
+        seen_eids = {int(e["id"]) for e in events_rows if e.get("id")}
+        for e in wc_rows:
+            eid = e.get("id")
+            if eid is not None and int(eid) not in seen_eids:
+                events_rows.append(e)
+                seen_eids.add(int(eid))
+    except Exception as e:
+        print(f"store_movers world-cup pull failed: {e}")
+
     if not events_rows:
         return {"city": city, "days": day_cap, "count": 0, "events": []}
     # Drop speculative names (CANCELLED / (If Necessary)) — playoff "may not
@@ -6142,6 +6242,18 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
     except Exception:
         inactive = set()
+
+    # World Cup exemption (D3, 2026-06-16): the ghost detector eliminates events
+    # whose TEvo event row hasn't been re-polled recently (e.g. Match 72 flagged
+    # `ghost_eliminated` / `sports_stale_135hr`). That recency signal is about
+    # the events-feed cadence, NOT inventory — and we have live owned listings on
+    # these matches, so dropping them is a false negative. Keep owned World Cup
+    # matches out of `inactive`. Genuinely cancelled ones are still removed by the
+    # speculative-name filter above ("CANCELLED" never qualifies as WC here).
+    for _eid in list(inactive):
+        _ev = events_by_id.get(_eid) or {}
+        if _classify_world_cup(_ev.get("name"), _ev.get("primary_performer_name")):
+            inactive.discard(_eid)
 
     # Velocity windows for the 1h/24h ticket delta + getin pct moves.
     try:
