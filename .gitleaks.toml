@@ -25,6 +25,12 @@
 # 11 are this anon key (decoded role=anon), 3 are benign "key"-named string
 # constants (fingerprinted in .gitleaksignore). A service_role token encodes a
 # different payload and remains fully detected.
+#
+# 2026-06-16: also exempt the .gitleaksignore file itself. Each fingerprint
+# line it holds is `commit:file:rule:line`; lines whose rule is generic-api-key
+# contain the literal "key" next to a 40-char hex SHA and self-trip the
+# generic-api-key rule. The ignore file holds only fingerprints by construction
+# — never real credentials — so scanning it is meaningless and self-referential.
 
 title = "Terminal-2 gitleaks config"
 
@@ -32,9 +38,10 @@ title = "Terminal-2 gitleaks config"
 useDefault = true
 
 [allowlist]
-description = "Generated Understand-Anything artifacts + the public Supabase anon JWT (issue #242 triage)."
+description = "Generated Understand-Anything artifacts + public Supabase anon JWT + the .gitleaksignore registry itself (issue #242 triage)."
 paths = [
   '''\.understand-anything/''',
+  '''\.gitleaksignore$''',
 ]
 # Anchored on the base64url of {"iss":"supabase","ref":"hzrizjeaxlqcxfrtczpq",
 # "role":"anon" — i.e. ONLY this project's anon-role JWTs. Supabase emits a
