@@ -31,10 +31,20 @@ export default defineConfig(({ mode }) => {
       // entry chunk size considerably.
       rollupOptions: {
         output: {
-          manualChunks: {
-            stripe: ['@stripe/stripe-js'],
-            qr: ['html5-qrcode', 'qrcode.react'],
-            motion: ['motion'],
+          // Function form (not the Record<string, string[]> object form):
+          // Vite 8's bundled Rollup dropped the object overload from the
+          // OutputOptions type, so `tsc --noEmit` rejects it. The function
+          // form is accepted on both Vite 6 and 8 and is the forward-compatible
+          // way to express the same heavy-dep split.
+          manualChunks(id) {
+            if (id.includes('node_modules/@stripe/stripe-js/')) return 'stripe';
+            if (
+              id.includes('node_modules/html5-qrcode/') ||
+              id.includes('node_modules/qrcode.react/')
+            )
+              return 'qr';
+            if (id.includes('node_modules/motion/')) return 'motion';
+            return undefined;
           },
         },
       },
