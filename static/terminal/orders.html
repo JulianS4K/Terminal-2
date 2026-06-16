@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
   <link rel="manifest" href="/manifest.json" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Orders</title>
@@ -32,11 +32,11 @@
         <p>
           The orders surface is owned by <strong>D2</strong> (Order Clients lane).
           A unified Evo + SeatGeek + TickPick + Vivid view, plus a SeatData analytics tab,
-          lives at <strong>/d2</strong> on this service.
+          lives at <strong>d2-orders-dashboard.onrender.com</strong>.
           D0's terminal nav routes you there — both lanes converge at this page.
         </p>
         <div class="doorway-cta">
-          <a id="d2Open" class="btn-primary" href="/d2/" target="_blank" rel="noopener">
+          <a id="d2Open" class="btn-primary" href="https://d2-orders-dashboard.onrender.com" target="_blank" rel="noopener">
             Open Orders Dashboard ↗
           </a>
           <span id="d2HealthBadge" class="health-badge dim">checking…</span>
@@ -64,7 +64,7 @@
           <ul>
             <li>The full orders dashboard implementation</li>
             <li>All 4 order sources (Evo, SeatGeek, TickPick, Vivid) + SeatData tab</li>
-            <li>The <code>/d2</code> dashboard (merged into this service)</li>
+            <li><code>d2-orders-dashboard.onrender.com</code> service</li>
             <li>Auth: Supabase JWT + <code>@s4kent.com</code> allowlist (mirrors <code>app.py</code>)</li>
           </ul>
         </div>
