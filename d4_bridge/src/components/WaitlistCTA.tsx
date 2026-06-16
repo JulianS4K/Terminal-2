@@ -6,7 +6,7 @@
 // can register interest. On success it shows the queue position; the organizer
 // releases spots later (exos_notify_waitlist) which emails the joiner.
 
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Bell, Check } from 'lucide-react';
 import { joinWaitlist } from '../lib/waitlist';
 import { useToast } from '../context/ToastContext';
@@ -18,7 +18,7 @@ interface Props {
   defaultEmail?: string | null;
   defaultName?: string | null;
   /** Optional brand accent for the submit button. */
-  accentStyle?: React.CSSProperties;
+  accentStyle?: CSSProperties;
 }
 
 export default function WaitlistCTA({ eventId, tierId, defaultEmail, defaultName, accentStyle }: Props) {
