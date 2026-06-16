@@ -1337,6 +1337,20 @@ a.perf-chip:hover {
   border: 1px solid rgba(168, 85, 247, 0.45);
   color: #d8b7fb;
 }
+/* World Cup rail — teal accent. Owned (bookable) matches keep the standard
+   hover/lift; SG-only reference cards (.wc-card-ref) are non-interactive. */
+.movers-world-cup .mover-accent {
+  background: rgba(45, 212, 191, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.45);
+  color: #a7f3e4;
+}
+.wc-card-ref {
+  cursor: default;
+}
+.wc-card-ref:hover {
+  border-color: var(--line);
+  transform: none;
+}
 .mover-title {
   font-size: 14px;
   font-weight: 700;

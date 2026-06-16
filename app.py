@@ -5800,6 +5800,39 @@ def store_search(
     return payload
 
 
+@app.get("/api/store/world-cup")
+def store_world_cup(upcoming_only: bool = True, limit: int = 64):
+    """2026 FIFA World Cup match series for the storefront (D3, 2026-06-16).
+
+    Backed by the `world_cup_2026` mapping table. EVO/TEvo carries only Match 72
+    today, so the rail is driven off the SeatGeek-sourced schedule + market data
+    (from-price / median / listing counts) the table consolidates. Each match
+    carries a link target:
+      - owned EVO match → `tevo_event_id` (deep-links to our /store/event page)
+      - everything else → `sg_url` (the SeatGeek listing)
+
+    Read-only over our own DB; no upstream writes (RULE 2 n/a — no broker call).
+    Ordered by kickoff; `upcoming_only` (default) hides matches already played.
+    """
+    db = require_sb()
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    try:
+        q = (db.table("world_cup_2026")
+               .select("match_number,stage,group_label,team_a,team_b,match_label,"
+                       "event_datetime,event_date,venue_name,venue_city,venue_state,"
+                       "venue_country,tevo_event_id,we_own,owned_tickets_count,"
+                       "sg_url,sg_from_price,sg_median_price,sg_listings_count")
+               .order("event_datetime"))
+        if upcoming_only:
+            q = q.gte("event_date", today_iso)
+        rows = q.limit(max(1, min(int(limit), 200))).execute().data or []
+    except Exception as e:
+        # Never break the homepage if the table/columns drift.
+        print(f"store_world_cup query failed: {e}")
+        return {"count": 0, "matches": []}
+    return {"count": len(rows), "matches": rows}
+
+
 @app.get("/api/store/movers")
 def store_movers(
     background_tasks: BackgroundTasks,

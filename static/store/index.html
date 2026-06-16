@@ -65,6 +65,11 @@
       <!-- Filter banner — shown when the catalog was opened via a
            ?performer_id= or ?venue_id= link from an event page. -->
       <div id="catalogFilterBanner" class="banner" hidden></div>
+      <!-- 2026 FIFA World Cup rail — populated from /api/store/world-cup
+           (backed by the world_cup_2026 table: SeatGeek schedule + market
+           data). Owned EVO matches deep-link to our event page; SG-only
+           matches link to their SeatGeek listing. Hidden when empty. -->
+      <div id="worldCup" class="movers-sections" hidden></div>
       <!-- Themed sliders container — populated dynamically from
            /api/store/movers (response keys: moving_fast, price_drops,
            climbing, specials). Each section becomes one horizontal
