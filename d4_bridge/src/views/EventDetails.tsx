@@ -19,6 +19,8 @@ import { initOrgPixels, trackPixelEvent } from '../lib/pixels';
 import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
+import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
+import { claimFreeAddons } from '../lib/addons';
 
 export default function EventDetails() {
   const { id } = useParams();
@@ -36,6 +38,7 @@ export default function EventDetails() {
   // through to the Stripe metadata and the post-purchase usage increment.
   const [appliedDiscountCode, setAppliedDiscountCode] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [addonSel, setAddonSel] = useState<AddonSelection>({ items: [], totalCents: 0 });
   const [userTicketCount, setUserTicketCount] = useState(0);
   // Per-tier sold/capacity, sourced from the events/{id}/tierSales sub-
   // collection. Buyers can no longer mutate the embedded ticketTiers array
@@ -222,10 +225,11 @@ export default function EventDetails() {
       return;
     }
     const unitPrice = tier.price ?? event.price ?? 0;
+    // Grand total = tickets + selected add-ons. A free tier with PAID add-ons
+    // still routes through checkout; only a $0 grand total takes the free path.
+    const grandTotalCents = Math.round(unitPrice * quantity * 100) + addonSel.totalCents;
 
-    // Paid tiers → Stripe Checkout (edge fn + webhook fulfillment built; dormant
-    // until the publishable key is set). Free tiers fall through to claim below.
-    if (unitPrice > 0) {
+    if (grandTotalCents > 0) {
       if (!stripeEnabled) {
         toast({ kind: 'info', title: 'Coming soon', message: 'Paid checkout is being wired up.' });
         return;
@@ -238,6 +242,7 @@ export default function EventDetails() {
           quantity,
           successUrl: publicUrl('my-tickets?checkout=success'),
           cancelUrl: publicUrl(`event/${event.id}`),
+          addons: addonSel.items,
         });
         window.location.href = url; // leave the SPA for Stripe-hosted checkout
       } catch (err: any) {
@@ -253,6 +258,8 @@ export default function EventDetails() {
     setPurchasing(true);
     try {
       const params = new URLSearchParams(window.location.search);
+      // Shared idempotency/order ref so any free $0 extras attach to this claim.
+      const orderRef = crypto.randomUUID();
       const ids = await claimFreeTickets({
         eventId: event.id,
         tierId: tier.id,
@@ -261,8 +268,17 @@ export default function EventDetails() {
         channel: params.get('utm_source'),
         // Idempotency key for this claim attempt — a network retry returns the
         // same tickets instead of minting twice (button is disabled meanwhile).
-        orderRef: crypto.randomUUID(),
+        orderRef,
       });
+      // Attach any free extras (best-effort — a swag hiccup shouldn't fail the
+      // ticket claim the buyer already completed).
+      if (addonSel.items.length > 0) {
+        try {
+          await claimFreeAddons(event.id, orderRef, addonSel.items);
+        } catch (addErr) {
+          console.error('claimFreeAddons failed:', addErr);
+        }
+      }
       trackPixelEvent('Purchase', {
         content_name: event.title,
         content_ids: [event.id],
@@ -702,6 +718,14 @@ export default function EventDetails() {
                     </div>
                   </div>
                 </div>
+
+                {!soldOut && (
+                  <AddonSelector
+                    eventId={event.id}
+                    currency={event.currency || 'USD'}
+                    onChange={setAddonSel}
+                  />
+                )}
 
                 <button
                   disabled={soldOut || purchasing}

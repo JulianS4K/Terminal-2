@@ -31,10 +31,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { data: { user } } = await sbUser.auth.getUser();
   if (!user) return json({ error: "unauthorized" }, 401);
 
-  let p: { event_id?: string; tier_id?: string; quantity?: number; success_url?: string; cancel_url?: string };
+  let p: {
+    event_id?: string; tier_id?: string; quantity?: number;
+    success_url?: string; cancel_url?: string;
+    addons?: { addon_id?: string; quantity?: number }[];
+  };
   try { p = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const { event_id, tier_id, success_url, cancel_url } = p;
   const quantity = p.quantity ?? 1;
+  const addonReq = Array.isArray(p.addons) ? p.addons : [];
   if (!event_id || !tier_id || !success_url || !cancel_url) {
     return json({ error: "missing event_id / tier_id / success_url / cancel_url" }, 400);
   }
@@ -77,9 +82,63 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const currency = (ev.currency ?? "usd").toLowerCase();
   const unitAmount = Math.round(Number(tier.price) * 100);
-  const amountCents = unitAmount * quantity;
+
+  // Validate + price add-ons server-side (never trust the client's prices). Each
+  // must belong to this event, be public, and have stock. Build the priced
+  // snapshot stored on the session (fulfillment reads it to record the purchase).
+  type AddonRow = { addon_id: string; quantity: number; unit_price_cents: number; name: string };
+  const addonsForSession: AddonRow[] = [];
+  let addonTotal = 0;
+  if (addonReq.length > 0) {
+    const ids = [...new Set(addonReq.map((a) => a.addon_id).filter((x): x is string => !!x))];
+    const { data: catalog, error: addErr } = await sb
+      .from("exos_event_addons")
+      .select("id, name, price, capacity, sold, max_per_order, visibility, event_id")
+      .eq("event_id", event_id).in("id", ids);
+    if (addErr) return json({ error: "could not load add-ons" }, 500);
+    const byId = new Map((catalog ?? []).map((a) => [a.id, a]));
+    for (const req of addonReq) {
+      const qty = Number(req.quantity) || 0;
+      if (!req.addon_id || qty < 1) continue;
+      const a = byId.get(req.addon_id);
+      if (!a || a.visibility !== "public") return json({ error: "add-on not available" }, 409);
+      if (a.max_per_order && qty > a.max_per_order) {
+        return json({ error: `add-on "${a.name}" limited to ${a.max_per_order} per order` }, 409);
+      }
+      if (a.capacity > 0 && a.sold + qty > a.capacity) {
+        return json({ error: `add-on "${a.name}" is sold out` }, 409);
+      }
+      const unitCents = Math.round(Number(a.price) * 100);
+      addonsForSession.push({ addon_id: a.id, quantity: qty, unit_price_cents: unitCents, name: a.name });
+      addonTotal += unitCents * qty;
+    }
+  }
+
+  const amountCents = unitAmount * quantity + addonTotal;
   const feeBps = Number(Deno.env.get("EXOS_PLATFORM_FEE_BPS") ?? "500");
   const applicationFee = Math.round((amountCents * feeBps) / 10000);
+
+  // Only PAID line items go to Stripe ($0 lines are rejected in payment mode), so
+  // a free tier + paid add-ons charges just the add-ons. Ticket quantity is still
+  // recorded on the session for minting regardless of the tier's price.
+  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
+  if (unitAmount > 0) {
+    lineItems.push({
+      quantity,
+      price_data: { currency, unit_amount: unitAmount, product_data: { name: `${ev.name} — ${tier.name}` } },
+    });
+  }
+  for (const a of addonsForSession) {
+    if (a.unit_price_cents > 0) {
+      lineItems.push({
+        quantity: a.quantity,
+        price_data: { currency, unit_amount: a.unit_price_cents, product_data: { name: `${ev.name} — ${a.name}` } },
+      });
+    }
+  }
+  if (lineItems.length === 0) {
+    return json({ error: "nothing to charge — use the free claim path" }, 400);
+  }
 
   const stripe = new Stripe(stripeKey, { httpClient: Stripe.createFetchHttpClient(), apiVersion: "2024-06-20" });
 
@@ -87,14 +146,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     session = await stripe.checkout.sessions.create({
       mode: "payment",
-      line_items: [{
-        quantity,
-        price_data: {
-          currency,
-          unit_amount: unitAmount,
-          product_data: { name: `${ev.name} — ${tier.name}` },
-        },
-      }],
+      line_items: lineItems,
       payment_intent_data: {
         application_fee_amount: applicationFee,
         transfer_data: { destination: payments.connectedAccountId },
@@ -114,6 +166,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     event_id, tier_id, org_id: ev.org_id,
     buyer_uid: user.id, buyer_email: (user.email ?? "").toLowerCase(),
     quantity, amount_cents: amountCents, currency, status: "pending",
+    addons: addonsForSession.length > 0 ? addonsForSession : null,
   });
   if (insErr) {
     console.error("exos-checkout: ledger insert failed", insErr);

@@ -18,6 +18,7 @@ import { motion } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
+import AddonsEditor from '../components/AddonsEditor';
 import {
   COMMON_TIMEZONES,
   utcToZonedWallClock,
@@ -1184,6 +1185,9 @@ export default function EditEvent() {
               )}
            </div>
         </section>
+
+        {/* Add-ons & Merch — self-contained CRUD (not part of the form submit). */}
+        {eventId && <AddonsEditor eventId={eventId} />}
 
         {/* Commercial Logic Section */}
         <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-10">
