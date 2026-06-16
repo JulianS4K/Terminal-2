@@ -10,7 +10,7 @@ psql -h "$H" -p "$P" -U "$U" -q -c "DROP DATABASE IF EXISTS $DB;" -c "CREATE DAT
 PSQL="psql -h $H -p $P -U $U -d $DB -v ON_ERROR_STOP=1 -q"
 $PSQL -f "$DIR/prereq.sql"
 for m in 180000_exos_waitlist 190000_exos_addons 200000_exos_public_api_webhooks \
-         210000_exos_vouchers 220000_exos_waitlist_autoassign 230000_exos_tax 240000_exos_invoicing; do
+         210000_exos_vouchers 220000_exos_waitlist_autoassign 230000_exos_tax 240000_exos_invoicing 250000_exos_voucher_bypass_fulfill; do
   $PSQL -f "$MIG/20260616${m}.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"

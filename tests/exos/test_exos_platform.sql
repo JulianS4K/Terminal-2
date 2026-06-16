@@ -143,6 +143,26 @@ BEGIN
   RAISE NOTICE 'A6 invoice numbering OK (% then %)', a, b;
 END $$;
 
+-- A7. Voucher bypass_capacity mints on a genuinely SOLD-OUT tier (audit fix) ----
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold) VALUES
+  ('aaaaaaaa-0000-0000-0000-0000000000d2','aaaaaaaa-0000-0000-0000-0000000000e1','VIP',200,1,1);  -- sold out
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE vcode text; vid uuid; ids uuid[]; st text;
+BEGIN
+  vcode := public.exos_issue_voucher('aaaaaaaa-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-0000000000d2',NULL,true,NULL,1,NULL,'oversell');
+  SELECT id INTO vid FROM public.exos_vouchers WHERE code=vcode;
+  INSERT INTO public.exos_checkout_sessions(session_id,event_id,tier_id,org_id,buyer_uid,buyer_email,quantity,amount_cents,status,voucher_id)
+  VALUES ('A-bypass','aaaaaaaa-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-0000000000d2',
+          'aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','buyer@x.com',1,20000,'pending',vid);
+  ids := public.exos_fulfill_checkout('A-bypass');
+  ASSERT array_length(ids,1)=1, 'bypass voucher mints on sold-out tier';
+  SELECT status INTO st FROM public.exos_checkout_sessions WHERE session_id='A-bypass';
+  ASSERT st='fulfilled', 'session fulfilled not failed, got '||st;
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='aaaaaaaa-0000-0000-0000-0000000000d2')=2, 'oversold 1 to 2';
+  RAISE NOTICE 'A7 voucher bypass mints on sold-out tier OK (audit fix)';
+END $$;
+
 SELECT '*** PART A (individual functions) PASSED ***' AS result;
 
 -- ============================================================================
