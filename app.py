@@ -6243,6 +6243,18 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
     except Exception:
         inactive = set()
 
+    # World Cup exemption (D3, 2026-06-16): the ghost detector eliminates events
+    # whose TEvo event row hasn't been re-polled recently (e.g. Match 72 flagged
+    # `ghost_eliminated` / `sports_stale_135hr`). That recency signal is about
+    # the events-feed cadence, NOT inventory — and we have live owned listings on
+    # these matches, so dropping them is a false negative. Keep owned World Cup
+    # matches out of `inactive`. Genuinely cancelled ones are still removed by the
+    # speculative-name filter above ("CANCELLED" never qualifies as WC here).
+    for _eid in list(inactive):
+        _ev = events_by_id.get(_eid) or {}
+        if _classify_world_cup(_ev.get("name"), _ev.get("primary_performer_name")):
+            inactive.discard(_eid)
+
     # Velocity windows for the 1h/24h ticket delta + getin pct moves.
     try:
         vw = (db.table("v_event_velocity_windows")
