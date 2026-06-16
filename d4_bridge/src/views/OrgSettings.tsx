@@ -20,6 +20,7 @@ import { getOrganization, updateOrganization } from '../lib/orgs';
 import { startStripeOnboarding } from '../lib/checkout';
 import { uploadOrgLogo } from '../lib/orgLogo';
 import { Organization } from '../types';
+import DeveloperSettings from '../components/DeveloperSettings';
 
 // Hex-color validator — same shape as the ThemeContext sanitizer.
 // Mirrored here so we can give the user a fast field-level error
@@ -459,6 +460,9 @@ window.addEventListener('message', function(e) {
             Copy snippet
           </button>
         </fieldset>
+
+        {/* Developer — API keys + outbound webhooks (self-contained CRUD). */}
+        <DeveloperSettings orgId={org.id} canEdit={canEdit} />
 
         <div className="bg-white/5 border border-white/10 p-4 text-xs text-white/50 space-y-1">
           <div>
