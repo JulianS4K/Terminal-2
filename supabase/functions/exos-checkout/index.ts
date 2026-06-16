@@ -54,7 +54,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const { data: tier, error: tierErr } = await sb
     .from("exos_ticket_tiers")
-    .select("id, name, price, capacity, sold, event_id, exos_events!inner(id, org_id, name, status, currency)")
+    .select("id, name, price, capacity, sold, event_id, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax), exos_events!inner(id, org_id, name, status, currency)")
     .eq("id", tier_id).eq("event_id", event_id).maybeSingle();
   if (tierErr || !tier) return json({ error: "tier not found" }, 404);
 
@@ -115,6 +115,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
   type AddonRow = { addon_id: string; quantity: number; unit_price_cents: number; name: string };
   const addonsForSession: AddonRow[] = [];
   let addonTotal = 0;
+  // Tax accumulators: recordedTax = the tax portion of the order (recorded on the
+  // session, whether inclusive or exclusive); exclusiveTax = the part ADDED on top
+  // of the price (a separate Stripe "Tax" line + added to the charge).
+  let recordedTax = 0;
+  let exclusiveTax = 0;
+  const addTax = (amount: number, rule: { rate_percent?: number; price_includes_tax?: boolean } | null | undefined) => {
+    const rate = Number(rule?.rate_percent ?? 0);
+    if (!rate) return;
+    const t = taxCents(amount, rate, rule?.price_includes_tax === true);
+    recordedTax += t;
+    if (rule?.price_includes_tax !== true) exclusiveTax += t;
+  };
   if (addonReq.length > 0) {
     // Aggregate duplicate addon_ids FIRST so max_per_order + capacity apply to
     // the COMBINED quantity — otherwise a client could split one add-on across
@@ -132,7 +144,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (ids.length > 0) {
       const { data: catalog, error: addErr } = await sb
         .from("exos_event_addons")
-        .select("id, name, price, capacity, sold, max_per_order, visibility, event_id")
+        .select("id, name, price, capacity, sold, max_per_order, visibility, event_id, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax)")
         .eq("event_id", event_id).in("id", ids);
       if (addErr) return json({ error: "could not load add-ons" }, 500);
       const byId = new Map((catalog ?? []).map((a) => [a.id, a]));
@@ -148,11 +160,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const unitCents = Math.round(Number(a.price) * 100);
         addonsForSession.push({ addon_id: a.id, quantity: qty, unit_price_cents: unitCents, name: a.name });
         addonTotal += unitCents * qty;
+        addTax(unitCents * qty, (a as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
       }
     }
   }
 
-  const amountCents = unitAmount * quantity + addonTotal;
+  // Tier tax (after the voucher price override is applied to unitAmount).
+  addTax(unitAmount * quantity, (tier as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
+
+  const amountCents = unitAmount * quantity + addonTotal + exclusiveTax;
   const feeBps = Number(Deno.env.get("EXOS_PLATFORM_FEE_BPS") ?? "500");
   const applicationFee = Math.round((amountCents * feeBps) / 10000);
 
@@ -173,6 +189,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
         price_data: { currency, unit_amount: a.unit_price_cents, product_data: { name: `${ev.name} — ${a.name}` } },
       });
     }
+  }
+  // Exclusive tax → one explicit Tax line so the buyer sees it on Stripe's page.
+  if (exclusiveTax > 0) {
+    lineItems.push({
+      quantity: 1,
+      price_data: { currency, unit_amount: exclusiveTax, product_data: { name: "Tax" } },
+    });
   }
   if (lineItems.length === 0) {
     return json({ error: "nothing to charge — use the free claim path" }, 400);
@@ -206,6 +229,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     quantity, amount_cents: amountCents, currency, status: "pending",
     addons: addonsForSession.length > 0 ? addonsForSession : null,
     voucher_id: voucherId,
+    tax_cents: recordedTax > 0 ? recordedTax : null,
   });
   if (insErr) {
     console.error("exos-checkout: ledger insert failed", insErr);
@@ -214,6 +238,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   return json({ url: session.url, session_id: session.id });
 });
+
+// Mirrors public.exos_tax_cents: inclusive extracts the embedded tax from the
+// gross; exclusive computes the tax to add on top of the net.
+function taxCents(amount: number, ratePercent: number, inclusive: boolean): number {
+  if (!ratePercent) return 0;
+  return inclusive
+    ? Math.round((amount * ratePercent) / (100 + ratePercent))
+    : Math.round((amount * ratePercent) / 100);
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

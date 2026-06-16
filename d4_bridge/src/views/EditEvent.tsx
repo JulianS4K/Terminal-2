@@ -20,6 +20,7 @@ import { useToast } from '../context/ToastContext';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
 import AddonsEditor from '../components/AddonsEditor';
 import VouchersEditor from '../components/VouchersEditor';
+import TaxRulesEditor from '../components/TaxRulesEditor';
 import {
   COMMON_TIMEZONES,
   utcToZonedWallClock,
@@ -1192,6 +1193,9 @@ export default function EditEvent() {
 
         {/* Vouchers — self-contained CRUD (not part of the form submit). */}
         {eventId && <VouchersEditor eventId={eventId} />}
+
+        {/* Tax / VAT rules — self-contained CRUD (not part of the form submit). */}
+        {eventId && <TaxRulesEditor eventId={eventId} />}
 
         {/* Commercial Logic Section */}
         <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-10">
