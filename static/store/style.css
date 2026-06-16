@@ -1343,19 +1343,15 @@ a.perf-chip:hover {
   border: 1px solid rgba(168, 85, 247, 0.45);
   color: #d8b7fb;
 }
-/* World Cup rail — teal accent. Owned (bookable) matches keep the standard
-   hover/lift; SG-only reference cards (.wc-card-ref) are non-interactive. */
-.movers-world-cup .mover-accent {
-  background: rgba(45, 212, 191, 0.12);
-  border: 1px solid rgba(45, 212, 191, 0.45);
-  color: #a7f3e4;
+/* Concierge rail — champagne-gold accent on premium top-band seats. */
+.movers-concierge .mover-accent {
+  background: var(--gold-soft);
+  border: 1px solid rgba(201,169,106,0.45);
+  color: var(--gold);
 }
-.wc-card-ref {
-  cursor: default;
-}
-.wc-card-ref:hover {
-  border-color: var(--line);
-  transform: none;
+.movers-concierge .movers-section-title::before {
+  content: "✦ ";
+  color: var(--gold);
 }
 .mover-title {
   font-size: 14px;
