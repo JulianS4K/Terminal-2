@@ -8399,21 +8399,11 @@ def store_test_tour_page(_=Depends(_require_non_prod)):
 # wins for matching). Auth (question B): D2 routes reuse their own dependency
 # injection; the shell's `require_auth` applies on app.py's own routes.
 try:
-    from d2_dashboard.main import router as d2_router, root as d2_dashboard_root  # type: ignore
+    from d2_dashboard.main import router as d2_router  # type: ignore
     app.include_router(d2_router)
-    # Fold the standalone d2-orders-dashboard service INTO this unified shell.
-    # The dashboard PAGE (d2's own "/") is shadowed by the hub homescreen
-    # (app.get("/") above), so serve it same-origin at /d2 instead. Its assets
-    # live in d2_dashboard/static and load from /static/d2/* — mount that here,
-    # BEFORE the catch-all /static mount below, so the longer prefix wins.
-    _D2_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "d2_dashboard", "static")
-    if os.path.isdir(_D2_STATIC_DIR):
-        app.mount("/static/d2", StaticFiles(directory=_D2_STATIC_DIR), name="d2_static")
-    app.add_api_route("/d2", d2_dashboard_root, methods=["GET"], include_in_schema=False)
-    app.add_api_route("/d2/", d2_dashboard_root, methods=["GET"], include_in_schema=False)
-    logging.getLogger(__name__).info("d2_dashboard mounted (router + /d2 page + /static/d2)")
+    logging.getLogger(__name__).info("d2_dashboard router mounted at unified shell (%d routes)", len(d2_router.routes))
 except Exception as _d2_import_err:  # pragma: no cover — d2 module optional in dev
-    logging.getLogger(__name__).warning("d2_dashboard NOT mounted: %s", _d2_import_err)
+    logging.getLogger(__name__).warning("d2_dashboard router NOT mounted: %s", _d2_import_err)
 
 
 # ---------- Site essentials (SEO + browser-tab UX) ----------

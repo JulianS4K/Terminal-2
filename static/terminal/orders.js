@@ -6,7 +6,7 @@
 (function () {
   'use strict';
   const T = window.Terminal;
-  const D2_BASE = '';  // same-origin — D2 dashboard is merged into this service (/d2 + /api/d2/*)
+  const D2_BASE = 'https://d2-orders-dashboard.onrender.com';
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
