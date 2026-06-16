@@ -45,19 +45,22 @@ BEGIN
   RAISE NOTICE 'Paused % prior non-AXS TicketsData crons', n;
 END $$;
 
--- 2. Mark the "100k for the rest combined" non-AXS pool.
+-- 2. Budget split is RECORDED but NOT YET ENFORCED (operator: "dont enforce
+--    budget just yet"). The gates stay at their prior live values (monthly
+--    180,000 / daily 6,000); only the COMMENTs note the planned split. Flip the
+--    thresholds to 100,000 / 4,000 when enforcement is approved.
 CREATE OR REPLACE FUNCTION public.td_monthly_budget_ok()
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path TO 'public','pg_temp'
-AS $function$ SELECT public.td_credits_this_month() < 100000; $function$;
+AS $function$ SELECT public.td_credits_this_month() < 180000; $function$;
 REVOKE ALL ON FUNCTION public.td_monthly_budget_ok() FROM anon, public;
 COMMENT ON FUNCTION public.td_monthly_budget_ok() IS
-  'True if MTD recorded non-AXS TicketsData credits < 100,000 (operator split 2026-06-16: 100k for SH/VD/GT/TM combined, TP off; AXS funded separately at 150k, tracked provider-side).';
+  'True if MTD recorded non-AXS TicketsData credits < 180,000. NOTE: operator-planned split (AXS 150k / rest 100k, 2026-06-16) is NOT YET ENFORCED pending review.';
 
 CREATE OR REPLACE FUNCTION public.td_daily_budget_ok()
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path TO 'public','pg_temp'
-AS $function$ SELECT public.td_credits_today() < 4000; $function$;
+AS $function$ SELECT public.td_credits_today() < 6000; $function$;
 REVOKE ALL ON FUNCTION public.td_daily_budget_ok() FROM anon, public;
 COMMENT ON FUNCTION public.td_daily_budget_ok() IS
-  'True if today''s recorded non-AXS TicketsData credits < 4,000 (smoothing cap under the 100k/mo non-AXS pool, operator 2026-06-16).';
+  'True if today''s recorded non-AXS TicketsData credits < 6,000. Budget split not yet enforced (2026-06-16).';
