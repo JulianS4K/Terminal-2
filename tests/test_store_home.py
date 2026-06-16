@@ -547,6 +547,78 @@ def test_compute_movers_no_fallback_when_a_rail_populated():
     assert out["featured"][0]["_featured_kind"] == "playoff"
 
 
+# ---------- Featured rail: World Cup inclusion (D3, 2026-06-16) ----------
+#
+# FIFA World Cup 2026 matches we own EVO tickets to surface in the Featured
+# rail regardless of host city (the rail is NYC-anchored, but the World Cup is
+# a national draw and our owned WC inventory can sit at any host venue — e.g.
+# Match 72 at Mercedes-Benz Stadium, Atlanta). WC matches share the playoff
+# exemption from the owned>100 depth gate (thin owned counts per match).
+
+def test_classify_world_cup_helper_unit():
+    cw = app_module._classify_world_cup
+    # EVO performer-name + name-format hits
+    assert cw("2026 World Cup Soccer - Match 72 (Congo DR vs Uzbekistan) (Group K)") is True
+    assert cw("anything", performer_name="World Cup Soccer") is True
+    assert cw("Norway vs Senegal - World Cup - Match 41 (Group I)") is True
+    # lookalikes that merely contain the words "world cup" — must NOT match
+    assert cw("St. Louis Cardinals at Kansas City Royals (World Cup Scarf Giveaway)") is False
+    assert cw("World Rugby Nations Cup (USA vs Portugal, Tonga vs Zimbabwe)") is False
+    assert cw("World Cup Countdown Concert") is False
+    assert cw("") is False
+    assert cw(None) is False
+
+
+def test_section_featured_includes_world_cup_under_owned_gate():
+    """A World Cup match with owned <= 100 must still be Featured — WC matches
+    share the playoff exemption from the owned>100 depth gate, tagged 'World Cup'."""
+    wc = {
+        "id": 1,
+        "name": "2026 World Cup Soccer - Match 72 (Congo DR vs Uzbekistan) (Group K)",
+        "primary_performer_name": "World Cup Soccer",
+        "owned_tickets_count": 62,            # < 100, would fail the gate
+        "owned_median_retail": 775,
+        "occurs_at_local": "2026-06-27T19:30:00-04:00",
+    }
+    out = app_module._section_featured([wc], {}, {})
+    assert [c["id"] for c in out] == [1]
+    assert out[0]["_featured_kind"] == "world_cup"
+    assert out[0]["_featured_tag"] == "World Cup"
+
+
+def test_section_featured_excludes_world_cup_lookalike_promo():
+    """An MLB game with a '(World Cup Scarf Giveaway)' promo is NOT a World Cup
+    match — no WC exemption/tag. With owned 62 and a sub-$50 median it stays out
+    of Featured entirely (the depth gate still applies)."""
+    ev = {
+        "id": 9,
+        "name": "St. Louis Cardinals at Kansas City Royals (World Cup Scarf Giveaway)",
+        "primary_performer_name": "Kansas City Royals",
+        "owned_tickets_count": 62, "owned_median_retail": 20,
+        "occurs_at_local": "2026-06-19T19:15:00-05:00",
+    }
+    assert app_module._section_featured([ev], {}, {}) == []
+
+
+def test_compute_movers_features_owned_world_cup_non_nyc():
+    """End-to-end: a World Cup match we own (owned 62) at a non-NYC host venue
+    (Atlanta) survives the pipeline and lands in Featured tagged 'World Cup'."""
+    db = _FakeDB({
+        "events": [_event(
+            1,
+            name="2026 World Cup Soccer - Match 72 (Congo DR vs Uzbekistan) (Group K)",
+            occurs=_fut(11), venue_location="Atlanta, GA",
+            performer_name="World Cup Soccer")],
+        "latest_event_metrics": [_lem(1, owned=62, retail_min=396.0)],
+        "event_lifecycle": [_lc(1)],
+    })
+    out = app_module._compute_movers(db, "NYC", 21, 8)
+    feat = {c["id"]: c for c in out["featured"]}
+    assert 1 in feat
+    assert feat[1]["_featured_kind"] == "world_cup"
+    assert feat[1]["_featured_tag"] == "World Cup"
+
+
 def test_home_city_nyc_filters_correctly(store_home_client):
     """city=NYC restricts to NYC-area venues. Bronx + Flushing + Manhattan
     all pass; LA + Chicago must not."""
