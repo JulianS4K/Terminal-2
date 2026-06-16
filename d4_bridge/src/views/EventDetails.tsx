@@ -21,6 +21,7 @@ import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
 import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
 import { claimFreeAddons } from '../lib/addons';
+import VoucherField from '../components/VoucherField';
 import { useT } from '../context/LanguageContext';
 
 export default function EventDetails() {
@@ -41,6 +42,7 @@ export default function EventDetails() {
   const [appliedDiscountCode, setAppliedDiscountCode] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [addonSel, setAddonSel] = useState<AddonSelection>({ items: [], totalCents: 0 });
+  const [voucher, setVoucher] = useState<{ code: string; canBypass: boolean } | null>(null);
   const [userTicketCount, setUserTicketCount] = useState(0);
   // Per-tier sold/capacity, sourced from the events/{id}/tierSales sub-
   // collection. Buyers can no longer mutate the embedded ticketTiers array
@@ -250,6 +252,7 @@ export default function EventDetails() {
           successUrl: publicUrl('my-tickets?checkout=success'),
           cancelUrl: publicUrl(`event/${event.id}`),
           addons: addonSel.items,
+          voucherCode: voucher?.code,
         });
         window.location.href = url; // leave the SPA for Stripe-hosted checkout
       } catch (err: any) {
@@ -726,7 +729,14 @@ export default function EventDetails() {
                   </div>
                 </div>
 
-                {!soldOut && (
+                {/* A valid voucher can unlock a sold-out event (or pin a price). */}
+                <VoucherField
+                  eventId={event.id}
+                  email={user?.email ?? null}
+                  onApplied={setVoucher}
+                />
+
+                {(!soldOut || voucher?.canBypass) && (
                   <AddonSelector
                     eventId={event.id}
                     currency={event.currency || 'USD'}
@@ -735,7 +745,7 @@ export default function EventDetails() {
                 )}
 
                 <button
-                  disabled={soldOut || purchasing}
+                  disabled={(soldOut && !voucher?.canBypass) || purchasing}
                   onClick={handlePurchase}
                   className="primary-button w-full flex items-center justify-center space-x-4 disabled:bg-white/10 disabled:text-white/20"
                 >
@@ -744,12 +754,12 @@ export default function EventDetails() {
                   ) : (
                     <>
                       <Ticket className="w-5 h-5" />
-                      <span className="uppercase tracking-tighter italic text-sm font-black">{soldOut ? t('event.soldOut') : t('event.buy')}</span>
+                      <span className="uppercase tracking-tighter italic text-sm font-black">{(soldOut && !voucher?.canBypass) ? t('event.soldOut') : t('event.buy')}</span>
                     </>
                   )}
                 </button>
 
-                {soldOut && (
+                {soldOut && !voucher?.canBypass && (
                   <div className="mt-3">
                     <WaitlistCTA
                       eventId={event.id}

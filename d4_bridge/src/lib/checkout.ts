@@ -17,6 +17,8 @@ export async function startCheckout(input: {
   cancelUrl: string;
   /** Optional product add-ons (merch) to charge alongside the ticket. */
   addons?: { addon_id: string; quantity: number }[];
+  /** Optional access voucher (may bypass a sold-out tier / pin a price). */
+  voucherCode?: string;
 }): Promise<string> {
   const { data, error } = await supabase.functions.invoke('exos-checkout', {
     body: {
@@ -26,6 +28,7 @@ export async function startCheckout(input: {
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
       addons: input.addons && input.addons.length > 0 ? input.addons : undefined,
+      voucher_code: input.voucherCode || undefined,
     },
   });
   if (error) throw error;

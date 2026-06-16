@@ -35,11 +35,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
     event_id?: string; tier_id?: string; quantity?: number;
     success_url?: string; cancel_url?: string;
     addons?: { addon_id?: string; quantity?: number }[];
+    voucher_code?: string;
   };
   try { p = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const { event_id, tier_id, success_url, cancel_url } = p;
   const quantity = p.quantity ?? 1;
   const addonReq = Array.isArray(p.addons) ? p.addons : [];
+  const voucherCode = (p.voucher_code ?? "").trim();
   if (!event_id || !tier_id || !success_url || !cancel_url) {
     return json({ error: "missing event_id / tier_id / success_url / cancel_url" }, 400);
   }
@@ -58,7 +60,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const ev = (tier as unknown as { exos_events: { org_id: string; name: string; status: string; currency: string | null } }).exos_events;
   if (ev.status !== "published") return json({ error: "event not on sale" }, 409);
-  if (tier.capacity > 0 && tier.sold + quantity > tier.capacity) {
+
+  // Voucher (pretix-style access token) — validated server-side. May bypass a
+  // sold-out tier and/or pin a price; consumed on fulfillment by a DB trigger
+  // (exos_checkout_consume_voucher). Distinct from discount codes.
+  let voucherId: string | null = null;
+  let bypassCapacity = false;
+  let overridePrice: number | null = null;
+  if (voucherCode) {
+    const { data: vRows, error: vErr } = await sb.rpc("exos_check_voucher", {
+      p_event_id: event_id, p_code: voucherCode, p_email: user.email ?? null,
+    });
+    const v = Array.isArray(vRows) ? vRows[0] : vRows;
+    if (vErr || !v?.is_valid) {
+      return json({ error: `voucher ${v?.reason ?? "invalid"}` }, 409);
+    }
+    if (v.restrict_tier_id && v.restrict_tier_id !== tier_id) {
+      return json({ error: "voucher is not valid for this ticket type" }, 409);
+    }
+    voucherId = v.voucher_id;
+    bypassCapacity = v.can_bypass === true;
+    overridePrice = v.override_price != null ? Number(v.override_price) : null;
+  }
+
+  if (!bypassCapacity && tier.capacity > 0 && tier.sold + quantity > tier.capacity) {
     return json({ error: "not enough tickets in this tier" }, 409);
   }
 
@@ -81,7 +106,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const currency = (ev.currency ?? "usd").toLowerCase();
-  const unitAmount = Math.round(Number(tier.price) * 100);
+  // A voucher price override pins the per-ticket price (comp / special rate).
+  const unitAmount = Math.round(Number(overridePrice ?? tier.price) * 100);
 
   // Validate + price add-ons server-side (never trust the client's prices). Each
   // must belong to this event, be public, and have stock. Build the priced
@@ -179,6 +205,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     buyer_uid: user.id, buyer_email: (user.email ?? "").toLowerCase(),
     quantity, amount_cents: amountCents, currency, status: "pending",
     addons: addonsForSession.length > 0 ? addonsForSession : null,
+    voucher_id: voucherId,
   });
   if (insErr) {
     console.error("exos-checkout: ledger insert failed", insErr);
