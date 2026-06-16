@@ -8,7 +8,6 @@
 // static/terminal/event.js — kept in sync by hand (no shared module yet).
 (function () {
   'use strict';
-  var MAPS_DOMAIN = 'https://maps.ticketevolution.com';
 
   // ----- parking / non-seated filter (matches terminal) -----
   function isParking(section) {
@@ -113,30 +112,45 @@
     if (!host || !window.Tevomaps || !window.Tevomaps.SeatmapFactory) return null;
     if (opts.venueId == null || opts.configurationId == null) return null;
 
-    // manifest → matcher index (+ remember which listing sections map to each key)
+    // manifest → matcher index (for price-coloring). Fetched through our OWN
+    // origin (/api/store/seatmap/.../manifest) — the TEvo maps CDN is origin-
+    // gated and 403s / omits CORS for the storefront host, so fetching it
+    // directly here silently failed on EVERY event and the map fell back to the
+    // static image. The manifest is OPTIONAL: when it can't load we still build
+    // the (uncolored) interactive map — matching the D0 terminal, which never
+    // hard-gated the build on the manifest — instead of showing the static jpg.
     var idx = null;
     try {
-      var resp = await fetch(MAPS_DOMAIN + '/' + opts.venueId + '/' + opts.configurationId + '/manifest.json');
+      var resp = await fetch('/api/store/seatmap/' + opts.venueId + '/' + opts.configurationId + '/manifest',
+                             { headers: { 'Accept': 'application/json' } });
       if (resp.ok) {
         var manifest = await resp.json();
         idx = buildIndex(Object.keys((manifest && manifest.sections) || {}));
+      } else {
+        console.warn('[StoreSeatmap] manifest HTTP ' + resp.status + ' (venue ' + opts.venueId +
+                     '/config ' + opts.configurationId + ') — rendering map without price coloring');
       }
-    } catch (e) { idx = null; }
-    if (!idx) return null;   // no map → caller keeps the static image
+    } catch (e) {
+      console.warn('[StoreSeatmap] manifest fetch error:', (e && e.message) || e);
+    }
 
-    // cheapest listing per matched manifest section + reverse map (key → listing sections)
+    // cheapest listing per matched manifest section + reverse map (key → listing
+    // sections). Skipped when the manifest is unavailable — the map still builds,
+    // just without price coloring or section→listing click-through.
     var floorByKey = {}, listingsByKey = {};
-    (opts.listings || []).forEach(function (l) {
-      var sec = (l.section || '').trim();
-      if (!sec || isParking(sec)) return;
-      var price = Number(l.retail_price);
-      if (!isFinite(price) || price <= 0) return;
-      var key = matchSection(sec, idx);
-      if (!key) return;
-      if (floorByKey[key] == null || price < floorByKey[key]) floorByKey[key] = price;
-      (listingsByKey[key] = listingsByKey[key] || []);
-      if (listingsByKey[key].indexOf(sec) < 0) listingsByKey[key].push(sec);
-    });
+    if (idx) {
+      (opts.listings || []).forEach(function (l) {
+        var sec = (l.section || '').trim();
+        if (!sec || isParking(sec)) return;
+        var price = Number(l.retail_price);
+        if (!isFinite(price) || price <= 0) return;
+        var key = matchSection(sec, idx);
+        if (!key) return;
+        if (floorByKey[key] == null || price < floorByKey[key]) floorByKey[key] = price;
+        (listingsByKey[key] = listingsByKey[key] || []);
+        if (listingsByKey[key].indexOf(sec) < 0) listingsByKey[key].push(sec);
+      });
+    }
     var ticketGroups = Object.keys(floorByKey).map(function (key) {
       return { tevo_section_name: key, retail_price: floorByKey[key] };
     });
@@ -155,7 +169,7 @@
           // selected manifest names → the listing sections they came from
           var out = [];
           (sections || []).forEach(function (name) {
-            var k = matchSection(name, idx) || name;   // selection echoes a manifest key
+            var k = (idx ? matchSection(name, idx) : null) || name;   // selection echoes a manifest key
             var direct = listingsByKey[name] || listingsByKey[k];
             if (direct) direct.forEach(function (s) { if (out.indexOf(s) < 0) out.push(s); });
           });
@@ -163,7 +177,10 @@
         },
       });
       api = await factory.build(host.id);
-    } catch (e) { return null; }
+    } catch (e) {
+      console.warn('[StoreSeatmap] factory build failed:', (e && e.message) || e);
+      return null;
+    }
     return { api: api, mapped: ticketGroups.length };
   }
 

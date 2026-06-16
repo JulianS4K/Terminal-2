@@ -44,3 +44,20 @@
 
 # Docs that the coworker reads but doesn't write
 /docs/                                      @JulianS4K
+
+# ── D4 / The Bridge (Exos primary-ticketing) ─────────────────────────────
+# Grouped for clear lane categorization (ownership is unchanged — the `*`
+# rule above already assigns @JulianS4K). The Bridge's footprint is the
+# d4_bridge React app + its build output, the exos-* edge functions, and the
+# *exos* migrations. NOT the A1/D0 "*bridge*" items (sg_to_tevo_search_bridge,
+# espn_bridge, etc.). Auto-labelled `area:bridge` via .github/labeler.yml.
+/d4_bridge/                                 @JulianS4K
+/static/bridge/                             @JulianS4K
+/supabase/functions/exos-api/               @JulianS4K
+/supabase/functions/exos-checkout/          @JulianS4K
+/supabase/functions/exos-connect-onboard/   @JulianS4K
+/supabase/functions/exos-distribute/        @JulianS4K
+/supabase/functions/exos-mail-drain/        @JulianS4K
+/supabase/functions/exos-webhook-drain/     @JulianS4K
+/docs/d4_bridge_charter.md                  @JulianS4K
+/docs/d4_operating_constraints.md           @JulianS4K

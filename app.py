@@ -7790,6 +7790,36 @@ def store_event_detail(
     )
 
 
+@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/manifest")
+def store_seatmap_manifest(venue_id: int, configuration_id: int):
+    """Same-origin proxy for the TEvo seat-map section manifest.
+
+    The interactive storefront seat map (static/store/lib/seatmap.js) needs the
+    venue/configuration `manifest.json` to map listing sections → map sections
+    for price-coloring. Fetching it directly from maps.ticketevolution.com in the
+    browser is origin-gated by the CDN (it 403s / omits CORS for the storefront
+    origin), so the manifest never loads and the map silently fell back to the
+    static image on every event. Proxying it through our own origin removes the
+    cross-origin dependency entirely. Read-only GET passthrough (RULE 2 OK —
+    maps.ticketevolution.com is a public read host, no write).
+    """
+    url = f"https://maps.ticketevolution.com/{venue_id}/{configuration_id}/manifest.json"
+    try:
+        r = requests.get(url, timeout=8, headers={"Accept": "application/json"})
+    except requests.RequestException:
+        raise HTTPException(502, "manifest fetch failed")
+    if r.status_code == 404:
+        raise HTTPException(404, "no manifest for this venue/configuration")
+    if not r.ok:
+        raise HTTPException(502, f"manifest upstream {r.status_code}")
+    try:
+        body = r.json()
+    except ValueError:
+        raise HTTPException(502, "manifest not JSON")
+    # Manifests are immutable per venue/config — cache hard at the edge + browser.
+    return JSONResponse(content=body, headers={"Cache-Control": "public, max-age=86400"})
+
+
 # Consumer-grade zone names match a programmatic bowl pattern:
 # "{Lower|Club|Upper|Floor|...} (Xs)" — e.g. "Lower (100s)", "Upper (400s)".
 # But many performer+venue pairs ALSO get venue-specific bowl additions like
