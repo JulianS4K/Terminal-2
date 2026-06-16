@@ -114,9 +114,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 // Resolve the host and block private / loopback / link-local / metadata targets.
 // Returns a reason string if blocked, else null.
 //
-// Residual risk (B1, flagged in mig 20260616200000): this resolves DNS, then
-// fetch() resolves again — a DNS-rebinding host could flip to an internal IP
-// between the two lookups. Fully closing it needs IP-pinned connect (impractical
+// Resolves both A and AAAA and blocks if ANY address is private. Residual risk
+// (B1, flagged in mig 20260616200000): this resolves DNS, then fetch() resolves
+// again — a DNS-rebinding host could flip to an internal IP between the two
+// lookups. Fully closing it needs IP-pinned connect (impractical
 // with Deno fetch + TLS SNI). Mitigating factors: webhook URLs are set only by
 // authenticated org owner/manager (not anonymous attackers), redirects are
 // disabled (manual), and literal private IPs + localhost/.local/.internal are
@@ -128,8 +129,10 @@ async function urlIsBlocked(rawUrl: string): Promise<string | null> {
   const host = u.hostname;
   if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return "internal host";
 
-  // If the host is a literal IP, check it directly; else resolve A records.
-  const literals = /^[0-9.]+$/.test(host) || host.includes(":") ? [host] : await resolveA(host);
+  // If the host is a literal IP, check it directly; else resolve BOTH A and AAAA
+  // and reject if ANY resolved address is private — a host with a public IPv4 but
+  // a private IPv6 (or vice versa) must not slip through on the family fetch picks.
+  const literals = /^[0-9.]+$/.test(host) || host.includes(":") ? [host] : await resolveAll(host);
   if (literals.length === 0) return "dns resolution failed";
   for (const ip of literals) {
     if (isPrivateIp(ip)) return `private ip ${ip}`;
@@ -137,12 +140,16 @@ async function urlIsBlocked(rawUrl: string): Promise<string | null> {
   return null;
 }
 
-async function resolveA(host: string): Promise<string[]> {
-  try {
-    return await Deno.resolveDns(host, "A");
-  } catch {
-    return [];
+async function resolveAll(host: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const kind of ["A", "AAAA"] as const) {
+    try {
+      out.push(...await Deno.resolveDns(host, kind));
+    } catch {
+      /* this record type may not exist — ignore and rely on the other */
+    }
   }
+  return out;
 }
 
 function isPrivateIp(ip: string): boolean {
