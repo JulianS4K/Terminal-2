@@ -783,20 +783,18 @@
     // slider. Empty sections are hidden. days=90 to give the 3mo horizon
     // enough pool depth for each section's filter.
     if (!performerId && !venueId) {
+      // Concierge rail — premium top-band EVO seats (leads the curated rails).
+      const cHost = $("#conciergeRail");
+      if (cHost) {
+        api("/api/store/concierge?days=60&limit=18")
+          .then((res) => renderConcierge(cHost, res))
+          .catch(() => { cHost.hidden = true; });
+      }
       const host = $("#moversSections");
       if (host) {
         api("/api/store/movers?city=NYC&days=90")
           .then((res) => renderMoversSections(host, res))
           .catch(() => { host.hidden = true; });
-      }
-      // 2026 FIFA World Cup rail — independent of the NYC movers strip (WC
-      // matches are a national draw and mostly SeatGeek-sourced). Failure
-      // hides the rail; it never blocks the catalog.
-      const wcHost = $("#worldCup");
-      if (wcHost) {
-        api("/api/store/world-cup?upcoming_only=true&limit=48")
-          .then((res) => renderWorldCup(wcHost, res))
-          .catch(() => { wcHost.hidden = true; });
       }
     }
 
@@ -981,7 +979,7 @@
 
   // Section render config — one entry per themed slider in display order.
   // `accent` line is the per-card secondary note describing why this event
-  // qualified for the section (e.g. "↓ 35% below market" for price_drops).
+  // qualified for the section (e.g. "↓ 35% in 24h" for price_drops).
   const SECTIONS = [
     // Featured (operator directive 2026-05-19 v2): narrow criteria — only
     // playoff games + events with owned_median_retail > $50. Other signals
@@ -999,7 +997,7 @@
     { key: "price_drops", title: "Price drops in NYC",
       accent: (ev) => {
         const d = Number(ev._discount_pct);
-        return Number.isFinite(d) ? `↓ ${d.toFixed(0)}% below market` : "";
+        return Number.isFinite(d) ? `↓ ${d.toFixed(0)}% in 24h` : "";
       } },
     { key: "climbing", title: "Climbing fast in NYC",
       accent: (ev) => {
@@ -1046,68 +1044,56 @@
     return a;
   }
 
-  // World Cup match card. Owned EVO matches (today just Match 72) are
-  // bookable, so they render as a link into our /store/event page. SG-only
-  // matches aren't sellable through our EVO flow and we hold no SeatGeek
-  // deep-link, so they render as a non-interactive market-reference card
-  // (matchup + venue + date + SeatGeek from-price). `from $X` uses our owned
-  // median when we own it, else the SeatGeek market floor.
-  function _wcCard(m) {
-    const ownsEvo = m.we_own && m.tevo_event_id;
-    const card = document.createElement(ownsEvo ? "a" : "div");
-    card.className = "mover-card wc-card" + (ownsEvo ? "" : " wc-card-ref");
-    if (ownsEvo) card.href = `/store/event/${Number(m.tevo_event_id) || 0}`;
-
-    // Chip: owned stock stands out; otherwise the stage/group label.
-    const tag = ownsEvo ? "Our tickets" : (m.group_label || m.stage || "World Cup");
-    if (tag) {
-      const badge = document.createElement("div");
-      badge.className = "mover-accent";
-      badge.textContent = tag;
-      card.append(badge);
+  // Concierge card — an event where we hold premium top-band seats (EVO only).
+  // `from_price` is the entry price into that event's premium tier (the cheapest
+  // of its top-band owned seats). Bookable link into our /store/event page.
+  function _conciergeCard(ev) {
+    const a = document.createElement("a");
+    a.className = "mover-card concierge-card";
+    a.href = `/store/event/${Number(ev.id) || 0}`;
+    if (ev.primary_performer_color) {
+      a.style.setProperty("--card-accent", ev.primary_performer_color);
     }
+    const badge = document.createElement("div");
+    badge.className = "mover-accent";
+    badge.textContent = "Premium seats";
+    a.append(badge);
     const title = document.createElement("div");
     title.className = "mover-title";
-    title.textContent = m.match_label && m.match_label !== "TBD"
-      ? m.match_label
-      : `${m.stage || "World Cup"} · Match ${m.match_number}`;
-    card.append(title);
+    title.textContent = ev.name || "Untitled event";
+    a.append(title);
     const where = document.createElement("div");
     where.className = "mover-where";
-    const venue = [m.venue_name, m.venue_city].filter(Boolean).join(", ");
-    where.textContent = [venue, fmtWhen(m.event_datetime)].filter(Boolean).join(" · ");
-    card.append(where);
+    where.textContent = [ev.venue_name, fmtWhen(ev.occurs_at_local)]
+      .filter(Boolean).join(" · ");
+    a.append(where);
     const meta = document.createElement("div");
     meta.className = "mover-meta";
-    const price = ownsEvo
-      ? (m.owned_median_retail != null ? m.owned_median_retail : m.sg_from_price)
-      : m.sg_from_price;
-    if (price != null) {
+    if (ev.from_price != null) {
       const fp = document.createElement("span");
       fp.className = "mover-price";
-      fp.textContent = `from ${fmtMoney(price)}`;
+      fp.textContent = `from ${fmtMoney(ev.from_price)}`;
       meta.append(fp);
     }
-    card.append(meta);
-    return card;
+    a.append(meta);
+    return a;
   }
 
-  // Render the 2026 FIFA World Cup rail as one horizontal slider, ordered by
-  // kickoff. Hidden entirely when no matches come back.
-  function renderWorldCup(host, payload) {
+  // Render the Concierge rail as one horizontal slider. Hidden when empty.
+  function renderConcierge(host, payload) {
     host.replaceChildren();
-    const matches = (payload && payload.matches) || [];
-    if (!matches.length) { host.hidden = true; return; }
+    const items = (payload && payload.events) || [];
+    if (!items.length) { host.hidden = true; return; }
     const section = document.createElement("section");
-    section.className = "movers-section movers-world-cup";
-    section.setAttribute("aria-label", "2026 FIFA World Cup");
+    section.className = "movers-section movers-concierge";
+    section.setAttribute("aria-label", "Concierge — premium seats");
     const h = document.createElement("h2");
     h.className = "movers-section-title";
-    h.textContent = "2026 FIFA World Cup";
+    h.textContent = "Concierge · premium seats";
     section.append(h);
     const row = document.createElement("div");
     row.className = "movers-section-row";
-    for (const m of matches) row.append(_wcCard(m));
+    for (const ev of items) row.append(_conciergeCard(ev));
     section.append(row);
     host.append(section);
     host.hidden = false;

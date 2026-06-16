@@ -58,7 +58,7 @@
         <div id="searchSuggest" class="search-suggest" hidden role="listbox"></div>
       </form>
       <nav class="hero-chips" aria-label="Quick links">
-        <a class="chip chip-gold" href="#worldCup">2026 World Cup</a>
+        <a class="chip chip-gold" href="#conciergeRail">Premium seats</a>
         <a class="chip" href="#moversSections">Trending now</a>
         <a class="chip" href="#grid">Browse all events</a>
         <a class="chip" href="#concierge">Premium &amp; VIP</a>
@@ -92,8 +92,9 @@
     <section id="results" class="results" aria-live="polite">
       <!-- Filter banner — shown when opened via a ?performer_id= / ?venue_id= link. -->
       <div id="catalogFilterBanner" class="banner" hidden></div>
-      <!-- 2026 FIFA World Cup rail (/api/store/world-cup). Hidden when empty. -->
-      <div id="worldCup" class="movers-sections" hidden></div>
+      <!-- Concierge rail — premium top-band EVO seats (/api/store/concierge).
+           EVO inventory only; no SeatGeek data. Hidden when empty. -->
+      <div id="conciergeRail" class="movers-sections" hidden></div>
       <!-- Themed curated rails (/api/store/movers): Featured, moving fast, etc. -->
       <div id="moversSections" class="movers-sections" hidden></div>
       <div id="status" class="status" aria-live="polite">Curating your events…</div>

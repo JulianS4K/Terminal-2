@@ -5800,39 +5800,32 @@ def store_search(
     return payload
 
 
-@app.get("/api/store/world-cup")
-def store_world_cup(upcoming_only: bool = True, limit: int = 64):
-    """2026 FIFA World Cup match series for the storefront (D3, 2026-06-16).
-
-    Backed by the `world_cup_2026` mapping table. EVO/TEvo carries only Match 72
-    today, so the rail is driven off the SeatGeek-sourced schedule + market data
-    (from-price / median / listing counts) the table consolidates. Each match
-    carries a link target:
-      - owned EVO match → `tevo_event_id` (deep-links to our /store/event page)
-      - everything else → `sg_url` (the SeatGeek listing)
-
-    Read-only over our own DB; no upstream writes (RULE 2 n/a — no broker call).
-    Ordered by kickoff; `upcoming_only` (default) hides matches already played.
+@app.get("/api/store/concierge")
+def store_concierge(city: str = "NYC", days: int = 60, limit: int = 18):
+    """Concierge rail — upcoming owned events where we hold PREMIUM top-band
+    seats (>= $500), EVO/TEvo inventory only (D3, 2026-06-16). Backed by the
+    `concierge_events` rollup; ordered most-premium first. `from_price` is the
+    entry into each event's premium tier. NYC-scoped like the movers rail.
     """
     db = require_sb()
     today_iso = datetime.now(timezone.utc).date().isoformat()
+    horizon_iso = (datetime.now(timezone.utc) + timedelta(days=max(1, min(int(days), 120)))).date().isoformat()
+    venue_patterns = ("%New York%", "%Brooklyn%", "%Bronx%", "%Queens%",
+                      "%Flushing%", "%Elmont%", "%, NY%", "%Newark%", "%East Rutherford%")
     try:
-        q = (db.table("world_cup_2026")
-               .select("match_number,stage,group_label,team_a,team_b,match_label,"
-                       "event_datetime,event_date,venue_name,venue_city,venue_state,"
-                       "venue_country,tevo_event_id,we_own,owned_tickets_count,"
-                       "sg_url,sg_from_price,sg_median_price,sg_listings_count")
-               # Owned (bookable) matches lead the featured rail, then by kickoff.
-               .order("we_own", desc=True)
-               .order("event_datetime"))
-        if upcoming_only:
-            q = q.gte("event_date", today_iso)
-        rows = q.limit(max(1, min(int(limit), 200))).execute().data or []
+        q = (db.table("concierge_events")
+               .select("event_id,name,venue_name,venue_location,occurs_at_local,"
+                       "from_price,prem_max_price,prem_tickets,primary_performer_name")
+               .gte("occurs_date", today_iso)
+               .lte("occurs_date", horizon_iso))
+        q = q.or_(",".join(_or_ilike_clause("venue_location", p) for p in venue_patterns))
+        rows = q.order("prem_max_price", desc=True).limit(max(1, min(int(limit), 40))).execute().data or []
     except Exception as e:
-        # Never break the homepage if the table/columns drift.
-        print(f"store_world_cup query failed: {e}")
-        return {"count": 0, "matches": []}
-    return {"count": len(rows), "matches": rows}
+        print(f"store_concierge query failed: {e}")
+        return {"count": 0, "events": []}
+    # Map event_id -> id so the card links to /store/event/{id}.
+    events = [{**r, "id": r.pop("event_id")} for r in rows]
+    return {"count": len(events), "events": events}
 
 
 @app.get("/api/store/movers")
@@ -5905,35 +5898,26 @@ def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Storefront sections — 3 themed sliders (price movement split into 2 rows):
-#   moving_fast   demand velocity        sg_sales_24h >= 10 OR tix_d24h <= -50
-#   price_drops   our price < SG market  retail_min < 0.7 * sg_median_now
-#   climbing      price firming          (TEvo getin +5% AND d24h<0) OR
-#                                        (SG median +5% AND SG listings -5%)
-#   specials      curated/calendar       owned > 100 AND (holiday-window
-#                                        match via v_event_holidays OR
-#                                        rivalry game via v_rivalry_events)
-# Each section is independent — a single event can appear in 0, 1, or 2
-# sections (e.g., a Yankees vs Red Sox game on July 4th qualifies as
-# both `specials` and `moving_fast`). The 4-row layout replaces the
-# previous single-strip label-mix approach so deals can't crowd out
-# other signals.
+# Storefront sections — themed sliders. EVO/TEvo-ONLY (operator directive
+# 2026-06-16): the consumer store features no SeatGeek information or values.
+# All velocity signals derive from TEvo data:
+#   moving_fast   demand velocity   tix_d24h <= -50 (≥50 tickets left our market in 24h)
+#   price_drops   our get-in fell   getin_pct_24h <= -10 (our get-in price dropped ≥10% in 24h)
+#   climbing      price firming     d24h < 0 AND getin_pct_24h >= +5%
+#   specials      curated/calendar  owned > 100 AND (holiday-window OR rivalry)
+# Each section is independent — a single event can appear in 0, 1, or 2 sections.
 # ---------------------------------------------------------------------------
 
 
 def _section_moving_fast(candidates: list[dict], cap: int = 10) -> list[dict]:
-    """Demand velocity: events selling fast across either market. SG path
-    is more reliable (confirmed sales); TEvo path captures supply leaving
-    the broker market even when SG xref is missing.
-    """
+    """Demand velocity (TEvo): supply leaving our broker market fast — a 24h
+    ticket-count drop of ≥50. EVO-only; no SeatGeek sales signal."""
     out = []
     for c in candidates:
-        sg_sales = c.get("sg_sales_24h") or 0
         d24h = c.get("tix_d24h")
-        if sg_sales >= 10 or (isinstance(d24h, int) and d24h <= -50):
+        if isinstance(d24h, int) and d24h <= -50:
             out.append(c)
     out.sort(key=lambda c: (
-        -(c.get("sg_sales_24h") or 0),
         -abs(c.get("tix_d24h") or 0),
         c.get("occurs_at_local") or "9999",
     ))
@@ -5941,54 +5925,30 @@ def _section_moving_fast(candidates: list[dict], cap: int = 10) -> list[dict]:
 
 
 def _section_price_drops(candidates: list[dict], cap: int = 10) -> list[dict]:
-    """Our get-in price is below SG market median by ≥30%. A real deal
-    signal vs. a flat $20 cutoff — captures relative value, not absolute
-    cheapness. Requires SG xref + recent listings; events without SG
-    coverage are silently skipped.
-    """
+    """Our get-in price fell ≥10% in the last 24h (TEvo get-in movement).
+    EVO-only — no SeatGeek market comparison. Displayed as "↓ X% in 24h"."""
     out = []
     for c in candidates:
-        retail_min = c.get("from_price")
-        sg_median = c.get("sg_median_now")
-        if retail_min is None or sg_median is None:
-            continue
-        try:
-            rm = float(retail_min)
-            sm = float(sg_median)
-            if sm <= 0:
-                continue
-            discount = (sm - rm) / sm
-            if discount >= 0.30:
-                c["_discount_pct"] = round(discount * 100.0, 1)
-                out.append(c)
-        except (TypeError, ValueError):
-            continue
+        getin_pct = c.get("getin_pct_24h")
+        if isinstance(getin_pct, (int, float)) and getin_pct <= -10.0:
+            c["_discount_pct"] = round(abs(getin_pct), 1)
+            out.append(c)
     out.sort(key=lambda c: (-c.get("_discount_pct", 0.0),
                             c.get("occurs_at_local") or "9999"))
     return out[:cap]
 
 
 def _section_climbing(candidates: list[dict], cap: int = 10) -> list[dict]:
-    """Price firming: tickets dropping AND get-in climbing, or SG median
-    climbing AND SG listings shrinking. Dual-source for noise resistance
-    in thin pools (single-listing changes can shift median 5%+).
-    """
+    """Price firming (TEvo): tickets dropping AND get-in climbing ≥5% in 24h.
+    EVO-only; the former SeatGeek-median path was removed."""
     out = []
     for c in candidates:
         d24h = c.get("tix_d24h")
         getin_pct = c.get("getin_pct_24h")
-        sg_med_d = c.get("sg_median_delta_pct")
-        sg_list_d = c.get("sg_listings_delta_pct")
         tevo_climb = (isinstance(d24h, int) and d24h < 0
                       and isinstance(getin_pct, (int, float)) and getin_pct >= 5.0)
-        sg_climb = (isinstance(sg_med_d, (int, float)) and sg_med_d >= 5.0
-                    and isinstance(sg_list_d, (int, float)) and sg_list_d <= -5.0)
-        if tevo_climb or sg_climb:
-            climb_pct = max(
-                getin_pct if isinstance(getin_pct, (int, float)) else -999,
-                sg_med_d if isinstance(sg_med_d, (int, float)) else -999,
-            )
-            c["_climb_pct"] = round(climb_pct, 1) if climb_pct > -999 else None
+        if tevo_climb:
+            c["_climb_pct"] = round(getin_pct, 1)
             out.append(c)
     out.sort(key=lambda c: (-(c.get("_climb_pct") or 0),
                             c.get("occurs_at_local") or "9999"))
@@ -6314,105 +6274,12 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
         except (TypeError, ValueError):
             return False
 
-    # ----- SG enrichment (xref + sales 48h + listings now/prior windows) -----
-    # Each block wrapped in try/except so SG-side failures degrade to TEvo-only
-    # labels rather than killing the strip. Bible §3 landmines respected:
-    # sales firehose 11-23x dedup via sg_sale_id, listings keyed by sg_event_id.
-    sg_event_id_by_tevo: dict[int, int] = {}
-    try:
-        sg_xref = (db.table("seatgeek_event_xref")
-                     .select("tevo_event_id,sg_event_id")
-                     .in_("tevo_event_id", list(metrics_by_id.keys()))
-                     .execute().data) or []
-        sg_event_id_by_tevo = {int(r["tevo_event_id"]): int(r["sg_event_id"])
-                               for r in sg_xref if r.get("sg_event_id")}
-    except Exception as e:
-        print(f"store_movers sg_xref query failed: {e}")
-    tevo_by_sg = {v: k for k, v in sg_event_id_by_tevo.items()}
-    sg_ids = list(sg_event_id_by_tevo.values())
-
-    sg_sales_24h_by_tevo: dict[int, int] = {}
-    sg_sales_prior_24h_by_tevo: dict[int, int] = {}
-    if sg_ids:
-        try:
-            cutoff_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-            cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            rows = (db.table("seatgeek_sales_snapshots")
-                      .select("sg_event_id,sg_sale_id,sale_at_utc,pulled_at")
-                      .in_("sg_event_id", sg_ids)
-                      .gte("sale_at_utc", cutoff_48h)
-                      .limit(20000)
-                      .execute().data) or []
-            # Python-side DISTINCT ON sg_sale_id (latest pulled_at wins)
-            latest_by_sale: dict = {}
-            for r in rows:
-                sid = r.get("sg_sale_id")
-                if sid is None:
-                    continue
-                prior = latest_by_sale.get(sid)
-                if not prior or (r.get("pulled_at") or "") > (prior.get("pulled_at") or ""):
-                    latest_by_sale[sid] = r
-            for r in latest_by_sale.values():
-                sg_eid = int(r["sg_event_id"])
-                tev = tevo_by_sg.get(sg_eid)
-                if not tev:
-                    continue
-                sat = r.get("sale_at_utc") or ""
-                if sat >= cutoff_24h:
-                    sg_sales_24h_by_tevo[tev] = sg_sales_24h_by_tevo.get(tev, 0) + 1
-                else:
-                    sg_sales_prior_24h_by_tevo[tev] = sg_sales_prior_24h_by_tevo.get(tev, 0) + 1
-        except Exception as e:
-            print(f"store_movers sg_sales query failed: {e}")
-
-    # SG listings two windows: now (≤6h) and prior (24-30h ago). DISTINCT ON
-    # sglid per window, then count + median(broadcast_price).
-    sg_listings_now: dict[int, dict] = {}    # tev -> {count, median}
-    sg_listings_prior: dict[int, dict] = {}
-    if sg_ids:
-        for window_label, lo_iso, hi_iso in [
-            ("now",
-             (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(),
-             None),
-            ("prior",
-             (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat(),
-             (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()),
-        ]:
-            try:
-                q = (db.table("seatgeek_listings_snapshots")
-                       .select("sg_event_id,sglid,broadcast_price,captured_at")
-                       .in_("sg_event_id", sg_ids)
-                       .gte("captured_at", lo_iso))
-                if hi_iso is not None:
-                    q = q.lt("captured_at", hi_iso)
-                rows = q.order("captured_at", desc=True).limit(50000).execute().data or []
-            except Exception as e:
-                print(f"store_movers sg_listings {window_label} query failed: {e}")
-                rows = []
-            # DISTINCT ON sglid (latest captured_at wins; rows already ordered DESC)
-            per_event: dict[int, dict] = {}
-            for r in rows:
-                sg_eid = int(r["sg_event_id"])
-                sglid = r.get("sglid")
-                if sg_eid not in per_event:
-                    per_event[sg_eid] = {"sglids": set(), "prices": []}
-                if sglid in per_event[sg_eid]["sglids"]:
-                    continue
-                per_event[sg_eid]["sglids"].add(sglid)
-                bp = r.get("broadcast_price")
-                if bp is not None:
-                    try:
-                        per_event[sg_eid]["prices"].append(float(bp))
-                    except (TypeError, ValueError):
-                        pass
-            target = sg_listings_now if window_label == "now" else sg_listings_prior
-            for sg_eid, agg in per_event.items():
-                tev = tevo_by_sg.get(sg_eid)
-                if not tev:
-                    continue
-                prices = sorted(agg["prices"])
-                median = prices[len(prices) // 2] if prices else None
-                target[tev] = {"count": len(agg["sglids"]), "median": median}
+    # ----- EVO-only storefront (operator directive 2026-06-16) -----
+    # The consumer store features EVO/TEvo inventory ONLY — no SeatGeek
+    # information or values surface to customers. The former SG enrichment
+    # (xref + sales + listings windows) was removed; the discovery rails below
+    # (moving_fast / price_drops / climbing) run purely off TEvo velocity
+    # signals (ticket-count delta + get-in price movement).
 
     # ----- Build candidate pool with all signal data attached -----
     # Every owned (>=1) event lands in `candidates` with its full signal
@@ -6442,23 +6309,6 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             pct_val = float(getin_pct_24h) if getin_pct_24h is not None else None
         except (TypeError, ValueError):
             pct_val = None
-
-        sg_sales_24h = sg_sales_24h_by_tevo.get(eid, 0)
-        sg_sales_prior = sg_sales_prior_24h_by_tevo.get(eid, 0)
-        sg_sales_delta_pct = None
-        if sg_sales_prior > 0:
-            sg_sales_delta_pct = round(100.0 * (sg_sales_24h - sg_sales_prior) / sg_sales_prior, 1)
-        sg_now = sg_listings_now.get(eid)
-        sg_prior = sg_listings_prior.get(eid)
-        sg_listings_delta_pct = None
-        sg_median_delta_pct = None
-        if sg_now and sg_prior and sg_prior["count"] > 0:
-            sg_listings_delta_pct = round(
-                100.0 * (sg_now["count"] - sg_prior["count"]) / sg_prior["count"], 1)
-        if (sg_now and sg_prior and sg_prior["median"]
-                and sg_prior["median"] > 0 and sg_now["median"] is not None):
-            sg_median_delta_pct = round(
-                100.0 * (sg_now["median"] - sg_prior["median"]) / sg_prior["median"], 1)
 
         # Home-team assets (primary performer)
         primary_pid_raw = ev.get("primary_performer_id")
@@ -6503,11 +6353,6 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             "from_price": from_price,
             "tix_d24h": d24h_val,
             "getin_pct_24h": pct_val,
-            "sg_sales_24h": sg_sales_24h,
-            "sg_sales_delta_pct": sg_sales_delta_pct,
-            "sg_listings_delta_pct": sg_listings_delta_pct,
-            "sg_median_delta_pct": sg_median_delta_pct,
-            "sg_median_now": (sg_now or {}).get("median"),
             "owned_tickets_count": owned_tickets,
             "owned_median_retail": m.get("owned_median_retail"),
             "owned_share": m.get("owned_share"),
