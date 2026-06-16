@@ -265,13 +265,12 @@
         `<td class="num">${num(r.listings_count)}</td>` +
         `<td class="num">${num(r.tickets_count)}</td>` +
         '</tr>').join('');
-      const spark = sgSparkline(rows.map(r => +r.allin_median).filter(v => Number.isFinite(v)));
       priceSection =
         `<section id="kpi-grid">${kpiHtml}</section>` +
         '<section id="sg-price-history">' +
           '<div class="panel-title row"><span>SEATGEEK PRICE HISTORY — daily all-in (wc_price_daily)</span>' +
           `<span class="muted small">${rows.length} days · sg_event_id ${sgId}</span></div>` +
-          spark +
+          '<div id="wcChartHost" class="wc-chart"></div>' +
           '<table class="wc-daily"><thead><tr><th>Date</th><th class="num">Get-in</th><th class="num">Median</th>' +
           '<th class="num">P90</th><th class="num">Listings</th><th class="num">Tickets</th></tr></thead>' +
           `<tbody>${tableRows}</tbody></table>` +
@@ -279,16 +278,69 @@
     }
 
     pane.innerHTML = priceSection +
+      '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
+        '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
+        '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
+        'GameTime needs discovery; seat map / EVO aren\'t available for SeatGeek-native events.</div></section>' +
       '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
         '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>' +
       '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
-        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>' +
-      '<section id="other-markets"><div class="panel-title">OTHER MARKETS — via AQ hub</div>' +
-        '<div class="muted small">StubHub + VividSeats collection is being enabled for World Cup matches (listings appear here as they\'re pulled). ' +
-        'Ticketmaster + GameTime use slug-based URLs and require discovery. Seat map / EVO aren\'t available — these events aren\'t in the TEvo market.</div></section>';
+        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>';
 
+    if (rows.length) renderWcChart('wcChartHost', rows);
+    loadWcMarkets(sgId).catch(e => console.error('[wc markets]', e));
     loadSgListingsInline(sgId).catch(e => console.error('[sg listings]', e));
     loadSgSalesInline(sgId).catch(e => console.error('[sg sales]', e));
+  }
+
+  // Real uPlot price chart for the WC page (get-in / median / p90 daily series).
+  function renderWcChart(hostId, rows) {
+    const host = document.getElementById(hostId);
+    if (!host || typeof uPlot === 'undefined' || !rows || rows.length < 2) return;
+    const asc = rows.slice().sort((a, b) => (a.snapshot_date < b.snapshot_date ? -1 : 1));
+    const xs = asc.map(r => Math.floor(new Date(r.snapshot_date + 'T00:00:00Z').getTime() / 1000));
+    const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
+    const data = [xs, col('allin_min'), col('allin_median'), col('allin_p90')];
+    const width = () => Math.max(320, host.clientWidth || 800);
+    const opts = {
+      width: width(), height: 240,
+      scales: { x: { time: true } },
+      series: [
+        {},
+        { label: 'Get-in', stroke: '#5ab0ff', width: 2 },
+        { label: 'Median', stroke: '#46d39a', width: 2 },
+        { label: 'P90', stroke: '#e0a23c', width: 1 },
+      ],
+    };
+    host.innerHTML = '';
+    const u = new uPlot(opts, data, host);
+    if (!host._wcResize) {
+      host._wcResize = true;
+      window.addEventListener('resize', () => u.setSize({ width: width(), height: 240 }));
+    }
+  }
+
+  // Cross-source markets summary (SeatGeek live + StubHub/VividSeats/Ticketmaster
+  // as their data lands), resolved through the AQ hub by get_wc_markets.
+  async function loadWcMarkets(sgId) {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('wcMktBody'), meta = document.getElementById('wcMktMeta');
+    if (!body || !Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_wc_markets', { p_sg_event_id: sgId });
+    if (res.error) { body.innerHTML = `<div class="empty">${escapeHtml(res.error.message)}</div>`; if (meta) meta.textContent = ''; return; }
+    const rows = res.data || [];
+    if (!rows.length) { body.innerHTML = '<div class="empty">No market data yet — pulls in progress.</div>'; if (meta) meta.textContent = ''; return; }
+    if (meta) meta.textContent = `${rows.length} source${rows.length > 1 ? 's' : ''}`;
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const trs = rows.map(r => '<tr>' +
+      `<td><strong>${escapeHtml(r.source)}</strong></td>` +
+      `<td class="num">${money(r.getin)}</td>` +
+      `<td class="num">${money(r.median)}</td>` +
+      `<td class="num">${r.listings != null ? T.fmtNum(r.listings) : '—'}</td>` +
+      `<td class="muted small">${r.last_pull ? escapeHtml(T.fmtDate(r.last_pull)) : '—'}</td>` +
+      '</tr>').join('');
+    body.innerHTML = '<table><thead><tr><th>Source</th><th class="num">Get-in</th><th class="num">Median</th>' +
+      '<th class="num">Listings</th><th>Last pull</th></tr></thead><tbody>' + trs + '</tbody></table>';
   }
 
   async function loadSgListingsInline(sgId) {
