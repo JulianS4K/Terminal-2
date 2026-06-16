@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const Auth = window.TerminalAuth;
-  const D2_BASE = 'https://d2-orders-dashboard.onrender.com';
+  const D2_BASE = '';  // same-origin — D2 dashboard is merged into this service (/d2 + /api/d2/*)
 
   function isLocalhost() {
     const h = location.hostname;
