@@ -7790,34 +7790,60 @@ def store_event_detail(
     )
 
 
-@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/manifest")
-def store_seatmap_manifest(venue_id: int, configuration_id: int):
-    """Same-origin proxy for the TEvo seat-map section manifest.
+def _fetch_tevo_seatmap_file(venue_id: int, configuration_id: int, filename: str, accept: str):
+    """Server-side GET of a TEvo seat-map asset, returned to the caller.
 
-    The interactive storefront seat map (static/store/lib/seatmap.js) needs the
-    venue/configuration `manifest.json` to map listing sections → map sections
-    for price-coloring. Fetching it directly from maps.ticketevolution.com in the
-    browser is origin-gated by the CDN (it 403s / omits CORS for the storefront
-    origin), so the manifest never loads and the map silently fell back to the
-    static image on every event. Proxying it through our own origin removes the
-    cross-origin dependency entirely. Read-only GET passthrough (RULE 2 OK —
-    maps.ticketevolution.com is a public read host, no write).
+    Same-origin proxy for the interactive storefront seat map. The Tevomaps
+    bundle builds every asset URL as
+    `${mapsDomain}/${venueId}/${configurationId}/<file>` and fetches BOTH
+    `map.svg` and `manifest.json` from maps.ticketevolution.com in the browser.
+    That CDN omits CORS / origin-gates the storefront host, so those cross-origin
+    fetches fail, `SeatmapFactory.build()` rejects, and the map silently fell
+    back to the static image on every event. Routing the bundle's `mapsDomain`
+    at this proxy (see static/store/lib/seatmap.js) removes the cross-origin
+    dependency entirely. Read-only GET passthrough (RULE 2 OK —
+    maps.ticketevolution.com is a public read host, no write). venue_id /
+    configuration_id are int-typed so the upstream path can't be injected.
     """
-    url = f"https://maps.ticketevolution.com/{venue_id}/{configuration_id}/manifest.json"
+    url = f"https://maps.ticketevolution.com/{venue_id}/{configuration_id}/{filename}"
     try:
-        r = requests.get(url, timeout=8, headers={"Accept": "application/json"})
+        r = requests.get(url, timeout=8, headers={"Accept": accept})
     except requests.RequestException:
-        raise HTTPException(502, "manifest fetch failed")
+        raise HTTPException(502, "seatmap fetch failed")
     if r.status_code == 404:
-        raise HTTPException(404, "no manifest for this venue/configuration")
+        raise HTTPException(404, "no seatmap for this venue/configuration")
     if not r.ok:
-        raise HTTPException(502, f"manifest upstream {r.status_code}")
+        raise HTTPException(502, f"seatmap upstream {r.status_code}")
+    return r
+
+
+# Maps/manifests are immutable per venue/config — cache hard at the edge + browser.
+_SEATMAP_CACHE = "public, max-age=86400"
+
+
+@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/manifest.json")
+def store_seatmap_manifest(venue_id: int, configuration_id: int):
+    """Section manifest proxy. Consumed by the Tevomaps bundle (price-region
+    matching) AND by seatmap.js's own listing→section price-coloring index."""
+    r = _fetch_tevo_seatmap_file(venue_id, configuration_id, "manifest.json", "application/json")
     try:
         body = r.json()
     except ValueError:
         raise HTTPException(502, "manifest not JSON")
-    # Manifests are immutable per venue/config — cache hard at the edge + browser.
-    return JSONResponse(content=body, headers={"Cache-Control": "public, max-age=86400"})
+    return JSONResponse(content=body, headers={"Cache-Control": _SEATMAP_CACHE})
+
+
+@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/map.svg")
+def store_seatmap_svg(venue_id: int, configuration_id: int):
+    """Map SVG proxy. The Tevomaps bundle fetches this then injects it as the
+    interactive map; without the proxy the cross-origin fetch fails and the map
+    never builds."""
+    r = _fetch_tevo_seatmap_file(venue_id, configuration_id, "map.svg", "image/svg+xml")
+    return Response(
+        content=r.content,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": _SEATMAP_CACHE},
+    )
 
 
 # Consumer-grade zone names match a programmatic bowl pattern:

@@ -113,7 +113,7 @@
     if (opts.venueId == null || opts.configurationId == null) return null;
 
     // manifest → matcher index (for price-coloring). Fetched through our OWN
-    // origin (/api/store/seatmap/.../manifest) — the TEvo maps CDN is origin-
+    // origin (/api/store/seatmap/.../manifest.json) — the TEvo maps CDN is origin-
     // gated and 403s / omits CORS for the storefront host, so fetching it
     // directly here silently failed on EVERY event and the map fell back to the
     // static image. The manifest is OPTIONAL: when it can't load we still build
@@ -121,7 +121,7 @@
     // hard-gated the build on the manifest — instead of showing the static jpg.
     var idx = null;
     try {
-      var resp = await fetch('/api/store/seatmap/' + opts.venueId + '/' + opts.configurationId + '/manifest',
+      var resp = await fetch('/api/store/seatmap/' + opts.venueId + '/' + opts.configurationId + '/manifest.json',
                              { headers: { 'Accept': 'application/json' } });
       if (resp.ok) {
         var manifest = await resp.json();
@@ -161,6 +161,14 @@
       var factory = new window.Tevomaps.SeatmapFactory({
         venueId: String(opts.venueId),
         configurationId: String(opts.configurationId),
+        // Route the bundle's internal map.svg + manifest.json fetches through
+        // our same-origin proxy (app.py /api/store/seatmap/...). configFilePath
+        // inside the bundle is `${mapsDomain}/${venueId}/${configurationId}`, so
+        // it then GETs `${mapsDomain}/<venue>/<config>/map.svg` (and manifest.json)
+        // from us instead of cross-origin to maps.ticketevolution.com — which
+        // omits CORS for the storefront host, rejecting build() and forcing the
+        // static fallback on every event.
+        mapsDomain: '/api/store/seatmap',
         ticketGroups: ticketGroups,
         showLegend: true,
         showControls: true,
