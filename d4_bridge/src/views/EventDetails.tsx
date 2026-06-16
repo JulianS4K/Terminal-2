@@ -227,11 +227,16 @@ export default function EventDetails() {
       return;
     }
     const unitPrice = tier.price ?? event.price ?? 0;
-    // Grand total = tickets + selected add-ons. A free tier with PAID add-ons
-    // still routes through checkout; only a $0 grand total takes the free path.
-    const grandTotalCents = Math.round(unitPrice * quantity * 100) + addonSel.totalCents;
+    // A purchase needs Stripe checkout whenever there's anything PRICED — a paid
+    // tier OR paid add-ons. The free-claim path (exos_claim_free_tickets /
+    // _free_addons) only accepts a $0 tier + $0 extras and hard-rejects priced
+    // items, so a paid tier discounted to $0 must STILL go through checkout (the
+    // discount is redeemed server-side there, not via the free path). We
+    // therefore route on the nominal prices, never on a discounted total —
+    // discount codes are org-secret + not yet server-validated.
+    const needsCheckout = unitPrice > 0 || addonSel.totalCents > 0;
 
-    if (grandTotalCents > 0) {
+    if (needsCheckout) {
       if (!stripeEnabled) {
         toast({ kind: 'info', title: t('event.comingSoonTitle'), message: t('event.comingSoon') });
         return;
