@@ -30,6 +30,12 @@
   function norm(s) {
     return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
   }
+  // Light key for matching listing sections against venue_section_map.section_raw
+  // (both are raw EVO section strings) — case/whitespace-insensitive, punctuation
+  // PRESERVED (unlike norm) so "104A" vs "104 a" stay distinct in the crosswalk.
+  function nkey(s) {
+    return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+  }
   function parse(s) {
     var n = norm(s);
     var numM = n.match(/\d+/);
@@ -134,17 +140,41 @@
       console.warn('[StoreSeatmap] manifest fetch error:', (e && e.message) || e);
     }
 
+    // AUTHORITATIVE section → seatmap-key crosswalk (public.venue_section_map,
+    // surfaced by /api/store/seatmap/.../section-map). This is the SAME server-side
+    // mapper D0's terminal reads via get_event_section_map — built with
+    // exact/token/token_base tiers, far more complete than the JS heuristic below.
+    // It's the primary resolver; the heuristic (matchSection) only fills sections
+    // the crosswalk hasn't mapped, so coverage strictly improves. Optional: if it
+    // can't load we fall back entirely to the heuristic.
+    var crosswalk = {};  // nkey(section_raw) → seatmap_key
+    try {
+      var cwResp = await fetch('/api/store/seatmap/' + opts.venueId + '/' + opts.configurationId + '/section-map',
+                               { headers: { 'Accept': 'application/json' } });
+      if (cwResp.ok) {
+        var cwBody = await cwResp.json();
+        var secs = (cwBody && cwBody.sections) || {};
+        Object.keys(secs).forEach(function (raw) { crosswalk[nkey(raw)] = secs[raw]; });
+      } else {
+        console.warn('[StoreSeatmap] section-map HTTP ' + cwResp.status + ' — heuristic-only matching');
+      }
+    } catch (e) {
+      console.warn('[StoreSeatmap] section-map fetch error:', (e && e.message) || e);
+    }
+    var hasCrosswalk = Object.keys(crosswalk).length > 0;
+
     // cheapest listing per matched manifest section + reverse map (key → listing
-    // sections). Skipped when the manifest is unavailable — the map still builds,
-    // just without price coloring or section→listing click-through.
+    // sections). Built when we have EITHER the crosswalk OR the manifest index;
+    // skipped only when both are unavailable — the map still builds, just without
+    // price coloring or section→listing click-through.
     var floorByKey = {}, listingsByKey = {};
-    if (idx) {
+    if (hasCrosswalk || idx) {
       (opts.listings || []).forEach(function (l) {
         var sec = (l.section || '').trim();
         if (!sec || isParking(sec)) return;
         var price = Number(l.retail_price);
         if (!isFinite(price) || price <= 0) return;
-        var key = matchSection(sec, idx);
+        var key = crosswalk[nkey(sec)] || (idx ? matchSection(sec, idx) : null);
         if (!key) return;
         if (floorByKey[key] == null || price < floorByKey[key]) floorByKey[key] = price;
         (listingsByKey[key] = listingsByKey[key] || []);

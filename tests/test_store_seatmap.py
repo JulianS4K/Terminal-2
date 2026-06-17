@@ -127,3 +127,86 @@ def test_non_int_ids_rejected(client, monkeypatch):
     # int-typed path params guarantee the upstream path can't be injected.
     _stub_get(monkeypatch, _FakeResp(200, content=b"x", is_json=False), {})
     assert client.get("/api/store/seatmap/abc/14341/map.svg").status_code == 422
+
+
+# ---------- section-map crosswalk bridge (venue_section_map) ----------
+
+class _FakeTable:
+    """Minimal supabase-py fluent stub: .table().select().eq()*.execute().data,
+    keyed by (configuration_id, platform) so config-fallback can be exercised."""
+    def __init__(self, data_by_cfg_plat, calls):
+        self._data = data_by_cfg_plat
+        self._calls = calls
+        self._eq = {}
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, col, val):
+        self._eq[col] = val
+        return self
+
+    def execute(self):
+        cfg = self._eq.get("configuration_id")
+        plat = self._eq.get("platform")
+        self._calls.append((cfg, plat))
+        rows = self._data.get((cfg, plat), [])
+        return type("R", (), {"data": rows})()
+
+
+class _FakeSB:
+    def __init__(self, data_by_cfg_plat):
+        self.data = data_by_cfg_plat
+        self.calls = []
+
+    def table(self, name):
+        assert name == "venue_section_map"
+        return _FakeTable(self.data, self.calls)
+
+
+def test_section_map_returns_crosswalk(client, monkeypatch):
+    sb = _FakeSB({(53, "evo"): [
+        {"section_raw": "Field Box 112A", "seatmap_key": "field box 112"},
+        {"section_raw": "Grandstand 405", "seatmap_key": "grandstand 405"},
+        {"section_raw": "  ", "seatmap_key": "x"},          # blank raw — dropped
+        {"section_raw": "Bleacher 1", "seatmap_key": None},  # null key — dropped
+    ]})
+    monkeypatch.setattr(app_module, "sb", sb)
+    r = client.get("/api/store/seatmap/896/53/section-map")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["config_used"] == 53
+    assert body["count"] == 2
+    assert body["sections"]["Field Box 112A"] == "field box 112"
+    assert "Bleacher 1" not in body["sections"]
+
+
+def test_section_map_falls_back_to_union_bucket(client, monkeypatch):
+    # No rows for the event's config → retry configuration_id = 0 (union bucket).
+    sb = _FakeSB({(0, "evo"): [{"section_raw": "GA", "seatmap_key": "ga floor"}]})
+    monkeypatch.setattr(app_module, "sb", sb)
+    r = client.get("/api/store/seatmap/896/9999/section-map")
+    body = r.json()
+    assert body["config_used"] == 0
+    assert body["sections"] == {"GA": "ga floor"}
+    assert sb.calls == [(9999, "evo"), (0, "evo")]  # primary then fallback
+
+
+def test_section_map_no_double_fallback_when_config_is_zero(client, monkeypatch):
+    sb = _FakeSB({})  # nothing anywhere
+    monkeypatch.setattr(app_module, "sb", sb)
+    r = client.get("/api/store/seatmap/896/0/section-map")
+    assert r.json() == {"sections": {}, "config_used": 0, "count": 0}
+    assert sb.calls == [(0, "evo")]  # config 0 → no second query
+
+
+def test_section_map_unsupported_platform_rejected(client, monkeypatch):
+    monkeypatch.setattr(app_module, "sb", _FakeSB({}))
+    assert client.get("/api/store/seatmap/896/53/section-map?platform=tp").status_code == 400
+
+
+def test_section_map_degrades_when_sb_missing(client, monkeypatch):
+    monkeypatch.setattr(app_module, "sb", None)
+    r = client.get("/api/store/seatmap/896/53/section-map")
+    assert r.status_code == 200
+    assert r.json()["count"] == 0

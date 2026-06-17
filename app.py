@@ -7857,6 +7857,63 @@ def store_seatmap_svg(venue_id: int, configuration_id: int):
     )
 
 
+@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/section-map")
+def store_seatmap_section_map(venue_id: int, configuration_id: int, platform: str = "evo"):
+    """Authoritative section -> seatmap-key crosswalk for the storefront seat map.
+
+    The interactive map colors manifest polygons by cheapest listing price, which
+    requires mapping each raw listing section to a map polygon key. seatmap.js has
+    a client-side heuristic matcher, but the SERVER-SIDE crosswalk
+    (`public.venue_section_map`, built by `build_venue_section_map()` with
+    exact/token/token_base tiers) is far more complete. D0's terminal reads it via
+    the `get_event_section_map` RPC — but that RPC is `@s4kent.com`-gated, so the
+    public storefront can't call it. This endpoint bridges the SAME table to the
+    storefront through the service-role client (read-only SELECT — RULE 1 OK; no
+    write, no cross-lane mutation), so D0 and D1 share one source of truth.
+
+    Config-aware: prefer the event's configuration bucket, falling back to the
+    union bucket (configuration_id = 0) — mirrors `get_event_section_map`. seatmap.js
+    still falls back to its heuristic for any section the crosswalk hasn't mapped.
+    """
+    plat = (platform or "evo").lower()
+    if plat not in ("evo", "sg"):
+        raise HTTPException(400, "unsupported platform")
+    if sb is None:
+        return JSONResponse(content={"sections": {}, "config_used": None, "count": 0})
+
+    def _rows(cfg: int):
+        try:
+            return (
+                sb.table("venue_section_map")
+                .select("section_raw,seatmap_key")
+                .eq("tevo_venue_id", venue_id)
+                .eq("configuration_id", cfg)
+                .eq("platform", plat)
+                .execute().data
+            ) or []
+        except Exception:
+            return []
+
+    config_used = configuration_id
+    rows = _rows(configuration_id)
+    if not rows and configuration_id != 0:
+        config_used = 0
+        rows = _rows(0)
+
+    sections: dict[str, str] = {}
+    for row in rows:
+        raw = (row.get("section_raw") or "").strip()
+        key = (row.get("seatmap_key") or "").strip()
+        if raw and key:
+            sections[raw] = key
+    # Crosswalk is rebuilt by the venue_section_map_refresh cron — cache modestly
+    # (not the 24h used for immutable manifests/SVGs).
+    return JSONResponse(
+        content={"sections": sections, "config_used": config_used, "count": len(sections)},
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 # Consumer-grade zone names match a programmatic bowl pattern:
 # "{Lower|Club|Upper|Floor|...} (Xs)" — e.g. "Lower (100s)", "Upper (400s)".
 # But many performer+venue pairs ALSO get venue-specific bowl additions like
