@@ -23,7 +23,8 @@ The `/new-migration` command scaffolds the FILE; this skill is the whole lifecyc
 ## Process
 
 1. **Don't rebuild it.** Before designing anything, confirm it doesn't already exist —
-   132 tables / 152 views / 75+ crons are live. Grep `RESOURCES_BIBLE.md` for the keyword;
+   hundreds of tables / views / crons are live (`RESOURCES_BIBLE.md` owns the live inventory
+   + counts). Grep `RESOURCES_BIBLE.md` for the keyword;
    check `MIGRATION_CONVENTIONS.md §14` so you don't re-ship landmark work.
    `SELECT relname FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace
     WHERE nspname='public' AND relkind IN ('r','v','m') AND relname ILIKE '%<kw>%';`
@@ -66,7 +67,7 @@ The `/new-migration` command scaffolds the FILE; this skill is the whole lifecyc
 | "…skip the sample test, the SQL looks right." | Column-name + null-key bugs (`occurs_at_local` is TEXT; `tevo_event_id` often NULL) only show on real rows. Step 3 is the cheapest place to catch them. |
 | "…apply now, it's a tiny change." | Apply is operator-gated **per call** regardless of size (CLAUDE.md §1). Tiny DDL still mutates prod. |
 | "…it's NOT VALID so the FK won't block inserts." | `NOT VALID` skips *existing* rows but still enforces every new INSERT. Drop it, don't mark it. |
-| "…I'll reuse this name, feels new." | 132 tables / 152 views exist; re-implementing `event_metrics`/`*_xref`/`v_event_*` is the #1 waste. Step 1 exists for this. |
+| "…I'll reuse this name, feels new." | The inventory is large (see `RESOURCES_BIBLE.md`); re-implementing `event_metrics`/`*_xref`/`v_event_*` is the #1 waste. Step 1 exists for this. |
 | "…verify later, apply succeeded." | "Applied" ≠ "correct." A function can return 20 and write 0 rows (clock_timestamp vs now() bug). Re-run the samples. |
 
 ## Red flags — stop if any are true
