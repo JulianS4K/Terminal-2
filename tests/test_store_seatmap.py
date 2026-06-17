@@ -93,6 +93,17 @@ def test_map_svg_proxy_passes_through(client, monkeypatch):
     assert cap["url"] == "https://maps.ticketevolution.com/896/14341/map.svg"
 
 
+def test_map_svg_carries_xss_hardening_headers(client, monkeypatch):
+    # SVG is the only same-origin route returning image/svg+xml; opened directly
+    # as a document it would execute embedded scripts. sandbox + nosniff
+    # neutralize that on direct navigation (the inline-injection path is
+    # unaffected — it reads .text(), not the response as a document).
+    _stub_get(monkeypatch, _FakeResp(200, content=b"<svg/>", is_json=False), {})
+    r = client.get("/api/store/seatmap/896/14341/map.svg")
+    assert "sandbox" in r.headers.get("content-security-policy", "")
+    assert r.headers.get("x-content-type-options") == "nosniff"
+
+
 def test_upstream_404_maps_to_404(client, monkeypatch):
     _stub_get(monkeypatch, _FakeResp(404, is_json=False), {})
     assert client.get("/api/store/seatmap/1/2/map.svg").status_code == 404

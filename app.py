@@ -7842,7 +7842,18 @@ def store_seatmap_svg(venue_id: int, configuration_id: int):
     return Response(
         content=r.content,
         media_type="image/svg+xml",
-        headers={"Cache-Control": _SEATMAP_CACHE},
+        headers={
+            "Cache-Control": _SEATMAP_CACHE,
+            # Defense-in-depth: this is the only same-origin route that returns
+            # SVG. An SVG opened directly as a document executes embedded
+            # scripts; the bundle's inline-injection path reads .text() so these
+            # headers don't affect it, but a direct hit to this URL would
+            # otherwise be a same-origin script-execution sink. `sandbox` with no
+            # tokens blocks script execution on direct navigation; nosniff stops
+            # content-type confusion.
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
