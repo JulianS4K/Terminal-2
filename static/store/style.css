@@ -496,13 +496,16 @@ a { color: inherit; }
    it mounts successfully store.js hides the static .map img above it. */
 .seatmap-host {
   width: 100%;
-  min-height: 320px;
+  /* Definite height (not just min-height): the TEvo SVG sizes to its container,
+     so without a resolved height it collapses to ~0 and the host renders as a
+     blank box. Mirrors the proven terminal pattern (static/terminal/style.css). */
+  height: 480px;
   border-radius: 6px;
   background: #f6f7f9;
   overflow: hidden;
   position: relative;
 }
-.seatmap-host svg { display: block; width: 100%; height: auto; }
+.seatmap-host svg { display: block; width: 100%; height: 100%; }
 /* TEvo injects its own controls/legend; keep them inside the rounded host. */
 .seatmap-host .legend,
 .seatmap-host .controls { font-size: 12px; }
