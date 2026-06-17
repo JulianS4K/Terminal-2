@@ -5654,6 +5654,84 @@ def _search_sql_only(db, q_norm: str, limit: int) -> dict:
     }
 
 
+def _search_players(db, q_norm: str, limit: int) -> list[dict]:
+    """Sports player search for the storefront. Resolves a player name to their
+    team + the team's upcoming events via the shared PUBLIC RPC
+    `sports_player_search` (mig 20260617120000), then enriches each event with
+    the same we_own/from_price tags as _search_sql_only so the dropdown can show
+    "tickets you can buy" under a player.
+
+    Public sports data only (rosters, team names, public listings) — the only
+    money shown is the consumer-facing from_price already on every event card.
+    Returns [] on any failure: the players block is additive and must never 500
+    the whole search.
+    """
+    try:
+        players = (db.rpc("sports_player_search",
+                          {"p_q": q_norm, "p_limit": limit}).execute().data) or []
+    except Exception as e:
+        print(f"_search_players rpc failed: {e}")
+        return []
+    if not players:
+        return []
+
+    # One batched tag lookup across every event id from every matched player.
+    all_ids = [
+        int(ev.get("tevo_event_id") or 0)
+        for pl in players for ev in (pl.get("events") or [])
+        if ev.get("tevo_event_id")
+    ]
+    metrics: dict[int, dict] = {}
+    inactive: set[int] = set()
+    if all_ids:
+        uniq = list(set(all_ids))
+        try:
+            rows = (db.table("latest_event_metrics")
+                      .select("event_id,owned_tickets_count,retail_min")
+                      .in_("event_id", uniq).execute().data) or []
+            metrics = {int(r["event_id"]): r for r in rows if r.get("event_id")}
+        except Exception:
+            metrics = {}
+        try:
+            lc = (db.table("event_lifecycle")
+                    .select("event_id,is_active")
+                    .in_("event_id", uniq).execute().data) or []
+            inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+        except Exception:
+            inactive = set()
+
+    out: list[dict] = []
+    for pl in players:
+        events_out = []
+        for ev in (pl.get("events") or []):
+            eid = int(ev.get("tevo_event_id") or 0)
+            if not eid or eid in inactive or _is_speculative_event_name(ev.get("name")):
+                continue
+            m = metrics.get(eid) or {}
+            events_out.append({
+                "id": eid,
+                "name": ev.get("name"),
+                "venue_name": ev.get("venue_name"),
+                "location": ev.get("venue_location"),
+                "occurs_at": ev.get("occurs_at_local"),
+                "we_own": bool(m.get("owned_tickets_count")),
+                "from_price": m.get("retail_min"),
+                "owned_tix": m.get("owned_tickets_count"),
+            })
+        out.append({
+            "performer_id": int(pl.get("tevo_performer_id") or 0),
+            "name": pl.get("full_name") or pl.get("display_name"),
+            "team_name": pl.get("team_name"),
+            "league": pl.get("espn_league"),
+            "position": pl.get("position_abbr"),
+            "jersey": pl.get("jersey"),
+            "status": pl.get("status"),
+            "headshot_url": pl.get("headshot_url"),
+            "events": events_out,
+        })
+    return out
+
+
 def _search_live(db, q_norm: str, limit: int) -> dict:
     """Live search: hits TEvo /v9/searches/suggestions, then cross-joins the
     returned event IDs against our SQL to tag we_own + from_price. Used in
@@ -5765,7 +5843,7 @@ def store_search(
     """
     q_norm = (q or "").strip()
     if not q_norm:
-        return {"q": "", "events": [], "performers": [], "venues": [],
+        return {"q": "", "players": [], "events": [], "performers": [], "venues": [],
                 "source": "empty", "latency_ms": 0}
 
     # Cap at 50; the upstream cap is 20, so anything past that just trims.
@@ -5792,6 +5870,11 @@ def store_search(
         payload = _search_sql_only(db, q_norm, lim)
     else:
         payload = _search_live(db, q_norm, lim)
+
+    # Sports player layer (mode-agnostic): "messi"/"lebron" → their team's
+    # upcoming events. Independent of the events/performers/venues path so it
+    # works under both SQL and live modes; cached as part of payload below.
+    payload["players"] = _search_players(db, q_norm, lim)
 
     elapsed_ms = int((time.time() - t0) * 1000)
     payload["q"] = q_norm

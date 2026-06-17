@@ -871,20 +871,35 @@
     }
   }
 
-  // Render suggestion dropdown body. Three sections:
-  //   Events you can buy now (we_own=true) — top priority, shown first
+  // Render suggestion dropdown body. Sections, in priority order:
+  //   Players — sports search: a matched athlete + their team's upcoming
+  //     events (e.g. "messi" → Inter Miami CF games). Shown first.
+  //   Events you can buy now (we_own=true) — top priority among plain events
   //   Other events (we_own=false) — surfaced but flagged as "browse"
   //   Performers + venues — bottom, clickable filter pivots
   function renderSuggest(host, payload) {
     if (!host) return;
     host.replaceChildren();
+    const players = (payload && payload.players) || [];
     const events = (payload && payload.events) || [];
     const performers = (payload && payload.performers) || [];
     const venues = (payload && payload.venues) || [];
 
-    if (!events.length && !performers.length && !venues.length) {
+    if (!players.length && !events.length && !performers.length && !venues.length) {
       host.hidden = true;
       return;
+    }
+
+    if (players.length) {
+      host.append(suggestHeader("Players"));
+      players.forEach((pl) => {
+        host.append(suggestPlayerRow(pl));
+        (pl.events || []).forEach((e) => {
+          const row = suggestEventRow(e, !!e.we_own);
+          row.classList.add("under-player");
+          host.append(row);
+        });
+      });
     }
 
     const buyable = events.filter((e) => e.we_own);
@@ -938,6 +953,25 @@
       price.textContent = `from ${fmtMoney(ev.from_price)}`;
       a.append(price);
     }
+    return a;
+  }
+
+  function suggestPlayerRow(pl) {
+    // Player → their team's performer filter page. The team's upcoming events
+    // render as nested rows beneath this one (see renderSuggest).
+    const a = document.createElement("a");
+    a.className = "suggest-row player";
+    a.href = `/store?performer_id=${Number(pl.performer_id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = pl.name || "";
+    a.append(name);
+    const meta = document.createElement("div");
+    meta.className = "suggest-row-meta";
+    const who = [pl.jersey ? `#${pl.jersey}` : "", pl.position].filter(Boolean).join(" ");
+    meta.textContent = [pl.team_name, pl.league, who].filter(Boolean).join(" · ");
+    a.append(meta);
     return a;
   }
 

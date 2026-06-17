@@ -1,5 +1,7 @@
 -- Migration 20260617120000 · lane:D0 (author) → A1 (apply) ·
---   writes (DDL): terminal_search() (v3 — adds a 'players' section),
+--   writes (DDL): sports_player_search() (new, public/ungated),
+--                 terminal_search() (v3 — adds a 'players' section, now via the
+--                 shared sports_player_search()),
 --                 events_primary_performer_id_idx (new), events_performer_ids_gin (new) ·
 --   reads: espn_athletes, performer_espn_team_xref, espn_teams_canonical,
 --          espn_injuries_snapshots, aq_performer_map, events,
@@ -11,27 +13,31 @@
 --    Supabase branch (copy-on-write fork) before any prod apply.
 --
 -- WHY ───────────────────────────────────────────────────────────────────────
--- Make the terminal search a *sports* search: typing a player's name ("messi",
--- "lebron") should surface that player's TEAM and the team's upcoming event
--- info — not just literal event/performer/venue name matches.
+-- Make our search a *sports* search on BOTH surfaces — the D0 terminal and the
+-- consumer store: typing a player's name ("messi", "lebron") should surface
+-- that player's TEAM and the team's upcoming event info — not just literal
+-- event/performer/venue name matches.
 --
--- terminal_search v2 only matched on event / performer / venue NAMES, so a
--- player name returned nothing (no event is literally named "LeBron"). This
--- adds a 'players' section that layers in our ESPN athlete data:
+-- The name→team→events resolution lives in ONE shared, public RPC,
+-- sports_player_search(), so both surfaces use identical matching + ranking:
 --
 --     espn_athletes (name)                       -- "LeBron James"
 --       → performer_espn_team_xref (team→tevo)   -- LA Lakers performer 16328
 --       → events (upcoming for that performer)   -- the team's games
 --
--- and returns, per matched player: the athlete (position/jersey/status/headshot
--- + latest injury) + their mapped TEvo team performer + up to 3 upcoming events.
--- The frontend renders these as a PLAYERS section whose rows deep-link to the
--- team's performer page and to each upcoming event page.
+-- and it returns, per matched player: the athlete (position/jersey/status/
+-- headshot + latest injury) + their mapped TEvo team performer + up to 3
+-- upcoming events (with venue + occurs_at so each surface can shape its own row
+-- — the store adds we_own/from_price tags on top; the terminal links to the
+-- event/performer pages).
 --
--- This composes with — does not replace — the existing API-search-fed sections:
--- events/performers/venues come from our TEvo-search-populated catalog and the
--- 'marketplace' section from TicketsData /events discovery (v2). Players is the
--- ESPN layer that ties a person to the ticketed team event.
+--   * D0 terminal  → terminal_search() (email-gated) calls sports_player_search
+--                    and returns it as the 'players' section alongside the
+--                    existing TEvo-catalog events/performers/venues + the
+--                    TicketsData 'marketplace' section.
+--   * Consumer store → /api/store/search calls sports_player_search directly
+--                    (it is PUBLIC — only public sports data, no broker
+--                    numbers) and enriches the events with we_own/from_price.
 --
 -- LANDMINES OBSERVED (PROJECT_BIBLE §3) ──────────────────────────────────────
 --   * espn_team_id COLLIDES across leagues (id "13" = NBA Lakers AND an MLB
@@ -41,12 +47,12 @@
 --     espn_league) BOTH — verified league-correct (LeBron→Lakers, Messi→Inter
 --     Miami CF). latest_injury is likewise espn_league-scoped.
 --   * events.occurs_at_local is TEXT (offset-bearing) — compare against a
---     formatted string cutoff, never a timestamptz (same fix as v2).
+--     formatted string cutoff, never a timestamptz.
 --   * events link to a performer via primary_performer_id OR performer_ids[]
 --     (array) — both checked.
 --
--- IDEMPOTENT: CREATE OR REPLACE (same (text,integer) signature → no new
--- overload) + CREATE INDEX IF NOT EXISTS. Re-runnable.
+-- IDEMPOTENT: CREATE OR REPLACE (same signatures → no new overload) +
+-- CREATE INDEX IF NOT EXISTS. Re-runnable.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Supporting indexes for the per-player upcoming-events lookup (events is small,
@@ -58,7 +64,14 @@ CREATE INDEX IF NOT EXISTS events_performer_ids_gin
   ON public.events USING gin (performer_ids);
 
 
-CREATE OR REPLACE FUNCTION public.terminal_search(
+-- ─────────────────────────────────────────────────────────────────────────────
+-- sports_player_search() — shared, PUBLIC athlete→team→upcoming-events resolver.
+-- Returns a JSONB ARRAY of matched players (NOT wrapped). Used by both
+-- terminal_search() (D0) and /api/store/search (consumer store). No email gate:
+-- it exposes only public sports data (rosters, team names, public event listings)
+-- — never broker prices/inventory.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sports_player_search(
   p_q     text,
   p_limit integer DEFAULT 6
 )
@@ -67,36 +80,23 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = public, extensions, pg_temp
 AS $func$
 DECLARE
-  v_email   text;
-  v_q       text;
-  v_pat     text;
-  v_re      text;   -- regex-safe token for word-boundary (\m) ranking
-  v_now_s   text;   -- formatted "upcoming" cutoff (occurs_at_local is TEXT)
-  v_cap     integer;
-  v_evs     jsonb;
-  v_perfs   jsonb;
-  v_vens    jsonb;
-  v_mkt     jsonb;
-  v_players jsonb;
+  v_q     text;
+  v_pat   text;
+  v_re    text;   -- regex-safe token for word-boundary (\m) ranking
+  v_now_s text;   -- formatted "upcoming" cutoff (occurs_at_local is TEXT)
+  v_cap   integer;
+  v_out   jsonb;
 BEGIN
-  v_email := coalesce(auth.jwt()->>'email', '');
-  IF v_email NOT LIKE '%@s4kent.com' THEN
-    RAISE EXCEPTION 'forbidden: % is not an @s4kent.com email', v_email USING ERRCODE = '42501';
-  END IF;
-
   v_q   := trim(coalesce(p_q, ''));
   v_cap := greatest(1, least(coalesce(p_limit, 6), 20));
   IF length(v_q) < 2 THEN
-    RETURN jsonb_build_object('q', v_q, 'players', '[]'::jsonb, 'events', '[]'::jsonb,
-                              'performers', '[]'::jsonb, 'venues', '[]'::jsonb,
-                              'marketplace', '[]'::jsonb);
+    RETURN '[]'::jsonb;
   END IF;
   v_pat   := '%' || v_q || '%';
   -- strip regex metacharacters so the \m word-boundary match can't error / inject
   v_re    := regexp_replace(v_q, '[^[:alnum:][:space:]]', '', 'g');
   v_now_s := to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS');
 
-  -- ── PLAYERS (ESPN) — athlete → mapped TEvo team performer → upcoming events ──
   WITH cand AS (
     SELECT a.espn_athlete_id, a.full_name, a.display_name, a.position_abbr,
            a.jersey, a.status, a.espn_league, a.espn_team_id, a.headshot_url,
@@ -126,7 +126,7 @@ BEGIN
                  WHERE apm.tevo_performer_id = ptx.tevo_performer_id LIMIT 1)) AS team_name,
       (SELECT coalesce(jsonb_agg(ev ORDER BY ev.occurs_at_local), '[]'::jsonb)
          FROM (
-           SELECT e.id AS tevo_event_id, e.name, e.venue_name, e.occurs_at_local
+           SELECT e.id AS tevo_event_id, e.name, e.venue_name, e.venue_location, e.occurs_at_local
            FROM public.events e
            WHERE (e.primary_performer_id = ptx.tevo_performer_id
                   OR ptx.tevo_performer_id = ANY (e.performer_ids))
@@ -174,12 +174,67 @@ BEGIN
              )
              ORDER BY q.has_events DESC, q.match_strength DESC, q.last_seen_at DESC
            ), '[]'::jsonb)
-  INTO v_players
+  INTO v_out
   FROM (
     SELECT * FROM m
     ORDER BY m.has_events DESC, m.match_strength DESC, m.last_seen_at DESC
     LIMIT v_cap
   ) q;
+
+  RETURN v_out;
+END $func$;
+
+REVOKE ALL ON FUNCTION public.sports_player_search(text, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.sports_player_search(text, integer) TO anon, authenticated;
+
+COMMENT ON FUNCTION public.sports_player_search(text, integer) IS
+  'Shared PUBLIC sports search: athlete name → mapped TEvo team performer → up '
+  'to 3 upcoming events. Returns a JSONB array. League-scoped team mapping '
+  '(dodges the espn_team_id cross-league collision). Used by terminal_search '
+  '(D0) and /api/store/search (consumer store). mig 20260617120000.';
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- terminal_search() v3 — adds the 'players' section (via sports_player_search).
+-- Existing events/performers/venues/marketplace keys unchanged → forward-compat.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.terminal_search(
+  p_q     text,
+  p_limit integer DEFAULT 6
+)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $func$
+DECLARE
+  v_email   text;
+  v_q       text;
+  v_pat     text;
+  v_now_s   text;
+  v_cap     integer;
+  v_evs     jsonb;
+  v_perfs   jsonb;
+  v_vens    jsonb;
+  v_mkt     jsonb;
+  v_players jsonb;
+BEGIN
+  v_email := coalesce(auth.jwt()->>'email', '');
+  IF v_email NOT LIKE '%@s4kent.com' THEN
+    RAISE EXCEPTION 'forbidden: % is not an @s4kent.com email', v_email USING ERRCODE = '42501';
+  END IF;
+
+  v_q   := trim(coalesce(p_q, ''));
+  v_cap := greatest(1, least(coalesce(p_limit, 6), 20));
+  IF length(v_q) < 2 THEN
+    RETURN jsonb_build_object('q', v_q, 'players', '[]'::jsonb, 'events', '[]'::jsonb,
+                              'performers', '[]'::jsonb, 'venues', '[]'::jsonb,
+                              'marketplace', '[]'::jsonb);
+  END IF;
+  v_pat   := '%' || v_q || '%';
+  v_now_s := to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS');
+
+  -- PLAYERS — shared resolver (ESPN athlete → team performer → upcoming events)
+  v_players := public.sports_player_search(v_q, v_cap);
 
   -- ── EVENTS (catalog, upcoming) ──────────────────────────────────────────────
   SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.match_len, e.occurs_at_local), '[]'::jsonb)
@@ -249,7 +304,6 @@ REVOKE ALL ON FUNCTION public.terminal_search(text, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.terminal_search(text, integer) TO anon, authenticated;
 
 COMMENT ON FUNCTION public.terminal_search(text, integer) IS
-  'D0 terminal topbar search — players (ESPN athlete→team performer→upcoming '
-  'events) / events / performers / venues / marketplace (TicketsData-discovered). '
-  'Email-gated. Cap 20/section. v3 mig 20260617120000 (adds players section; '
-  'team mapping is league-scoped to avoid the espn_team_id cross-league collision).';
+  'D0 terminal topbar search — players (via sports_player_search) / events / '
+  'performers / venues / marketplace (TicketsData-discovered). Email-gated. '
+  'Cap 20/section. v3 mig 20260617120000 (adds players section).';

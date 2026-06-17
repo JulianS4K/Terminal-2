@@ -190,6 +190,13 @@ a { color: inherit; }
   font-weight: 700;
   color: var(--accent-2);
 }
+/* Sports player row + its nested team-event rows */
+.suggest-row.player { border-left-color: var(--accent-2); }
+.suggest-row.under-player {
+  padding-left: 26px;
+  font-size: 13px;
+}
+.suggest-row.under-player .suggest-row-name { font-size: 13px; font-weight: 500; }
 .suggest-status {
   /* Loading + error states inside the dropdown — same height/position as
      a hit row so the dropdown doesn't jump-resize when results land. */
