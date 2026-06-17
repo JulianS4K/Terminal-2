@@ -321,12 +321,25 @@ def test_public_config_checkout_dormant_by_default(client):
     assert body["purchase_enabled"] is False
 
 
-def test_public_config_checkout_enabled_when_domain_set(client, monkeypatch):
-    """When the operator sets STOREFRONT_CHECKOUT_DOMAIN the config flips to
-    purchase_enabled=true and surfaces the domain so store.js redirects
-    Reserve to TEvo's hosted checkout. (This is the ENABLE switch — left
-    unset in prod until provisioning + legal land.)"""
+def test_public_config_checkout_kill_switch_overrides_domain(client, monkeypatch):
+    """Live online checkout is force-DISABLED (operator directive): the
+    STOREFRONT_CHECKOUT_DISABLED kill switch overrides STOREFRONT_CHECKOUT_DOMAIN,
+    so even with a domain set the config still reports no checkout and store.js
+    never redirects to hosted checkout. Re-enabling is a deliberate two-step."""
     monkeypatch.setattr(app_module, "STOREFRONT_CHECKOUT_DOMAIN", "checkout.example.com")
+    monkeypatch.setattr(app_module, "STOREFRONT_CHECKOUT_DISABLED", True)
+    r = client.get("/api/public/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["checkout_domain"] is None
+    assert body["purchase_enabled"] is False
+
+
+def test_public_config_checkout_enabled_when_kill_switch_cleared(client, monkeypatch):
+    """The ENABLE path still works when the kill switch is explicitly cleared
+    AND the domain is set — both are required. Guards the two-step re-enable."""
+    monkeypatch.setattr(app_module, "STOREFRONT_CHECKOUT_DOMAIN", "checkout.example.com")
+    monkeypatch.setattr(app_module, "STOREFRONT_CHECKOUT_DISABLED", False)
     r = client.get("/api/public/config")
     assert r.status_code == 200
     body = r.json()
