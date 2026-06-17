@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by a small set of specialized bot lanes coordinating through `public.bot_chat`.
 
-> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.3.0 2026-06-10 (A1) — *Architecture* + *Repo layout* + *Build/run* refreshed against the tree: full nine-client list, `broadway_extension/` + `trip_planner/` added, dead `.env.example` step replaced; v1.4.0 2026-06-10 (A1) — bible sweep folded into the entry point: *Start here* surfaces the AQ-mapper #1 fact + lane status, *Conventions* gains cross-source-ID / lane-goals / edge-fn-auth pointers. The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
+> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.3.0 2026-06-10 (A1) — *Architecture* + *Repo layout* + *Build/run* refreshed against the tree: full nine-client list, `broadway_extension/` + `trip_planner/` added, dead `.env.example` step replaced; v1.4.0 2026-06-10 (A1) — bible sweep folded into the entry point: *Start here* surfaces the AQ-mapper #1 fact + lane status, *Conventions* gains cross-source-ID / lane-goals / edge-fn-auth pointers; v1.5.0 2026-06-17 — *Repo layout* + *Conventions* register the `.claude-plugins/` governance plugin (workflow **skills**, commands, Pre+PostToolUse hooks) — the executable form of the `PROJECT_BIBLE §8` recipes (→ `CLAUDE.md §5`). The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
 
 ---
 
@@ -100,6 +100,8 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `BOT_HIERARC
 │   └── functions/          edge functions
 ├── bin/                    CI checks (sync-check.sh, check-docs.sh, graph-drift.mjs)
 ├── scripts/                data/ingest tools + check_readonly.py (RULE 2 static audit, CI gate)
+├── .claude-plugins/        governance plugin: skills/ (executable §8 workflows) ·
+│   terminal2-governance/   commands/ (/new-migration, /rule2-audit) · hooks/ (Pre+PostToolUse)
 ├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards)
 ├── docs/                   active references + docs/archive/ (historical)
 ├── design/                 historical wireframes / proposals
@@ -132,6 +134,7 @@ uvicorn app:app --reload --port 8765
 - **Edge functions that mutate or burn paid APIs: platform `verify_jwt` is NOT sufficient** → `PROJECT_BIBLE.md §1` rule 7 (`requireCronSecret` pattern)
 - **Credential rotation** → `MIGRATION_CONVENTIONS.md` vault allowlist + `docs/release-discipline.md §7`
 - **Cross-bot coordination** → `public.bot_chat` (durable, append-only; conventions: `docs/bot_chat_conventions.md`) + Slack `#terminal-2-*`
+- **Workflow skills** (executable form of the `PROJECT_BIBLE §8` recipes; auto-surfaced by the PreToolUse router) → `CLAUDE.md §5` · skills live in `.claude-plugins/terminal2-governance/skills/`
 
 ---
 

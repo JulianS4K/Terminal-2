@@ -2,7 +2,7 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v1.2.0 · baseline v1.0.0 2026-05-28 (A1); v1.1.0 2026-05-28 (A1) — §5 adds the forward-only SKILL.md structure standard; v1.2.0 2026-06-01 (B1) — §2 makes the listing-source lockdown explicit (EVO/SG prices unchangeable; force-pulls read-only and cannot influence upstream; enforced by `check_readonly.py` + `test_readonly_guards.py`, no bypass). Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.2.0 · baseline v1.0.0 2026-05-28 (A1); v1.1.0 2026-05-28 (A1) — §5 adds the forward-only SKILL.md structure standard; v1.2.0 2026-06-01 (B1) — §2 makes the listing-source lockdown explicit (EVO/SG prices unchangeable; force-pulls read-only and cannot influence upstream; enforced by `check_readonly.py` + `test_readonly_guards.py`, no bypass); v1.3.0 2026-06-17 — §5 extends the SKILL.md standard to repo **workflow skills** (`.claude-plugins/.../skills/`, the executable form of `PROJECT_BIBLE §8` recipes) + the PreToolUse `skill_router.py` discoverability hook; procedures→skills / facts→bibles. Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -111,7 +111,7 @@ Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are 
 - Service Tokens are the preferred mechanism for enforcement when feasible (Render's Member-role token can't perform writes by API constraint, providing hard isolation beyond policy). Until tokens are scoped per-bot, the scoping is policy-level and audited via Render's audit log.
 - Cross-service writes (D1 touching D2's service or vice versa) = lane violation, surfaces as `flag` in `bot_chat` per existing cross-lane rules
 
-### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15) *(v1.1 · A1 · 2026-05-28)*
+### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15) *(v1.2 · 2026-06-17)*
 
 Every active bot MUST create its own lane-scoped aging-sweep scheduled task on first activation. Operator-mandated 2026-05-15 (bot_chat 210).
 
@@ -143,6 +143,9 @@ Every active bot MUST create its own lane-scoped aging-sweep scheduled task on f
 - **Verification** — a one-line self-check the task *reasons about* before finishing, e.g. "confirm exactly one Slack post fired." Phrase as a check, **never an action** — wording it as a step can trigger a duplicate post.
 
 Keep payloads ≤1500 chars and the file ≤~80 lines — brevity beats ceremony; omit any section that doesn't apply.
+
+**Workflow skills — same anatomy, applied to recurring procedures (v1.2 · 2026-06-17).** The same four-section structure now also backs **repo workflow skills** (not just scheduled tasks): the executable form of the `PROJECT_BIBLE.md §8` recipes (author a migration, wire a UI panel, spawn a cron, run a security pass…). They live under `.claude-plugins/terminal2-governance/skills/<name>/SKILL.md` (a `Rationalizations` table — excuse→rebuttal, wired to the §3 landmines — and an evidence-based `Verification` gate are encouraged for these). The split that keeps this from regrowing doc-sprawl: **procedures → skills, facts → bibles, link don't copy** — a skill points to `§3`/`§0`/`§14`, never restates them. First skill: `ship-a-migration` (the full migration lifecycle around the `/new-migration` scaffold).
+- **Discoverability is mechanical, not memory.** A skill only helps if invoked. `.claude-plugins/terminal2-governance/hooks/hooks.json` runs a **PreToolUse** router (`scripts/skill_router.py`) that matches a tool call to a skill and injects a **non-blocking** nudge — e.g. editing `supabase/migrations/*.sql`, calling `apply_migration`, or running DDL via `execute_sql` surfaces `ship-a-migration`. Fires once per (session, skill); `ROUTES` is the single source of truth (one row per wired skill). This is the discoverability counterpart to the PostToolUse governance guard.
 
 ### 6. Documentation discipline — the canonical doc set is CLOSED (2026-05-28)
 
