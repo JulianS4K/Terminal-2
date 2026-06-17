@@ -8024,6 +8024,26 @@ def store_index_page():
     return _render_storefront_page("index.html")
 
 
+@app.api_route("/store-sw.js", methods=["GET", "HEAD"], include_in_schema=False)
+def store_service_worker():
+    """Serve the storefront PWA service worker from a ROOT path so it can claim
+    the '/store' scope. A service worker only controls pages at/below its own URL
+    directory, so served from /static/store/ it could never cover the /store
+    routes. store.js registers it with { scope: '/store' }; the
+    Service-Worker-Allowed header authorizes that broader-than-directory scope."""
+    path = os.path.join(STATIC_DIR, "store", "sw.js")
+    with open(path, "r", encoding="utf-8") as f:
+        body = f.read()
+    return Response(
+        content=body,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "Service-Worker-Allowed": "/store",
+        },
+    )
+
+
 @app.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
 def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
     return _render_storefront_page("event.html")

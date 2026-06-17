@@ -2297,12 +2297,6 @@
         }
       }
 
-      // Interactive seat map — replaces the static image when the venue +
-      // configuration resolve to a published TEvo map. Mounts once (the build
-      // is heavy); on success the static <img>/placeholder is hidden. Failure
-      // is silent — the static fallback above stays put.
-      maybeMountSeatmap();
-
       const freshness = $("#freshness");
       if (freshness) {
         if (res.inventory_source === "cache") {
@@ -2330,6 +2324,16 @@
       head.hidden = false;
       body.hidden = false;
       renderListings();
+
+      // Interactive seat map — replaces the static image when the venue +
+      // configuration resolve to a published TEvo map. Mount AFTER #body is
+      // unhidden: Tevomaps reads the container's size at build() time, so a
+      // zero-size container (hidden ancestor) bakes a blank map that never
+      // re-fits — the white-box bug. rAF lets layout settle so the host has
+      // real clientWidth/Height. Mounts once (the build is heavy); on success
+      // the static <img>/placeholder is hidden. Failure is silent — the static
+      // fallback stays put.
+      requestAnimationFrame(() => maybeMountSeatmap());
       // Re-render section chips against the new listings (sections may have
       // shifted as filters narrowed); zone chips are event-static so don't
       // need re-rendering here.
@@ -3016,5 +3020,16 @@
     document.addEventListener("DOMContentLoaded", _autoMount);
   } else {
     _autoMount();
+  }
+
+  // PWA: register the storefront service worker. Served at /store-sw.js (a root
+  // path) so it can claim the '/store' scope. Progressive enhancement — any
+  // failure (unsupported, blocked, offline) is silent and the site works as-is.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("/store-sw.js", { scope: "/store" })
+        .catch(() => {});
+    });
   }
 })();

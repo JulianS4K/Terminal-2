@@ -1,0 +1,15 @@
+{
+  "name": "VibePass — direct-inventory tickets",
+  "short_name": "VibePass",
+  "description": "Browse sports and live-event tickets we hold directly. Transparent pricing, interactive seat maps, no daisy chains.",
+  "start_url": "/store",
+  "scope": "/store",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0b0e",
+  "theme_color": "#0a0b0e",
+  "icons": [
+    { "src": "/static/store/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/static/store/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

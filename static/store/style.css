@@ -27,6 +27,9 @@ body {
   color: var(--text);
   background: var(--bg);
   min-height: 100vh;
+  /* iOS dynamic viewport: avoids the Safari toolbar shrinking/growing 100vh
+     and leaving a background gap. dvh falls back to vh where unsupported. */
+  min-height: 100dvh;
 }
 a { color: inherit; }
 
@@ -50,7 +53,12 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 24px;
+  /* Safe-area insets: with apple-mobile-web-app-status-bar-style=black-translucent
+     the standalone PWA draws under the notch/Dynamic Island, so pad the top and
+     the rounded-corner sides on iPhone. Falls back to 0 on non-notched devices. */
+  padding:
+    calc(14px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right))
+    14px calc(24px + env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
@@ -80,7 +88,8 @@ a { color: inherit; }
 .wrap {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 24px;
+  /* Keep content clear of the iPhone's rounded corners in landscape/standalone. */
+  padding: 24px calc(24px + env(safe-area-inset-right)) 24px calc(24px + env(safe-area-inset-left));
 }
 
 /* ----- Hero / search ----- */
@@ -844,7 +853,10 @@ a { color: inherit; }
   align-items: center;
   justify-content: center;
   z-index: 100;
-  padding: 16px;
+  /* Honor the notch + home-indicator so the modal card is never clipped. */
+  padding:
+    calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
 }
 .modal-card {
   background: var(--panel-2);
@@ -1179,7 +1191,8 @@ a.perf-chip:hover {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 24px;
+  /* Clear the home-indicator on iPhone (extra bottom inset in standalone). */
+  padding: 24px 24px calc(24px + env(safe-area-inset-bottom));
   color: var(--muted);
   font-size: 12px;
   border-top: 1px solid var(--line);
