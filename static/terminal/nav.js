@@ -58,8 +58,9 @@
   // ---------- Global terminal search ----------
   //
   // Topbar search input, available on every terminal page (via nav.js).
-  // Calls `terminal_search` SECDEF RPC (mig 20260517230000) and renders a
-  // 3-section dropdown — Events / Performers / Venues.
+  // Calls `terminal_search` SECDEF RPC (mig 20260517230000, players added v3
+  // mig 20260617120000) and renders a dropdown — Players (sports: athlete →
+  // team → upcoming events) / Events / Performers / Venues / Marketplace.
   //
   // Keyboard: type-to-search (300ms debounce), ↑/↓ to navigate suggestions,
   // Enter to follow first/selected result, Esc closes. Click-outside closes.
@@ -71,7 +72,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'term-search';
     wrap.innerHTML = `
-      <input type="search" class="term-search-input" placeholder="Search events / performers / venues…" autocomplete="off" spellcheck="false" />
+      <input type="search" class="term-search-input" placeholder="Search players / events / performers / venues…" autocomplete="off" spellcheck="false" />
       <div class="term-search-suggest" hidden></div>`;
     // Insert before version chip / auth ctrl / status. Use the .pagenav as
     // anchor — search slots immediately after the nav links.
@@ -130,16 +131,47 @@
     }
 
     function renderResults(d) {
-      const evs   = d.events      || [];
-      const perfs = d.performers  || [];
-      const vens  = d.venues      || [];
-      const mkt   = d.marketplace || [];
+      const players = d.players     || [];
+      const evs     = d.events      || [];
+      const perfs   = d.performers  || [];
+      const vens    = d.venues      || [];
+      const mkt     = d.marketplace || [];
       flat = [];
-      if (!evs.length && !perfs.length && !vens.length && !mkt.length) {
+      if (!players.length && !evs.length && !perfs.length && !vens.length && !mkt.length) {
         sugg.innerHTML = `<div class="ts-empty">no matches for &ldquo;${escapeHtml(d.q || '')}&rdquo;</div>`;
         return;
       }
       const parts = [];
+      // PLAYERS — ESPN athlete → mapped TEvo team performer → upcoming events.
+      // The headline sports-search feature: typing a player name surfaces their
+      // team and the team's next games. Player head links to the performer page;
+      // each nested event row links to that event's page.
+      if (players.length) {
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">PLAYERS</div>');
+        players.forEach(pl => {
+          const teamHref = pl.tevo_performer_id != null
+            ? `performer.html?performer=${pl.tevo_performer_id}` : '#';
+          const bits = [pl.jersey ? '#' + pl.jersey : '', pl.position_abbr].filter(Boolean).join(' · ');
+          const teamMeta = [pl.team_name, pl.espn_league].filter(Boolean).join(' · ');
+          const inj = pl.latest_injury && pl.latest_injury.status
+            ? `<span class="ts-inj">${escapeHtml(pl.latest_injury.status)}</span>` : '';
+          flat.push({ href: teamHref, label: pl.full_name, kind: 'player' });
+          parts.push(`<a class="ts-row ts-player-head" href="${teamHref}" data-kind="player">
+              <span class="ts-name">${escapeHtml(pl.full_name || '(unknown)')}${bits ? ` <span class="ts-sub">${escapeHtml(bits)}</span>` : ''}${inj}</span>
+              <span class="ts-meta">${escapeHtml(teamMeta)}</span>
+            </a>`);
+          (pl.events || []).forEach(e => {
+            const href = `event.html?event=${e.tevo_event_id}`;
+            const meta = [e.venue_name, fmtDateShort(e.occurs_at_local)].filter(Boolean).join(' · ');
+            flat.push({ href, label: e.name, kind: 'event' });
+            parts.push(`<a class="ts-row ts-player-event" href="${href}" data-kind="event">
+                <span class="ts-name">${escapeHtml(e.name || '(unnamed)')}</span>
+                <span class="ts-meta">${escapeHtml(meta)}</span>
+              </a>`);
+          });
+        });
+        parts.push('</div>');
+      }
       if (evs.length) {
         parts.push('<div class="ts-section"><div class="ts-section-lbl">EVENTS</div>');
         evs.forEach(e => {
