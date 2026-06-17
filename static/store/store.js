@@ -366,6 +366,29 @@
     let suggestTimer = null;
     let suggestSeq = 0;
 
+    // Google-style landing: the page starts as just the centered search box
+    // (#searchHome) and the results grid (#results) is hidden. A search or a
+    // performer/venue deep link flips into "results mode" — the brand shrinks
+    // to the top and the grid appears. body.mode-results drives the CSS.
+    const results = $("#results");
+    const browseAll = $("#browseAll");
+    let inResultsMode = false;
+    function enterResultsMode() {
+      if (inResultsMode) return;
+      inResultsMode = true;
+      document.body.classList.add("mode-results");
+      if (results) results.hidden = false;
+    }
+    function exitResultsMode() {
+      inResultsMode = false;
+      document.body.classList.remove("mode-results");
+      if (results) results.hidden = true;
+      if (grid) { grid.replaceChildren(); grid.hidden = true; }
+      if (gridHeading) gridHeading.hidden = true;
+      if (empty) empty.hidden = true;
+      if (status) status.hidden = true;
+    }
+
     let allEvents = [];
     // loadComplete gates filter() so the user can't trigger a misleading
     // "No events match" empty state by typing in the search box while the
@@ -551,12 +574,14 @@
       e.preventDefault();
       const q = (input.value || "").trim();
       hideSuggest();
-      // Empty submit → revert to the home view (full catalog).
+      // Empty submit → back to the centered Google-style search home.
       if (!q) {
         userHasSearched = false;
-        render(allEvents, "all");
+        exitResultsMode();
+        input.focus();
         return;
       }
+      enterResultsMode();
       // Backend search — hits /api/store/search for the FULL result set,
       // not just the in-memory home payload. Click-Search previously called
       // filter(q) which ran an in-memory scan over the 60 events that
@@ -572,7 +597,10 @@
     // Local in-memory filter on the already-loaded catalog AND a debounced
     // call to /api/store/search for live suggestions (TEvo + our SQL).
     input.addEventListener("input", () => {
-      filter(input.value);
+      // Only the loaded results grid filters in-memory as you type. On the
+      // centered home there is no grid yet — typing just drives the
+      // autocomplete dropdown (Google-style).
+      if (inResultsMode && loadComplete) filter(input.value);
       scheduleSuggest(input.value);
     });
 
@@ -775,27 +803,23 @@
           status.append(msg, retry);
         });
     }
-    loadCatalog();
-
-    // NYC themed sliders — only shown on the bare /store view (no performer
-    // or venue filter). Server returns 4 keyed arrays (moving_fast,
-    // price_drops, climbing, specials) and each becomes its own horizontal
-    // slider. Empty sections are hidden. days=90 to give the 3mo horizon
-    // enough pool depth for each section's filter.
-    if (!performerId && !venueId) {
-      // Concierge rail — premium top-band EVO seats (leads the curated rails).
-      const cHost = $("#conciergeRail");
-      if (cHost) {
-        api("/api/store/concierge?days=60&limit=18")
-          .then((res) => renderConcierge(cHost, res))
-          .catch(() => { cHost.hidden = true; });
+    if (isHomeView) {
+      // Google-style landing: the page IS the search. No auto catalog load,
+      // no curated rails. The grid loads only on an explicit search (submit)
+      // or via the "Browse all events" affordance.
+      if (browseAll) {
+        browseAll.addEventListener("click", () => {
+          userHasSearched = false;
+          enterResultsMode();
+          if (gridHeading) gridHeading.textContent = "All events";
+          loadCatalog();
+        });
       }
-      const host = $("#moversSections");
-      if (host) {
-        api("/api/store/movers?city=NYC&days=90")
-          .then((res) => renderMoversSections(host, res))
-          .catch(() => { host.hidden = true; });
-      }
+    } else {
+      // Deep link (?performer_id= / ?venue_id=, e.g. from a player result) →
+      // straight into results with that filter applied.
+      enterResultsMode();
+      loadCatalog();
     }
 
     // ----- Live search suggestions dropdown -----

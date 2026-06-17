@@ -197,6 +197,107 @@ a { color: inherit; }
   font-size: 13px;
 }
 .suggest-row.under-player .suggest-row-name { font-size: 13px; font-weight: 500; }
+
+/* ===================== Google-style search landing ===================== */
+.search-shell {
+  min-height: calc(100vh - 56px);
+  display: flex;
+  flex-direction: column;
+}
+.search-home {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 18px;
+  padding: 8vh 20px 4vh;
+  transition: padding .2s ease;
+}
+.brand-mark {
+  font-size: clamp(40px, 8vw, 76px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+  text-decoration: none;
+  line-height: 1;
+}
+.brand-tagline { color: var(--muted); margin: 0; font-size: 15px; }
+.gsearch {
+  position: relative;          /* anchor for .search-suggest dropdown */
+  display: flex;
+  align-items: center;
+  width: min(620px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 18px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.gsearch:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255,92,42,0.15);
+}
+.gsearch-ic { color: var(--muted); font-size: 18px; margin-right: 10px; }
+.gsearch input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: 17px;
+  padding: 12px 0;
+}
+.gsearch input::placeholder { color: var(--muted); }
+.gsearch .search-suggest { border-radius: 16px; text-align: left; }
+.gsearch-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.gbtn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.gbtn:hover { background: var(--panel); border-color: var(--accent); }
+
+/* Results mode — brand shrinks to a top bar, the grid appears below. */
+body.mode-results .search-home {
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+body.mode-results .brand-mark { font-size: 26px; }
+body.mode-results .brand-tagline { display: none; }
+body.mode-results .gsearch { width: min(520px, 60vw); }
+body.mode-results .gsearch-actions { margin-left: auto; }
+body.mode-results #results {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* Minimal footer */
+.foot-min {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
+  padding: 14px 20px; border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 13px;
+}
+.foot-nav-min { display: flex; gap: 16px; flex-wrap: wrap; }
+.foot-nav-min a { color: var(--muted); text-decoration: none; }
+.foot-nav-min a:hover { color: var(--text); }
 .suggest-status {
   /* Loading + error states inside the dropdown — same height/position as
      a hit row so the dropdown doesn't jump-resize when results land. */
