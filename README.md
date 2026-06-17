@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by a small set of specialized bot lanes coordinating through `public.bot_chat`.
 
-> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.3.0 2026-06-10 (A1) — *Architecture* + *Repo layout* + *Build/run* refreshed against the tree: full nine-client list, `broadway_extension/` + `trip_planner/` added, dead `.env.example` step replaced; v1.4.0 2026-06-10 (A1) — bible sweep folded into the entry point: *Start here* surfaces the AQ-mapper #1 fact + lane status, *Conventions* gains cross-source-ID / lane-goals / edge-fn-auth pointers; v1.5.0 2026-06-17 — *Repo layout* + *Conventions* register the `.claude-plugins/` governance plugin (workflow **skills**, commands, Pre+PostToolUse hooks) — the executable form of the `PROJECT_BIBLE §8` recipes (→ `CLAUDE.md §5`). The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
+> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-06-09 (C1) — *Start here* adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.2.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.3.0 2026-06-10 (A1) — *Architecture* + *Repo layout* + *Build/run* refreshed against the tree: full nine-client list, `broadway_extension/` + `trip_planner/` added, dead `.env.example` step replaced; v1.4.0 2026-06-10 (A1) — bible sweep folded into the entry point: *Start here* surfaces the AQ-mapper #1 fact + lane status, *Conventions* gains cross-source-ID / lane-goals / edge-fn-auth pointers; v1.5.0 2026-06-17 — *Repo layout* + *Conventions* register the `.claude-plugins/` governance plugin (workflow **skills**, commands, Pre+PostToolUse hooks) — the executable form of the `PROJECT_BIBLE §8` recipes (→ `CLAUDE.md §5`); v1.6.0 2026-06-17 (operator) — *Conventions* push pointer reflects the **4-domain reorg** (push to `main` per-task; A1 + B1 maintain; prod-DB apply A1-centralized → `BOT_HIERARCHY.md`). The section-level version + bot-ref convention is defined below under *Doc-writing rules*.
 
 ---
 
@@ -128,7 +128,7 @@ uvicorn app:app --reload --port 8765
 - **Cross-source IDs never line up — resolve through the AQ mapper hub** → `PROJECT_BIBLE.md §0` (one-pager) · `D0_BIBLE.md §3` (full architecture)
 - **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3` + `§7`
 - **Migration filename/header/apply rules** → `MIGRATION_CONVENTIONS.md`
-- **Who can push / per-lane scope** → `BOT_HIERARCHY.md` (A1 is sole pusher to `main`)
+- **Who can push / per-lane scope** → `BOT_HIERARCHY.md` (push to `main` is per-task; A1 + B1 maintain it; prod-DB apply centralized on A1)
 - **What exists before you build something new** (tables · views · crons · edge fns · vault) → `RESOURCES_BIBLE.md`
 - **Where each lane is headed** (north-star + endgame per lane) → `docs/d_tier_goals.md`
 - **Edge functions that mutate or burn paid APIs: platform `verify_jwt` is NOT sufficient** → `PROJECT_BIBLE.md §1` rule 7 (`requireCronSecret` pattern)

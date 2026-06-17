@@ -1,6 +1,6 @@
 {
   "name": "terminal2-governance",
-  "description": "Terminal-2 governance enforcement: RULE 2 read-only audit + docs-registry gate as edit-time hooks, plus /rule2-audit and /new-migration workflow skills. Versioned by commit SHA (no version field) so every merge to main is the latest.",
+  "description": "Terminal-2 governance enforcement: RULE 2 read-only audit + docs-registry gate as PostToolUse edit-time hooks; a PreToolUse skill_router surfaces workflow skills at trigger time; /rule2-audit + /new-migration commands and skills/ (ship-a-migration) encode the PROJECT_BIBLE §8 workflows. Versioned by commit SHA (no version field) so every merge to main is the latest.",
   "author": {
     "name": "Terminal-2 operators",
     "email": "julian@s4kent.com"
