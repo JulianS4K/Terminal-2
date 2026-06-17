@@ -130,48 +130,43 @@
       renderResults(d);
     }
 
+    // Render a performer/player head row + its nested upcoming-event rows.
+    // Unifies how a player (ESPN → team) and a performer (Pearl Jam, a team)
+    // present: a clickable head linking to the performer page, with the
+    // entity's next events listed beneath. `sub` = "#23 · F" for a player;
+    // `inj` = an injury badge. Events array is {tevo_event_id,name,venue_name,
+    // occurs_at_local}.
+    function pushPerformerRows(parts, perfId, title, metaText, sub, inj, events) {
+      const headHref = perfId != null ? `performer.html?performer=${perfId}` : '#';
+      flat.push({ href: headHref, label: title, kind: 'performer' });
+      parts.push(`<a class="ts-row ts-player-head" href="${headHref}" data-kind="performer">
+          <span class="ts-name">${escapeHtml(title || '(unknown)')}${sub ? ` <span class="ts-sub">${escapeHtml(sub)}</span>` : ''}${inj || ''}</span>
+          <span class="ts-meta">${escapeHtml(metaText || '')}</span>
+        </a>`);
+      (events || []).forEach(e => {
+        const href = `event.html?event=${e.tevo_event_id}`;
+        const meta = [e.venue_name, fmtDateShort(e.occurs_at_local)].filter(Boolean).join(' · ');
+        flat.push({ href, label: e.name, kind: 'event' });
+        parts.push(`<a class="ts-row ts-player-event" href="${href}" data-kind="event">
+            <span class="ts-name">${escapeHtml(e.name || '(unnamed)')}</span>
+            <span class="ts-meta">${escapeHtml(meta)}</span>
+          </a>`);
+      });
+    }
+
     function renderResults(d) {
-      const players = d.players     || [];
       const evs     = d.events      || [];
+      const players = d.players     || [];
       const perfs   = d.performers  || [];
       const vens    = d.venues      || [];
       const mkt     = d.marketplace || [];
       flat = [];
-      if (!players.length && !evs.length && !perfs.length && !vens.length && !mkt.length) {
+      if (!evs.length && !players.length && !perfs.length && !vens.length && !mkt.length) {
         sugg.innerHTML = `<div class="ts-empty">no matches for &ldquo;${escapeHtml(d.q || '')}&rdquo;</div>`;
         return;
       }
       const parts = [];
-      // PLAYERS — ESPN athlete → mapped TEvo team performer → upcoming events.
-      // The headline sports-search feature: typing a player name surfaces their
-      // team and the team's next games. Player head links to the performer page;
-      // each nested event row links to that event's page.
-      if (players.length) {
-        parts.push('<div class="ts-section"><div class="ts-section-lbl">PLAYERS</div>');
-        players.forEach(pl => {
-          const teamHref = pl.tevo_performer_id != null
-            ? `performer.html?performer=${pl.tevo_performer_id}` : '#';
-          const bits = [pl.jersey ? '#' + pl.jersey : '', pl.position_abbr].filter(Boolean).join(' · ');
-          const teamMeta = [pl.team_name, pl.espn_league].filter(Boolean).join(' · ');
-          const inj = pl.latest_injury && pl.latest_injury.status
-            ? `<span class="ts-inj">${escapeHtml(pl.latest_injury.status)}</span>` : '';
-          flat.push({ href: teamHref, label: pl.full_name, kind: 'player' });
-          parts.push(`<a class="ts-row ts-player-head" href="${teamHref}" data-kind="player">
-              <span class="ts-name">${escapeHtml(pl.full_name || '(unknown)')}${bits ? ` <span class="ts-sub">${escapeHtml(bits)}</span>` : ''}${inj}</span>
-              <span class="ts-meta">${escapeHtml(teamMeta)}</span>
-            </a>`);
-          (pl.events || []).forEach(e => {
-            const href = `event.html?event=${e.tevo_event_id}`;
-            const meta = [e.venue_name, fmtDateShort(e.occurs_at_local)].filter(Boolean).join(' · ');
-            flat.push({ href, label: e.name, kind: 'event' });
-            parts.push(`<a class="ts-row ts-player-event" href="${href}" data-kind="event">
-                <span class="ts-name">${escapeHtml(e.name || '(unnamed)')}</span>
-                <span class="ts-meta">${escapeHtml(meta)}</span>
-              </a>`);
-          });
-        });
-        parts.push('</div>');
-      }
+      // EVO — events from our ticketing catalog (direct event-name matches).
       if (evs.length) {
         parts.push('<div class="ts-section"><div class="ts-section-lbl">EVENTS</div>');
         evs.forEach(e => {
@@ -185,15 +180,24 @@
         });
         parts.push('</div>');
       }
+      // ESPN — athlete → mapped TEvo team performer → that team's next games.
+      if (players.length) {
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">PLAYERS</div>');
+        players.forEach(pl => {
+          const sub = [pl.jersey ? '#' + pl.jersey : '', pl.position_abbr].filter(Boolean).join(' · ');
+          const meta = [pl.team_name, pl.espn_league].filter(Boolean).join(' · ');
+          const inj = pl.latest_injury && pl.latest_injury.status
+            ? `<span class="ts-inj">${escapeHtml(pl.latest_injury.status)}</span>` : '';
+          pushPerformerRows(parts, pl.tevo_performer_id, pl.full_name, meta, sub, inj, pl.events);
+        });
+        parts.push('</div>');
+      }
+      // PERFORMERS — TEvo performers (Pearl Jam, teams) with their next events.
+      // Same shape as players: "Pearl Jam" → concerts, like "Lakers" → games.
       if (perfs.length) {
         parts.push('<div class="ts-section"><div class="ts-section-lbl">PERFORMERS</div>');
         perfs.forEach(p => {
-          const href = `performer.html?performer=${p.tevo_performer_id}`;
-          flat.push({ href, label: p.performer_name, kind: 'performer' });
-          parts.push(`<a class="ts-row" href="${href}" data-kind="performer">
-              <span class="ts-name">${escapeHtml(p.performer_name || '(unnamed)')}</span>
-              <span class="ts-meta">${escapeHtml(p.category || '')}</span>
-            </a>`);
+          pushPerformerRows(parts, p.tevo_performer_id, p.performer_name, p.category, '', '', p.events);
         });
         parts.push('</div>');
       }
@@ -215,9 +219,8 @@
         // track locally yet. No internal page to link to — open the buy URL.
         parts.push('<div class="ts-section"><div class="ts-section-lbl">MARKETPLACE</div>');
         mkt.forEach(m => {
-          // Scheme-validate the third-party URL: TicketsData supplies
-          // event_url verbatim — only http(s) may reach an href (blocks
-          // javascript:/data: if the feed is ever compromised).
+          // Scheme-validate the third-party URL: only http(s) may reach an href
+          // (blocks javascript:/data: if the feed is ever compromised).
           const href = /^https?:\/\//i.test(m.event_url || '') ? m.event_url : '#';
           const meta = [m.platform, m.venue_name, fmtDateShort(m.event_date)].filter(Boolean).join(' · ');
           flat.push({ href, label: m.event_name, kind: 'marketplace' });

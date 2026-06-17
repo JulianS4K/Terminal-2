@@ -895,35 +895,22 @@
     }
   }
 
-  // Render suggestion dropdown body. Sections, in priority order:
-  //   Players — sports search: a matched athlete + their team's upcoming
-  //     events (e.g. "messi" → Inter Miami CF games). Shown first.
-  //   Events you can buy now (we_own=true) — top priority among plain events
-  //   Other events (we_own=false) — surfaced but flagged as "browse"
-  //   Performers + venues — bottom, clickable filter pivots
+  // Render suggestion dropdown body. Sections, in order:
+  //   EVO events — "tickets you can buy" (we_own) then "more events" (browse)
+  //   Players (ESPN) — a matched athlete + their team's upcoming events
+  //   Performers + venues — clickable filter pivots (performer → their events
+  //     in the grid; e.g. "Pearl Jam" → concerts)
   function renderSuggest(host, payload) {
     if (!host) return;
     host.replaceChildren();
-    const players = (payload && payload.players) || [];
     const events = (payload && payload.events) || [];
+    const players = (payload && payload.players) || [];
     const performers = (payload && payload.performers) || [];
     const venues = (payload && payload.venues) || [];
 
-    if (!players.length && !events.length && !performers.length && !venues.length) {
+    if (!events.length && !players.length && !performers.length && !venues.length) {
       host.hidden = true;
       return;
-    }
-
-    if (players.length) {
-      host.append(suggestHeader("Players"));
-      players.forEach((pl) => {
-        host.append(suggestPlayerRow(pl));
-        (pl.events || []).forEach((e) => {
-          const row = suggestEventRow(e, !!e.we_own);
-          row.classList.add("under-player");
-          host.append(row);
-        });
-      });
     }
 
     const buyable = events.filter((e) => e.we_own);
@@ -936,6 +923,17 @@
     if (browseOnly.length) {
       host.append(suggestHeader("More events"));
       browseOnly.forEach((e) => host.append(suggestEventRow(e, false)));
+    }
+    if (players.length) {
+      host.append(suggestHeader("Players"));
+      players.forEach((pl) => {
+        host.append(suggestPlayerRow(pl));
+        (pl.events || []).forEach((e) => {
+          const row = suggestEventRow(e, !!e.we_own);
+          row.classList.add("under-player");
+          host.append(row);
+        });
+      });
     }
     if (performers.length) {
       host.append(suggestHeader("Performers"));
