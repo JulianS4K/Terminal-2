@@ -1,10 +1,10 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §14 appended 6 collector-cadence + retention migs (`20260531140000`–`200000`); v1.2.0 2026-06-03 (A1) — §14 appended SG owned/non poller split (`20260603180000`) + raw-listings retention halve 30d→15d (`20260603190000`); v1.3.0 2026-06-03 (A1) — §14 appended 3 data-health audit fixes (`20260603200000`–`220000`); v1.4.0 2026-06-08 (A1) — §14 + cross-source amalgam value (mig `20260531214306`). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §14 appended 6 collector-cadence + retention migs (`20260531140000`–`200000`); v1.2.0 2026-06-03 (A1) — §14 appended SG owned/non poller split (`20260603180000`) + raw-listings retention halve 30d→15d (`20260603190000`); v1.3.0 2026-06-03 (A1) — §14 appended 3 data-health audit fixes (`20260603200000`–`220000`); v1.4.0 2026-06-08 (A1) — §14 + cross-source amalgam value (mig `20260531214306`); v1.5.0 2026-06-17 (operator) — roster note + §Workflow: push to `main` is **per-task** (A1 + B1 maintain; supersedes "A1 sole pusher"), prod-DB apply stays A1-centralized; §Workflow cross-links the `ship-a-migration` skill. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
-> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Production push authority is now A1 (sole pusher to `main`)** — see [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
+> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Push to `main` is per-task** (A1 + B1 jointly maintain `main`, reorg 2026-06-17 — supersedes "A1 sole pusher"); **prod-DB apply stays centralized on A1.** See [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
 
 ---
 
@@ -29,6 +29,8 @@ Authoritative reference for how migrations are authored, named, reviewed, and sh
 | **Local sandbox** | Any bot | `supabase start` against a local container |
 
 ### Workflow for non-audit-lane bots
+
+> **Executable form:** the `ship-a-migration` skill (`.claude-plugins/terminal2-governance/skills/ship-a-migration/`) runs this workflow with checkpoints + a verification gate; it's auto-surfaced when you edit a migration file or call `apply_migration` (→ `CLAUDE.md §5`).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐

@@ -4,6 +4,8 @@ description: Scaffold a Supabase migration file with the repo's required filenam
 
 Scaffold a new migration in `supabase/migrations/` for: $ARGUMENTS
 
+> Scaffolds the FILE only. For the **full lifecycle** (check-don't-rebuild → sample-test → operator-gated apply → verify → PR), use the **`ship-a-migration`** skill (`../skills/ship-a-migration/`), which calls this command at its authoring step.
+
 ## Process
 
 1. **Timestamp**: 14-digit UTC `YYYYMMDDHHMMSS` (`date -u +%Y%m%d%H%M%S`). Check `ls supabase/migrations/ | tail` for collisions — if the slot is taken, bump by `+30` (tight follow-up) or `+50` (leave room). NEVER bump by `+1` or `+100` (MIGRATION_CONVENTIONS.md §3).
