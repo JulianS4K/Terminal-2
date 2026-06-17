@@ -1779,7 +1779,19 @@
         ? "You'll complete payment securely on Ticket Evolution, our ticketing partner. Apple Pay and Google Pay supported."
         : "MVP demo only — no payment will be processed and no order will be sent to Ticket Evolution. This shows what the confirmation flow would look like once checkout is wired up.";
 
-      mb.append(h3, sub, label, receipt, confirm, disc);
+      // Honeypot — hidden from humans (off-screen, not a real "hidden" input so
+      // some bots still see it), aria-hidden + no autofill. A non-empty value on
+      // submit means a bot filled it; the server rejects the reserve.
+      const hp = document.createElement("input");
+      hp.type = "text";
+      hp.id = "rsvCompany";
+      hp.name = "company";
+      hp.tabIndex = -1;
+      hp.autocomplete = "off";
+      hp.setAttribute("aria-hidden", "true");
+      hp.style.cssText = "position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none";
+
+      mb.append(h3, sub, label, receipt, confirm, disc, hp);
 
       qSel.value = String(defaultQ);
       const recompute = () => {
@@ -1806,6 +1818,10 @@
         confirm.disabled = true;
         confirm.textContent = "Validating with TEvo…";
         try {
+          // Bot gate: honeypot value + a fresh reCAPTCHA token as a fallback
+          // when the first-interaction cookie is unavailable (both no-ops when
+          // the gate is dormant). The cookie, if set, rides along automatically.
+          const rcToken = window.StoreBot ? await window.StoreBot.token("submit") : null;
           const res = await api("/api/store/reserve", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1813,6 +1829,8 @@
               event_id: eventId,
               ticket_group_id: listing.id,
               quantity: Number(qSel.value),
+              hp: hp.value || "",
+              recaptcha_token: rcToken || undefined,
             }),
           });
           renderReceipt(mb, res);
@@ -3039,4 +3057,70 @@
         .catch(() => {});
     });
   }
+
+  // ---- Bot protection: reCAPTCHA v3 sitewide first-interaction gate ----
+  // Dormant unless the server returns recaptcha_site_key (keys unset = no-op, so
+  // the demo works without provisioning). When enabled: on the first user
+  // gesture we fetch a v3 token and POST it to /api/store/verify-human, which
+  // sets a short-lived signed cookie the write endpoints require — so the gate
+  // runs once per session, not per action. StoreBot.token(action) yields a fresh
+  // token for the reserve fallback. All failures are silent (write endpoints
+  // re-challenge as needed).
+  const StoreBot = (function () {
+    let siteKey = null;
+    let gated = false;
+
+    function loadScript(key) {
+      return new Promise((resolve, reject) => {
+        if (window.grecaptcha && window.grecaptcha.execute) return resolve();
+        const s = document.createElement("script");
+        s.src = "https://www.google.com/recaptcha/api.js?render=" + encodeURIComponent(key);
+        s.async = true;
+        s.defer = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("recaptcha load failed"));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function token(action) {
+      if (!siteKey || !window.grecaptcha || !window.grecaptcha.execute) return null;
+      try {
+        await new Promise((res) => window.grecaptcha.ready(res));
+        return await window.grecaptcha.execute(siteKey, { action: action || "submit" });
+      } catch { return null; }
+    }
+
+    async function gateOnce() {
+      if (gated) return;
+      gated = true;
+      const t = await token("gate");
+      if (!t) return;
+      try {
+        await api("/api/store/verify-human", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recaptcha_token: t }),
+        });
+      } catch { /* gate failed — write endpoints will re-challenge */ }
+    }
+
+    async function init() {
+      let cfg = null;
+      try { cfg = await api("/api/public/config"); } catch { return; }
+      if (!cfg || !cfg.recaptcha_enabled || !cfg.recaptcha_site_key) return;
+      siteKey = cfg.recaptcha_site_key;
+      try { await loadScript(siteKey); } catch { return; }
+      const events = ["pointerdown", "keydown", "touchstart"];
+      const fire = () => {
+        events.forEach((e) => window.removeEventListener(e, fire, true));
+        gateOnce();
+      };
+      events.forEach((e) => window.addEventListener(e, fire, true));
+    }
+
+    return { init, token };
+  })();
+  window.StoreBot = StoreBot;
+  StoreBot.init();
 })();

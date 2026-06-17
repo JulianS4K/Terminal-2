@@ -345,3 +345,63 @@ def test_public_config_checkout_enabled_when_kill_switch_cleared(client, monkeyp
     body = r.json()
     assert body["checkout_domain"] == "checkout.example.com"
     assert body["purchase_enabled"] is True
+
+
+# ---------- Bot protection: reCAPTCHA v3 gate + honeypot ----------
+
+def test_public_config_recaptcha_dormant_by_default(client):
+    """With no keys set the gate is dormant: config reports site_key=null +
+    recaptcha_enabled=false so store.js skips loading Google's script."""
+    r = client.get("/api/public/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["recaptcha_site_key"] is None
+    assert body["recaptcha_enabled"] is False
+
+
+def test_verify_human_noop_when_dormant(client):
+    """verify-human is a no-op success while dormant (nothing to verify)."""
+    r = client.post("/api/store/verify-human", json={})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "enabled": False}
+
+
+def test_reserve_honeypot_rejects_bot(client):
+    """A non-empty honeypot ('hp') field means a bot auto-filled it → 400,
+    before any inventory work. Always on, even while reCAPTCHA is dormant."""
+    r = client.post("/api/store/reserve", json={
+        "event_id": 123, "ticket_group_id": 456, "quantity": 2, "hp": "acme inc",
+    })
+    assert r.status_code == 400
+
+
+def test_reserve_blocked_without_human_when_gate_enabled(client, monkeypatch):
+    """When the gate is enabled, a reserve with no human cookie and no valid
+    token is blocked with 403 (no network: a missing token fails closed)."""
+    monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
+    r = client.post("/api/store/reserve", json={
+        "event_id": 123, "ticket_group_id": 456, "quantity": 2,
+    })
+    assert r.status_code == 403
+
+
+def test_reserve_passes_gate_with_valid_token(client, monkeypatch):
+    """A passing reCAPTCHA token clears the gate (stubbed — no network). Proven
+    by reaching the downstream quantity-cap check (400), not a 403."""
+    monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
+    monkeypatch.setattr(app_module, "_verify_recaptcha", lambda *a, **k: True)
+    r = client.post("/api/store/reserve", json={
+        "event_id": 123, "ticket_group_id": 456, "quantity": 9999,
+        "recaptcha_token": "tok",
+    })
+    assert r.status_code == 400  # cap check, i.e. the gate let it through
+
+
+def test_verify_human_sets_cookie_when_token_valid(client, monkeypatch):
+    """verify-human issues the vp_human cookie on a passing token (stubbed)."""
+    monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
+    monkeypatch.setattr(app_module, "_verify_recaptcha", lambda *a, **k: True)
+    r = client.post("/api/store/verify-human", json={"recaptcha_token": "tok"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert "vp_human" in r.cookies
