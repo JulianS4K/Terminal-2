@@ -1758,7 +1758,14 @@
       const totV = document.createElement("span"); totV.className = "v total"; totV.id = "rcTotal"; totV.textContent = fmtMoney(Number(listing.retail_price) * defaultQ);
       receipt.append(totK, totV);
 
-      const checkoutLive = !!purchaseConfig.purchase_enabled && !!purchaseConfig.checkout_domain;
+      // Live online checkout is DISABLED — the storefront performs no online
+      // checkout. Defensive client guard (server also force-returns checkout
+      // off via /api/public/config): never redirect to a hosted-checkout URL,
+      // regardless of any (stale/cached) purchaseConfig. Re-enabling requires
+      // both this guard and the server kill switch (STOREFRONT_CHECKOUT_DISABLED).
+      const CHECKOUT_DISABLED = true;
+      const checkoutLive = !CHECKOUT_DISABLED
+        && !!purchaseConfig.purchase_enabled && !!purchaseConfig.checkout_domain;
 
       const confirm = document.createElement("button");
       confirm.className = "btn";

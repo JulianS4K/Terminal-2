@@ -300,8 +300,13 @@ if not STOREFRONT_RESERVE_REQUIRES_AUTH:
 # subdomain with the TEvo rep + point DNS (CNAME -> cname.vercel-dns.com),
 # land real legal copy (D1-OPS-5), THEN set this env var.
 STOREFRONT_CHECKOUT_DOMAIN = os.environ.get("STOREFRONT_CHECKOUT_DOMAIN", "").strip()
-if STOREFRONT_CHECKOUT_DOMAIN:
-    print(f"STOREFRONT_CHECKOUT_DOMAIN={STOREFRONT_CHECKOUT_DOMAIN} — Reserve redirects to TEvo Hosted Checkout (real purchases ENABLED).")
+# Live online checkout is intentionally DISABLED (operator directive 2026-06):
+# the storefront performs no online checkout. /api/public/config force-returns
+# checkout off regardless of this env var, so setting STOREFRONT_CHECKOUT_DOMAIN
+# alone will NOT re-enable purchases — remove this kill switch first.
+STOREFRONT_CHECKOUT_DISABLED = True
+if STOREFRONT_CHECKOUT_DOMAIN and STOREFRONT_CHECKOUT_DISABLED:
+    print(f"STOREFRONT_CHECKOUT_DOMAIN={STOREFRONT_CHECKOUT_DOMAIN} is set but IGNORED — live checkout is force-disabled (STOREFRONT_CHECKOUT_DISABLED).")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -882,11 +887,13 @@ def public_config():
         # a 'demo · sql snapshot' pill so users know what they're seeing.
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "storefront_search_sql_only": STOREFRONT_SEARCH_SQL_ONLY,
-        # TEvo Hosted Checkout: domain is null while dormant (Reserve stays
-        # the MVP mock); when the operator sets STOREFRONT_CHECKOUT_DOMAIN,
-        # store.js redirects Reserve to the hosted checkout URL.
-        "checkout_domain": STOREFRONT_CHECKOUT_DOMAIN or None,
-        "purchase_enabled": bool(STOREFRONT_CHECKOUT_DOMAIN),
+        # TEvo Hosted Checkout: force-OFF. Live online checkout is disabled
+        # (STOREFRONT_CHECKOUT_DISABLED) — always report no checkout so store.js
+        # never redirects to a hosted-checkout URL, even if STOREFRONT_CHECKOUT_
+        # DOMAIN is set. Re-enabling is a deliberate two-step: clear the kill
+        # switch AND set the domain.
+        "checkout_domain": None if STOREFRONT_CHECKOUT_DISABLED else (STOREFRONT_CHECKOUT_DOMAIN or None),
+        "purchase_enabled": (not STOREFRONT_CHECKOUT_DISABLED) and bool(STOREFRONT_CHECKOUT_DOMAIN),
     }
 
 # ---------- Protected routes ----------
