@@ -4,7 +4,7 @@
 **Owner: A1.** Reorg 2026-06-17 (operator directive) — four peer domains by ownership; **not a command chain.** No bot "reports to" another; the lanes are guidance for who writes what, coordinated through `bot_chat`.
 **Absorbs former `LANE_DISCIPLINE.md`** (merged 2026-05-28; that file is now in `docs/archive/`).
 
-> **Doc version:** v2.0.0 · baseline 2026-05-28 (A1); v2.0.0 2026-06-17 (operator) — **reframed from a top-down hierarchy to peer-domain lane guidance**: four domains (A1 data plane · B1 git/code · C1 docs/coordination · D0–D4 FE surfaces); push to `main` is per-task (A1 + B1 maintain), not bot-tier-gated; DB security → A1, git security → B1; own-bible model (promote globally-relevant facts to the main set, C1 arbitrates). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.0.0 · baseline 2026-05-28 (A1); v2.0.0 2026-06-17 (operator) — **reframed from a top-down hierarchy to peer-domain lane guidance**: four domains (A1 data plane · B1 git/code · C1 docs/coordination · D0–D4 FE surfaces); push to `main` is per-task (A1 + B1 maintain), not bot-tier-gated; DB security → A1, git security → B1; own-bible model (promote globally-relevant facts to the main set, C1 arbitrates); v2.1.0 2026-06-17 (operator) — **§5.5 full-tree code lane-assignment audit** + **§5.5b shared cross-lane resource register** (venue/seat map, API surface, trip_planner, order data, `*_public` boundary, design tokens, RULE-2, AQ hub); C1 mandate gains shared-resource coordination. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 > **This doc owns:** lane domains · push authority · Render service scope · per-bot lane scope (writes / never-writes / reads) · cross-cutting lane rules.
 > Migration mechanics → `MIGRATION_CONVENTIONS.md`. Immutable security invariants → `CLAUDE.md`. Per-session playbook → `PROJECT_BIBLE.md`.
@@ -84,6 +84,7 @@ Each active lane below lists its **mandate**, **writes**, **never-writes**, **re
 **Mission:** keep the docs accurate and coordination healthy; arbitrate what's shared vs lane-local.
 
 - **Owns:** `bot_chat`; the **main bible set** + the closed registry + doc structure; the **promotion gate** — deciding which facts graduate from a bot's own `<BOT>_BIBLE.md` into the main set (each bot owns its own bible; only globally-relevant facts get promoted).
+- **Shared cross-lane resources (operator directive 2026-06-17):** C1 also owns the **register of resources that span lanes** — the venue/seat map (D0 + store), the shared API surface (`/api/broker/*` + `/api/store/*` in one `app.py`), the `trip_planner` module (D0 + D1 routes), order data (D0 tiles + D2 dashboard, via `unified_orders`), `static/_shared/`, the `*_public` RPC boundary, and the AQ mapper hub. C1 keeps these in §5.5 and **reviews any change touching a shared resource for cross-consumer impact** (a D0 venue-map change must not break store; an order-view schema change must serve both D0 and D2). Catalog **future crosses** here as they appear.
 - **Drift watch:** compare `main` vs deployed + bibles vs reality (`migration_drift_check()`, `release_health_check()`); post checkpoints to `bot_chat`; route fixes (data→A1, code/security→B1, surface→the owning D-bot).
 - **Writes (in lane):** the main bible set + registry; `bot_chat` checkpoints/drift flags; `docs/c1_daily_checkpoint_runbook.md`. *(Dated snapshots → `bot_chat` or `docs/archive/` — never `docs/` root.)*
 - **Reads:** everything. **Authority:** owns the doc registry + promotion decisions; flags drift to the owning lane.
@@ -141,6 +142,53 @@ Each table has exactly one owning lane that writes; all others read. (Full mecha
 | **D1** | `share_links` (PAUSED) |
 | **D2** | `evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots` (PAUSED) |
 | **D3** | `broadway_*` tables (PAUSED) |
+
+---
+
+## 5.5 Code lane-assignment map (full-tree audit) *(v1.0 · operator · 2026-06-17)*
+
+Every code path assigned to an owning lane under the 4-domain model. Audit of the whole tree (2026-06-17). **Single-writer holds:** one lane writes; others read/consume. Cross-lane seams are in §5.5b.
+
+| Path / component | Owner | Notes |
+|---|---|---|
+| `supabase/migrations/*` (596) | **A1** | all schema/data/cron/RLS migrations |
+| `supabase/functions/*` (ingest + drains: `collect*`, `espn*`, `seatdata-poll`, `wiki-collect`, `nws*`, `seatmap-manifest-sync`, `*-search-bridge`, `sg-seller-webhook`, …) | **A1** | data pipeline |
+| `supabase/functions/exos-*` (api, checkout, connect-onboard, distribute, mail-drain, webhook-drain), `stripe-webhook` | **D4** | Exos app edge fns |
+| `evo/seatgeek/seatdata/ticketsdata/axs/tickpick/vivid/gotickets_client.py` (8 read-only clients) | **A1** | ingest; GET-only by construction |
+| `broadway_client.py`, `broadway_extension/`, `broadway_*` tables | **D3** | Broadway scraper |
+| `app.py` | **A1** (file) | shared — D0 owns `/api/broker/*`, D1 owns `/api/store/*` (§5.5b) |
+| order tables (`evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `sd_sales_normalized`) + ingestion | **A1** | consumed by D0 + D2 (§5.5b) |
+| AQ mapper (`aq_event_map`, matchers) + `*_xref` + metrics matviews | **A1** | cross-source hub (§5.5b) |
+| RLS / SECURITY DEFINER / RULE-2 policy | **A1** | DB/API security (moved from B1) |
+| `bin/` (sync-check, check-docs, graph-drift), `.github/workflows/*`, `.gitleaks*` | **B1** | CI + git guards |
+| `scripts/check_readonly.py`, `tests/test_readonly_guards.py` | **B1** (code) | enforce **A1**'s RULE-2 policy (§5.5b) |
+| `tests/*` (pytest suite) | **B1** | test-suite health |
+| canonical `*.md` registry (main bible set), `.understand-anything/` | **C1** | docs + knowledge graph |
+| `bot_chat` + the §5.5b shared-resource register | **C1** | coordination |
+| `static/terminal/*`, `/api/broker/*`, `render-d0-terminal.yaml` | **D0** | terminal FE + own Render |
+| `static/store/*`, `/api/store/*`, `render.yaml` | **D1** | storefront FE + own Render |
+| `d2_dashboard/*`, `render-d2-dashboard.yaml` | **D2** | orders dashboard + own Render |
+| `d4_bridge/*`, `static/bridge/`, `exos_*` schema | **D4** | Exos/Bridge full app |
+| `static/home/`, `static/undelivered/` | **D0** | hub / D2 placeholder surface |
+| `requirements.txt`, `Procfile` | **A1** (shape) | lanes add their own deps |
+| `design/`, `docs/archive/` | — | historical / non-canonical |
+
+### 5.5b Shared cross-lane resources — C1-coordinated register *(v1.0 · operator · 2026-06-17)*
+
+The seams where one lane's change can break another's surface. **C1 reviews any change touching these for cross-consumer impact.** (The default rule still holds — one writer, many readers — but here the readers are *other lanes*, so coordination is mandatory, not optional.)
+
+| Shared resource | Writer / owner | Consumers (cross-lane) | Coordination rule |
+|---|---|---|---|
+| **Venue / seat map** — `static/terminal/lib/tevomaps.bundle.js` + `venue.js`/`event.js`; data `cross_source_venue_map`/`aq_venue_map`/`venue_assets` | D0 (component) · A1 (data) | **D0** terminal + **D1** `store.js` | a D0 map change must keep store rendering; tail-remap landmine (`PROJECT_BIBLE §3`) applies to both |
+| **API surface** — single `app.py` | A1 (file) | **D0** `/api/broker/*` · **D1** `/api/store/*` · A1 `/api/public/*` | route blocks are lane-owned; shared helpers + `/api/public/config` change → PR comment to both FE lanes |
+| **`trip_planner/`** module | shared (D0+D1) | `/api/broker/.../trip-plan` (**D0**) + `/api/store/.../trip-plan` (**D1**) | one engine, two routes; change once, regression-test both (`KANBAN` D0-PROD-8) |
+| **Order data** — `unified_orders`/`cross_source_orders` views over the order tables | A1 (ingest + view) | **D0** `orders.js` event tiles + **D2** dashboard (`unified_orders` ×36) | a view/schema change must serve both consumers; D-tier keys on `tevo_event_id` (unmapped = invisible, `§3`) |
+| **`*_public` RPCs** — the wholesale-filtered read boundary | A1 | **D1** store (only path) | D1 may never read `broker_*`/wholesale fields; the `*_public` whitelist is the contract |
+| **`static/_shared/design-tokens.css`** | shared (FE) | **D0 · D1 · D2 · D4** surfaces | a token change ripples to every surface — coordinate via C1 |
+| **RULE-2 read-only lockdown** — `check_readonly.py` / `test_readonly_guards.py` | B1 (guard code) · A1 (policy) | every `*_client.py` (A1) + CI (B1) | weakening = security-CRIT; B1 maintains the scanner, A1 owns what counts as a write |
+| **AQ mapper** — `aq_event_map` hub | A1 | **every lane** that resolves cross-source IDs | the #1 architectural fact (`PROJECT_BIBLE §0`); never join raw source IDs |
+
+**Future crosses:** as a new shared resource appears (a surface consuming another lane's data/component), add a row here and flag it in `bot_chat` so the owner + consumers agree the contract before it hardens. This register is the single place to answer "who else breaks if I change this?"
 
 ---
 
