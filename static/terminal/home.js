@@ -1,50 +1,40 @@
 // D0 Terminal — Home page.
 //
-// Movers panel reads `event_movers_index` via Path-C RPCs (mig 20260527260000):
-//   get_event_movers_v2(source, window_days, category, limit)
-//   get_event_movers_index_summary(source, window_days)
-// Coverage band, full movers table (source / window / segment controls), and
-// owned-events list all derive from the v2 rows.
+// Three panels (operator directive 2026-06-17 — Movers + S4K-owned panels removed):
+//   • My watchlist — the user's own tracked events (event_watchlist_list RPC).
+//   • Coverage band — active-future-sports counts, derived from the cross-source
+//     mover index (get_event_movers_v2) which still drives the at-a-glance totals.
+//   • Top-50 chart — "SG SELLING, WE'RE NOT IN" (get_sg_market_chart RPC).
 //
-// Semantic shift from the prior /api/broker/movers?window_hours= path:
-//   • OLD: events that moved in the last N hours (rolling-window delta).
-//   • NEW: events currently in the mover index slot for an N-day horizon —
-//     populated by the cross-source mover compute (price_up / price_down /
-//     selling_fast / accumulating / value_gap / cross_gap categories).
-// Source toggle lets operator pin to a single platform or use the merged
-// composite. Owned/market deltas + SG sales / owned median / value cols
-// from the legacy panel are NOT in v2 — they render as "—" honest empty.
-// Top-50 chart fires its own RPC (get_sg_market_chart) — independent.
+// The full Movers cross-source table now lives only on its dedicated page
+// (movers.html); the home page keeps just the coverage roll-up it feeds.
 
 (function () {
   'use strict';
   const T = window.Terminal;
 
   const state = {
-    source: 'merged',         // 'merged' | 'evo' | 'sg' | 'td_sh' | 'td_gt' | 'td_vd'
-    windowDays: 7,            // 7 | 15 | 30 | 180 (rpc-supported buckets)
-    segment: 'all',           // 'all' | 'owned'
-    rows: [],
-    sortKey: 'delta_market_pct',
-    sortDir: 'desc',
-    gapMap: new Map(),        // event_id → [{ gap_type, detail, signal_score }]
+    // Coverage band reads the merged 7d mover index — the same default the
+    // dedicated Movers page opens with.
+    source: 'merged',
+    windowDays: 7,
     chartTab: 'top',          // 'top' (rank 1-50) | 'rest' (rank 51+)
   };
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
-    wireMoversControls();
     // Watchlist is the first table — the user's own tracked events. Independent
-    // RPC, runs in parallel with movers/blind-spots.
+    // RPC, runs in parallel with the coverage roll-up / chart.
     loadWatchlist().catch(e => console.error('[watchlist]', e));
-    // Top-50 chart fires its own RPC, independent of movers — runs in parallel.
+    // Top-50 chart fires its own RPC — runs in parallel.
     wireChartTabs();
     renderMarketChart().catch(e => console.error('[sgChart]', e));
-    load();
+    // Coverage band counts (active future sports) from the mover index.
+    loadCoverage().catch(e => console.error('[coverage]', e));
   }
 
-  // ---------- Watchlist (first table; max 50/page, client-paged) ----------
-  const WL_PAGE_SIZE = 50;
+  // ---------- Watchlist (first table; max 25/page, client-paged) ----------
+  const WL_PAGE_SIZE = 25;
   let _wlItems = [];
   let _wlPage = 0;
   let _wlBasis = null;   // 'bell' (since today's 12:00 ET open) | '24h' — drives the Δ caption
@@ -219,129 +209,22 @@
       }));
   }
 
-  // ---------- Path-C v2 movers load ----------
-
-  async function load() {
-    T.setStatus(`Loading home · ${state.source} · ${state.windowDays}d…`);
-    const body = document.getElementById('moversBody');
-    if (body) body.innerHTML = '<div class="empty">loading…</div>';
-
-    const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-      T.setStatus('not signed in', 'err');
-      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
-      return;
-    }
-
-    try {
-      const [eventsRes, summaryRes] = await Promise.all([
-        Auth.client.rpc('get_event_movers_v2', {
-          p_source:      state.source,
-          p_window_days: state.windowDays,
-          p_category:    null,   // all categories
-          p_limit:       200,
-        }),
-        Auth.client.rpc('get_event_movers_index_summary', {
-          p_source:      state.source,
-          p_window_days: state.windowDays,
-        }),
-      ]);
-      if (eventsRes.error)  throw new Error(eventsRes.error.message  || 'movers RPC error');
-      if (summaryRes.error) throw new Error(summaryRes.error.message || 'summary RPC error');
-
-      const rawRows = eventsRes.data  || [];
-      const summary = summaryRes.data || [];
-
-      // Reshape v2 columns to the legacy field aliases that renderMovers /
-      // renderCoverage / renderOwnedEvents consume. Fields not in v2 become null
-      // and render as "—".
-      state.rows = rawRows.map(reshapeV2Row);
-      state.gapMap = new Map();   // reset on each load
-
-      T.setStatus('Loaded', 'ok');
-      renderSummaryStrip(summary);
-      renderCoverage(state.rows);
-      renderMovers();
-      renderOwnedEvents(state.rows);
-      // Phase 2: batch-load gap alerts for all mover event_ids, then re-render
-      // so GapChips appear in the table without blocking the initial paint.
-      loadGapMap(state.rows).catch(e => console.error('[gapMap]', e));
-    } catch (e) {
-      T.setStatus(e.message, 'err');
-      if (body) body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
-    }
-  }
-
-  // Map v2 RPC row → legacy field names used by the render functions.
-  function reshapeV2Row(r) {
-    return Object.assign({}, r, {
-      // v2 → legacy alias
-      name:             r.event_name || r.name || ('Event ' + r.event_id),
-      occurs_at_local:  r.occurs_at  || r.occurs_at_local,
-      cur_market_med:   r.cur_price  != null ? +r.cur_price  : null,
-      delta_market_pct: r.price_delta_pct != null ? +r.price_delta_pct : null,
-      cur_owned_tix:    r.cur_owned  != null ? +r.cur_owned  : 0,
-      // v2 lacks these — null renders as "—" in the table
-      cur_market_tix:   null,
-      cur_owned_med:    null,
-      sg_sales_window:  null,
-      delta_owned_pct:  null,
-      delta_market_val: null,
-      delta_owned_val:  null,
-      performer_name:   null,
-    });
-  }
-
-  // Summary strip above movers table — same shape as movers.html v2SummaryStrip.
-  function renderSummaryStrip(summary) {
-    const strip = document.getElementById('moversSummaryStrip');
-    if (!strip || !summary.length) { if (strip) strip.innerHTML = ''; return; }
-    strip.innerHTML = summary.map(s => {
-      const sz   = s.index_size || 0;
-      const cov  = s.data_coverage_pct != null ? ` · ${Math.round(s.data_coverage_pct)}% cov` : '';
-      const turn = (+s.entries_24h || 0) + (+s.exits_24h || 0);
-      const turnStr = turn ? ` · ${turn} Δ/24h` : '';
-      return `<span class="badge" title="source=${escapeHtml(s.source)} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category || '')}: ${sz}${cov}${turnStr}</span>`;
-    }).join(' ');
-  }
-
-  // ---------- Phase 2: GapChip batch loader ----------
-  // discovery_gap_alerts has no RLS (relrowsecurity=false) — direct read OK.
-  // Queries all active gaps for the current mover rows in one round-trip, then
-  // re-renders the movers table so gap badges appear in event name cells.
-
-  async function loadGapMap(rows) {
-    if (!rows || !rows.length) return;
-    const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client) return;
-    const ids = [...new Set(rows.map(r => r.event_id).filter(Boolean))];
-    if (!ids.length) return;
-    const { data, error } = await Auth.client
-      .from('discovery_gap_alerts')
-      .select('event_id,gap_type,detail,signal_score')
-      .in('event_id', ids)
-      .is('resolved_at', null)
-      .order('signal_score', { ascending: false });
-    if (error || !data) return;
-    const m = new Map();
-    data.forEach(g => {
-      if (!m.has(g.event_id)) m.set(g.event_id, []);
-      m.get(g.event_id).push(g);
-    });
-    state.gapMap = m;
-    renderMovers();  // re-render now that gap badges are available
-  }
-
-  // Returns HTML for up to 2 gap chips for an event (compact — avoid badge overflow).
-  function gapBadgesHtml(eventId) {
-    const gaps = state.gapMap.get(eventId);
-    if (!gaps || !gaps.length) return '';
-    return gaps.slice(0, 2).map(g =>
-      `<span class="badge gap-chip" title="${escapeHtml(g.detail || '')}">${escapeHtml((g.gap_type || '').replace(/_/g, ' '))}</span>`
-    ).join(' ');
-  }
-
   // ---------- Coverage band ----------
+  // Counts active future events from the merged 7d mover index — the at-a-glance
+  // roll-up that headed the (now-removed) Movers panel.
+
+  async function loadCoverage() {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+    const res = await Auth.client.rpc('get_event_movers_v2', {
+      p_source:      state.source,
+      p_window_days: state.windowDays,
+      p_category:    null,
+      p_limit:       200,
+    });
+    if (res.error) { console.error('[coverage] rpc', res.error); return; }
+    renderCoverage(res.data || []);
+  }
 
   function renderCoverage(rows) {
     const now = Date.now();
@@ -373,7 +256,9 @@
   //               + percent_rank(7d-MA sales median)        (0..2)
   //
   // High on EITHER axis charts; high on BOTH tops it. Eligibility:
-  // owned_count_last_7d = 0, future event, >= 2 days of sales in trailing 7d.
+  // SG owned_count_last_7d = 0 AND EVO owned_tickets_count = 0 (operator
+  // directive 2026-06-17 — exclude events where EVO holds owned tickets),
+  // future event, >= 2 days of sales in trailing 7d.
   // Each row carries prev_rank / peak_rank / days_on_chart for movement.
   // Two tabs: "Top 50" (rank 1-50) and "The Rest" (rank 51+, capped server-side).
 
@@ -506,124 +391,7 @@
     body.appendChild(tbl);
   }
 
-  // ---------- Full movers table (mirrors movers.html) ----------
-
-  function wireMoversControls() {
-    // Source toggle
-    document.querySelectorAll('[data-src]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-src]').forEach(b => b.classList.remove('is-active'));
-        btn.classList.add('is-active');
-        state.source = btn.dataset.src;
-        load();
-      });
-    });
-    // Window (days)
-    document.querySelectorAll('[data-wdays]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-wdays]').forEach(b => b.classList.remove('is-active'));
-        btn.classList.add('is-active');
-        state.windowDays = parseInt(btn.dataset.wdays, 10);
-        load();
-      });
-    });
-    // Segment
-    document.querySelectorAll('[data-segment]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-segment]').forEach(b => b.classList.remove('is-active'));
-        btn.classList.add('is-active');
-        state.segment = btn.dataset.segment;
-        renderMovers();
-      });
-    });
-  }
-
-  function renderMovers() {
-    const body = document.getElementById('moversBody');
-    if (!body) return;
-    const filtered = state.segment === 'owned'
-      ? state.rows.filter(r => (+r.cur_owned_tix || 0) > 0)
-      : state.rows;
-
-    const countEl = document.getElementById('moversCount');
-    if (countEl) countEl.textContent = filtered.length ? `${filtered.length} events` : '';
-
-    if (!filtered.length) {
-      body.innerHTML = '<div class="empty">no movers</div>';
-      return;
-    }
-
-    const sorted = [...filtered].sort((a, b) => {
-      const av = a[state.sortKey], bv = b[state.sortKey];
-      if (av === null || av === undefined) return 1;
-      if (bv === null || bv === undefined) return -1;
-      return state.sortDir === 'desc' ? bv - av : av - bv;
-    });
-
-    // v2 RPC cols available: event_name, occurs_at, cur_price (→ cur_market_med),
-    // price_delta_pct (→ delta_market_pct), cur_owned (→ cur_owned_tix), category,
-    // rank, signal_score, evo_median, sg_median, td_sh/gt/vd_median, *_spread.
-    // Legacy cols not in v2 (cur_market_tix, cur_owned_med, sg_sales_window,
-    // delta_owned_pct, delta_market_val, delta_owned_val) are dropped from the
-    // header to avoid a table of "—".
-    const cols = [
-      { key: null,               label: 'Event',      align: 'left' },
-      { key: null,               label: 'Category',   align: 'left' },
-      { key: null,               label: 'T-days',     align: 'num'  },
-      { key: 'cur_owned_tix',    label: 'Owned',      align: 'num'  },
-      { key: 'cur_market_med',   label: 'Cur $',      align: 'num'  },
-      { key: 'delta_market_pct', label: '%Δ',         align: 'num'  },
-      { key: 'signal_score',     label: 'Score',      align: 'num'  },
-      { key: 'rank',             label: 'Rank',       align: 'num'  },
-    ];
-
-    body.innerHTML = '';
-    const tbl = document.createElement('table');
-    tbl.className = 'movers-tbl';
-    const thead = document.createElement('thead');
-    const trh = document.createElement('tr');
-    cols.forEach(c => {
-      const th = document.createElement('th');
-      th.textContent = c.label;
-      if (c.align === 'num') th.classList.add('num');
-      if (c.key) {
-        th.classList.add('sortable');
-        th.dataset.sort = c.key;
-        if (state.sortKey === c.key) th.classList.add('is-sorted', state.sortDir);
-        th.addEventListener('click', () => {
-          if (state.sortKey === c.key) state.sortDir = state.sortDir === 'desc' ? 'asc' : 'desc';
-          else { state.sortKey = c.key; state.sortDir = 'desc'; }
-          renderMovers();
-        });
-      }
-      trh.appendChild(th);
-    });
-    thead.appendChild(trh);
-    tbl.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    sorted.slice(0, 100).forEach(r => {
-      const tr = document.createElement('tr');
-      tr.classList.add('clickable');
-      tr.addEventListener('click', () => { window.location.href = 'event.html?event=' + r.event_id; });
-      const d = T.daysUntil(r.occurs_at_local || r.occurs_at);
-      const mDPct = r.delta_market_pct != null ? +r.delta_market_pct : NaN;
-      const ownedTix = +r.cur_owned_tix || 0;
-      const score = r.signal_score != null ? (+r.signal_score).toFixed(2) : '—';
-      tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a> ${T.temporalChipHtml(r.occurs_at_local || r.occurs_at)} ${gapBadgesHtml(r.event_id)}</td>
-        <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
-        <td class="num">${d === null ? '—' : d}</td>
-        <td class="num ${ownedTix > 0 ? 'ours' : ''}">${T.fmtNum(ownedTix)}</td>
-        <td class="num">${r.cur_market_med != null ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>
-        <td class="num ${pctCls(mDPct)}">${Number.isFinite(mDPct) ? T.fmtPct(mDPct, 1) : '—'}</td>
-        <td class="num muted small">${score}</td>
-        <td class="num muted small">${r.rank != null ? r.rank : '—'}</td>`;
-      tbody.appendChild(tr);
-    });
-    tbl.appendChild(tbody);
-    body.appendChild(tbl);
-  }
+  // ---------- Util ----------
 
   function pctCls(v) {
     if (!Number.isFinite(v)) return '';
@@ -633,71 +401,6 @@
     if (!Number.isFinite(v)) return '—';
     return (v >= 0 ? '+' : '−') + '$' + T.fmtNum(Math.round(Math.abs(v)));
   }
-
-  // ---------- Owned events list (next 30d) ----------
-
-  function renderOwnedEvents(rows) {
-    const body = document.getElementById('ownedEventsBody');
-    const countEl = document.getElementById('ownedEventCount');
-    body.innerHTML = '';
-    const now = Date.now();
-    const day = 86400000;
-    const upcoming = rows.filter(r => {
-      if (!((+r.cur_owned_tix || 0) > 0)) return false;
-      const t = new Date(r.occurs_at_local || r.occurs_at).getTime();
-      if (!Number.isFinite(t)) return false;
-      const days = (t - now) / day;
-      return days >= -1 && days <= 30;
-    }).sort((a, b) => {
-      // Soonest-first by event date.
-      const ta = new Date(a.occurs_at_local || a.occurs_at).getTime();
-      const tb = new Date(b.occurs_at_local || b.occurs_at).getTime();
-      if (!Number.isFinite(ta)) return 1;
-      if (!Number.isFinite(tb)) return -1;
-      return ta - tb;
-    });
-
-    countEl.textContent = upcoming.length ? `${upcoming.length} events` : '';
-
-    if (!upcoming.length) {
-      body.innerHTML = '<div class="empty">no owned events in the next 30d</div>';
-      return;
-    }
-
-    // v2 RPC: cur_owned_med / delta_owned_val not available.
-    // Show qty + cur price (cur_market_med alias) + %Δ + mover chip.
-    const tbl = document.createElement('table');
-    tbl.innerHTML = `
-      <thead><tr>
-        <th>Event</th>
-        <th class="num">T-days</th>
-        <th class="num">Owned qty</th>
-        <th class="num">Cur $</th>
-        <th class="num">%Δ</th>
-        <th class="num">Category</th>
-      </tr></thead>
-      <tbody></tbody>
-    `;
-    const tb = tbl.querySelector('tbody');
-    upcoming.slice(0, 30).forEach(r => {
-      const ot = +r.cur_owned_tix || 0;
-      const d  = T.daysUntil(r.occurs_at_local || r.occurs_at);
-      const mDPct = r.delta_market_pct != null ? +r.delta_market_pct : NaN;
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a></td>
-        <td class="num">${d === null ? '—' : d}</td>
-        <td class="num ours">${T.fmtNum(ot)}</td>
-        <td class="num">${r.cur_market_med != null ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>
-        <td class="num ${pctCls(mDPct)}">${Number.isFinite(mDPct) ? T.fmtPct(mDPct, 1) : '—'}</td>
-        <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
-      `;
-      tb.appendChild(tr);
-    });
-    body.appendChild(tbl);
-  }
-
-  // ---------- Util ----------
 
   function setText(id, txt) {
     const el = document.getElementById(id);
