@@ -300,8 +300,109 @@ if not STOREFRONT_RESERVE_REQUIRES_AUTH:
 # subdomain with the TEvo rep + point DNS (CNAME -> cname.vercel-dns.com),
 # land real legal copy (D1-OPS-5), THEN set this env var.
 STOREFRONT_CHECKOUT_DOMAIN = os.environ.get("STOREFRONT_CHECKOUT_DOMAIN", "").strip()
-if STOREFRONT_CHECKOUT_DOMAIN:
-    print(f"STOREFRONT_CHECKOUT_DOMAIN={STOREFRONT_CHECKOUT_DOMAIN} — Reserve redirects to TEvo Hosted Checkout (real purchases ENABLED).")
+# Live online checkout is intentionally DISABLED (operator directive 2026-06):
+# the storefront performs no online checkout. /api/public/config force-returns
+# checkout off regardless of this env var, so setting STOREFRONT_CHECKOUT_DOMAIN
+# alone will NOT re-enable purchases — remove this kill switch first.
+STOREFRONT_CHECKOUT_DISABLED = True
+if STOREFRONT_CHECKOUT_DOMAIN and STOREFRONT_CHECKOUT_DISABLED:
+    print(f"STOREFRONT_CHECKOUT_DOMAIN={STOREFRONT_CHECKOUT_DOMAIN} is set but IGNORED — live checkout is force-disabled (STOREFRONT_CHECKOUT_DISABLED).")
+
+# ---------- Bot protection: Google reCAPTCHA v3 (sitewide first-interaction gate) ----------
+# DORMANT unless both keys are set, so the demo works without provisioning. When
+# enabled, store.js fetches a v3 token on first interaction, POSTs it to
+# /api/store/verify-human, and the server issues a short-lived signed cookie
+# (vp_human). The write/spam endpoints (reserve, share-create) then require that
+# cookie (or a fresh token). Score-gated; fails OPEN only on a Google outage so a
+# network blip can't lock out the demo, fails CLOSED on a low score / bad token.
+RECAPTCHA_SITE_KEY = os.environ.get("RECAPTCHA_SITE_KEY", "").strip()
+RECAPTCHA_SECRET_KEY = os.environ.get("RECAPTCHA_SECRET_KEY", "").strip()
+try:
+    RECAPTCHA_MIN_SCORE = float(os.environ.get("RECAPTCHA_MIN_SCORE", "0.5"))
+except ValueError:
+    RECAPTCHA_MIN_SCORE = 0.5
+RECAPTCHA_ENABLED = bool(RECAPTCHA_SITE_KEY and RECAPTCHA_SECRET_KEY)
+if RECAPTCHA_ENABLED:
+    print(f"reCAPTCHA v3 ENABLED — sitewide bot gate active (min score {RECAPTCHA_MIN_SCORE}).")
+else:
+    print("reCAPTCHA v3 dormant (RECAPTCHA_SITE_KEY/RECAPTCHA_SECRET_KEY unset) — honeypot + rate limits still active.")
+
+# HMAC key for the signed human-session cookie. Prefer a stable secret so the
+# cookie survives restarts; fall back to a per-process random (cookies simply
+# re-issue on the next interaction after a restart — fine for a demo).
+_HUMAN_COOKIE_SECRET = (
+    os.environ.get("SESSION_SIGNING_SECRET") or CRON_SECRET or secrets.token_hex(32)
+).encode()
+_HUMAN_COOKIE_NAME = "vp_human"
+_HUMAN_TTL_SECONDS = 1800  # 30 min
+
+
+def _issue_human_token(ttl: int = _HUMAN_TTL_SECONDS) -> str:
+    """Mint a signed, expiring opaque token: '<exp>.<hex-hmac>'."""
+    exp = int(time.time()) + ttl
+    sig = hmac.new(_HUMAN_COOKIE_SECRET, str(exp).encode(), "sha256").hexdigest()
+    return f"{exp}.{sig}"
+
+
+def _valid_human_token(tok: str | None) -> bool:
+    if not tok or "." not in tok:
+        return False
+    exp_s, _, sig = tok.partition(".")
+    try:
+        exp = int(exp_s)
+    except ValueError:
+        return False
+    if exp < int(time.time()):
+        return False
+    expected = hmac.new(_HUMAN_COOKIE_SECRET, exp_s.encode(), "sha256").hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
+def _verify_recaptcha(token: str | None, expected_action: str, remote_ip: str | None) -> bool:
+    """Verify a reCAPTCHA v3 token with Google. Returns True when the gate is
+    dormant (no keys). Fails OPEN on a network/Google error (demo availability),
+    CLOSED on an explicit failure / low score / action mismatch."""
+    if not RECAPTCHA_ENABLED:
+        return True
+    if not token:
+        return False
+    try:
+        resp = requests.post(
+            "https://www.google.com/recaptcha/api/siteverify",
+            data={"secret": RECAPTCHA_SECRET_KEY, "response": token, "remoteip": remote_ip or ""},
+            timeout=5,
+        )
+        data = resp.json()
+    except Exception as e:  # noqa: BLE001 — network/parse: fail open so a Google blip can't break the demo
+        print(f"[recaptcha] verify call failed ({e!r}) — failing open")
+        return True
+    if not data.get("success"):
+        return False
+    action = data.get("action")
+    if action and expected_action and action != expected_action:
+        return False
+    return float(data.get("score") or 0.0) >= RECAPTCHA_MIN_SCORE
+
+
+def _require_human(request: Request, payload: dict | None = None):
+    """Gate a write/spam endpoint behind the human check. No-op when the gate is
+    dormant. Accepts a valid vp_human cookie OR a fresh reCAPTCHA token in the
+    request body ('recaptcha_token'); otherwise 403. Also runs the always-on
+    honeypot check (a non-empty 'hp' field => silently treat as a bot)."""
+    # Honeypot — always on, even when reCAPTCHA is dormant. A hidden field no
+    # human ever fills; bots that auto-fill inputs trip it.
+    if payload and str(payload.get("hp") or "").strip():
+        raise HTTPException(400, "invalid request")
+    if not RECAPTCHA_ENABLED:
+        return
+    if _valid_human_token(request.cookies.get(_HUMAN_COOKIE_NAME)):
+        return
+    token = (payload or {}).get("recaptcha_token")
+    xff = request.headers.get("x-forwarded-for") or ""
+    ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
+    if _verify_recaptcha(token, "submit", ip):
+        return
+    raise HTTPException(403, "bot verification required — refresh the page and try again")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -501,9 +602,27 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "form-action 'self'"
     )
 
+    # Storefront variant when the reCAPTCHA v3 gate is enabled: allow Google's
+    # challenge script/frame. Scoped to /store paths + gated on RECAPTCHA_ENABLED
+    # so terminal/home/bridge and the dormant case keep the tighter policy.
+    _CSP_RECAPTCHA = (
+        "default-src 'self'; "
+        "script-src 'self' https://www.google.com https://www.gstatic.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://www.google.com https://*.supabase.co; "
+        "frame-src https://www.google.com; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        response.headers.setdefault("Content-Security-Policy", self._CSP)
+        csp = self._CSP
+        if RECAPTCHA_ENABLED and request.url.path.startswith("/store"):
+            csp = self._CSP_RECAPTCHA
+        response.headers.setdefault("Content-Security-Policy", csp)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
@@ -582,7 +701,8 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         ("/api/store/share/",   10,  60.0),  # POST/DELETE/GET-by-id — spam vector
         ("/api/store/shares",   60,  60.0),  # list endpoint
         ("/api/store/share",    10,  60.0),  # POST create
-        ("/api/store/reserve",  20,  60.0),  # mock reserve, but hits TEvo
+        ("/api/store/verify-human", 30, 60.0),  # bot gate — once per session, generous
+        ("/api/store/reserve",  10,  60.0),  # mock reserve, but hits TEvo (tightened for demo)
         ("/api/store/",         60,  60.0),  # public catalog reads
         ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
         ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
@@ -882,11 +1002,18 @@ def public_config():
         # a 'demo · sql snapshot' pill so users know what they're seeing.
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "storefront_search_sql_only": STOREFRONT_SEARCH_SQL_ONLY,
-        # TEvo Hosted Checkout: domain is null while dormant (Reserve stays
-        # the MVP mock); when the operator sets STOREFRONT_CHECKOUT_DOMAIN,
-        # store.js redirects Reserve to the hosted checkout URL.
-        "checkout_domain": STOREFRONT_CHECKOUT_DOMAIN or None,
-        "purchase_enabled": bool(STOREFRONT_CHECKOUT_DOMAIN),
+        # TEvo Hosted Checkout: force-OFF. Live online checkout is disabled
+        # (STOREFRONT_CHECKOUT_DISABLED) — always report no checkout so store.js
+        # never redirects to a hosted-checkout URL, even if STOREFRONT_CHECKOUT_
+        # DOMAIN is set. Re-enabling is a deliberate two-step: clear the kill
+        # switch AND set the domain.
+        "checkout_domain": None if STOREFRONT_CHECKOUT_DISABLED else (STOREFRONT_CHECKOUT_DOMAIN or None),
+        "purchase_enabled": (not STOREFRONT_CHECKOUT_DISABLED) and bool(STOREFRONT_CHECKOUT_DOMAIN),
+        # reCAPTCHA v3 sitewide bot gate. site_key is null while dormant (store.js
+        # then skips loading Google's script); when set, store.js runs the gate on
+        # first interaction. The secret never leaves the server.
+        "recaptcha_site_key": RECAPTCHA_SITE_KEY or None,
+        "recaptcha_enabled": RECAPTCHA_ENABLED,
     }
 
 # ---------- Protected routes ----------
@@ -8021,8 +8148,34 @@ def store_event_zones(event_id: int):
     }
 
 
+@app.post("/api/store/verify-human")
+def store_verify_human(request: Request, payload: dict = Body(...)):
+    """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
+    session with a v3 token (action 'gate'); on a passing score we set a
+    short-lived signed cookie that the write endpoints accept, so the gate runs
+    once rather than on every action. No-op success when the gate is dormant."""
+    if not RECAPTCHA_ENABLED:
+        return JSONResponse({"ok": True, "enabled": False})
+    token = payload.get("recaptcha_token") or payload.get("token")
+    xff = request.headers.get("x-forwarded-for") or ""
+    ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
+    if not _verify_recaptcha(token, "gate", ip):
+        raise HTTPException(403, "verification failed")
+    resp = JSONResponse({"ok": True, "enabled": True})
+    resp.set_cookie(
+        _HUMAN_COOKIE_NAME,
+        _issue_human_token(),
+        max_age=_HUMAN_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        path="/",
+    )
+    return resp
+
+
 @app.post("/api/store/reserve")
-def store_reserve(payload: dict = Body(...), authorization: str | None = Header(None)):
+def store_reserve(request: Request, payload: dict = Body(...), authorization: str | None = Header(None)):
     """MVP placeholder: a real checkout is not wired up yet. Validates that
     the requested ticket_group + quantity matches the live owned inventory in
     TEvo, then returns a mock confirmation. NEVER calls /v9/orders.
@@ -8033,6 +8186,8 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
     once the front-end attaches Authorization headers."""
     if STOREFRONT_RESERVE_REQUIRES_AUTH:
         require_auth(authorization)
+    # Bot gate: honeypot (always) + reCAPTCHA human-cookie/token (when enabled).
+    _require_human(request, payload)
     try:
         event_id = int(payload.get("event_id") or 0)
         ticket_group_id = int(payload.get("ticket_group_id") or 0)
@@ -8105,6 +8260,26 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
 @app.api_route("/store", methods=["GET", "HEAD"])
 def store_index_page():
     return _render_storefront_page("index.html")
+
+
+@app.api_route("/store-sw.js", methods=["GET", "HEAD"], include_in_schema=False)
+def store_service_worker():
+    """Serve the storefront PWA service worker from a ROOT path so it can claim
+    the '/store' scope. A service worker only controls pages at/below its own URL
+    directory, so served from /static/store/ it could never cover the /store
+    routes. store.js registers it with { scope: '/store' }; the
+    Service-Worker-Allowed header authorizes that broader-than-directory scope."""
+    path = os.path.join(STATIC_DIR, "store", "sw.js")
+    with open(path, "r", encoding="utf-8") as f:
+        body = f.read()
+    return Response(
+        content=body,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "Service-Worker-Allowed": "/store",
+        },
+    )
 
 
 @app.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
