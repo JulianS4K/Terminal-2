@@ -40,6 +40,7 @@
     // Grouped with the discovery/axs tools cluster.
     { id: 'subs',      label: 'SUBS',      href: 'subs.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
+    { id: 'health',    label: 'HEALTH',    href: 'health.html' },
   ];
 
   function inject() {
