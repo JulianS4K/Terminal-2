@@ -596,7 +596,15 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; "
-        "connect-src 'self' https://*.supabase.co; "
+        # maps.ticketevolution.com: the Tevomaps seat-map library fetches the
+        # venue map.svg via connect (fetch/XHR), so it must be in connect-src.
+        # The per-page <meta> CSP already allows it, but browsers enforce the
+        # INTERSECTION of meta + this header — without it here the SVG fetch is
+        # blocked and the storefront seat map renders blank. (The D0 terminal is
+        # served from a static CDN that doesn't run this middleware, so only its
+        # permissive meta CSP applied — which is why the terminal map worked and
+        # the storefront map didn't.)
+        "connect-src 'self' https://*.supabase.co https://maps.ticketevolution.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -610,7 +618,7 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "script-src 'self' https://www.google.com https://www.gstatic.com; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; "
-        "connect-src 'self' https://www.google.com https://*.supabase.co; "
+        "connect-src 'self' https://www.google.com https://*.supabase.co https://maps.ticketevolution.com; "
         "frame-src https://www.google.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
