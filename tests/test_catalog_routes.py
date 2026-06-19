@@ -117,3 +117,22 @@ def test_configuration_detail_passthrough(client, monkeypatch):
     body = client.get("/api/configurations/42").json()
     assert body == {"id": 42}
     assert rec.calls["get_configuration"] == ((42,), {})
+
+
+# ---------- /api/events (search passthrough, moved BR-CODE-1 slice 6) ----------
+
+def test_events_search_passthrough(client, monkeypatch):
+    captured = {}
+
+    class _Rec:
+        def search_events_all(self, **kw):
+            captured.update(kw)
+            return [{"id": 1}, {"id": 2}]
+
+    monkeypatch.setattr(app_module, "client", _Rec())
+    body = client.get("/api/events?q=knicks&performer_id=16303").json()
+    assert body == {"count": 2, "events": [{"id": 1}, {"id": 2}]}
+    # query args + the fixed popularity order_by are passed through to the client.
+    assert captured["q"] == "knicks"
+    assert captured["performer_id"] == 16303
+    assert captured["order_by"] == "events.popularity_score DESC"

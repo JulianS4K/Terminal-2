@@ -902,26 +902,7 @@ def config_info(user=Depends(require_auth)):
     }
 
 
-@app.get("/api/events")
-def events_search(
-    q: str | None = None,
-    performer_id: int | None = None,
-    venue_id: int | None = None,
-    occurs_at_gte: str | None = Query(None, alias="occurs_at.gte"),
-    occurs_at_lte: str | None = Query(None, alias="occurs_at.lte"),
-    only_with_available_tickets: bool = True,
-    _=Depends(require_auth),
-):
-    events = client.search_events_all(
-        q=q or None,
-        performer_id=performer_id,
-        venue_id=venue_id,
-        occurs_at_gte=occurs_at_gte,
-        occurs_at_lte=occurs_at_lte,
-        only_with_available_tickets=only_with_available_tickets,
-        order_by="events.popularity_score DESC",
-    )
-    return {"count": len(events), "events": events}
+# /api/events (search) moved to routers/catalog.py (BR-CODE-1 slice 6).
 
 
 _PARKING_RE = re.compile(r"\b(parking|garage|valet|lot)\b", re.IGNORECASE)
