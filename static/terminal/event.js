@@ -301,7 +301,9 @@
     const xs = asc.map(r => Math.floor(new Date(r.snapshot_date + 'T00:00:00Z').getTime() / 1000));
     const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
     const data = [xs, col('allin_min'), col('allin_median'), col('allin_p90')];
-    const width = () => Math.max(320, host.clientWidth || 800);
+    // Floor stays below the narrowest phone pane so the canvas never exceeds its
+    // container (see paneSize note) — a 320 floor overflowed a ~284px SE pane.
+    const width = () => Math.max(160, host.clientWidth || 800);
     const opts = {
       width: width(), height: 240,
       scales: { x: { time: true } },
@@ -1487,7 +1489,12 @@
 
   function paneSize(host) {
     const rect = host.getBoundingClientRect();
-    const w = Math.max(400, rect.width || host.clientWidth || 1200);
+    // Floor is only a guard against a 0-width measurement during layout — it must
+    // stay BELOW the narrowest real container (a ~320px phone pane is ~284px after
+    // padding). A high floor (was 400) forced the canvas wider than the pane, and
+    // since .chart-pane is overflow:hidden the right edge — the LATEST, most
+    // important data — got clipped off-screen on mobile. Use the measured width.
+    const w = Math.max(160, rect.width || host.clientWidth || 1200);
     // Subtract a small budget for the host's own padding; uPlot wants exact px.
     const h = Math.max(40, Math.floor(rect.height || host.clientHeight || 120));
     return { w, h };

@@ -2185,15 +2185,49 @@ body[data-page="login"] {
   /* Dense tables: scroll the table itself rather than blow out the layout. */
   table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
 
-  /* Event tabs + movers controls swipe horizontally. */
-  .event-tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
-  .event-tab { white-space: nowrap; }
+  /* Event tabs + movers controls swipe horizontally. Hide the scrollbar so the
+     swipe strip reads as a clean tab rail rather than a scrolled box, and snap
+     each tab so a flick lands on a tab edge. */
+  .event-tabs {
+    overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;            /* Firefox */
+  }
+  .event-tabs::-webkit-scrollbar { display: none; }  /* WebKit/Blink */
+  /* Bigger touch targets for the tab rail (Apple HIG ≥44px). */
+  .event-tab {
+    white-space: nowrap;
+    padding: 11px 14px; min-height: 44px;
+    scroll-snap-align: start;
+  }
+  /* The "|" group separators are visual noise in a horizontal swipe rail. */
+  .event-tabs-sep { display: none; }
   .ctrl-row { flex-wrap: wrap; gap: 8px; }
+
+  /* Stack the chart header: title on its own line, controls left-aligned below
+     so the range picker + toggles get full width instead of being crushed into
+     the right edge. */
+  .chart-section .chart-title { flex-direction: column; align-items: stretch; gap: 8px; }
+  .chart-section .chart-controls { gap: 8px; justify-content: flex-start; }
+  /* Toggle/velocity groups each take their own row so they wrap predictably. */
+  .source-toggles, .velocity-strip { width: 100%; }
+  /* The data-layer hint is informational density — drop it on a phone. */
+  .layer-hint { display: none; }
+  /* Easier-to-tap range picker + alert toggle. */
+  .range-select { padding: 6px 10px; font-size: 13px; }
+  .alerts-toggle { font-size: 12px; }
 
   /* Charts get a workable height on a phone (panes were min 260px each). */
   .chart-section.composite { min-height: 0; }
-  .composite-pane-block .chart-pane { min-height: 200px; }
-  .chart-section .chart-controls { gap: 8px; }
+  .composite-pane-block .chart-pane { min-height: 220px; }
+
+  /* Seat map: 560px is most of a phone screen — trim it to a usable height. */
+  .seatmap-mapwrap { min-height: 360px; }
+  .seatmap-host { height: 360px; }
+  .seatmap-toolbar.row { flex-wrap: wrap; gap: 6px; }
+
+  /* Track button is a primary action — give it a full touch target. */
+  .track-btn { padding: 10px 16px; min-height: 44px; }
 
   /* Source-link pills + watchlist controls wrap nicely. */
   .panel-title.row { flex-wrap: wrap; gap: 4px; }
