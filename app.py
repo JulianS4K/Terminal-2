@@ -1263,10 +1263,8 @@ def performers_search(
     raise HTTPException(400, "Provide q or category_id")
 
 
-@app.get("/api/performers/{performer_id}")
-def performer_detail(performer_id: int, include_opponents: bool = True, _=Depends(require_auth)):
-    return client.get_performer(performer_id, include_opponents=include_opponents)
-
+# /api/performers/{id} + /api/venues/{id} + /api/configurations[/{id}] moved to
+# routers/catalog.py (BR-CODE-1 slice 2); included once below (search → "wired").
 
 # Static league list for the league-browse strip in the Performers tab.
 # Sourced from performer_external_ids where source='espn'. Order roughly
@@ -2399,19 +2397,13 @@ def venues_search(
     raise HTTPException(400, "Provide q, or (lat+lon), or postal_code.")
 
 
-@app.get("/api/venues/{venue_id}")
-def venue_detail(venue_id: int, _=Depends(require_auth)):
-    return client.get_venue(venue_id)
+# Catalog detail passthroughs (/api/performers/{id}, /api/venues/{id},
+# /api/configurations[/{id}]) live in routers/catalog.py (BR-CODE-1 slice 2).
+# get_client is a getter so handlers resolve the live `client` at request time
+# (keeps the monkeypatch tests + auth ownership in app.py).
+from routers.catalog import build_catalog_router  # noqa: E402
 
-
-@app.get("/api/configurations")
-def configurations_list(venue_id: int | None = None, name: str | None = None, _=Depends(require_auth)):
-    return client.list_configurations(venue_id=venue_id, name=name or None)
-
-
-@app.get("/api/configurations/{config_id}")
-def configuration_detail(config_id: int, _=Depends(require_auth)):
-    return client.get_configuration(config_id)
+app.include_router(build_catalog_router(get_client=lambda: client, require_auth=require_auth))
 
 
 @app.get("/api/watchlist")
