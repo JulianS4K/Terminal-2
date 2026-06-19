@@ -97,7 +97,7 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 CROSS-CUTTING (no surface; serve every lane):
   A1  data plane   — DB · full ingest pipeline · crons · DB security (RLS/SECDEF/RULE-2)
   B1  git + code   — git/code security · drift · freshness · compartmentalization · tests
-  C1  docs + coord — bot_chat · main bible set · own-bible promotions · shared-resource register
+  C1  docs + coord — bot_chat · main bible set · doc consolidation · shared-resource register
 
 FRONTEND SURFACES (distinct per surface · own Render + UX/speed testing):
   D0 ★ terminal   D1 store   D2 orders-dashboard   D3 broadway   D4 Exos/Bridge (full app)
