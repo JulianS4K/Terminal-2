@@ -2184,6 +2184,14 @@ body[data-page="login"] {
   /* Collapse the 12-col grid → single column; every panel spans full width. */
   main.wrap { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
   main.wrap > * { grid-column: 1 / -1 !important; }
+  /* The event page KEEPS its 12-col track on purpose: a single 1fr track grows
+     to the widest grid item's min-content (the fixed-px uPlot chart canvas) and
+     blows past the viewport. Spanning every panel across all 12 columns gives
+     full width without that trap. Overview sections carry grid-column:1/-1 in the
+     base CSS already; the lazy tab-pane sections (TD Markets etc.) do NOT — and
+     the .tab-pane is display:contents, so its child sections are the real grid
+     items. Span them here so their no-wrap tables stop forcing sideways scroll. */
+  .wrap.event .tab-pane > * { grid-column: 1 / -1 !important; }
 
   /* Hero stacks; KPI hero drops below and left-aligns. The event hero's real
      rule is `.wrap.event > #hero` (specificity 0,2,1), so a bare `#hero` here
