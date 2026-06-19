@@ -85,4 +85,4 @@ Author: C1. Operator directive 2026-05-17. Expands C1 beyond drift + checkpoint 
 
 ## Ratification
 
-Operator-directed 2026-05-17. Canonical-doc reflections (PROJECT_BIBLE §2, LANE_DISCIPLINE C1, current-state-index) are in this same PR. A1 curates PROJECT_BIBLE per its refresh policy — this PR routes to A1 for the bible edit + ratification; C1-owned docs (this charter, runbook, operating constraints) are in C1's lane.
+Operator-directed 2026-05-17. Canonical-doc reflections (PROJECT_BIBLE §2, PROJECT_BIBLE.md §2 C1, current-state-index) are in this same PR. A1 curates PROJECT_BIBLE per its refresh policy — this PR routes to A1 for the bible edit + ratification; C1-owned docs (this charter, runbook, operating constraints) are in C1's lane.

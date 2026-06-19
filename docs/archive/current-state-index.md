@@ -9,8 +9,8 @@ Single entry-point to the authoritative docs describing prod state today. Prior 
 | Doc | Purpose | Last refresh |
 |---|---|---|
 | [CLAUDE.md](CLAUDE.md) | Global operator rules, standing permissions, lane scoping | 2026-05-13 |
-| [LANE_DISCIPLINE.md](LANE_DISCIPLINE.md) | Per-bot scope; C1 section refactored 2026-05-14 (PR #109) | 2026-05-14 |
-| [BOT_HIERARCHY.md](BOT_HIERARCHY.md) | Push restrictions matrix | — |
+| [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) | Per-bot scope; C1 section refactored 2026-05-14 (PR #109) | 2026-05-14 |
+| [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) | Push restrictions matrix | — |
 | [MIGRATION_CONVENTIONS.md](MIGRATION_CONVENTIONS.md) | Filename, header, lane rules; PR #55 (2026-05-10) | 2026-05-10 |
 | [PROJECT_BIBLE.md](PROJECT_BIBLE.md) | Operating playbook (rules + hierarchy + RPCs + column landmines + macros + recipes). Read FIRST every session. | 2026-05-16 |
 | [RESOURCES_BIBLE.md](RESOURCES_BIBLE.md) | Living inventory (services, tables, matviews, views, crons, edge fns, vault, extensions, HTTP surface). | 2026-05-16 |
@@ -57,7 +57,7 @@ If operator chooses destructive later, the `git mv docs/audit-2026-05-{08,09,11,
 
 - **Onboarding a new bot session**: read all entries in §"Canonical" + the most recent checkpoint and audit plan.
 - **Investigating a regression**: cross-reference today's checkpoint with the prior 5/14 audit for the day-over-day delta.
-- **Planning new work**: consult [LANE_DISCIPLINE.md](LANE_DISCIPLINE.md) + this index's §"Today's working docs" first.
+- **Planning new work**: consult [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) + this index's §"Today's working docs" first.
 
 ## Maintenance
 
