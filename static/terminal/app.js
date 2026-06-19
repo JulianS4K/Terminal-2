@@ -257,12 +257,6 @@
     moversPreloadIndex, moversChipHtml,
   };
 
-  // PWA: register the service worker (installable + offline app shell). External
-  // file so it satisfies CSP script-src 'self'. Loaded on every terminal page.
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js')
-        .catch((e) => console.warn('[pwa] sw register failed', e));
-    });
-  }
+  // PWA service-worker registration now lives in pwa.js so it can load on every
+  // terminal page (including login.html, which does not load app.js).
 })();
