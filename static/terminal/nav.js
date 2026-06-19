@@ -22,6 +22,10 @@
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    // Retail chat — natural-language price/inventory lookups over the book
+    // (full market on the terminal; owned-EVO-only on the storefront). Talks
+    // to /api/retail-chat → the `chat` edge fn. Wired 2026-06-19.
+    { id: 'retail-chat', label: 'RETAIL CHAT', href: 'retail-chat.html' },
     // Discovery — TEvo blindspot (broker selling, we own 0) + returning
     // performers/venues. Companion to Movers; same nav grouping for the
     // "what to watch" surface. Wired 2026-05-19 (PR A1 blindspot stack).
