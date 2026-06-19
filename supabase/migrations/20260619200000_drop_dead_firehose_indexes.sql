@@ -1,7 +1,17 @@
 -- Migration 20260619200000 · lane:A1 (operator-directed) ·
 --   writes (DDL): DROP INDEX CONCURRENTLY x6 on the snapshot firehoses
 --   reads: none
---   ## NOT YET APPLIED — operator-gated. Drops indexes on hot firehose tables.
+--   ## PARTIALLY APPLIED 2026-06-19 (operator-approved). 4 of 6 dropped:
+--     seatgeek_sales_snapshots_tevo_event_id_idx, sg_listings_price_change_idx,
+--     idx_sg_listings_owned, sg_listings_snapshots_prev_bc_null_idx (~227 MB).
+--   ## 2 on listings_snapshots — both now INVALID (indisvalid=false → already out
+--     of every query plan, so the read-speed win is banked), physical removal
+--     completing via in-flight CONCURRENTLY finalizers. The 3-day blocker was
+--     terminated (A1-OPS-24), but the `midnight-catchup-sweep` cron keeps firing
+--     (now self-capped at 5min via SET LOCAL) and its AccessShareLock cycles
+--     delay the final removal phase. They finalize within a sweep cap; the
+--     operator cron fix (A1-OPS-24) ends the interference. If they linger as
+--     invalid, a plain `DROP INDEX` in a between-sweep gap finishes them.
 --
 -- GOAL: data-analysis SPEED (operator reframe 2026-06-19). Removing dead /
 -- low-value indexes speeds the INGEST path (fewer indexes to maintain per
