@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from core.helpers import classify_playoff, delta, listings_cadence_seconds  # noqa: E402
-from core.broker_helpers import bulk_performer_assets  # noqa: E402
+from core.broker_helpers import bulk_performer_assets, bulk_event_context  # noqa: E402
 
 
 # ---------- classify_playoff ----------
@@ -101,3 +101,69 @@ def test_bulk_performer_assets_maps_by_int_id():
     assert set(out) == {16303, 18}
     assert out[16303]["name"] == "Knicks"
     assert out[18]["logo_default_url"] == "y.png"
+
+
+# ---------- bulk_event_context ----------
+
+class _CtxChain:
+    """Per-table fluent chain: every filter returns self; execute() yields the
+    table's preloaded rows. Supports the builder methods bulk_event_context uses."""
+    def __init__(self, rows):
+        self._rows = rows
+    def select(self, *_a, **_k):
+        return self
+    def in_(self, *_a, **_k):
+        return self
+    def gte(self, *_a, **_k):
+        return self
+    def execute(self):
+        return type("_R", (), {"data": self._rows})()
+
+
+class _CtxDB:
+    def __init__(self, by_table):
+        self._by_table = by_table
+    def table(self, name):
+        return _CtxChain(self._by_table.get(name, []))
+
+
+def test_bulk_event_context_empty_ids():
+    assert bulk_event_context(_CtxDB({}), []) == {}
+
+
+def test_bulk_event_context_shape_and_none_defaults():
+    # Event present but no context rows in any view -> every dimension None.
+    db = _CtxDB({"events": [{"id": 5, "name": "Knicks vs Celtics", "performer_ids": []}]})
+    out = bulk_event_context(db, [5])
+    assert set(out) == {5}
+    assert out[5] == {
+        "rivalry": None, "mlb_series": None, "tournament": None,
+        "weather": None, "holiday": None, "playoff": None,
+    }
+
+
+def test_bulk_event_context_playoff_from_name_and_rivalry():
+    db = _CtxDB({
+        "events": [{"id": 7, "name": "Rangers vs Devils - NHL Stanley Cup Finals",
+                    "performer_ids": []}],
+        "v_rivalry_events": [{"tevo_event_id": 7, "rivalry_name": "Hudson River Rivalry",
+                              "league": "NHL", "is_branded": True,
+                              "rivalry_intensity": 9, "wikipedia_url": "http://x"}],
+    })
+    out = bulk_event_context(db, [7])
+    # playoff resolved via the event-name regex (no series-tag performer)
+    assert out[7]["playoff"] == {"label": "NHL Stanley Cup Finals", "kind": "specific"}
+    # rivalry mapped from the view row
+    assert out[7]["rivalry"]["name"] == "Hudson River Rivalry"
+    assert out[7]["rivalry"]["is_branded"] is True
+
+
+def test_bulk_event_context_playoff_series_tag_beats_name():
+    # A series-tag performer ("NBA Finals") attaches the specific label even
+    # when the event name itself carries no playoff phrase.
+    db = _CtxDB({
+        "events": [{"id": 9, "name": "Celtics vs Mavericks", "performer_ids": [101]}],
+        "performer_metadata": [{"performer_id": 101, "name": "NBA Finals"}],
+    })
+    out = bulk_event_context(db, [9])
+    assert out[9]["playoff"] == {"label": "NBA Finals", "kind": "specific"}
