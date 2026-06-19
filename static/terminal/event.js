@@ -3319,8 +3319,18 @@
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
       } else if (tabId === 'alerts') {
-        // Re-render every activation (cheap; reflects track/alert toggles).
+        // Re-render the tracking/recent/watchlist sections every activation
+        // (cheap; reflects track/alert toggles).
         await loadAlertsTab(eventId);
+        // Mount the custom alert-rule UI ONCE (alerts.js). This used to sit in an
+        // unreachable second branch below a catch-all `tabId === 'alerts'`, so it
+        // never ran — the rule UI was dead. Folded in here (2026-06-19).
+        if (!_tabState.loaded['alerts']) {
+          _tabState.loaded['alerts'] = true;
+          const label = document.getElementById('evTitle')?.textContent || '';
+          window.TerminalAlerts?.mount('event', eventId, label,
+            document.querySelector('#paneAlerts .alerts-root'));
+        }
       } else if (tabId === 'seatmap' && !_tabState.loaded['seatmap']) {
         await loadSeatmap(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
@@ -3334,10 +3344,6 @@
           loadCrossBrokerFull(eventId),
         ]);
         updateOurOrdersTabCount();
-      } else if (tabId === 'alerts' && !_tabState.loaded['alerts']) {
-        _tabState.loaded['alerts'] = true;
-        const label = document.getElementById('evTitle')?.textContent || '';
-        window.TerminalAlerts?.mount('event', eventId, label, document.querySelector('#paneAlerts .alerts-root'));
       }
     });
   }
@@ -3363,7 +3369,6 @@
       'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
-      'alerts':       'paneAlerts',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
