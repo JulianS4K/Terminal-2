@@ -1121,29 +1121,18 @@ _ESPN_LEAGUES = [
 ]
 
 
-@app.get("/api/broker/leagues")
-def broker_leagues(_=Depends(require_auth)):
-    """Static list of ESPN-tracked leagues for the league-browse strip in the Performers tab."""
-    return {"leagues": _ESPN_LEAGUES}
+# Simple broker routes (/leagues, /performer/{id}/assets, /event/{id}/espn)
+# moved to routers/broker.py (BR-CODE-1 slice 11). Helper-heavy broker routes
+# stay in app.py until their shared helpers are extracted. Wired once below.
+from routers.broker import build_broker_router  # noqa: E402
 
-
-@app.get("/api/broker/performer/{performer_id}/assets")
-def broker_performer_assets(performer_id: int, _=Depends(require_auth)):
-    """ESPN team logo + colors + URLs for a TEvo performer. Backed by
-    performer_metadata (populated by crawl-espn-team-assets fn — drained
-    every 3 min by cron 'crawl-espn-team-assets-3min').
-
-    Returns null fields for performers without ESPN mapping (e.g. concerts
-    or playoff bracket placeholders). 65/866 populated as of 2026-05-08.
-    """
-    db = require_sb()
-    row = (db.table("performer_metadata")
-             .select("performer_id, name, espn_team_id, espn_league, "
-                     "color_primary, color_alternate, "
-                     "logo_default_url, logo_dark_url, logo_scoreboard_url, logo_4k_primary_url, logo_secondary_url, "
-                     "espn_team_url, espn_roster_url, espn_schedule_url, espn_fetched_at")
-             .eq("performer_id", performer_id).limit(1).execute().data or [])
-    return row[0] if row else {"performer_id": performer_id, "logo_default_url": None}
+app.include_router(build_broker_router(
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+    espn_leagues=_ESPN_LEAGUES,
+    get_supabase_url=lambda: SUPABASE_URL,
+    get_supabase_anon_key=lambda: SUPABASE_ANON_KEY,
+))
 
 
 def _trip_plan_payload(performer_id: int, home_lat: float, home_lon: float,
@@ -3196,18 +3185,7 @@ def admin_wire_sd_to_tevo(_=Depends(require_auth)):
     }
 
 
-@app.get("/api/broker/event/{event_id}/espn")
-def broker_event_espn(event_id: int, _=Depends(require_auth)):
-    """Tab 2: ESPN aggregated data for home + away teams.
-    Calls the espn edge fn server-side to keep the JWT off the wire."""
-    if not (SUPABASE_URL and SUPABASE_ANON_KEY):
-        raise HTTPException(500, "espn fn not reachable: missing SUPABASE_URL/SUPABASE_ANON_KEY")
-    url = f"{SUPABASE_URL}/functions/v1/espn/event/{int(event_id)}"
-    try:
-        r = requests.get(url, headers={"Authorization": f"Bearer {SUPABASE_ANON_KEY}"}, timeout=15)
-        return r.json() if r.ok else {"applicable": False, "error": f"espn fn {r.status_code}"}
-    except Exception as e:
-        return {"applicable": False, "error": str(e)}
+# (broker_event_espn moved to routers/broker.py — slice 11)
 
 
 @app.get("/api/broker/event/{event_id}/chart-data")
