@@ -189,3 +189,41 @@ def tevo_runtime_to_http(
     if upstream in (429, 503):
         return HTTPException(503, failure_detail)
     return HTTPException(502, failure_detail)
+
+
+def csv_list(v: str | None) -> list[str]:
+    """Split a comma-separated string into a trimmed, empties-dropped list."""
+    return [s.strip() for s in (v or "").split(",") if s.strip()]
+
+
+def normalize_filters(raw: dict | None) -> dict:
+    """Coerce a free-form filter dict (URL params or share_links.filters JSON)
+    into the canonical shape the resolver expects. Drops empty values."""
+    raw = raw or {}
+    def _maybe_csv(v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return csv_list(str(v))
+    def _maybe_num(v):
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    def _maybe_int(v):
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    return {
+        "section": _maybe_csv(raw.get("section")),
+        "zones": _maybe_csv(raw.get("zones")),
+        "min_price": _maybe_num(raw.get("min_price")),
+        "max_price": _maybe_num(raw.get("max_price")),
+        "min_qty": _maybe_int(raw.get("min_qty")),
+    }

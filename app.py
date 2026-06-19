@@ -230,6 +230,7 @@ from core.movers import compute_movers as _compute_movers  # noqa: E402
 from core.search import search_sql_only as _search_sql_only  # noqa: E402
 from core.helpers import clean_opt_url as _clean_opt_url  # noqa: E402
 from core.helpers import tevo_runtime_to_http as _tevo_runtime_to_http  # noqa: E402
+from core.helpers import normalize_filters as _normalize_filters  # noqa: E402
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
@@ -5241,8 +5242,8 @@ def _section_sort_key(s: str) -> tuple:
     return (1, int(digits) if digits else 0, s.lower())
 
 
-def _csv(v: str | None) -> list[str]:
-    return [s.strip() for s in (v or "").split(",") if s.strip()]
+# _csv + _normalize_filters -> core/helpers.py (BR-CODE-1 shared event/listings
+# layer); imported (aliased) near the top of this module.
 
 
 def _build_zone_resolver(performer_id: int | None, venue_id: int | None):
@@ -5278,37 +5279,7 @@ def _build_zone_resolver(performer_id: int | None, venue_id: int | None):
     return resolve
 
 
-def _normalize_filters(raw: dict | None) -> dict:
-    """Coerce a free-form filter dict (URL params or share_links.filters JSON)
-    into the canonical shape the resolver expects. Drops empty values."""
-    raw = raw or {}
-    def _maybe_csv(v):
-        if v is None:
-            return []
-        if isinstance(v, list):
-            return [str(x).strip() for x in v if str(x).strip()]
-        return _csv(str(v))
-    def _maybe_num(v):
-        if v is None or v == "":
-            return None
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-    def _maybe_int(v):
-        if v is None or v == "":
-            return None
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return None
-    return {
-        "section": _maybe_csv(raw.get("section")),
-        "zones": _maybe_csv(raw.get("zones")),
-        "min_price": _maybe_num(raw.get("min_price")),
-        "max_price": _maybe_num(raw.get("max_price")),
-        "min_qty": _maybe_int(raw.get("min_qty")),
-    }
+# _normalize_filters -> core/helpers.py (BR-CODE-1); imported (aliased) at top.
 
 
 def _fire_canonical_refresh(event_id: int, ev: dict) -> None:

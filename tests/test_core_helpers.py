@@ -248,3 +248,36 @@ def test_tevo_runtime_to_http_carries_details():
     assert nf.detail == "gone"
     fail = tevo_runtime_to_http(RuntimeError("500"), not_found_detail="gone", failure_detail="oops")
     assert fail.detail == "oops"
+
+
+# ---------- csv_list + normalize_filters ----------
+
+def test_csv_list_trims_and_drops_empties():
+    from core.helpers import csv_list
+    assert csv_list("a, b ,,c") == ["a", "b", "c"]
+    assert csv_list(None) == []
+    assert csv_list("") == []
+
+
+def test_normalize_filters_canonical_shape():
+    from core.helpers import normalize_filters
+    out = normalize_filters({
+        "section": "100, 200",
+        "zones": ["Lower", " ", "Club"],
+        "min_price": "50", "max_price": "", "min_qty": "2",
+    })
+    assert out == {
+        "section": ["100", "200"],
+        "zones": ["Lower", "Club"],
+        "min_price": 50.0, "max_price": None, "min_qty": 2,
+    }
+
+
+def test_normalize_filters_empty_and_bad_values():
+    from core.helpers import normalize_filters
+    out = normalize_filters(None)
+    assert out == {"section": [], "zones": [], "min_price": None,
+                   "max_price": None, "min_qty": None}
+    # non-numeric price / qty coerce to None, not raise
+    bad = normalize_filters({"min_price": "abc", "min_qty": "x"})
+    assert bad["min_price"] is None and bad["min_qty"] is None
