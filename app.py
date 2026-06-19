@@ -8818,48 +8818,13 @@ except Exception as _d2_import_err:  # pragma: no cover — d2 module optional i
 
 # ---------- Site essentials (SEO + browser-tab UX) ----------
 #
-# Browsers + crawlers probe these at fixed paths. Without explicit routes,
-# /robots.txt + /sitemap.xml + /favicon.ico would 404. Railway audit
-# 2026-05-16 found all 3 missing on the deployed storefront.
+# Browsers + crawlers probe /robots.txt + /sitemap.xml + /favicon.ico at fixed
+# paths; without explicit routes they'd 404 (Railway audit 2026-05-16). These
+# moved to routers/site_essentials.py (BR-CODE-1 app.py decomposition); the
+# factory takes this deploy's base URL so each env advertises its own sitemap.
+from routers.site_essentials import build_site_essentials_router  # noqa: E402
 
-_ROBOTS_TXT = (
-    "User-agent: *\n"
-    "Allow: /\n"
-    "Disallow: /api/\n"
-    "Disallow: /store/test\n"
-    "Disallow: /store/test/\n"
-    f"Sitemap: {_STOREFRONT_BASE_URL}/sitemap.xml\n"
-)
-
-
-@app.get("/robots.txt", include_in_schema=False)
-def robots_txt():
-    """Crawler directive — public pages allowed, /api/ + test harness denied.
-    Sitemap URL self-references this deploy's base so each environment
-    advertises its own sitemap correctly."""
-    return Response(content=_ROBOTS_TXT, media_type="text/plain; charset=utf-8")
-
-
-@app.get("/sitemap.xml", include_in_schema=False)
-def sitemap_xml():
-    """Minimal sitemap covering the public storefront entry points. Per-event
-    URLs are dynamic + ranked elsewhere; this is the static surface map only.
-    """
-    base = _STOREFRONT_BASE_URL
-    urls = ["/store", "/store/about", "/store/privacy", "/store/terms"]
-    body = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    body += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-    for path in urls:
-        body += f"  <url><loc>{base}{path}</loc></url>\n"
-    body += "</urlset>\n"
-    return Response(content=body, media_type="application/xml; charset=utf-8")
-
-
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon_ico():
-    """Browsers probe /favicon.ico even when the page declares an SVG.
-    Redirect to the canonical SVG so users get the icon instead of a 404."""
-    return RedirectResponse(url="/static/store/favicon.svg", status_code=308)
+app.include_router(build_site_essentials_router(_STOREFRONT_BASE_URL))
 
 
 # Static assets (CSS / JS / images) served from /static.
