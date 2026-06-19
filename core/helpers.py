@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from fastapi import HTTPException
+
 
 def listings_cadence_seconds(occurs_at_local: str | None) -> int:
     """Mirror collect-listings cron windows: closer events poll faster."""
@@ -151,3 +153,39 @@ def classify_world_cup(event_name: str | None,
     if not event_name:
         return False
     return bool(_WORLD_CUP_RE.search(event_name))
+
+
+def clean_opt_url(v) -> str | None:
+    """Coerce sentinel non-URLs to real None.
+
+    `v_event_seating_chart` (and occasionally TEvo's inline config) carry the
+    literal string "null" / "None" / "" for an absent seat-map URL. Passed
+    through verbatim, the frontend treats the truthy string "null" as a URL
+    and renders a broken <img> whose src resolves to /store/event/null. Coerce
+    those sentinels to None so the no-chart placeholder path is taken.
+    """
+    if v is None:
+        return None
+    s = str(v).strip()
+    if s.lower() in ("null", "none", ""):
+        return None
+    return v
+
+
+# A 3-digit run in a TEvo client exception message — used to recover the
+# upstream HTTP status so the route can map it to the right downstream code.
+_TEVO_STATUS_RE = re.compile(r"\b(\d{3})\b")
+
+
+def tevo_runtime_to_http(
+    e: Exception, *, not_found_detail: str, failure_detail: str
+) -> HTTPException:
+    """Map a TEvo client runtime error to the right HTTPException: upstream
+    400/404 -> 404 (event gone), 429/503 -> 503 (retryable), else 502."""
+    m = _TEVO_STATUS_RE.search(str(e))
+    upstream = int(m.group(1)) if m else None
+    if upstream in (400, 404):
+        return HTTPException(404, not_found_detail)
+    if upstream in (429, 503):
+        return HTTPException(503, failure_detail)
+    return HTTPException(502, failure_detail)
