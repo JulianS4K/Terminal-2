@@ -1,0 +1,133 @@
+# Claude Maintenance Agent — scheduled "background agent" (Tier 2: propose via draft PRs)
+#
+# WHAT THIS IS
+#   A recurring Claude Code run that performs the repo-maintenance loop described in
+#   docs/archive/2026-06-19-code-update-maintenance-plan.md. There is no always-on
+#   daemon in this stack — a "background agent" = this scheduled workflow.
+#
+# AUTONOMY (Tier 2 — operator-selected 2026-06-19)
+#   It REPORTS + PROPOSES. It opens DRAFT PRs for safe mechanical work and posts a
+#   summary. It does NOT merge, NOT force-push, NOT apply DB migrations, NOT make
+#   security decisions, NOT bump dependency UPPER bounds. Those stay operator-gated
+#   per CLAUDE.md §1/§2. Promote to "act" later by allowing dependabot auto-merge.
+#
+# SETUP (one secret — until then the job warns + skips, it does not fail red)
+#   Settings → Secrets and variables → Actions → New repository secret:
+#     ANTHROPIC_API_KEY   (or switch the auth line below to claude_code_oauth_token)
+#   Then enable: it runs weekly, or trigger manually via the Actions tab ("Run workflow").
+#   Disable: toggle the workflow off in the Actions tab, or delete this file.
+#
+# PERMISSIONS
+#   Default is read-only (top-level). The job elevates to contents/pull-requests/issues
+#   write so it can open draft PRs + comment. No other job in the repo gets these.
+
+name: Claude Maintenance
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # Mondays 08:00 UTC — weekly maintenance pass
+  workflow_dispatch:        # manual "Run workflow" button
+
+# Least-privilege default; the single job elevates only what it needs.
+permissions:
+  contents: read
+
+# Never run two maintenance passes at once (they'd open duplicate PRs).
+concurrency:
+  group: claude-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    name: Weekly maintenance pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write          # branch + commit for draft PRs
+      pull-requests: write      # open draft PRs, comment
+      issues: write             # post the summary
+    steps:
+      # Guard: if the Claude credential isn't wired yet, warn and skip cleanly
+      # so the weekly run doesn't show red before the operator adds the secret.
+      - name: Check credential is configured
+        id: cred
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Claude Maintenance skipped::ANTHROPIC_API_KEY secret not set. Add it in Settings → Secrets → Actions to enable the agent (see workflow header)."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.cred.outputs.configured == 'true'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0       # full history so drift/branch checks work
+
+      # The sweeps the agent runs are python (check_readonly.py) + node (graph-drift.mjs)
+      # + bash (check-docs.sh). Provision both runtimes up front.
+      - name: Set up Python
+        if: steps.cred.outputs.configured == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        if: steps.cred.outputs.configured == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Run Claude maintenance pass
+        if: steps.cred.outputs.configured == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # To use a Claude subscription instead, delete the line above and use:
+          #   claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --max-turns 40
+            --model claude-opus-4-8
+          prompt: |
+            You are the Terminal-2 weekly maintenance agent running headless in CI.
+            Authoritative plan: docs/archive/2026-06-19-code-update-maintenance-plan.md.
+            Governance you MUST obey: CLAUDE.md (read it first), PROJECT_BIBLE.md, README.md doc rules.
+
+            AUTONOMY = TIER 2 (propose, do not act). Allowed outputs this run:
+              - ONE summary comment (open or comment on a tracking GitHub issue titled
+                "Weekly maintenance — <YYYY-MM-DD>").
+              - DRAFT pull requests, branch name `claude/auto-maintenance-<YYYYMMDD>`, for
+                SAFE mechanical fixes only (doc/registry drift, a refreshed dated plan
+                snapshot, graph-drift fold-in). One concern per PR. Always draft.
+
+            HARD LIMITS — never cross (these would require an operator):
+              - Do NOT merge or close any PR. Do NOT enable auto-merge. Do NOT force-push.
+              - Do NOT push to main. Do NOT apply Supabase migrations or run any DB mutation.
+              - Do NOT change dependency UPPER bounds (requirements.txt) or edit a security
+                control (RULE-2 guards, RLS, branch protection, secrets). Report those instead.
+              - Do NOT edit another lane's surface beyond docs; if a fix needs code, file it
+                as a finding, don't write it.
+
+            DO THIS, IN ORDER:
+              1. Run the sweeps and capture pass/fail:
+                   bash bin/check-docs.sh
+                   python scripts/check_readonly.py
+                   node bin/graph-drift.mjs   (if present)
+                   pytest -q  (smoke; report failures, don't fix app code)
+              2. Review open Dependabot PRs: for each, note CI status + whether it is a
+                 LOWER-bound bump. Produce a "ready to merge (green + lower-bound)" digest —
+                 a recommendation list ONLY; you do not merge.
+              3. Flag any open PR with no activity for >7 days (aging) and list orphan
+                 `claude/*` / `a1/*` branches with no open PR (prune candidates for C1).
+              4. Cross-check docs/archive/2026-06-19-code-update-maintenance-plan.md against
+                 reality; if a fact drifted, open ONE draft PR with the correction.
+              5. Post the summary comment: sweep results, dependabot digest, aging PRs,
+                 orphan branches, any draft PRs you opened, and anything escalated to the
+                 operator. Keep it tight (tables, no preamble).
+
+            If nothing actionable, still post a one-line "all clear" summary (heartbeat —
+            a silent run is indistinguishable from a dead one). End your turn after posting.
