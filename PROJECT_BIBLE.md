@@ -220,7 +220,7 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 4. **Out-of-lane writes** require a PR comment to the lane owner; if offline, `flag` in `bot_chat`. **Never silently write across lanes** — even cache files/logs count.
 5. **SECURITY DEFINER convention** — every new SECDEF fn ships in one migration with `REVOKE EXECUTE … FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE … TO service_role` + a `current_user NOT IN ('service_role','postgres','supabase_admin')` guard at body start.
 
-**Paused-lane scope (D1–D4)** is preserved for clean reactivation in `docs/<bot>_operating_constraints.md` (per-bot self-contracts) + `docs/d4_bridge_charter.md` (D4 full charter). D-tier writes only their own surface; never DB tables (file a migration → A1 applies). **D4/Exos** is primary-market ticketing on its own `exos_*` schema, served at `/bridge/`, linking to canonical events **by value** via `bridge_event_xref` — never writes D0 tables.
+**Paused-lane scope (D1–D4)** is this §2 + `docs/d4_bridge_charter.md` (D4 full charter); the old per-lane self-contracts are archived (`docs/archive/d{0,1,4}_operating_constraints.md`) — reactivation reads §2.5/§2.6, not those snapshots. D-tier writes only their own surface; never DB tables (file a migration → A1 applies). **D4/Exos** is primary-market ticketing on its own `exos_*` schema, served at `/bridge/`, linking to canonical events **by value** via `bridge_event_xref` — never writes D0 tables.
 
 ---
 
