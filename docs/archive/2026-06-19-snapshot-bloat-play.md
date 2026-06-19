@@ -65,6 +65,10 @@ Sequenced safest → structural:
 
 **espn_injuries_snapshots:** 7.18 M updates on 36 k rows → 16:1 dead → bloated hot index (`athlete_team`, 7.2 M scans). Fix: `pg_repack` + per-table `autovacuum_vacuum_scale_factor=0.02`.
 
+**🚩 ROOT-CAUSE FOUND DURING APPLY (2026-06-19) — a runaway 3-day transaction.** While dropping the dead indexes, an `ACCESS EXCLUSIVE` on `listings_snapshots` couldn't be acquired: a `midnight-catchup-sweep` cron txn had been **ACTIVE ~3 days** (`backfill_stale_zone_metrics` loop; `pg_stat_statements` max ≈74 h), holding `AccessShareLock` on the table. Its 3-day xmin **pins the vacuum horizon**, so autovacuum runs but cannot reclaim — listings 6.3 M dead, espn **613 k dead : 36 k live (17:1)**. **This is why the bloat regenerates faster than retention removes it**, and it blocks every `ACCESS EXCLUSIVE` op the speed program needs (the last 2 index drops, REINDEX, partition cutover). Filed `KANBAN A1-OPS-24` (operator decision: terminate the backend + self-cap the cron). The vacuum-horizon pin likely undercuts pillars 2–4 until cleared.
+
+**APPLY STATUS (2026-06-19, operator "do it"):** pillar-1 guardrails APPLIED (2 `*_recent` views + `analyst_ro` role; role needs an out-of-band LOGIN+conn repoint). Pillar-2 index drops **4/6 APPLIED** (~227 MB: `seatgeek_sales_snapshots_tevo_event_id_idx`, `sg_listings_price_change_idx`, `idx_sg_listings_owned`, `sg_listings_snapshots_prev_bc_null_idx`); the 2 on `listings_snapshots` are blocked by A1-OPS-24 (`…price_change_idx` is mid-drop/invalid = already out of plans; `…prev_retail_null_idx` 1.2 GB untouched).
+
 **Sequence:** now = pillars 1–3 + espn repack (low-risk, big win); structural = pillar 4. All prod DDL via **ship-a-migration** (operator-gated apply).
 
 **Authored, NOT applied (operator-gated review):**

@@ -2,8 +2,10 @@
 --   writes (DDL): CREATE VIEW x2 (recent firehose windows); CREATE ROLE analyst_ro
 --     + GRANTs + ALTER ROLE ... SET statement_timeout; COMMENTs.
 --   reads: none
---   ## NOT YET APPLIED — operator-gated. Pure additive (new views + new role);
---   touches NO existing object's data and changes NO existing role's config.
+--   ## APPLIED 2026-06-19 (operator-approved) via apply_migration. Pure additive
+--   (new views + new role); touched NO existing object's data and changed NO
+--   existing role's config. Post-apply still needs the out-of-band step below:
+--   ALTER ROLE analyst_ro LOGIN PASSWORD '<...>' + repoint the analysis conn.
 --
 -- GOAL: data-analysis SPEED (operator reframe 2026-06-19). Two guardrails that
 -- stop ad-hoc analysis from scanning the raw firehose unbounded:
