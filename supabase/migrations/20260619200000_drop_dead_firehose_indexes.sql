@@ -4,12 +4,14 @@
 --   ## PARTIALLY APPLIED 2026-06-19 (operator-approved). 4 of 6 dropped:
 --     seatgeek_sales_snapshots_tevo_event_id_idx, sg_listings_price_change_idx,
 --     idx_sg_listings_owned, sg_listings_snapshots_prev_bc_null_idx (~227 MB).
---   ## 2 STILL PENDING — both on listings_snapshots, BLOCKED by a 3-day stuck
---     `midnight-catchup-sweep` txn holding AccessShareLock on the table (see
---     KANBAN A1-OPS-24): listings_snapshots_price_change_idx is mid-drop
---     (indisvalid=false → already out of all query plans, harmless) and
---     listings_snapshots_prev_retail_null_idx (1.2 GB) is untouched. Finish both
---     once that txn is cleared (a plain DROP INDEX will then take the brief lock).
+--   ## 2 on listings_snapshots — both now INVALID (indisvalid=false → already out
+--     of every query plan, so the read-speed win is banked), physical removal
+--     completing via in-flight CONCURRENTLY finalizers. The 3-day blocker was
+--     terminated (A1-OPS-24), but the `midnight-catchup-sweep` cron keeps firing
+--     (now self-capped at 5min via SET LOCAL) and its AccessShareLock cycles
+--     delay the final removal phase. They finalize within a sweep cap; the
+--     operator cron fix (A1-OPS-24) ends the interference. If they linger as
+--     invalid, a plain `DROP INDEX` in a between-sweep gap finishes them.
 --
 -- GOAL: data-analysis SPEED (operator reframe 2026-06-19). Removing dead /
 -- low-value indexes speeds the INGEST path (fewer indexes to maintain per
