@@ -228,6 +228,8 @@ from core.broker_helpers import bulk_performer_assets as _bulk_performer_assets 
 from core.broker_helpers import bulk_event_context as _bulk_event_context  # noqa: E402
 from core.movers import compute_movers as _compute_movers  # noqa: E402
 from core.search import search_sql_only as _search_sql_only  # noqa: E402
+from core.helpers import clean_opt_url as _clean_opt_url  # noqa: E402
+from core.helpers import tevo_runtime_to_http as _tevo_runtime_to_http  # noqa: E402
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
@@ -4389,21 +4391,8 @@ def _is_tbd(name: str | None) -> bool:
     )
 
 
-def _clean_opt_url(v) -> str | None:
-    """Coerce sentinel non-URLs to real None.
-
-    `v_event_seating_chart` (and occasionally TEvo's inline config) carry the
-    literal string "null" / "None" / "" for an absent seat-map URL. Passed
-    through verbatim, the frontend treats the truthy string "null" as a URL
-    and renders a broken <img> whose src resolves to /store/event/null. Coerce
-    those sentinels to None so the no-chart placeholder path is taken.
-    """
-    if v is None:
-        return None
-    s = str(v).strip()
-    if s.lower() in ("null", "none", ""):
-        return None
-    return v
+# _clean_opt_url + _tevo_runtime_to_http (+ _TEVO_STATUS_RE) -> core/helpers.py
+# (BR-CODE-1 shared event/listings layer). Imported (aliased) near the top.
 
 
 def _search_cache_get(key: str) -> dict | None:
@@ -5600,29 +5589,9 @@ def _fetch_owned_ticket_groups(
     return groups, "live"
 
 
-# Map an EvoClient RuntimeError to a semantically correct HTTP status.
-# evo_client raises RuntimeError("TEvo API returned <code>") for a non-2xx
-# upstream response, or "TEvo API returned no response" for a connection/
-# timeout/DNS failure. A 400/404 from TEvo means the event id doesn't
-# resolve → that's a client-facing 404 (Not Found), NOT a gateway error.
-# Everything else (5xx, no-response) is a genuine upstream failure → 502;
-# 429/503 surface as 503 so callers/crawlers back off ("try again") rather
-# than treating it as a hard gateway break. Never echoes upstream body/URL —
-# only the mapped status + a caller-supplied generic detail reach the client
-# (the evo_client already scrubbed everything but the status into the message).
-_TEVO_STATUS_RE = re.compile(r"\b(\d{3})\b")
-
-
-def _tevo_runtime_to_http(
-    e: Exception, *, not_found_detail: str, failure_detail: str
-) -> HTTPException:
-    m = _TEVO_STATUS_RE.search(str(e))
-    upstream = int(m.group(1)) if m else None
-    if upstream in (400, 404):
-        return HTTPException(404, not_found_detail)
-    if upstream in (429, 503):
-        return HTTPException(503, failure_detail)
-    return HTTPException(502, failure_detail)
+# _tevo_runtime_to_http (maps an EvoClient RuntimeError to a 404/503/502) +
+# _TEVO_STATUS_RE moved to core/helpers.py (BR-CODE-1 shared event/listings
+# layer). Imported (aliased) near the top of this module.
 
 
 def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: bool = False) -> dict:

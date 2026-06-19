@@ -17,6 +17,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from core.helpers import (  # noqa: E402
     classify_playoff, delta, listings_cadence_seconds,
     or_ilike_clause, is_speculative_event_name, classify_world_cup,
+    clean_opt_url, tevo_runtime_to_http,
 )
 from core.broker_helpers import bulk_performer_assets, bulk_event_context  # noqa: E402
 
@@ -212,3 +213,38 @@ def test_classify_world_cup_name_regex_fallback():
     assert classify_world_cup("World Cup Group Stage - Match 12") is True
     assert classify_world_cup("Knicks vs Celtics") is False
     assert classify_world_cup(None) is False
+
+
+# ---------- clean_opt_url ----------
+
+def test_clean_opt_url_coerces_sentinels():
+    for sentinel in ("null", "None", "  NULL ", "", "  "):
+        assert clean_opt_url(sentinel) is None
+    assert clean_opt_url(None) is None
+
+
+def test_clean_opt_url_passes_real_urls():
+    assert clean_opt_url("https://x/chart.png") == "https://x/chart.png"
+
+
+# ---------- tevo_runtime_to_http ----------
+
+def test_tevo_runtime_to_http_status_mapping():
+    mk = lambda e: tevo_runtime_to_http(e, not_found_detail="nf", failure_detail="fail")
+    # 400/404 -> 404
+    assert mk(RuntimeError("TEvo API returned 404")).status_code == 404
+    assert mk(RuntimeError("TEvo API returned 400")).status_code == 404
+    # 429/503 -> 503 (retryable)
+    assert mk(RuntimeError("TEvo API returned 429")).status_code == 503
+    assert mk(RuntimeError("TEvo API returned 503")).status_code == 503
+    # other 5xx -> 502
+    assert mk(RuntimeError("TEvo API returned 500")).status_code == 502
+    # no status in message (connection/DNS) -> 502
+    assert mk(RuntimeError("TEvo API returned no response")).status_code == 502
+
+
+def test_tevo_runtime_to_http_carries_details():
+    nf = tevo_runtime_to_http(RuntimeError("404"), not_found_detail="gone", failure_detail="oops")
+    assert nf.detail == "gone"
+    fail = tevo_runtime_to_http(RuntimeError("500"), not_found_detail="gone", failure_detail="oops")
+    assert fail.detail == "oops"
