@@ -93,3 +93,61 @@ def classify_playoff(event_name: str | None) -> dict | None:
     if _PLAYOFF_GENERIC_RE.search(event_name):
         return {"label": "Playoffs", "kind": "generic"}
     return None
+
+
+# Characters that conflict with PostgREST's `.or_()` clause parser, so a pattern
+# containing them must be double-quoted in an or-clause value.
+_OR_VALUE_RESERVED = (",", "(", ")")
+
+
+def or_ilike_clause(col: str, pattern: str) -> str:
+    """Build a single `col.ilike.<pattern>` clause for PostgREST `.or_()`.
+    Wraps the pattern in double quotes when it contains characters that
+    conflict with the or-clause parser (commas, parens). Embedded double
+    quotes are doubled per PostgREST's quoting rules.
+    """
+    if any(c in pattern for c in _OR_VALUE_RESERVED) or '"' in pattern:
+        escaped = pattern.replace('"', '""')
+        return f'{col}.ilike."{escaped}"'
+    return f"{col}.ilike.{pattern}"
+
+
+# Event-name substrings signalling a game that may never happen as scheduled.
+_SPECULATIVE_NAME_PATTERNS = (
+    "CANCELLED",
+    "(IF NECESSARY)",
+)
+
+
+def is_speculative_event_name(name: str | None) -> bool:
+    """True when an event name contains any pattern indicating the game may
+    never happen as scheduled (CANCELLED or playoff if-necessary). Consumer
+    surfaces should drop these. (Date TBD) events are NOT speculative —
+    they're real scheduled games with pending datetime confirmation, surfaced
+    via the `tbd` badge."""
+    if not name:
+        return False
+    upper = name.upper()
+    return any(p in upper for p in _SPECULATIVE_NAME_PATTERNS)
+
+
+_WORLD_CUP_RE = re.compile(
+    r"\bworld\s*cup\s*soccer\b|\bworld\s*cup\b.{0,40}\bmatch\s+\d+", re.I
+)
+
+
+def classify_world_cup(event_name: str | None,
+                       performer_name: str | None = None) -> bool:
+    """True if the event is a FIFA World Cup soccer match.
+
+    We surface owned World Cup matches in the storefront Featured rail
+    regardless of host city — the rail is NYC-anchored, but the World Cup is
+    a national draw and our owned WC inventory can sit at any host venue
+    (e.g. Match 72 at Mercedes-Benz Stadium, Atlanta). The primary signal is
+    the EVO performer name "World Cup Soccer"; the name regex is a fallback.
+    """
+    if performer_name and performer_name.strip().lower() == "world cup soccer":
+        return True
+    if not event_name:
+        return False
+    return bool(_WORLD_CUP_RE.search(event_name))
