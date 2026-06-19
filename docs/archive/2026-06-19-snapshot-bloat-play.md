@@ -65,4 +65,9 @@ Sequenced safest → structural:
 
 **espn_injuries_snapshots:** 7.18 M updates on 36 k rows → 16:1 dead → bloated hot index (`athlete_team`, 7.2 M scans). Fix: `pg_repack` + per-table `autovacuum_vacuum_scale_factor=0.02`.
 
-**Sequence:** now = pillars 1–3 + espn repack (low-risk, big win); structural = pillar 4. All prod DDL via **ship-a-migration** (operator-gated apply). Pillar-2 migration file is authored (NOT applied) for review.
+**Sequence:** now = pillars 1–3 + espn repack (low-risk, big win); structural = pillar 4. All prod DDL via **ship-a-migration** (operator-gated apply).
+
+**Authored, NOT applied (operator-gated review):**
+- Pillar 1 guardrails — `supabase/migrations/20260619210000_analysis_speed_guardrails.sql`: a `listings_snapshots_recent` (30d) view that prunes via `idx_listings_captured` (+ an `seatgeek_listings_snapshots_recent` sibling), and a bounded read-only `analyst_ro` role (`statement_timeout=30s`) for ad-hoc/MCP analysis. **Why a new role, not `ALTER ROLE service_role SET statement_timeout`:** measured `pg_stat_statements` max_exec_time shows legit `service_role` ingest/maintenance running minutes (`sg_blindspot_mv_refresh` 565s, `listings_deltas_backfill_chunked` 266s, `build_venue_section_map` 123s, many cron bodies ~120s, self-capped per-txn via `SET LOCAL`); a ceiling low enough to catch a 140s analyst scan (~60s) would also kill the 565s matview refresh — the two overlap, so the clean separation is a bounded *human* role + untouched service_role.
+- Pillar 2 index drops — `…20260619200000_drop_dead_firehose_indexes.sql` (6 dead/low-value indexes).
+- Pillar 4 partition — `…20260619220000_partition_listings_snapshots_BLUEPRINT.sql`: a **stage-gated runbook** (not a one-shot migration). Avoids copying 123M rows by attaching the existing table as the `[MINVALUE, cutover)` historical partition behind a pre-validated CHECK; cutover is a short rename+attach+rename txn in a maintenance window with ingest paused. **Requires** a follow-up monthly partition-maker + `DROP PARTITION` retention cron before cutover (else inserts past the last partition fail).
