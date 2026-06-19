@@ -1,6 +1,6 @@
-# Snapshot-bloat fix play + SG-cron pause (2026-06-19)
+# Snapshot retention → **data-analysis-speed** play + SG-cron pause (2026-06-19)
 
-> **Non-canonical dated artifact** (per `PROJECT_BIBLE §1` rule 10 / docs rules). Operator-directed. Records (a) the SG-cron pause applied to prod, (b) the live bloat numbers, (c) the data-quality-preserving fix play. The actionable rows live in `KANBAN.md` (`A1-OPS-3`, `A1-OPS-16..21`).
+> **Non-canonical dated artifact** (per `PROJECT_BIBLE §1` rule 10 / docs rules). Operator-directed. **Reframe (operator 2026-06-19): the primary concern is data-analysis SPEED, not disk cost** — bloat matters only as it slows scans. Records (a) the SG-cron pause, (b) live size/index data, (c) the speed-focused fix. Actionable rows → `KANBAN.md` (`A1-OPS-3`, `A1-OPS-16..21`). **The speed solution is §"Speed solution" below; the storage framing under it is secondary.**
 
 ## SG crons PAUSED (2026-06-19, operator-directed, reversible)
 
@@ -44,3 +44,25 @@ Sequenced safest → structural:
 5. **Wave 2 — sales dedup rollup:** `seatgeek_sales_snapshots` is 11–23× overcounted (UNIQUE on `pulled_at` re-inserts each sale every poll). Deduped rollup (one row per `sg_sale_id`, keep-latest) + shorter raw TTL; queries already `DISTINCT ON (sg_sale_id)`.
 
 **Apply order is operator/A1-gated** (prod DB). Step 1 (pg_repack `espn_injuries_snapshots`) is the immediate zero-risk win to green-light first.
+
+---
+
+## Speed solution (PRIMARY — operator reframe 2026-06-19)
+
+**Diagnosis (live prod):** analysis is slow because cross-event / wide-window queries scan the raw firehose (`listings_snapshots` 48 GB / 123 M rows, **22 GB indexes = 46%**) instead of the pre-aggregated layer. `min(captured_at)` over the raw table **timed out at 25 s**. Three speed-killers:
+
+1. **Index bloat from delete churn.** `listings_snapshots`: **415 M deletes + 98 M updates** → 22 GB of bloated btrees. Retention `DELETE`s rows but never shrinks indexes → more pages/scan → slower every query, and it re-bloats continuously.
+2. **Dead / low-value indexes** (cumulative `idx_scan`) that slow *ingest* + waste buffer cache: `seatgeek_sales_snapshots_tevo_event_id_idx` (109 MB, **0**), `sg_listings_price_change_idx` (9 MB, **0**), `listings_snapshots_price_change_idx` (22 MB, 7), `listings_snapshots_prev_retail_null_idx` (1.2 GB, 116 — partial for the *disabled* aq backfill), `sg_listings_snapshots_prev_bc_null_idx` (101 MB, 179 — disabled backfill), `idx_sg_listings_owned` (8 MB, 9). Candidates to verify-then-drop: `idx_sg_listings_sglid` (703 MB, 65), `sg_listings_tevo_sglid_captured_idx` (502 MB, 158).
+3. **No partition pruning** — all 5 firehoses are plain tables.
+
+**Pre-agg layer is ~200× smaller** (route analysis here, never raw): `latest_event_metrics` matview **20 MB / 8.6 k** · `event_listing_snapshot_daily` 97 MB · `event_metrics` + `seatgeek_event_metrics` 251 MB.
+
+**4 pillars (speed-gain ÷ effort):**
+1. **Route analysis to the pre-agg layer** — already the SOP (`PROJECT_BIBLE §3`); enforce it + gap-fill any dimension analysts reach to raw for. No migration.
+2. **Drop dead/low-value indexes** — faster INSERTs (less write-amp → less bloat) + more buffer cache for hot indexes (`event_tgid_captured` 20.9 M scans, `sg_listings_dedup` 66 M). One migration (file authored: `..._drop_dead_firehose_indexes.sql`).
+3. **`REINDEX CONCURRENTLY` the bloated hot indexes** (8.6 GB PK + 8 GB workhorse on listings, ~30–50% bloat) — online, fewer pages/scan.
+4. **Partition firehoses by `captured_at`** — partition pruning for time-window analysis; retention becomes `DROP PARTITION` (no churn → indexes never re-bloat → speed *stays*). The permanent fix.
+
+**espn_injuries_snapshots:** 7.18 M updates on 36 k rows → 16:1 dead → bloated hot index (`athlete_team`, 7.2 M scans). Fix: `pg_repack` + per-table `autovacuum_vacuum_scale_factor=0.02`.
+
+**Sequence:** now = pillars 1–3 + espn repack (low-risk, big win); structural = pillar 4. All prod DDL via **ship-a-migration** (operator-gated apply). Pillar-2 migration file is authored (NOT applied) for review.
