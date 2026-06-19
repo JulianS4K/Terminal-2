@@ -2406,11 +2406,13 @@ from routers.catalog import build_catalog_router  # noqa: E402
 app.include_router(build_catalog_router(get_client=lambda: client, require_auth=require_auth))
 
 
-@app.get("/api/watchlist")
-def watchlist_list(_=Depends(require_auth)):
-    db = require_sb()
-    data = db.table("watchlist").select("*").order("added_at", desc=True).execute().data
-    return {"items": data or []}
+# /api/watchlist GET, /api/runs, /api/snapshots/* (read lists) moved to
+# routers/lists.py (BR-CODE-1 slice 3). get_require_sb is a getter so handlers
+# resolve the live require_sb at request time (keeps monkeypatch tests). The
+# watchlist POST/DELETE (mutating) routes stay below.
+from routers.lists import build_lists_router  # noqa: E402
+
+app.include_router(build_lists_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
 @app.post("/api/watchlist")
@@ -2442,42 +2444,8 @@ def watchlist_remove(item_id: int, _=Depends(require_auth)):
     return {"ok": True}
 
 
-@app.get("/api/runs")
-def runs_list(limit: int = 20, _=Depends(require_auth)):
-    db = require_sb()
-    data = db.table("runs").select("*").order("id", desc=True).limit(limit).execute().data
-    return {"items": data or []}
-
-
-@app.get("/api/snapshots/latest")
-def snapshots_latest(_=Depends(require_auth)):
-    db = require_sb()
-    snaps = db.table("latest_snapshots").select("*").execute().data or []
-    if not snaps:
-        return {"items": []}
-    ids = [s["event_id"] for s in snaps]
-    events = db.table("events").select("*").in_("id", ids).execute().data or []
-    by_id = {e["id"]: e for e in events}
-    items = []
-    for s in snaps:
-        e = by_id.get(s["event_id"], {})
-        items.append({
-            **s,
-            "event_name": e.get("name"),
-            "occurs_at_local": e.get("occurs_at_local"),
-            "venue_name": e.get("venue_name"),
-            "venue_location": e.get("venue_location"),
-            "primary_performer_name": e.get("primary_performer_name"),
-        })
-    items.sort(key=lambda x: x.get("occurs_at_local") or "")
-    return {"items": items}
-
-
-@app.get("/api/snapshots/velocity")
-def snapshots_velocity(_=Depends(require_auth)):
-    db = require_sb()
-    data = db.table("event_velocity").select("*").order("occurs_at_local").execute().data or []
-    return {"items": data}
+# (/api/runs + /api/snapshots/latest + /api/snapshots/velocity moved to
+# routers/lists.py — see the include_router above, BR-CODE-1 slice 3.)
 
 
 def _fire_collect(url: str, secret: str) -> None:
