@@ -1,0 +1,85 @@
+name: surface-boundary-check
+
+# Cross-contamination signal for the D-tier frontend surfaces (BR-SPLIT-2).
+#
+# The asset->lane map (BOT_HIERARCHY §5.5) assigns every path to one lane, but
+# CODEOWNERS + forbidden-paths-check only separate *owner vs coworker* (all bots
+# commit as the owner), so nothing flags a PR that edits two D-surfaces at once.
+# This job is that flag.
+#
+# NON-BLOCKING by design: it emits ::warning:: annotations only, never fails the
+# build. A multi-surface PR is often legitimate (a coordinated cross-lane change)
+# — the point is visibility + a nudge to coordinate per §5.5b, not a hard gate.
+# Flip `HARD_FAIL=1` (operator decision) to make multi-surface PRs blocking once
+# the branch-prefix->lane convention is confirmed.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  surface-boundary:
+    runs-on: ubuntu-latest
+    env:
+      HARD_FAIL: "0"   # operator flips to "1" to make multi-surface PRs blocking
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed files
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/changed.txt
+          echo "Changed files:"; cat /tmp/changed.txt
+
+      - name: Check D-surface boundaries
+        run: |
+          set -euo pipefail
+          CHANGED=/tmp/changed.txt
+
+          # Exclusive surface paths (one owning D-lane each) — BOT_HIERARCHY §5.5.
+          declare -A SURFACE=(
+            ["D0 terminal"]='^static/terminal/'
+            ["D1 store"]='^(static/store/|static/home/)'
+            ["D2 dashboard"]='^d2_dashboard/'
+            ["D4 bridge"]='^(d4_bridge/|static/bridge/)'
+            ["D3 broadway"]='^(broadway_client\.py|broadway_extension/)'
+          )
+
+          # Shared cross-lane seams — touching these is cross-lane BY DESIGN
+          # (BOT_HIERARCHY §5.5b). They are excluded from the surface tally and
+          # get their own coordination FYI.
+          SEAMS='^(static/_shared/|static/shared/|trip_planner/|static/store/chat\.html|static/terminal/retail-chat\.|supabase/functions/chat/)'
+
+          touched=()
+          for name in "${!SURFACE[@]}"; do
+            # A retail-chat file under static/terminal|store is a seam, not an
+            # exclusive surface touch — strip seam paths before testing.
+            if grep -vE "$SEAMS" "$CHANGED" | grep -qE "${SURFACE[$name]}"; then
+              touched+=("$name")
+            fi
+          done
+
+          if grep -qE "$SEAMS" "$CHANGED"; then
+            echo "::warning::This PR touches a cross-lane SHARED resource (BOT_HIERARCHY §5.5b: _shared / shared / trip_planner / retail-chat). Verify every consumer surface still works and coordinate per the §5.5b register."
+          fi
+
+          count=${#touched[@]}
+          if (( count > 1 )); then
+            joined=$(IFS=', '; echo "${touched[*]}")
+            echo "::warning::This PR spans ${count} D-surfaces: ${joined}. Cross-contamination check — confirm this is an intentional, coordinated cross-lane change (BOT_HIERARCHY §5.5/§5.5b). Single-surface PRs are the norm."
+            if [[ "${HARD_FAIL}" == "1" ]]; then
+              echo "❌ HARD_FAIL=1: multi-surface PRs are blocking."
+              exit 1
+            fi
+            echo "ℹ️ Non-blocking (HARD_FAIL=0) — surfaced for visibility only."
+          elif (( count == 1 )); then
+            echo "✅ Single D-surface touched: ${touched[0]}. No cross-surface contamination."
+          else
+            echo "✅ No exclusive D-surface paths touched (backend/docs/shared only)."
+          fi
