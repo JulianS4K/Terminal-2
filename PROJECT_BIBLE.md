@@ -157,22 +157,26 @@ One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.m
 
 ### 2.5 Code lane-assignment map (full-tree)
 
+**No-orphan invariant:** every tracked top-level path resolves to exactly one owning lane here (or an explicit shared seam in §2.6); add a new top-level path here in the PR that introduces it (unassigned = cross-contamination risk).
+
 | Path / component | Owner | Notes |
 |---|---|---|
 | `supabase/migrations/*` | **A1** | all schema/data/cron/RLS migrations |
 | `supabase/functions/*` (ingest/drains: `collect*`, `espn*`, `seatdata-poll`, `wiki-collect`, `*-search-bridge`, `seatmap-manifest-sync`, `sg-seller-webhook`, …) | **A1** | data pipeline |
+| `supabase/functions/chat` | **A1** (fn) · D0+D1 consume | retail-chat NL price/inventory edge fn (#583); cross-surface → §2.6 |
 | `supabase/functions/exos-*` + `stripe-webhook` | **D4** | Exos app edge fns |
 | 9 read-only `*_client.py` (evo/seatgeek/seatdata/ticketsdata/axs/tickpick/vivid/gotickets) | **A1** | GET-only by construction |
 | `broadway_client.py`, `broadway_extension/`, `broadway_*` | **D3** | Broadway scraper |
-| `app.py` | **A1** (file) | shared — D0 owns `/api/broker/*`, D1 owns `/api/store/*` (§2.6) |
+| `app.py` + `routers/*` | **A1** (file/package) | decomposition (BR-CODE-1): `APIRouter` modules `include_router`'d back; one-directional import; per-surface route blocks lane-owned — D0 `/api/broker/*`, D1 `/api/store/*` (§2.6) |
 | order tables + ingestion; AQ mapper + `*_xref` + metrics matviews; RLS/SECDEF/RULE-2 | **A1** | cross-source hub + DB security |
-| `bin/*`, `.github/workflows/*`, `.gitleaks*`; `scripts/check_readonly.py`, `tests/*` | **B1** | CI + git guards + tests |
-| canonical `*.md` registry + `.understand-anything/`; `bot_chat` + shared-resource register | **C1** | docs + coordination |
-| `static/terminal/*`, `/api/broker/*`, `render-d0-terminal.yaml`; `static/home/`, `static/undelivered/` | **D0** | terminal FE + own Render + hub |
+| `bin/*`, `.github/workflows/*`, `.gitleaks*`, `.gitignore`/`.mcp.json`/release plumbing; `scripts/check_readonly.py`, `tests/*` | **B1** | CI + git guards + tests |
+| canonical `*.md` registry, `.understand-anything/`, `.claude*` governance (hook/scanner code → B1); `bot_chat` + shared-resource register | **C1** | docs + coordination + harness governance |
+| `static/terminal/*`, `/api/broker/*`, `render-d0-terminal.yaml`; `static/{home,undelivered,index.html,favicon.svg,version.json}`; `D0_BIBLE.md` | **D0** | terminal FE + own Render + root hub + own-bible |
 | `static/store/*`, `/api/store/*`, `render.yaml` | **D1** | storefront FE |
+| `static/_shared/` + `static/shared/` | shared (FE) | cross-surface assets (design tokens, retail-chat widget) — seams in §2.6 |
 | `d2_dashboard/*`, `render-d2-dashboard.yaml` | **D2** | orders dashboard |
 | `d4_bridge/*`, `static/bridge/`, `exos_*` schema | **D4** | Exos/Bridge full app |
-| `requirements.txt`, `Procfile` | **A1** (shape) | lanes add their own deps |
+| `requirements.txt`, `Procfile`, data `*.csv` seeds | **A1** (shape) | lanes add their own deps |
 | `design/`, `docs/archive/` | — | historical / non-canonical |
 
 ### 2.6 Shared cross-lane resources — C1-coordinated
@@ -187,6 +191,7 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 | **Order data** — `unified_orders`/`cross_source_orders` | A1 (ingest+view) | D0 `orders.js` tiles + D2 dashboard | a view/schema change must serve both; keys on `tevo_event_id` (unmapped = invisible, §0) |
 | **`*_public` RPCs** — wholesale-filtered read boundary | A1 | D1 store (only path) | D1 may never read `broker_*`/wholesale fields; the whitelist is the contract |
 | **`static/_shared/design-tokens.css`** | shared (FE) | D0 · D1 · D2 · D4 | token change ripples to every surface — coordinate via C1 |
+| **Retail-chat** — `static/shared/retail-chat-widget.js` + `supabase/functions/chat` (#583) | A1 (edge fn + widget) | D0 `static/terminal/retail-chat.*` + D1 `static/store/chat.html` | one widget + one edge fn, two surfaces — a contract change must keep both working |
 | **RULE-2 lockdown** — `check_readonly.py`/`test_readonly_guards.py` | B1 (guard) · A1 (policy) | every `*_client.py` + CI | weakening = security-CRIT |
 | **AQ mapper** — `aq_event_map` | A1 | **every lane** resolving cross-source IDs | the #1 fact (§0); never join raw source IDs |
 

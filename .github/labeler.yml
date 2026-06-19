@@ -83,3 +83,46 @@
 "area:kanban":
   - changed-files:
       - any-glob-to-any-file: "KANBAN.md"
+
+# ── Orphan-closure labels (2026-06-19) — every surface is now labeled so a
+# cross-lane touch is visible on the PR (BOT_HIERARCHY §5.5 no-orphan invariant).
+
+# D0-owned hub + placeholder static surfaces (not the terminal app itself).
+"area:hub-fe":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "static/home/**/*"
+          - "static/undelivered/**/*"
+          - "static/index.html"
+          - "static/favicon.svg"
+          - "static/version.json"
+
+# Shared FE assets that ripple across every surface — touching these is a
+# cross-lane change by definition (coordinate via C1, BOT_HIERARCHY §5.5b).
+"area:shared-fe":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "static/_shared/**/*"
+          - "static/shared/**/*"
+
+# Retail-chat cross-surface feature (#583): widget + edge fn consumed by BOTH
+# terminal (D0) and store (D1). The label flags a cross-lane seam (§5.5b).
+"area:retail-chat":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "static/shared/retail-chat-widget.js"
+          - "static/terminal/retail-chat.*"
+          - "static/store/chat.html"
+          - "supabase/functions/chat/**/*"
+
+# D3 Broadway scraper.
+"area:broadway":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "broadway_client.py"
+          - "broadway_extension/**/*"
+
+# Shared trip-planner engine (D0 + D1 routes, §5.5b).
+"area:trip-planner":
+  - changed-files:
+      - any-glob-to-any-file: "trip_planner/**/*"
