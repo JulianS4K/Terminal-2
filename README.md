@@ -8,11 +8,12 @@ Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Rend
 
 ## Start here (reading order)
 
-A cold-started bot should read these three, in order. The first is loaded for you automatically every session; the rest you read once at session start.
+A cold-started bot reads **two** docs at session start (you don't pre-know your lane, so there are no lane-specific session-start bibles — everything universal is in these two).
 
 1. **[`CLAUDE.md`](CLAUDE.md)** — *(auto-loaded every session)* immutable security + operator lockdown rules. The safety baseline; it directs you to read the bible next.
-2. **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md)** — the per-session playbook: hard rules, **§2 lane assignment / ownership** (who owns which tool, table, route, service — absorbed `BOT_HIERARCHY.md` 2026-06-19), SQL macros, §3 column-name landmines, workflow recipes, self-check. **Read this first** of the things you choose to open — and read **its §0 before any cross-source SQL**: source event IDs NEVER line up; everything resolves through the `aq_event_map` hub. It's the #1 fact cold sessions miss.
-3. **[`D0_BIBLE.md`](D0_BIBLE.md)** — cross-source ID architecture **+ the full cold-start manual for building the D0 terminal frontend** (PART 1).
+2. **[`PROJECT_BIBLE.md`](PROJECT_BIBLE.md)** — the per-session playbook: hard rules, **§2 lane assignment / ownership**, SQL macros, §3 column-name landmines, **§5 the full cross-source ID architecture** (absorbed the former D0_BIBLE §3, 2026-06-19), workflow recipes, self-check. **Read its §0 before any cross-source SQL** — source event IDs NEVER line up; everything resolves through the `aq_event_map` hub (the #1 fact cold sessions miss).
+
+On-demand references (read only when relevant, not at session start): **`RESOURCES_BIBLE.md`** (what exists) · **`docs/d0_terminal_build.md`** (build the D0 terminal frontend).
 
 **Four peer domains** (2026-06-17 reorg): **A1** data plane · **B1** git/code · **C1** docs/coordination · **D0–D4** distinct FE surfaces. Push to `main` is **per-task** (A1 + B1 maintain; prod-DB apply stays A1-centralized). D0 is the priority active lane; D1–D4 paused until D0 ships; E1 folded into A1. Full ownership detail → `PROJECT_BIBLE.md §2`.
 
@@ -31,7 +32,6 @@ Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't c
 | [`README.md`](README.md) | Entry point · reading order · **this registry** · doc-writing rules |
 | [`CLAUDE.md`](CLAUDE.md) | Immutable security + operator lockdown rules · doc-discipline rule *(auto-loaded every session)* |
 | [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md) | Per-session playbook: rule summary · SQL macros · **§3 column landmines** · workflow recipes · self-check |
-| [`D0_BIBLE.md`](D0_BIBLE.md) | Cross-source ID architecture (§3) · **full D0 terminal build manual** (PART 1) |
 | [`RESOURCES_BIBLE.md`](RESOURCES_BIBLE.md) | Resource catalog: external services · DB inventory (key tables/views/fns/crons/edge fns + live counts) · **cron scheduling policy (§5)** · **event taxonomy & RULES** · data buckets · vault-secret names |
 | [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) | Migration filename + header rules · level/lane taxonomy · **landmark-migration log (§14)** |
 | [`CHANGELOG.md`](CHANGELOG.md) | Auto-generated release notes (release-please) — **DO NOT hand-edit** |
@@ -40,7 +40,7 @@ Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't c
 **Historical / non-canonical** (not in the closed set, kept only for the decision trail — do **not** treat as current):
 - `docs/archive/` — superseded audits, checkpoints, session logs, handoffs, and the former `LANE_DISCIPLINE.md` / `BOT_HIERARCHY.md` / `SCHEMA.md` (lane ownership folded into `PROJECT_BIBLE.md §2`; inventory into `RESOURCES_BIBLE.md`).
 - `design/` — point-in-time wireframes and design proposals.
-- `docs/` (non-archive) — a few active references owned by a canonical doc (e.g. per-bot operating constraints, runbooks the bibles link to). Everything dated/superseded lives under `docs/archive/`.
+- `docs/` (non-archive) — on-demand references read only when relevant, not session-start bibles: **`docs/d0_terminal_build.md`** (the D0 terminal frontend build manual, ex-`D0_BIBLE.md` PART 1 — its cross-source PART 2 moved to `PROJECT_BIBLE §5`), per-bot operating constraints, runbooks the bibles link to. Everything dated/superseded lives under `docs/archive/`.
 
 ---
 
@@ -70,7 +70,7 @@ Browser ─► Render (FastAPI + static) ─► Supabase (Postgres + Auth + Edge
            └──────────── cross-bot coordination ── public.bot_chat
 ```
 
-Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIBLE.md §2.7` and `D0_BIBLE.md` (PART 1, deploy chain).
+Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIBLE.md §2.7` and `docs/d0_terminal_build.md` (deploy chain).
 
 ## Repo layout
 
@@ -85,7 +85,7 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 ├── trip_planner/           shared tour-itinerary optimizer (D0 + D1 trip-plan routes; see its README)
 ├── broadway_extension/     browser extension — Broadway.com availability capture (see its README)
 ├── static/
-│   ├── terminal/           D0 — broker terminal (build manual: D0_BIBLE.md PART 1)
+│   ├── terminal/           D0 — broker terminal (build manual: docs/d0_terminal_build.md)
 │   ├── store/              D1 — consumer retail storefront (store/test/ = non-prod sandbox)
 │   ├── home/ undelivered/  D0 hub · D2 undelivered surface
 │   ├── bridge/             D4 — Exos Bridge SPA build artifact (committed)
@@ -105,7 +105,7 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 
 ## Build / run / deploy the terminal
 
-The complete cold-start manual — frontend file map, the `T.api()` data-fetch architecture, per-page endpoint/RPC contracts, the auth flow, local dev, and the exact Render deploy chain — lives in **[`D0_BIBLE.md`](D0_BIBLE.md) PART 1**. Quick local run:
+The complete cold-start manual — frontend file map, the `T.api()` data-fetch architecture, per-page endpoint/RPC contracts, the auth flow, local dev, and the exact Render deploy chain — lives in **[`docs/d0_terminal_build.md`](docs/d0_terminal_build.md)**. Quick local run:
 
 ```powershell
 python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -r requirements.txt
@@ -120,7 +120,7 @@ uvicorn app:app --reload --port 8765
 
 ## Conventions — quick pointers (don't restate; link)
 
-- **Cross-source IDs never line up — resolve through the AQ mapper hub** → `PROJECT_BIBLE.md §0` (one-pager) · `D0_BIBLE.md §3` (full architecture)
+- **Cross-source IDs never line up — resolve through the AQ mapper hub** → `PROJECT_BIBLE.md §0` (one-pager) · `PROJECT_BIBLE.md §5` (full architecture)
 - **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3` + `§7`
 - **Migration filename/header/apply rules** → `MIGRATION_CONVENTIONS.md`
 - **Who can push / per-lane scope / who owns each tool** → `PROJECT_BIBLE.md §2` (push to `main` is per-task; A1 + B1 maintain it; prod-DB apply centralized on A1)

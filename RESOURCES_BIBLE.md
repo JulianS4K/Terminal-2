@@ -2,7 +2,7 @@
 
 > **Doc version:** v2.0.0 (2026-06-19 dense rewrite; history in git/CHANGELOG)
 
-What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `D0_BIBLE §3`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
+What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
 **Before creating any table/view/RPC/cron/edge-fn: check it doesn't already exist.** This doc lists key objects by domain; for the FULL set query the DB (it is source of truth — this doc is the roadmap):
 ```sql
@@ -56,7 +56,7 @@ Reddit: PAUSED 2026-05-13 (tables `reddit_*` retained, crons dropped). Railway: 
 
 ## 2. Tables by domain (key only; full list = query pg_class)
 
-**Reads are by `tevo_event_id` everywhere downstream; source tables are native-keyed + AQ-derived `tevo_event_id` (often NULL on fresh rows). Map via AQ hub — see `D0_BIBLE §3`. Never join raw source IDs.**
+**Reads are by `tevo_event_id` everywhere downstream; source tables are native-keyed + AQ-derived `tevo_event_id` (often NULL on fresh rows). Map via AQ hub — see `PROJECT_BIBLE §5`. Never join raw source IDs.**
 
 ### 2.1 Events / cross-source hub
 `events` (TEvo canonical, 1/event), `event_xref` (TEvo↔ESPN), `aq_event_map` (**THE cross-source hub** — PK `aq_short_event_id`; carries tevo/sg/sh/vivid/tm ids; N rows can share one tevo_event_id — dedupe+validate), `sg_events_canonical` (SG↔TEvo), `ticketsdata_event_xref` (TD; `event_id` is platform-native NOT tevo), `seatgeek_event_xref`, `seatdata_event_xref`, `canonical_external_ids` (**dormant** — not the hub), `entity_xref_overrides`/`_conflicts`, `event_match_attempts`, `event_pulls`, `event_alerts`.
@@ -169,6 +169,6 @@ ML feature groups (7): 11 Temporal/calendar · 12 Demand/popularity · 13 Histor
 `performer_metadata.top_category_name` (4): Concerts, Sports, Comedy, Theater. Derived: `what_event_type` (game/concert/comedy/show), `genre` (~13, non-game), `events.event_type`. Sports leaves: Football(NFL/NCAA/UFL…), Soccer(MLS/NWSL/WC/EPL…), Baseball(MLB/MiLB), Basketball(NBA/WNBA), Hockey(NHL/AHL/PWHL), Fighting(MMA/WWE/Boxing), Auto. **Behavior gates:** HOME/AWAY + ESPN context only for `what_event_type='game'` w/ `performer_home_venues`/`espn` source. **ESPN coverage:** full (performer+event pages) NBA/MLB; performer-page-only NFL/NHL/MLS/WNBA/WC; none for NCAA/MiLB/Fighting (gameday ingest = NBA+MLB only — known gap).
 
 ## 13. Intentionally NOT here (query directly)
-Indexes (`pg_indexes`), constraints/triggers, RLS policies (`pg_policies`; A1 lane), edge-fn source (`supabase/functions/<slug>/index.ts`), frontend file inventory (`D0_BIBLE §B2`), full table/view/fn/cron enumeration (§0 queries).
+Indexes (`pg_indexes`), constraints/triggers, RLS policies (`pg_policies`; A1 lane), edge-fn source (`supabase/functions/<slug>/index.ts`), frontend file inventory (`docs/d0_terminal_build.md §B2`), full table/view/fn/cron enumeration (§0 queries).
 
 Owner: A1. Refresh after any PR adding/removing a service, secret, or domain-key table; refresh §0 counts quarterly (B1-NEXT-25).
