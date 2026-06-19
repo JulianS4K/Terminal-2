@@ -90,7 +90,7 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
 ## 2. Lane assignment — who owns what *(v2.0 · 2026-06-17; merged from BOT_HIERARCHY 2026-06-19)*
 
-> **This section is the single source of truth for ownership** (absorbed `BOT_HIERARCHY.md` 2026-06-19 — that file was retired into this bible). It answers "which lane/project owns this tool, table, route, or service." Immutable security invariants → `CLAUDE.md`. Migration mechanics → `MIGRATION_CONVENTIONS.md`. The objective resource catalog → `RESOURCES_BIBLE.md` + `RESOURCES_INVENTORY.generated.md`.
+> **This section is the single source of truth for ownership** (absorbed `BOT_HIERARCHY.md` 2026-06-19 — that file was retired into this bible). It answers "which lane/project owns this tool, table, route, or service." Immutable security invariants → `CLAUDE.md`. Migration mechanics → `MIGRATION_CONVENTIONS.md`. The resource catalog → `RESOURCES_BIBLE.md`.
 
 **Four peer domains — coordination is lateral (via `bot_chat`), not a command chain.** No bot reports to another.
 
