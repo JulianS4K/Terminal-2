@@ -14,7 +14,7 @@ Read these in order:
 2. [`KANBAN.md §🟢 OPEN`](../KANBAN.md) — what's actionable right now (severity-sorted)
 3. [`CLAUDE.md`](../CLAUDE.md) — security rules + 2026-05-13 lockdown
 4. [`MIGRATION_CONVENTIONS.md`](../MIGRATION_CONVENTIONS.md) — if authoring migrations
-5. [`docs/<your-lane>_operating_constraints.md`](../docs/) — your self-contract
+5. Your lane scope is in **`PROJECT_BIBLE.md §2`** (per-bot self-contracts were retired there 2026-06-19; only `docs/b1_operating_constraints.md` remains, for the security severity matrix)
 
 ## If you're a human contributor
 

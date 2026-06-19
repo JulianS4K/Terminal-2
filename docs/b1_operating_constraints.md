@@ -4,7 +4,7 @@ B1's per-bot self-contract. Companion to `PROJECT_BIBLE.md §2 §B1` (which sets
 
 This doc is B1's specific working agreement: read surface, write surface, monitoring duties, per-session sweep, severity matrix, hallucination cross-check, reporting protocol.
 
-Mirrors the D1/C1 pattern (`docs/d1_operating_constraints.md` PR #77, `docs/c1_operating_constraints.md`).
+B1 is the **one remaining per-bot self-contract** — the others (`d0/c1/d1/d4`) were retired into `PROJECT_BIBLE §2` (2026-06-19). This one persists because its **severity matrix** is referenced by `.github/SECURITY.md` + the `secret-scan` workflow.
 
 ## Mandate
 
@@ -25,9 +25,9 @@ Operationalized as continuous monitoring across **eleven surfaces** (operator ex
 | **Git / repo posture** | Branch protection rules, required status checks, collaborator perms, GitHub Actions secrets/vars, repo visibility, webhooks, deploy keys, secret-scanning + Dependabot config, push-protection state, workflow permissions, SHA pinning |
 | **Render workspace posture** | Workspace access, service list, IP allowlists, autoDeploy triggers, env-var inventory (names only, not values), preview-deploys posture, suspended state, deploy notification config |
 | **Slack posture** | Slack webhooks pointing into / out of the repo, Slack tokens / signing secrets / bot tokens leaked in code or git history, Slack GitHub App installations, Slack-shaped URLs (`hooks.slack.com/services/*`) appearing in commits, Slack messages (when an operator-installed Slack MCP becomes available) for incident leaks and external-attack chatter |
-| **Librarian / archivist** (added 2026-05-16 per operator directive) | Drift between canonical reference docs (`PROJECT_BIBLE.md`, `RESOURCES_BIBLE.md`, `CLAUDE.md`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `MIGRATION_CONVENTIONS.md`, `MIGRATION_CONVENTIONS.md`) and live state; cross-bible consistency (e.g., a fact in PROJECT_BIBLE.md §3 RPC table that contradicts what's in pg_proc); communication-channel health (Slack channels, `bot_chat` thread closure rates, scheduled-task signal-to-noise) |
+| **Librarian / archivist** (added 2026-05-16 per operator directive) | Drift between canonical reference docs (`README.md`, `CLAUDE.md`, `PROJECT_BIBLE.md`, `RESOURCES_BIBLE.md`, `MIGRATION_CONVENTIONS.md`) and live state; cross-bible consistency (e.g., a fact in PROJECT_BIBLE.md §3 RPC table that contradicts what's in pg_proc); communication-channel health (Slack channels, `bot_chat` thread closure rates, scheduled-task signal-to-noise) |
 | **README freshness** (added 2026-05-17 per operator directive) | `README.md` is the repo-level entry point for first-time human readers + bots that don't yet know to look at `PROJECT_BIBLE.md`. B1 keeps it current as architecture/folder-layout/governance changes ship: quick-link table, architecture diagram, repo layout, useful queries, TEvo gotchas pointer. Triggered by any merge that touches top-level dirs, governance docs, edge functions, or hosting (Render service set) |
-| **Keeper of records** (added 2026-05-24 per operator directive: *"you're the keeper of records — it's your job to maintain this and track kanban progress"*) | B1 owns the coherence of the planning/record doc-set: **`PROJECT_BIBLE.md` (what is) ↔ `docs/d_tier_goals.md` (where each lane is going + the open-distribution-Ticketmaster endgame) ↔ `docs/d_tier_unification_plan.md` (the route, M0–M5)** must stay mutually consistent — when goals or lane scope change, the plan + bible pointers are reconciled (drift/contradiction across the three is a finding, surfaced not silently resolved). Plus **KANBAN progress tracking**: each per-session sweep reconciles `KANBAN.md §🟢 OPEN` against shipped PRs (delete closed rows per the closure protocol; flag rows whose fix merged but weren't pruned; report movement). Records authored/maintained by B1; cross-lane content stays the lane's, A1 merges. |
+| **Keeper of records** (added 2026-05-24 per operator directive: *"you're the keeper of records — it's your job to maintain this and track kanban progress"*) | B1 owns the coherence of the planning/record doc-set: **`PROJECT_BIBLE.md` (what is) ↔ `docs/d_tier_goals.md` (where each lane is going + the open-distribution-Ticketmaster endgame)** must stay mutually consistent — when goals or lane scope change, the plan + bible pointers are reconciled (drift/contradiction across the three is a finding, surfaced not silently resolved). Plus **KANBAN progress tracking**: each per-session sweep reconciles `KANBAN.md §🟢 OPEN` against shipped PRs (delete closed rows per the closure protocol; flag rows whose fix merged but weren't pruned; report movement). Records authored/maintained by B1; cross-lane content stays the lane's, A1 merges. |
 
 ## Read surface
 
@@ -42,7 +42,7 @@ Active read targets:
 - Git history (`git log`, `git show`, `git diff`)
 - All `docs/` content, all `supabase/migrations/*.sql`, all `supabase/functions/*`, all `scripts/`, all `bin/`
 - **GitHub repo settings**: `gh api repos/.../branches/main/protection`, `gh api repos/.../hooks`, `gh api repos/.../keys`, `gh api repos/.../collaborators`, `gh api repos/.../actions/permissions`, `gh api repos/.../actions/secrets` (names only), `gh api repos/.../actions/variables`, `gh api repos/.../code-scanning/alerts`, `gh api repos/.../secret-scanning/alerts`, `gh api repos/.../dependabot/alerts`
-- **Render workspace** (read-only): `mcp__render__list_workspaces`, `list_services`, `get_service`, `get_metrics`, `list_logs`, `list_deploys`, `list_log_label_values`. **Forbidden writes** stay forbidden: `update_environment_variables`, `update_web_service`, `update_static_site`, `create_*`, `update_cron_job`. D1 owns Render writes per `PROJECT_BIBLE.md §2` Cross-cutting Rule #6.
+- **Render workspace** (read-only): `mcp__render__list_workspaces`, `list_services`, `get_service`, `get_metrics`, `list_logs`, `list_deploys`, `list_log_label_values`. **Forbidden writes** stay forbidden: `update_environment_variables`, `update_web_service`, `update_static_site`, `create_*`, `update_cron_job`. Render writes belong to A1 + D0 (workspace-wide, `PROJECT_BIBLE §2.7`); B1 — like all other lanes — is read-only.
 
 ## Write surface (authored files)
 
@@ -80,7 +80,7 @@ Operator must explicitly approve each of these:
 
 ## Forbidden actions (no permission unblocks)
 
-- Modify Render workspace (D1's sole lane per `PROJECT_BIBLE.md §2` Cross-cutting Rule #6)
+- Modify Render workspace (A1 + D0 own writes, workspace-wide per `PROJECT_BIBLE §2.7`; B1 read-only)
 - Bypass security gates (`--no-verify`, `--no-gpg-sign`)
 - Push without operator OK when the change applies to prod DB
 
@@ -126,7 +126,7 @@ Run at session start. Total runtime ~5 min. All read-only.
 | 19 | **War-games rotation** (added 2026-05-16 per operator directive) | Pick 1-2 scenarios from `docs/war_games_playbook.md` (10 total; full rotation covers in ~5-10 sessions). Run the read-only probe template for the picked scenario(s). Findings → SEC-tagged KANBAN entry + bot_chat per severity. Clean runs → no post (counts toward rotation coverage). | 0 SEC-CRIT/HIGH live openings found; scenario row updated in playbook §"First run findings". |
 | 20 | **README freshness check** (added 2026-05-17 per operator directive) | Read `README.md` quickly + diff against: (a) hosted-services list (`mcp__render__list_services`); (b) folder layout (`ls` top-level dirs); (c) governance docs in quick-links table (do all 7 referenced docs exist?); (d) edge function count claim vs `ls supabase/functions/`; (e) migration count claim vs `ls supabase/migrations/*.sql \| wc -l`; (f) useful queries — referenced tables/views/columns exist. | All claims match live state. Else: file PR same-session with the deltas. README staleness > 1 week qualifies as SEC-LOW hygiene (won't break anything but misleads new readers/bots). |
 | 21 | **KANBAN progress reconciliation** (keeper-of-records, added 2026-05-24) | Cross-reference `KANBAN.md §🟢 OPEN` rows against merged PRs since last sweep (`gh pr list --state merged`). For each row whose fix merged: **delete it** (closure-by-deletion protocol) or flag if another lane shipped it but left the row. Report net movement (rows opened / closed / still-blocked) in the sweep `change_log`. | §🟢 OPEN reflects reality — no row whose fix already merged; movement reported. |
-| 22 | **Doc-set coherence** (keeper-of-records, added 2026-05-24) | Spot-check that the record trio stays mutually consistent: `PROJECT_BIBLE.md` (what is) ↔ `docs/d_tier_goals.md` (where) ↔ `docs/d_tier_unification_plan.md` (route). A goal/lane-scope change that the plan or bible pointers don't reflect = drift → reconcile PR (or `flag` if cross-lane). | Trio consistent; no goal/scope change unreflected in the plan. |
+| 22 | **Doc-set coherence** (keeper-of-records, added 2026-05-24) | Spot-check that the record trio stays mutually consistent: `PROJECT_BIBLE.md` (what is) ↔ `docs/d_tier_goals.md` (where). A goal/lane-scope change that the plan or bible pointers don't reflect = drift → reconcile PR (or `flag` if cross-lane). | Trio consistent; no goal/scope change unreflected in the plan. |
 
 Output:
 - **Clean sweep** → `bot_chat_log('change_log', 'security', 'B1', 'B1 sweep <date> — clean. Baseline: <release_health_check rows hash>.')`
@@ -208,7 +208,7 @@ Living inventory at [`docs/git_repo_security_posture.md`](git_repo_security_post
 
 Living inventory at [`docs/render_security_posture.md`](render_security_posture.md). B1 diffs against it during per-session sweep step 13.
 
-D1 owns Render writes exclusively per [`PROJECT_BIBLE.md §2`](../PROJECT_BIBLE.md) Cross-cutting Rule #6. B1 reads only — any finding that requires a write becomes a PR comment to D1.
+A1 + D0 own Render writes (workspace-wide) per [`PROJECT_BIBLE.md §2.7`](../PROJECT_BIBLE.md). B1 reads only — any finding that requires a write becomes a PR comment to the owning lane (A1/D0).
 
 ### What B1 checks (per-session, read-only)
 
@@ -270,7 +270,7 @@ Added 2026-05-16 per operator directive: "communication channel, Librarians and 
 
 - Edit bibles unilaterally (PR + A1 merge pattern preserved).
 - Audit content for technical correctness (that's lane-owner duty).
-- Maintain operational lane-specific docs (e.g., `docs/d1_operating_constraints.md` is D1's).
+- Maintain operational lane-specific docs (e.g., this file is B1's; lane ownership otherwise single-homed in `PROJECT_BIBLE §2`).
 - Post to `#terminal-2-alerts` outside the scheduled-task auto-pipe.
 
 ## Slack posture monitoring

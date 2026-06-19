@@ -22,7 +22,7 @@ The bible has:
 
 This file (CLAUDE.md) remains the canonical source for security rules + lockdown invariants. The bible is the operational handbook bots read once per session.
 
-Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `PROJECT_BIBLE.md §2` (which absorbed `BOT_HIERARCHY.md` on 2026-06-19, itself having absorbed `LANE_DISCIPLINE.md`). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md`.
+Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `PROJECT_BIBLE.md §2` (which absorbed `BOT_HIERARCHY.md` on 2026-06-19, itself having absorbed `LANE_DISCIPLINE.md`). The per-bot self-contracts were retired into §2 (2026-06-19); only `docs/b1_operating_constraints.md` remains, kept for its security severity matrix (referenced by `.github/SECURITY.md` + the secret-scan workflow).
 
 ## Global operator rules (2026-05-13 lockdown)
 
