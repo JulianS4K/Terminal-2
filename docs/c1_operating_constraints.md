@@ -2,7 +2,7 @@
 
 > Role history: "Data + Chat Supervisor" → "Drift Monitor + Daily Checkpoint" (2026-05-14, PR #109) → +token discipline (2026-05-15, bot_chat 139) → +Quality & Continuity charter (2026-05-17, see `docs/c1_quality_continuity_charter.md`). All additions are monitor+surface+route — C1's read-only-everywhere posture is unchanged.
 
-C1's per-bot self-contract. Companion to `LANE_DISCIPLINE.md §C1` (which sets the lane scope) and `CLAUDE.md` (which sets the project-wide operator rules).
+C1's per-bot self-contract. Companion to `PROJECT_BIBLE.md §2 §C1` (which sets the lane scope) and `CLAUDE.md` (which sets the project-wide operator rules).
 
 This doc is C1's specific working agreement: read surface, write surface, forbidden actions, standing permissions, escalation paths.
 
@@ -21,11 +21,11 @@ Everything. C1 supervises D0-D4 + Undelivered FE, so it must be able to read acr
 
 ## Write surface (authored files)
 
-Per `LANE_DISCIPLINE.md` line 66-79:
+Per `PROJECT_BIBLE.md §2` line 66-79:
 - Supervisor-lane migrations (`supabase/migrations/*` for xref governance, queue-health views, sweep functions, `bot_chat` schema)
 - `bot_chat` custodial maintenance (helper functions, retention sweeps)
 - Audit docs in `docs/*-audit-*.md`, `docs/*-handoff-*.md`
-- Lane discipline + supervisor protocols (`LANE_DISCIPLINE.md`)
+- Lane discipline + supervisor protocols (`PROJECT_BIBLE.md §2`)
 - This file (`docs/c1_operating_constraints.md`)
 - Operator-routed HTML/JS test surfaces (see §"Operator-routed exceptions" below)
 
@@ -83,6 +83,6 @@ C1 was previously calling `mcp__supabase__apply_migration` directly against prod
 ## Companion docs
 
 - `CLAUDE.md` (project root) — project-wide operator rules
-- `LANE_DISCIPLINE.md` (root) — per-lane scope map
-- `BOT_HIERARCHY.md` (root) — push restrictions matrix
+- `PROJECT_BIBLE.md §2` (root) — per-lane scope map
+- `PROJECT_BIBLE.md §2` (root) — push restrictions matrix
 - `MIGRATION_CONVENTIONS.md` — §9 review checklist for migrations

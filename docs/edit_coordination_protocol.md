@@ -4,7 +4,7 @@ Authored by D0 (2026-05-15) under the consolidated-frontend consolidation. Polit
 
 ## TL;DR
 
-Before editing a file **outside your direct write surface** (per [LANE_DISCIPLINE.md](../LANE_DISCIPLINE.md)), post a `bot_chat` `sync` event with `meta.action='claim'`. After commit, post a `release`. Other bots check active claims before starting. Auto-expire after `meta.expires_at` so crashes don't strand the file.
+Before editing a file **outside your direct write surface** (per [PROJECT_BIBLE.md §2](../PROJECT_BIBLE.md)), post a `bot_chat` `sync` event with `meta.action='claim'`. After commit, post a `release`. Other bots check active claims before starting. Auto-expire after `meta.expires_at` so crashes don't strand the file.
 
 Uses existing `bot_chat_log()` + `sync` event_type — **no DDL, no schema change**. Adoption is per-lane choice; enforcement is by convention + PR review.
 
@@ -121,8 +121,8 @@ D0 announces this protocol with a `bot_chat` `sync` event tagged for D1, D2, B1,
 
 ## References
 
-- [BOT_HIERARCHY.md](../BOT_HIERARCHY.md) — table + push ownership
-- [LANE_DISCIPLINE.md](../LANE_DISCIPLINE.md) — per-lane write surface
+- [PROJECT_BIBLE.md §2](../PROJECT_BIBLE.md) — table + push ownership
+- [PROJECT_BIBLE.md §2](../PROJECT_BIBLE.md) — per-lane write surface
 - [CLAUDE.md](../CLAUDE.md) — `bot_chat_log` standing permission (project-wide)
 - `bot_chat` row 157 — D-level reorg that motivated this protocol
 - `bot_chat` row 144 — C1's migration filename collision audit (related coordination drift)

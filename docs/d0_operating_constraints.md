@@ -2,7 +2,7 @@
 
 D0 = Consolidated Frontend Lane (since 2026-05-15 D-level reorg, `bot_chat` row 157). Was "Terminal FE" pre-reorg.
 
-Companion to [LANE_DISCIPLINE.md §D0](../LANE_DISCIPLINE.md), [BOT_HIERARCHY.md](../BOT_HIERARCHY.md), [CLAUDE.md §4](../CLAUDE.md). Mirrors the pattern of `d1_operating_constraints.md`, `b1_operating_constraints.md`, `c1_operating_constraints.md`.
+Companion to [PROJECT_BIBLE.md §2 §D0](../PROJECT_BIBLE.md), [PROJECT_BIBLE.md §2](../PROJECT_BIBLE.md), [CLAUDE.md §4](../CLAUDE.md). Mirrors the pattern of `d1_operating_constraints.md`, `b1_operating_constraints.md`, `c1_operating_constraints.md`.
 
 ## Scope
 
@@ -60,7 +60,7 @@ D0 does **not** write any Supabase table. Standing exception per [CLAUDE.md](../
 - Direct writes to D1's `static/store/*` or D2's `d2_dashboard/*` without D1/D2 author awareness (sign-off, not takeover)
 - Cron schedule mutations (`cron.schedule`, `cron.unschedule`)
 - Edge function deploys that mutate data
-- Pushing directly to `main` (A1 sole pusher per [BOT_HIERARCHY §3](../BOT_HIERARCHY.md))
+- Pushing directly to `main` (A1 sole pusher per [PROJECT_BIBLE.md §2 §3](../PROJECT_BIBLE.md))
 - Bypassing the pytest CI gate (`.github/workflows/tests.yml` since reorg) — green CI is the merge gate
 - Touching another lane's Render service: B1/C1 can read all 3; only A1 (workspace-wide) overrides
 
@@ -92,16 +92,16 @@ D0 reads + posts only in `#terminal-2-d0` (`C0B420N237F`) for sign-offs + cross-
 
 ## Open items / known drift
 
-- [LANE_DISCIPLINE.md line 116](../LANE_DISCIPLINE.md) still reads "D0 has no deploy infra of its own yet" — stale since PR #107 (D0 Render env). Per-service table at line 249 + CLAUDE.md §4 are correct; line 116 paragraph wasn't updated. Flagged for A1 doc-fix.
-- LANE_DISCIPLINE.md §D0 was written pre-reorg and does not mention consolidated-frontend scope. A1 owns the §D0 section update per row 157.
+- [PROJECT_BIBLE.md §2 line 116](../PROJECT_BIBLE.md) still reads "D0 has no deploy infra of its own yet" — stale since PR #107 (D0 Render env). Per-service table at line 249 + CLAUDE.md §4 are correct; line 116 paragraph wasn't updated. Flagged for A1 doc-fix.
+- PROJECT_BIBLE.md §2 §D0 was written pre-reorg and does not mention consolidated-frontend scope. A1 owns the §D0 section update per row 157.
 - D2's `/api/d2/*` endpoints lack CORS allowlist for `vibepass-terminal-test.onrender.com`. Not blocking — D0 doorway only pings `/healthz` (no auth, no CORS pain). If inline orders summary surfaces later, raise the CORS question to D0-as-coordinator → D2.
 - Home/Movers/Performer terminal pages stay on Path A (`/api/broker/*`) until Phase-2 RPCs land. Cross-origin to `vibepass-storefront-test.onrender.com` in prod still needs D1's CORS allowlist OR equivalent RPCs.
 
 ## References
 
 - [CLAUDE.md §4](../CLAUDE.md) — Render per-service scoped access
-- [LANE_DISCIPLINE.md](../LANE_DISCIPLINE.md) — lane chart + per-service ownership
-- [BOT_HIERARCHY.md](../BOT_HIERARCHY.md) — push matrix + table ownership
+- [PROJECT_BIBLE.md §2](../PROJECT_BIBLE.md) — lane chart + per-service ownership
+- [PROJECT_BIBLE.md §2](../PROJECT_BIBLE.md) — push matrix + table ownership
 - [docs/terminal-redesign-2026-05-09.md](terminal-redesign-2026-05-09.md) — 7-page redesign spec
 - [docs/event-view-wireframe-v4.md](event-view-wireframe-v4.md) — Event Detail spec
 - `bot_chat` row 157 — D-level reorg directive

@@ -4,7 +4,7 @@
 
 Living snapshot of the Render workspace serving Terminal-2 lanes. B1 diffs current `mcp__render__*` output against this doc to catch regressions.
 
-**Lane scope**: per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.md) Cross-cutting Rule #6, A1 + D1 own Render writes. D2 + D0 have write scope on their own services per PROJECT_BIBLE.md §2. B1 monitors only — findings that require Render writes become PR comments to the service owner.
+**Lane scope**: per [`PROJECT_BIBLE.md §2`](../PROJECT_BIBLE.md) Cross-cutting Rule #6, A1 + D1 own Render writes. D2 + D0 have write scope on their own services per PROJECT_BIBLE.md §2. B1 monitors only — findings that require Render writes become PR comments to the service owner.
 
 ---
 
@@ -166,7 +166,7 @@ Not Terminal-2. Listed for completeness — confirms no foreign repos have activ
 
 ## Section 5 — Cross-lane patch protocol for Render findings
 
-Per [`LANE_DISCIPLINE.md`](../LANE_DISCIPLINE.md) Cross-cutting Rule #6, B1 cannot write to Render. Process for findings:
+Per [`PROJECT_BIBLE.md §2`](../PROJECT_BIBLE.md) Cross-cutting Rule #6, B1 cannot write to Render. Process for findings:
 
 1. **SEC-CRIT / SEC-HIGH on Render**: PR comment to D1 immediately. If D1 offline >24h AND finding is exploitable, escalate to operator for direct Render Dashboard fix. B1 does NOT call `mcp__render__update_*` even under security cross-lane exception — the lane separation is hard.
 2. **SEC-MED / SEC-LOW**: file in KANBAN.md, PR comment to D1 with ack-or-defer ask.

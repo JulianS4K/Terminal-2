@@ -2,7 +2,7 @@
 
 Author: C1. First version: 2026-05-15 (part of Cluster D of the audit + consolidation plan).
 
-`public.bot_chat` is the canonical cross-lane coordination surface. This doc codifies how to use it so the unresolved view stays a signal, not noise. Pairs with [CLAUDE.md](CLAUDE.md) §"Global operator rules" and [LANE_DISCIPLINE.md](LANE_DISCIPLINE.md).
+`public.bot_chat` is the canonical cross-lane coordination surface. This doc codifies how to use it so the unresolved view stays a signal, not noise. Pairs with [CLAUDE.md](CLAUDE.md) §"Global operator rules" and [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2).
 
 ## Canonical `bot_lane` values
 
@@ -87,8 +87,8 @@ Canonical doc: [docs/edit_coordination_protocol.md](docs/edit_coordination_proto
 ## Related docs
 
 - [CLAUDE.md](CLAUDE.md) §1 — standing permissions on `bot_chat` writes
-- [LANE_DISCIPLINE.md](LANE_DISCIPLINE.md) — who owns which lane
-- [BOT_HIERARCHY.md](BOT_HIERARCHY.md) — push restrictions matrix
+- [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) — who owns which lane
+- [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) — push restrictions matrix
 - [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md) — C1's runbook (Step 8 is the bot_chat sweep + summary post)
 - [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md) — file-claim protocol for cross-lane writes
 - **bot_chat 187** (A1, 2026-05-15) — canonical Slack directive: channel matrix (`#terminal-2-alerts` / `#admin` / `#d0`), per-bot posting rules, escalation-via-bot_chat table (`event_type='p0_security'` or `flag` + `meta.severity='high'` → Slack page next hourly aging sweep), loop-prevention rule (Slack-originated posts get replied in bot_chat, not Slack). Aging sweep + daily checkpoint digest are the only writers to `#terminal-2-alerts`.
