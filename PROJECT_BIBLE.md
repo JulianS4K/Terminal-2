@@ -2,23 +2,22 @@
 
 > **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
 
-**Read FIRST every session.** Saves ~5× tokens vs reading every governance file at start.
+**Read FIRST every session — but this doc is large; do NOT linear-read it.** Priority read = **§0** (the AQ hub — the #1 fact most sessions miss) + **§1** (hard rules). Then determine your lane (§2) and **jump to the one section your task needs**:
 
-This doc is the **operating playbook** — rules, macros, recipes, landmines. For the **inventory** (what exists: tables, views, crons, edge functions, vault, services), read `RESOURCES_BIBLE.md`.
-
-**⚠ BEFORE CREATING ANY NEW TABLE / VIEW / RPC / CRON / EDGE-FN — check `RESOURCES_BIBLE.md` first.** 132 tables + 152 views + 75+ crons + 40+ edge fns already exist. Recurring waste: re-implementing `event_metrics`, `*_xref`, `*_pending`, `v_event_*` patterns when one already exists. Quick check: `SELECT relname FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace WHERE nspname='public' AND relkind IN ('r','v','m')` — search the output for keywords before authoring.
-
-| Need | Read |
+| Your task / need | Go to |
 |---|---|
-| **What's open right now? (all lanes, severity-sorted)** | **`KANBAN.md §🟢 OPEN WORK` — single source of truth, populate-as-you-go, delete-when-fixed** |
-| What can I do? Hard rules, hierarchy, macros, recipes | **This file** |
-| What exists? Tables/views/crons/edge-fn inventory | `RESOURCES_BIBLE.md` |
-| Table/cron/edge inventory · cross-source links · ops-health SQL | **`RESOURCES_BIBLE.md`** |
-| Build the D0 terminal frontend (file map, contracts, deploy) | `docs/d0_terminal_build.md` (on-demand) |
-| Where's each lane going? (north-star + endgame) | `docs/d_tier_goals.md` |
-| Who can push / who owns what? | §2 (this file) |
-| How do I apply a migration? | `MIGRATION_CONVENTIONS.md` |
-| Security rules + lockdown invariants | `CLAUDE.md` |
+| Hard rules · what I can't do | **§1** (+ `CLAUDE.md` = security/lockdown invariants) |
+| **Which lane am I?** | **§2** — lane is *derived from what you touch + what it affects*, not pre-assigned |
+| Cross-source IDs · joins · mapping | **§0 → §5** (full architecture) |
+| Authoring / querying SQL | **§3** column landmines → **§4** canonical RPCs |
+| MCP tool scope · SQL macros | **§6 · §7** |
+| Ship a migration / cron / PR | **§8** + `MIGRATION_CONVENTIONS.md` |
+| **What already exists** (before creating a table/view/RPC/cron/edge-fn — reuse, don't rebuild) | `RESOURCES_BIBLE.md` (212 tables · 178 views · 164 crons · 29 edge fns) |
+| What's open right now (all lanes, severity-sorted) | `KANBAN.md §🟢 OPEN WORK` |
+| Build the terminal frontend (file map, contracts, deploy) | `docs/d0_terminal_build.md` (on-demand) |
+| Where each lane is headed (north-star) | `docs/d_tier_goals.md` |
+
+Full section list → the Table of contents below (Ctrl-F `## N.` to jump).
 
 ---
 
@@ -30,7 +29,7 @@ Sections are numbered so you can Ctrl-F `## N.` to jump. **Read §0 first — it
 |---|---|---|
 | **0** | **The AQ mapper is THE hub** | the #1 cross-source fact — read before any cross-source SQL |
 | 1 | Hard rules | the lines you can't cross (mirrors `CLAUDE.md`) |
-| 2 | Bot hierarchy + Render ownership | who you are, who pushes where |
+| 2 | Lane assignment — who owns what | derive your lane from the work + its blast radius; push authority; shared seams |
 | 3 | Column-name landmines | exact wrong→right names — check BEFORE authoring SQL |
 | 4 | Canonical SECDEF RPCs | the hot RPC subset + args + when to call |
 | 5 | Cross-source bridge — full architecture | namespaces · hub · TD/performer/venue chains · orders/sales · don't-rebuild |
@@ -90,6 +89,13 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 ## 2. Lane assignment — who owns what
 
 > **This section is the single source of truth for ownership** (absorbed `BOT_HIERARCHY.md` 2026-06-19 — that file was retired into this bible). It answers "which lane/project owns this tool, table, route, or service." Immutable security invariants → `CLAUDE.md`. Migration mechanics → `MIGRATION_CONVENTIONS.md`. The resource catalog → `RESOURCES_BIBLE.md`.
+
+### Determining your lane — you don't *start* as one; the work assigns it
+A fresh session has no built-in lane identity. Derive it from the task, in two steps:
+1. **What you're working on** → the path/surface you touch. Its owner in the **§2.5 code map** is your lane for this task (e.g. `supabase/migrations/*`→A1, `static/terminal/*`→D0, `static/store/*`→D1).
+2. **What it affects (blast radius)** → if that path is a **shared seam in §2.6** (or its output feeds another lane's surface), your change is **cross-lane** → coordinate with the affected consumers (C1 reviews) before it hardens.
+
+If the task prompt or your branch prefix (`claude/<lane>-…`) already names a lane, that's your starting point — still run step 2 for blast radius. **CI enforces this after the fact:** path/branch labeler → `area:`/`level:` labels · `surface-boundary-check` flags out-of-lane paths · the §2.5 **no-orphan invariant** (every path resolves to exactly one owner). When unsure, ask via `bot_chat` `question` or the operator.
 
 **Four peer domains — coordination is lateral (via `bot_chat`), not a command chain.** No bot reports to another.
 
