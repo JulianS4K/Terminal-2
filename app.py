@@ -8265,6 +8265,120 @@ def store_reserve(request: Request, payload: dict = Body(...), authorization: st
     }
 
 
+# ---------- Retail chat (natural-language price/inventory assistant) ----------
+#
+# Thin proxy in front of the deployed `chat` Supabase edge function (the same
+# tool-using assistant behind the SMS/web bots). It already resolves events,
+# aggregates price zones, and filters owned-EVO listings by qty + budget
+# ("next Yankees home game with tickets under $5"). We proxy rather than let
+# the browser call the function directly so that (a) the LLM key stays on the
+# edge function, (b) the terminal call is email-gated, (c) the storefront call
+# is hard-locked to OWNED inventory, and (d) we avoid the function's
+# localhost-only CORS allowlist.
+#
+# scope discipline: the proxy sets `scope` server-side — the client cannot
+# choose it. Terminal → "all" (full market); storefront → "owned" (our owned
+# EVO inventory only). The edge function clamps include_all accordingly, so a
+# consumer can never widen the storefront beyond owned inventory.
+
+_RETAIL_CHAT_MAX_TURNS = 24
+_RETAIL_CHAT_MAX_CHARS = 4000
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort real client IP behind the Render/Railway proxy. Forwarded
+    to the edge function so its per-IP rate limit is per-user, not per-proxy."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
+    return (request.client.host if request.client else "") or "unknown"
+
+
+def _sanitize_chat_history(payload: dict) -> list[dict]:
+    """Validate + bound the client-supplied transcript before forwarding.
+    Accepts either {history:[{role,content}...]} or {message:"..."}."""
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "expected a JSON object")
+    hist = payload.get("history")
+    if hist is None and payload.get("message"):
+        hist = [{"role": "user", "content": str(payload.get("message"))}]
+    if not isinstance(hist, list) or not hist:
+        raise HTTPException(400, "history or message required")
+    out: list[dict] = []
+    for item in hist[-_RETAIL_CHAT_MAX_TURNS:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in ("user", "assistant") or not isinstance(content, str):
+            continue
+        content = content.strip()
+        if not content:
+            continue
+        out.append({"role": role, "content": content[:_RETAIL_CHAT_MAX_CHARS]})
+    if not out:
+        raise HTTPException(400, "no valid messages in history")
+    if out[-1]["role"] != "user":
+        raise HTTPException(400, "last message must be from the user")
+    return out
+
+
+def _proxy_retail_chat(history: list[dict], scope: str, client_ip: str) -> JSONResponse:
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+        raise HTTPException(503, "chat service not configured")
+    url = f"{SUPABASE_URL.rstrip('/')}/functions/v1/chat"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "apikey": SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+        "x-real-ip": client_ip,
+        "x-forwarded-for": client_ip,
+    }
+    try:
+        r = requests.post(
+            url,
+            headers=headers,
+            json={"history": history, "scope": "all" if scope == "all" else "owned"},
+            timeout=45,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).error("retail-chat proxy upstream error: %s", e)
+        raise HTTPException(502, "chat service unreachable")
+    try:
+        body = r.json()
+    except Exception:
+        body = {"error": "assistant returned a malformed response"}
+    status = r.status_code if r.status_code >= 400 else 200
+    return JSONResponse(body, status_code=status)
+
+
+@app.post("/api/retail-chat")
+def retail_chat_terminal(request: Request, payload: dict = Body(...), _=Depends(require_auth)):
+    """Operator-facing retail chat (email-gated). scope=all → full market."""
+    history = _sanitize_chat_history(payload)
+    return _proxy_retail_chat(history, "all", _client_ip(request))
+
+
+@app.post("/api/store/retail-chat")
+def retail_chat_store(request: Request, payload: dict = Body(...)):
+    """Public storefront retail chat. scope=owned → hard-locked to our owned
+    EVO inventory (enforced server-side; the consumer cannot widen it)."""
+    history = _sanitize_chat_history(payload)
+    return _proxy_retail_chat(history, "owned", _client_ip(request))
+
+
+@app.api_route("/store/chat", methods=["GET", "HEAD"])
+def store_chat_page():
+    """Storefront concierge chat. Mounts the shared retail-chat widget
+    (static/shared/retail-chat-widget.js) against /api/store/retail-chat."""
+    return _render_storefront_page("chat.html")
+
+
 @app.api_route("/store", methods=["GET", "HEAD"])
 def store_index_page():
     return _render_storefront_page("index.html")
