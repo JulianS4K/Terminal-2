@@ -1181,6 +1181,11 @@
     const { w, h } = paneSize(host);
     const opts = {
       width: w, height: h,
+      // The app renders its own per-series legends (#chartPriceLegend) + a custom
+      // hover tooltip, so uPlot's built-in legend is redundant. Left on, uPlot's
+      // CSS `.uplot{width:min-content}` sized .uplot to the legend's ~1743px and
+      // the pane's overflow:hidden just clipped it — dead, oversized DOM. Off it goes.
+      legend: { show: false },
       cursor: { drag: { x: true, y: false } },
       scales: {
         x: { time: true, range: xRange ? (() => xRange) : undefined },
@@ -1439,6 +1444,7 @@
 
     const opts = {
       width: w, height: h,
+      legend: { show: false },   // app uses custom legends + tooltip (see price chart note)
       cursor: { drag: { x: true, y: false } },
       scales: {
         x:  { time: true, range: xRange ? (() => xRange) : undefined },
