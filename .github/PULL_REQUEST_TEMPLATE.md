@@ -14,7 +14,7 @@
 - [ ] SECURITY DEFINER fns include REVOKE PUBLIC + GRANT service_role + current_user body-assert (if any added)
 - [ ] New cron jobs avoid `:02 / :05 / :07` minute marks (saturated clusters)
 - [ ] PR title format: `<type>(<lane>): <short imperative>`
-- [ ] **Bible updated in this PR** if a migration / `*_client.py` / edge fn / deploy IaC changed (`bible-freshness` gate; else `BIBLE-OK: <reason>` in a commit)
+- [ ] **Bible updated** *if* this PR adds a catalogued resource (new service/secret/table/view/RPC/cron/edge-fn or a new column landmine) — `RESOURCES_BIBLE` / `PROJECT_BIBLE §3·§4`. Routine changes: leave unchecked, no doc needed.
 
 ## What
 <!-- 1-3 bullets -->

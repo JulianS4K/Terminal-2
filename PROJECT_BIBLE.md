@@ -80,7 +80,7 @@ Deeper: §3 column traps · §4 RPC args · §5 ID rules + don't-rebuild · `D0_
 7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
 8. **Check `KANBAN.md §🟢 OPEN WORK` before claiming new work.** It is the single-source-of-truth for what's currently actionable across all lanes — severity-sorted, with the smallest fix for each finding. **Fixing bot DELETES its row from that section in the same PR as the fix** (row's absence IS the closure signal; archive sections below preserve the historical detail). Populate as you go — anyone can add a row; B1 maintains for security findings, each lane for its own. Broadcast: bot_chat 311 (2026-05-17).
 9. **Work in your OWN git worktree — never the shared root checkout.** A `checkout`/branch-switch/`reset` on the shared clone strands other sessions. Each session uses its own worktree on a per-session branch cut from `origin/main`.
-10. **Update the bible in the SAME PR as the change it describes** (RULE 0). New/changed migration, `*_client.py`, edge fn, or deploy IaC ⇒ update the owning doc (`RESOURCES_BIBLE` for inventory/services/secrets; §2.7 for deploy; §3/§4 for new landmine/RPC). **CI-enforced** by `bin/check-bible-freshness.sh` (workflow `bible-freshness`) — blocks merge on a doc-bearing change with no doc update. Legit no-doc change → add `BIBLE-OK: <reason>` to a commit message.
+10. **When a change adds/alters a *documented* resource, update the bible in the same PR** (RULE 0 — judgment, not a gate; **most changes need no doc edit**). Update only when you add a NEW external service/secret, a new table/view/RPC/cron/edge-fn worth cataloguing, a new column landmine (§3), or a hot RPC (§4) → edit the owning doc (`RESOURCES_BIBLE`; §2.7 for deploy). Routine work (bugfix, index, refactor, a migration that catalogues nothing new) needs none. Prompted by self-check #12 + the PR checklist — not CI-forced (a gate can't tell "needs a doc" from "doesn't").
 
 When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
@@ -571,7 +571,7 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 9. ☐ Is my "discovery" a known gap in `KANBAN.md` (don't waste cycles)?
 10. ☐ **About to create a new doc?** STOP — the canonical doc set is CLOSED (see the README registry). Add the fact to its owning doc; never create a new root/governance `.md`; never state one fact in two places — link instead.
 11. ☐ **Am I working in my own worktree, not the shared root?** A `git checkout`/branch-switch in the shared clone strands other sessions (§1 rule 9) — use `git -C <your-worktree>` on a per-session branch.
-12. ☐ **Did a migration / `*_client.py` / edge fn / deploy IaC change?** Update the owning doc in this same PR (§1 rule 10) — the `bible-freshness` gate blocks merge otherwise (or `BIBLE-OK: <reason>`).
+12. ☐ **Did I add a NEW catalogued resource** (service/secret/table/view/RPC/cron/edge-fn) or a new column landmine? If so, update the owning doc this PR (§1 rule 10). Routine changes need no doc edit — judgment, not a gate.
 
 If YES to all → proceed. Else fall back to `RESOURCES_BIBLE.md` for inventory or `CLAUDE.md` for security rules.
 
