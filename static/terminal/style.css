@@ -1055,9 +1055,12 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   padding: 2px;
 }
 .hero-main {
-  display: flex;
-  align-items: flex-start;
-  gap: 0;
+  /* Block flow, NOT flex: the 48px performer logo is an inline img
+     (vertical-align:middle + margin-right) meant to sit beside the inline-block
+     title, with the venue/date <p class="meta"> wrapping to the line below.
+     display:flex turned all of those — logo, title, meta, badges — into a single
+     no-gap row, so the title ran straight into the venue text on every event. */
+  display: block;
 }
 .hero-main > h1.title { display: inline-block; }
 
