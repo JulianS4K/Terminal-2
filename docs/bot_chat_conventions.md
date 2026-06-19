@@ -82,13 +82,13 @@ Open `flag` / `question` / `collision` / `p0_security` are **never** bulk-resolv
 
 When editing a file outside your direct write surface, post a `sync` event with `meta` payload `{action:'claim', path:'<file>', expires_at:'<iso>', intent:'<short>'}` *before* the edit. After commit, post a follow-up `sync` with `meta.action='release'` + `in_reply_to=<claim_id>`. Conflict rule: lower `id` wins; later claimer releases + waits. Stale claims auto-expire (default 30 min). A1/B1 may `revoke`.
 
-Canonical doc: [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md) (PR #113, pending merge). C1 adopts the pattern for any future cross-lane writes; in-lane writes (own docs, own conventions) need no claim.
+Canonical doc: [docs/edit_coordination_protocol.md](docs/archive/edit_coordination_protocol.md) (PR #113, pending merge). C1 adopts the pattern for any future cross-lane writes; in-lane writes (own docs, own conventions) need no claim.
 
 ## Related docs
 
 - [CLAUDE.md](CLAUDE.md) §1 — standing permissions on `bot_chat` writes
 - [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) — who owns which lane
 - [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) — push restrictions matrix
-- [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md) — C1's runbook (Step 8 is the bot_chat sweep + summary post)
-- [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md) — file-claim protocol for cross-lane writes
+- [docs/c1_daily_checkpoint_runbook.md](docs/archive/c1_daily_checkpoint_runbook.md) — C1's runbook (Step 8 is the bot_chat sweep + summary post)
+- [docs/edit_coordination_protocol.md](docs/archive/edit_coordination_protocol.md) — file-claim protocol for cross-lane writes
 - **bot_chat 187** (A1, 2026-05-15) — canonical Slack directive: channel matrix (`#terminal-2-alerts` / `#admin` / `#d0`), per-bot posting rules, escalation-via-bot_chat table (`event_type='p0_security'` or `flag` + `meta.severity='high'` → Slack page next hourly aging sweep), loop-prevention rule (Slack-originated posts get replied in bot_chat, not Slack). Aging sweep + daily checkpoint digest are the only writers to `#terminal-2-alerts`.

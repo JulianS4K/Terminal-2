@@ -370,7 +370,7 @@ What a standard organizer/attendee expects vs. what we ship today. Grouped **fre
 
 ### NEXT (D0) — Consolidated frontend lane post row 157 reorg
 
-Plan: [docs/d0_frontend_consolidation_plan.md](docs/d0_frontend_consolidation_plan.md). Self-contract: [docs/d0_operating_constraints.md](docs/d0_operating_constraints.md). Coordination: [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md). 5 D0-tracked rows:
+Plan: [docs/d0_frontend_consolidation_plan.md](docs/archive/d0_frontend_consolidation_plan.md). Self-contract: [docs/d0_operating_constraints.md](docs/d0_operating_constraints.md). Coordination: [docs/edit_coordination_protocol.md](docs/archive/edit_coordination_protocol.md). 5 D0-tracked rows:
 
 - **D0 → operator** — Supabase Auth Redirect URLs whitelist (2 URLs, dashboard action). Per `bot_chat` row 145. Unblocks PR #113 deployed login flow.
 - **D0 → operator** — Render plan flip `vibepass-storefront-test` free → starter ($14/mo). Per D1 row 169 outstanding item 1. MCP `update_web_service` doesn't support plan changes — dashboard or Render REST API only.

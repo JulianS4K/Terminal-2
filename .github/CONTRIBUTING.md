@@ -48,7 +48,7 @@ Note: PRs that touch backend code (`app.py`, `supabase/*`, `*_client.py`) requir
 
 ## Commit messages
 
-Format: `<type>(<lane>): <short imperative>` per [`docs/pr_governance.md`](../docs/pr_governance.md).
+Format: `<type>(<lane>): <short imperative>` per [`docs/pr_governance.md`](../docs/archive/pr_governance.md).
 
 Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.
 

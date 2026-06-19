@@ -79,7 +79,7 @@ D4 owns the **engineering** of the Bridge: the integration layer that did not pr
 | Distribution rails to retail channels | **D2** order clients (`evo_client.py`, `seatgeek_client.py`, `tickpick_client.py`, `vivid_client.py`, `gotickets_client.py`) | **Reuse the clients; add a WRITE/listing path** (gated — §6.1) |
 | Consumer aggregate site (Phase 2) | **D1** storefront (`static/store/*`, `/api/store/*`) | **Reuse / extend** |
 | Cross-source event identity (so a Bridge event = a catalog event = SG/TEvo events) | **A1/C1** canonical: `aq_event_map`, `event_xref`, `seatgeek_event_xref`, matchers | **Reuse** |
-| Venue intake storefront (checkout / QR / Stripe) | **pretix** (recommended) or Hi.Events fork — see [`d4_intake_platform_eval.md`](d4_intake_platform_eval.md). Existing `hi-events` Render svc is **not** our fork — stand up new. | **Net-new (fork; separate repo)** |
+| Venue intake storefront (checkout / QR / Stripe) | **pretix** (recommended) or Hi.Events fork — see [`d4_intake_platform_eval.md`](archive/d4_intake_platform_eval.md). Existing `hi-events` Render svc is **not** our fork — stand up new. | **Net-new (fork; separate repo)** |
 | **Bridge integration layer** (ingest, floor control, push, oversell guard, buyer capture) | — | **Net-new — this is D4's build** |
 
 ---
@@ -138,7 +138,7 @@ Buyer-data capture introduces a **new PII surface** (name/contact/purchase histo
 
 ## 8. Open decisions / prerequisites (need operator / A1 / B1 input)
 
-1. **Hi.Events vs pretix** — **D4 recommends pretix** for long-term extensibility (plugin system + Python stack-fit); full analysis in [`d4_intake_platform_eval.md`](d4_intake_platform_eval.md). The thesis exec-brief leaned **Hi.Events** for speed-to-prototype — operator confirms the final pick.
+1. **Hi.Events vs pretix** — **D4 recommends pretix** for long-term extensibility (plugin system + Python stack-fit); full analysis in [`d4_intake_platform_eval.md`](archive/d4_intake_platform_eval.md). The thesis exec-brief leaned **Hi.Events** for speed-to-prototype — operator confirms the final pick.
 2. **Existing `hi-events` Render service** — **resolved (2026-05-20): not our fork. D4 stands up new** regardless of platform pick.
 3. **Upstream-write authorization** (§6.1) — operator go/no-go to begin a per-platform listing-write carve-out, and which platforms first. Note: TEvo is itself a B2B distribution hub that may fan out to multiple downstream points-of-sale — clarify which channels are **direct API integrations** vs. **reached via TEvo / a POS hub** (avoids assuming 10 separate direct integrations).
 4. **Repo location of the fork** — separate repo (recommended; AGPL-3.0 + different stack) vs. monorepo subdir.

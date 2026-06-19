@@ -117,13 +117,13 @@ A1 + B1 maintain `main` (push per-task, not by tier).   ★ D0 PRIORITY; D1–D4
 | **D3** | Broadway FE | Broadway surface + `broadway_*`. | **PAUSED** |
 | **D4** | Exos/Bridge — full app | Primary-ticketing app: Stripe checkout + transactional mail + `exos_*` schema; own deploy target. | **PAUSED** |
 
-> **E1 folded (2026-06-17):** cron/429/Slack alerting + the hourly aging-sweeps (`CLAUDE.md §5`) → **A1**; per-surface webhooks (`stripe-webhook` → D4, `sg-seller-webhook` → A1). **Own-bible model:** each active bot may keep a `<BOT>_BIBLE.md` for lane-local facts; a fact enters the main set only via a C1-reviewed promotion (`D0_BIBLE.md` is the live example).
+> **E1 folded (2026-06-17):** cron/429/Slack alerting → **A1**; per-surface webhooks (`stripe-webhook` → D4, `sg-seller-webhook` → A1). **Own-bible model:** each active bot may keep a `<BOT>_BIBLE.md` for lane-local facts; a fact enters the main set only via a C1-reviewed promotion (`D0_BIBLE.md` is the live example).
 
 ### 2.2 Per-lane writes / never-writes
 
 - **A1** — writes: all migrations (incl. RLS/SECDEF + `*_security_*.sql`); ingest + order tables; `supabase/functions/*` (data pipeline); the 9 `*_client.py`; `app.py` data routes; `requirements.txt`/`Procfile`; `MIGRATION_CONVENTIONS.md`. Reads: everything.
 - **B1** — writes: `KANBAN.md` security backlog; `docs/security-runbook-*.md`; `supabase/functions/_shared/cron-auth.ts`; CI workflows + `bin/`/`scripts/` guard code; cross-cutting security patches (PR comment to the file's owner). No prod tables.
-- **C1** — writes: the main bible set + registry; `bot_chat` checkpoints/drift flags; `docs/c1_daily_checkpoint_runbook.md`. Never applies prod DB (author files only).
+- **C1** — writes: the main bible set + registry; `bot_chat` checkpoints/drift flags. Never applies prod DB (author files only).
 - **D0** — writes: `static/terminal/*` (html/js/css); `docs/d0-*.md`, wireframes; `/api/broker/*` routes (coordinate with A1). **Never writes:** any DB table directly; any cron schedule (author migration, A1 applies); data-mutating edge functions; paused-lane files.
 - **D1–D4 (PAUSED)** — scope preserved in §2.8.
 

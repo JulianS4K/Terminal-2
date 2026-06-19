@@ -112,41 +112,19 @@ Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are 
 - Service Tokens are the preferred mechanism for enforcement when feasible (Render's Member-role token can't perform writes by API constraint, providing hard isolation beyond policy). Until tokens are scoped per-bot, the scoping is policy-level and audited via Render's audit log.
 - Cross-service writes (D1 touching D2's service or vice versa) = lane violation, surfaces as `flag` in `bot_chat` per existing cross-lane rules
 
-### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15)
+### 5. Skill conventions (SKILL.md structure + discoverability)
 
-Every active bot MUST create its own lane-scoped aging-sweep scheduled task on first activation. Operator-mandated 2026-05-15 (bot_chat 210).
+Recurring procedures are encoded as **workflow skills** under `.claude-plugins/terminal2-governance/skills/<name>/SKILL.md` — the executable form of the `PROJECT_BIBLE.md §8` recipes. Shipped: `ship-a-migration`.
 
-**Spec — each bot's task must:**
-- Cadence: **hourly** at a unique minute offset (avoid collisions, see slot registry below)
-- Query: `public.bot_chat` for entries addressed to this bot (via `bot_lane = '<this-bot>'` OR `@<this-bot>` substring match) AND `resolved_at IS NULL` AND `event_type IN ('p0_security','flag','question')` AND `created_at < now() - interval '2 hours'` AND `created_at > now() - interval '7 days'`
-- **Always post (HEARTBEAT pattern, 2026-05-15 operator directive)** — even on zero findings, fire a short "all clear" line. Silent posts mean we can't distinguish "healthy" from "task dead." Vary content based on findings (full table if hits, one-line OK if not).
-- Post to the bot's primary Slack channel (`#terminal-2-d0` for D-tier subordinates, `#terminal-2-admin` for A1/B1/C1, `#terminal-2-alerts` for cross-cutting global sweep)
-- Tools required: Supabase MCP `execute_sql` + Slack MCP `slack_send_message` (operator must "Run now" once per task to pre-approve)
-- Token discipline: tight payload, table format, no preamble
+**SKILL.md structure** (four labeled sections, trimmed for token discipline; keep ≤~80 lines):
+- **frontmatter** — `name`, `description`.
+- **Process** — the numbered operative steps (check → act → tools).
+- **Red flags** — the must-NOT list.
+- **Verification** — a one-line evidence-based self-check the skill *reasons about* before finishing (phrase as a check, never an action). A `Rationalizations` table (excuse→rebuttal, wired to §3 landmines) is encouraged.
 
-**Minute slot registry (claim by editing this section in your onboarding PR):**
+**Procedures → skills, facts → bibles, link don't copy** — a skill points to `§3`/`§0`/`§14`, never restates them.
 
-| Slot | Bot | Task name |
-|---|---|---|
-| `:00` | A1 | `bot-chat-aging-sweep` (global, posts to `#terminal-2-alerts`) |
-| `:15` | B1 | `b1-security-autocheck` |
-| `:45` | D2 | `d2-bot-chat-monitor` |
-| `:05`, `:10`, `:20`, `:25`, `:30`, `:35`, `:40`, `:50`, `:55` | **available** | — |
-
-**Reference implementation**: `bot-chat-aging-sweep` shipped 2026-05-15 (A1). See `mcp__scheduled-tasks__create_scheduled_task` schema + the prompt embedded in that task's SKILL.md at `C:\Users\julia\.claude\scheduled-tasks\bot-chat-aging-sweep\SKILL.md`.
-
-**Why mandatory**: today's cron cascade incident (bot_chat 195) was caught in 3h by B1's interactive sweep. A1 missed it for that whole window because A1 only had a global aging sweep (every bot's items, no lane-specific focus). Per-bot sweeps catch lane-addressed work fast.
-
-**SKILL.md structure (forward-only, 2026-05-28).** New or revised task `SKILL.md` files use the four labeled sections below. Existing tasks are **grandfathered** — owners upgrade their own opportunistically (lane-scoped; A1 does not rewrite another bot's task file). Adapted from the public `agent-skills` pattern, deliberately trimmed to keep our token discipline: keep the parts that catch real failure modes, drop the verbose boilerplate.
-- **frontmatter** — `name`, `description` (unchanged).
-- **Process** — the numbered operative steps (query → act → tools); same content, just labeled.
-- **Red flags** — the must-NOT list, e.g. "never post to `bot_chat` (feedback loop)"; "a silent run looks identical to a dead task."
-- **Verification** — a one-line self-check the task *reasons about* before finishing, e.g. "confirm exactly one Slack post fired." Phrase as a check, **never an action** — wording it as a step can trigger a duplicate post.
-
-Keep payloads ≤1500 chars and the file ≤~80 lines — brevity beats ceremony; omit any section that doesn't apply.
-
-**Workflow skills — same anatomy, applied to recurring procedures (v1.2 · 2026-06-17).** The same four-section structure now also backs **repo workflow skills** (not just scheduled tasks): the executable form of the `PROJECT_BIBLE.md §8` recipes (author a migration, wire a UI panel, spawn a cron, run a security pass…). They live under `.claude-plugins/terminal2-governance/skills/<name>/SKILL.md` (a `Rationalizations` table — excuse→rebuttal, wired to the §3 landmines — and an evidence-based `Verification` gate are encouraged for these). The split that keeps this from regrowing doc-sprawl: **procedures → skills, facts → bibles, link don't copy** — a skill points to `§3`/`§0`/`§14`, never restates them. First skill: `ship-a-migration` (the full migration lifecycle around the `/new-migration` scaffold).
-- **Discoverability is mechanical, not memory.** A skill only helps if invoked. `.claude-plugins/terminal2-governance/hooks/hooks.json` runs a **PreToolUse** router (`scripts/skill_router.py`) that matches a tool call to a skill and injects a **non-blocking** nudge — e.g. editing `supabase/migrations/*.sql`, calling `apply_migration`, or running DDL via `execute_sql` surfaces `ship-a-migration`. Fires once per (session, skill); `ROUTES` is the single source of truth (one row per wired skill). This is the discoverability counterpart to the PostToolUse governance guard.
+**Discoverability is mechanical, not memory.** `.claude-plugins/terminal2-governance/hooks/hooks.json` runs a **PreToolUse** router (`scripts/skill_router.py`) that matches a tool call to a skill and injects a **non-blocking** nudge (editing `supabase/migrations/*.sql`, `apply_migration`, or DDL via `execute_sql` → surfaces `ship-a-migration`). Fires once per (session, skill); `ROUTES` is the single source of truth.
 
 ### 6. Documentation discipline — the canonical doc set is CLOSED (2026-05-28)
 

@@ -86,6 +86,6 @@ D4 ─┤                                                         │
 
 - **`PROJECT_BIBLE.md`** = current form (what exists, rules). Read first, every session.
 - **This doc** = destination per lane + the endgame. Read to know *which direction* a lane pushes.
-- **[`docs/d_tier_unification_plan.md`](d_tier_unification_plan.md)** = the route (phases, M0–M5, acceptance). Read for *the next concrete step*.
+- **[`docs/d_tier_unification_plan.md`](archive/d_tier_unification_plan.md)** = the route (phases, M0–M5, acceptance). Read for *the next concrete step*.
 
 **Near-term spine:** D2 sales-data backend + D4 free-first launch are the foundation; D1 (secondary → D4 discovery) and D0 (analytics → trading) build on top; D3 widens D0's data; E1 is the long-horizon layer on the mature metrics brain.

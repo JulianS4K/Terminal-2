@@ -59,7 +59,7 @@ C1 runs this audit on every PR being merged as part of consolidation. Findings f
 
 ## C1 daily Step 9 — token discipline audit
 
-Added to [docs/c1_daily_checkpoint_runbook.md](docs/c1_daily_checkpoint_runbook.md). Each checkpoint:
+Added to [docs/c1_daily_checkpoint_runbook.md](docs/archive/c1_daily_checkpoint_runbook.md). Each checkpoint:
 1. Scan `supabase/migrations/*.sql` modified in the last 24h for headers >15 lines. Flag with line count + proposed trim.
 2. `SELECT id, length(message) FROM bot_chat WHERE created_at > now() - interval '24 hours' AND length(message) > 1500` — flag oversized rows.
 3. Note any anti-pattern responses from the daily checkpoint review (self-audit; C1 is not exempt).
