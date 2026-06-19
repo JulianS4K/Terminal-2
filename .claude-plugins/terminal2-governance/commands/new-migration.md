@@ -30,7 +30,7 @@ Scaffold a new migration in `supabase/migrations/` for: $ARGUMENTS
 ## Red flags
 
 - Authoring the file is standing-permitted; **applying it to prod (`apply_migration` / `execute_sql` DDL) requires explicit operator permission per call** (CLAUDE.md §1). Never apply as part of this command.
-- New crons inside the migration must be wrapped with `cron_should_fire` (PROJECT_BIBLE §11 item 6) and respect `CRON_HIERARCHY.md` tiers.
+- New crons inside the migration must be wrapped with `cron_should_fire` (PROJECT_BIBLE §11 item 6) and respect `RESOURCES_BIBLE §5` cron tiers.
 - No literal secrets in SQL — vault references only (`get_app_secret` pattern).
 
 ## Verification

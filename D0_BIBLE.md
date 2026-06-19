@@ -214,7 +214,7 @@ Run these checks before spending tokens on exploratory queries. Prevents re-disc
 5. **Already in a view?** → Check `RESOURCES_BIBLE.md` for `v_canonical_*`, `v_event_*`, `v_sg_*`, `v_bot_chat_*` views before writing raw SQL.
 6. **Migration already shipped?** → `MIGRATION_CONVENTIONS.md` landmark-migration log. Don't re-implement work already in prod.
 7. **Open drift item?** → `KANBAN.md`. If you're debugging something that looks like a known gap, check there first.
-8. **Listings look stale?** → freshness is **horizon-driven** (2026-05-31). A far-horizon event polling slowly is on-cadence, not broken. Check `collector_cadence` + `evo_listings_poll_state` (SG: `sg_event_priority_state.last_fired_listings_at`) before alerting. See §7 + CRON_HIERARCHY §4b.
+8. **Listings look stale?** → freshness is **horizon-driven** (2026-05-31). A far-horizon event polling slowly is on-cadence, not broken. Check `collector_cadence` + `evo_listings_poll_state` (SG: `sg_event_priority_state.last_fired_listings_at`) before alerting. See §7 + RESOURCES_BIBLE §5.
 
 ---
 
@@ -614,7 +614,7 @@ SELECT public.bot_chat_log(
 
 ## 7. Data source freshness expectations
 
-> **Listings freshness is event-horizon-driven now (2026-05-31 collector-cadence cutover).** The old fixed horizon-window collectors are retired — EVO and SG now poll **per event** on a date-horizon band, driven by config in `public.collector_cadence` + per-event state tables (`evo_listings_poll_state`; SG reuses `sg_event_priority_state.last_fired_listings_at`). So "expected freshness" varies by how soon the event is: EVO ≤7d = 15 min … 61d+ = 12 h; SG ≤7d = 1 h … 31d+ = 24 h. The table below = the **near-event** expectation. A "stale" far-horizon event is usually on-cadence, not broken. SG is rate-limited (`p_max=5`); its clock advances only on HTTP 200. Bands: **CRON_HIERARCHY §4b**.
+> **Listings freshness is event-horizon-driven now (2026-05-31 collector-cadence cutover).** The old fixed horizon-window collectors are retired — EVO and SG now poll **per event** on a date-horizon band, driven by config in `public.collector_cadence` + per-event state tables (`evo_listings_poll_state`; SG reuses `sg_event_priority_state.last_fired_listings_at`). So "expected freshness" varies by how soon the event is: EVO ≤7d = 15 min … 61d+ = 12 h; SG ≤7d = 1 h … 31d+ = 24 h. The table below = the **near-event** expectation. A "stale" far-horizon event is usually on-cadence, not broken. SG is rate-limited (`p_max=5`); its clock advances only on HTTP 200. Bands: **RESOURCES_BIBLE §5**.
 
 | Source | Expected freshness (near-event) | Table | Alert if stale > |
 |---|---|---|---|

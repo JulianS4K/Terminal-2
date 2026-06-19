@@ -32,9 +32,8 @@ Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't c
 | [`CLAUDE.md`](CLAUDE.md) | Immutable security + operator lockdown rules · doc-discipline rule *(auto-loaded every session)* |
 | [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md) | Per-session playbook: rule summary · SQL macros · **§3 column landmines** · workflow recipes · self-check |
 | [`D0_BIBLE.md`](D0_BIBLE.md) | Cross-source ID architecture (§3) · **full D0 terminal build manual** (PART 1) |
-| [`RESOURCES_BIBLE.md`](RESOURCES_BIBLE.md) | Resource catalog: external services · DB inventory (key tables/views/fns/crons/edge fns + live counts) · **event taxonomy & RULES** · data buckets · vault-secret names · onboarding recipes |
+| [`RESOURCES_BIBLE.md`](RESOURCES_BIBLE.md) | Resource catalog: external services · DB inventory (key tables/views/fns/crons/edge fns + live counts) · **cron scheduling policy (§5)** · **event taxonomy & RULES** · data buckets · vault-secret names |
 | [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) | Migration filename + header rules · level/lane taxonomy · **landmark-migration log (§14)** |
-| [`CRON_HIERARCHY.md`](CRON_HIERARCHY.md) | Cron scheduling policy + job ownership |
 | [`SYNC_PROTOCOL.md`](SYNC_PROTOCOL.md) | Repo ↔ deploy ↔ DB sync mechanics |
 | [`CHANGELOG.md`](CHANGELOG.md) | Auto-generated release notes (release-please) — **DO NOT hand-edit** |
 | [`KANBAN.md`](KANBAN.md) | Open work · drift watchlist · known data-architecture gaps *(append-only)* |

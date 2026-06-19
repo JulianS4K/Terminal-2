@@ -4,9 +4,8 @@ Operator directive 2026-05-14: "find a way to streamline project from here on ou
 
 This doc captures the failure patterns we observed shipping today and the practices/tooling that prevent them. Companion to:
 - `MIGRATION_CONVENTIONS.md` — slot reservation + ordering rules (canonical)
-- `BOT_HIERARCHY.md` — push restrictions matrix
-- `LANE_DISCIPLINE.md` — per-bot scope
-- `CRON_HIERARCHY.md` — cron tier budgets
+- `PROJECT_BIBLE.md §2` — push restrictions + lane ownership (absorbed BOT_HIERARCHY / LANE_DISCIPLINE)
+- `RESOURCES_BIBLE.md §5` — cron tier budgets
 
 ---
 

@@ -956,7 +956,7 @@ Plus three new chart series powered by `seatgeek_event_metrics`:
 
 ### NEXT (design) — SeatGeek Seller Direct: S4K inventory + sales overlay
 
-> **Status 2026-06-06:** **LISTINGS side shipped** — full-book rolling-cursor pull + AQ map + D0 event-page panel (`get_event_sg_seller_listings_full`, mig `20260606194100`; CRON_HIERARCHY §4c). **ORDERS side (`/orders`, `seatgeek_orders`) is OBSOLETE** (operator directive) — feed is stale to 2025-06 with no payment data; not maintained, do not build the orders overlay below. Real-time upgrade for listings = webhook **D2-OPS-3** (still merged/undeployed).
+> **Status 2026-06-06:** **LISTINGS side shipped** — full-book rolling-cursor pull + AQ map + D0 event-page panel (`get_event_sg_seller_listings_full`, mig `20260606194100`; RESOURCES_BIBLE §5). **ORDERS side (`/orders`, `seatgeek_orders`) is OBSOLETE** (operator directive) — feed is stale to 2025-06 with no payment data; not maintained, do not build the orders overlay below. Real-time upgrade for listings = webhook **D2-OPS-3** (still merged/undeployed).
 
 **What**: SG Seller Direct integration is live. Listings are pulled full-book (rolling cursor) from `sellerdirect-api.seatgeek.com` and AQ-mapped to canonical TEvo events. Every row carries inline event metadata, so `seatgeek_event_xref` / `sg_events_canonical` auto-fill via fuzzy match. *(Orders ingest below is obsolete — see status banner.)*
 
