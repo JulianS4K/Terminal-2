@@ -31,6 +31,7 @@ fastapi = pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
 import app as app_module  # noqa: E402
+import core.auth as core_auth  # noqa: E402  (require_auth + AUTH_DISABLED live here now)
 from fastapi import HTTPException  # noqa: E402
 
 TestClient = starlette_testclient.TestClient
@@ -60,11 +61,14 @@ def _good_user(**overrides) -> dict:
 @pytest.fixture()
 def live_auth(monkeypatch):
     """Force the auth gate ON and stub the Supabase /auth/v1/user lookup."""
-    monkeypatch.setattr(app_module, "AUTH_DISABLED", False)
+    # require_auth reads AUTH_DISABLED as a core.auth module global now.
+    monkeypatch.setattr(core_auth, "AUTH_DISABLED", False)
 
     def _set_user(payload: dict, ok: bool = True):
+        # core.auth.require_auth calls the shared `requests` module — patching
+        # requests.get there reaches it (same module object).
         monkeypatch.setattr(
-            app_module.requests, "get",
+            core_auth.requests, "get",
             lambda *a, **kw: _FakeAuthResponse(payload, ok=ok),
         )
 
