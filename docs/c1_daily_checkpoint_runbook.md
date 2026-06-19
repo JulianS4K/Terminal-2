@@ -133,7 +133,14 @@ For each: comment in `bot_chat` listing them; lane owners reclaim or close.
 
 ### Step 7 — Write the daily summary (3 min)
 
-Author `docs/c1-checkpoint-<YYYY-MM-DD>.md`:
+Author `docs/archive/c1-checkpoint-<YYYY-MM-DD>.md`.
+
+> **Path note (2026-06-19):** the checkpoint MUST live under `docs/archive/`, not
+> bare `docs/`. The `docs-registry` CI gate (`bin/check-docs.sh` check 2, per
+> CLAUDE.md §6) fails any dated / `checkpoint-` file in `docs/` outside
+> `docs/archive/`. Writing to `docs/c1-checkpoint-*.md` is why the 06-08 / 06-10 /
+> 06-16 checkpoint PRs never went green. Archive is the canonical home for durable
+> dated artifacts.
 
 ```markdown
 # C1 Checkpoint — 2026-MM-DD
@@ -163,7 +170,7 @@ Author `docs/c1-checkpoint-<YYYY-MM-DD>.md`:
 Commit to repo:
 ```bash
 git checkout -b claude/c1-checkpoint-<date>
-git add docs/c1-checkpoint-<date>.md
+git add docs/archive/c1-checkpoint-<date>.md
 git commit -m "chore(c1): daily checkpoint <date>"
 git push -u origin claude/c1-checkpoint-<date>
 gh pr create --base main --title "chore(c1): daily checkpoint <date>" ...
