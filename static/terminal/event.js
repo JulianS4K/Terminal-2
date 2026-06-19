@@ -5389,6 +5389,13 @@
       ['retail_p75',             'P75', '$'],
       ['retail_p90',             'P90', '$'],
       ['wholesale_median',       'WHOLESALE', '$'],
+      // Distribution-shape ratios (units from migration 20260425000001 + the
+      // collect-listings collector): dispersion = p75/p25, tail = p90/median —
+      // both ratios → "1.50×"; top5_concentration = numeric(5,4) fraction 0–1 of
+      // tickets in the top-5 sections → a percentage.
+      ['price_dispersion',       'DISPERSION', '×'],
+      ['tail_premium',           'TAIL PREM',  '×'],
+      ['top5_concentration',     'TOP5 CONC',  '%'],
     ];
     function latestNonNullField(col) {
       for (let i = rows.length - 1; i >= 0; i--) {
@@ -5399,10 +5406,18 @@
       }
       return null;
     }
+    // Format by prefix: '$' money (rounded), '×' ratio (2dp, e.g. 1.50×),
+    // '%' fraction→percent (e.g. 0.62→62%), else a plain rounded integer.
+    function fmtSnapVal(val, prefix) {
+      if (prefix === '$') return '$' + T.fmtNum(Math.round(val));
+      if (prefix === '×') return val.toFixed(2) + '×';
+      if (prefix === '%') return Math.round(val * 100) + '%';
+      return T.fmtNum(Math.round(val));
+    }
     const cells = fields.map(([col, label, prefix]) => {
       const found = latestNonNullField(col);
       const valHtml = found
-        ? `<span class="last-snap-val">${prefix === '$' ? '$' : ''}${T.fmtNum(Math.round(found.val))}</span>`
+        ? `<span class="last-snap-val">${fmtSnapVal(found.val, prefix)}</span>`
         : `<span class="last-snap-val dim">—</span>`;
       return `<div class="last-snap-cell"><span class="last-snap-lbl">${label}</span>${valHtml}</div>`;
     }).join('');
