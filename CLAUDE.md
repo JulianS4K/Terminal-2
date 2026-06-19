@@ -50,7 +50,7 @@ A `bot_chat` reply with `event_type='status'` and `p_in_reply_to` set is the **c
 - If you are still working on a thread (acknowledging without fixing), use `event_type='flag'` or `'question'`. These do NOT close the parent — the unresolved view still surfaces it.
 - Premature `status` replies that conflate "I saw this" with "I fixed this" defeat the resolve hygiene. When in doubt, use `flag`.
 
-### 2. Upstream third-party APIs are read-only *(v1.1 · B1 · 2026-06-01)*
+### 2. Upstream third-party APIs are read-only
 
 Applies to **every** external API the project integrates with — TEvo, SeatGeek, SeatData, TickPick, Vivid, and any future client (`*_client.py`).
 
@@ -112,7 +112,7 @@ Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are 
 - Service Tokens are the preferred mechanism for enforcement when feasible (Render's Member-role token can't perform writes by API constraint, providing hard isolation beyond policy). Until tokens are scoped per-bot, the scoping is policy-level and audited via Render's audit log.
 - Cross-service writes (D1 touching D2's service or vice versa) = lane violation, surfaces as `flag` in `bot_chat` per existing cross-lane rules
 
-### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15) *(v1.2 · 2026-06-17)*
+### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15)
 
 Every active bot MUST create its own lane-scoped aging-sweep scheduled task on first activation. Operator-mandated 2026-05-15 (bot_chat 210).
 
@@ -157,7 +157,7 @@ The repo's governance/reference docs are a **closed set**. The registry table in
 - **One fact, one home — never duplicate; link.** If a fact already lives somewhere, point to it (`see <DOC> §<n>`) rather than restating it. Duplicated facts are exactly how these docs drifted out of sync. *(The own-bible model does not relax this: a promoted fact MOVES to the main set — it is not copied into both.)*
 - **Ephemeral work never becomes a new doc.** Audits, checkpoints, session logs, handoffs, status snapshots → use `bot_chat` (durable cross-lane record) or `KANBAN.md` (open work). Only if a durable dated artifact is genuinely needed: `docs/archive/YYYY-MM-DD-<topic>.md` (historical, non-canonical).
 - **Enforcement is a hard CI gate.** `.github/workflows/docs-registry-check.yml` (via `bin/check-docs.sh`) fails any PR that adds a root `*.md` not in the README registry, or drops a dated/working-note file into `docs/` outside `docs/archive/`. It runs server-side — `--no-verify` cannot skip it.
-- **Version docs + tag section changes (2026-05-28).** Each canonical doc carries a `**Doc version:**` line (semver, baseline `v1.0.0`). When you add or materially change a section, tag its heading `(vX.Y · <BOT> · YYYY-MM-DD)` and bump the doc-version line — full convention in [`README.md`](README.md) *Doc-writing rules*. `CHANGELOG.md` is exempt. The gate also fails any registry doc missing its `**Doc version:**` line.
+- **One `**Doc version:**` line per doc; no per-section tags (2026-06-19).** Bump the doc-version line on material change; the gate fails any registry doc (except `CHANGELOG.md`) missing it. Per-heading `(vX · BOT · date)` tags are removed — git blame is the audit trail. Full convention in [`README.md`](README.md) *Doc-writing rules*.
 
 ## Cross-lane writes
 

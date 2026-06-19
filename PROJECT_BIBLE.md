@@ -42,7 +42,7 @@ Sections are numbered so you can Ctrl-F `## N.` to jump. **Read §0 first — it
 
 ---
 
-## 0. The AQ mapper is THE hub — read before any cross-source SQL *(v1.0 · A1 · 2026-06-08)*
+## 0. The AQ mapper is THE hub — read before any cross-source SQL
 
 > **If you internalize one thing from this file, internalize this.** Most wasted sessions trace back to missing it.
 
@@ -71,7 +71,7 @@ Sections are numbered so you can Ctrl-F `## N.` to jump. **Read §0 first — it
 
 ---
 
-## 1. Hard rules (you can't override these) *(v1.1 · A1 · 2026-05-28)*
+## 1. Hard rules (you can't override these)
 
 1. **SQL data is read-only by default.** Any `INSERT`/`UPDATE`/`DELETE`/DDL on prod requires explicit operator permission per call. Standing exceptions: `bot_chat` writes via `bot_chat_log()`, Supabase branch creation (copy-on-write fork, no prod mutation), authoring migration files (apply gated separately).
 2. **Upstream third-party APIs are READ-ONLY.** TEvo, SeatGeek, SeatData, TickPick, Vivid — GET endpoints only. No order POSTs, holds, webhook config changes without explicit operator authorization.
@@ -87,7 +87,7 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
 ---
 
-## 2. Lane assignment — who owns what *(v2.0 · 2026-06-17; merged from BOT_HIERARCHY 2026-06-19)*
+## 2. Lane assignment — who owns what
 
 > **This section is the single source of truth for ownership** (absorbed `BOT_HIERARCHY.md` 2026-06-19 — that file was retired into this bible). It answers "which lane/project owns this tool, table, route, or service." Immutable security invariants → `CLAUDE.md`. Migration mechanics → `MIGRATION_CONVENTIONS.md`. The resource catalog → `RESOURCES_BIBLE.md`.
 
@@ -213,7 +213,7 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 
 ---
 
-## 3. Column-name landmines (catch SQL bugs before you author) *(v1.4 · A1 · 2026-06-10)*
+## 3. Column-name landmines (catch SQL bugs before you author)
 
 Every entry here cost real session time when discovered. CHECK column names against this table FIRST.
 
@@ -270,7 +270,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 
 ---
 
-## 4. Canonical SECDEF RPCs (the hot subset) *(v1.1 · A1 · 2026-06-08)*
+## 4. Canonical SECDEF RPCs (the hot subset)
 
 | RPC | Args | When to call |
 |---|---|---|
@@ -311,7 +311,7 @@ For the full RPC list + arg detail + composition relationships → the migration
 
 ---
 
-## 5. Cross-source bridge topology — see `D0_BIBLE.md §3` (canonical owner) *(v1.1 · A1 · 2026-06-08)*
+## 5. Cross-source bridge topology — see `D0_BIBLE.md §3` (canonical owner)
 
 > **New here? Read §0 first** for the one-paragraph "why" + the mapper-job table; this section is the rule detail.
 >
@@ -343,7 +343,7 @@ SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 
 ---
 
-## 6. MCP tools by lane *(v1.1 · A1 · 2026-05-28)*
+## 6. MCP tools by lane
 
 | MCP family | A1 | B1 | C1 | D0 | D1 | D2 | D3/D4/E1 |
 |---|---|---|---|---|---|---|---|
@@ -356,7 +356,7 @@ SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 | scheduled-tasks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | GitHub (`gh` via Bash) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-### 6a. Read-only / "view-only" attach → layer in the general-data library for color commentary *(v1.0 · D0 · 2026-06-01)*
+### 6a. Read-only / "view-only" attach → layer in the general-data library for color commentary
 
 When this project is attached to a Claude as a **view-only (read-only) data source** — the Terminal Analyst pattern (`docs/d0_terminal_analyst_skill.md`; remote-MCP plan in `docs/d0_llm_analysis_layer_spec.md`) — the AI must **not stop at the ticket-market SQL** (listings / orders / sales). It should **also pull the general / contextual data layer** to add *color commentary* — the "why" behind a price, a mover, or a demand read — always read-only, always grounded in an actual query.
 
@@ -368,7 +368,7 @@ What to reference (the full inventory + freshness is owned by `RESOURCES_BIBLE.m
 
 Rules: color commentary **augments, never replaces** the market numbers; quote exact values, never estimate; flag staleness (much of this layer is built-but-thin — see `RESOURCES_BIBLE.md`); never present context as a pricing decision (human-in-the-loop, per the analyst contract in `CLAUDE.md §2` + the read-only lockdown).
 
-### 6b. Every broker-related answer ends with a verified terminal link *(v1.0 · D0 · 2026-06-01)*
+### 6b. Every broker-related answer ends with a verified terminal link
 
 When you answer a **broker / pricing / event / performer / venue / movers / orders** question (chat, analyst, any surface), **end the answer with a link to the relevant existing terminal page** so the human can jump straight to the live view. **Check the link resolves before you cite it** — confirm it's one of the canonical pages below and, for an entity link, that the id actually resolves in our data (don't hand-wave a URL). If nothing covers the answer — or the entity isn't in our data — **say so plainly instead of inventing a link.**
 
@@ -513,11 +513,11 @@ SELECT public._cron_invoke_edge_fn(
 
 ---
 
-## 8. Workflow recipes *(v1.4 · 2026-06-17)*
+## 8. Workflow recipes
 
 > **These recipes are being converted to executable *workflow skills* (2026-06-17).** A skill is the same steps in the four-section `SKILL.md` form (Process / Red flags / Verification, + a Rationalizations table) under `.claude-plugins/terminal2-governance/skills/<name>/`, surfaced automatically by the PreToolUse `skill_router.py` hook (`CLAUDE.md §5`). Shipped: **`ship-a-migration`** (the recipe below, executable). The recipe text stays here as the human-readable reference; the skill is what an agent runs. Procedures live in skills, facts stay in the bibles — don't duplicate.
 
-### "I want to understand the codebase fast (code knowledge graph)" *(v1.2 · C1 · 2026-06-10)*
+### "I want to understand the codebase fast (code knowledge graph)"
 Cold-start orientation aid. An interactive **code knowledge graph** of the whole repo, built with the [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) Claude-Code plugin (tree-sitter + semantic analysis).
 - **To view (no toolchain): open [`.understand-anything/knowledge-graph-chart.html`](.understand-anything/knowledge-graph-chart.html) in any browser** — a self-contained, offline chart (pan/zoom, layer legend + toggles, search, click-for-details, guided tour). The graph data is committed alongside it at `.understand-anything/knowledge-graph.json`.
 - **To check freshness: `node bin/graph-drift.mjs`** — lists files ADDED (in the repo, not yet in the graph) and REMOVED since the snapshot. When a lane merges new code, run it; fold any additions in as new nodes + grounded edges and refresh `project.gitCommitHash`. (`--check` exits non-zero on drift.)

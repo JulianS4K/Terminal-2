@@ -490,7 +490,7 @@ Emergency override  → tag `urgent-prod-write`, human approval, audit-lane back
 
 ---
 
-## 14. Landmark migration log (don't re-do shipped work) *(v1.1 · A1 · 2026-05-31)*
+## 14. Landmark migration log (don't re-do shipped work)
 
 > Migrated here from `PROJECT_BIBLE.md §9` (2026-05-28) to keep the per-session playbook lean. This is the durable, curated record of migrations that shipped meaningful schema/behavior changes — **check it before authoring** to avoid re-doing work that already landed. It is **not** auto-generated: `CHANGELOG.md` (owned by release-please, generated from conventional commits) is the machine record; this appendix is the hand-curated landmark subset with the "why." A1 appends a row when a landmark migration lands.
 

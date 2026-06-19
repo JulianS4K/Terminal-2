@@ -160,7 +160,7 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ---
 
-## 4b. Listings collection — per-event poller model *(v1.2 · A1 · 2026-06-03)*
+## 4b. Listings collection — per-event poller model
 
 > **Forward note (2026-06-06):** the SG listings/sales + TD cadences in this section were **superseded by the trading-hours redesign in §4c** (market-timed, metronome firing) — **migrations #1–#3 applied to prod 2026-06-06**. The owned/non split below still holds; the per-event *intervals* and TD firing model are now governed by §4c. SellerDirect pagination (#4) remains pending.
 
@@ -198,7 +198,7 @@ Within each tier, minute offsets are spread so no two jobs land on the exact sam
 
 ---
 
-## 4c. Trading-hours cadence redesign — market-timed, distributed firing *(v1.3 · A1 · 2026-06-06)*
+## 4c. Trading-hours cadence redesign — market-timed, distributed firing
 
 > **Status: migrations #1–#4 APPLIED to prod 2026-06-06** (operator-authorized; versions `20260606191854` / `192104` / `192416` / `194100` + `get_event_sg_seller_listings_full` RPC). These supersede the §4b SG/TD cadences (now **live**). #4 = SellerDirect full-book pull + AQ map + D0 FE (operator reversed the earlier hold) — see *SellerDirect finding* below. **EVO is unchanged** (sole TEvo consumer, ≈unlimited → keep §4b bands). Scope: SG broker `/listings` (owned), SG `/sales`, TicketsData (TD) 5 platforms (SH/VD/GT/TP/TM — covered; SeatGeek incl. any TD→SG discovery stays on its native feeds, never routed through TD).
 

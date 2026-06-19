@@ -6,7 +6,7 @@ Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Rend
 
 ---
 
-## Start here (reading order) *(v1.3 · A1 · 2026-06-10)*
+## Start here (reading order)
 
 A cold-started bot should read these three, in order. The first is loaded for you automatically every session; the rest you read once at session start.
 
@@ -46,7 +46,7 @@ Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't c
 
 ---
 
-## Doc-writing rules (enforced by CI) *(v1.1 · A1 · 2026-05-28)*
+## Doc-writing rules (enforced by CI)
 
 Mirrors `CLAUDE.md §6` (loaded every session) — repeated here because this is where the registry lives.
 
@@ -54,14 +54,11 @@ Mirrors `CLAUDE.md §6` (loaded every session) — repeated here because this is
 2. **One fact, one home — never duplicate; link** (`see <DOC> §<n>`). Duplicated facts are how docs drift out of sync.
 3. **Ephemeral work never becomes a new doc.** Audits, checkpoints, session logs, handoffs, status snapshots → `bot_chat` (durable) or `KANBAN.md` (open work). Only if a durable dated artifact is genuinely needed: `docs/archive/YYYY-MM-DD-<topic>.md`.
 4. **The gate is real.** `.github/workflows/docs-registry-check.yml` (via `bin/check-docs.sh`) fails any PR that adds a root `*.md` not in this registry, or drops a dated/working-note file into `docs/` outside `docs/archive/`. It runs server-side — `--no-verify` can't skip it.
-5. **Version every doc; tag every section change.** Each canonical doc carries a `**Doc version:**` line under its title (semver; the closed set baselines at `v1.0.0` on 2026-05-28). When you add or materially change a section:
-   - **Tag the section heading** with `(vX.Y · <BOT> · YYYY-MM-DD)` — a new section starts at `v1.0`; an edit bumps the minor (`v1.1`, `v1.2`, …). Example: `## 4. Canonical SECDEF RPCs *(v1.2 · A1 · 2026-05-28)*`. (Pre-versioning sections carry an implicit `v1.0`; the first edit makes them `v1.1`.)
-   - **Bump the doc-version line** — patch for a wording fix, minor for a new/changed section, major for a structural rewrite.
-   - This gives a **section-level audit trail** — which bot changed what, when. `CHANGELOG.md` is exempt (release-please-generated). The CI gate fails any registry doc (except `CHANGELOG.md`) missing its `**Doc version:**` line.
+5. **One `**Doc version:**` line per doc; no per-section tags.** Each canonical doc carries a single `**Doc version:**` line under its title (the CI gate fails any registry doc except `CHANGELOG.md` missing it). Bump it on material change. **Do not** add per-heading `(vX · BOT · date)` tags — git blame is the audit trail; inline tags are filler for a bot reader. (Removed 2026-06-19.)
 
 ---
 
-## Architecture at a glance *(v1.1 · A1 · 2026-06-10)*
+## Architecture at a glance
 
 ```
 Browser ─► Render (FastAPI + static) ─► Supabase (Postgres + Auth + Edge Functions)
@@ -77,7 +74,7 @@ Browser ─► Render (FastAPI + static) ─► Supabase (Postgres + Auth + Edge
 
 Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIBLE.md §2.7` and `D0_BIBLE.md` (PART 1, deploy chain).
 
-## Repo layout *(v1.1 · A1 · 2026-06-10)*
+## Repo layout
 
 ```
 .
@@ -108,7 +105,7 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 └── <canonical *.md>        the 11 docs in the registry above
 ```
 
-## Build / run / deploy the terminal *(v1.1 · A1 · 2026-06-10)*
+## Build / run / deploy the terminal
 
 The complete cold-start manual — frontend file map, the `T.api()` data-fetch architecture, per-page endpoint/RPC contracts, the auth flow, local dev, and the exact Render deploy chain — lives in **[`D0_BIBLE.md`](D0_BIBLE.md) PART 1**. Quick local run:
 
@@ -123,7 +120,7 @@ uvicorn app:app --reload --port 8765
 
 `http://localhost:8765` → home hub; `/static/terminal/event.html?event=<id>` → D0 broker view.
 
-## Conventions — quick pointers (don't restate; link) *(v1.1 · A1 · 2026-06-10)*
+## Conventions — quick pointers (don't restate; link)
 
 - **Cross-source IDs never line up — resolve through the AQ mapper hub** → `PROJECT_BIBLE.md §0` (one-pager) · `D0_BIBLE.md §3` (full architecture)
 - **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3` + `§7`

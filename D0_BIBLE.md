@@ -48,7 +48,7 @@ There are **two data paths** out of the browser:
 
 *(There is no "Path B" — the A/C labels are historical. The event page uses a **Path C → Path A waterfall**: try RPC v3, fall back to RPC v2, then fall back to 5 parallel REST calls. See §B4.)*
 
-## B2. Frontend file map (`static/terminal/`, 25 files) *(v1.1 · D0 · 2026-06-02)*
+## B2. Frontend file map (`static/terminal/`, 25 files)
 
 **JS modules (11):**
 
@@ -134,7 +134,7 @@ Plus 6 parallel enrichment loaders in `init()` (`event.js:78-86`): `loadCrossSou
   - `/api/broker/movers` (`app.py:3517`; handler `broker_movers` `:3518`; v2 helper `_broker_movers_v2` `:3486`)
   - `/api/broker/event/{id}/overview` (`:2200`), `/chart-data` (`:3033`), `/zones` (`:2411`), `/orders` (`:4139`), `/cadences` (`:3737`)
   - `/api/broker/performer/{id}/assets` (`:1126`)
-- **`/api/axs/*` routes** *(v1.1 · A1 · 2026-06-10)* — `/api/axs/event/{id}` (latest snapshot state), `/sections` (per-section availability+pricing), `/listings` (**EVO-standard consecutive-seat blocks** from `v_axs_listings`: section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only `seat_numbers`), `/series` (price+listing time series for charts). Keyed by `tevo_event_id`; read-only from `axs_*_snapshots`. FE: **AXS Box Office** tab renders the by-section rollup **+** the grouped listings table, plus a sky-blue AXS line (legend toggle) on the median-price and listing-count charts. **Cross-source reuse:** an AXS event, once AQ-mapped to `tevo_event_id`, is a canonical TEvo event already collected by the existing TEvo+SG+TD-markets pollers — so all-marketplace data is automatic (no AXS-specific poller), surfaced via the existing cross-source panel / `get_event_all_source_listing_metrics`. Empty-state until snapshots ingest.
+- **`/api/axs/*` routes** — `/api/axs/event/{id}` (latest snapshot state), `/sections` (per-section availability+pricing), `/listings` (**EVO-standard consecutive-seat blocks** from `v_axs_listings`: section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only `seat_numbers`), `/series` (price+listing time series for charts). Keyed by `tevo_event_id`; read-only from `axs_*_snapshots`. FE: **AXS Box Office** tab renders the by-section rollup **+** the grouped listings table, plus a sky-blue AXS line (legend toggle) on the median-price and listing-count charts. **Cross-source reuse:** an AXS event, once AQ-mapped to `tevo_event_id`, is a canonical TEvo event already collected by the existing TEvo+SG+TD-markets pollers — so all-marketplace data is automatic (no AXS-specific poller), surfaced via the existing cross-source panel / `get_event_all_source_listing_metrics`. Empty-state until snapshots ingest.
 - **CORS** (`app.py:450-477`): `_CORS_ORIGINS` from env `CORS_ALLOWED_ORIGINS`; **default is localhost-only** (`http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000`, `app.py:452`). Wildcards and non-concrete URLs are rejected at boot (`:459-470`). `allow_credentials=True`; methods `GET/POST/DELETE/OPTIONS`; headers `Authorization/Content-Type/X-Cron-Secret` (`:474-476`). **⚠ The CDN origin is not in the default — see §B10 gap #1.**
 - **Security headers** (`_SecurityHeadersMiddleware`, `app.py:480`): CSP `connect-src 'self' https://*.supabase.co`.
 - **Token verification** (`app.py:425-426`): backend POSTs the incoming bearer to `{SUPABASE_URL}/auth/v1/user` with the anon apikey to validate the session server-side.
@@ -168,7 +168,7 @@ Two services, both deploy from `branch: main`:
 - **Optional**: `AUTH_DISABLED=true` to bypass JWT verification in dev (`app.py:224`; ignored in prod `:240`); `CORS_ALLOWED_ORIGINS` (defaults to localhost — fine for same-origin dev).
 - **Static**: FastAPI mounts `/static` from `STATIC_DIR` (`app.py:7940`); the terminal is served same-origin, so `API_BASE` resolves to `''` on localhost (`app.js:32`) and no CORS config is needed locally.
 
-## B9. Charting (uPlot) *(v1.1 · D0 · 2026-06-03)*
+## B9. Charting (uPlot)
 
 Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite `#composite-chart` section with two stacked uPlot panes — **price** (`#chartHostPrice`, medians on a $-axis) + **inventory** (`#chartHostInv`, qty lines + SG sale bars) — sharing one range selector (6h/24h/3d/7d/30d/90d/1y/ALL) + per-source pill toggles. Built in `event.js`: `renderChartPrice`, `renderChartInventory`, Y-range guard `robustYRange`, `clipRangeForHours` (fit-to-history x-axis).
 
@@ -188,7 +188,7 @@ Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite 
 
 ---
 
-## B11. Seat Map — multi-source Tevomaps overlay *(v1.1 · D0 · 2026-06-06)*
+## B11. Seat Map — multi-source Tevomaps overlay
 
 The **Seat Map** tab on `event.html` renders the TEvo interactive venue seatmap and colors each section by a **selected source's** listing floor. Shipped PRs #406-410.
 
@@ -212,7 +212,7 @@ The **Seat Map** tab on `event.html` renders the TEvo interactive venue seatmap 
 
 > What the terminal reads. The terminal itself is read-only against the DB (D0 never writes tables); these are the surfaces it queries.
 
-## 2. "Check before investigating" checklist *(v1.1 · A1 · 2026-05-31)*
+## 2. "Check before investigating" checklist
 
 Run these checks before spending tokens on exploratory queries. Prevents re-discovery of known architecture.
 
@@ -413,7 +413,7 @@ tevo_venue_id
 - Have venue_short_id (from aq_event_map) → `aq_venue_map`
 - Need ESPN venue → `venue_assets.espn_venue_id` directly — no separate ESPN venue table
 
-### 3h. Orders & sales → TEvo (same rule — map via the AQ mapper) *(v1.3 · A1 · 2026-05-30)*
+### 3h. Orders & sales → TEvo (same rule — map via the AQ mapper)
 
 Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a): each row carries the **source's own event id** plus a **derived `tevo_event_id` that is only populated by mapping through the AQ mapper** — freshly-collected orders have it NULL.
 
@@ -467,7 +467,7 @@ Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a
 
 **TD ↔ TEvo linkage warning (pre-mig-380000):** `ticketsdata_event_xref.event_id` is TD's platform-native ID (4.5M–160M range), NOT tevo_event_id. After mig 380000 applied, use `ticketsdata_event_xref.tevo_event_id` directly.
 
-### 4b-axs. AXS tables (primary box office) *(v1.0 · A1 · 2026-06-10)*
+### 4b-axs. AXS tables (primary box office)
 
 | Table | Purpose | Key columns |
 |---|---|---|
@@ -621,7 +621,7 @@ SELECT public.bot_chat_log(
 
 ---
 
-## 7. Data source freshness expectations *(v1.1 · A1 · 2026-05-31)*
+## 7. Data source freshness expectations
 
 > **Listings freshness is event-horizon-driven now (2026-05-31 collector-cadence cutover).** The old fixed horizon-window collectors are retired — EVO and SG now poll **per event** on a date-horizon band, driven by config in `public.collector_cadence` + per-event state tables (`evo_listings_poll_state`; SG reuses `sg_event_priority_state.last_fired_listings_at`). So "expected freshness" varies by how soon the event is: EVO ≤7d = 15 min … 61d+ = 12 h; SG ≤7d = 1 h … 31d+ = 24 h. The table below = the **near-event** expectation. A "stale" far-horizon event is usually on-cadence, not broken. SG is rate-limited (`p_max=5`); its clock advances only on HTTP 200. Bands: **CRON_HIERARCHY §4b**.
 
