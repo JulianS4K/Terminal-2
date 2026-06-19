@@ -3920,9 +3920,15 @@
       return;
     }
     const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client) {
-      if (meta) meta.textContent = 'no auth (Path C unavailable on localhost)';
+    // Require a real SESSION, not just the client object — the client always
+    // exists (built from the publishable key), so checking only `Auth.client`
+    // let a session-less load fall through to the `events` read, which RLS
+    // returns empty → the confusing "event lookup failed / no event row" state.
+    // Gate on the token like the rest of the page so it degrades cleanly.
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (meta) meta.textContent = 'no auth — sign in to view the seat map';
       if (host) host.innerHTML = '<div class="empty">Seat map needs an @s4kent.com session.</div>';
+      if (listBody) listBody.innerHTML = '';
       return;
     }
 
