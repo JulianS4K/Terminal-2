@@ -42,7 +42,7 @@ The `/new-migration` command scaffolds the FILE; this skill is the whole lifecyc
    (`date -u +%Y%m%d%H%M%S`, bump +30/+50 on collision, never +1/+100), filename
    `^\d{14}_[a-z0-9_]+\.sql$`, and the required header block (Lane / Touches W,R / Pre-reqs).
    SECURITY DEFINER fns get the `REVOKE…FROM PUBLIC,anon,authenticated` + `GRANT…service_role`
-   + `current_user NOT IN (...)` guard (`BOT_HIERARCHY §8.5`). New crons wrap `cron_should_fire`.
+   + `current_user NOT IN (...)` guard (`PROJECT_BIBLE §2.8`). New crons wrap `cron_should_fire`.
    → **Checkpoint:** `grep '^-- Lane:'` hits and no `<placeholders>` remain.
 
 5. **Get explicit operator permission to apply.** Applying is NOT standing-permitted.

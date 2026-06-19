@@ -86,10 +86,10 @@ Order tables remain forever-retention (§2.3). SeatData snapshots retained but p
 
 
 
-Companion to `BOT_HIERARCHY.md` (which is *who* can push) and `MIGRATION_CONVENTIONS.md` (which is *how* to push). This doc is *what exists*.
+Companion to `PROJECT_BIBLE.md §2` (which is *who* owns / can push) and `MIGRATION_CONVENTIONS.md` (which is *how* to push). This doc is *what exists*.
 
 Conventions:
-- **Lane** = current owner per `BOT_HIERARCHY.md` (A1/B1/C1/D0/D1/D2/D3)
+- **Lane** = current owner per `PROJECT_BIBLE.md §2` (A1/B1/C1/D0/D1/D2/D3)
 - **PR** = where the resource was created or last meaningfully changed. "pre-history" = predates the current PR numbering (migration timestamp in repo).
 - Sizes in this doc are point-in-time snapshots; track real-time via Supabase dashboard.
 

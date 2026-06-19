@@ -6,7 +6,7 @@ Loaded automatically by Claude Code on every session in this repo. Applies to **
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
-**Before doing anything, read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).** It consolidates the 80% you need from this file + BOT_HIERARCHY.md + MIGRATION_CONVENTIONS.md + data-source docs into a single per-session reference. Saves ~5× the tokens vs reading every governance file at session start.
+**Before doing anything, read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).** It consolidates the 80% you need from this file + lane ownership (its §2, which absorbed `BOT_HIERARCHY.md`) + MIGRATION_CONVENTIONS.md + data-source docs into a single per-session reference. Saves ~5× the tokens vs reading every governance file at session start.
 
 The bible has:
 - Hard rules (no-mutation, read-only-upstream, lane scope)
@@ -22,7 +22,7 @@ The bible has:
 
 This file (CLAUDE.md) remains the canonical source for security rules + lockdown invariants. The bible is the operational handbook bots read once per session.
 
-Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `BOT_HIERARCHY.md` (it absorbed the former `LANE_DISCIPLINE.md` on 2026-05-28). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md`.
+Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `PROJECT_BIBLE.md §2` (which absorbed `BOT_HIERARCHY.md` on 2026-06-19, itself having absorbed `LANE_DISCIPLINE.md`). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md`.
 
 ## Global operator rules (2026-05-13 lockdown)
 
@@ -72,7 +72,7 @@ OK: search / suggestions / events / performers / venues / ticket_groups / listin
 
 Each bot has operational latitude on UI files and JS wiring routed to them. Build, iterate, refactor without per-step approval.
 
-Lane assignments per `BOT_HIERARCHY.md` (4-domain reorg 2026-06-17 — peer domains, not a chain):
+Lane assignments per `PROJECT_BIBLE.md §2` (4-domain reorg 2026-06-17 — peer domains, not a chain):
 - **A1** — data plane (DB + full ingest pipeline + DB security + crons)
 - **B1** — git + code (git/code security, drift, freshness, compartmentalization, tests)
 - **C1** — docs + coordination (`bot_chat`, the main bible set, promotions)
@@ -168,7 +168,7 @@ If your work needs to touch another lane's surface:
 
 ## Push protocol *(reorg 2026-06-17)*
 
-- **Push to `main` is per-task/per-agent, not bot-tier-gated.** A1 + B1 jointly maintain `main`; each task is pushed by the bot it's delegated to, after green CI. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `BOT_HIERARCHY.md §4`.)
+- **Push to `main` is per-task/per-agent, not bot-tier-gated.** A1 + B1 jointly maintain `main`; each task is pushed by the bot it's delegated to, after green CI. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `PROJECT_BIBLE.md §2.3`.)
 - **Prod-DB apply stays centralized on A1** — D-tier has zero Supabase mutation authority; a DB change is filed as a migration + `bot_chat` to A1, who applies it. (Git push ≠ DB apply; only the latter is centralized.)
 - Open a PR per task; CI must be green before merge.
 

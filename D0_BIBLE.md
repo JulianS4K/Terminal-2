@@ -7,7 +7,7 @@
 - **PART 1 — BUILD THE TERMINAL** (§B1–§B10): a cold-start manual. Everything a fresh engineer needs to rebuild the D0 terminal frontend from scratch — file map, fetch architecture, per-page contracts, backend surface, auth, deploy, local dev.
 - **PART 2 — THE DATA LAYER** (§2–§9): what the terminal *reads*. Cross-source ID architecture, table/RPC/view inventory, freshness, ops-health surfaces, diagnostics.
 
-D0_BIBLE owns the **cross-source ID architecture** (§3) and the **terminal build manual** (PART 1). Table/view/function *inventory* lives in `RESOURCES_BIBLE.md`; per-session rules + §3 column landmines in `PROJECT_BIBLE.md`; roster/authority in `BOT_HIERARCHY.md`.
+D0_BIBLE owns the **cross-source ID architecture** (§3) and the **terminal build manual** (PART 1). Table/view/function *inventory* lives in `RESOURCES_BIBLE.md`; per-session rules + §3 column landmines + roster/authority in `PROJECT_BIBLE.md` (ownership in its §2).
 
 > **Tip — orient before you build.** For a fast map of `static/terminal/*` and how it wires to the backend, open the committed **code knowledge graph** chart: [`.understand-anything/knowledge-graph-chart.html`](.understand-anything/knowledge-graph-chart.html) in a browser (architectural layers, file/function relationships, guided tour). Regenerate/explore with `/understand` + `/understand-dashboard`; recipe → `PROJECT_BIBLE.md §8` *("I want to understand the codebase fast")*.
 

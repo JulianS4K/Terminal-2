@@ -4,13 +4,13 @@
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
-> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Push to `main` is per-task** (A1 + B1 jointly maintain `main`, reorg 2026-06-17 — supersedes "A1 sole pusher"); **prod-DB apply stays centralized on A1.** See [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
+> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Push to `main` is per-task** (A1 + B1 jointly maintain `main`, reorg 2026-06-17 — supersedes "A1 sole pusher"); **prod-DB apply stays centralized on A1.** See [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
 
 ---
 
 ## TL;DR
 
-1. **Only the audit lane (now A1 — see [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md)) pushes to production.** Other bots develop in preview branches and open PRs.
+1. **Only the audit lane (now A1 — see [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md)) pushes to production.** Other bots develop in preview branches and open PRs.
 2. **Migrations are file-system ordered** by `YYYYMMDDHHMMSS_*.sql`. Bump by `+30` to `+50` on collisions, never `+1`.
 3. **Single-writer rule per table.** The bot that introduced the table owns writes. Others read.
 4. **Every migration declares its lane** in a standard header block (see §6).
@@ -396,7 +396,7 @@ Some scenarios need to break the rules. The audit lane decides; others propose.
 This document is owned by the audit lane. Updates require:
 1. Audit-lane-authored PR
 2. Brief mention of the change at the top of `KANBAN.md`
-3. If lanes change: update [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) (the roster + push-authority owner) to match
+3. If lanes change: update [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md) (the roster + push-authority owner) to match
 
 If you (any bot) think this doc is wrong or incomplete, open an issue tagged `migration-conventions` — don't edit it yourself unless you're the audit lane.
 
@@ -610,4 +610,4 @@ Emergency override  → tag `urgent-prod-write`, human approval, audit-lane back
 ---
 
 Last updated: 2026-06-08 — SG owned-focus + listings full-count fix (`20260608030000`) + movers agg-timeout fix (`…031000`) + bot_chat auto-resolve & noise sweep (`…032000`), all applied to prod & file-synced to main. | 2026-06-08 — cross-source amalgam value landed to main (mig `20260531214306`: amalgam_getin/median/source_count generated cols + `get_event_amalgam` RPC; applied to prod 05-31 via MCP, file now synced). | 2026-06-03 — added SG owned/non poller split (`20260603180000`), raw-listings retention halve 30d→15d (`20260603190000`), + 3 data-health audit fixes (`20260603200000`–`220000`: seller-listings FK ingest, dedup per-event bound, evo_discover bot_chat_log), all applied to prod (branch `claude/sg-listing-token-spend-Et52v`, PR #423). | 2026-05-31 — added 6 collector-cadence + retention migs (collector_cadence `20260531140000`, EVO poller …150000, SG poller+bands …160000, cron cutover …170000, retention Wave 1 …180000, P0 fixes …200000). | 2026-05-30 — terminal event-page chain timeout audit (mig 20260530120000; branch `a1/terminal-sql-audit-fixes`, applied to prod, not yet pushed to main). | 2026-05-29 — added 7 landmark migs (TD focus 20260529120000, SG floor-sweep …170000, TickPick platform …180000, TP+TM metrics …190000, Ticketmaster platform …200000, TM fixes …210000, TM resale split …220000); all pushed to main. | prior: 2026-05-28 — added §14 landmark migration log (migrated from `PROJECT_BIBLE.md §9`); added roster note reconciling "audit lane" → A1.
-Owner: A1 (formerly "audit lane"; see `BOT_HIERARCHY.md` for the current roster).
+Owner: A1 (formerly "audit lane"; see `PROJECT_BIBLE.md §2` for the current roster).

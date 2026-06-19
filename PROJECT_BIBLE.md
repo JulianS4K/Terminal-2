@@ -16,7 +16,7 @@ This doc is the **operating playbook** — rules, macros, recipes, landmines. Fo
 | What exists? Tables/views/crons/edge-fn inventory | `RESOURCES_BIBLE.md` |
 | **D0-specific: table inventory, cross-source links, ops health, diagnostic SQL** | **`D0_BIBLE.md`** |
 | Where's each lane going? (north-star + endgame) | `docs/d_tier_goals.md` |
-| Who can push to where? | `BOT_HIERARCHY.md` |
+| Who can push / who owns what? | §2 (this file) |
 | How do I apply a migration? | `MIGRATION_CONVENTIONS.md` |
 | Security rules + lockdown invariants | `CLAUDE.md` |
 
@@ -78,7 +78,7 @@ Sections are numbered so you can Ctrl-F `## N.` to jump. **Read §0 first — it
 2. **Upstream third-party APIs are READ-ONLY.** TEvo, SeatGeek, SeatData, TickPick, Vivid — GET endpoints only. No order POSTs, holds, webhook config changes without explicit operator authorization.
 3. **HTML / JS in your assigned lane is free reign** — no per-step approval.
 4. **Render workspace is per-service scoped** (§2 ownership matrix) — **except D0, which has workspace-wide parity with A1 (2026-05-16)**. Cross-service writes by any other lane = lane violation.
-5. **Push to `main` is per-task** — A1 + B1 jointly maintain `main`; the delegated bot pushes its own work after green CI (reorg 2026-06-17, supersedes "A1 sole pusher"). **Prod-DB apply stays centralized on A1** (D-tier has zero mutation authority). See `BOT_HIERARCHY.md §4`.
+5. **Push to `main` is per-task** — A1 + B1 jointly maintain `main`; the delegated bot pushes its own work after green CI (reorg 2026-06-17, supersedes "A1 sole pusher"). **Prod-DB apply stays centralized on A1** (D-tier has zero mutation authority). See §2.3.
 6. **Cross-lane file edits require coordination** via `bot_chat` `question` or PR comment to the lane owner.
 7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
 8. **Check `KANBAN.md §🟢 OPEN WORK` before claiming new work.** It is the single-source-of-truth for what's currently actionable across all lanes — severity-sorted, with the smallest fix for each finding. **Fixing bot DELETES its row from that section in the same PR as the fix** (row's absence IS the closure signal; archive sections below preserve the historical detail). Populate as you go — anyone can add a row; B1 maintains for security findings, each lane for its own. Broadcast: bot_chat 311 (2026-05-17).
@@ -88,15 +88,17 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
 ---
 
-## 2. Bot hierarchy + Render service ownership
+## 2. Lane assignment — who owns what *(v2.0 · 2026-06-17; merged from BOT_HIERARCHY 2026-06-19)*
 
-**Reorg 2026-06-17** — four peer domains (not a command chain); push to `main` is per-task. D1–D4 still paused until D0 ships.
+> **This section is the single source of truth for ownership** (absorbed `BOT_HIERARCHY.md` 2026-06-19 — that file was retired into this bible). It answers "which lane/project owns this tool, table, route, or service." Immutable security invariants → `CLAUDE.md`. Migration mechanics → `MIGRATION_CONVENTIONS.md`. The objective resource catalog → `RESOURCES_BIBLE.md` + `RESOURCES_INVENTORY.generated.md`.
+
+**Four peer domains — coordination is lateral (via `bot_chat`), not a command chain.** No bot reports to another.
 
 ```
-CROSS-CUTTING (serve every lane):
-  A1  data plane     — DB · full ingest pipeline · crons · DB security (RLS/SECDEF/RULE-2)
-  B1  git + code     — git/code security · drift · freshness · compartmentalization · tests
-  C1  docs + coord   — bot_chat · main bible set · own-bible promotions
+CROSS-CUTTING (no surface; serve every lane):
+  A1  data plane   — DB · full ingest pipeline · crons · DB security (RLS/SECDEF/RULE-2)
+  B1  git + code   — git/code security · drift · freshness · compartmentalization · tests
+  C1  docs + coord — bot_chat · main bible set · own-bible promotions · shared-resource register
 
 FRONTEND SURFACES (distinct per surface · own Render + UX/speed testing):
   D0 ★ terminal   D1 store   D2 orders-dashboard   D3 broadway   D4 Exos/Bridge (full app)
@@ -104,18 +106,111 @@ FRONTEND SURFACES (distinct per surface · own Render + UX/speed testing):
 A1 + B1 maintain `main` (push per-task, not by tier).   ★ D0 PRIORITY; D1–D4 paused until D0 ships.
 ```
 
-**Roster — full detail (domain · status · Render scope · push authority) is owned by `BOT_HIERARCHY.md` (single source of truth).** At a glance: **A1 · B1 · C1 · D0 = ACTIVE** (D0 PRIORITY, workspace-wide Render parity with A1); **D1 · D2 · D3 · D4 = PAUSED** until D0 ships (E1 folded — alerting→A1, webhooks→owning lane). Push is **per-task** (A1 + B1 maintain `main`); prod-DB apply stays centralized on A1.
+### 2.1 Lane roster
 
-**Testing-unified (2026-05-16, PR #168)**: all runtime traffic flows through `vibepass-storefront-test` (starter, no cold starts) — it mounts D0 terminal + D1 storefront + D2 dashboard via `app.include_router`. `vibepass-terminal-test` is the D0 static CDN. Full deploy chain → `D0_BIBLE.md` (PART 1, deploy).
+| Lane | Domain | Mandate | Status |
+|---|---|---|---|
+| **A1** | Data plane | Supabase tables/migrations/crons; the **AQ mapper** + cross-source xref; the 9 read-only `*_client.py` + edge functions + **order ingestion** + `app.py` data routes; **DB-layer security** (RLS, SECDEF, RULE-2 lockdown); data freshness + 429/cron monitoring + alerting. | **ACTIVE** |
+| **B1** | Git + code | Git history; **git/code security** (secret leaks, insecure patterns — *not* DB RLS/SECDEF); drift prevention; code freshness; module compartmentalization; test-suite + CI-gate health. | **ACTIVE** |
+| **C1** | Docs + coord | `bot_chat`; the **main bible set** + closed registry + structure; **promotion arbiter** (lane-bible → main set); the **shared cross-lane resource register** (§2.6). | **ACTIVE** |
+| **D0** ★ | Terminal FE | Broker terminal (`static/terminal/*` + `/api/broker/*`); UX + speed testing; owns its Render service; **workspace-wide Render parity with A1**. Gating lane for D1–D4 reactivation. | **ACTIVE — PRIORITY** |
+| **D1** | Storefront FE | Consumer storefront (`static/store/*`, `/api/store/*`); owns `vibepass-storefront-test`. | **PAUSED** |
+| **D2** | Orders dashboard | `d2_dashboard/*`; owns `d2-orders-dashboard`. | **PAUSED** |
+| **D3** | Broadway FE | Broadway surface + `broadway_*`. | **PAUSED** |
+| **D4** | Exos/Bridge — full app | Primary-ticketing app: Stripe checkout + transactional mail + `exos_*` schema; own deploy target. | **PAUSED** |
 
-Code-dir ownership (full per-lane scope → `BOT_HIERARCHY.md`):
-- D0 → `static/terminal/*` + terminal `app.py` routes
-- D1 → `static/store/*` + `/api/store/*`
-- D2 → `d2_dashboard/*`
-- D4 → `d4_bridge/*` (Exos app) + `exos_*` / `bridge_event_xref` migrations (D4 authors; A1 applies)
-- A1 → `supabase/migrations/*`, governance docs, cross-cutting
+> **E1 folded (2026-06-17):** cron/429/Slack alerting + the hourly aging-sweeps (`CLAUDE.md §5`) → **A1**; per-surface webhooks (`stripe-webhook` → D4, `sg-seller-webhook` → A1). **Own-bible model:** each active bot may keep a `<BOT>_BIBLE.md` for lane-local facts; a fact enters the main set only via a C1-reviewed promotion (`D0_BIBLE.md` is the live example).
 
-**D4 / Exos (Bridge)** — primary-market ticketing, greenfield React app on its own `exos_*` schema (Firestore→Supabase complete 2026-05-23, Firebase fully removed). Served at `/bridge/` via the unified Render service (`static/bridge/`, last rebuilt 2026-05-25). Links to canonical events **by value** via `bridge_event_xref` and **never writes D0 tables**. **Full charter, migration state, and build steps → `docs/d4_bridge_charter.md`; open D4 items → `KANBAN.md §🟢 OPEN WORK`.** D4 schema/value landmines stay in §3. (D4 is PAUSED — see roster above.)
+### 2.2 Per-lane writes / never-writes
+
+- **A1** — writes: all migrations (incl. RLS/SECDEF + `*_security_*.sql`); ingest + order tables; `supabase/functions/*` (data pipeline); the 9 `*_client.py`; `app.py` data routes; `requirements.txt`/`Procfile`; `MIGRATION_CONVENTIONS.md`. Reads: everything.
+- **B1** — writes: `KANBAN.md` security backlog; `docs/security-runbook-*.md`; `supabase/functions/_shared/cron-auth.ts`; CI workflows + `bin/`/`scripts/` guard code; cross-cutting security patches (PR comment to the file's owner). No prod tables.
+- **C1** — writes: the main bible set + registry; `bot_chat` checkpoints/drift flags; `docs/c1_daily_checkpoint_runbook.md`. Never applies prod DB (author files only).
+- **D0** — writes: `static/terminal/*` (html/js/css); `docs/d0-*.md`, wireframes; `/api/broker/*` routes (coordinate with A1). **Never writes:** any DB table directly; any cron schedule (author migration, A1 applies); data-mutating edge functions; paused-lane files.
+- **D1–D4 (PAUSED)** — scope preserved in §2.8.
+
+### 2.3 Push authority
+
+**Push to `main` is per-task/per-agent, not bot-tier-gated** — the delegated bot pushes its own work after green CI; A1 + B1 are joint maintainers. **Prod-DB apply stays centralized on A1** (git push ≠ DB apply).
+
+| | Prod DB | `main` | Render | Edge fns | Vault |
+|---|---|---|---|---|---|
+| **A1** | ✅ via MCP | ✅ maintainer | ✅ workspace-wide | ✅ deploy | ✅ rotate/set |
+| **B1** | ✅ DB-security migs | ✅ maintainer | ❌ | ✅ sec only | ✅ |
+| **C1** | ❌ author only | ✅ docs | ❌ | ❌ | ❌ |
+| **D0** | ❌ author only (A1 applies) | ✅ own surface | ✅ **parity with A1** | ❌ | ❌ |
+| **D1–D4** | ❌ (PAUSED) | ✅ own surface when active | own service when active | ❌ | ❌ |
+
+**D-tier has ZERO Supabase mutation authority** — including emergency apply. A DB change is filed as a migration file + `bot_chat` to A1, who applies it. DB security = A1; git/code security = B1.
+
+### 2.4 Single-writer table ownership
+
+One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.md §4`).
+
+| Lane | Tables they write |
+|---|---|
+| **A1** | `event_xref`, `*_xref`, `event_listing_snapshot_daily`, sweep fns, `latest_event_metrics` matview, FRED macro, ESPN tables, `event_movers_index(_history)`, `discovery_gap_alerts`, **order/ingest tables**, **`pg_policies`/RLS** |
+| **B1** | *(no prod tables)* — git history, CI/guard code, `cron-auth.ts`, test suite |
+| **C1** | `bot_chat`, the main bible set + registry, `*_canonical`, `*_resolved` sidecars, `seatgeek_event_xref` |
+| **D0** | `static/terminal/*` (read-only from DB) |
+| **D1** | `share_links` (PAUSED) |
+| **D2** | `evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots` (PAUSED) |
+| **D3** | `broadway_*` (PAUSED) |
+
+### 2.5 Code lane-assignment map (full-tree)
+
+| Path / component | Owner | Notes |
+|---|---|---|
+| `supabase/migrations/*` | **A1** | all schema/data/cron/RLS migrations |
+| `supabase/functions/*` (ingest/drains: `collect*`, `espn*`, `seatdata-poll`, `wiki-collect`, `*-search-bridge`, `seatmap-manifest-sync`, `sg-seller-webhook`, …) | **A1** | data pipeline |
+| `supabase/functions/exos-*` + `stripe-webhook` | **D4** | Exos app edge fns |
+| 9 read-only `*_client.py` (evo/seatgeek/seatdata/ticketsdata/axs/tickpick/vivid/gotickets) | **A1** | GET-only by construction |
+| `broadway_client.py`, `broadway_extension/`, `broadway_*` | **D3** | Broadway scraper |
+| `app.py` | **A1** (file) | shared — D0 owns `/api/broker/*`, D1 owns `/api/store/*` (§2.6) |
+| order tables + ingestion; AQ mapper + `*_xref` + metrics matviews; RLS/SECDEF/RULE-2 | **A1** | cross-source hub + DB security |
+| `bin/*`, `.github/workflows/*`, `.gitleaks*`; `scripts/check_readonly.py`, `tests/*` | **B1** | CI + git guards + tests |
+| canonical `*.md` registry + `.understand-anything/`; `bot_chat` + shared-resource register | **C1** | docs + coordination |
+| `static/terminal/*`, `/api/broker/*`, `render-d0-terminal.yaml`; `static/home/`, `static/undelivered/` | **D0** | terminal FE + own Render + hub |
+| `static/store/*`, `/api/store/*`, `render.yaml` | **D1** | storefront FE |
+| `d2_dashboard/*`, `render-d2-dashboard.yaml` | **D2** | orders dashboard |
+| `d4_bridge/*`, `static/bridge/`, `exos_*` schema | **D4** | Exos/Bridge full app |
+| `requirements.txt`, `Procfile` | **A1** (shape) | lanes add their own deps |
+| `design/`, `docs/archive/` | — | historical / non-canonical |
+
+### 2.6 Shared cross-lane resources — C1-coordinated
+
+The seams where one lane's change can break another's surface. **C1 reviews any change touching these for cross-consumer impact.**
+
+| Shared resource | Writer | Cross-lane consumers | Rule |
+|---|---|---|---|
+| **Venue/seat map** (`lib/tevomaps.bundle.js`, `venue.js`/`event.js`; `cross_source_venue_map`/`aq_venue_map`/`venue_assets`) | D0 (component) · A1 (data) | D0 terminal + D1 `store.js` | a D0 map change must keep store rendering; tail-remap landmine (§3) applies to both |
+| **API surface** — single `app.py` | A1 (file) | D0 `/api/broker/*` · D1 `/api/store/*` · A1 `/api/public/*` | route blocks lane-owned; shared helpers + `/api/public/config` → PR comment to both FE lanes |
+| **`trip_planner/`** | shared (D0+D1) | `/api/broker/.../trip-plan` (D0) + `/api/store/.../trip-plan` (D1) | one engine, two routes; regression-test both |
+| **Order data** — `unified_orders`/`cross_source_orders` | A1 (ingest+view) | D0 `orders.js` tiles + D2 dashboard | a view/schema change must serve both; keys on `tevo_event_id` (unmapped = invisible, §0) |
+| **`*_public` RPCs** — wholesale-filtered read boundary | A1 | D1 store (only path) | D1 may never read `broker_*`/wholesale fields; the whitelist is the contract |
+| **`static/_shared/design-tokens.css`** | shared (FE) | D0 · D1 · D2 · D4 | token change ripples to every surface — coordinate via C1 |
+| **RULE-2 lockdown** — `check_readonly.py`/`test_readonly_guards.py` | B1 (guard) · A1 (policy) | every `*_client.py` + CI | weakening = security-CRIT |
+| **AQ mapper** — `aq_event_map` | A1 | **every lane** resolving cross-source IDs | the #1 fact (§0); never join raw source IDs |
+
+### 2.7 Deploy infrastructure (Render)
+
+| Service | Service ID | Owner | Sub-implementer | Source | IaC |
+|---|---|---|---|---|---|
+| `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
+| `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 (PAUSED) | `app.py`, `static/store/*` | `render.yaml` |
+| `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D2 (PAUSED) | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
+
+**Testing-unified (2026-05-16, PR #168):** all runtime traffic flows through `vibepass-storefront-test` (starter, no cold starts) — it mounts D0 terminal + D1 storefront + D2 dashboard via `app.include_router`. `vibepass-terminal-test` is the D0 static CDN; `d2-orders-dashboard` is an idle placeholder. Both live services auto-deploy from `main` after green CI. **Render access:** A1 + D0 workspace-wide; all others read-only (writes need operator approval). Full deploy chain → `D0_BIBLE.md` (PART 1).
+
+### 2.8 Cross-cutting lane rules + paused-lane scope
+
+1. **Shared files** (`app.py`, `requirements.txt`, `MIGRATION_CONVENTIONS.md`, `KANBAN.md`) — propose via PR comment to the owner before editing.
+2. **Single-writer per table** (§2.4 + `MIGRATION_CONVENTIONS.md §4`).
+3. **Security cross-cutting exception** — B1 may patch any file for a security CRIT/HIGH, surfaced via PR comment to the affected lane.
+4. **Out-of-lane writes** require a PR comment to the lane owner; if offline, `flag` in `bot_chat`. **Never silently write across lanes** — even cache files/logs count.
+5. **SECURITY DEFINER convention** — every new SECDEF fn ships in one migration with `REVOKE EXECUTE … FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE … TO service_role` + a `current_user NOT IN ('service_role','postgres','supabase_admin')` guard at body start.
+
+**Paused-lane scope (D1–D4)** is preserved for clean reactivation in `docs/<bot>_operating_constraints.md` (per-bot self-contracts) + `docs/d4_bridge_charter.md` (D4 full charter). D-tier writes only their own surface; never DB tables (file a migration → A1 applies). **D4/Exos** is primary-market ticketing on its own `exos_*` schema, served at `/bridge/`, linking to canonical events **by value** via `bridge_event_xref` — never writes D0 tables.
 
 ---
 
