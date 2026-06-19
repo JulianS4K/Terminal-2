@@ -42,32 +42,30 @@ Sections are numbered so you can Ctrl-F `## N.` to jump. **Read §0 first — it
 
 ---
 
-## 0. The AQ mapper is THE hub — read before any cross-source SQL
+## 0. AQ mapper is THE hub — read before any cross-source SQL
 
-> **If you internalize one thing from this file, internalize this.** Most wasted sessions trace back to missing it.
+**#1 fact most sessions miss.** Source IDs are source-internal, NEVER align: TEvo `event_id` (3.0–3.4M), SG `sg_event_id` (17M+), TD `event_id` (per-platform), ESPN `espn_event_id` (text), TickPick/Vivid/SeatData. Cross-source join on a raw id = **0 rows**, silently misleads audits.
 
-**Source IDs are source-internal and NEVER line up.** TEvo `event_id` (3.0–3.4M), SeatGeek `sg_event_id` (17M+), TicketsData `event_id` (per-platform native), ESPN `espn_event_id` (text), TickPick/Vivid/SeatData ids — **none of them match each other.** Joining cross-source on a raw numeric/text id returns **0 rows** and silently misleads audits.
+`aq_event_map` (~7,271 rows) is the hub: carries every source id (tevo/sg/sh/vivid/tm + `venue_short_id` + `performer_short_id`), resolves to canonical **`tevo_event_id`/`tevo_performer_id`/`tevo_venue_id`** (bigint). Join key INTO it = **`aq_short_event_id`** (7-char), NOT a source id.
 
-**`aq_event_map` is the one hub everything resolves through.** It carries every source id (`tevo_event_id` / `sg_event_id` / `sh_event_id` / `vivid_event_id` / `tm_event_id` + `venue_short_id` + `performer_short_id`) and the canonical ids everything resolves **to**: **`tevo_event_id` / `tevo_performer_id` / `tevo_venue_id`** (all bigint). The join key into the hub is **`aq_short_event_id`** (the canonical 7-char id) — *not* a source id.
+Hub-and-spoke. Siblings (NOT in hub): ESPN → `event_xref` (`tevo_event_id↔espn_event_id`+`espn_league`; hub has no espn id); venue → `aq_venue_map` (via `venue_short_id`); performer → `aq_performer_map`/`entity_performer_map` (via `performer_short_id`). `ticketsdata_event_xref` joins in on `aq_short_event_id` (~100%).
 
-**It's a hub-and-spoke, not one universal table.** `aq_event_map` is the *event* hub for listing/order sources (SG/SH/Vivid/TM/TP). Three things live on **sibling maps**, not in the hub: **ESPN linkage** → `event_xref` (`tevo_event_id ↔ espn_event_id` + `espn_league`; the hub carries **no** ESPN id), **venue** → `aq_venue_map` (hop via `aq_event_map.venue_short_id`), **performer** → `aq_performer_map` / `entity_performer_map` (via `performer_short_id`). `ticketsdata_event_xref` joins *into* the hub on `aq_short_event_id` (~100%). And the canonical *identifier* everything collapses to is **`tevo_event_id`** — the hub is the resolver *into* that namespace, not the namespace itself.
+**⚠ NOT `canonical_external_ids`** — name looks right, but DORMANT (passive `event_xref` drift feed only). Use `aq_event_map`.
 
-**⚠ Don't mistake `canonical_external_ids` for the hub.** Its name ("master external-id table / generalized cross-source lookup") makes it the obvious wrong guess, but it is **dormant** — designed, never adopted as the operational table, fed only passively by `event_xref` drift triggers. The live, populated hub is `aq_event_map` (7,271 rows). When you want cross-source IDs, go to `aq_event_map`, not `canonical_external_ids`.
+**Orders/sales/listings are source-native-keyed; `tevo_event_id` is DERIVED, often NULL on fresh rows** (`evo_orders` — EVO native id IS tevo id; `tickpick_orders`, `vivid_orders`, `seatgeek_orders`, `sd_sales_normalized`, SG seller book). Terminal views key on `tevo_event_id` → unmapped = INVISIBLE. Never hand-map by name/date — mappers run:
 
-**Orders / sales / listings are source-native-keyed; their `tevo_event_id` is DERIVED and often NULL on fresh rows.** `evo_orders` (EVO is special — its native id *is* the TEvo id), `tickpick_orders`, `vivid_orders`, `seatgeek_orders`, `sd_sales_normalized`, the SG seller book — each holds the source's own event id, and `tevo_event_id` is back-filled asynchronously by the mappers. **Terminal views key on `tevo_event_id`, so an un-mapped row is INVISIBLE** until the mapper runs. Never hand-map by name/date — let the machinery do it:
-
-| Mapper / job | What it maps | Cadence |
+| Mapper / job | Maps | Cadence |
 |---|---|---|
-| `match_to_aq_event_id(...)` / `create_system_aq_event(...)` | any source event → `aq_short_event_id` (4-tier matcher, SYS-md5 fallback) | on demand |
-| `auto_match_sg_canonical_v3()` / `sg_attempt_event_xref_v3(...)` | SG canonical → TEvo (±24h, parking skip) | hourly cron |
-| `backfill_order_tevo_from_aq()` | orders/sales native id → `tevo_event_id` | hourly @ :40 |
-| `sg_seller_sync_and_map()` | SG SellerDirect book → canonical + `tevo_event_id` | `*/15` |
-| `sg_to_tevo_search_bridge` / `aq_tevo_search_candidates(...)` | cold events missing from `events` → TEvo `/v9/events` (SG / non-SG) | cron / drained |
-| `refresh_td_event_links()` | TicketsData xref → TEvo (5-step chain) | nightly |
+| `match_to_aq_event_id(...)` / `create_system_aq_event(...)` | any source event → `aq_short_event_id` (4-tier + SYS-md5 fallback) | on demand |
+| `auto_match_sg_canonical_v3()` / `sg_attempt_event_xref_v3(...)` | SG canonical → TEvo (±24h, parking skip) | hourly |
+| `backfill_order_tevo_from_aq()` | orders/sales native → `tevo_event_id` | hourly :40 |
+| `sg_seller_sync_and_map()` | SG SellerDirect → canonical + `tevo_event_id` | `*/15` |
+| `sg_to_tevo_search_bridge` / `aq_tevo_search_candidates(...)` | cold events missing from `events` → TEvo `/v9/events` | cron/drained |
+| `refresh_td_event_links()` | TD xref → TEvo (5-step chain) | nightly |
 
-**The map can be WRONG — always dedupe + validate before trusting a row.** `aq_event_map`'s PK is `aq_short_event_id`, so **N rows can share one `tevo_event_id`** (un-merged TBD/`system_seed` duplicates + venue+date false matches). A name + league guard (`aq_name_consistent`) now blocks most false binds, but residual same-city TBD-placeholder collisions remain. **Dedupe per `tevo_event_id` and confirm performer/opponent before acting on a single row.**
+**Map can be WRONG.** PK `aq_short_event_id` → N rows can share one `tevo_event_id` (un-merged TBD/`system_seed` dupes + venue+date false matches). `aq_name_consistent` guard blocks most; residual same-city TBD collisions remain. Dedupe per `tevo_event_id` + confirm performer/opponent before trusting a row.
 
-**Go deeper:** the exact column traps live in **§3**, the RPC args in **§4**, the 5 ID rules + the "don't rebuild these" list in **§5**, and the full ID-namespace architecture + every mapping chain in **`D0_BIBLE.md §3`** (canonical owner).
+Deeper: §3 column traps · §4 RPC args · §5 ID rules + don't-rebuild · `D0_BIBLE §3` (full architecture).
 
 ---
 
@@ -311,35 +309,15 @@ For the full RPC list + arg detail + composition relationships → the migration
 
 ---
 
-## 5. Cross-source bridge topology — see `D0_BIBLE.md §3` (canonical owner)
+## 5. Cross-source bridge — full chains in `D0_BIBLE §3a–§3h`
 
-> **New here? Read §0 first** for the one-paragraph "why" + the mapper-job table; this section is the rule detail.
->
-> **Single source of truth moved to `D0_BIBLE.md §3a–§3h` (2026-05-28; orders/sales §3h added 2026-05-30).** The full ID-namespace rules, the `aq_event_map` hub diagram, the TD→TEvo 5-step resolution chain, the **orders/sales → tevo mapping**, and the performer/venue mapping chains all live there with matching detail. This section keeps only the must-know teaser so a non-D0 bot knows the rule and where to look — don't duplicate the chains here.
+§0 = the why + mapper table. Rule recap: (1) never join raw source IDs; (2) `aq_event_map` = hub → canonical `tevo_*`; (3) **`aq_short_event_id` is TWO systems** — `listings_snapshots.aq_short_event_id` = TEvo `SYS-{hex}` **0%-pop** (query by `event_id`); `ticketsdata_event_xref.aq_short_event_id` = 7-char **100%-join** to hub. Never join the two; (4) no numeric bridge → text+date (`performer+date`, or `home+away+date`); never cross-source on `venue_id`; (5) orders/sales native-keyed, `tevo_event_id` derived/NULL → `backfill_order_tevo_from_aq()` :40; unmapped order = invisible.
 
-**The 5 rules that prevent wasted sessions:**
-1. **Source IDs are source-internal — NEVER join cross-source on raw numeric/text IDs.** TEvo `event_id` (3.0–3.4M), SG `sg_event_id` (17M+), TD `event_id`, ESPN `espn_event_id` (text) never line up.
-2. **`aq_event_map` is THE hub** — carries `tevo_event_id` / `sg_event_id` / `sh_event_id` / `vivid_event_id` / `tm_event_id` + `venue_short_id` + `performer_short_id`. Canonical IDs everything resolves to: **`tevo_event_id` / `tevo_performer_id` / `tevo_venue_id`** (all bigint).
-3. **`aq_short_event_id` is TWO different systems** (the #1 landmine): `listings_snapshots.aq_short_event_id` = TEvo `SYS-{hex}`, **0% populated** (query by `event_id`); `ticketsdata_event_xref.aq_short_event_id` = 7-char alphanumeric (e.g. `K9KX32Z`), **100% join** to `aq_event_map`. Never join the two to each other — zero matches guaranteed.
-4. **No numeric bridge → text + date match.** `performer + date` is unique (touring artists don't double-book a market same-day); sports use `home_team + away_team + date`. Never match on source-internal `venue_id` / `sg_venue_id` / `tevo_venue_id` across sources.
-5. **Orders/sales obey the same native-ID rule** *(A1 2026-05-30)*. `evo_orders` / `tickpick_orders` / `vivid_orders` / `seatgeek_orders` / `sd_sales_normalized` carry the **source's own event id** + a *derived* `tevo_event_id` that is often NULL on fresh rows. Map via the AQ mapper — **`backfill_order_tevo_from_aq()`** (hourly @ :40) — never assume a source table is tevo-keyed. Terminal order views (`our_orders_by_event` / `unified_orders_by_event` / v3 `cross_source_orders`) key on `tevo_event_id`, so an unmapped order is **invisible**. EVO is special (its native `event_id` IS the TEvo id). Full detail: `D0_BIBLE.md §3h`.
+**Don't rebuild (exist; args §4):** `cross_source_venue_resolve(name,city,state)`→tevo_venue_id · `sg_attempt_event_xref_v3`/`auto_match_sg_canonical_v3` (SG→TEvo ±24h) · `refresh_td_event_links()` (nightly TD 5-step) · `sg_to_tevo_search_bridge_30min` · `aq_tevo_search_candidates()` (non-SG cold-search) · `sg_seller_sync_and_map()`.
 
-**Do NOT rebuild these — they already exist** (full arg detail in §4 + the migration headers):
-- `cross_source_venue_resolve(name, city, state)` → `tevo_venue_id` (3-tier text match)
-- `sg_attempt_event_xref_v3(...)` / `auto_match_sg_canonical_v3()` → SG→TEvo matcher v3 (±24h, parking skip)
-- `refresh_td_event_links()` (mig 20260528380000) → nightly TD link sync, 5-step chain incl. text fallback
-- `sg_to_tevo_search_bridge_30min` cron → fills `aq_event_map.tevo_event_id`
-- `aq_tevo_search_candidates(p_limit, p_backoff_hours)` (mig 20260605133500) → non-SG (TM/Vivid/SH) cold-search selector → TEvo `/v9/events`
-- `sg_seller_sync_and_map()` (mig 20260606195118) → SG SellerDirect book → `sg_events_canonical` + `seatgeek_seller_listings.tevo_event_id`
+**D0 entry:** `SELECT * FROM _v_d0_event_index WHERE sg_event_id=$1;` — non-SG → `get_broker_event_page_v2($tevo_event_id,168)`.
 
-**D0 canonical entry** (Phase 2a):
-```sql
-SELECT * FROM public._v_d0_event_index WHERE sg_event_id = $1;
--- non-SG events (NFL etc.): v2 RPC resolves via event_xref fallback
-SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
-```
-
-**Snapshot inventory** — before proposing a new snapshot capture, check what firehoses already exist (5 live + 3 order streams + 4 specialized + 4 idle) → `RESOURCES_BIBLE.md` "Snapshot streams" + "D0 tab option matrix". Rule: there's probably already a firehose for what you want — you just need a SECDEF RPC wrapper.
+**New snapshot? Check existing firehoses first** (`RESOURCES_BIBLE §2.2`) — likely already captured; you just need a SECDEF RPC wrapper.
 
 ---
 
@@ -356,35 +334,11 @@ SELECT public.get_broker_event_page_v2($tevo_event_id, 168);
 | scheduled-tasks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | GitHub (`gh` via Bash) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-### 6a. Read-only / "view-only" attach → layer in the general-data library for color commentary
+### 6a. Read-only attach → layer general-data for color commentary
+On a view-only attach (Terminal Analyst, `docs/d0_terminal_analyst_skill.md`), don't stop at market SQL — also pull context for the "why" (read-only, grounded in a query): ESPN (`v_event_full_sports`, `v_espn_injuries_current`, `v_team_recent_results`), weather (`v_event_weather`, `v_event_active_weather_alerts`), social/wiki (`v_event_reddit`, `v_performer_reddit_pulse`); one-call rollup `v_event_why_context`. Augments never replaces numbers; quote exact values; flag staleness (layer is thin); never present context as a pricing decision (human-in-loop). Inventory: `RESOURCES_BIBLE`.
 
-When this project is attached to a Claude as a **view-only (read-only) data source** — the Terminal Analyst pattern (`docs/d0_terminal_analyst_skill.md`; remote-MCP plan in `docs/d0_llm_analysis_layer_spec.md`) — the AI must **not stop at the ticket-market SQL** (listings / orders / sales). It should **also pull the general / contextual data layer** to add *color commentary* — the "why" behind a price, a mover, or a demand read — always read-only, always grounded in an actual query.
-
-What to reference (the full inventory + freshness is owned by `RESOURCES_BIBLE.md` — don't restate it here, just reach for it):
-- **Sports context (ESPN):** injuries, team state / standings, recent results, news, win-prob → `v_event_full_sports`, `v_espn_injuries_current`, `v_team_recent_results`
-- **Weather (NWS/NOAA):** forecasts, active alerts, venue climatology → `v_event_weather`, `v_event_active_weather_alerts`
-- **Social / encyclopedic:** league + performer subreddits (`general_subreddits` / `performer_subreddits`), Reddit pulse, Wikipedia → `v_event_reddit`, `v_performer_reddit_pulse`
-- **One-call rollup:** `v_event_why_context` aggregates the above per event — start here.
-
-Rules: color commentary **augments, never replaces** the market numbers; quote exact values, never estimate; flag staleness (much of this layer is built-but-thin — see `RESOURCES_BIBLE.md`); never present context as a pricing decision (human-in-the-loop, per the analyst contract in `CLAUDE.md §2` + the read-only lockdown).
-
-### 6b. Every broker-related answer ends with a verified terminal link
-
-When you answer a **broker / pricing / event / performer / venue / movers / orders** question (chat, analyst, any surface), **end the answer with a link to the relevant existing terminal page** so the human can jump straight to the live view. **Check the link resolves before you cite it** — confirm it's one of the canonical pages below and, for an entity link, that the id actually resolves in our data (don't hand-wave a URL). If nothing covers the answer — or the entity isn't in our data — **say so plainly instead of inventing a link.**
-
-Canonical terminal pages (served under `/terminal/` — routes in `app.py`, nav in `static/terminal/nav.js`; prefix with the deployed terminal host):
-
-| Surface | Link |
-|---|---|
-| Home / dashboard | `/terminal/` |
-| Event detail | `/terminal/event.html?event=<tevo_event_id>` |
-| Performer | `/terminal/performer.html?performer=<tevo_performer_id>` |
-| Venue | `/terminal/venue.html?venue=<tevo_venue_id>` |
-| Movers | `/terminal/movers.html` |
-| Discovery (blindspots) | `/terminal/discovery.html` |
-| Orders | `/terminal/orders.html` |
-
-The ids are the **canonical `tevo_*` ids** (§5 rule 2) — resolve via `_v_d0_event_index` / the AQ hub, not a source-native id.
+### 6b. End broker answers with a verified terminal link
+Broker/pricing/event/performer/venue/movers/orders answers end with a link to the live terminal page; **verify it resolves** (canonical page + id resolves in our data) before citing — else say so, don't invent. Pages (prefix deployed host): `/terminal/` · `event.html?event=<tevo_event_id>` · `performer.html?performer=<tevo_performer_id>` · `venue.html?venue=<tevo_venue_id>` · `movers.html` · `discovery.html` · `orders.html`. Ids = canonical `tevo_*` (resolve via `_v_d0_event_index`/AQ hub, not source-native).
 
 ---
 
@@ -515,15 +469,13 @@ SELECT public._cron_invoke_edge_fn(
 
 ## 8. Workflow recipes
 
-> **These recipes are being converted to executable *workflow skills* (2026-06-17).** A skill is the same steps in the four-section `SKILL.md` form (Process / Red flags / Verification, + a Rationalizations table) under `.claude-plugins/terminal2-governance/skills/<name>/`, surfaced automatically by the PreToolUse `skill_router.py` hook (`CLAUDE.md §5`). Shipped: **`ship-a-migration`** (the recipe below, executable). The recipe text stays here as the human-readable reference; the skill is what an agent runs. Procedures live in skills, facts stay in the bibles — don't duplicate.
+> Recipes are becoming executable **workflow skills** (`.claude-plugins/terminal2-governance/skills/<name>/`, surfaced by the PreToolUse `skill_router.py`, `CLAUDE.md §5`). Shipped: **`ship-a-migration`**. Procedures → skills, facts → bibles; don't duplicate.
 
-### "I want to understand the codebase fast (code knowledge graph)"
-Cold-start orientation aid. An interactive **code knowledge graph** of the whole repo, built with the [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) Claude-Code plugin (tree-sitter + semantic analysis).
-- **To view (no toolchain): open [`.understand-anything/knowledge-graph-chart.html`](.understand-anything/knowledge-graph-chart.html) in any browser** — a self-contained, offline chart (pan/zoom, layer legend + toggles, search, click-for-details, guided tour). The graph data is committed alongside it at `.understand-anything/knowledge-graph.json`.
-- **To check freshness: `node bin/graph-drift.mjs`** — lists files ADDED (in the repo, not yet in the graph) and REMOVED since the snapshot. When a lane merges new code, run it; fold any additions in as new nodes + grounded edges and refresh `project.gitCommitHash`. (`--check` exits non-zero on drift.)
-- **To regenerate / re-chart:** `/understand` rebuilds the graph (nodes = files/functions/classes/SQL-migration tables/docs/configs/CI-pipelines; edges = imports/contains/exports/tested_by/depends_on/reads_from/writes_to; grouped into architectural layers + a guided tour); `/understand-dashboard` opens the full plugin dashboard on it. **Note:** a full rebuild replaces the hand-curated cross-layer edges — prefer the incremental `graph-drift` + fold-in flow unless the code changed materially.
-- **What's versioned vs not:** the graph JSON + chart HTML + `meta.json` are committed; the heavy scratch (`intermediate/`, `fingerprints.json`, `chart-data.json`) is gitignored. A scoped `.gitleaks.toml` allowlist exempts this generated dir from `secret-scan` false positives (source identifiers like `…fastly…` test names — never real secrets).
-- **Snapshot:** ≈1,900 nodes / 3,500 edges across **17 layers** (Database Migrations, Backend API & Source Clients, D4 Bridge, D0/D1 frontends, Edge Functions, CI/CD, Docs & Governance, …), **0 orphans**, with code→data `reads_from`/`writes_to` edges. Fastest way to see "what talks to what" before touching a lane.
+### "Understand the codebase fast (code knowledge graph)"
+Interactive repo graph (Understand-Anything plugin; ~1,900 nodes / 3,500 edges / 17 layers, 0 orphans, incl. code→data `reads_from`/`writes_to`).
+- **View (no toolchain):** open `.understand-anything/knowledge-graph-chart.html` in a browser (committed alongside `knowledge-graph.json`).
+- **Freshness:** `node bin/graph-drift.mjs` (`--check` exits nonzero on drift) → lists files added/removed since snapshot; fold additions in + refresh `project.gitCommitHash`.
+- **Regenerate:** `/understand` rebuilds (replaces hand-curated cross-layer edges — prefer incremental fold-in); `/understand-dashboard` explores. Graph JSON + chart + `meta.json` committed; scratch gitignored (scoped `.gitleaks.toml` allowlist).
 
 ### "I want to author a migration"
 > **Executable form: the `ship-a-migration` skill** (`.claude-plugins/terminal2-governance/skills/ship-a-migration/`) runs these steps with checkpoints + a verification gate; editing a migration file or calling `apply_migration` auto-surfaces it. The `/new-migration` command scaffolds the file (step 3).
