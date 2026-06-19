@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v2.2.0 (2026-06-19; history in git/CHANGELOG) — §2.5 +`core/*` (BR-CODE-1 core extraction: shared runtime config/auth/db, one-directional import)
+> **Doc version:** v2.3.0 (2026-06-19; history in git/CHANGELOG) — §4/§0: `sg_attempt_event_xref_v3` exact-date guard documented (same-date-first + off-date-series reject, PR #613 / mig 20260619200000) — was read as a naive "±24h, nearest wins" matcher
 
 **Read FIRST every session — but this doc is large; do NOT linear-read it.** Priority read = **§0** (the AQ hub — the #1 fact most sessions miss) + **§1** (hard rules). Then determine your lane (§2) and **jump to the one section your task needs**:
 
@@ -57,7 +57,7 @@ Hub-and-spoke. Siblings (NOT in hub): ESPN → `event_xref` (`tevo_event_id↔es
 | Mapper / job | Maps | Cadence |
 |---|---|---|
 | `match_to_aq_event_id(...)` / `create_system_aq_event(...)` | any source event → `aq_short_event_id` (4-tier + SYS-md5 fallback) | on demand |
-| `auto_match_sg_canonical_v3()` / `sg_attempt_event_xref_v3(...)` | SG canonical → TEvo (±24h, parking skip) | hourly |
+| `auto_match_sg_canonical_v3()` / `sg_attempt_event_xref_v3(...)` | SG canonical → TEvo (±24h window, **same-date-first + off-date-series reject**, name/league + parking guards) | hourly |
 | `backfill_order_tevo_from_aq()` | orders/sales native → `tevo_event_id` | hourly :40 |
 | `sg_seller_sync_and_map()` | SG SellerDirect → canonical + `tevo_event_id` | `*/15` |
 | `sg_to_tevo_search_bridge` / `aq_tevo_search_candidates(...)` | cold events missing from `events` → TEvo `/v9/events` | cron/drained |
@@ -306,7 +306,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `sg_canonical_refresh_v2_pull(window_minutes)` | int (default 15; NULL = full) | Reconciles `sg_events_canonical.last_v2_pull_at` + `last_v2_listings_count` + `last_v2_status` + `has_v2_listings_pulled` from `seatgeek_listings_snapshots`. Cron @ :12,:42. Backfill ran 2026-05-16: 574 rows brought to 100% coverage. |
 | `sg_broker_listings_process(p_limit)` / `sg_broker_sales_process(p_limit)` | int (default **50**) | **Bounded drain** (2026-05-17). Reads `sg_broker_pending` rows that have an `_http_response`, joins `aq_event_map` + `seatgeek_event_xref` once, inserts rows + marks resolved. Cron is the 1-min priority variant only (30-min duplicates unscheduled). If pendings outpace 50/min, raise the param. |
 | `sweep_all_expired_pg_net_pending(ttl_hours)` | int (default 12) | Cron-driven housekeeping. Includes `sg_broker_pending` as of 2026-05-17. Marks `resolved_at = now()` for pendings where the `_http_response` row has been pruned. |
-| `sg_attempt_event_xref_v3(...)` | bigint, text, date, timestamptz, text, [text], [text], [text] | **Matcher v3**: ±24h date tolerance + parking skip + `cross_source_venue_resolve` lookup. Replaces v2 in `cross_source_match_tick`. |
+| `sg_attempt_event_xref_v3(...)` | bigint, text, date, timestamptz, text, [text], [text], [text] | **Matcher v3**: ±24h date tolerance + parking skip + `cross_source_venue_resolve` lookup. Replaces v2 in `cross_source_match_tick`. **Accept-guards (do NOT bypass):** (1) name/league consistency via `aq_name_consistent`/`aq_league_consistent` (mig 20260608194500); (2) **exact-date guard (PR #613, mig 20260619200000):** same-date candidates outrank off-date ones, and an off-date pick is **rejected** when a same-venue, name-consistent **series sibling** exists within ±3d — else the ±24h window binds the *adjacent game of a series* (same teams next day) and the existing-xref early-return never self-corrects. Lone events (no sibling) keep the ±24h timezone fallback. |
 | `auto_match_sg_canonical_v3()` | — | Sweeps all unlinked SG canonical rows through matcher v3. Returns `(attempted, newly_matched, parking_skipped, still_unmatched, needs_tevo_search)`. |
 | `cross_source_venue_resolve(name, city, state)` | text, [text], [text] | Returns `tevo_venue_id` from any-source venue name via 3-tier match (canonical / aliases array / prefix). Driven by `cross_source_venue_map` (391 TEvo rows + 129 SG / 94 TickPick / 85 Vivid aliases as of 2026-05-16). |
 | `refresh_cross_source_venue_map()` | — | Rebuilds `cross_source_venue_map` from events/sg_events_canonical/tickpick_orders.raw/vivid_orders.raw. Idempotent. |
