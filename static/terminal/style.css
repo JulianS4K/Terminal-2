@@ -2174,8 +2174,16 @@ body[data-page="login"] {
   main.wrap { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
   main.wrap > * { grid-column: 1 / -1 !important; }
 
-  /* Hero stacks; KPI hero drops below and left-aligns. */
+  /* Hero stacks; KPI hero drops below and left-aligns. The event hero's real
+     rule is `.wrap.event > #hero` (specificity 0,2,1), so a bare `#hero` here
+     loses and the 2-col grid persists — combined with hero-side's min-width
+     280px + the title's `overflow-wrap:anywhere`, the title column collapses to
+     ~1 char and the name renders vertically. Match the specificity + drop the
+     side rail's min-width so the two halves stack full-width. */
+  .wrap.event > #hero,
   #hero { grid-template-columns: 1fr; gap: 12px; }
+  .hero-side { min-width: 0; align-items: stretch; }
+  .freshness, .coverage { justify-content: flex-start; }
   #kpi { grid-row: auto; text-align: left; }
   .kpi-value { font-size: 24px; }
 
