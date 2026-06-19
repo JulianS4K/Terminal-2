@@ -892,14 +892,8 @@ def public_config():
 
 # ---------- Protected routes ----------
 
-@app.get("/api/config")
-def config_info(user=Depends(require_auth)):
-    return {
-        "supabase_configured": sb is not None,
-        "collect_available": bool(sb is not None and CRON_SECRET and SUPABASE_URL),
-        "env": "sandbox" if SANDBOX else "prod",
-        "user_email": (user or {}).get("email"),
-    }
+# /api/config + /api/cross-source/event/{id} moved to routers/misc.py
+# (BR-CODE-1 slice 10). Wired once below the bootstrap (search "build_misc_router").
 
 
 # /api/events (search) moved to routers/catalog.py (BR-CODE-1 slice 6).
@@ -4495,30 +4489,17 @@ def collect_sg_seller(
 #  routers/seatgeek.py — slice 9)
 
 
-@app.get("/api/cross-source/event/{event_id}")
-def cross_source_event(event_id: int, _=Depends(require_auth)):
-    """One-stop view of all 3 external xrefs for a TEvo event.
-    Returns ESPN + SeatGeek + SeatData ids together so frontend doesn't
-    need 3 separate calls. Free."""
-    db = require_sb()
-    ev = (db.table("events")
-          .select("id,name,occurs_at_local,venue_id,venue_name,primary_performer_id,primary_performer_name,event_type")
-          .eq("id", event_id).limit(1).execute()).data or []
-    if not ev:
-        raise HTTPException(404, f"event {event_id} not found")
-    espn = (db.table("event_xref").select("espn_event_id,espn_league,espn_slug,match_method,matched_at")
-            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    sg = (db.table("seatgeek_event_xref").select("sg_event_id,sg_event_name,sg_event_type,sg_event_location,match_method,matched_at,last_listings_at,last_sales_at")
-          .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    sd = (db.table("seatdata_event_xref").select("sd_event_id,match_method,matched_at,last_paid_pull_at")
-          .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    return {
-        "tevo_event": ev[0],
-        "espn":     espn[0] if espn else None,
-        "seatgeek": sg[0]   if sg   else None,
-        "seatdata": sd[0]   if sd   else None,
-        "matched_count": sum(1 for x in (espn, sg, sd) if x),
-    }
+# (config_info + cross_source_event moved to routers/misc.py — slice 10)
+from routers.misc import build_misc_router  # noqa: E402
+
+app.include_router(build_misc_router(
+    get_sb=lambda: sb,
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+    cron_secret=CRON_SECRET,
+    supabase_url=SUPABASE_URL,
+    sandbox=SANDBOX,
+))
 
 
 @app.post("/api/seatdata/event/{event_id}/sync-sales")
