@@ -189,22 +189,13 @@ Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite 
 ---
 
 ## B11. Seat Map — multi-source Tevomaps overlay
-
-The **Seat Map** tab on `event.html` renders the TEvo interactive venue seatmap and colors each section by a **selected source's** listing floor. Shipped PRs #406-410.
-
-**Library (vendored, not npm).** `lib/tevomaps.bundle.js` = the prebuilt **UMD** bundle of `@ticketevolution/seatmaps-client@5.0.0` (`dist/bundle.js`), exposing global `window.Tevomaps`. React+ReactDOM are bundled in, so there is **no build step and no React dep** — it loads via a plain `<script>` exactly like `uplot.iife.min.js`. Provenance/sha/license in `lib/tevomaps.bundle.NOTICE.md` (package is `UNLICENSED` — used under the TEvo broker relationship, vendored at operator direction). To update: re-`npm pack`, copy `dist/bundle.js`, refresh the sha.
-
-**Inputs (all already in our DB — pure Path-C, no backend change).**
-- `venueId` ← `public.events.venue_id`; `configurationId` ← `public.events.configuration_id` (both read directly, RLS-OK).
-- Section→floor `ticketGroups` per source, fetched **by tevo event_id** (each RPC resolves the cross-source bridge itself): EVO `get_event_evo_listings_full`, SG `get_event_sg_listings_full`, SH/GT/VD `get_event_td_listings(p_tevo_event_id, p_platform, p_hours)`.
-
-**Runtime fetch + CSP.** The library fetches `https://maps.ticketevolution.com/{venueId}/{configurationId}/{map.svg,manifest.json}` from the **browser**. `event.html`'s `<meta>` CSP `connect-src` MUST include `https://maps.ticketevolution.com` (added in #406). The maps host is **not reachable from CI/agent/SQL envs** (egress allowlist) — only a real browser renders it.
-
-**Section-name mapping (the gotcha — see PROJECT_BIBLE §3 landmine).** The manifest keys sections by **full descriptive names** (`Lower Level Corner 104`, `Chase Bridges 316`, `Floor 2`), but every source stores only the trailing token (`104`). The map matches `tevo_section_name` *exactly* (lowercased). So `loadSeatmap` fetches the manifest, reduces both sides to a **tail** (trailing digits + short letter suffix), and remaps our tokens → full names before handing them to `SeatmapFactory`. Tail collisions (`2` → `Floor 2` *and* `Event Level Suites 2`) prefer the `Floor N` key; other collisions are left uncolored (still listed).
-
-**Multi-source selector.** Map renders once (default TEvo); the selector re-colors by **one** source at a time via `api.updateTicketGroups()` (never collective) and swaps the listing table. Sources: **TEvo · SeatGeek · StubHub · GameTime · VividSeats · TickPick**. **TP is ZONE-MAPPED** — it lists whole bands (`100s`/`200s`/`400s`/`Lower`/`Suites`), not seat sections, so `_seatmapZoneKeys` expands each zone label to the SET of manifest sections it covers (hundreds-band by section-number digit; named tier by a word the manifest key contains) and paints them all at the zone's floor; `_seatmapIsZoneSource` flags it, and it's excluded from auto-pick (whole-band paint over-counts vs section-level sources). **TM still excluded** (primary/box-office, no section-level resale). The `Floor N`↔`VIP N` tail-collision is resolved by `_smPick` T4b (prefer the unique `Floor`-named candidate — matches the documented tie-rule above); this colors the courtside floor sections (`2/4/6/8/10/11/12` + `D` variants) for every section-level source. Coverage on MSG/Knicks: GT ~100%, VD ~99%, SH ~96%, SG ~87% (section-level); the only non-mapping residue is inherently zone-level with no section number (`lower level`, `100 Level`, bare `madison club`, club/fan buckets). Every listing whose section does NOT resolve to a manifest key (so the map leaves it grey) is tagged in the listing table with an **`unmapped`** pill + amber row tint (`_seatmapRowMapped`) and a per-source count footer — a spot-check affordance for the residue.
-
-**Map availability across inventory.** ~100% of upcoming events carry `venue_id`+`configuration_id` (can attempt), but only **~79 configurations / 72 venues** carry a `v_broker_configurations.fanvenues_key` (our in-DB "interactive map exists" proxy; covers ~1,483 upcoming events). True CDN coverage is `≥79` and browser-probe-confirmable only. See KANBAN for the coverage-probe follow-up.
+`event.html` Seat Map tab: TEvo interactive seatmap, sections colored by a selected source's listing floor (PRs #406-410).
+- **Library:** `lib/tevomaps.bundle.js` = vendored UMD `@ticketevolution/seatmaps-client@5.0.0` (global `window.Tevomaps`, React bundled → no build step). License/sha → `lib/tevomaps.bundle.NOTICE.md` (UNLICENSED; TEvo broker relationship). Update: re-`npm pack`, copy `dist/bundle.js`, refresh sha.
+- **Inputs (Path-C, no backend):** `venueId`←`events.venue_id`, `configurationId`←`events.configuration_id`; per-source `ticketGroups` by tevo event_id via `get_event_evo_listings_full` / `get_event_sg_listings_full` / `get_event_td_listings(tevo_event_id,platform,hours)`.
+- **CSP:** library fetches `maps.ticketevolution.com/{venueId}/{configurationId}/{map.svg,manifest.json}` from the browser → `event.html` `<meta>` CSP `connect-src` must include that host (#406). Not reachable from CI/agent/SQL (egress allowlist) — only a real browser renders it.
+- **Section-name gotcha (`PROJECT_BIBLE §3`):** manifest keys = full names (`Lower Level Corner 104`); sources store only the tail token (`104`); map matches `tevo_section_name` exactly (lowercased). `loadSeatmap` reduces both to a tail (digits + short suffix), remaps token→full name. Tail collision (`2`→`Floor 2` & `Event Level Suites 2`) prefers `Floor N`; others grey.
+- **Selector:** renders once (TEvo default); re-colors one source at a time via `api.updateTicketGroups()`. Sources: TEvo/SG/StubHub/GameTime/VividSeats/TickPick. **TP is ZONE-MAPPED** (whole bands `100s`/`Lower`/`Suites` → `_seatmapZoneKeys` expands to the section set; `_seatmapIsZoneSource`; excluded from auto-pick — over-counts). **TM excluded** (primary box-office). `Floor N`↔`VIP N` → `_smPick` T4b prefers unique Floor key. Coverage MSG/Knicks: GT ~100%, VD ~99%, SH ~96%, SG ~87%; residue is zone-level (no section #). Unmapped sections → `unmapped` pill + amber tint (`_seatmapRowMapped`) + per-source count footer.
+- **Availability:** ~100% upcoming events have `venue_id`+`configuration_id`; only ~79 configs / 72 venues have `v_broker_configurations.fanvenues_key` (in-DB "map exists" proxy; ~1,483 events). True CDN coverage ≥79, browser-probe-confirmable only (KANBAN follow-up).
 
 ---
 
@@ -638,21 +629,8 @@ SELECT public.bot_chat_log(
 
 ---
 
-## 8. Current cron health snapshot (2026-05-28)
-
-| Cron | Status | Issue |
-|---|---|---|
-| TEvo: collect-listings-* (5 crons) | ✅ | |
-| TEvo: evo_discover_new_events | ❌ | bot_chat_log called with 5th arg 'D0' — needs migration fix |
-| TEvo: listings_aq_backfill_overnight | ❌ | pg_cron 120s hard limit — open KANBAN item |
-| SG: **sg_listings_floor_sweep** | ✅ | **NEW 2026-05-29** — fair round-robin `*/2 × 4`, adaptive-gated on `ratelimit-remaining`. **Replaces** sg_broker_listings_queue_5min + _peak + sg_priority_poll_tick_5min (all DISABLED 2026-05-29; they starved low tiers + burst-collided). |
-| SG: sg_blindspot_poll_5min | ❌ | deadlock on sg_event_priority_state UPDATE |
-| TD: **td_tp_discover / _drain / td_enqueue_peak_tp** | ✅ | **NEW 2026-05-29** — TickPick platform for the focus events (22 TP xref: 20 Yankee Stadium + 2 MSG). |
-| ESPN: all 8 crons | ✅ | |
-| TD: td_pull_drain, td_normalize_drain | ✅ | |
-| Sweep: sweep-old-listings, sweep-old-sg-listings | ✅ | Fixed mig 360000 |
-| Movers: compute-event-movers | ✅ | Fixed mig 370000 |
-| TD links: refresh-td-event-links | ✅ | New mig 380000 |
+## 8. Cron health — live, not snapshotted
+Don't trust a dated snapshot here. Cron catalog → `RESOURCES_BIBLE §5`; live status → §9 query below + `v_cron_health`; open failures → `KANBAN`.
 
 ---
 
