@@ -2167,8 +2167,19 @@ body[data-page="login"] {
   /* Respect the notch / home indicator (viewport-fit=cover). */
   body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
   .topbar { padding-top: calc(8px + env(safe-area-inset-top)); flex-wrap: wrap; }
-  .topbar .status { margin-left: 0; }
+  .topbar .status { margin-left: auto; }
   .live-pill { margin-left: auto; }
+  /* The nav is a no-wrap flex row of 8 links whose combined min-content (~560px)
+     can't shrink below the phone width — the single biggest source of sideways
+     scroll on EVERY page. Let it wrap onto its own full-width row(s), drop the
+     side margins, and allow it to size below its content. */
+  .topbar nav.pagenav {
+    flex: 1 1 100%; margin: 6px 0 0; min-width: 0;
+    flex-wrap: wrap; justify-content: flex-start;
+  }
+  .topbar nav.pagenav a { padding: 6px 8px; }
+  /* Global search drops to its own full-width row instead of forcing 320px. */
+  .term-search { flex: 1 1 100%; margin: 6px 0 0; }
 
   /* Collapse the 12-col grid → single column; every panel spans full width. */
   main.wrap { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
@@ -2187,8 +2198,28 @@ body[data-page="login"] {
   #kpi { grid-row: auto; text-align: left; }
   .kpi-value { font-size: 24px; }
 
+  /* Control-button groups must wrap within themselves — discovery packs ~11
+     filter buttons into one .ctrl-group and movers' SOURCE has 6; a no-wrap
+     group is wider than the phone and forces sideways scroll. */
+  .ctrl-group { flex-wrap: wrap; }
+  /* Dense card / cell grids collapse on a phone. */
+  .movers-grid { grid-template-columns: repeat(2, 1fr); }
+  .merge-grid, .feature-grid { grid-template-columns: 1fr; }
+  .mg-cell, .ft-cell { overflow-wrap: anywhere; }
+
   /* KPI grid → 2 columns on a phone. */
   #kpi-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Home coverage band (4-col) + performer/venue rollup KPIs (6-col) are far
+     too dense for a phone — the values overflow their cells. Collapse them. */
+  .coverage-grid { grid-template-columns: repeat(2, 1fr); }
+  .rollup-grid   { grid-template-columns: repeat(3, 1fr); }
+
+  /* Performer/venue hero: shrink the logo column so a long name has room and
+     never gets squeezed to a vertical sliver (same failure mode as #hero). */
+  #perf-hero, #venue-hero { grid-template-columns: 64px 1fr; gap: 12px; }
+  #perf-hero .ph-left img, #venue-hero .ph-left img { width: 56px; height: 56px; }
+  #perf-hero .ph-right .title, #venue-hero .ph-right .title { font-size: 18px; overflow-wrap: anywhere; }
 
   /* Dense tables: scroll the table itself rather than blow out the layout. */
   table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
