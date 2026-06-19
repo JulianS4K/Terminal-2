@@ -1,6 +1,8 @@
 # SYNC_PROTOCOL.md
 
-> **Doc version:** v1.0.0 · baseline 2026-05-28 (A1). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **⚰️ ARCHIVED 2026-06-19 — superseded.** This protocol described the May multi-bot, A1-merges-everything world (SYNC CHECKPOINT broadcasts, baton-passing, daily sync ritual, 3-track A1-review SLAs, slot-reservation). The **2026-06-17 per-task-push reorg** retired that model. The still-live rules moved to **`MIGRATION_CONVENTIONS.md`**: apply-before-PR → §11.1, branch/PR naming → §11.2 (+ enforced by the `pr-title-lint` workflow), migration-slot collision → §3, pre-PR checks → the PR template. Kept here only for the decision trail. **Do not treat as current.**
+
+> **Doc version:** archived (history in git/CHANGELOG)
 
 **Goal: shrink the time from "a bot has a change ready" to "every other bot is back in sync with prod."**
 

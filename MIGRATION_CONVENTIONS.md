@@ -260,26 +260,12 @@ When a migration breaks production, the first 30 seconds of debugging is reading
 
 ---
 
-## 7. Vault secrets
+## 7. Vault secrets (process; current name list → `RESOURCES_BIBLE §7`)
 
-### Naming
-```
-<DOMAIN>_<PURPOSE>
-```
-
-Examples:
-- `FRED_API_KEY` — audit lane (macro)
-- `ESPN_API_KEY` — audit lane (ESPN ingest)
-- `TEVO_BROKER_TOKEN` — audit lane (TEvo)
-- `BROADWAY_SCRAPER_USER_AGENT` — broadway lane
-- `STRIPE_API_KEY` — storefront lane (when added)
-
-### Rules
-
-- **One secret per service per lane.** Don't share keys across bots even for the same upstream service — auditing access becomes impossible.
-- **Document new secrets in the migration header** (`Pre-reqs: vault.YOUR_SECRET`).
-- **Rotation policy:** keys rotate annually or on suspected compromise. Audit lane drives rotation.
-- **Never check secrets into git.** If a secret leaks into a migration file, the audit lane rejects the PR and rotates the key.
+- **Naming** `<DOMAIN>_<PURPOSE>` (e.g. `FRED_API_KEY`). One secret per service per lane; document new ones in the migration header (`Pre-reqs: vault.<NAME>`). **Never** check a secret into git (leak ⇒ reject PR + rotate).
+- **Storage:** Supabase vault (`vault.secrets`, preferred — rotate in one SQL call) or Edge/Render env for boot-time bootstrap (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`).
+- **`get_app_secret(name)` whitelist:** `get_app_secret`/`upsert_app_secret` are SECDEF + service-role-only, enforcing a hardcoded name whitelist. Add a secret = (1) add the name to the whitelist constant in **both** fns; (2) seed via `vault.create_secret`/`upsert_app_secret`; (3) add it to `RESOURCES_BIBLE §7`; all same PR.
+- **Rotation** (annual or on compromise): `SELECT vault.update_secret(s.id,'<new>') FROM vault.secrets s WHERE s.name='<NAME>';` then update any pinned env (`supabase secrets set`, Render) + bounce cached workers. Never insert a duplicate-name row (name is unique; helpers read by name).
 
 ---
 
@@ -389,6 +375,12 @@ Some scenarios need to break the rules. The audit lane decides; others propose.
 
 **Never `DROP TABLE` to "start over."** The data on the production table is real and other bots may depend on it.
 
+### 11.1 Apply-before-PR (idempotent + reversible only)
+When a migration is **idempotent** (`CREATE OR REPLACE`, `… IF NOT EXISTS`, `DROP … IF EXISTS`, `cron.un/schedule`) **and reversible** (no data loss without an opt-in flag), A1 may apply via MCP **before** opening the PR; the PR is then the idempotent codification (re-apply = no-op). **Allowed:** `CREATE OR REPLACE FUNCTION`, `CREATE/DROP INDEX IF [NOT] EXISTS`, matview `WITH NO DATA` + REFRESH, `cron.schedule/unschedule`, `GRANT`/`REVOKE`, `COMMENT`, seed rows `ON CONFLICT DO NOTHING`. **BANNED:** `DROP TABLE`/`COLUMN`/`TYPE`, `DROP CONSTRAINT … CASCADE`, anything breaking a live consumer mid-flight, any cross-lane change without prior `bot_chat` ack. When applied early, the PR body states `## Already applied to prod — Applied via MCP <ts>; idempotent codification` + a test-plan line confirming re-apply is a no-op.
+
+### 11.2 Branch + PR naming
+Branch `claude/<lane-short>-<purpose-slug>` (lowercase lane: `a1/b1/c1/d0/…`). PR title `<type>(<lane>): <short imperative>` (Conventional Commits `feat/fix/chore/docs/perf/refactor`) — **enforced by the `pr-title-lint` workflow**; squash-merge keeps `…(#<pr>)` in the subject.
+
 ---
 
 ## 12. Document maintenance
@@ -402,81 +394,10 @@ If you (any bot) think this doc is wrong or incomplete, open an issue tagged `mi
 
 ---
 
-## 12. Vault secrets — whitelist + rotation policy (added 2026-05-11 security chat)
-
-Every secret used by any code path in this repo must live in **one of two places**:
-1. **Supabase vault** (`vault.secrets`) — preferred; rotation is one SQL call, no migration cycle, no env redeploy.
-2. **Railway / Supabase Edge Function env vars** — for things the runtime needs at boot before it can talk to Postgres (the bootstrap secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`).
-
-NEVER place a secret directly in repo source (this includes migration DDL, KANBAN/AGENTS notes, edge function code, HTML, `.env.example` with real values).
-
-### 12.1 The `get_app_secret` whitelist (single source of truth)
-
-`public.get_app_secret(name)` and `public.upsert_app_secret(name, value)` are SECURITY DEFINER + service-role-only. Both enforce a hardcoded **whitelist** of allowed secret names. To add a new secret you must:
-
-1. Modify the whitelist constant inside both functions (additive — never remove a name without auditing callers).
-2. Seed the secret via `vault.create_secret(value, name)` or `upsert_app_secret(name, value)`.
-3. Add a row to the `vault.secret_metadata` view (see §12.3).
-4. Document in this file under §12.4.
-
-### 12.2 Rotation procedure
-
-```sql
--- 1. Generate a new value (out-of-band, do NOT log it).
--- 2. Update vault:
-SELECT vault.update_secret(s.id, '<new value>')
-FROM vault.secrets s WHERE s.name = '<SECRET_NAME>';
--- 3. If the secret is also pinned to an env var (e.g. CRON_SECRET):
---    - railway variables --set "<NAME>=<new value>"
---    - supabase secrets set <NAME>="<new value>"
--- 4. Update the metadata view (§12.3) so the next audit shows fresh rotation.
--- 5. Bounce any worker that caches at boot (FastAPI on Railway redeploys automatically).
-```
-
-**Never rotate by inserting a new row with the same name** — `vault.secrets.name` is unique, and the helpers read by name. Always `update_secret`.
-
-### 12.3 Audit query
-
-A migration should land a `vault.secret_metadata` view (or table if vault doesn't allow views over `secrets`) of the shape:
-
-```sql
-CREATE OR REPLACE VIEW public.v_vault_secret_metadata AS
-SELECT
-  s.name,
-  s.created_at,
-  s.updated_at,
-  m.owner_lane,
-  m.last_rotated_at,
-  m.notes
-FROM vault.secrets s
-LEFT JOIN public.vault_secret_metadata m ON m.name = s.name;
-GRANT SELECT ON public.v_vault_secret_metadata TO service_role;
--- DO NOT GRANT to anon / authenticated / coworker_readonly.
-```
-
-(Migration to land this is a follow-up — tracked in KANBAN as `[SEC-LOW] Document get_app_secret whitelist`.)
-
-### 12.4 Current whitelist (as of 2026-05-11)
-
-| Secret name | Owner lane | Reader | Purpose |
-|---|---|---|---|
-| `CRON_SECRET` | xref+macro | app.py + edge fns + cron jobs | Cron-driven endpoint auth |
-| `EDGE_FN_ANON_JWT` | xref+macro | cron jobs | Bearer auth for edge fn invocation |
-| `SEATDATA_API_KEY` | canonical | seatdata_client | Upstream API auth |
-| `TEVO_API_TOKEN` | canonical | evo_client | Upstream API auth |
-| `TEVO_SECRET` | canonical | evo_client | Upstream API auth |
-| `SEATGEEK_API_TOKEN` | canonical | seatgeek_client | Upstream API auth |
-| `FRED_API_KEY` | xref+macro | macro fn | Upstream API auth |
-| `anthropic_api_key` | canonical | chat edge fn | LLM auth |
-
-Adding a new entry requires both the whitelist update AND a row in this table (same migration).
-
----
-
 ## 13. Quick reference card
 
 ```
-Production push     → audit lane only
+Production push     → per-task (A1 + B1 maintain main); prod-DB apply A1-only
 Migration timestamp → YYYYMMDDHHMMSS, bump +30/+50 on collision
 Filename            → <timestamp>_<lane>_<desc>.sql
 Header              → Lane / Touches / Pre-reqs (mandatory)

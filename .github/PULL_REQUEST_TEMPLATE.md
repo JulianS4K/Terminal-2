@@ -1,12 +1,11 @@
 <!-- Fill every field. Admin blocks PRs missing fields. See README.md +
-     SYNC_PROTOCOL.md (track + checklist) + MIGRATION_CONVENTIONS.md. -->
+     MIGRATION_CONVENTIONS.md (shipping rules + checklist). -->
 
 **Level**: <!-- admin | security | supervisor | primary-sales | secondary-sales | data-collection -->
 **Lane**: <!-- e.g. "Terminal Front End", or A1 / B1 / C1 / D0 / D1 / D2 / D3 -->
-**Branch**: <!-- claude/<lane>-<slug>, per SYNC_PROTOCOL §8 -->
-**Track**: <!-- 🟢 fast | 🟡 careful | 🔴 emergency — see SYNC_PROTOCOL §2 -->
+**Branch**: <!-- claude/<lane>-<slug>, per MIGRATION_CONVENTIONS §11.2 -->
 
-## Pre-PR checklist (SYNC_PROTOCOL §3)
+## Pre-PR checklist (MIGRATION_CONVENTIONS)
 - [ ] Rebased / merged with `origin/main` immediately before opening
 - [ ] `bash scripts/check_sync.sh` prints SYNCED
 - [ ] Migration slot reserved in `bot_chat` (Careful track DDL only)
@@ -35,7 +34,7 @@
 
 ## Already applied to prod
 <!-- Idempotent + reversible migrations may be applied via MCP before PR open
-     (SYNC_PROTOCOL §5). If so, state: "Applied via MCP at <timestamp UTC>;
+     (MIGRATION_CONVENTIONS §11.1). If so, state: "Applied via MCP at <timestamp UTC>;
      this PR is the idempotent codification. Re-apply is a no-op." Otherwise
      delete this section. -->
 
