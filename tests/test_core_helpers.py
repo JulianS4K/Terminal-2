@@ -14,7 +14,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from core.helpers import classify_playoff, delta, listings_cadence_seconds  # noqa: E402
+from core.helpers import (  # noqa: E402
+    classify_playoff, delta, listings_cadence_seconds,
+    or_ilike_clause, is_speculative_event_name, classify_world_cup,
+)
 from core.broker_helpers import bulk_performer_assets, bulk_event_context  # noqa: E402
 
 
@@ -167,3 +170,45 @@ def test_bulk_event_context_playoff_series_tag_beats_name():
     })
     out = bulk_event_context(db, [9])
     assert out[9]["playoff"] == {"label": "NBA Finals", "kind": "specific"}
+
+
+# ---------- or_ilike_clause ----------
+
+def test_or_ilike_clause_plain_pattern_unquoted():
+    assert or_ilike_clause("venue_name", "%Brooklyn%") == "venue_name.ilike.%Brooklyn%"
+
+
+def test_or_ilike_clause_quotes_reserved_chars():
+    # A comma in the pattern would otherwise split the PostgREST or-clause —
+    # must be double-quoted (the "%, NY%" bug that returned 0 NYC movers).
+    assert or_ilike_clause("venue_location", "%, NY%") == 'venue_location.ilike."%, NY%"'
+    # parens are reserved too
+    assert or_ilike_clause("name", "(If Necessary)") == 'name.ilike."(If Necessary)"'
+
+
+def test_or_ilike_clause_doubles_embedded_quotes():
+    assert or_ilike_clause("c", 'a"b') == 'c.ilike."a""b"'
+
+
+# ---------- is_speculative_event_name ----------
+
+def test_is_speculative_event_name():
+    assert is_speculative_event_name("Knicks vs Celtics (If Necessary)") is True
+    assert is_speculative_event_name("Yankees game CANCELLED") is True
+    assert is_speculative_event_name("Knicks vs Celtics") is False
+    assert is_speculative_event_name("Game 7 (Date TBD)") is False  # TBD != speculative
+    assert is_speculative_event_name(None) is False
+
+
+# ---------- classify_world_cup ----------
+
+def test_classify_world_cup_performer_signal():
+    assert classify_world_cup("Match 72", "World Cup Soccer") is True
+    assert classify_world_cup("anything", "  World Cup Soccer ") is True
+
+
+def test_classify_world_cup_name_regex_fallback():
+    assert classify_world_cup("FIFA World Cup Soccer Final") is True
+    assert classify_world_cup("World Cup Group Stage - Match 12") is True
+    assert classify_world_cup("Knicks vs Celtics") is False
+    assert classify_world_cup(None) is False

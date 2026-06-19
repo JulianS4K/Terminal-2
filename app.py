@@ -129,22 +129,8 @@ _STOREFRONT_HTML_CACHE: dict[str, str] = {}
 # on the consumer storefront despite the broker tier already marking them
 # SKIP. CANCELLED was already filtered at 3 app-layer call sites; this
 # helper consolidates + adds (If Necessary).
-_SPECULATIVE_NAME_PATTERNS = (
-    "CANCELLED",
-    "(IF NECESSARY)",
-)
-
-
-def _is_speculative_event_name(name: str | None) -> bool:
-    """True when an event name contains any pattern indicating the game may
-    never happen as scheduled (CANCELLED or playoff if-necessary). Consumer
-    surfaces should drop these. (Date TBD) events are NOT speculative —
-    they're real scheduled games with pending datetime confirmation, surfaced
-    via the `tbd` badge."""
-    if not name:
-        return False
-    upper = name.upper()
-    return any(p in upper for p in _SPECULATIVE_NAME_PATTERNS)
+# _SPECULATIVE_NAME_PATTERNS + _is_speculative_event_name -> core/helpers.py
+# (BR-CODE-1 leaf-helper pass). Imported (aliased) below.
 
 
 def _read_storefront_html(name: str) -> str:
@@ -233,6 +219,11 @@ from core.auth import require_auth, AUTH_DISABLED, _is_production  # noqa: E402
 # `_`-prefixed names so every call site + the route tests' monkeypatch
 # (app._bulk_performer_assets) keep resolving the app-module binding.
 from core.helpers import classify_playoff as _classify_playoff, _PLAYOFF_SPECIFIC_RE  # noqa: E402
+from core.helpers import (  # noqa: E402
+    or_ilike_clause as _or_ilike_clause,
+    is_speculative_event_name as _is_speculative_event_name,
+    classify_world_cup as _classify_world_cup,
+)
 from core.broker_helpers import bulk_performer_assets as _bulk_performer_assets  # noqa: E402
 from core.broker_helpers import bulk_event_context as _bulk_event_context  # noqa: E402
 
@@ -1365,26 +1356,8 @@ def _classify_marquee_competition(event_name: str | None) -> str | None:
 # Tight by design so it does NOT catch lookalikes that merely contain the
 # words "world cup": MLB "(World Cup Scarf Giveaway)" promos, "Rugby World
 # Cup", or "World Cup Countdown Concert" — none of which are WC matches.
-_WORLD_CUP_RE = re.compile(
-    r"\bworld\s*cup\s*soccer\b|\bworld\s*cup\b.{0,40}\bmatch\s+\d+", re.I
-)
-
-
-def _classify_world_cup(event_name: str | None,
-                        performer_name: str | None = None) -> bool:
-    """True if the event is a FIFA World Cup soccer match.
-
-    We surface owned World Cup matches in the storefront Featured rail
-    regardless of host city — the rail is NYC-anchored, but the World Cup is
-    a national draw and our owned WC inventory can sit at any host venue
-    (e.g. Match 72 at Mercedes-Benz Stadium, Atlanta). The primary signal is
-    the EVO performer name "World Cup Soccer"; the name regex is a fallback.
-    """
-    if performer_name and performer_name.strip().lower() == "world cup soccer":
-        return True
-    if not event_name:
-        return False
-    return bool(_WORLD_CUP_RE.search(event_name))
+# _WORLD_CUP_RE + _classify_world_cup -> core/helpers.py (BR-CODE-1 leaf-helper
+# pass). Imported (aliased) near the top of this module.
 
 
 # Canadian team detection (2026-05-19 v4) — operator directive: Canadian
@@ -4477,19 +4450,8 @@ def _escape_ilike(s: str) -> str:
 # treat the value as ending early. Wrapping the value in double quotes tells
 # PostgREST to read the value verbatim. Required for hard-coded patterns
 # like "%, NY%" — the comma would otherwise be parsed as a clause separator.
-_OR_VALUE_RESERVED = (",", "(", ")")
-
-
-def _or_ilike_clause(col: str, pattern: str) -> str:
-    """Build a single `col.ilike.<pattern>` clause for PostgREST `.or_()`.
-    Wraps the pattern in double quotes when it contains characters that
-    conflict with the or-clause parser (commas, parens). Embedded double
-    quotes are doubled per PostgREST's quoting rules.
-    """
-    if any(c in pattern for c in _OR_VALUE_RESERVED) or '"' in pattern:
-        escaped = pattern.replace('"', '""')
-        return f'{col}.ilike."{escaped}"'
-    return f"{col}.ilike.{pattern}"
+# _OR_VALUE_RESERVED + _or_ilike_clause -> core/helpers.py (BR-CODE-1 leaf-helper
+# pass). Imported (aliased) near the top of this module.
 
 
 def _is_tbd(name: str | None) -> bool:
