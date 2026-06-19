@@ -5387,6 +5387,8 @@
       ['cost_median',            'COST MED', '$'],
       ['retail_p25',             'P25', '$'],
       ['retail_p75',             'P75', '$'],
+      ['retail_p90',             'P90', '$'],
+      ['wholesale_median',       'WHOLESALE', '$'],
     ];
     function latestNonNullField(col) {
       for (let i = rows.length - 1; i >= 0; i--) {
