@@ -18,6 +18,8 @@ from typing import Callable
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 
+from core.helpers import listings_cadence_seconds
+
 
 def build_broker_router(
     get_require_sb: Callable[[], Callable],
@@ -59,5 +61,39 @@ def build_broker_router(
             return r.json() if r.ok else {"applicable": False, "error": f"espn fn {r.status_code}"}
         except Exception as e:
             return {"applicable": False, "error": str(e)}
+
+    @router.get("/api/broker/event/{event_id}/cadences")
+    def broker_event_cadences(event_id: int, _=Depends(require_auth)):
+        """Per-section poll cadence for the page. Each section reads its own
+        last_pull_at + cadence_seconds; next poll = last + cadence + jitter."""
+        db = get_require_sb()()
+        ev = (db.table("events").select("id,occurs_at_local").eq("id", event_id).limit(1).execute().data or [{}])[0]
+        listings_cad = listings_cadence_seconds(ev.get("occurs_at_local"))
+        last_listings = (
+            db.table("event_metrics").select("captured_at")
+            .eq("event_id", event_id).order("captured_at", desc=True).limit(1)
+            .execute()
+        ).data or []
+        last_listings_at = last_listings[0]["captured_at"] if last_listings else None
+        last_inj = (
+            db.table("espn_injuries_snapshots").select("last_seen_at")
+            .order("last_seen_at", desc=True).limit(1).execute()
+        ).data or []
+        last_inj_at = last_inj[0]["last_seen_at"] if last_inj else None
+        last_team_snap = (
+            db.table("espn_team_snapshots").select("last_seen_at")
+            .order("last_seen_at", desc=True).limit(1).execute()
+        ).data or []
+        last_team_at = last_team_snap[0]["last_seen_at"] if last_team_snap else None
+        return {
+            "event_id": event_id,
+            "sections": {
+                "overview":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
+                "section_metrics": {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
+                "raw_tevo":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
+                "espn_injuries":   {"last_pull_at": last_inj_at,      "cadence_seconds": 60 * 10},
+                "espn_team":       {"last_pull_at": last_team_at,     "cadence_seconds": 60 * 60 * 24},
+            },
+        }
 
     return router

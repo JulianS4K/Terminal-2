@@ -169,3 +169,24 @@ def test_overview_populated_computes_metric_deltas(client, monkeypatch):
     assert body["last_pull_at"] == "2026-05-10T12:00:00Z"
     # the rich-detail RPC was actually consulted for the header.
     assert any(name == "get_broker_event_detail" for name, _ in fake.rpc_calls)
+
+
+# ---------- /api/broker/event/{id}/cadences (moved to routers/broker.py, slice 12) ----------
+
+def test_cadences_sections_and_listings_cadence(client, monkeypatch):
+    # occurs_at_local ~5 days out -> listings cadence 60min (3600s) per
+    # core.helpers.listings_cadence_seconds.
+    import datetime as _dt
+    soon = (_dt.datetime.now() + _dt.timedelta(days=5)).date().isoformat()
+    fake = FakeSupabase(table_data={
+        "events": [{"id": 1, "occurs_at_local": soon}],
+        "event_metrics": [{"captured_at": "2026-05-10T00:00:00Z"}],
+        "espn_injuries_snapshots": [{"last_seen_at": "2026-05-10T01:00:00Z"}],
+        "espn_team_snapshots": [{"last_seen_at": "2026-05-09T00:00:00Z"}],
+    })
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/event/1/cadences").json()
+    assert set(body["sections"]) == {"overview", "section_metrics", "raw_tevo", "espn_injuries", "espn_team"}
+    assert body["sections"]["overview"]["cadence_seconds"] == 3600
+    assert body["sections"]["overview"]["last_pull_at"] == "2026-05-10T00:00:00Z"
+    assert body["sections"]["espn_injuries"]["cadence_seconds"] == 600

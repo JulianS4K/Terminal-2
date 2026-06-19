@@ -2329,41 +2329,10 @@ def collect_run(watchlist_id: int | None = None, user=Depends(require_auth)):
 # ============================================================================
 
 
-def _listings_cadence_seconds(occurs_at_local: str | None) -> int:
-    """Mirror collect-listings cron windows: closer events poll faster."""
-    if not occurs_at_local:
-        return 60 * 60 * 24
-    try:
-        # occurs_at_local is TEXT not TIMESTAMPTZ — known P1. Slice to date.
-        d = datetime.fromisoformat(occurs_at_local[:10])
-        days_out = (d - datetime.now()).days
-    except Exception:
-        return 60 * 60
-    if days_out <= 1:
-        return 60 * 20      # 20 min
-    if days_out <= 7:
-        return 60 * 60      # 60 min
-    if days_out <= 30:
-        return 60 * 60 * 4  # 4h
-    if days_out <= 60:
-        return 60 * 60 * 12 # 12h
-    return 60 * 60 * 24     # 24h
-
-
-def _delta(curr, prev):
-    """Compute delta + percent for a numeric metric. Returns dict or None."""
-    if curr is None or prev is None:
-        return None
-    try:
-        c = float(curr); p = float(prev)
-    except (TypeError, ValueError):
-        return None
-    if c == p:
-        return {"abs": 0, "pct": 0, "dir": "flat"}
-    diff = c - p
-    pct = (diff / p * 100) if p != 0 else None
-    return {"abs": round(diff, 2), "pct": round(pct, 2) if pct is not None else None,
-            "dir": "up" if diff > 0 else "down"}
+# Pure helpers moved to core/helpers.py (BR-CODE-1 helper pass); aliased so the
+# inline _delta / _listings_cadence_seconds usages keep working unchanged.
+from core.helpers import delta as _delta  # noqa: E402
+from core.helpers import listings_cadence_seconds as _listings_cadence_seconds  # noqa: E402
 
 
 @app.get("/api/broker/event/{event_id}/overview")
@@ -3909,45 +3878,8 @@ def broker_movers(window_hours: int = 24, source: str = "merged", window_days: i
     }
 
 
-@app.get("/api/broker/event/{event_id}/cadences")
-def broker_event_cadences(event_id: int, _=Depends(require_auth)):
-    """Per-section poll cadence for the page. Each section reads its own
-    last_pull_at + cadence_seconds; next poll = last + cadence + jitter."""
-    db = require_sb()
-    ev = (db.table("events").select("id,occurs_at_local").eq("id", event_id).limit(1).execute().data or [{}])[0]
-    listings_cad = _listings_cadence_seconds(ev.get("occurs_at_local"))
-    # last_pull_at for listings = most recent event_metrics row
-    last_listings = (
-        db.table("event_metrics").select("captured_at")
-        .eq("event_id", event_id).order("captured_at", desc=True).limit(1)
-        .execute()
-    ).data or []
-    last_listings_at = last_listings[0]["captured_at"] if last_listings else None
-
-    # ESPN injuries cadence = 10 min (espn-roster-10min cron)
-    last_inj = (
-        db.table("espn_injuries_snapshots").select("last_seen_at")
-        .order("last_seen_at", desc=True).limit(1).execute()
-    ).data or []
-    last_inj_at = last_inj[0]["last_seen_at"] if last_inj else None
-
-    # ESPN team standings cadence = daily; ESPN scores/odds for events ±24h = 10 min
-    last_team_snap = (
-        db.table("espn_team_snapshots").select("last_seen_at")
-        .order("last_seen_at", desc=True).limit(1).execute()
-    ).data or []
-    last_team_at = last_team_snap[0]["last_seen_at"] if last_team_snap else None
-
-    return {
-        "event_id": event_id,
-        "sections": {
-            "overview":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
-            "section_metrics": {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
-            "raw_tevo":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
-            "espn_injuries":   {"last_pull_at": last_inj_at,      "cadence_seconds": 60 * 10},
-            "espn_team":       {"last_pull_at": last_team_at,     "cadence_seconds": 60 * 60 * 24},
-        },
-    }
+# (broker_event_cadences moved to routers/broker.py — slice 12, uses
+#  core.helpers.listings_cadence_seconds)
 
 
 # ============================================================================
