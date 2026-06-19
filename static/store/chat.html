@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="VibePass" />
+  <link rel="apple-touch-icon" href="/static/store/favicon.svg" />
+  <link rel="manifest" href="/static/store/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://www.google.com https://*.supabase.co; frame-src https://www.google.com; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>VibePass — ask the concierge</title>
+  <meta name="description" content="Ask our concierge about seats and prices in plain English — every answer comes from inventory we hold directly." />
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <link rel="stylesheet" href="/static/store/style.css" />
+  <style>
+    body[data-page="chat"] { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+    main.wrap.chat-wrap { flex:1 1 auto; min-height:0; display:flex; flex-direction:column;
+      max-width:760px; margin:0 auto; width:100%; padding:18px 16px; }
+    .chat-hero { flex:0 0 auto; margin:0 0 14px; }
+    .chat-hero h1 { font-size:24px; margin:0 0 6px; }
+    .chat-hero p { color:#9b9ba6; margin:0; font-size:14px; }
+    #storeChat { flex:1 1 auto; min-height:0;
+      --rchat-bg:#0b0b0e; --rchat-panel:#15161b; --rchat-line:#26272e;
+      --rchat-text:#ececf1; --rchat-muted:#9b9ba6; --rchat-accent:#e8b84b; }
+  </style>
+</head>
+<body data-page="chat">
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <nav class="topnav" aria-label="Primary">
+      <a href="/store">Browse events</a>
+      <a href="/store/discover">Discover tours</a>
+    </nav>
+    <a class="topcta" href="/store">Back to store</a>
+  </header>
+
+  <main class="wrap chat-wrap">
+    <div class="chat-hero">
+      <h1>Ask the concierge</h1>
+      <p>Tell us a team, a date, or a budget. Every answer comes from seats we hold directly.</p>
+    </div>
+
+    <!-- Auto-mounted by /static/shared/retail-chat-widget.js. Public endpoint,
+         server-locked to scope=owned (our owned EVO inventory only). -->
+    <div
+      data-retail-chat
+      data-endpoint="/api/store/retail-chat"
+      data-scope="owned"
+      data-cors="false"
+      data-greeting="Hi! Tell me what you're after — a team, a date, or a budget. For example: “next Yankees home game with tickets under $50”."
+      data-placeholder="e.g. Knicks home game under $150 this month"
+      data-hint="Direct inventory · all-in pricing · in hand before the gates."
+      data-examples='["Next Yankees home game with tickets under $50","Knicks home game under $150 this month","Two seats together for a Lakers game","What do you have at MSG this weekend?"]'
+      id="storeChat"></div>
+  </main>
+
+  <script src="/static/shared/retail-chat-widget.js?v=20260619" defer></script>
+</body>
+</html>
