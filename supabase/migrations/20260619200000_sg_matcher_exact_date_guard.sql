@@ -50,9 +50,14 @@
 --       (a doubleheader + a TBD playoff game). Letting the matcher re-bind
 --       avoids the steal.
 --
--- ⚠️ NOT YET APPLIED — operator-gated (CLAUDE.md §1: CREATE OR REPLACE is DDL;
---    the corrective sweep is UPDATE/DELETE on prod). Author-only commit. Apply
---    via apply_migration after operator review of the dry-run in the PR.
+-- ✅ Applied to prod  Applied via MCP 2026-06-19 (operator-authorized, CLAUDE.md §1).
+--    Post-apply verified: guard_live=true; swept_unbound=35 (== pre-count);
+--    series_offdate_remaining=0; any_offdate_remaining=22 (lone ±1d events left
+--    untouched, by design); swept_xref_leftover=0. Re-binding of the clean
+--    same-date siblings is left to the hourly auto_match_sg_canonical_v3 cron
+--    (not run inline, to avoid broad side effects during apply). NOTE: applied
+--    without the outer BEGIN/COMMIT (apply_migration manages the transaction);
+--    the wrapper is retained below for documentation / db-reset fidelity.
 -- ============================================================================
 
 BEGIN;
