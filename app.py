@@ -210,11 +210,17 @@ def _render_storefront_page(name: str) -> HTMLResponse:
 
 # ---------- Bootstrap ----------
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
-CRON_SECRET = os.environ.get("CRON_SECRET")
-ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
+# Runtime config moved to core/config.py (BR-CODE-1 core extraction); imported
+# here so existing `app.<NAME>` reads + the test monkeypatches keep working.
+# The auth kill-switch (AUTH_DISABLED / _is_production) stays below — it's part
+# of the auth gate (require_auth).
+from core.config import (  # noqa: E402
+    SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY, CRON_SECRET,
+    ALLOWED_EMAIL_DOMAIN, STOREFRONT_SQL_ONLY, STOREFRONT_SEARCH_SQL_ONLY,
+    STOREFRONT_PREFER_INTERNAL_ZONES, STOREFRONT_RESERVE_REQUIRES_AUTH,
+    STOREFRONT_CHECKOUT_DOMAIN, STOREFRONT_CHECKOUT_DISABLED,
+    RECAPTCHA_SITE_KEY, RECAPTCHA_SECRET_KEY, RECAPTCHA_MIN_SCORE, RECAPTCHA_ENABLED,
+)
 
 # AUTH_DISABLED is a local-dev kill switch. To prevent a misconfig from
 # accidentally opening the whole API, it ONLY takes effect when:
@@ -241,91 +247,8 @@ AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
 if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
     print("WARNING: AUTH_DISABLED=true ignored — production indicator detected (RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / FLY_APP_NAME / RENDER).")
 
-# STOREFRONT_SQL_ONLY — demo mode for pre-checkout MVP. When on:
-#   - /api/store/events/{id} reads ticket_groups from listings_snapshots
-#     (cron-collected) instead of going live to TEvo.
-#   - /api/store/reserve skips TEvo validation and returns a mock receipt.
-#   - /api/store/events/near forces source=supabase (no TEvo geo call).
-#
-# Why: until real checkout is wired, live TEvo only buys us freshness, and
-# the test environment shouldn't burn TEvo quota on every page load. Flip
-# off the moment real /v9/orders calls go live — stale snapshots are
-# dangerous when shoppers can actually buy.
-STOREFRONT_SQL_ONLY = os.environ.get("STOREFRONT_SQL_ONLY", "false").lower() == "true"
-if STOREFRONT_SQL_ONLY:
-    print("STOREFRONT_SQL_ONLY=true — storefront serves from listings_snapshots; no live TEvo calls on store routes.")
-
-# STOREFRONT_SEARCH_SQL_ONLY — independent flag for /api/store/search routing
-# (operator 2026-05-18). Splits search off from the general STOREFRONT_SQL_ONLY
-# so search can default to SQL (snappy + zero TEvo quota) while event-detail
-# stays on TEvo live (fresh ticket-group pricing). To revert search to TEvo:
-# set STOREFRONT_SEARCH_SQL_ONLY=false. STOREFRONT_SQL_ONLY=true still wins
-# (forces SQL for both) for backward compat with prior deployments. Live
-# search code path (_search_live) is preserved as a flippable fallback.
-STOREFRONT_SEARCH_SQL_ONLY = os.environ.get("STOREFRONT_SEARCH_SQL_ONLY", "true").lower() == "true"
-if STOREFRONT_SEARCH_SQL_ONLY and not STOREFRONT_SQL_ONLY:
-    print("STOREFRONT_SEARCH_SQL_ONLY=true — /api/store/search uses _search_sql_only; event-detail still live TEvo.")
-
-# STOREFRONT_PREFER_INTERNAL_ZONES — flip on once the hand-curated granular
-# zones (NYK at MSG taxonomy, etc.) cover most/all sections. Today most of
-# them have coverage gaps that leave shoppers with un-filterable listings,
-# so the default surfaces the consumer-bowl layer (Lower 100s / Club 200s
-# etc.) which is well-covered. Internal detection logic stays wired so a
-# flip flag does the right thing event-by-event when data matures.
-STOREFRONT_PREFER_INTERNAL_ZONES = (
-    os.environ.get("STOREFRONT_PREFER_INTERNAL_ZONES", "false").lower() == "true"
-)
-if STOREFRONT_PREFER_INTERNAL_ZONES:
-    print("STOREFRONT_PREFER_INTERNAL_ZONES=true — granular zones preferred when (performer, venue) has them.")
-
-# Reserve endpoint auth gate. Default is `true` — unauthenticated state-changing
-# routes are wrong by default. MVP demo envs that want the front-end button to
-# work without a Supabase session must explicitly set STOREFRONT_RESERVE_REQUIRES_AUTH=false.
-# Sprint 2 (real-purchase path) keeps this true unconditionally.
-STOREFRONT_RESERVE_REQUIRES_AUTH = (
-    os.environ.get("STOREFRONT_RESERVE_REQUIRES_AUTH", "true").lower() == "true"
-)
-if not STOREFRONT_RESERVE_REQUIRES_AUTH:
-    print("STOREFRONT_RESERVE_REQUIRES_AUTH=false — /api/store/reserve is UNAUTHENTICATED (MVP demo mode).")
-
-# TEvo Hosted Checkout — DORMANT until the operator provisions the domain.
-# When set (e.g. "checkout.vibepass.com"), the storefront Reserve button
-# redirects the buyer to TEvo's hosted checkout at
-#   https://<domain>/checkout/payment/<event_id>/<ticket_group_id>?quantity=N
-# where TEvo is the merchant-of-record and handles payment, Apple/Google
-# Pay, and fraud. When empty (the default) the Reserve flow stays the MVP
-# mock — NO real purchases, NO redirect. This is a pure browser redirect:
-# our backend never writes to TEvo, so the RULE 2 read-only wall is not
-# involved. Enabling is operator-gated: provision the hosted-checkout
-# subdomain with the TEvo rep + point DNS (CNAME -> cname.vercel-dns.com),
-# land real legal copy (D1-OPS-5), THEN set this env var.
-STOREFRONT_CHECKOUT_DOMAIN = os.environ.get("STOREFRONT_CHECKOUT_DOMAIN", "").strip()
-# Live online checkout is intentionally DISABLED (operator directive 2026-06):
-# the storefront performs no online checkout. /api/public/config force-returns
-# checkout off regardless of this env var, so setting STOREFRONT_CHECKOUT_DOMAIN
-# alone will NOT re-enable purchases — remove this kill switch first.
-STOREFRONT_CHECKOUT_DISABLED = True
-if STOREFRONT_CHECKOUT_DOMAIN and STOREFRONT_CHECKOUT_DISABLED:
-    print(f"STOREFRONT_CHECKOUT_DOMAIN={STOREFRONT_CHECKOUT_DOMAIN} is set but IGNORED — live checkout is force-disabled (STOREFRONT_CHECKOUT_DISABLED).")
-
-# ---------- Bot protection: Google reCAPTCHA v3 (sitewide first-interaction gate) ----------
-# DORMANT unless both keys are set, so the demo works without provisioning. When
-# enabled, store.js fetches a v3 token on first interaction, POSTs it to
-# /api/store/verify-human, and the server issues a short-lived signed cookie
-# (vp_human). The write/spam endpoints (reserve, share-create) then require that
-# cookie (or a fresh token). Score-gated; fails OPEN only on a Google outage so a
-# network blip can't lock out the demo, fails CLOSED on a low score / bad token.
-RECAPTCHA_SITE_KEY = os.environ.get("RECAPTCHA_SITE_KEY", "").strip()
-RECAPTCHA_SECRET_KEY = os.environ.get("RECAPTCHA_SECRET_KEY", "").strip()
-try:
-    RECAPTCHA_MIN_SCORE = float(os.environ.get("RECAPTCHA_MIN_SCORE", "0.5"))
-except ValueError:
-    RECAPTCHA_MIN_SCORE = 0.5
-RECAPTCHA_ENABLED = bool(RECAPTCHA_SITE_KEY and RECAPTCHA_SECRET_KEY)
-if RECAPTCHA_ENABLED:
-    print(f"reCAPTCHA v3 ENABLED — sitewide bot gate active (min score {RECAPTCHA_MIN_SCORE}).")
-else:
-    print("reCAPTCHA v3 dormant (RECAPTCHA_SITE_KEY/RECAPTCHA_SECRET_KEY unset) — honeypot + rate limits still active.")
+# (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
+# at the top of this bootstrap block, BR-CODE-1 core extraction.)
 
 # HMAC key for the signed human-session cookie. Prefer a stable secret so the
 # cookie survives restarts; fall back to a per-process random (cookies simply

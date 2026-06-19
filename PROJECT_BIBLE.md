@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v2.1.0 (2026-06-19; history in git/CHANGELOG)
+> **Doc version:** v2.2.0 (2026-06-19; history in git/CHANGELOG) — §2.5 +`core/*` (BR-CODE-1 core extraction: shared runtime config/auth/db, one-directional import)
 
 **Read FIRST every session — but this doc is large; do NOT linear-read it.** Priority read = **§0** (the AQ hub — the #1 fact most sessions miss) + **§1** (hard rules). Then determine your lane (§2) and **jump to the one section your task needs**:
 
@@ -175,7 +175,7 @@ One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.m
 | `supabase/functions/exos-*` + `stripe-webhook` | **D4** | Exos app edge fns |
 | 9 read-only `*_client.py` (evo/seatgeek/seatdata/ticketsdata/axs/tickpick/vivid/gotickets) | **A1** | GET-only by construction |
 | `broadway_client.py`, `broadway_extension/`, `broadway_*` | **D3** | Broadway scraper |
-| `app.py` + `routers/*` | **A1** (file/package) | decomposition (BR-CODE-1): `APIRouter` modules `include_router`'d back; one-directional import; per-surface route blocks lane-owned — D0 `/api/broker/*`, D1 `/api/store/*` (§2.6) |
+| `app.py` + `routers/*` + `core/*` | **A1** (file/package) | decomposition (BR-CODE-1): `routers/*` = `APIRouter` modules `include_router`'d back; `core/*` = shared runtime (config now; auth/db/client later) both import; **one-directional import** (`app.py`/`routers` → `core`, never reverse); per-surface route blocks lane-owned — D0 `/api/broker/*`, D1 `/api/store/*` (§2.6) |
 | order tables + ingestion; AQ mapper + `*_xref` + metrics matviews; RLS/SECDEF/RULE-2 | **A1** | cross-source hub + DB security |
 | `bin/*`, `.github/workflows/*`, `.gitleaks*`, `.gitignore`/`.mcp.json`/release plumbing; `scripts/check_readonly.py`, `tests/*` | **B1** | CI + git guards + tests |
 | canonical `*.md` registry, `.understand-anything/`, `.claude*` governance (hook/scanner code → B1); `bot_chat` + shared-resource register | **C1** | docs + coordination + harness governance |
