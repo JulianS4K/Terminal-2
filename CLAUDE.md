@@ -2,11 +2,11 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v1.2.0 · baseline v1.0.0 2026-05-28 (A1); v1.1.0 2026-05-28 (A1) — §5 adds the forward-only SKILL.md structure standard; v1.2.0 2026-06-01 (B1) — §2 makes the listing-source lockdown explicit (EVO/SG prices unchangeable; force-pulls read-only and cannot influence upstream; enforced by `check_readonly.py` + `test_readonly_guards.py`, no bypass); v1.3.0 2026-06-17 — §5 extends the SKILL.md standard to repo **workflow skills** (`.claude-plugins/.../skills/`, the executable form of `PROJECT_BIBLE §8` recipes) + the PreToolUse `skill_router.py` discoverability hook; procedures→skills / facts→bibles; v1.4.0 2026-06-17 (operator) — **4-domain reorg**: §3 lane assignments (A1 data plane · B1 git/code · C1 docs/coord · D0–D4 FE surfaces), Push protocol now **per-task** (A1 + B1 maintain `main`, supersedes "A1 sole pusher"), §2 RULE-2 reassigned to A1's DB/API security, §6 adds the own-bible promotion model. Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
-**Before doing anything, read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).** It consolidates the 80% you need from this file + BOT_HIERARCHY.md + MIGRATION_CONVENTIONS.md + data-source docs into a single per-session reference. Saves ~5× the tokens vs reading every governance file at session start.
+**Before doing anything, read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md).** It consolidates the 80% you need from this file + lane ownership (its §2, which absorbed `BOT_HIERARCHY.md`) + MIGRATION_CONVENTIONS.md + data-source docs into a single per-session reference. Saves ~5× the tokens vs reading every governance file at session start.
 
 The bible has:
 - Hard rules (no-mutation, read-only-upstream, lane scope)
@@ -22,7 +22,7 @@ The bible has:
 
 This file (CLAUDE.md) remains the canonical source for security rules + lockdown invariants. The bible is the operational handbook bots read once per session.
 
-Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `BOT_HIERARCHY.md` (it absorbed the former `LANE_DISCIPLINE.md` on 2026-05-28). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md`.
+Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `PROJECT_BIBLE.md §2` (which absorbed `BOT_HIERARCHY.md` on 2026-06-19, itself having absorbed `LANE_DISCIPLINE.md`). Per-bot self-contracts live at `docs/<bot>_operating_constraints.md`.
 
 ## Global operator rules (2026-05-13 lockdown)
 
@@ -50,7 +50,7 @@ A `bot_chat` reply with `event_type='status'` and `p_in_reply_to` set is the **c
 - If you are still working on a thread (acknowledging without fixing), use `event_type='flag'` or `'question'`. These do NOT close the parent — the unresolved view still surfaces it.
 - Premature `status` replies that conflate "I saw this" with "I fixed this" defeat the resolve hygiene. When in doubt, use `flag`.
 
-### 2. Upstream third-party APIs are read-only *(v1.1 · B1 · 2026-06-01)*
+### 2. Upstream third-party APIs are read-only
 
 Applies to **every** external API the project integrates with — TEvo, SeatGeek, SeatData, TickPick, Vivid, and any future client (`*_client.py`).
 
@@ -72,7 +72,7 @@ OK: search / suggestions / events / performers / venues / ticket_groups / listin
 
 Each bot has operational latitude on UI files and JS wiring routed to them. Build, iterate, refactor without per-step approval.
 
-Lane assignments per `BOT_HIERARCHY.md` (4-domain reorg 2026-06-17 — peer domains, not a chain):
+Lane assignments per `PROJECT_BIBLE.md §2` (4-domain reorg 2026-06-17 — peer domains, not a chain):
 - **A1** — data plane (DB + full ingest pipeline + DB security + crons)
 - **B1** — git + code (git/code security, drift, freshness, compartmentalization, tests)
 - **C1** — docs + coordination (`bot_chat`, the main bible set, promotions)
@@ -112,41 +112,19 @@ Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are 
 - Service Tokens are the preferred mechanism for enforcement when feasible (Render's Member-role token can't perform writes by API constraint, providing hard isolation beyond policy). Until tokens are scoped per-bot, the scoping is policy-level and audited via Render's audit log.
 - Cross-service writes (D1 touching D2's service or vice versa) = lane violation, surfaces as `flag` in `bot_chat` per existing cross-lane rules
 
-### 5. Bot onboarding — mandatory aging-sweep scheduled task (2026-05-15) *(v1.2 · 2026-06-17)*
+### 5. Skill conventions (SKILL.md structure + discoverability)
 
-Every active bot MUST create its own lane-scoped aging-sweep scheduled task on first activation. Operator-mandated 2026-05-15 (bot_chat 210).
+Recurring procedures are encoded as **workflow skills** under `.claude-plugins/terminal2-governance/skills/<name>/SKILL.md` — the executable form of the `PROJECT_BIBLE.md §8` recipes. Shipped: `ship-a-migration`.
 
-**Spec — each bot's task must:**
-- Cadence: **hourly** at a unique minute offset (avoid collisions, see slot registry below)
-- Query: `public.bot_chat` for entries addressed to this bot (via `bot_lane = '<this-bot>'` OR `@<this-bot>` substring match) AND `resolved_at IS NULL` AND `event_type IN ('p0_security','flag','question')` AND `created_at < now() - interval '2 hours'` AND `created_at > now() - interval '7 days'`
-- **Always post (HEARTBEAT pattern, 2026-05-15 operator directive)** — even on zero findings, fire a short "all clear" line. Silent posts mean we can't distinguish "healthy" from "task dead." Vary content based on findings (full table if hits, one-line OK if not).
-- Post to the bot's primary Slack channel (`#terminal-2-d0` for D-tier subordinates, `#terminal-2-admin` for A1/B1/C1, `#terminal-2-alerts` for cross-cutting global sweep)
-- Tools required: Supabase MCP `execute_sql` + Slack MCP `slack_send_message` (operator must "Run now" once per task to pre-approve)
-- Token discipline: tight payload, table format, no preamble
+**SKILL.md structure** (four labeled sections, trimmed for token discipline; keep ≤~80 lines):
+- **frontmatter** — `name`, `description`.
+- **Process** — the numbered operative steps (check → act → tools).
+- **Red flags** — the must-NOT list.
+- **Verification** — a one-line evidence-based self-check the skill *reasons about* before finishing (phrase as a check, never an action). A `Rationalizations` table (excuse→rebuttal, wired to §3 landmines) is encouraged.
 
-**Minute slot registry (claim by editing this section in your onboarding PR):**
+**Procedures → skills, facts → bibles, link don't copy** — a skill points to `§3`/`§0`/`§14`, never restates them.
 
-| Slot | Bot | Task name |
-|---|---|---|
-| `:00` | A1 | `bot-chat-aging-sweep` (global, posts to `#terminal-2-alerts`) |
-| `:15` | B1 | `b1-security-autocheck` |
-| `:45` | D2 | `d2-bot-chat-monitor` |
-| `:05`, `:10`, `:20`, `:25`, `:30`, `:35`, `:40`, `:50`, `:55` | **available** | — |
-
-**Reference implementation**: `bot-chat-aging-sweep` shipped 2026-05-15 (A1). See `mcp__scheduled-tasks__create_scheduled_task` schema + the prompt embedded in that task's SKILL.md at `C:\Users\julia\.claude\scheduled-tasks\bot-chat-aging-sweep\SKILL.md`.
-
-**Why mandatory**: today's cron cascade incident (bot_chat 195) was caught in 3h by B1's interactive sweep. A1 missed it for that whole window because A1 only had a global aging sweep (every bot's items, no lane-specific focus). Per-bot sweeps catch lane-addressed work fast.
-
-**SKILL.md structure (forward-only, 2026-05-28).** New or revised task `SKILL.md` files use the four labeled sections below. Existing tasks are **grandfathered** — owners upgrade their own opportunistically (lane-scoped; A1 does not rewrite another bot's task file). Adapted from the public `agent-skills` pattern, deliberately trimmed to keep our token discipline: keep the parts that catch real failure modes, drop the verbose boilerplate.
-- **frontmatter** — `name`, `description` (unchanged).
-- **Process** — the numbered operative steps (query → act → tools); same content, just labeled.
-- **Red flags** — the must-NOT list, e.g. "never post to `bot_chat` (feedback loop)"; "a silent run looks identical to a dead task."
-- **Verification** — a one-line self-check the task *reasons about* before finishing, e.g. "confirm exactly one Slack post fired." Phrase as a check, **never an action** — wording it as a step can trigger a duplicate post.
-
-Keep payloads ≤1500 chars and the file ≤~80 lines — brevity beats ceremony; omit any section that doesn't apply.
-
-**Workflow skills — same anatomy, applied to recurring procedures (v1.2 · 2026-06-17).** The same four-section structure now also backs **repo workflow skills** (not just scheduled tasks): the executable form of the `PROJECT_BIBLE.md §8` recipes (author a migration, wire a UI panel, spawn a cron, run a security pass…). They live under `.claude-plugins/terminal2-governance/skills/<name>/SKILL.md` (a `Rationalizations` table — excuse→rebuttal, wired to the §3 landmines — and an evidence-based `Verification` gate are encouraged for these). The split that keeps this from regrowing doc-sprawl: **procedures → skills, facts → bibles, link don't copy** — a skill points to `§3`/`§0`/`§14`, never restates them. First skill: `ship-a-migration` (the full migration lifecycle around the `/new-migration` scaffold).
-- **Discoverability is mechanical, not memory.** A skill only helps if invoked. `.claude-plugins/terminal2-governance/hooks/hooks.json` runs a **PreToolUse** router (`scripts/skill_router.py`) that matches a tool call to a skill and injects a **non-blocking** nudge — e.g. editing `supabase/migrations/*.sql`, calling `apply_migration`, or running DDL via `execute_sql` surfaces `ship-a-migration`. Fires once per (session, skill); `ROUTES` is the single source of truth (one row per wired skill). This is the discoverability counterpart to the PostToolUse governance guard.
+**Discoverability is mechanical, not memory.** `.claude-plugins/terminal2-governance/hooks/hooks.json` runs a **PreToolUse** router (`scripts/skill_router.py`) that matches a tool call to a skill and injects a **non-blocking** nudge (editing `supabase/migrations/*.sql`, `apply_migration`, or DDL via `execute_sql` → surfaces `ship-a-migration`). Fires once per (session, skill); `ROUTES` is the single source of truth.
 
 ### 6. Documentation discipline — the canonical doc set is CLOSED (2026-05-28)
 
@@ -156,8 +134,8 @@ The repo's governance/reference docs are a **closed set**. The registry table in
 - **Own-bible model (reorg 2026-06-17).** Each active bot may keep one `<BOT>_BIBLE.md` (e.g. `D0_BIBLE.md`) for **lane-local** facts/procedures. A fact graduates to the **main** set only when it's relevant to all bots, via a **C1-reviewed promotion** (C1 owns the main set + registry). Per-bot bibles are a registered doc class — add the file to the README registry in the same PR that creates it so the docs gate stays green. *(The registry/gate wiring for the `<BOT>_BIBLE.md` class is a tracked follow-up — `KANBAN.md` C1-OPS-2; until it lands, get operator/C1 sign-off before adding one.)*
 - **One fact, one home — never duplicate; link.** If a fact already lives somewhere, point to it (`see <DOC> §<n>`) rather than restating it. Duplicated facts are exactly how these docs drifted out of sync. *(The own-bible model does not relax this: a promoted fact MOVES to the main set — it is not copied into both.)*
 - **Ephemeral work never becomes a new doc.** Audits, checkpoints, session logs, handoffs, status snapshots → use `bot_chat` (durable cross-lane record) or `KANBAN.md` (open work). Only if a durable dated artifact is genuinely needed: `docs/archive/YYYY-MM-DD-<topic>.md` (historical, non-canonical).
-- **Enforcement is a hard CI gate.** `.github/workflows/docs-registry-check.yml` (via `bin/check-docs.sh`) fails any PR that adds a root `*.md` not in the README registry, or drops a dated/working-note file into `docs/` outside `docs/archive/`. It runs server-side — `--no-verify` cannot skip it.
-- **Version docs + tag section changes (2026-05-28).** Each canonical doc carries a `**Doc version:**` line (semver, baseline `v1.0.0`). When you add or materially change a section, tag its heading `(vX.Y · <BOT> · YYYY-MM-DD)` and bump the doc-version line — full convention in [`README.md`](README.md) *Doc-writing rules*. `CHANGELOG.md` is exempt. The gate also fails any registry doc missing its `**Doc version:**` line.
+- **Enforcement is a hard CI gate** (server-side; `--no-verify` cannot skip). `docs-registry-check` (`bin/check-docs.sh`) fails a PR that adds a root `*.md` not in the README registry, or a dated/working-note file in `docs/` outside `docs/archive/`. *(Keeping the bible current when a change adds a catalogued resource (RULE 0) is a judgment prompt — `PROJECT_BIBLE` self-check #12 + the PR checklist — deliberately NOT a gate: a mechanical check can't distinguish a change that needs a doc from one that doesn't, so forcing it would just spam no-op edits.)*
+- **One `**Doc version:**` line per doc; no per-section tags (2026-06-19).** Bump the doc-version line on material change; the gate fails any registry doc (except `CHANGELOG.md`) missing it. Per-heading `(vX · BOT · date)` tags are removed — git blame is the audit trail. Full convention in [`README.md`](README.md) *Doc-writing rules*.
 
 ## Cross-lane writes
 
@@ -168,7 +146,7 @@ If your work needs to touch another lane's surface:
 
 ## Push protocol *(reorg 2026-06-17)*
 
-- **Push to `main` is per-task/per-agent, not bot-tier-gated.** A1 + B1 jointly maintain `main`; each task is pushed by the bot it's delegated to, after green CI. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `BOT_HIERARCHY.md §4`.)
+- **Push to `main` is per-task/per-agent, not bot-tier-gated.** A1 + B1 jointly maintain `main`; each task is pushed by the bot it's delegated to, after green CI. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `PROJECT_BIBLE.md §2.3`.)
 - **Prod-DB apply stays centralized on A1** — D-tier has zero Supabase mutation authority; a DB change is filed as a migration + `bot_chat` to A1, who applies it. (Git push ≠ DB apply; only the latter is centralized.)
 - Open a PR per task; CI must be green before merge.
 

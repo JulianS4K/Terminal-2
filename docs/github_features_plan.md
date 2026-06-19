@@ -145,7 +145,7 @@ This doc maps every GitHub surface to a concrete proposed use within Terminal-2'
 | Wiki page | Purpose | Source content |
 |---|---|---|
 | **Home** | Sidebar TOC + project overview | Adapted from README.md |
-| **Bot directory** | One page per bot (A1, B1, ...) with role + lane + write surface | Synthesized from `LANE_DISCIPLINE.md` + each bot's `*_operating_constraints.md` |
+| **Bot directory** | One page per bot (A1, B1, ...) with role + lane + write surface | Synthesized from `PROJECT_BIBLE.md §2` + each bot's `*_operating_constraints.md` |
 | **Architecture** | Component diagram, data flow, hosted services | From PROJECT_BIBLE.md §2 + RESOURCES_BIBLE.md §1 |
 | **Glossary** | A→Z definitions: AQ, broker firehose, listings_snapshots, etc. | Mined from migration headers + bibles |
 | **New-bot bootstrap** | First-session checklist | Pointer to PROJECT_BIBLE.md + KANBAN §🟢 OPEN + this wiki Home |

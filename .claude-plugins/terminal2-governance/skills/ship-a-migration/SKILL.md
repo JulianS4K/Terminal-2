@@ -42,7 +42,7 @@ The `/new-migration` command scaffolds the FILE; this skill is the whole lifecyc
    (`date -u +%Y%m%d%H%M%S`, bump +30/+50 on collision, never +1/+100), filename
    `^\d{14}_[a-z0-9_]+\.sql$`, and the required header block (Lane / Touches W,R / Pre-reqs).
    SECURITY DEFINER fns get the `REVOKE…FROM PUBLIC,anon,authenticated` + `GRANT…service_role`
-   + `current_user NOT IN (...)` guard (`BOT_HIERARCHY §8.5`). New crons wrap `cron_should_fire`.
+   + `current_user NOT IN (...)` guard (`PROJECT_BIBLE §2.8`). New crons wrap `cron_should_fire`.
    → **Checkpoint:** `grep '^-- Lane:'` hits and no `<placeholders>` remain.
 
 5. **Get explicit operator permission to apply.** Applying is NOT standing-permitted.
@@ -53,7 +53,7 @@ The `/new-migration` command scaffolds the FILE; this skill is the whole lifecyc
    → **Checkpoint:** apply returned success; `list_migrations` shows it landed.
 
 7. **Verify on the same samples from step 3** — prove the change did what step 3 predicted,
-   with the same rows. For a cron, confirm it's scheduled + within the `CRON_HIERARCHY` budget.
+   with the same rows. For a cron, confirm it's scheduled + within the `RESOURCES_BIBLE §5` cron budget.
    → **Checkpoint:** post-apply output matches the intended shape on the same IDs.
 
 8. **Record + ship.** Add `-- Already applied to prod · via MCP YYYY-MM-DD` to the header;
@@ -73,7 +73,7 @@ The `/new-migration` command scaffolds the FILE; this skill is the whole lifecyc
 - You're about to `apply_migration` / DDL / DML on prod **without** a yes from step 5.
 - A literal secret is in the SQL (use vault `get_app_secret` — never inline).
 - You're joining two sources on a raw numeric/text event ID (→ 0 rows; go via `aq_event_map`).
-- A new cron has no `cron_should_fire` gate, or pushes peak concurrency over the `CRON_HIERARCHY` budget.
+- A new cron has no `cron_should_fire` gate, or pushes peak concurrency over the `RESOURCES_BIBLE §5` cron budget.
 - An unconditional `max()` / wide-window `DISTINCT ON` over a firehose inside an event-page RPC (timeout).
 
 ## Verification

@@ -10,12 +10,11 @@ Terminal-2 is a multi-bot orchestrated ticket-trading intelligence platform. The
 
 Read these in order:
 
-1. [`PROJECT_BIBLE.md`](../PROJECT_BIBLE.md) — operating playbook (hard rules, lane scope, SQL macros, column-name landmines)
+1. [`PROJECT_BIBLE.md`](../PROJECT_BIBLE.md) — operating playbook (hard rules, **§2 lane assignment / your write surface** — roster · push authority · per-lane scope, absorbed `BOT_HIERARCHY.md`; SQL macros; column-name landmines)
 2. [`KANBAN.md §🟢 OPEN`](../KANBAN.md) — what's actionable right now (severity-sorted)
 3. [`CLAUDE.md`](../CLAUDE.md) — security rules + 2026-05-13 lockdown
-4. [`BOT_HIERARCHY.md`](../BOT_HIERARCHY.md) — your write surface (roster · push authority · per-lane scope; absorbed the former `LANE_DISCIPLINE.md`)
-5. [`MIGRATION_CONVENTIONS.md`](../MIGRATION_CONVENTIONS.md) — if authoring migrations
-6. [`docs/<your-lane>_operating_constraints.md`](../docs/) — your self-contract
+4. [`MIGRATION_CONVENTIONS.md`](../MIGRATION_CONVENTIONS.md) — if authoring migrations
+5. [`docs/<your-lane>_operating_constraints.md`](../docs/) — your self-contract
 
 ## If you're a human contributor
 
@@ -49,7 +48,7 @@ Note: PRs that touch backend code (`app.py`, `supabase/*`, `*_client.py`) requir
 
 ## Commit messages
 
-Format: `<type>(<lane>): <short imperative>` per [`docs/pr_governance.md`](../docs/pr_governance.md).
+Format: `<type>(<lane>): <short imperative>` per [`docs/pr_governance.md`](../docs/archive/pr_governance.md).
 
 Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.
 

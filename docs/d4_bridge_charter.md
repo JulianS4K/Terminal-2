@@ -1,10 +1,10 @@
 # D4 — The Bridge: Lane Charter & System Architecture
 
-**Status:** ACTIVATING — supersedes the "UNASSIGNED / future · AR codes, custom ticketing" placeholder in `LANE_DISCIPLINE.md`, `BOT_HIERARCHY.md`, `PROJECT_BIBLE.md`, `docs/bot-hierarchy.mermaid`, `README.md`. (Governance-doc status flips are A1-owned — see §8.)
+**Status:** ACTIVATING — supersedes the "UNASSIGNED / future · AR codes, custom ticketing" placeholder in `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md`, `docs/bot-hierarchy.mermaid`, `README.md`. (Governance-doc status flips are A1-owned — see §8.)
 **Lane:** D4 · `bot_level = data-collection` · reports to C1 (hierarchy), subordinate-coding posture under D0 for any shared frontend surface.
 **Author:** D4 · **Date:** 2026-05-20
 **Source thesis:** *The Bridge — Strategic Opportunity Report* (Julian, Mar 2026, **Confidential**). Held externally (operator's `Downloads`); **not committed to this repo** — it carries BD/financial detail (prospect lists, projections, partner terms) that does not belong in source control. This charter reproduces only the **technical/product architecture** needed to scope the engineering lane.
-**Reconciles with:** `CLAUDE.md` (lockdown invariants), `LANE_DISCIPLINE.md`, `BOT_HIERARCHY.md`, `PROJECT_BIBLE.md`.
+**Reconciles with:** `CLAUDE.md` (lockdown invariants), `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md`.
 
 > **Placeholder correction:** prior governance docs labeled D4 "AR codes, custom ticketing." "AR" was a garble of the **QR-code check-in** the venue-intake platform provides. This charter is the real scope.
 
@@ -79,7 +79,7 @@ D4 owns the **engineering** of the Bridge: the integration layer that did not pr
 | Distribution rails to retail channels | **D2** order clients (`evo_client.py`, `seatgeek_client.py`, `tickpick_client.py`, `vivid_client.py`, `gotickets_client.py`) | **Reuse the clients; add a WRITE/listing path** (gated — §6.1) |
 | Consumer aggregate site (Phase 2) | **D1** storefront (`static/store/*`, `/api/store/*`) | **Reuse / extend** |
 | Cross-source event identity (so a Bridge event = a catalog event = SG/TEvo events) | **A1/C1** canonical: `aq_event_map`, `event_xref`, `seatgeek_event_xref`, matchers | **Reuse** |
-| Venue intake storefront (checkout / QR / Stripe) | **pretix** (recommended) or Hi.Events fork — see [`d4_intake_platform_eval.md`](d4_intake_platform_eval.md). Existing `hi-events` Render svc is **not** our fork — stand up new. | **Net-new (fork; separate repo)** |
+| Venue intake storefront (checkout / QR / Stripe) | **pretix** (recommended) or Hi.Events fork — see [`d4_intake_platform_eval.md`](archive/d4_intake_platform_eval.md). Existing `hi-events` Render svc is **not** our fork — stand up new. | **Net-new (fork; separate repo)** |
 | **Bridge integration layer** (ingest, floor control, push, oversell guard, buyer capture) | — | **Net-new — this is D4's build** |
 
 ---
@@ -112,10 +112,10 @@ The entire product depends on **creating listings/inventory on upstream platform
 The order clients are **D2's** write surface. D4 must not edit them directly. Pattern (mirrors how D1 *imports + calls* `evo_client.py` read methods): D4 builds an **orchestration layer** that imports the D2-owned listing modules; D2 remains the author/owner of those modules; cross-lane changes go via PR comment / `bot_chat`.
 
 ### 6.3 D4 deploy target
-Per `LANE_DISCIPLINE.md`, D4 gets **its own deploy target** when scoped — not D1's storefront service. Candidates: a new Render service (`vibepass-bridge-*`) for the integration layer; the venue-intake fork likely deploys separately (own repo/service). **A1 owns provisioning.** Confirm whether the existing `hi-events` service is the intended fork (§8).
+Per `PROJECT_BIBLE.md §2`, D4 gets **its own deploy target** when scoped — not D1's storefront service. Candidates: a new Render service (`vibepass-bridge-*`) for the integration layer; the venue-intake fork likely deploys separately (own repo/service). **A1 owns provisioning.** Confirm whether the existing `hi-events` service is the intended fork (§8).
 
 ### 6.4 D4 table namespace / single-writer
-D4 writes only its own `bridge_*` namespace (single-writer rule, `BOT_HIERARCHY.md §4`). It **reads** D0/A1/C1 tables and **xrefs** into the canonical key (`aq_event_map`) rather than forking identity.
+D4 writes only its own `bridge_*` namespace (single-writer rule, `PROJECT_BIBLE.md §2 §4`). It **reads** D0/A1/C1 tables and **xrefs** into the canonical key (`aq_event_map`) rather than forking identity.
 
 ### 6.5 Buyer PII & data ownership (B1)
 Buyer-data capture introduces a **new PII surface** (name/contact/purchase history per the thesis's "organizer owns all data" promise). RLS, retention, export, and GDPR posture require B1 review before the capture pipeline ships.
@@ -138,12 +138,12 @@ Buyer-data capture introduces a **new PII surface** (name/contact/purchase histo
 
 ## 8. Open decisions / prerequisites (need operator / A1 / B1 input)
 
-1. **Hi.Events vs pretix** — **D4 recommends pretix** for long-term extensibility (plugin system + Python stack-fit); full analysis in [`d4_intake_platform_eval.md`](d4_intake_platform_eval.md). The thesis exec-brief leaned **Hi.Events** for speed-to-prototype — operator confirms the final pick.
+1. **Hi.Events vs pretix** — **D4 recommends pretix** for long-term extensibility (plugin system + Python stack-fit); full analysis in [`d4_intake_platform_eval.md`](archive/d4_intake_platform_eval.md). The thesis exec-brief leaned **Hi.Events** for speed-to-prototype — operator confirms the final pick.
 2. **Existing `hi-events` Render service** — **resolved (2026-05-20): not our fork. D4 stands up new** regardless of platform pick.
 3. **Upstream-write authorization** (§6.1) — operator go/no-go to begin a per-platform listing-write carve-out, and which platforms first. Note: TEvo is itself a B2B distribution hub that may fan out to multiple downstream points-of-sale — clarify which channels are **direct API integrations** vs. **reached via TEvo / a POS hub** (avoids assuming 10 separate direct integrations).
 4. **Repo location of the fork** — separate repo (recommended; AGPL-3.0 + different stack) vs. monorepo subdir.
 5. **Lane mapping** — **resolved (2026-05-20)**: storefront is **D1** (not D2); **D4 is independent from D0 for now**; D2 = distribution rails; **Automatiq distribution lands as a later D1 addition**.
-6. **Governance status flips** (A1-owned): flip D4 from "UNASSIGNED/future" → "ACTIVE" across `LANE_DISCIPLINE.md`, `BOT_HIERARCHY.md`, `PROJECT_BIBLE.md`, `docs/bot-hierarchy.mermaid`, `README.md`; claim an aging-sweep minute slot (`CLAUDE.md §5` registry). D4 drafts; **A1 lands** (sole pusher to main + governance-doc owner).
+6. **Governance status flips** (A1-owned): flip D4 from "UNASSIGNED/future" → "ACTIVE" across `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md`, `docs/bot-hierarchy.mermaid`, `README.md`; claim an aging-sweep minute slot (`CLAUDE.md §5` registry). D4 drafts; **A1 lands** (sole pusher to main + governance-doc owner).
 
 ---
 
@@ -158,7 +158,7 @@ The thesis is a business strategy document. The following are **operator / BD sc
 - *The Bridge — Strategic Opportunity Report* (Julian, Mar 2026, Confidential — external).
 - `docs/d4_operating_constraints.md` — D4 lane self-contract (read/write surfaces, forbidden actions).
 - `CLAUDE.md` — lockdown invariants (esp. rule #2 upstream read-only, rule #7 edge-fn auth).
-- `LANE_DISCIPLINE.md` §D4 + §6 (deploy ownership) · `BOT_HIERARCHY.md` (push matrix, single-writer).
+- `PROJECT_BIBLE.md §2` §D4 + §6 (deploy ownership) · `PROJECT_BIBLE.md §2` (push matrix, single-writer).
 - `PROJECT_BIBLE.md` §4 (D0 SECDEF RPCs), §5 (cross-source bridge topology), §3 (column landmines).
 - `d1_operating_constraints.md` — Sprint-2 RULE-2 carve-out (template for §6.1 upstream-write).
 - Hi.Events: `github.com/HiEventsDev/hi.events` · pretix: `github.com/pretix/pretix`.

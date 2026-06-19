@@ -1,13 +1,13 @@
 # D0_BIBLE.md — Terminal build manual + D0 data reference
 
-> **Doc version:** v1.11.0 · baseline 2026-05-28 (A1); v1.2.0 2026-05-30 (A1) — §3a universal mapping rule + §3h orders/sales → tevo with the 3-stage AQ-hub mapping pipeline (sweep → `resolve_aq_tevo_from_sources` → `backfill_order_tevo_from_aq`); v1.3.0 2026-05-30 (A1) — §3h adds the local-link tier (`link_aq_tevo_from_events`, mig 230000) + the evo-search-from-SQL recipe + the NFL✓/WC✗ catalog caveat; v1.4.0 2026-05-31 (A1) — §7 + §2 checklist: listings freshness is event-horizon-driven (`collector_cadence` + per-event clocks; §3h unaffected); v1.5.0 2026-06-02 (D0) — §B2 file map refresh + new §B11 Seat Map (multi-source Tevomaps overlay, PRs #406-410); v1.6.0 2026-06-03 (D0) — §B9 chart rebuilt: retention-aware hybrid backbone (durable daily spliced under fine-grained series) + UI cleanup; v1.7.0 2026-06-06 (D0) — §B11: TickPick added as a ZONE-MAPPED seatmap source (`_seatmapZoneKeys` band/named-tier expansion) + `Floor N`↔`VIP N` collision fix (`_smPick` T4b prefers the unique Floor key); v1.8.0 2026-06-09 (C1) — intro adds the code knowledge-graph onboarding pointer (→ `PROJECT_BIBLE.md §8`); v1.9.0 2026-06-09 (C1) — pointer now links the committed, viewable chart (`.understand-anything/knowledge-graph-chart.html`); v1.10.0 2026-06-10 (A1) — AXS primary box office: §3d TEvo↔AXS bridge (`axs_aq_match`), new §4b-axs AXS tables (incl. per-seat), §B5 `/api/axs/*` routes + AXS Box Office tab/chart line; v1.11.0 2026-06-10 (A1) — §B5: `/api/axs/event/{id}/listings` (EVO-standard grouped blocks via `v_axs_listings`) + AXS tab renders grouped listings; cross-source data is automatic for AQ-mapped AXS events (no AXS-specific poller). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
 
 **Read this alongside `PROJECT_BIBLE.md` at session start.** This doc has two parts:
 
 - **PART 1 — BUILD THE TERMINAL** (§B1–§B10): a cold-start manual. Everything a fresh engineer needs to rebuild the D0 terminal frontend from scratch — file map, fetch architecture, per-page contracts, backend surface, auth, deploy, local dev.
 - **PART 2 — THE DATA LAYER** (§2–§9): what the terminal *reads*. Cross-source ID architecture, table/RPC/view inventory, freshness, ops-health surfaces, diagnostics.
 
-D0_BIBLE owns the **cross-source ID architecture** (§3) and the **terminal build manual** (PART 1). Table/view/function *inventory* lives in `RESOURCES_BIBLE.md`; per-session rules + §3 column landmines in `PROJECT_BIBLE.md`; roster/authority in `BOT_HIERARCHY.md`.
+D0_BIBLE owns the **cross-source ID architecture** (§3) and the **terminal build manual** (PART 1). Table/view/function *inventory* lives in `RESOURCES_BIBLE.md`; per-session rules + §3 column landmines + roster/authority in `PROJECT_BIBLE.md` (ownership in its §2).
 
 > **Tip — orient before you build.** For a fast map of `static/terminal/*` and how it wires to the backend, open the committed **code knowledge graph** chart: [`.understand-anything/knowledge-graph-chart.html`](.understand-anything/knowledge-graph-chart.html) in a browser (architectural layers, file/function relationships, guided tour). Regenerate/explore with `/understand` + `/understand-dashboard`; recipe → `PROJECT_BIBLE.md §8` *("I want to understand the codebase fast")*.
 
@@ -48,7 +48,7 @@ There are **two data paths** out of the browser:
 
 *(There is no "Path B" — the A/C labels are historical. The event page uses a **Path C → Path A waterfall**: try RPC v3, fall back to RPC v2, then fall back to 5 parallel REST calls. See §B4.)*
 
-## B2. Frontend file map (`static/terminal/`, 25 files) *(v1.1 · D0 · 2026-06-02)*
+## B2. Frontend file map (`static/terminal/`, 25 files)
 
 **JS modules (11):**
 
@@ -134,7 +134,7 @@ Plus 6 parallel enrichment loaders in `init()` (`event.js:78-86`): `loadCrossSou
   - `/api/broker/movers` (`app.py:3517`; handler `broker_movers` `:3518`; v2 helper `_broker_movers_v2` `:3486`)
   - `/api/broker/event/{id}/overview` (`:2200`), `/chart-data` (`:3033`), `/zones` (`:2411`), `/orders` (`:4139`), `/cadences` (`:3737`)
   - `/api/broker/performer/{id}/assets` (`:1126`)
-- **`/api/axs/*` routes** *(v1.1 · A1 · 2026-06-10)* — `/api/axs/event/{id}` (latest snapshot state), `/sections` (per-section availability+pricing), `/listings` (**EVO-standard consecutive-seat blocks** from `v_axs_listings`: section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only `seat_numbers`), `/series` (price+listing time series for charts). Keyed by `tevo_event_id`; read-only from `axs_*_snapshots`. FE: **AXS Box Office** tab renders the by-section rollup **+** the grouped listings table, plus a sky-blue AXS line (legend toggle) on the median-price and listing-count charts. **Cross-source reuse:** an AXS event, once AQ-mapped to `tevo_event_id`, is a canonical TEvo event already collected by the existing TEvo+SG+TD-markets pollers — so all-marketplace data is automatic (no AXS-specific poller), surfaced via the existing cross-source panel / `get_event_all_source_listing_metrics`. Empty-state until snapshots ingest.
+- **`/api/axs/*` routes** — `/api/axs/event/{id}` (latest snapshot state), `/sections` (per-section availability+pricing), `/listings` (**EVO-standard consecutive-seat blocks** from `v_axs_listings`: section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only `seat_numbers`), `/series` (price+listing time series for charts). Keyed by `tevo_event_id`; read-only from `axs_*_snapshots`. FE: **AXS Box Office** tab renders the by-section rollup **+** the grouped listings table, plus a sky-blue AXS line (legend toggle) on the median-price and listing-count charts. **Cross-source reuse:** an AXS event, once AQ-mapped to `tevo_event_id`, is a canonical TEvo event already collected by the existing TEvo+SG+TD-markets pollers — so all-marketplace data is automatic (no AXS-specific poller), surfaced via the existing cross-source panel / `get_event_all_source_listing_metrics`. Empty-state until snapshots ingest.
 - **CORS** (`app.py:450-477`): `_CORS_ORIGINS` from env `CORS_ALLOWED_ORIGINS`; **default is localhost-only** (`http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000`, `app.py:452`). Wildcards and non-concrete URLs are rejected at boot (`:459-470`). `allow_credentials=True`; methods `GET/POST/DELETE/OPTIONS`; headers `Authorization/Content-Type/X-Cron-Secret` (`:474-476`). **⚠ The CDN origin is not in the default — see §B10 gap #1.**
 - **Security headers** (`_SecurityHeadersMiddleware`, `app.py:480`): CSP `connect-src 'self' https://*.supabase.co`.
 - **Token verification** (`app.py:425-426`): backend POSTs the incoming bearer to `{SUPABASE_URL}/auth/v1/user` with the anon apikey to validate the session server-side.
@@ -168,7 +168,7 @@ Two services, both deploy from `branch: main`:
 - **Optional**: `AUTH_DISABLED=true` to bypass JWT verification in dev (`app.py:224`; ignored in prod `:240`); `CORS_ALLOWED_ORIGINS` (defaults to localhost — fine for same-origin dev).
 - **Static**: FastAPI mounts `/static` from `STATIC_DIR` (`app.py:7940`); the terminal is served same-origin, so `API_BASE` resolves to `''` on localhost (`app.js:32`) and no CORS config is needed locally.
 
-## B9. Charting (uPlot) *(v1.1 · D0 · 2026-06-03)*
+## B9. Charting (uPlot)
 
 Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite `#composite-chart` section with two stacked uPlot panes — **price** (`#chartHostPrice`, medians on a $-axis) + **inventory** (`#chartHostInv`, qty lines + SG sale bars) — sharing one range selector (6h/24h/3d/7d/30d/90d/1y/ALL) + per-source pill toggles. Built in `event.js`: `renderChartPrice`, `renderChartInventory`, Y-range guard `robustYRange`, `clipRangeForHours` (fit-to-history x-axis).
 
@@ -188,23 +188,14 @@ Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite 
 
 ---
 
-## B11. Seat Map — multi-source Tevomaps overlay *(v1.1 · D0 · 2026-06-06)*
-
-The **Seat Map** tab on `event.html` renders the TEvo interactive venue seatmap and colors each section by a **selected source's** listing floor. Shipped PRs #406-410.
-
-**Library (vendored, not npm).** `lib/tevomaps.bundle.js` = the prebuilt **UMD** bundle of `@ticketevolution/seatmaps-client@5.0.0` (`dist/bundle.js`), exposing global `window.Tevomaps`. React+ReactDOM are bundled in, so there is **no build step and no React dep** — it loads via a plain `<script>` exactly like `uplot.iife.min.js`. Provenance/sha/license in `lib/tevomaps.bundle.NOTICE.md` (package is `UNLICENSED` — used under the TEvo broker relationship, vendored at operator direction). To update: re-`npm pack`, copy `dist/bundle.js`, refresh the sha.
-
-**Inputs (all already in our DB — pure Path-C, no backend change).**
-- `venueId` ← `public.events.venue_id`; `configurationId` ← `public.events.configuration_id` (both read directly, RLS-OK).
-- Section→floor `ticketGroups` per source, fetched **by tevo event_id** (each RPC resolves the cross-source bridge itself): EVO `get_event_evo_listings_full`, SG `get_event_sg_listings_full`, SH/GT/VD `get_event_td_listings(p_tevo_event_id, p_platform, p_hours)`.
-
-**Runtime fetch + CSP.** The library fetches `https://maps.ticketevolution.com/{venueId}/{configurationId}/{map.svg,manifest.json}` from the **browser**. `event.html`'s `<meta>` CSP `connect-src` MUST include `https://maps.ticketevolution.com` (added in #406). The maps host is **not reachable from CI/agent/SQL envs** (egress allowlist) — only a real browser renders it.
-
-**Section-name mapping (the gotcha — see PROJECT_BIBLE §3 landmine).** The manifest keys sections by **full descriptive names** (`Lower Level Corner 104`, `Chase Bridges 316`, `Floor 2`), but every source stores only the trailing token (`104`). The map matches `tevo_section_name` *exactly* (lowercased). So `loadSeatmap` fetches the manifest, reduces both sides to a **tail** (trailing digits + short letter suffix), and remaps our tokens → full names before handing them to `SeatmapFactory`. Tail collisions (`2` → `Floor 2` *and* `Event Level Suites 2`) prefer the `Floor N` key; other collisions are left uncolored (still listed).
-
-**Multi-source selector.** Map renders once (default TEvo); the selector re-colors by **one** source at a time via `api.updateTicketGroups()` (never collective) and swaps the listing table. Sources: **TEvo · SeatGeek · StubHub · GameTime · VividSeats · TickPick**. **TP is ZONE-MAPPED** — it lists whole bands (`100s`/`200s`/`400s`/`Lower`/`Suites`), not seat sections, so `_seatmapZoneKeys` expands each zone label to the SET of manifest sections it covers (hundreds-band by section-number digit; named tier by a word the manifest key contains) and paints them all at the zone's floor; `_seatmapIsZoneSource` flags it, and it's excluded from auto-pick (whole-band paint over-counts vs section-level sources). **TM still excluded** (primary/box-office, no section-level resale). The `Floor N`↔`VIP N` tail-collision is resolved by `_smPick` T4b (prefer the unique `Floor`-named candidate — matches the documented tie-rule above); this colors the courtside floor sections (`2/4/6/8/10/11/12` + `D` variants) for every section-level source. Coverage on MSG/Knicks: GT ~100%, VD ~99%, SH ~96%, SG ~87% (section-level); the only non-mapping residue is inherently zone-level with no section number (`lower level`, `100 Level`, bare `madison club`, club/fan buckets). Every listing whose section does NOT resolve to a manifest key (so the map leaves it grey) is tagged in the listing table with an **`unmapped`** pill + amber row tint (`_seatmapRowMapped`) and a per-source count footer — a spot-check affordance for the residue.
-
-**Map availability across inventory.** ~100% of upcoming events carry `venue_id`+`configuration_id` (can attempt), but only **~79 configurations / 72 venues** carry a `v_broker_configurations.fanvenues_key` (our in-DB "interactive map exists" proxy; covers ~1,483 upcoming events). True CDN coverage is `≥79` and browser-probe-confirmable only. See KANBAN for the coverage-probe follow-up.
+## B11. Seat Map — multi-source Tevomaps overlay
+`event.html` Seat Map tab: TEvo interactive seatmap, sections colored by a selected source's listing floor (PRs #406-410).
+- **Library:** `lib/tevomaps.bundle.js` = vendored UMD `@ticketevolution/seatmaps-client@5.0.0` (global `window.Tevomaps`, React bundled → no build step). License/sha → `lib/tevomaps.bundle.NOTICE.md` (UNLICENSED; TEvo broker relationship). Update: re-`npm pack`, copy `dist/bundle.js`, refresh sha.
+- **Inputs (Path-C, no backend):** `venueId`←`events.venue_id`, `configurationId`←`events.configuration_id`; per-source `ticketGroups` by tevo event_id via `get_event_evo_listings_full` / `get_event_sg_listings_full` / `get_event_td_listings(tevo_event_id,platform,hours)`.
+- **CSP:** library fetches `maps.ticketevolution.com/{venueId}/{configurationId}/{map.svg,manifest.json}` from the browser → `event.html` `<meta>` CSP `connect-src` must include that host (#406). Not reachable from CI/agent/SQL (egress allowlist) — only a real browser renders it.
+- **Section-name gotcha (`PROJECT_BIBLE §3`):** manifest keys = full names (`Lower Level Corner 104`); sources store only the tail token (`104`); map matches `tevo_section_name` exactly (lowercased). `loadSeatmap` reduces both to a tail (digits + short suffix), remaps token→full name. Tail collision (`2`→`Floor 2` & `Event Level Suites 2`) prefers `Floor N`; others grey.
+- **Selector:** renders once (TEvo default); re-colors one source at a time via `api.updateTicketGroups()`. Sources: TEvo/SG/StubHub/GameTime/VividSeats/TickPick. **TP is ZONE-MAPPED** (whole bands `100s`/`Lower`/`Suites` → `_seatmapZoneKeys` expands to the section set; `_seatmapIsZoneSource`; excluded from auto-pick — over-counts). **TM excluded** (primary box-office). `Floor N`↔`VIP N` → `_smPick` T4b prefers unique Floor key. Coverage MSG/Knicks: GT ~100%, VD ~99%, SH ~96%, SG ~87%; residue is zone-level (no section #). Unmapped sections → `unmapped` pill + amber tint (`_seatmapRowMapped`) + per-source count footer.
+- **Availability:** ~100% upcoming events have `venue_id`+`configuration_id`; only ~79 configs / 72 venues have `v_broker_configurations.fanvenues_key` (in-DB "map exists" proxy; ~1,483 events). True CDN coverage ≥79, browser-probe-confirmable only (KANBAN follow-up).
 
 ---
 
@@ -212,7 +203,7 @@ The **Seat Map** tab on `event.html` renders the TEvo interactive venue seatmap 
 
 > What the terminal reads. The terminal itself is read-only against the DB (D0 never writes tables); these are the surfaces it queries.
 
-## 2. "Check before investigating" checklist *(v1.1 · A1 · 2026-05-31)*
+## 2. "Check before investigating" checklist
 
 Run these checks before spending tokens on exploratory queries. Prevents re-discovery of known architecture.
 
@@ -223,7 +214,7 @@ Run these checks before spending tokens on exploratory queries. Prevents re-disc
 5. **Already in a view?** → Check `RESOURCES_BIBLE.md` for `v_canonical_*`, `v_event_*`, `v_sg_*`, `v_bot_chat_*` views before writing raw SQL.
 6. **Migration already shipped?** → `MIGRATION_CONVENTIONS.md` landmark-migration log. Don't re-implement work already in prod.
 7. **Open drift item?** → `KANBAN.md`. If you're debugging something that looks like a known gap, check there first.
-8. **Listings look stale?** → freshness is **horizon-driven** (2026-05-31). A far-horizon event polling slowly is on-cadence, not broken. Check `collector_cadence` + `evo_listings_poll_state` (SG: `sg_event_priority_state.last_fired_listings_at`) before alerting. See §7 + CRON_HIERARCHY §4b.
+8. **Listings look stale?** → freshness is **horizon-driven** (2026-05-31). A far-horizon event polling slowly is on-cadence, not broken. Check `collector_cadence` + `evo_listings_poll_state` (SG: `sg_event_priority_state.last_fired_listings_at`) before alerting. See §7 + RESOURCES_BIBLE §5.
 
 ---
 
@@ -413,7 +404,7 @@ tevo_venue_id
 - Have venue_short_id (from aq_event_map) → `aq_venue_map`
 - Need ESPN venue → `venue_assets.espn_venue_id` directly — no separate ESPN venue table
 
-### 3h. Orders & sales → TEvo (same rule — map via the AQ mapper) *(v1.3 · A1 · 2026-05-30)*
+### 3h. Orders & sales → TEvo (same rule — map via the AQ mapper)
 
 Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a): each row carries the **source's own event id** plus a **derived `tevo_event_id` that is only populated by mapping through the AQ mapper** — freshly-collected orders have it NULL.
 
@@ -467,7 +458,7 @@ Our **orders/sales** tables obey the exact same native-ID rule as listings (§3a
 
 **TD ↔ TEvo linkage warning (pre-mig-380000):** `ticketsdata_event_xref.event_id` is TD's platform-native ID (4.5M–160M range), NOT tevo_event_id. After mig 380000 applied, use `ticketsdata_event_xref.tevo_event_id` directly.
 
-### 4b-axs. AXS tables (primary box office) *(v1.0 · A1 · 2026-06-10)*
+### 4b-axs. AXS tables (primary box office)
 
 | Table | Purpose | Key columns |
 |---|---|---|
@@ -621,9 +612,9 @@ SELECT public.bot_chat_log(
 
 ---
 
-## 7. Data source freshness expectations *(v1.1 · A1 · 2026-05-31)*
+## 7. Data source freshness expectations
 
-> **Listings freshness is event-horizon-driven now (2026-05-31 collector-cadence cutover).** The old fixed horizon-window collectors are retired — EVO and SG now poll **per event** on a date-horizon band, driven by config in `public.collector_cadence` + per-event state tables (`evo_listings_poll_state`; SG reuses `sg_event_priority_state.last_fired_listings_at`). So "expected freshness" varies by how soon the event is: EVO ≤7d = 15 min … 61d+ = 12 h; SG ≤7d = 1 h … 31d+ = 24 h. The table below = the **near-event** expectation. A "stale" far-horizon event is usually on-cadence, not broken. SG is rate-limited (`p_max=5`); its clock advances only on HTTP 200. Bands: **CRON_HIERARCHY §4b**.
+> **Listings freshness is event-horizon-driven now (2026-05-31 collector-cadence cutover).** The old fixed horizon-window collectors are retired — EVO and SG now poll **per event** on a date-horizon band, driven by config in `public.collector_cadence` + per-event state tables (`evo_listings_poll_state`; SG reuses `sg_event_priority_state.last_fired_listings_at`). So "expected freshness" varies by how soon the event is: EVO ≤7d = 15 min … 61d+ = 12 h; SG ≤7d = 1 h … 31d+ = 24 h. The table below = the **near-event** expectation. A "stale" far-horizon event is usually on-cadence, not broken. SG is rate-limited (`p_max=5`); its clock advances only on HTTP 200. Bands: **RESOURCES_BIBLE §5**.
 
 | Source | Expected freshness (near-event) | Table | Alert if stale > |
 |---|---|---|---|
@@ -638,21 +629,8 @@ SELECT public.bot_chat_log(
 
 ---
 
-## 8. Current cron health snapshot (2026-05-28)
-
-| Cron | Status | Issue |
-|---|---|---|
-| TEvo: collect-listings-* (5 crons) | ✅ | |
-| TEvo: evo_discover_new_events | ❌ | bot_chat_log called with 5th arg 'D0' — needs migration fix |
-| TEvo: listings_aq_backfill_overnight | ❌ | pg_cron 120s hard limit — open KANBAN item |
-| SG: **sg_listings_floor_sweep** | ✅ | **NEW 2026-05-29** — fair round-robin `*/2 × 4`, adaptive-gated on `ratelimit-remaining`. **Replaces** sg_broker_listings_queue_5min + _peak + sg_priority_poll_tick_5min (all DISABLED 2026-05-29; they starved low tiers + burst-collided). |
-| SG: sg_blindspot_poll_5min | ❌ | deadlock on sg_event_priority_state UPDATE |
-| TD: **td_tp_discover / _drain / td_enqueue_peak_tp** | ✅ | **NEW 2026-05-29** — TickPick platform for the focus events (22 TP xref: 20 Yankee Stadium + 2 MSG). |
-| ESPN: all 8 crons | ✅ | |
-| TD: td_pull_drain, td_normalize_drain | ✅ | |
-| Sweep: sweep-old-listings, sweep-old-sg-listings | ✅ | Fixed mig 360000 |
-| Movers: compute-event-movers | ✅ | Fixed mig 370000 |
-| TD links: refresh-td-event-links | ✅ | New mig 380000 |
+## 8. Cron health — live, not snapshotted
+Don't trust a dated snapshot here. Cron catalog → `RESOURCES_BIBLE §5`; live status → §9 query below + `v_cron_health`; open failures → `KANBAN`.
 
 ---
 
