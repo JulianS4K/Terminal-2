@@ -63,6 +63,17 @@ def capture_post(monkeypatch):
     return calls
 
 
+@pytest.fixture(autouse=True)
+def reset_budget(monkeypatch):
+    """Isolate the in-process cost-guard counters between tests + restore the
+    default (high) caps so unrelated tests aren't throttled."""
+    monkeypatch.setattr(app_module, "_RETAIL_CHAT_ENABLED", True)
+    monkeypatch.setattr(app_module, "_RETAIL_CHAT_DAILY_MAX", 1000)
+    monkeypatch.setattr(app_module, "_RETAIL_CHAT_IP_DAILY_MAX", 40)
+    app_module._retail_chat_usage.update({"day": None, "total": 0, "by_ip": {}})
+    yield
+
+
 # ---------- scope is server-set ----------
 
 def test_terminal_forwards_scope_all(capture_post):
@@ -135,3 +146,41 @@ def test_upstream_status_passthrough(monkeypatch):
     r = client.post("/api/store/retail-chat", json={"message": "hi"})
     assert r.status_code == 429
     assert "error" in r.json()
+
+
+# ---------- cost guard ----------
+
+def test_kill_switch_spends_nothing(monkeypatch, capture_post):
+    monkeypatch.setattr(app_module, "_RETAIL_CHAT_ENABLED", False)
+    r = client.post("/api/store/retail-chat", json={"message": "hi"})
+    assert r.status_code == 503
+    assert capture_post == []  # never forwarded → no LLM cost
+
+
+def test_store_per_ip_daily_cap(capture_post, monkeypatch):
+    monkeypatch.setattr(app_module, "_RETAIL_CHAT_IP_DAILY_MAX", 2)
+    h = {"x-forwarded-for": "198.51.100.5"}
+    assert client.post("/api/store/retail-chat", json={"message": "a"}, headers=h).status_code == 200
+    assert client.post("/api/store/retail-chat", json={"message": "b"}, headers=h).status_code == 200
+    assert client.post("/api/store/retail-chat", json={"message": "c"}, headers=h).status_code == 429
+    assert len(capture_post) == 2  # the capped 3rd never reached the LLM
+
+
+def test_terminal_exempt_from_per_ip_cap(capture_post, monkeypatch):
+    """The email-gated terminal isn't subject to the public per-IP cap."""
+    monkeypatch.setattr(app_module, "_RETAIL_CHAT_IP_DAILY_MAX", 1)
+    h = {"x-forwarded-for": "198.51.100.9"}
+    assert client.post("/api/retail-chat", json={"message": "a"}, headers=h).status_code == 200
+    assert client.post("/api/retail-chat", json={"message": "b"}, headers=h).status_code == 200
+    assert len(capture_post) == 2
+
+
+def test_global_daily_cap(capture_post, monkeypatch):
+    monkeypatch.setattr(app_module, "_RETAIL_CHAT_DAILY_MAX", 2)
+    codes = [
+        client.post("/api/store/retail-chat", json={"message": "x"},
+                    headers={"x-forwarded-for": f"203.0.113.{i}"}).status_code
+        for i in range(1, 4)
+    ]
+    assert codes == [200, 200, 429]
+    assert len(capture_post) == 2
