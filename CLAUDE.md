@@ -2,7 +2,7 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v1.2.0 · baseline v1.0.0 2026-05-28 (A1); v1.1.0 2026-05-28 (A1) — §5 adds the forward-only SKILL.md structure standard; v1.2.0 2026-06-01 (B1) — §2 makes the listing-source lockdown explicit (EVO/SG prices unchangeable; force-pulls read-only and cannot influence upstream; enforced by `check_readonly.py` + `test_readonly_guards.py`, no bypass); v1.3.0 2026-06-17 — §5 extends the SKILL.md standard to repo **workflow skills** (`.claude-plugins/.../skills/`, the executable form of `PROJECT_BIBLE §8` recipes) + the PreToolUse `skill_router.py` discoverability hook; procedures→skills / facts→bibles; v1.4.0 2026-06-17 (operator) — **4-domain reorg**: §3 lane assignments (A1 data plane · B1 git/code · C1 docs/coord · D0–D4 FE surfaces), Push protocol now **per-task** (A1 + B1 maintain `main`, supersedes "A1 sole pusher"), §2 RULE-2 reassigned to A1's DB/API security, §6 adds the own-bible promotion model. Section-level version + bot-ref convention → §6 *Documentation discipline* + [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 

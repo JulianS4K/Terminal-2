@@ -1,6 +1,6 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §14 appended 6 collector-cadence + retention migs (`20260531140000`–`200000`); v1.2.0 2026-06-03 (A1) — §14 appended SG owned/non poller split (`20260603180000`) + raw-listings retention halve 30d→15d (`20260603190000`); v1.3.0 2026-06-03 (A1) — §14 appended 3 data-health audit fixes (`20260603200000`–`220000`); v1.4.0 2026-06-08 (A1) — §14 + cross-source amalgam value (mig `20260531214306`); v1.5.0 2026-06-17 (operator) — roster note + §Workflow: push to `main` is **per-task** (A1 + B1 maintain; supersedes "A1 sole pusher"), prod-DB apply stays A1-centralized; §Workflow cross-links the `ship-a-migration` skill. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 

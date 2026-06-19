@@ -1,6 +1,6 @@
 # CRON_HIERARCHY.md
 
-> **Doc version:** v1.2.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §1 job-count + §4b rewritten for the per-event collector-cadence model (`collector_cadence`-driven scan per source; EVO/SG horizon bands; ~12 horizon/blindspot collectors retired, 2–3 pollers added); v1.2.0 2026-06-03 (A1) — §4b: SG `/listings` poller split into owned (`sg_listings_poll_owned_1min`, ON) / non-owned (`sg_listings_poll_nonowned_5min`, once-daily, OFF); `sg_listings_poll_2min` retired; raw listings retention 30d→15d; v1.3.0 2026-06-06 (A1) — **§4c** adds the trading-hours cadence redesign (market-timed two-format + metronome firing across SG `/listings`+`/sales`+SellerDirect + TD 5 platforms), the **peak/off-peak derivation methodology**, and the cadence/budget/firing **reference tables** (design of record, pending migrations). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
 
 **Tiered cron-scheduling policy for Terminal-2. Maximize data freshness within bounded concurrency, with explicit headroom for future bot lanes (B2-B4).**
 
