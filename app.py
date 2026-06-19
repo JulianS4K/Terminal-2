@@ -3999,104 +3999,17 @@ def _get_seatdata_client():
         return None
 
 
-@app.get("/api/seatdata/account")
-def seatdata_account(_=Depends(require_auth)):
-    """Diagnostic: SeatData account identity, plans, server-side rate-limit catalog."""
-    client = _get_seatdata_client()
-    if not client:
-        raise HTTPException(503, "SEATDATA_API_KEY not set on this Railway env")
-    return client.account()
+# SeatData READ routes (account/usage/budget/event/event-sales) moved to
+# routers/seatdata.py (BR-CODE-1 slice 7). The link/auto-search/sync POSTs stay
+# in app.py. Getters resolve the live _get_seatdata_client + require_sb at
+# request time (keeps monkeypatch tests).
+from routers.seatdata import build_seatdata_router  # noqa: E402
 
-
-@app.get("/api/seatdata/usage")
-def seatdata_usage(_=Depends(require_auth)):
-    """Diagnostic: SeatData billing-period usage totals (server-reported)."""
-    client = _get_seatdata_client()
-    if not client:
-        raise HTTPException(503, "SEATDATA_API_KEY not set on this Railway env")
-    return client.usage()
-
-
-@app.get("/api/seatdata/budget")
-def seatdata_budget(_=Depends(require_auth)):
-    """Our DB-tracked pull budget (independent of SeatData's internal counters).
-    Hard-capped at 100/day, 2000/month per migration 20260509060000.
-    Returns: {allowed, used, daily_cap, monthly_used, monthly_cap, reason}.
-    """
-    db = require_sb()
-    res = db.rpc("seatdata_check_budget", {"p_endpoint": "paid"}).execute()
-    return res.data or {}
-
-
-@app.get("/api/seatdata/event/{event_id}")
-def seatdata_event(event_id: int, _=Depends(require_auth)):
-    """Read SeatData state for a TEvo event_id (xref + persisted snapshots).
-    Free — no SeatData API calls. Returns null fields if not yet linked/pulled."""
-    db = require_sb()
-    xref = (
-        db.table("seatdata_event_xref").select("*")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    ).data or []
-    if not xref:
-        return {"tevo_event_id": event_id, "linked": False, "xref": None,
-                "sales_count": 0, "stats_count": 0, "latest_stats": None}
-    sales_n = (
-        db.table("seatdata_sales_snapshots").select("id", count="exact")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    )
-    stats_n = (
-        db.table("seatdata_event_stats").select("id", count="exact")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    )
-    latest = (
-        db.table("seatdata_event_latest").select("*")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    ).data or []
-    return {
-        "tevo_event_id": event_id,
-        "linked": True,
-        "xref": xref[0],
-        "sales_count": getattr(sales_n, "count", None) or 0,
-        "stats_count": getattr(stats_n, "count", None) or 0,
-        "latest_stats": latest[0] if latest else None,
-    }
-
-
-@app.get("/api/seatdata/event/{event_id}/sales")
-def seatdata_event_sales(event_id: int, limit: int = 500, _=Depends(require_auth)):
-    """Read persisted sales rows for an event. Free — no SeatData API call.
-    Sorted by sale_timestamp DESC (most recent first)."""
-    limit = max(1, min(int(limit), 5000))
-    db = require_sb()
-    rows = (
-        db.table("seatdata_sales_snapshots")
-        .select("sale_timestamp,quantity,price,zone,section,row")
-        .eq("tevo_event_id", event_id)
-        .order("sale_timestamp", desc=True)
-        .limit(limit).execute()
-    ).data or []
-    if not rows:
-        return {"event_id": event_id, "count": 0, "sales": [],
-                "summary": {"avg": None, "median": None, "min": None, "max": None,
-                            "tickets_total": 0, "zones": [], "first_sale": None, "last_sale": None}}
-    prices = sorted(r["price"] for r in rows if r.get("price") is not None)
-    n = len(prices)
-    median = prices[n // 2] if n % 2 == 1 else (prices[n // 2 - 1] + prices[n // 2]) / 2 if n else None
-    return {
-        "event_id": event_id,
-        "count": len(rows),
-        "sales": rows,
-        "summary": {
-            "avg":    round(sum(prices) / n, 2) if n else None,
-            "median": round(median, 2) if median is not None else None,
-            "min":    min(prices) if prices else None,
-            "max":    max(prices) if prices else None,
-            "tickets_total": sum(max(int(r.get("quantity") or 1), 1) for r in rows),
-            "zones":  sorted({r.get("zone") for r in rows if r.get("zone")}),
-            "first_sale": rows[-1]["sale_timestamp"],
-            "last_sale":  rows[0]["sale_timestamp"],
-        },
-    }
+app.include_router(build_seatdata_router(
+    get_seatdata_client=lambda: _get_seatdata_client(),
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+))
 
 
 @app.get("/api/axs/event/{event_id}")
