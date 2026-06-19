@@ -4,7 +4,7 @@
 **Owner: A1.** Reorg 2026-06-17 (operator directive) — four peer domains by ownership; **not a command chain.** No bot "reports to" another; the lanes are guidance for who writes what, coordinated through `bot_chat`.
 **Absorbs former `LANE_DISCIPLINE.md`** (merged 2026-05-28; that file is now in `docs/archive/`).
 
-> **Doc version:** v2.0.0 · baseline 2026-05-28 (A1); v2.0.0 2026-06-17 (operator) — **reframed from a top-down hierarchy to peer-domain lane guidance**: four domains (A1 data plane · B1 git/code · C1 docs/coordination · D0–D4 FE surfaces); push to `main` is per-task (A1 + B1 maintain), not bot-tier-gated; DB security → A1, git security → B1; own-bible model (promote globally-relevant facts to the main set, C1 arbitrates); v2.1.0 2026-06-17 (operator) — **§5.5 full-tree code lane-assignment audit** + **§5.5b shared cross-lane resource register** (venue/seat map, API surface, trip_planner, order data, `*_public` boundary, design tokens, RULE-2, AQ hub); C1 mandate gains shared-resource coordination. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.2.0 · baseline 2026-05-28 (A1); v2.0.0 2026-06-17 (operator) — **reframed from a top-down hierarchy to peer-domain lane guidance**: four domains (A1 data plane · B1 git/code · C1 docs/coordination · D0–D4 FE surfaces); push to `main` is per-task (A1 + B1 maintain), not bot-tier-gated; DB security → A1, git security → B1; own-bible model (promote globally-relevant facts to the main set, C1 arbitrates); v2.1.0 2026-06-17 (operator) — **§5.5 full-tree code lane-assignment audit** + **§5.5b shared cross-lane resource register** (venue/seat map, API surface, trip_planner, order data, `*_public` boundary, design tokens, RULE-2, AQ hub); C1 mandate gains shared-resource coordination; v2.2.0 2026-06-19 (operator) — **§5.5/§5.5b orphan-closure sweep**: assigned every previously-unmapped tracked path (static-root files + `static/shared/` + git/release plumbing + `.claude*` governance + data csv + `D0_BIBLE.md`/`CRON_HIERARCHY.md`/`SYNC_PROTOCOL.md`), added the **no-orphan invariant**, registered the **retail-chat** cross-surface feature (#583) in §5.5b, and extended `.github/labeler.yml` to label every surface; mechanical lane-boundary CI check filed as `KANBAN BR-SPLIT-2`. Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
 
 > **This doc owns:** lane domains · push authority · Render service scope · per-bot lane scope (writes / never-writes / reads) · cross-cutting lane rules.
 > Migration mechanics → `MIGRATION_CONVENTIONS.md`. Immutable security invariants → `CLAUDE.md`. Per-session playbook → `PROJECT_BIBLE.md`.
@@ -145,9 +145,9 @@ Each table has exactly one owning lane that writes; all others read. (Full mecha
 
 ---
 
-## 5.5 Code lane-assignment map (full-tree audit) *(v1.0 · operator · 2026-06-17)*
+## 5.5 Code lane-assignment map (full-tree audit) *(v1.1 · operator · 2026-06-19)*
 
-Every code path assigned to an owning lane under the 4-domain model. Audit of the whole tree (2026-06-17). **Single-writer holds:** one lane writes; others read/consume. Cross-lane seams are in §5.5b.
+Every code path assigned to an owning lane under the 4-domain model. Audit of the whole tree (2026-06-17; **orphan-closure sweep 2026-06-19** — assigned previously-unmapped static-root/config/governance assets + the retail-chat cross-surface feature). **Single-writer holds:** one lane writes; others read/consume. Cross-lane seams are in §5.5b. **No-orphan invariant:** every tracked path resolves to exactly one owning lane here (or is an explicit shared seam in §5.5b) — an unassigned asset is a cross-contamination risk, so a new top-level path must be added here in the PR that introduces it.
 
 | Path / component | Owner | Notes |
 |---|---|---|
@@ -170,6 +170,15 @@ Every code path assigned to an owning lane under the 4-domain model. Audit of th
 | `d2_dashboard/*`, `render-d2-dashboard.yaml` | **D2** | orders dashboard + own Render |
 | `d4_bridge/*`, `static/bridge/`, `exos_*` schema | **D4** | Exos/Bridge full app |
 | `static/home/`, `static/undelivered/` | **D0** | hub / D2 placeholder surface |
+| `static/index.html`, `static/favicon.svg`, `static/version.json` | **D0** | root hub/static surface (served by `app.py`) |
+| `static/_shared/`, `static/shared/` | shared (FE) | cross-surface assets — `_shared/design-tokens.css` + `shared/retail-chat-widget.js`; both seams in §5.5b |
+| `supabase/functions/chat` | **A1** (fn) · D0+D1 consume | retail-chat NL price/inventory edge fn (#583); cross-surface widget → §5.5b |
+| `D0_BIBLE.md` | **D0** | D0 own-bible (registered own-bible class, `CLAUDE.md §6`) |
+| `CRON_HIERARCHY.md` | **A1** | cron schedule/ownership doc |
+| `SYNC_PROTOCOL.md` | **B1** | repo↔deploy↔DB sync / drift protocol |
+| `.gitleaks.toml`, `.gitleaksignore`, `.gitignore`, `.mcp.json`, `release-please-config.json`, `.release-please-manifest.json`, `version.txt` | **B1** | git/secret guards + release plumbing |
+| `.claude/`, `.claude-plugin/`, `.claude-plugins/` (governance skills + PreToolUse hooks), `.understand-anything/` | **C1** (B1 for hook/scanner code) | harness governance + knowledge graph |
+| `top25_sg_future_events_by_sales.csv` | **A1** | data artifact (SG sales seed) |
 | `requirements.txt`, `Procfile` | **A1** (shape) | lanes add their own deps |
 | `design/`, `docs/archive/` | — | historical / non-canonical |
 
@@ -185,6 +194,7 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 | **Order data** — `unified_orders`/`cross_source_orders` views over the order tables | A1 (ingest + view) | **D0** `orders.js` event tiles + **D2** dashboard (`unified_orders` ×36) | a view/schema change must serve both consumers; D-tier keys on `tevo_event_id` (unmapped = invisible, `§3`) |
 | **`*_public` RPCs** — the wholesale-filtered read boundary | A1 | **D1** store (only path) | D1 may never read `broker_*`/wholesale fields; the `*_public` whitelist is the contract |
 | **`static/_shared/design-tokens.css`** | shared (FE) | **D0 · D1 · D2 · D4** surfaces | a token change ripples to every surface — coordinate via C1 |
+| **Retail-chat** — `static/shared/retail-chat-widget.js` + `supabase/functions/chat` (NL price/inventory, #583) | A1 (edge fn + widget host) | **D0** `static/terminal/retail-chat.*` + **D1** `static/store/chat.html` | one widget + one edge fn, two surfaces; a widget/contract change must keep both terminal and store working — change once, verify both |
 | **RULE-2 read-only lockdown** — `check_readonly.py` / `test_readonly_guards.py` | B1 (guard code) · A1 (policy) | every `*_client.py` (A1) + CI (B1) | weakening = security-CRIT; B1 maintains the scanner, A1 owns what counts as a write |
 | **AQ mapper** — `aq_event_map` hub | A1 | **every lane** that resolves cross-source IDs | the #1 architectural fact (`PROJECT_BIBLE §0`); never join raw source IDs |
 
