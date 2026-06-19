@@ -1152,6 +1152,17 @@
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
       { key: 'prices_axs',      label: 'AXS box office', color: '#38bdf8', width: 1.75, dash: null, data: chart.prices_axs || [] },
     ];
+    // TP / TM / TM-resale price medians — the medians live in _tdFamily[*].med
+    // (the same family that already feeds the Overall-median consensus below) but
+    // were only ever plotted as listing-COUNTS on the inventory pane, never as
+    // price lines here. Omit-empty: a source with no median in the latest snapshot
+    // adds nothing (so this is a no-op until A1's snapshot rollup populates them).
+    if (_tdFamily) {
+      const famMed = (k) => (_tdFamily[k] && _tdFamily[k].med) || [];
+      if (famMed('tp').length)  specs.push({ key: 'td_tp_med',  label: 'TickPick',     color: '#eab308', width: 1.25, dash: null, data: famMed('tp') });
+      if (famMed('tm').length)  specs.push({ key: 'td_tm_med',  label: 'Ticketmaster', color: '#818cf8', width: 1.25, dash: null, data: famMed('tm') });
+      if (famMed('tmr').length) specs.push({ key: 'td_tmr_med', label: 'TM resale',    color: '#e879f9', width: 1.25, dash: null, data: famMed('tmr') });
+    }
     const { xs } = buildSeriesData(specs);
 
     // "Overall median" — quantity-weighted, carry-forward consensus across all
@@ -1410,9 +1421,9 @@
       if (famCnt('tp').length) specs.push(
         { key: 'td-tp-cnt',  label: 'TP listings',  color: '#eab308', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tp') });
       if (famCnt('tm').length) specs.push(
-        { key: 'td-tm-cnt',  label: 'TM listings',  color: '#38bdf8', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tm') });
+        { key: 'td-tm-cnt',  label: 'TM listings',  color: '#818cf8', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tm') });
       if (famCnt('tmr').length) specs.push(
-        { key: 'td-tmr-cnt', label: 'TMr listings', color: '#fb7185', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tmr') });
+        { key: 'td-tmr-cnt', label: 'TMr listings', color: '#e879f9', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tmr') });
     }
     const { xs } = buildSeriesData(specs);
     // Stack the two market-sales bar series (SeatData on top of SG): SeatData's
@@ -1711,6 +1722,9 @@
     { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
     { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
     { src: 'AXS',  color: '#38bdf8', keys: ['prices_axs', 'counts_axs'] },
+    { src: 'TP',   color: '#eab308', keys: ['td_tp_med', 'td-tp-cnt'] },
+    { src: 'TM',   color: '#818cf8', keys: ['td_tm_med', 'td-tm-cnt'] },
+    { src: 'TMr',  color: '#e879f9', keys: ['td_tmr_med', 'td-tmr-cnt'] },
   ];
 
   // Which series keys currently carry real data (scanning both build caches).
@@ -4938,21 +4952,22 @@
     const body = document.getElementById('sgSellerOrdersFullBody');
     const meta = document.getElementById('sgSellerOrdersFullMeta');
     const countChip = document.getElementById('tabCountSgSellerOrders');
+    const section = document.getElementById('sg-seller-orders-full');
     if (!body) return;
-    if (!d || d.hidden) {
-      const reason = d && d.reason === 'no_sg_bridge' ? 'no SG bridge for this event' : 'hidden';
-      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+    const rows = (d && d.rows) || [];
+    // This SellerDirect feed is OBSOLETE (stale) — collapse the whole panel when
+    // it has nothing current rather than parking a dead/empty box on the page,
+    // matching the broker-sales hide-when-empty convention. Only show it if it
+    // genuinely still carries rows.
+    if (!d || d.hidden || !rows.length) {
+      if (section) section.style.display = 'none';
       if (meta) meta.textContent = '0 rows';
       if (countChip) countChip.textContent = '0';
       return;
     }
-    const rows = d.rows || [];
+    if (section) section.style.display = '';
     if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
     if (countChip) countChip.textContent = String(rows.length);
-    if (!rows.length) {
-      body.innerHTML = '<div class="empty">no SG SellerDirect orders for this event</div>';
-      return;
-    }
     const host = document.createElement('div');
     host.className = 'full-list-host';
     const tbl = document.createElement('table');
