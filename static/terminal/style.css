@@ -2217,9 +2217,15 @@ body[data-page="login"] {
   .range-select { padding: 6px 10px; font-size: 13px; }
   .alerts-toggle { font-size: 12px; }
 
-  /* Charts get a workable height on a phone (panes were min 260px each). */
+  /* Charts get a workable height on a phone (panes were min 260px each).
+     The desktop layout makes the two panes share a fixed 680px section via
+     flex:1 1 0 — but with the section collapsed to content height on mobile,
+     flex-grow panes have no free space to divide and collapse, letting each
+     uPlot canvas overflow into the next pane. Pin each pane to a natural,
+     explicit height and stack them instead of sharing. */
   .chart-section.composite { min-height: 0; }
-  .composite-pane-block .chart-pane { min-height: 220px; }
+  .composite-pane-block { flex: 0 0 auto; min-height: 0; }
+  .composite-pane-block .chart-pane { flex: 0 0 auto; height: 240px; min-height: 240px; }
 
   /* Seat map: 560px is most of a phone screen — trim it to a usable height. */
   .seatmap-mapwrap { min-height: 360px; }
