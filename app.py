@@ -229,6 +229,12 @@ from core.config import (  # noqa: E402
 # `core.auth.AUTH_DISABLED`.
 from core.auth import require_auth, AUTH_DISABLED, _is_production  # noqa: E402
 
+# Helpers moved to core/ (BR-CODE-1 helper pass). Aliased to the historical
+# `_`-prefixed names so every call site + the route tests' monkeypatch
+# (app._bulk_performer_assets) keep resolving the app-module binding.
+from core.helpers import classify_playoff as _classify_playoff, _PLAYOFF_SPECIFIC_RE  # noqa: E402
+from core.broker_helpers import bulk_performer_assets as _bulk_performer_assets  # noqa: E402
+
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
 
@@ -1321,66 +1327,9 @@ def broker_tours_near(
     return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
 
 
-def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
-    """Fetch performer_metadata for many performer_ids at once. Returns map
-    {performer_id: {logo_default_url, color_primary, ...}}. Used by event
-    overview to attach home + away logos in a single roundtrip."""
-    if not performer_ids:
-        return {}
-    rows = (db.table("performer_metadata")
-              .select("performer_id, name, espn_team_id, espn_league, "
-                      "color_primary, color_alternate, logo_default_url, logo_dark_url")
-              .in_("performer_id", performer_ids)
-              .execute()).data or []
-    return {int(r["performer_id"]): r for r in rows}
-
-
-# Playoff-specific phrases we recognize in event names. Order matters: more
-# specific labels (NBA Finals) are tried before generic round indicators so
-# the badge surfaces "NBA Finals" instead of "Playoffs" when both match.
-_PLAYOFF_SPECIFIC_RE = re.compile(
-    r"\b("
-    r"NBA\s+Finals|"
-    r"NBA\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
-    r"NHL\s+Stanley\s+Cup\s+Finals|"
-    r"NHL\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
-    r"Stanley\s+Cup(?:\s+Finals?)?|"
-    r"World\s+Series|"
-    r"Super\s+Bowl(?:\s+L[IVX]+)?|"
-    r"MLS\s+Cup|"
-    r"NCAA\s+(?:Final\s+Four|National\s+Championship)|"
-    r"College\s+Football\s+Playoff(?:\s+National\s+Championship)?"
-    r")\b",
-    re.IGNORECASE,
-)
-_PLAYOFF_GENERIC_RE = re.compile(
-    r"\((?:Game\s+\d+|Round\s+\d+)|"           # parenthetical TEvo markers
-    r"\b(?:Playoffs?|Postseason|Wild\s+Card|"
-    r"Conference\s+Finals?|Conference\s+Semifinals?|"
-    r"Division\s+Series)\b",
-    re.IGNORECASE,
-)
-
-
-def _classify_playoff(event_name: str | None) -> dict | None:
-    """Return a playoff badge dict for the event name, or None.
-
-    Two-tier:
-      - specific  match (e.g. "NBA Finals") → that phrase is the label
-      - generic   match (e.g. "Round 3", "(Game 7,") → label = "Playoffs"
-
-    Falls back to None when nothing matches. Case-insensitive throughout.
-    """
-    if not event_name:
-        return None
-    m = _PLAYOFF_SPECIFIC_RE.search(event_name)
-    if m:
-        # Normalize whitespace so multi-word matches print cleanly.
-        label = re.sub(r"\s+", " ", m.group(1)).strip()
-        return {"label": label, "kind": "specific"}
-    if _PLAYOFF_GENERIC_RE.search(event_name):
-        return {"label": "Playoffs", "kind": "generic"}
-    return None
+# _bulk_performer_assets -> core/broker_helpers.py and _classify_playoff (+ its
+# _PLAYOFF_*_RE) -> core/helpers.py (BR-CODE-1 helper pass). Imported (aliased)
+# at the top of this module; call sites unchanged.
 
 
 # Marquee competitions — events that aren't playoffs but carry their own

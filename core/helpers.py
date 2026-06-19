@@ -6,6 +6,7 @@ core, never reverse). Moved verbatim from app.py.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 
@@ -44,3 +45,51 @@ def delta(curr, prev):
     pct = (diff / p * 100) if p != 0 else None
     return {"abs": round(diff, 2), "pct": round(pct, 2) if pct is not None else None,
             "dir": "up" if diff > 0 else "down"}
+
+
+# Playoff-specific phrases we recognize in event names. Order matters: more
+# specific labels (NBA Finals) are tried before generic round indicators so
+# the badge surfaces "NBA Finals" instead of "Playoffs" when both match.
+_PLAYOFF_SPECIFIC_RE = re.compile(
+    r"\b("
+    r"NBA\s+Finals|"
+    r"NBA\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
+    r"NHL\s+Stanley\s+Cup\s+Finals|"
+    r"NHL\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
+    r"Stanley\s+Cup(?:\s+Finals?)?|"
+    r"World\s+Series|"
+    r"Super\s+Bowl(?:\s+L[IVX]+)?|"
+    r"MLS\s+Cup|"
+    r"NCAA\s+(?:Final\s+Four|National\s+Championship)|"
+    r"College\s+Football\s+Playoff(?:\s+National\s+Championship)?"
+    r")\b",
+    re.IGNORECASE,
+)
+_PLAYOFF_GENERIC_RE = re.compile(
+    r"\((?:Game\s+\d+|Round\s+\d+)|"           # parenthetical TEvo markers
+    r"\b(?:Playoffs?|Postseason|Wild\s+Card|"
+    r"Conference\s+Finals?|Conference\s+Semifinals?|"
+    r"Division\s+Series)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_playoff(event_name: str | None) -> dict | None:
+    """Return a playoff badge dict for the event name, or None.
+
+    Two-tier:
+      - specific  match (e.g. "NBA Finals") → that phrase is the label
+      - generic   match (e.g. "Round 3", "(Game 7,") → label = "Playoffs"
+
+    Falls back to None when nothing matches. Case-insensitive throughout.
+    """
+    if not event_name:
+        return None
+    m = _PLAYOFF_SPECIFIC_RE.search(event_name)
+    if m:
+        # Normalize whitespace so multi-word matches print cleanly.
+        label = re.sub(r"\s+", " ", m.group(1)).strip()
+        return {"label": label, "kind": "specific"}
+    if _PLAYOFF_GENERIC_RE.search(event_name):
+        return {"label": "Playoffs", "kind": "generic"}
+    return None
