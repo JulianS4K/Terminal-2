@@ -55,3 +55,27 @@ def test_verify_recaptcha_missing_token_fails_closed():
     # before reaching here, so the dormant case never hits this function).
     assert verify_recaptcha(None, "submit", "1.2.3.4") is False
     assert verify_recaptcha("", "submit", None) is False
+
+
+from core.auth import require_cron_or_auth  # noqa: E402
+
+
+def test_require_cron_or_auth_accepts_matching_secret(monkeypatch):
+    import core.auth as auth_mod
+    monkeypatch.setattr(auth_mod, "CRON_SECRET", "s3cr3t")
+    assert require_cron_or_auth(None, "s3cr3t") == {"cron": True}
+
+
+def test_require_cron_or_auth_falls_through_to_auth_when_secret_absent(monkeypatch):
+    import core.auth as auth_mod
+    # no server secret configured -> never accept a header secret; defer to auth.
+    monkeypatch.setattr(auth_mod, "CRON_SECRET", None)
+    monkeypatch.setattr(auth_mod, "AUTH_DISABLED", True)  # require_auth returns None
+    assert require_cron_or_auth(None, "anything") is None
+
+
+def test_require_cron_or_auth_wrong_secret_defers_to_auth(monkeypatch):
+    import core.auth as auth_mod
+    monkeypatch.setattr(auth_mod, "CRON_SECRET", "s3cr3t")
+    monkeypatch.setattr(auth_mod, "AUTH_DISABLED", True)
+    assert require_cron_or_auth(None, "wrong") is None
