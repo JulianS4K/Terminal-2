@@ -2819,10 +2819,11 @@
 
   window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
 
-  // Reverse discovery — for fans who follow a favorite artist or team on tour and
-  // want to catch them near home. Location-first: performers (and teams, via their
-  // away games) with >= min_shows within a radius of home in the window.
-  // Backed by /api/store/tours/near; each show links to its /store/event page.
+  // Reverse discovery — for fans who want to travel ALONG a favorite artist or team's
+  // run (go city to city with them), not just catch one show. Location-first:
+  // performers (and teams, via their away games) playing >= min_shows within a radius
+  // of home in the window — i.e. a multi-stop run you can follow in person. Backed by
+  // /api/store/tours/near; "Travel the whole tour" → /store/tour plans the dates.
   function mountDiscover() {
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -2869,7 +2870,7 @@
           + (isTeam ? `&side=${side}` : "");
         return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
           + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? gamesLabel : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
-          + `<div style="margin:6px 0"><a href="${follow}"><b>${isTeam ? "Follow this team →" : "Follow this tour →"}</b></a></div>`
+          + `<div style="margin:6px 0"><a href="${follow}"><b>${isTeam ? "Travel with them →" : "Travel the whole tour →"}</b></a></div>`
           + `<div class="tour-shows">${shows}</div></div>`;
       }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";
     }

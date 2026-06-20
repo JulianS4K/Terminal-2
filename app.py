@@ -7033,9 +7033,10 @@ def store_tours_near(
     min_shows: int = 2,
     concerts_only: bool = False,
 ):
-    """D1 store reverse discovery — for fans who follow a favorite artist or team on
-    tour and want to catch them near home. Returns performers/teams with >= min_shows
-    within `within_mi` of home in the window, with price-from + demand. Teams surface
+    """D1 store reverse discovery — for fans who want to travel ALONG a favorite
+    artist or team's run (go city to city with them), not just catch one show. Returns
+    performers/teams playing >= min_shows within `within_mi` of home in the window (a
+    multi-stop run you can follow in person), with price-from + demand. Teams surface
     by their AWAY games near you (road trips that come to your area), not the local
     team's home stand — team_side='away'."""
     return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only,
