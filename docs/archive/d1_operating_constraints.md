@@ -2,7 +2,7 @@
 
 D1 = Consumer Retail Bot. Old label P1 (deprecated post-restructure 2026-05-12). Subordinate coding arm under D0 (consolidated frontend lane) per the 2026-05-15 D-tier reorg (`bot_chat` row 157, PR #126).
 
-This doc codifies the boundaries D1 operates within. **`CLAUDE.md §4` is the canonical Render-scope chart** + **`LANE_DISCIPLINE.md §6` is the deploy-ownership table** + **`BOT_HIERARCHY.md` is the global push matrix** — read those first. This file fills in D1-specific operational detail that doesn't belong in the global chart.
+This doc codifies the boundaries D1 operates within. **`CLAUDE.md §4` is the canonical Render-scope chart** + **`PROJECT_BIBLE.md §2 §6` is the deploy-ownership table** + **`PROJECT_BIBLE.md §2` is the global push matrix** — read those first. This file fills in D1-specific operational detail that doesn't belong in the global chart.
 
 ## Post-reorg posture (2026-05-15)
 
@@ -159,8 +159,8 @@ Post `bot_chat` status (`bot_lane='D1'`, `event_type='change_log'`) referencing 
 ## References
 
 - `CLAUDE.md` §4 — Render workspace per-service scoped access (canonical post-reorg)
-- `LANE_DISCIPLINE.md` §6 — deploy-ownership table (D-tier sections annotated)
-- `BOT_HIERARCHY.md` — global push matrix
+- `PROJECT_BIBLE.md §2` §6 — deploy-ownership table (D-tier sections annotated)
+- `PROJECT_BIBLE.md §2` — global push matrix
 - `MIGRATION_CONVENTIONS.md` — repo migration discipline (D1 follows §2, §3, §6 even for share_links)
 - `SCHEMA.md` — RULE 2 (read-only TEvo wall)
 - `docs/edit_coordination_protocol.md` — claim/release protocol for cross-lane edits (D0-authored, all D-tier bots follow)

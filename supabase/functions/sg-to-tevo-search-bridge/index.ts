@@ -185,9 +185,23 @@ Deno.serve(async (req) => {
       if (sc > bestScore) { bestScore = sc; best = ev; }
     }
 
-    if (!best || bestScore < minScore) {
+    // A1-OPS-24: reject a pure venue+date coincidence. A different show at the
+    // same venue/date scores ~74 on venue (+50) and same-date (+24) ALONE with
+    // zero name overlap, clearing minScore — that is how "Salsa Spectacular ..."
+    // bound to "Los Angeles Philharmonic ..." at the Hollywood Bowl. Require at
+    // least one shared MEANINGFUL name/team token, mirroring the DB-side
+    // aq_name_consistent guard. (teamA holds the full SG name for non-"at"/"vs"
+    // titles, so concerts still match a TEvo name that shares any real word.)
+    const NAME_STOP = new Set(["the","and","at","of","a","an","to","in","on","for","with","vs","de","el","la","los"]);
+    const bestNameTokens = best ? tokenSet(best.name ?? "") : new Set<string>();
+    const sgNameTokens = new Set<string>([...tokenSet(teamB), ...tokenSet(teamA)]);
+    let nameOverlap = 0;
+    for (const t of sgNameTokens) if (!NAME_STOP.has(t) && bestNameTokens.has(t)) nameOverlap++;
+
+    if (!best || bestScore < minScore || nameOverlap === 0) {
       noResults++;
-      if (!dryRun) await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: "low_score", meta: { best_score: bestScore, best_id: best?.id, best_name: best?.name, top_n: events.length, owned: c.owned } }, { onConflict: "sg_event_id" });
+      const lowScoreReason = (best && bestScore >= minScore && nameOverlap === 0) ? "no_name_overlap" : "low_score";
+      if (!dryRun) await sb.from("sg_tevo_search_attempts").upsert({ sg_event_id: c.sg_event_id, attempted_at: new Date().toISOString(), result: lowScoreReason, meta: { best_score: bestScore, best_id: best?.id, best_name: best?.name, name_overlap: nameOverlap, top_n: events.length, owned: c.owned } }, { onConflict: "sg_event_id" });
       continue;
     }
 

@@ -4,6 +4,8 @@ description: Scaffold a Supabase migration file with the repo's required filenam
 
 Scaffold a new migration in `supabase/migrations/` for: $ARGUMENTS
 
+> Scaffolds the FILE only. For the **full lifecycle** (check-don't-rebuild → sample-test → operator-gated apply → verify → PR), use the **`ship-a-migration`** skill (`../skills/ship-a-migration/`), which calls this command at its authoring step.
+
 ## Process
 
 1. **Timestamp**: 14-digit UTC `YYYYMMDDHHMMSS` (`date -u +%Y%m%d%H%M%S`). Check `ls supabase/migrations/ | tail` for collisions — if the slot is taken, bump by `+30` (tight follow-up) or `+50` (leave room). NEVER bump by `+1` or `+100` (MIGRATION_CONVENTIONS.md §3).
@@ -28,7 +30,7 @@ Scaffold a new migration in `supabase/migrations/` for: $ARGUMENTS
 ## Red flags
 
 - Authoring the file is standing-permitted; **applying it to prod (`apply_migration` / `execute_sql` DDL) requires explicit operator permission per call** (CLAUDE.md §1). Never apply as part of this command.
-- New crons inside the migration must be wrapped with `cron_should_fire` (PROJECT_BIBLE §11 item 6) and respect `CRON_HIERARCHY.md` tiers.
+- New crons inside the migration must be wrapped with `cron_should_fire` (PROJECT_BIBLE §11 item 6) and respect `RESOURCES_BIBLE §5` cron tiers.
 - No literal secrets in SQL — vault references only (`get_app_secret` pattern).
 
 ## Verification

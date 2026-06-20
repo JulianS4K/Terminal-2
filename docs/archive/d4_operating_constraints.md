@@ -2,7 +2,7 @@
 
 D4 = **The Bridge** lane: primary-market ticketing intake + distribution to S4K's retail channels. Activating 2026-05-20 (was "UNASSIGNED / future"). Reports to C1 (hierarchy); subordinate-coding posture under D0 for any shared frontend surface.
 
-This doc codifies the boundaries D4 operates within. **Read first:** [`docs/d4_bridge_charter.md`](d4_bridge_charter.md) (scope + architecture), `CLAUDE.md §4` (Render scope), `BOT_HIERARCHY.md` (deploy ownership · push matrix · per-lane scope — absorbed the former `LANE_DISCIPLINE.md` on 2026-05-28). This file fills in D4-specific operational detail.
+This doc codifies the boundaries D4 operates within. **Read first:** [`docs/d4_bridge_charter.md`](d4_bridge_charter.md) (scope + architecture), `CLAUDE.md §4` (Render scope), `PROJECT_BIBLE.md §2` (deploy ownership · push matrix · per-lane scope — absorbed the former `PROJECT_BIBLE.md §2` on 2026-05-28). This file fills in D4-specific operational detail.
 
 ## Posture (activation, pre-implementation)
 
@@ -53,7 +53,7 @@ D4 **must not**:
 3. **Run `apply_migration` against the prod project.** Migrations land via PR → A1. Preview branches (`create_branch`) OK for validation.
 4. **Push to `main`.** A1 is sole pusher (B1 for CRIT security). D4 ships via PR.
 5. **Write Render env vars / config on any service** (read-only tier until D4's own service is provisioned).
-6. **Edit other lanes' files** — storefront (`static/store/*`, D1), terminal (`static/terminal/*`, D0), dashboard (`d2_dashboard/*`, D2), broadway (`broadway_client.py`, D3), canonical migrations / `SCHEMA.md` outside D4's sections, governance docs (`LANE_DISCIPLINE.md`, `BOT_HIERARCHY.md`, `PROJECT_BIBLE.md` — A1-owned).
+6. **Edit other lanes' files** — storefront (`static/store/*`, D1), terminal (`static/terminal/*`, D0), dashboard (`d2_dashboard/*`, D2), broadway (`broadway_client.py`, D3), canonical migrations / `SCHEMA.md` outside D4's sections, governance docs (`PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md` — A1-owned).
 7. **Capture buyer PII** before B1 reviews RLS / retention / export posture.
 8. **Echo secrets** (Stripe keys, platform API tokens, Supabase service-role key) in chat or commits — env-var indirection only.
 
@@ -89,7 +89,7 @@ On activation D4 must create a lane-scoped **aging-sweep scheduled task** (hourl
 
 - [`docs/d4_bridge_charter.md`](d4_bridge_charter.md) — scope + architecture + governance reconciliation.
 - `CLAUDE.md` §2 (upstream read-only), §4 (Render scope), §5 (aging-sweep), §7 (edge-fn auth).
-- `LANE_DISCIPLINE.md` §D4 + §6 · `BOT_HIERARCHY.md` (push matrix, single-writer).
+- `PROJECT_BIBLE.md §2` §D4 + §6 · `PROJECT_BIBLE.md §2` (push matrix, single-writer).
 - `d1_operating_constraints.md` — Sprint-2 RULE-2 carve-out (template for upstream-write).
 - `PROJECT_BIBLE.md` §3 (column landmines), §4 (RPCs), §5 (cross-source topology).
 

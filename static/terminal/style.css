@@ -1840,6 +1840,21 @@ body[data-page="login"] {
 }
 .ts-empty.err { color: var(--neg); }
 
+/* Player rows (sports search): athlete head + nested upcoming-event rows */
+.ts-player-head .ts-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ts-sub { color: var(--muted); font-weight: 400; font-size: 10px; }
+.ts-inj {
+  color: var(--neg);
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid var(--neg); border-radius: 3px;
+  padding: 0 3px;
+}
+/* Indent a player's team events under the athlete head */
+.ts-player-event { padding-left: 22px; border-left: 2px solid var(--line-2); }
+.ts-player-event .ts-name { font-weight: 400; }
+.ts-player-event:hover, .ts-player-event.active { border-left-color: var(--accent); }
+
 /* ---------- Event redesign (post-PR #206) ---------- */
 
 /* Hero weather card — compact top-right of hero side-rail */

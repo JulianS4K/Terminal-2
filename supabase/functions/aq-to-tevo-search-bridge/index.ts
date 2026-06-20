@@ -1,4 +1,11 @@
-// aq-to-tevo-search-bridge (v1)
+// aq-to-tevo-search-bridge (v3)
+//
+// v3 (2026-06-19, A1-OPS-26): require >=1 shared meaningful name token before
+// accepting. The venue guard (bestVenue >= 25) blocks same-name/different-venue,
+// but NOT a DIFFERENT show at the SAME venue/date (e.g. "Salsa Spectacular" ->
+// "LA Philharmonic" @ Hollywood Bowl; "Buccaneers Season Tickets" -> "Bruno
+// Mars" @ Raymond James — venue 50 + date 24 = 74, zero name overlap). Mirrors
+// the sg-to-tevo-search-bridge guard + the DB-side aq_name_consistent.
 //
 // COLD BRIDGE (non-SG analogue of sg-to-tevo-search-bridge): for aq_event_map
 // hub rows that carry a Ticketmaster / Vivid / ScoreBig(SH) id but NO sg_event_id
@@ -178,9 +185,21 @@ Deno.serve(async (req) => {
 
     // Accept only with BOTH enough total score AND a real venue signal — guards
     // against same-name/same-date matches at a different venue.
-    if (!best || bestScore < minScore || bestVenue < 25) {
+    // A1-OPS-26: ALSO require a name/team token overlap. The venue guard blocks
+    // same-name/different-venue, but NOT a DIFFERENT show at the SAME venue/date
+    // (e.g. Salsa Spectacular vs LA Philharmonic @ Hollywood Bowl — both venue 50
+    // + date 24 = 74 with zero name overlap). Mirrors the sg-to-tevo-search-bridge
+    // guard + the DB-side aq_name_consistent.
+    const NAME_STOP = new Set(["the","and","at","of","a","an","to","in","on","for","with","vs","de","el","la","los"]);
+    const bestNameTokens = best ? tokenSet(best.name ?? "") : new Set<string>();
+    const aqNameTokens = new Set<string>([...tokenSet(teamB), ...tokenSet(teamA), ...tokenSet(c.performer ?? "")]);
+    let nameOverlap = 0;
+    for (const t of aqNameTokens) if (!NAME_STOP.has(t) && bestNameTokens.has(t)) nameOverlap++;
+
+    if (!best || bestScore < minScore || bestVenue < 25 || nameOverlap === 0) {
       lowScore++;
-      if (!dryRun) await sb.from("aq_tevo_search_attempts").upsert({ aq_id: c.aq_id, attempted_at: new Date().toISOString(), result: "low_score", meta: { best_score: bestScore, best_venue: bestVenue, best_id: best?.id, best_name: best?.name, top_n: events.length, name: nameQuery, src: c.src } }, { onConflict: "aq_id" });
+      const reason = (best && bestScore >= minScore && bestVenue >= 25 && nameOverlap === 0) ? "no_name_overlap" : "low_score";
+      if (!dryRun) await sb.from("aq_tevo_search_attempts").upsert({ aq_id: c.aq_id, attempted_at: new Date().toISOString(), result: reason, meta: { best_score: bestScore, best_venue: bestVenue, best_id: best?.id, best_name: best?.name, name_overlap: nameOverlap, top_n: events.length, name: nameQuery, src: c.src } }, { onConflict: "aq_id" });
       continue;
     }
 
@@ -198,7 +217,7 @@ Deno.serve(async (req) => {
       // Canonical link: set the hub row's tevo_event_id.
       await sb.from("aq_event_map").update({ tevo_event_id: best.id }).eq("id", c.aq_id);
 
-      await sb.from("aq_tevo_search_attempts").upsert({ aq_id: c.aq_id, attempted_at: new Date().toISOString(), result: "matched", meta: { tevo_event_id: best.id, score: bestScore, name: best.name, src: c.src } }, { onConflict: "aq_id" });
+      await sb.from("aq_tevo_search_attempts").upsert({ aq_id: c.aq_id, attempted_at: new Date().toISOString(), result: "matched", meta: { tevo_event_id: best.id, score: bestScore, venue_score: bestVenue, name_overlap: nameOverlap, name: best.name, src: c.src } }, { onConflict: "aq_id" });
     }
 
     matched++;

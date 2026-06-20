@@ -871,20 +871,35 @@
     }
   }
 
-  // Render suggestion dropdown body. Three sections:
-  //   Events you can buy now (we_own=true) — top priority, shown first
+  // Render suggestion dropdown body. Sections, in priority order:
+  //   Players — sports search: a matched athlete + their team's upcoming
+  //     events (e.g. "messi" → Inter Miami CF games). Shown first.
+  //   Events you can buy now (we_own=true) — top priority among plain events
   //   Other events (we_own=false) — surfaced but flagged as "browse"
   //   Performers + venues — bottom, clickable filter pivots
   function renderSuggest(host, payload) {
     if (!host) return;
     host.replaceChildren();
+    const players = (payload && payload.players) || [];
     const events = (payload && payload.events) || [];
     const performers = (payload && payload.performers) || [];
     const venues = (payload && payload.venues) || [];
 
-    if (!events.length && !performers.length && !venues.length) {
+    if (!players.length && !events.length && !performers.length && !venues.length) {
       host.hidden = true;
       return;
+    }
+
+    if (players.length) {
+      host.append(suggestHeader("Players"));
+      players.forEach((pl) => {
+        host.append(suggestPlayerRow(pl));
+        (pl.events || []).forEach((e) => {
+          const row = suggestEventRow(e, !!e.we_own);
+          row.classList.add("under-player");
+          host.append(row);
+        });
+      });
     }
 
     const buyable = events.filter((e) => e.we_own);
@@ -938,6 +953,25 @@
       price.textContent = `from ${fmtMoney(ev.from_price)}`;
       a.append(price);
     }
+    return a;
+  }
+
+  function suggestPlayerRow(pl) {
+    // Player → their team's performer filter page. The team's upcoming events
+    // render as nested rows beneath this one (see renderSuggest).
+    const a = document.createElement("a");
+    a.className = "suggest-row player";
+    a.href = `/store?performer_id=${Number(pl.performer_id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = pl.name || "";
+    a.append(name);
+    const meta = document.createElement("div");
+    meta.className = "suggest-row-meta";
+    const who = [pl.jersey ? `#${pl.jersey}` : "", pl.position].filter(Boolean).join(" ");
+    meta.textContent = [pl.team_name, pl.league, who].filter(Boolean).join(" · ");
+    a.append(meta);
     return a;
   }
 
@@ -1758,7 +1792,14 @@
       const totV = document.createElement("span"); totV.className = "v total"; totV.id = "rcTotal"; totV.textContent = fmtMoney(Number(listing.retail_price) * defaultQ);
       receipt.append(totK, totV);
 
-      const checkoutLive = !!purchaseConfig.purchase_enabled && !!purchaseConfig.checkout_domain;
+      // Live online checkout is DISABLED — the storefront performs no online
+      // checkout. Defensive client guard (server also force-returns checkout
+      // off via /api/public/config): never redirect to a hosted-checkout URL,
+      // regardless of any (stale/cached) purchaseConfig. Re-enabling requires
+      // both this guard and the server kill switch (STOREFRONT_CHECKOUT_DISABLED).
+      const CHECKOUT_DISABLED = true;
+      const checkoutLive = !CHECKOUT_DISABLED
+        && !!purchaseConfig.purchase_enabled && !!purchaseConfig.checkout_domain;
 
       const confirm = document.createElement("button");
       confirm.className = "btn";
@@ -1772,7 +1813,19 @@
         ? "You'll complete payment securely on Ticket Evolution, our ticketing partner. Apple Pay and Google Pay supported."
         : "MVP demo only — no payment will be processed and no order will be sent to Ticket Evolution. This shows what the confirmation flow would look like once checkout is wired up.";
 
-      mb.append(h3, sub, label, receipt, confirm, disc);
+      // Honeypot — hidden from humans (off-screen, not a real "hidden" input so
+      // some bots still see it), aria-hidden + no autofill. A non-empty value on
+      // submit means a bot filled it; the server rejects the reserve.
+      const hp = document.createElement("input");
+      hp.type = "text";
+      hp.id = "rsvCompany";
+      hp.name = "company";
+      hp.tabIndex = -1;
+      hp.autocomplete = "off";
+      hp.setAttribute("aria-hidden", "true");
+      hp.style.cssText = "position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none";
+
+      mb.append(h3, sub, label, receipt, confirm, disc, hp);
 
       qSel.value = String(defaultQ);
       const recompute = () => {
@@ -1799,6 +1852,10 @@
         confirm.disabled = true;
         confirm.textContent = "Validating with TEvo…";
         try {
+          // Bot gate: honeypot value + a fresh reCAPTCHA token as a fallback
+          // when the first-interaction cookie is unavailable (both no-ops when
+          // the gate is dormant). The cookie, if set, rides along automatically.
+          const rcToken = window.StoreBot ? await window.StoreBot.token("submit") : null;
           const res = await api("/api/store/reserve", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1806,6 +1863,8 @@
               event_id: eventId,
               ticket_group_id: listing.id,
               quantity: Number(qSel.value),
+              hp: hp.value || "",
+              recaptcha_token: rcToken || undefined,
             }),
           });
           renderReceipt(mb, res);
@@ -2297,12 +2356,6 @@
         }
       }
 
-      // Interactive seat map — replaces the static image when the venue +
-      // configuration resolve to a published TEvo map. Mounts once (the build
-      // is heavy); on success the static <img>/placeholder is hidden. Failure
-      // is silent — the static fallback above stays put.
-      maybeMountSeatmap();
-
       const freshness = $("#freshness");
       if (freshness) {
         if (res.inventory_source === "cache") {
@@ -2330,6 +2383,16 @@
       head.hidden = false;
       body.hidden = false;
       renderListings();
+
+      // Interactive seat map — replaces the static image when the venue +
+      // configuration resolve to a published TEvo map. Mount AFTER #body is
+      // unhidden: Tevomaps reads the container's size at build() time, so a
+      // zero-size container (hidden ancestor) bakes a blank map that never
+      // re-fits — the white-box bug. rAF lets layout settle so the host has
+      // real clientWidth/Height. Mounts once (the build is heavy); on success
+      // the static <img>/placeholder is hidden. Failure is silent — the static
+      // fallback stays put.
+      requestAnimationFrame(() => maybeMountSeatmap());
       // Re-render section chips against the new listings (sections may have
       // shifted as filters narrowed); zone chips are event-static so don't
       // need re-rendering here.
@@ -3080,4 +3143,81 @@
   } else {
     _autoMount();
   }
+
+  // PWA: register the storefront service worker. Served at /store-sw.js (a root
+  // path) so it can claim the '/store' scope. Progressive enhancement — any
+  // failure (unsupported, blocked, offline) is silent and the site works as-is.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("/store-sw.js", { scope: "/store" })
+        .catch(() => {});
+    });
+  }
+
+  // ---- Bot protection: reCAPTCHA v3 sitewide first-interaction gate ----
+  // Dormant unless the server returns recaptcha_site_key (keys unset = no-op, so
+  // the demo works without provisioning). When enabled: on the first user
+  // gesture we fetch a v3 token and POST it to /api/store/verify-human, which
+  // sets a short-lived signed cookie the write endpoints require — so the gate
+  // runs once per session, not per action. StoreBot.token(action) yields a fresh
+  // token for the reserve fallback. All failures are silent (write endpoints
+  // re-challenge as needed).
+  const StoreBot = (function () {
+    let siteKey = null;
+    let gated = false;
+
+    function loadScript(key) {
+      return new Promise((resolve, reject) => {
+        if (window.grecaptcha && window.grecaptcha.execute) return resolve();
+        const s = document.createElement("script");
+        s.src = "https://www.google.com/recaptcha/api.js?render=" + encodeURIComponent(key);
+        s.async = true;
+        s.defer = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("recaptcha load failed"));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function token(action) {
+      if (!siteKey || !window.grecaptcha || !window.grecaptcha.execute) return null;
+      try {
+        await new Promise((res) => window.grecaptcha.ready(res));
+        return await window.grecaptcha.execute(siteKey, { action: action || "submit" });
+      } catch { return null; }
+    }
+
+    async function gateOnce() {
+      if (gated) return;
+      gated = true;
+      const t = await token("gate");
+      if (!t) return;
+      try {
+        await api("/api/store/verify-human", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recaptcha_token: t }),
+        });
+      } catch { /* gate failed — write endpoints will re-challenge */ }
+    }
+
+    async function init() {
+      let cfg = null;
+      try { cfg = await api("/api/public/config"); } catch { return; }
+      if (!cfg || !cfg.recaptcha_enabled || !cfg.recaptcha_site_key) return;
+      siteKey = cfg.recaptcha_site_key;
+      try { await loadScript(siteKey); } catch { return; }
+      const events = ["pointerdown", "keydown", "touchstart"];
+      const fire = () => {
+        events.forEach((e) => window.removeEventListener(e, fire, true));
+        gateOnce();
+      };
+      events.forEach((e) => window.addEventListener(e, fire, true));
+    }
+
+    return { init, token };
+  })();
+  window.StoreBot = StoreBot;
+  StoreBot.init();
 })();

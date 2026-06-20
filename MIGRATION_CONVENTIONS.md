@@ -1,16 +1,16 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v1.4.0 · baseline 2026-05-28 (A1); v1.1.0 2026-05-31 (A1) — §14 appended 6 collector-cadence + retention migs (`20260531140000`–`200000`); v1.2.0 2026-06-03 (A1) — §14 appended SG owned/non poller split (`20260603180000`) + raw-listings retention halve 30d→15d (`20260603190000`); v1.3.0 2026-06-03 (A1) — §14 appended 3 data-health audit fixes (`20260603200000`–`220000`); v1.4.0 2026-06-08 (A1) — §14 + cross-source amalgam value (mig `20260531214306`). Section-level version + bot-ref convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
-> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Production push authority is now A1 (sole pusher to `main`)** — see [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
+> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Push to `main` is per-task** (A1 + B1 jointly maintain `main`, reorg 2026-06-17 — supersedes "A1 sole pusher"); **prod-DB apply stays centralized on A1.** See [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
 
 ---
 
 ## TL;DR
 
-1. **Only the audit lane (now A1 — see [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md)) pushes to production.** Other bots develop in preview branches and open PRs.
+1. **Only the audit lane (now A1 — see [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md)) pushes to production.** Other bots develop in preview branches and open PRs.
 2. **Migrations are file-system ordered** by `YYYYMMDDHHMMSS_*.sql`. Bump by `+30` to `+50` on collisions, never `+1`.
 3. **Single-writer rule per table.** The bot that introduced the table owns writes. Others read.
 4. **Every migration declares its lane** in a standard header block (see §6).
@@ -29,6 +29,8 @@ Authoritative reference for how migrations are authored, named, reviewed, and sh
 | **Local sandbox** | Any bot | `supabase start` against a local container |
 
 ### Workflow for non-audit-lane bots
+
+> **Executable form:** the `ship-a-migration` skill (`.claude-plugins/terminal2-governance/skills/ship-a-migration/`) runs this workflow with checkpoints + a verification gate; it's auto-surfaced when you edit a migration file or call `apply_migration` (→ `CLAUDE.md §5`).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -200,7 +202,7 @@ collect_*    TEvo ingest (audit lane)
 
 ### Existing cron landscape (as of 2026-05-10)
 
-Cron scheduling policy + job ownership lives in [`CRON_HIERARCHY.md`](CRON_HIERARCHY.md) (the canonical cron owner). Update it when you add/remove a job.
+Cron scheduling policy + catalog lives in [`RESOURCES_BIBLE.md §5`](RESOURCES_BIBLE.md) (the canonical cron owner). Update it when you add/remove a job.
 
 ---
 
@@ -258,26 +260,12 @@ When a migration breaks production, the first 30 seconds of debugging is reading
 
 ---
 
-## 7. Vault secrets
+## 7. Vault secrets (process; current name list → `RESOURCES_BIBLE §7`)
 
-### Naming
-```
-<DOMAIN>_<PURPOSE>
-```
-
-Examples:
-- `FRED_API_KEY` — audit lane (macro)
-- `ESPN_API_KEY` — audit lane (ESPN ingest)
-- `TEVO_BROKER_TOKEN` — audit lane (TEvo)
-- `BROADWAY_SCRAPER_USER_AGENT` — broadway lane
-- `STRIPE_API_KEY` — storefront lane (when added)
-
-### Rules
-
-- **One secret per service per lane.** Don't share keys across bots even for the same upstream service — auditing access becomes impossible.
-- **Document new secrets in the migration header** (`Pre-reqs: vault.YOUR_SECRET`).
-- **Rotation policy:** keys rotate annually or on suspected compromise. Audit lane drives rotation.
-- **Never check secrets into git.** If a secret leaks into a migration file, the audit lane rejects the PR and rotates the key.
+- **Naming** `<DOMAIN>_<PURPOSE>` (e.g. `FRED_API_KEY`). One secret per service per lane; document new ones in the migration header (`Pre-reqs: vault.<NAME>`). **Never** check a secret into git (leak ⇒ reject PR + rotate).
+- **Storage:** Supabase vault (`vault.secrets`, preferred — rotate in one SQL call) or Edge/Render env for boot-time bootstrap (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`).
+- **`get_app_secret(name)` whitelist:** `get_app_secret`/`upsert_app_secret` are SECDEF + service-role-only, enforcing a hardcoded name whitelist. Add a secret = (1) add the name to the whitelist constant in **both** fns; (2) seed via `vault.create_secret`/`upsert_app_secret`; (3) add it to `RESOURCES_BIBLE §7`; all same PR.
+- **Rotation** (annual or on compromise): `SELECT vault.update_secret(s.id,'<new>') FROM vault.secrets s WHERE s.name='<NAME>';` then update any pinned env (`supabase secrets set`, Render) + bounce cached workers. Never insert a duplicate-name row (name is unique; helpers read by name).
 
 ---
 
@@ -299,7 +287,7 @@ Examples:
 
 ## 9. Review checklist (audit lane uses this)
 
-> **See also**: [`docs/pr_governance.md`](docs/pr_governance.md) — A1-ratified 2026-05-16. Codifies one-concern-per-PR, size targets, squash-merge convention, branch-update protocol, lane sign-off requirements, and self-merge anti-pattern. Read the governance doc for principles; this checklist is the mechanical pre-merge audit.
+> **PR governance** (one-concern-per-PR, size targets, squash-merge, lane sign-off, no self-merge) → `PROJECT_BIBLE §2.3` + §2.8. This checklist is the mechanical pre-merge audit.
 
 Before merging any non-audit-lane PR, the audit lane verifies:
 
@@ -387,6 +375,12 @@ Some scenarios need to break the rules. The audit lane decides; others propose.
 
 **Never `DROP TABLE` to "start over."** The data on the production table is real and other bots may depend on it.
 
+### 11.1 Apply-before-PR (idempotent + reversible only)
+When a migration is **idempotent** (`CREATE OR REPLACE`, `… IF NOT EXISTS`, `DROP … IF EXISTS`, `cron.un/schedule`) **and reversible** (no data loss without an opt-in flag), A1 may apply via MCP **before** opening the PR; the PR is then the idempotent codification (re-apply = no-op). **Allowed:** `CREATE OR REPLACE FUNCTION`, `CREATE/DROP INDEX IF [NOT] EXISTS`, matview `WITH NO DATA` + REFRESH, `cron.schedule/unschedule`, `GRANT`/`REVOKE`, `COMMENT`, seed rows `ON CONFLICT DO NOTHING`. **BANNED:** `DROP TABLE`/`COLUMN`/`TYPE`, `DROP CONSTRAINT … CASCADE`, anything breaking a live consumer mid-flight, any cross-lane change without prior `bot_chat` ack. When applied early, the PR body states `## Already applied to prod — Applied via MCP <ts>; idempotent codification` + a test-plan line confirming re-apply is a no-op.
+
+### 11.2 Branch + PR naming
+Branch `claude/<lane-short>-<purpose-slug>` (lowercase lane: `a1/b1/c1/d0/…`). PR title `<type>(<lane>): <short imperative>` (Conventional Commits `feat/fix/chore/docs/perf/refactor`) — **enforced by the `pr-title-lint` workflow**; squash-merge keeps `…(#<pr>)` in the subject.
+
 ---
 
 ## 12. Document maintenance
@@ -394,87 +388,16 @@ Some scenarios need to break the rules. The audit lane decides; others propose.
 This document is owned by the audit lane. Updates require:
 1. Audit-lane-authored PR
 2. Brief mention of the change at the top of `KANBAN.md`
-3. If lanes change: update [`BOT_HIERARCHY.md`](BOT_HIERARCHY.md) (the roster + push-authority owner) to match
+3. If lanes change: update [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md) (the roster + push-authority owner) to match
 
 If you (any bot) think this doc is wrong or incomplete, open an issue tagged `migration-conventions` — don't edit it yourself unless you're the audit lane.
-
----
-
-## 12. Vault secrets — whitelist + rotation policy (added 2026-05-11 security chat)
-
-Every secret used by any code path in this repo must live in **one of two places**:
-1. **Supabase vault** (`vault.secrets`) — preferred; rotation is one SQL call, no migration cycle, no env redeploy.
-2. **Railway / Supabase Edge Function env vars** — for things the runtime needs at boot before it can talk to Postgres (the bootstrap secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`).
-
-NEVER place a secret directly in repo source (this includes migration DDL, KANBAN/AGENTS notes, edge function code, HTML, `.env.example` with real values).
-
-### 12.1 The `get_app_secret` whitelist (single source of truth)
-
-`public.get_app_secret(name)` and `public.upsert_app_secret(name, value)` are SECURITY DEFINER + service-role-only. Both enforce a hardcoded **whitelist** of allowed secret names. To add a new secret you must:
-
-1. Modify the whitelist constant inside both functions (additive — never remove a name without auditing callers).
-2. Seed the secret via `vault.create_secret(value, name)` or `upsert_app_secret(name, value)`.
-3. Add a row to the `vault.secret_metadata` view (see §12.3).
-4. Document in this file under §12.4.
-
-### 12.2 Rotation procedure
-
-```sql
--- 1. Generate a new value (out-of-band, do NOT log it).
--- 2. Update vault:
-SELECT vault.update_secret(s.id, '<new value>')
-FROM vault.secrets s WHERE s.name = '<SECRET_NAME>';
--- 3. If the secret is also pinned to an env var (e.g. CRON_SECRET):
---    - railway variables --set "<NAME>=<new value>"
---    - supabase secrets set <NAME>="<new value>"
--- 4. Update the metadata view (§12.3) so the next audit shows fresh rotation.
--- 5. Bounce any worker that caches at boot (FastAPI on Railway redeploys automatically).
-```
-
-**Never rotate by inserting a new row with the same name** — `vault.secrets.name` is unique, and the helpers read by name. Always `update_secret`.
-
-### 12.3 Audit query
-
-A migration should land a `vault.secret_metadata` view (or table if vault doesn't allow views over `secrets`) of the shape:
-
-```sql
-CREATE OR REPLACE VIEW public.v_vault_secret_metadata AS
-SELECT
-  s.name,
-  s.created_at,
-  s.updated_at,
-  m.owner_lane,
-  m.last_rotated_at,
-  m.notes
-FROM vault.secrets s
-LEFT JOIN public.vault_secret_metadata m ON m.name = s.name;
-GRANT SELECT ON public.v_vault_secret_metadata TO service_role;
--- DO NOT GRANT to anon / authenticated / coworker_readonly.
-```
-
-(Migration to land this is a follow-up — tracked in KANBAN as `[SEC-LOW] Document get_app_secret whitelist`.)
-
-### 12.4 Current whitelist (as of 2026-05-11)
-
-| Secret name | Owner lane | Reader | Purpose |
-|---|---|---|---|
-| `CRON_SECRET` | xref+macro | app.py + edge fns + cron jobs | Cron-driven endpoint auth |
-| `EDGE_FN_ANON_JWT` | xref+macro | cron jobs | Bearer auth for edge fn invocation |
-| `SEATDATA_API_KEY` | canonical | seatdata_client | Upstream API auth |
-| `TEVO_API_TOKEN` | canonical | evo_client | Upstream API auth |
-| `TEVO_SECRET` | canonical | evo_client | Upstream API auth |
-| `SEATGEEK_API_TOKEN` | canonical | seatgeek_client | Upstream API auth |
-| `FRED_API_KEY` | xref+macro | macro fn | Upstream API auth |
-| `anthropic_api_key` | canonical | chat edge fn | LLM auth |
-
-Adding a new entry requires both the whitelist update AND a row in this table (same migration).
 
 ---
 
 ## 13. Quick reference card
 
 ```
-Production push     → audit lane only
+Production push     → per-task (A1 + B1 maintain main); prod-DB apply A1-only
 Migration timestamp → YYYYMMDDHHMMSS, bump +30/+50 on collision
 Filename            → <timestamp>_<lane>_<desc>.sql
 Header              → Lane / Touches / Pre-reqs (mandatory)
@@ -488,7 +411,7 @@ Emergency override  → tag `urgent-prod-write`, human approval, audit-lane back
 
 ---
 
-## 14. Landmark migration log (don't re-do shipped work) *(v1.1 · A1 · 2026-05-31)*
+## 14. Landmark migration log (don't re-do shipped work)
 
 > Migrated here from `PROJECT_BIBLE.md §9` (2026-05-28) to keep the per-session playbook lean. This is the durable, curated record of migrations that shipped meaningful schema/behavior changes — **check it before authoring** to avoid re-doing work that already landed. It is **not** auto-generated: `CHANGELOG.md` (owned by release-please, generated from conventional commits) is the machine record; this appendix is the hand-curated landmark subset with the "why." A1 appends a row when a landmark migration lands.
 
@@ -592,7 +515,7 @@ Emergency override  → tag `urgent-prod-write`, human approval, audit-lane back
 | **2026-05-31** | 20260531140000 | **collector_cadence config table** — NEW `public.collector_cadence(source, scope, band, min_hours, max_hours, peak_interval_min, offpeak_interval_min, enabled, sort_order, notes)` (tunable per-source/scope/horizon poll intervals) + helper `collector_band(source,scope,hours)` → `(band, required_min)`, peak-aware (ET 12-23). Foundation for the per-event listings pollers. |
 | 2026-05-31 | 20260531150000 | **EVO listings poller** — NEW `public.evo_listings_poll_state(event_id PK, last_polled_listings_at, listings_polls_today, budget_day)` + `evo_listings_poll_tick(p_max)` (fires `collect-listings?event_id=X` per due event, stamp-on-fire). EVO is the sole TEvo consumer (≈unlimited). Cron `evo_listings_poll_2min`. |
 | 2026-05-31 | 20260531160000 | **SG poller + bands** — `sg_listings_poll_tick(p_max,p_min_remaining)` (band-driven, rate-aware backoff via `ratelimit-remaining`, strand-safe, `p_max=5` — SG is ~5 req/10s) + retuned `sg_sales_poll_tick` (bands); `sg_broker_listings_process` now advances `last_polled_listings_at` **only on HTTP 200**. SG reuses `sg_event_priority_state` (+`last_fired_listings_at`) — no `sg_listings_poll_state`. Cron `sg_listings_poll_2min`. |
-| 2026-05-31 | 20260531170000 | **Cron cutover (bands)** — RETIRED the horizon collectors: `collect-listings-0-24h/1-7d/7-30d/30-60d/60d+`, `collect-listings-featured-10min`, `sg_blindspot_poll_5min`, `sg_listings_floor_sweep`, `sg_60d_listings/sales_morning/afternoon`, `sg_broker_sales_queue_5min`, + ~9 inactive. ADDED `evo_listings_poll_2min` + `sg_listings_poll_2min`. (P0 follow-ups in `…200000` re-add a low-freq `collect-listings` discovery sweep + re-enable `sg_sales_poll_5min`.) Per-horizon cadence bands: CRON_HIERARCHY §4b. |
+| 2026-05-31 | 20260531170000 | **Cron cutover (bands)** — RETIRED the horizon collectors: `collect-listings-0-24h/1-7d/7-30d/30-60d/60d+`, `collect-listings-featured-10min`, `sg_blindspot_poll_5min`, `sg_listings_floor_sweep`, `sg_60d_listings/sales_morning/afternoon`, `sg_broker_sales_queue_5min`, + ~9 inactive. ADDED `evo_listings_poll_2min` + `sg_listings_poll_2min`. (P0 follow-ups in `…200000` re-add a low-freq `collect-listings` discovery sweep + re-enable `sg_sales_poll_5min`.) Per-horizon cadence bands: RESOURCES_BIBLE §5. |
 | 2026-05-31 | 20260531180000 | **Retention Wave 1** — operator-set retention ladder (replaces the old forever-retention firehose rule): raw snapshots **30d** ALL sources; `event_metrics` **120d**; `section_metrics` **60d**; `event_section_rows` **30d**; `espn_injuries` **90d**; `event_listing_snapshot_daily` **INDEFINITE**. NEW `sweep_old_section_metrics(60)` / `sweep_old_event_section_rows(30)` / `sweep_old_espn_injuries(90)`; modified `sweep_old_listings` (event_metrics→120d) + `sweep_old_td_listings` (30d, re-batched). + autovacuum tuning on high-churn tables. Wave 2 (SG-sales dedup) / 3 (change-detection) / 4 (partitioning) + VACUUM FULL staged in KANBAN. |
 | 2026-05-31 | 20260531200000 | **Collector-cadence P0 fixes** — same-day follow-ups to the cutover: re-add a low-frequency `collect-listings` new-event discovery sweep + re-enable `sg_sales_poll_5min` (band-driven). |
 | 2026-05-31 | 20260531214306 | **Cross-source AMALGAM value** — 3 GENERATED STORED cols on `event_listing_snapshot_daily`: `amalgam_getin` (cross-source FLOOR = `LEAST(NULLIF(per-source getin,0))` over EVO/SG/SH/GT/VD/TP/TM — auto-uses only the sources present), `amalgam_source_count` (0-7), `amalgam_median` (count-WEIGHTED mean of per-source medians — inventory-weighted *typical* price, legitimately ≫ getin for premium events; **not a bug**). Generated ⇒ `compute_event_listing_snapshot` untouched + all rows auto-backfilled on ALTER. Live `get_event_amalgam(event_id)` RPC (floor + blend + `sources[]` + per-source breakdown) — **complements, ≠ dup of** D0's `get_event_all_source_listing_metrics` (06-06; live per-source breakdown, no blend). On `v_event_listing_trends` w/ DoD+WoW deltas. Applied to prod 05-31 (via MCP, ledger `20260531214306`); file landed to main 06-08. |
@@ -608,4 +531,4 @@ Emergency override  → tag `urgent-prod-write`, human approval, audit-lane back
 ---
 
 Last updated: 2026-06-08 — SG owned-focus + listings full-count fix (`20260608030000`) + movers agg-timeout fix (`…031000`) + bot_chat auto-resolve & noise sweep (`…032000`), all applied to prod & file-synced to main. | 2026-06-08 — cross-source amalgam value landed to main (mig `20260531214306`: amalgam_getin/median/source_count generated cols + `get_event_amalgam` RPC; applied to prod 05-31 via MCP, file now synced). | 2026-06-03 — added SG owned/non poller split (`20260603180000`), raw-listings retention halve 30d→15d (`20260603190000`), + 3 data-health audit fixes (`20260603200000`–`220000`: seller-listings FK ingest, dedup per-event bound, evo_discover bot_chat_log), all applied to prod (branch `claude/sg-listing-token-spend-Et52v`, PR #423). | 2026-05-31 — added 6 collector-cadence + retention migs (collector_cadence `20260531140000`, EVO poller …150000, SG poller+bands …160000, cron cutover …170000, retention Wave 1 …180000, P0 fixes …200000). | 2026-05-30 — terminal event-page chain timeout audit (mig 20260530120000; branch `a1/terminal-sql-audit-fixes`, applied to prod, not yet pushed to main). | 2026-05-29 — added 7 landmark migs (TD focus 20260529120000, SG floor-sweep …170000, TickPick platform …180000, TP+TM metrics …190000, Ticketmaster platform …200000, TM fixes …210000, TM resale split …220000); all pushed to main. | prior: 2026-05-28 — added §14 landmark migration log (migrated from `PROJECT_BIBLE.md §9`); added roster note reconciling "audit lane" → A1.
-Owner: A1 (formerly "audit lane"; see `BOT_HIERARCHY.md` for the current roster).
+Owner: A1 (formerly "audit lane"; see `PROJECT_BIBLE.md §2` for the current roster).

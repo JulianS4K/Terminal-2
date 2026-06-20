@@ -47,6 +47,11 @@ fastapi = pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
 import app as app_module  # noqa: E402
+# The movers engine (section builders + holiday/marquee classifiers + _compute_movers)
+# moved to core/movers.py (BR-CODE-1). app still re-exports _compute_movers /
+# _classify_world_cup / _or_ilike_clause (reachable via app_module), but the section
+# builders + the holiday-proximity classifier are module-private to core.movers.
+from core import movers as _movers  # noqa: E402
 
 TestClient = starlette_testclient.TestClient
 
@@ -450,7 +455,7 @@ def test_section_featured_includes_playoff_under_owned_gate():
         "owned_median_retail": 5880,
         "occurs_at_local": "2026-05-31T20:00:00-04:00",
     }
-    out = app_module._section_featured([playoff], {}, {})
+    out = _movers._section_featured([playoff], {}, {})
     assert [c["id"] for c in out] == [1]
     assert out[0]["_featured_kind"] == "playoff"
 
@@ -464,7 +469,7 @@ def test_section_featured_excludes_nonplayoff_under_owned_gate():
         "owned_tickets_count": 61, "owned_median_retail": 20,
         "occurs_at_local": "2026-06-01T19:00:00-04:00",
     }
-    assert app_module._section_featured([ev], {}, {}) == []
+    assert _movers._section_featured([ev], {}, {}) == []
 
 
 def test_section_featured_premium_nonplayoff_still_included():
@@ -475,7 +480,7 @@ def test_section_featured_premium_nonplayoff_still_included():
         "owned_tickets_count": 150, "owned_median_retail": 120,
         "occurs_at_local": "2026-06-02T19:00:00-04:00",
     }
-    out = app_module._section_featured([ev], {}, {})
+    out = _movers._section_featured([ev], {}, {})
     assert [c["id"] for c in out] == [3]
     assert out[0]["_featured_kind"] == "premium"
 
@@ -580,7 +585,7 @@ def test_section_featured_includes_world_cup_under_owned_gate():
         "owned_median_retail": 775,
         "occurs_at_local": "2026-06-27T19:30:00-04:00",
     }
-    out = app_module._section_featured([wc], {}, {})
+    out = _movers._section_featured([wc], {}, {})
     assert [c["id"] for c in out] == [1]
     assert out[0]["_featured_kind"] == "world_cup"
     assert out[0]["_featured_tag"] == "World Cup"
@@ -597,7 +602,7 @@ def test_section_featured_excludes_world_cup_lookalike_promo():
         "owned_tickets_count": 62, "owned_median_retail": 20,
         "occurs_at_local": "2026-06-19T19:15:00-05:00",
     }
-    assert app_module._section_featured([ev], {}, {}) == []
+    assert _movers._section_featured([ev], {}, {}) == []
 
 
 def test_compute_movers_features_owned_world_cup_non_nyc():
@@ -1311,7 +1316,7 @@ def _featured_candidate(eid: int, owned: int = 150,
 def test_section_featured_holiday_day_of_label():
     """Holiday day-of: bare name, no 'Weekend' suffix."""
     cand = _featured_candidate(1)
-    out = app_module._section_featured(
+    out = _movers._section_featured(
         [cand],
         holiday_by_eid={1: {"name": "Memorial Day", "weekend": False}},
         rivalry_by_eid={},
@@ -1324,7 +1329,7 @@ def test_section_featured_holiday_day_of_label():
 def test_section_featured_holiday_weekend_of_label():
     """Holiday weekend-of (±1/±2 from observed_date): 'Weekend' suffix."""
     cand = _featured_candidate(2)
-    out = app_module._section_featured(
+    out = _movers._section_featured(
         [cand],
         holiday_by_eid={2: {"name": "Memorial Day", "weekend": True}},
         rivalry_by_eid={},
@@ -1337,7 +1342,7 @@ def test_section_featured_holiday_weekend_of_label():
 def test_section_specials_holiday_day_of_label():
     """Specials rail mirrors Featured for the label semantics."""
     cand = _featured_candidate(3)
-    out = app_module._section_specials(
+    out = _movers._section_specials(
         [cand],
         holiday_by_eid={3: {"name": "Father's Day", "weekend": False}},
         rivalry_by_eid={},
@@ -1350,7 +1355,7 @@ def test_section_specials_holiday_day_of_label():
 def test_section_specials_holiday_weekend_of_label():
     """Specials rail — weekend-of gets the 'Weekend' framing."""
     cand = _featured_candidate(4)
-    out = app_module._section_specials(
+    out = _movers._section_specials(
         [cand],
         holiday_by_eid={4: {"name": "Father's Day", "weekend": True}},
         rivalry_by_eid={},
@@ -1365,7 +1370,7 @@ def test_section_specials_rivalry_wins_over_holiday():
     is the more specific narrative — guard the prefer-rivalry behavior so
     the new holiday-label refactor doesn't regress it."""
     cand = _featured_candidate(5)
-    out = app_module._section_specials(
+    out = _movers._section_specials(
         [cand],
         holiday_by_eid={5: {"name": "Memorial Day", "weekend": True}},
         rivalry_by_eid={5: "Yankees vs Red Sox"},
@@ -1385,21 +1390,21 @@ def test_section_specials_rivalry_wins_over_holiday():
 
 def test_classify_holiday_proximity_day_of():
     """Candidate on the exact observed_date → 'day_of'."""
-    assert app_module._classify_holiday_proximity(
+    assert _movers._classify_holiday_proximity(
         "2026-05-25", "2026-05-25"
     ) == "day_of"
 
 
 def test_classify_holiday_proximity_saturday_before():
     """Saturday before Memorial Day Mon → 'weekend_of'."""
-    assert app_module._classify_holiday_proximity(
+    assert _movers._classify_holiday_proximity(
         "2026-05-23", "2026-05-25"  # Sat May 23 (weekday 5) → weekend
     ) == "weekend_of"
 
 
 def test_classify_holiday_proximity_sunday_before():
     """Sunday before Memorial Day Mon → 'weekend_of'."""
-    assert app_module._classify_holiday_proximity(
+    assert _movers._classify_holiday_proximity(
         "2026-05-24", "2026-05-25"  # Sun May 24 (weekday 6) → weekend
     ) == "weekend_of"
 
@@ -1408,7 +1413,7 @@ def test_classify_holiday_proximity_tuesday_after_returns_none():
     """The operator's exact case: Tue May 26 after Memorial Day Mon
     May 25 is NOT 'Memorial Day Weekend'. Helper returns None so the
     upstream loop skips tagging this event with the holiday."""
-    assert app_module._classify_holiday_proximity(
+    assert _movers._classify_holiday_proximity(
         "2026-05-26", "2026-05-25"  # Tue May 26 (weekday 1) → no tag
     ) is None
 
@@ -1418,14 +1423,14 @@ def test_classify_holiday_proximity_friday_before_returns_none():
     Sat or Sun; the long-weekend lead-in is not Featured-as-holiday
     territory (the event still flows to other Featured branches if it
     qualifies on owned_median or market-anchor)."""
-    assert app_module._classify_holiday_proximity(
+    assert _movers._classify_holiday_proximity(
         "2026-05-22", "2026-05-25"  # Fri May 22 (weekday 4) → no tag
     ) is None
 
 
 def test_classify_holiday_proximity_fathers_day_saturday():
     """Father's Day = Sun Jun 21, 2026. Saturday Jun 20 → 'weekend_of'."""
-    assert app_module._classify_holiday_proximity(
+    assert _movers._classify_holiday_proximity(
         "2026-06-20", "2026-06-21"  # Sat Jun 20 (weekday 5) → weekend
     ) == "weekend_of"
 
@@ -1433,5 +1438,5 @@ def test_classify_holiday_proximity_fathers_day_saturday():
 def test_classify_holiday_proximity_invalid_input_returns_none():
     """Malformed ISO date → None (defensive — caller may pass empty
     observed_date string when chosen row lacks the field)."""
-    assert app_module._classify_holiday_proximity("", "2026-05-25") is None
-    assert app_module._classify_holiday_proximity("not-a-date", "2026-05-25") is None
+    assert _movers._classify_holiday_proximity("", "2026-05-25") is None
+    assert _movers._classify_holiday_proximity("not-a-date", "2026-05-25") is None

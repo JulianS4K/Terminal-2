@@ -129,22 +129,8 @@ _STOREFRONT_HTML_CACHE: dict[str, str] = {}
 # on the consumer storefront despite the broker tier already marking them
 # SKIP. CANCELLED was already filtered at 3 app-layer call sites; this
 # helper consolidates + adds (If Necessary).
-_SPECULATIVE_NAME_PATTERNS = (
-    "CANCELLED",
-    "(IF NECESSARY)",
-)
-
-
-def _is_speculative_event_name(name: str | None) -> bool:
-    """True when an event name contains any pattern indicating the game may
-    never happen as scheduled (CANCELLED or playoff if-necessary). Consumer
-    surfaces should drop these. (Date TBD) events are NOT speculative —
-    they're real scheduled games with pending datetime confirmation, surfaced
-    via the `tbd` badge."""
-    if not name:
-        return False
-    upper = name.upper()
-    return any(p in upper for p in _SPECULATIVE_NAME_PATTERNS)
+# _SPECULATIVE_NAME_PATTERNS + _is_speculative_event_name -> core/helpers.py
+# (BR-CODE-1 leaf-helper pass). Imported (aliased) below.
 
 
 def _read_storefront_html(name: str) -> str:
@@ -210,98 +196,128 @@ def _render_storefront_page(name: str) -> HTMLResponse:
 
 # ---------- Bootstrap ----------
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
-CRON_SECRET = os.environ.get("CRON_SECRET")
-ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
-
-# AUTH_DISABLED is a local-dev kill switch. To prevent a misconfig from
-# accidentally opening the whole API, it ONLY takes effect when:
-#   (a) AUTH_DISABLED=true is set explicitly, AND
-#   (b) at least ONE indicator says we're NOT in production.
-# Hardened 2026-05-11; broadened beyond Railway-only check to be portable.
-_AUTH_DISABLED_REQUESTED = os.environ.get("AUTH_DISABLED", "false").lower() == "true"
-
-def _is_production() -> bool:
-    """Conservative production detector. If ANY of these indicators say
-    production, we treat it as production (deny the kill-switch)."""
-    railway = (os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() == "production"
-    generic = (os.environ.get("ENVIRONMENT") or "").lower() == "production"
-    node = (os.environ.get("NODE_ENV") or "").lower() == "production"
-    py = (os.environ.get("PYTHON_ENV") or "").lower() == "production"
-    fly = bool(os.environ.get("FLY_APP_NAME"))  # Fly.io
-    render = bool(os.environ.get("RENDER"))     # Render
-    # If NO env-indicator is set at all, we're likely local dev — only then
-    # honor the kill switch. This errs heavily on the side of safety.
-    any_prod_signal = railway or generic or node or py or fly or render
-    return any_prod_signal
-
-AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
-if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
-    print("WARNING: AUTH_DISABLED=true ignored — production indicator detected (RAILWAY_ENVIRONMENT / ENVIRONMENT / NODE_ENV / PYTHON_ENV / FLY_APP_NAME / RENDER).")
-
-# STOREFRONT_SQL_ONLY — demo mode for pre-checkout MVP. When on:
-#   - /api/store/events/{id} reads ticket_groups from listings_snapshots
-#     (cron-collected) instead of going live to TEvo.
-#   - /api/store/reserve skips TEvo validation and returns a mock receipt.
-#   - /api/store/events/near forces source=supabase (no TEvo geo call).
-#
-# Why: until real checkout is wired, live TEvo only buys us freshness, and
-# the test environment shouldn't burn TEvo quota on every page load. Flip
-# off the moment real /v9/orders calls go live — stale snapshots are
-# dangerous when shoppers can actually buy.
-STOREFRONT_SQL_ONLY = os.environ.get("STOREFRONT_SQL_ONLY", "false").lower() == "true"
-if STOREFRONT_SQL_ONLY:
-    print("STOREFRONT_SQL_ONLY=true — storefront serves from listings_snapshots; no live TEvo calls on store routes.")
-
-# STOREFRONT_SEARCH_SQL_ONLY — independent flag for /api/store/search routing
-# (operator 2026-05-18). Splits search off from the general STOREFRONT_SQL_ONLY
-# so search can default to SQL (snappy + zero TEvo quota) while event-detail
-# stays on TEvo live (fresh ticket-group pricing). To revert search to TEvo:
-# set STOREFRONT_SEARCH_SQL_ONLY=false. STOREFRONT_SQL_ONLY=true still wins
-# (forces SQL for both) for backward compat with prior deployments. Live
-# search code path (_search_live) is preserved as a flippable fallback.
-STOREFRONT_SEARCH_SQL_ONLY = os.environ.get("STOREFRONT_SEARCH_SQL_ONLY", "true").lower() == "true"
-if STOREFRONT_SEARCH_SQL_ONLY and not STOREFRONT_SQL_ONLY:
-    print("STOREFRONT_SEARCH_SQL_ONLY=true — /api/store/search uses _search_sql_only; event-detail still live TEvo.")
-
-# STOREFRONT_PREFER_INTERNAL_ZONES — flip on once the hand-curated granular
-# zones (NYK at MSG taxonomy, etc.) cover most/all sections. Today most of
-# them have coverage gaps that leave shoppers with un-filterable listings,
-# so the default surfaces the consumer-bowl layer (Lower 100s / Club 200s
-# etc.) which is well-covered. Internal detection logic stays wired so a
-# flip flag does the right thing event-by-event when data matures.
-STOREFRONT_PREFER_INTERNAL_ZONES = (
-    os.environ.get("STOREFRONT_PREFER_INTERNAL_ZONES", "false").lower() == "true"
+# Runtime config moved to core/config.py (BR-CODE-1 core extraction); imported
+# here so existing `app.<NAME>` reads + the test monkeypatches keep working.
+# The auth kill-switch (AUTH_DISABLED / _is_production) stays below — it's part
+# of the auth gate (require_auth).
+from core.config import (  # noqa: E402
+    SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY, CRON_SECRET,
+    ALLOWED_EMAIL_DOMAIN, STOREFRONT_SQL_ONLY, STOREFRONT_SEARCH_SQL_ONLY,
+    STOREFRONT_PREFER_INTERNAL_ZONES, STOREFRONT_RESERVE_REQUIRES_AUTH,
+    STOREFRONT_CHECKOUT_DOMAIN, STOREFRONT_CHECKOUT_DISABLED,
+    RECAPTCHA_SITE_KEY, RECAPTCHA_SECRET_KEY, RECAPTCHA_MIN_SCORE, RECAPTCHA_ENABLED,
 )
-if STOREFRONT_PREFER_INTERNAL_ZONES:
-    print("STOREFRONT_PREFER_INTERNAL_ZONES=true — granular zones preferred when (performer, venue) has them.")
 
-# Reserve endpoint auth gate. Default is `true` — unauthenticated state-changing
-# routes are wrong by default. MVP demo envs that want the front-end button to
-# work without a Supabase session must explicitly set STOREFRONT_RESERVE_REQUIRES_AUTH=false.
-# Sprint 2 (real-purchase path) keeps this true unconditionally.
-STOREFRONT_RESERVE_REQUIRES_AUTH = (
-    os.environ.get("STOREFRONT_RESERVE_REQUIRES_AUTH", "true").lower() == "true"
+# Auth gate moved to core/auth.py (BR-CODE-1 core extraction): require_auth +
+# the AUTH_DISABLED kill-switch + _is_production. Imported so existing
+# `app.<NAME>` reads keep working; require_auth reads its deps from core
+# (one-directional import). The security tests force the gate ON by patching
+# `core.auth.AUTH_DISABLED`.
+from core.auth import require_auth, AUTH_DISABLED, _is_production  # noqa: E402
+
+# Helpers moved to core/ (BR-CODE-1 helper pass). Aliased to the historical
+# `_`-prefixed names so every call site + the route tests' monkeypatch
+# (app._bulk_performer_assets) keep resolving the app-module binding.
+from core.helpers import classify_playoff as _classify_playoff, _PLAYOFF_SPECIFIC_RE  # noqa: E402
+from core.helpers import (  # noqa: E402
+    or_ilike_clause as _or_ilike_clause,
+    is_speculative_event_name as _is_speculative_event_name,
+    classify_world_cup as _classify_world_cup,
 )
-if not STOREFRONT_RESERVE_REQUIRES_AUTH:
-    print("STOREFRONT_RESERVE_REQUIRES_AUTH=false — /api/store/reserve is UNAUTHENTICATED (MVP demo mode).")
+from core.broker_helpers import bulk_performer_assets as _bulk_performer_assets  # noqa: E402
+from core.broker_helpers import bulk_event_context as _bulk_event_context  # noqa: E402
+from core.movers import compute_movers as _compute_movers  # noqa: E402
+from core.search import search_sql_only as _search_sql_only  # noqa: E402
+from core.helpers import clean_opt_url as _clean_opt_url  # noqa: E402
+from core.helpers import tevo_runtime_to_http as _tevo_runtime_to_http  # noqa: E402
+from core.helpers import normalize_filters as _normalize_filters  # noqa: E402
+from core.helpers import ticket_group_to_listing as _ticket_group_to_listing  # noqa: E402
+from core.helpers import parse_iso_or_none as _parse_iso_or_none  # noqa: E402
+from core.helpers import to_int_or_none as _to_int_or_none  # noqa: E402
+from core.helpers import to_num_or_none as _to_num_or_none  # noqa: E402
+from core.helpers import haversine_miles as _haversine_miles  # noqa: E402
+from core.helpers import venue_tokens as _venue_tokens  # noqa: E402
+from core.helpers import venue_overlap as _venue_overlap  # noqa: E402
 
-# TEvo Hosted Checkout — DORMANT until the operator provisions the domain.
-# When set (e.g. "checkout.vibepass.com"), the storefront Reserve button
-# redirects the buyer to TEvo's hosted checkout at
-#   https://<domain>/checkout/payment/<event_id>/<ticket_group_id>?quantity=N
-# where TEvo is the merchant-of-record and handles payment, Apple/Google
-# Pay, and fraud. When empty (the default) the Reserve flow stays the MVP
-# mock — NO real purchases, NO redirect. This is a pure browser redirect:
-# our backend never writes to TEvo, so the RULE 2 read-only wall is not
-# involved. Enabling is operator-gated: provision the hosted-checkout
-# subdomain with the TEvo rep + point DNS (CNAME -> cname.vercel-dns.com),
-# land real legal copy (D1-OPS-5), THEN set this env var.
-STOREFRONT_CHECKOUT_DOMAIN = os.environ.get("STOREFRONT_CHECKOUT_DOMAIN", "").strip()
-if STOREFRONT_CHECKOUT_DOMAIN:
-    print(f"STOREFRONT_CHECKOUT_DOMAIN={STOREFRONT_CHECKOUT_DOMAIN} — Reserve redirects to TEvo Hosted Checkout (real purchases ENABLED).")
+# (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
+# at the top of this bootstrap block, BR-CODE-1 core extraction.)
+
+# HMAC key for the signed human-session cookie. Prefer a stable secret so the
+# cookie survives restarts; fall back to a per-process random (cookies simply
+# re-issue on the next interaction after a restart — fine for a demo).
+_HUMAN_COOKIE_SECRET = (
+    os.environ.get("SESSION_SIGNING_SECRET") or CRON_SECRET or secrets.token_hex(32)
+).encode()
+_HUMAN_COOKIE_NAME = "vp_human"
+_HUMAN_TTL_SECONDS = 1800  # 30 min
+
+
+def _issue_human_token(ttl: int = _HUMAN_TTL_SECONDS) -> str:
+    """Mint a signed, expiring opaque token: '<exp>.<hex-hmac>'."""
+    exp = int(time.time()) + ttl
+    sig = hmac.new(_HUMAN_COOKIE_SECRET, str(exp).encode(), "sha256").hexdigest()
+    return f"{exp}.{sig}"
+
+
+def _valid_human_token(tok: str | None) -> bool:
+    if not tok or "." not in tok:
+        return False
+    exp_s, _, sig = tok.partition(".")
+    try:
+        exp = int(exp_s)
+    except ValueError:
+        return False
+    if exp < int(time.time()):
+        return False
+    expected = hmac.new(_HUMAN_COOKIE_SECRET, exp_s.encode(), "sha256").hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
+def _verify_recaptcha(token: str | None, expected_action: str, remote_ip: str | None) -> bool:
+    """Verify a reCAPTCHA v3 token with Google. Returns True when the gate is
+    dormant (no keys). Fails OPEN on a network/Google error (demo availability),
+    CLOSED on an explicit failure / low score / action mismatch."""
+    if not RECAPTCHA_ENABLED:
+        return True
+    if not token:
+        return False
+    try:
+        resp = requests.post(
+            "https://www.google.com/recaptcha/api/siteverify",
+            data={"secret": RECAPTCHA_SECRET_KEY, "response": token, "remoteip": remote_ip or ""},
+            timeout=5,
+        )
+        data = resp.json()
+    except Exception as e:  # noqa: BLE001 — network/parse: fail open so a Google blip can't break the demo
+        print(f"[recaptcha] verify call failed ({e!r}) — failing open")
+        return True
+    if not data.get("success"):
+        return False
+    action = data.get("action")
+    if action and expected_action and action != expected_action:
+        return False
+    return float(data.get("score") or 0.0) >= RECAPTCHA_MIN_SCORE
+
+
+def _require_human(request: Request, payload: dict | None = None):
+    """Gate a write/spam endpoint behind the human check. No-op when the gate is
+    dormant. Accepts a valid vp_human cookie OR a fresh reCAPTCHA token in the
+    request body ('recaptcha_token'); otherwise 403. Also runs the always-on
+    honeypot check (a non-empty 'hp' field => silently treat as a bot)."""
+    # Honeypot — always on, even when reCAPTCHA is dormant. A hidden field no
+    # human ever fills; bots that auto-fill inputs trip it.
+    if payload and str(payload.get("hp") or "").strip():
+        raise HTTPException(400, "invalid request")
+    if not RECAPTCHA_ENABLED:
+        return
+    if _valid_human_token(request.cookies.get(_HUMAN_COOKIE_NAME)):
+        return
+    token = (payload or {}).get("recaptcha_token")
+    xff = request.headers.get("x-forwarded-for") or ""
+    ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
+    if _verify_recaptcha(token, "submit", ip):
+        return
+    raise HTTPException(403, "bot verification required — refresh the page and try again")
 
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -406,46 +422,7 @@ else:
 
 # ---------- Auth dependency ----------
 
-def require_auth(authorization: str | None = Header(None)):
-    """Validate a Supabase-issued JWT + enforce email domain.
-
-    Browser sends 'Authorization: Bearer <jwt>' on every API call.
-    We hit Supabase's /auth/v1/user to validate the token and get the user,
-    then check the email ends in the allowed domain.
-    """
-    if AUTH_DISABLED:
-        return None
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "missing bearer token")
-    token = authorization.split(" ", 1)[1].strip()
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        raise HTTPException(500, "Supabase auth not configured on server")
-    try:
-        r = requests.get(
-            f"{SUPABASE_URL}/auth/v1/user",
-            headers={"Authorization": f"Bearer {token}", "apikey": SUPABASE_ANON_KEY},
-            timeout=5,
-        )
-    except Exception as e:
-        # Don't surface internal exception detail externally — may expose
-        # Supabase hostnames, connection error strings, or timeout messages
-        # that are useful to an attacker mapping our internal topology.
-        logging.getLogger(__name__).error("Auth check against Supabase failed: %s", e)
-        raise HTTPException(502, "auth check failed — upstream auth service unreachable")
-    if not r.ok:
-        raise HTTPException(401, "invalid session")
-    user = r.json()
-    # Stop-gap hardening, mirrors d2_dashboard/main.py require_auth:
-    #   - aud must be "authenticated"  → rejects service-role / anon tokens
-    #   - email_confirmed_at must be set → rejects unconfirmed signups
-    if user.get("aud") != "authenticated":
-        raise HTTPException(401, "invalid token audience")
-    if not user.get("email_confirmed_at"):
-        raise HTTPException(403, "email not confirmed")
-    email = (user.get("email") or "").lower()
-    if not email.endswith("@" + ALLOWED_EMAIL_DOMAIN.lower()):
-        raise HTTPException(403, f"access restricted to @{ALLOWED_EMAIL_DOMAIN}")
-    return user
+# require_auth moved to core/auth.py (imported above, BR-CODE-1 core extraction).
 
 
 # ---------- App setup ----------
@@ -495,7 +472,30 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; "
-        "connect-src 'self' https://*.supabase.co; "
+        # maps.ticketevolution.com: the Tevomaps seat-map library fetches the
+        # venue map.svg via connect (fetch/XHR), so it must be in connect-src.
+        # The per-page <meta> CSP already allows it, but browsers enforce the
+        # INTERSECTION of meta + this header — without it here the SVG fetch is
+        # blocked and the storefront seat map renders blank. (The D0 terminal is
+        # served from a static CDN that doesn't run this middleware, so only its
+        # permissive meta CSP applied — which is why the terminal map worked and
+        # the storefront map didn't.)
+        "connect-src 'self' https://*.supabase.co https://maps.ticketevolution.com; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+    # Storefront variant when the reCAPTCHA v3 gate is enabled: allow Google's
+    # challenge script/frame. Scoped to /store paths + gated on RECAPTCHA_ENABLED
+    # so terminal/home/bridge and the dormant case keep the tighter policy.
+    _CSP_RECAPTCHA = (
+        "default-src 'self'; "
+        "script-src 'self' https://www.google.com https://www.gstatic.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://www.google.com https://*.supabase.co https://maps.ticketevolution.com; "
+        "frame-src https://www.google.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -503,7 +503,10 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        response.headers.setdefault("Content-Security-Policy", self._CSP)
+        csp = self._CSP
+        if RECAPTCHA_ENABLED and request.url.path.startswith("/store"):
+            csp = self._CSP_RECAPTCHA
+        response.headers.setdefault("Content-Security-Policy", csp)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
@@ -582,7 +585,8 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         ("/api/store/share/",   10,  60.0),  # POST/DELETE/GET-by-id — spam vector
         ("/api/store/shares",   60,  60.0),  # list endpoint
         ("/api/store/share",    10,  60.0),  # POST create
-        ("/api/store/reserve",  20,  60.0),  # mock reserve, but hits TEvo
+        ("/api/store/verify-human", 30, 60.0),  # bot gate — once per session, generous
+        ("/api/store/reserve",  10,  60.0),  # mock reserve, but hits TEvo (tightened for demo)
         ("/api/store/",         60,  60.0),  # public catalog reads
         ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
         ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
@@ -882,45 +886,27 @@ def public_config():
         # a 'demo · sql snapshot' pill so users know what they're seeing.
         "storefront_sql_only": STOREFRONT_SQL_ONLY,
         "storefront_search_sql_only": STOREFRONT_SEARCH_SQL_ONLY,
-        # TEvo Hosted Checkout: domain is null while dormant (Reserve stays
-        # the MVP mock); when the operator sets STOREFRONT_CHECKOUT_DOMAIN,
-        # store.js redirects Reserve to the hosted checkout URL.
-        "checkout_domain": STOREFRONT_CHECKOUT_DOMAIN or None,
-        "purchase_enabled": bool(STOREFRONT_CHECKOUT_DOMAIN),
+        # TEvo Hosted Checkout: force-OFF. Live online checkout is disabled
+        # (STOREFRONT_CHECKOUT_DISABLED) — always report no checkout so store.js
+        # never redirects to a hosted-checkout URL, even if STOREFRONT_CHECKOUT_
+        # DOMAIN is set. Re-enabling is a deliberate two-step: clear the kill
+        # switch AND set the domain.
+        "checkout_domain": None if STOREFRONT_CHECKOUT_DISABLED else (STOREFRONT_CHECKOUT_DOMAIN or None),
+        "purchase_enabled": (not STOREFRONT_CHECKOUT_DISABLED) and bool(STOREFRONT_CHECKOUT_DOMAIN),
+        # reCAPTCHA v3 sitewide bot gate. site_key is null while dormant (store.js
+        # then skips loading Google's script); when set, store.js runs the gate on
+        # first interaction. The secret never leaves the server.
+        "recaptcha_site_key": RECAPTCHA_SITE_KEY or None,
+        "recaptcha_enabled": RECAPTCHA_ENABLED,
     }
 
 # ---------- Protected routes ----------
 
-@app.get("/api/config")
-def config_info(user=Depends(require_auth)):
-    return {
-        "supabase_configured": sb is not None,
-        "collect_available": bool(sb is not None and CRON_SECRET and SUPABASE_URL),
-        "env": "sandbox" if SANDBOX else "prod",
-        "user_email": (user or {}).get("email"),
-    }
+# /api/config + /api/cross-source/event/{id} moved to routers/misc.py
+# (BR-CODE-1 slice 10). Wired once below the bootstrap (search "build_misc_router").
 
 
-@app.get("/api/events")
-def events_search(
-    q: str | None = None,
-    performer_id: int | None = None,
-    venue_id: int | None = None,
-    occurs_at_gte: str | None = Query(None, alias="occurs_at.gte"),
-    occurs_at_lte: str | None = Query(None, alias="occurs_at.lte"),
-    only_with_available_tickets: bool = True,
-    _=Depends(require_auth),
-):
-    events = client.search_events_all(
-        q=q or None,
-        performer_id=performer_id,
-        venue_id=venue_id,
-        occurs_at_gte=occurs_at_gte,
-        occurs_at_lte=occurs_at_lte,
-        only_with_available_tickets=only_with_available_tickets,
-        order_by="events.popularity_score DESC",
-    )
-    return {"count": len(events), "events": events}
+# /api/events (search) moved to routers/catalog.py (BR-CODE-1 slice 6).
 
 
 _PARKING_RE = re.compile(r"\b(parking|garage|valet|lot)\b", re.IGNORECASE)
@@ -1128,10 +1114,8 @@ def performers_search(
     raise HTTPException(400, "Provide q or category_id")
 
 
-@app.get("/api/performers/{performer_id}")
-def performer_detail(performer_id: int, include_opponents: bool = True, _=Depends(require_auth)):
-    return client.get_performer(performer_id, include_opponents=include_opponents)
-
+# /api/performers/{id} + /api/venues/{id} + /api/configurations[/{id}] moved to
+# routers/catalog.py (BR-CODE-1 slice 2); included once below (search → "wired").
 
 # Static league list for the league-browse strip in the Performers tab.
 # Sourced from performer_external_ids where source='espn'. Order roughly
@@ -1147,29 +1131,18 @@ _ESPN_LEAGUES = [
 ]
 
 
-@app.get("/api/broker/leagues")
-def broker_leagues(_=Depends(require_auth)):
-    """Static list of ESPN-tracked leagues for the league-browse strip in the Performers tab."""
-    return {"leagues": _ESPN_LEAGUES}
+# Simple broker routes (/leagues, /performer/{id}/assets, /event/{id}/espn)
+# moved to routers/broker.py (BR-CODE-1 slice 11). Helper-heavy broker routes
+# stay in app.py until their shared helpers are extracted. Wired once below.
+from routers.broker import build_broker_router  # noqa: E402
 
-
-@app.get("/api/broker/performer/{performer_id}/assets")
-def broker_performer_assets(performer_id: int, _=Depends(require_auth)):
-    """ESPN team logo + colors + URLs for a TEvo performer. Backed by
-    performer_metadata (populated by crawl-espn-team-assets fn — drained
-    every 3 min by cron 'crawl-espn-team-assets-3min').
-
-    Returns null fields for performers without ESPN mapping (e.g. concerts
-    or playoff bracket placeholders). 65/866 populated as of 2026-05-08.
-    """
-    db = require_sb()
-    row = (db.table("performer_metadata")
-             .select("performer_id, name, espn_team_id, espn_league, "
-                     "color_primary, color_alternate, "
-                     "logo_default_url, logo_dark_url, logo_scoreboard_url, logo_4k_primary_url, logo_secondary_url, "
-                     "espn_team_url, espn_roster_url, espn_schedule_url, espn_fetched_at")
-             .eq("performer_id", performer_id).limit(1).execute().data or [])
-    return row[0] if row else {"performer_id": performer_id, "logo_default_url": None}
+app.include_router(build_broker_router(
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+    espn_leagues=_ESPN_LEAGUES,
+    get_supabase_url=lambda: SUPABASE_URL,
+    get_supabase_anon_key=lambda: SUPABASE_ANON_KEY,
+))
 
 
 def _trip_plan_payload(performer_id: int, home_lat: float, home_lon: float,
@@ -1395,92 +1368,19 @@ def broker_tours_near(
     return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
 
 
-def _bulk_performer_assets(db, performer_ids: list[int]) -> dict[int, dict]:
-    """Fetch performer_metadata for many performer_ids at once. Returns map
-    {performer_id: {logo_default_url, color_primary, ...}}. Used by event
-    overview to attach home + away logos in a single roundtrip."""
-    if not performer_ids:
-        return {}
-    rows = (db.table("performer_metadata")
-              .select("performer_id, name, espn_team_id, espn_league, "
-                      "color_primary, color_alternate, logo_default_url, logo_dark_url")
-              .in_("performer_id", performer_ids)
-              .execute()).data or []
-    return {int(r["performer_id"]): r for r in rows}
-
-
-# Playoff-specific phrases we recognize in event names. Order matters: more
-# specific labels (NBA Finals) are tried before generic round indicators so
-# the badge surfaces "NBA Finals" instead of "Playoffs" when both match.
-_PLAYOFF_SPECIFIC_RE = re.compile(
-    r"\b("
-    r"NBA\s+Finals|"
-    r"NBA\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
-    r"NHL\s+Stanley\s+Cup\s+Finals|"
-    r"NHL\s+(?:Eastern|Western)\s+Conference\s+(?:Semi)?Finals|"
-    r"Stanley\s+Cup(?:\s+Finals?)?|"
-    r"World\s+Series|"
-    r"Super\s+Bowl(?:\s+L[IVX]+)?|"
-    r"MLS\s+Cup|"
-    r"NCAA\s+(?:Final\s+Four|National\s+Championship)|"
-    r"College\s+Football\s+Playoff(?:\s+National\s+Championship)?"
-    r")\b",
-    re.IGNORECASE,
-)
-_PLAYOFF_GENERIC_RE = re.compile(
-    r"\((?:Game\s+\d+|Round\s+\d+)|"           # parenthetical TEvo markers
-    r"\b(?:Playoffs?|Postseason|Wild\s+Card|"
-    r"Conference\s+Finals?|Conference\s+Semifinals?|"
-    r"Division\s+Series)\b",
-    re.IGNORECASE,
-)
-
-
-def _classify_playoff(event_name: str | None) -> dict | None:
-    """Return a playoff badge dict for the event name, or None.
-
-    Two-tier:
-      - specific  match (e.g. "NBA Finals") → that phrase is the label
-      - generic   match (e.g. "Round 3", "(Game 7,") → label = "Playoffs"
-
-    Falls back to None when nothing matches. Case-insensitive throughout.
-    """
-    if not event_name:
-        return None
-    m = _PLAYOFF_SPECIFIC_RE.search(event_name)
-    if m:
-        # Normalize whitespace so multi-word matches print cleanly.
-        label = re.sub(r"\s+", " ", m.group(1)).strip()
-        return {"label": label, "kind": "specific"}
-    if _PLAYOFF_GENERIC_RE.search(event_name):
-        return {"label": "Playoffs", "kind": "generic"}
-    return None
+# _bulk_performer_assets -> core/broker_helpers.py and _classify_playoff (+ its
+# _PLAYOFF_*_RE) -> core/helpers.py (BR-CODE-1 helper pass). Imported (aliased)
+# at the top of this module; call sites unchanged.
 
 
 # Marquee competitions — events that aren't playoffs but carry their own
 # editorial weight (US Open Tennis, F1 Grand Prix, Inter Miami away). Added
 # 2026-05-19 v3 for the Featured rail's narrative-signal branch.
-_MARQUEE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"^US\s+Open\s+Tennis\b", re.I),                 "US Open Tennis"),
-    (re.compile(r"\bFormula\s*1\b|\bGrand\s+Prix\b", re.I),      "F1"),
-    # Inter Miami AWAY only — when the matchup is "Inter Miami CF at <home>".
-    # Home games carry less narrative interest (we're not catering to local
-    # Miami buyers in this storefront's scope).
-    (re.compile(r"^Inter\s+Miami\s+CF\s+at\s+", re.I),           "Inter Miami away"),
-]
-
-
-def _classify_marquee_competition(event_name: str | None) -> str | None:
-    """Return a marquee-competition label for the event name, or None.
-    Used by `_section_featured` to flag US Open / F1 / Inter Miami away
-    games into the Featured rail regardless of pricing signals.
-    """
-    if not event_name:
-        return None
-    for pat, label in _MARQUEE_PATTERNS:
-        if pat.search(event_name):
-            return label
-    return None
+# Movers engine (the _section_* builders, the 3 classifiers
+# _classify_marquee_competition / _has_canadian_team / _classify_holiday_proximity
+# + their constants _MARQUEE_PATTERNS / _CANADIAN_TEAM_RE / _HOLIDAY_PRIORITY, and
+# _compute_movers) -> core/movers.py (BR-CODE-1 heavy-helper pass). app.py imports
+# compute_movers (aliased) near the top; the cluster was movers-exclusive.
 
 
 # FIFA World Cup 2026 detection (D3, 2026-06-16). EVO/TEvo lists World Cup
@@ -1489,449 +1389,16 @@ def _classify_marquee_competition(event_name: str | None) -> str | None:
 # Tight by design so it does NOT catch lookalikes that merely contain the
 # words "world cup": MLB "(World Cup Scarf Giveaway)" promos, "Rugby World
 # Cup", or "World Cup Countdown Concert" — none of which are WC matches.
-_WORLD_CUP_RE = re.compile(
-    r"\bworld\s*cup\s*soccer\b|\bworld\s*cup\b.{0,40}\bmatch\s+\d+", re.I
-)
+# _WORLD_CUP_RE + _classify_world_cup -> core/helpers.py (BR-CODE-1 leaf-helper
+# pass). Imported (aliased) near the top of this module.
 
 
-def _classify_world_cup(event_name: str | None,
-                        performer_name: str | None = None) -> bool:
-    """True if the event is a FIFA World Cup soccer match.
-
-    We surface owned World Cup matches in the storefront Featured rail
-    regardless of host city — the rail is NYC-anchored, but the World Cup is
-    a national draw and our owned WC inventory can sit at any host venue
-    (e.g. Match 72 at Mercedes-Benz Stadium, Atlanta). The primary signal is
-    the EVO performer name "World Cup Soccer"; the name regex is a fallback.
-    """
-    if performer_name and performer_name.strip().lower() == "world cup soccer":
-        return True
-    if not event_name:
-        return False
-    return bool(_WORLD_CUP_RE.search(event_name))
+# (_CANADIAN_TEAM_RE/_has_canadian_team + _HOLIDAY_PRIORITY/_classify_holiday_proximity
+#  moved to core/movers.py with the rest of the movers engine — see note above.)
 
 
-# Canadian team detection (2026-05-19 v4) — operator directive: Canadian
-# holidays (Canada Day, Civic Holiday, etc.) should only tag events where
-# a Canadian team is visiting an NYC venue. Otherwise the holiday window
-# leaks "Canada Day" tags onto Yankees-Tigers games which is nonsensical
-# for the consumer.
-_CANADIAN_TEAM_RE = re.compile(
-    r"\b("
-    r"Toronto\s+(?:Blue\s+Jays|Raptors|FC|Maple\s+Leafs)|"
-    r"Montréal?\s+Canadiens|CF\s+Montr|"
-    r"Vancouver\s+(?:Canucks|Whitecaps)|"
-    r"Edmonton\s+Oilers|Calgary\s+Flames|"
-    r"Ottawa\s+Senators|Winnipeg\s+Jets"
-    r")\b",
-    re.IGNORECASE,
-)
-
-def _has_canadian_team(event_name: str | None) -> bool:
-    """True if the event name mentions a Canadian major-league team. Used
-    to gate Canadian holiday tagging in the NYC storefront."""
-    if not event_name:
-        return False
-    return bool(_CANADIAN_TEAM_RE.search(event_name))
-
-
-# Holiday priority — higher wins on same-day conflicts (operator directive
-# 2026-05-19 v4: "Father's Day over Juneteenth when they conflict on same
-# day"). Generic ranking favors family-celebration holidays (typically
-# associated with attending sports together) over administrative holidays.
-_HOLIDAY_PRIORITY: dict[str, int] = {
-    "Father's Day":     100,
-    "Mother's Day":     100,
-    "Memorial Day":      95,
-    "Independence Day":  95,
-    "Labor Day":         95,
-    "Thanksgiving":      95,
-    "Christmas":         95,
-    "New Year's Day":    90,
-    "Juneteenth":        50,
-}
-
-
-def _classify_holiday_proximity(candidate_date_iso: str,
-                                observed_date_iso: str) -> str | None:
-    """Decide whether a candidate event date earns a holiday tag, and what
-    flavor. Returns one of:
-      - "day_of"     → candidate == observed_date           (tag "Memorial Day")
-      - "weekend_of" → candidate is Sat/Sun in ±2 window    (tag "Memorial Day Weekend")
-      - None         → candidate is a non-holiday weekday   (no tag)
-
-    Operator directive 2026-05-19 v6: "suffix only when weekend = true,
-    not for a tuesday event". A Tuesday after Memorial Day Monday is NOT
-    Memorial Day Weekend — the holiday window-expansion (±2 from observed_date)
-    only earns a weekend tag for actual weekend days. Other weekdays in
-    the window fall back to the non-holiday Featured branches (premium,
-    market-anchor) or land in other rails (moving_fast, etc.).
-
-    Pure function — accepts ISO date strings, returns a string or None.
-    Caller is expected to have already verified the candidate's date is
-    within ±2 days of observed_date (i.e. the holiday is in range).
-    """
-    from datetime import date as _date_cls
-    try:
-        cand_d = _date_cls.fromisoformat(candidate_date_iso)
-    except (TypeError, ValueError):
-        return None
-    if candidate_date_iso == observed_date_iso:
-        return "day_of"
-    # weekday(): 0=Mon..6=Sun; 5=Sat, 6=Sun
-    if cand_d.weekday() in (5, 6):
-        return "weekend_of"
-    return None
-
-
-def _bulk_event_context(db, event_ids: list[int]) -> dict[int, dict]:
-    """Bulk-fetch all six context dimensions a storefront card / detail page
-    might surface, in one helper.
-
-    Returns:
-      { event_id: { "rivalry":    {...}|None,
-                    "mlb_series": {...}|None,
-                    "tournament": {...}|None,
-                    "weather":    {...}|None,
-                    "holiday":    {...}|None,
-                    "playoff":    {...}|None } }
-
-    Backing views (audit / context lanes — P1 reads only):
-      rivalry      ← v_rivalry_events             (mig 20260509530000)
-      mlb_series   ← v_mlb_game_series            (mig 20260509470000)
-      tournament   ← v_event_tournament_context   (mig 20260510010000)
-      weather      ← v_event_weather_with_fallback (mig 20260509560000)
-      holiday      ← v_event_calendar_context     (mig 20260509550000)
-      playoff      ← regex on events.name + performer_metadata series tags
-
-    Weather + holiday + playoff rules are applied here, not in the client, so
-    the storefront UI doesn't have to know about climatology vs forecast vs
-    severity tiers, or playoff naming conventions — it just renders what
-    the server hands it.
-
-    Missing views (per-env) degrade gracefully to None for that key.
-    """
-    if not event_ids:
-        return {}
-
-    ids = [int(e) for e in event_ids if e is not None]
-    ctx: dict[int, dict] = {
-        eid: {"rivalry": None, "mlb_series": None, "tournament": None,
-              "weather": None, "holiday": None, "playoff": None}
-        for eid in ids
-    }
-
-    # Playoff: read event names + series-tag performer membership in one
-    # roundtrip. Series tags like "NBA Finals" / "NBA Eastern Conference
-    # Semifinals" attach to the event via performer_ids and give us the
-    # most specific label; the name regex covers Round 3 / Game 7 events
-    # that don't yet have a series-tag attached.
-    try:
-        ev_rows = (db.table("events").select("id,name,performer_ids")
-                     .in_("id", ids).execute().data) or []
-        # Collect all unique non-primary performer ids so we can resolve
-        # series-tag names in one query.
-        candidate_perf_ids: set[int] = set()
-        for er in ev_rows:
-            for p in (er.get("performer_ids") or []):
-                try:
-                    candidate_perf_ids.add(int(p))
-                except (TypeError, ValueError):
-                    pass
-        series_tag_by_id: dict[int, str] = {}
-        if candidate_perf_ids:
-            try:
-                pm_rows = (db.table("performer_metadata")
-                             .select("performer_id,name")
-                             .in_("performer_id", list(candidate_perf_ids))
-                             .execute().data) or []
-                for pm in pm_rows:
-                    nm = (pm.get("name") or "")
-                    # Only keep "series tag" performers — leagues + rounds.
-                    if _PLAYOFF_SPECIFIC_RE.search(nm) or re.search(
-                        r"\b(NBA|NHL|NFL|MLB|MLS|WNBA)\s+(Playoffs?|Postseason|"
-                        r"Wild\s+Card|Finals?|Semifinals?|Championship|"
-                        r"Conference)\b",
-                        nm, re.IGNORECASE,
-                    ):
-                        series_tag_by_id[int(pm["performer_id"])] = nm
-            except Exception:
-                series_tag_by_id = {}
-        for er in ev_rows:
-            eid = int(er.get("id") or 0)
-            if eid not in ctx:
-                continue
-            # Prefer the most-specific series-tag performer if attached.
-            tagged: str | None = None
-            for p in (er.get("performer_ids") or []):
-                try:
-                    pid = int(p)
-                except (TypeError, ValueError):
-                    continue
-                name = series_tag_by_id.get(pid)
-                if not name:
-                    continue
-                # Specific (e.g. "NBA Finals") beats generic ("NBA Playoffs").
-                if _PLAYOFF_SPECIFIC_RE.search(name):
-                    tagged = name
-                    break
-                if tagged is None:
-                    tagged = name
-            if tagged:
-                # Strip umbrella "Playoffs" / "Postseason" when we have a
-                # more specific round-tag handy.
-                kind = "specific" if _PLAYOFF_SPECIFIC_RE.search(tagged) else "generic"
-                ctx[eid]["playoff"] = {"label": tagged, "kind": kind}
-                continue
-            # Fall back to regex on the event name.
-            ctx[eid]["playoff"] = _classify_playoff(er.get("name"))
-    except Exception:
-        pass
-
-    # Rivalry: v_rivalry_events can emit duplicate rows when both the
-    # performer-id and name joins match the same matchup, so dedup at the
-    # event id level (first row wins; intensity is the same either way).
-    try:
-        rows = (db.table("v_rivalry_events")
-                  .select("tevo_event_id,rivalry_name,league,is_branded,"
-                          "rivalry_intensity,wikipedia_url")
-                  .in_("tevo_event_id", ids)
-                  .execute()).data or []
-        seen: set[int] = set()
-        for r in rows:
-            eid = int(r["tevo_event_id"])
-            if eid in seen or eid not in ctx:
-                continue
-            seen.add(eid)
-            ctx[eid]["rivalry"] = {
-                "name": r.get("rivalry_name"),
-                "league": r.get("league"),
-                "is_branded": bool(r.get("is_branded")),
-                "intensity": r.get("rivalry_intensity"),
-                "wikipedia_url": r.get("wikipedia_url"),
-            }
-    except Exception:
-        pass
-
-    # MLB series: v_mlb_game_series rows hold the full tevo_event_ids array
-    # for the series. Pull every series whose end-date is today or later, then
-    # walk the array to attach the series context to each game in the set,
-    # adding game_number (1-based position within the series).
-    try:
-        today_iso = datetime.now(timezone.utc).date().isoformat()
-        rows = (db.table("v_mlb_game_series")
-                  .select("home_team,away_team,venue_name,series_start,series_end,"
-                          "series_span_days,game_count,tevo_event_ids,branded_series_name")
-                  .gte("series_end", today_iso)
-                  .execute()).data or []
-        for r in rows:
-            tevo_ids = r.get("tevo_event_ids") or []
-            tevo_ids = [int(e) for e in tevo_ids if e is not None]
-            for pos, eid in enumerate(tevo_ids, start=1):
-                if eid not in ctx:
-                    continue
-                ctx[eid]["mlb_series"] = {
-                    "home_team": r.get("home_team"),
-                    "away_team": r.get("away_team"),
-                    "venue_name": r.get("venue_name"),
-                    "series_start": r.get("series_start"),
-                    "series_end": r.get("series_end"),
-                    "span_days": r.get("series_span_days"),
-                    "game_count": r.get("game_count"),
-                    "branded_name": r.get("branded_series_name"),
-                    "sibling_event_ids": tevo_ids,
-                    "game_number": pos,
-                }
-    except Exception:
-        pass
-
-    # Tournament: one row per TEvo event in v_event_tournament_context (left
-    # join on event_xref + espn_tournament_events). Surfaces a multi-day
-    # parent so "Round 2 of US Open · Aug 26 – Sep 8" can render.
-    try:
-        rows = (db.table("v_event_tournament_context")
-                  .select("tevo_event_id,tournament_name,tournament_short_name,"
-                          "tournament_start,tournament_end,tournament_venue,"
-                          "espn_league,circuit_name")
-                  .in_("tevo_event_id", ids)
-                  .execute()).data or []
-        for r in rows:
-            eid = int(r["tevo_event_id"])
-            if eid not in ctx:
-                continue
-            ctx[eid]["tournament"] = {
-                "name": r.get("tournament_name"),
-                "short_name": r.get("tournament_short_name"),
-                "start_date": r.get("tournament_start"),
-                "end_date": r.get("tournament_end"),
-                "venue": r.get("tournament_venue"),
-                "league": r.get("espn_league"),
-                "circuit_name": r.get("circuit_name"),
-            }
-    except Exception:
-        pass
-
-    # Weather: v_event_weather_with_fallback has fallback-coalesced + raw
-    # forecast/climatology columns + NWS alert JSON. Apply display rules
-    # server-side so the client just renders what's set:
-    #   - indoor + no alert       → None (hide)
-    #   - any venue + active NWS  → alert (always shows up to 16d)
-    #   - outdoor + ≤7d forecast  → full forecast
-    #   - outdoor 8-16d + alert   → alert only
-    #   - otherwise               → None
-    try:
-        rows = (db.table("v_event_weather_with_fallback")
-                  .select("tevo_event_id,days_to_event,weather_kind,is_indoor,"
-                          "fcst_temp_f,fcst_precip_pct,fcst_precip_in,"
-                          "fcst_wind_mph,fcst_gust_mph,fcst_summary,"
-                          "weather_alerts")
-                  .in_("tevo_event_id", ids)
-                  .execute()).data or []
-        for r in rows:
-            eid = int(r["tevo_event_id"])
-            if eid not in ctx:
-                continue
-            days = r.get("days_to_event")
-            if days is None or days > 16 or days < 0:
-                continue  # too far out or past
-            alerts = r.get("weather_alerts") or []
-            kind = r.get("weather_kind") or ""
-            is_indoor = bool(r.get("is_indoor"))
-
-            # Slim NWS alerts down to fields the UI actually shows.
-            slim_alerts = []
-            for a in alerts[:3]:  # cap at 3 — anything more is noise
-                slim_alerts.append({
-                    "event": a.get("event"),
-                    "severity": a.get("severity"),
-                    "impact_tier": a.get("impact_tier"),
-                    "headline": a.get("headline"),
-                    "expires_at": a.get("expires_at"),
-                })
-
-            has_alert = bool(slim_alerts)
-            show_forecast = (
-                not is_indoor
-                and kind.startswith("forecast_outdoor")
-                and days <= 7
-                and r.get("fcst_temp_f") is not None
-            )
-
-            if not has_alert and not show_forecast:
-                continue  # nothing worth showing
-
-            w: dict = {
-                "days_to_event": days,
-                "is_indoor": is_indoor,
-                "alerts": slim_alerts,
-            }
-            if show_forecast:
-                w["forecast"] = {
-                    "temp_f": r.get("fcst_temp_f"),
-                    "summary": r.get("fcst_summary"),
-                    "precip_pct": r.get("fcst_precip_pct"),
-                    "precip_in": r.get("fcst_precip_in"),
-                    "wind_mph": r.get("fcst_wind_mph"),
-                    "gust_mph": r.get("fcst_gust_mph"),
-                }
-            ctx[eid]["weather"] = w
-    except Exception:
-        pass
-
-    # Holiday: v_event_calendar_context returns JSON arrays of holidays
-    # on/near the event date + active school breaks, each with precision
-    # (national/state/city) and impact (boost/neutral). Pick the single
-    # most-relevant pill to show — day-of beats nearby, city beats state
-    # beats national, "boost" beats "neutral".
-    try:
-        rows = (db.table("v_event_calendar_context")
-                  .select("tevo_event_id,event_date,is_holiday,"
-                          "within_holiday_window,school_break_active,"
-                          "holidays_today,holidays_nearby,school_breaks_active")
-                  .in_("tevo_event_id", ids)
-                  .execute()).data or []
-
-        def _precision_rank(p: str) -> int:
-            return {"city": 0, "state": 1, "national": 2}.get(p or "national", 3)
-
-        for r in rows:
-            eid = int(r["tevo_event_id"])
-            if eid not in ctx:
-                continue
-
-            today = r.get("holidays_today") or []
-            nearby = r.get("holidays_nearby") or []
-            breaks = r.get("school_breaks_active") or []
-
-            best: dict | None = None
-
-            # Day-of holiday: any precision, boost wins over neutral.
-            if today:
-                today_sorted = sorted(
-                    today,
-                    key=lambda h: (
-                        0 if h.get("impact") == "boost" else 1,
-                        _precision_rank(h.get("precision")),
-                    ),
-                )
-                h = today_sorted[0]
-                best = {
-                    "kind": "day_of",
-                    "label": h.get("name"),
-                    "impact": h.get("impact"),
-                    "precision": h.get("precision"),
-                    "date": r.get("event_date"),
-                }
-
-            # Nearby (±1 day) — only show if no day-of beat us.
-            if best is None and nearby:
-                nearby_sorted = sorted(
-                    nearby,
-                    key=lambda h: (
-                        0 if h.get("impact") == "boost" else 1,
-                        _precision_rank(h.get("precision")),
-                        abs(int(h.get("days_offset") or 0)),
-                    ),
-                )
-                h = nearby_sorted[0]
-                offset = int(h.get("days_offset") or 0)
-                suffix = " weekend" if abs(offset) == 1 else ""
-                best = {
-                    "kind": "nearby",
-                    "label": (h.get("name") or "") + suffix,
-                    "impact": h.get("impact"),
-                    "precision": h.get("precision"),
-                    "date": h.get("date"),
-                    "days_offset": offset,
-                }
-
-            # School break — only summer/winter (the only ones that meaningfully
-            # boost attendance for weekday games). Otherwise we'd label half
-            # the calendar with spring/fall breaks that don't move pricing.
-            if best is None and breaks:
-                summer_winter = [
-                    b for b in breaks
-                    if any(k in (b.get("name") or "").lower()
-                           for k in ("summer", "winter"))
-                ]
-                if summer_winter:
-                    summer_winter.sort(key=lambda b: _precision_rank(b.get("precision")))
-                    b = summer_winter[0]
-                    best = {
-                        "kind": "school_break",
-                        "label": b.get("name"),
-                        "impact": "boost",
-                        "precision": b.get("precision"),
-                        "start_date": b.get("start_date"),
-                        "end_date": b.get("end_date"),
-                    }
-
-            if best is not None:
-                ctx[eid]["holiday"] = best
-    except Exception:
-        pass
-
-    return ctx
+# _bulk_event_context -> core/broker_helpers.py (BR-CODE-1 heavy-helper pass).
+# Imported (aliased) at the top of this module; single call site unchanged.
 
 
 @app.get("/api/broker/news")
@@ -2301,26 +1768,22 @@ def venues_search(
     raise HTTPException(400, "Provide q, or (lat+lon), or postal_code.")
 
 
-@app.get("/api/venues/{venue_id}")
-def venue_detail(venue_id: int, _=Depends(require_auth)):
-    return client.get_venue(venue_id)
+# Catalog detail passthroughs (/api/performers/{id}, /api/venues/{id},
+# /api/configurations[/{id}]) live in routers/catalog.py (BR-CODE-1 slice 2).
+# get_client is a getter so handlers resolve the live `client` at request time
+# (keeps the monkeypatch tests + auth ownership in app.py).
+from routers.catalog import build_catalog_router  # noqa: E402
+
+app.include_router(build_catalog_router(get_client=lambda: client, require_auth=require_auth))
 
 
-@app.get("/api/configurations")
-def configurations_list(venue_id: int | None = None, name: str | None = None, _=Depends(require_auth)):
-    return client.list_configurations(venue_id=venue_id, name=name or None)
+# /api/watchlist GET, /api/runs, /api/snapshots/* (read lists) moved to
+# routers/lists.py (BR-CODE-1 slice 3). get_require_sb is a getter so handlers
+# resolve the live require_sb at request time (keeps monkeypatch tests). The
+# watchlist POST/DELETE (mutating) routes stay below.
+from routers.lists import build_lists_router  # noqa: E402
 
-
-@app.get("/api/configurations/{config_id}")
-def configuration_detail(config_id: int, _=Depends(require_auth)):
-    return client.get_configuration(config_id)
-
-
-@app.get("/api/watchlist")
-def watchlist_list(_=Depends(require_auth)):
-    db = require_sb()
-    data = db.table("watchlist").select("*").order("added_at", desc=True).execute().data
-    return {"items": data or []}
+app.include_router(build_lists_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
 @app.post("/api/watchlist")
@@ -2352,42 +1815,8 @@ def watchlist_remove(item_id: int, _=Depends(require_auth)):
     return {"ok": True}
 
 
-@app.get("/api/runs")
-def runs_list(limit: int = 20, _=Depends(require_auth)):
-    db = require_sb()
-    data = db.table("runs").select("*").order("id", desc=True).limit(limit).execute().data
-    return {"items": data or []}
-
-
-@app.get("/api/snapshots/latest")
-def snapshots_latest(_=Depends(require_auth)):
-    db = require_sb()
-    snaps = db.table("latest_snapshots").select("*").execute().data or []
-    if not snaps:
-        return {"items": []}
-    ids = [s["event_id"] for s in snaps]
-    events = db.table("events").select("*").in_("id", ids).execute().data or []
-    by_id = {e["id"]: e for e in events}
-    items = []
-    for s in snaps:
-        e = by_id.get(s["event_id"], {})
-        items.append({
-            **s,
-            "event_name": e.get("name"),
-            "occurs_at_local": e.get("occurs_at_local"),
-            "venue_name": e.get("venue_name"),
-            "venue_location": e.get("venue_location"),
-            "primary_performer_name": e.get("primary_performer_name"),
-        })
-    items.sort(key=lambda x: x.get("occurs_at_local") or "")
-    return {"items": items}
-
-
-@app.get("/api/snapshots/velocity")
-def snapshots_velocity(_=Depends(require_auth)):
-    db = require_sb()
-    data = db.table("event_velocity").select("*").order("occurs_at_local").execute().data or []
-    return {"items": data}
+# (/api/runs + /api/snapshots/latest + /api/snapshots/velocity moved to
+# routers/lists.py — see the include_router above, BR-CODE-1 slice 3.)
 
 
 def _fire_collect(url: str, secret: str) -> None:
@@ -2441,41 +1870,10 @@ def collect_run(watchlist_id: int | None = None, user=Depends(require_auth)):
 # ============================================================================
 
 
-def _listings_cadence_seconds(occurs_at_local: str | None) -> int:
-    """Mirror collect-listings cron windows: closer events poll faster."""
-    if not occurs_at_local:
-        return 60 * 60 * 24
-    try:
-        # occurs_at_local is TEXT not TIMESTAMPTZ — known P1. Slice to date.
-        d = datetime.fromisoformat(occurs_at_local[:10])
-        days_out = (d - datetime.now()).days
-    except Exception:
-        return 60 * 60
-    if days_out <= 1:
-        return 60 * 20      # 20 min
-    if days_out <= 7:
-        return 60 * 60      # 60 min
-    if days_out <= 30:
-        return 60 * 60 * 4  # 4h
-    if days_out <= 60:
-        return 60 * 60 * 12 # 12h
-    return 60 * 60 * 24     # 24h
-
-
-def _delta(curr, prev):
-    """Compute delta + percent for a numeric metric. Returns dict or None."""
-    if curr is None or prev is None:
-        return None
-    try:
-        c = float(curr); p = float(prev)
-    except (TypeError, ValueError):
-        return None
-    if c == p:
-        return {"abs": 0, "pct": 0, "dir": "flat"}
-    diff = c - p
-    pct = (diff / p * 100) if p != 0 else None
-    return {"abs": round(diff, 2), "pct": round(pct, 2) if pct is not None else None,
-            "dir": "up" if diff > 0 else "down"}
+# Pure helpers moved to core/helpers.py (BR-CODE-1 helper pass); aliased so the
+# inline _delta / _listings_cadence_seconds usages keep working unchanged.
+from core.helpers import delta as _delta  # noqa: E402
+from core.helpers import listings_cadence_seconds as _listings_cadence_seconds  # noqa: E402
 
 
 @app.get("/api/broker/event/{event_id}/overview")
@@ -3048,27 +2446,7 @@ def admin_seed_home_venues(league: str, _=Depends(require_auth)):
 #
 # RULE 2 compliant — every TEvo call is GET via the read-only client.
 
-def _venue_tokens(name: str) -> set[str]:
-    """Crude venue-name token bag for fuzzy match. Strips 'Parking' suffix
-    so 'Citi Field Parking' matches 'Citi Field'."""
-    if not name:
-        return set()
-    n = name.lower().replace(" parking", "").replace("parking", "")
-    return {tok for tok in re.split(r"[^a-z0-9]+", n) if len(tok) >= 3}
-
-
-def _venue_overlap(a: str, b: str) -> float:
-    """Jaccard overlap between two venue names. 1.0 = identical, 0 = nothing
-    in common. ~0.5 typically indicates a real match (e.g. 'Daikin Park'
-    vs 'Daikin Park Houston')."""
-    ta, tb = _venue_tokens(a), _venue_tokens(b)
-    if not ta or not tb:
-        return 0.0
-    inter = ta & tb
-    union = ta | tb
-    return len(inter) / len(union) if union else 0.0
-
-
+# _venue_tokens + _venue_overlap -> core/helpers.py (BR-CODE-1 pure-utility pass); aliased at top.
 def _upsert_tevo_event_into_events(db, ev: dict) -> int | None:
     """Upsert a TEvo event-detail dict into our `events` table. Returns the
     event id if upserted, None otherwise."""
@@ -3297,18 +2675,7 @@ def admin_wire_sd_to_tevo(_=Depends(require_auth)):
     }
 
 
-@app.get("/api/broker/event/{event_id}/espn")
-def broker_event_espn(event_id: int, _=Depends(require_auth)):
-    """Tab 2: ESPN aggregated data for home + away teams.
-    Calls the espn edge fn server-side to keep the JWT off the wire."""
-    if not (SUPABASE_URL and SUPABASE_ANON_KEY):
-        raise HTTPException(500, "espn fn not reachable: missing SUPABASE_URL/SUPABASE_ANON_KEY")
-    url = f"{SUPABASE_URL}/functions/v1/espn/event/{int(event_id)}"
-    try:
-        r = requests.get(url, headers={"Authorization": f"Bearer {SUPABASE_ANON_KEY}"}, timeout=15)
-        return r.json() if r.ok else {"applicable": False, "error": f"espn fn {r.status_code}"}
-    except Exception as e:
-        return {"applicable": False, "error": str(e)}
+# (broker_event_espn moved to routers/broker.py — slice 11)
 
 
 @app.get("/api/broker/event/{event_id}/chart-data")
@@ -4032,45 +3399,8 @@ def broker_movers(window_hours: int = 24, source: str = "merged", window_days: i
     }
 
 
-@app.get("/api/broker/event/{event_id}/cadences")
-def broker_event_cadences(event_id: int, _=Depends(require_auth)):
-    """Per-section poll cadence for the page. Each section reads its own
-    last_pull_at + cadence_seconds; next poll = last + cadence + jitter."""
-    db = require_sb()
-    ev = (db.table("events").select("id,occurs_at_local").eq("id", event_id).limit(1).execute().data or [{}])[0]
-    listings_cad = _listings_cadence_seconds(ev.get("occurs_at_local"))
-    # last_pull_at for listings = most recent event_metrics row
-    last_listings = (
-        db.table("event_metrics").select("captured_at")
-        .eq("event_id", event_id).order("captured_at", desc=True).limit(1)
-        .execute()
-    ).data or []
-    last_listings_at = last_listings[0]["captured_at"] if last_listings else None
-
-    # ESPN injuries cadence = 10 min (espn-roster-10min cron)
-    last_inj = (
-        db.table("espn_injuries_snapshots").select("last_seen_at")
-        .order("last_seen_at", desc=True).limit(1).execute()
-    ).data or []
-    last_inj_at = last_inj[0]["last_seen_at"] if last_inj else None
-
-    # ESPN team standings cadence = daily; ESPN scores/odds for events ±24h = 10 min
-    last_team_snap = (
-        db.table("espn_team_snapshots").select("last_seen_at")
-        .order("last_seen_at", desc=True).limit(1).execute()
-    ).data or []
-    last_team_at = last_team_snap[0]["last_seen_at"] if last_team_snap else None
-
-    return {
-        "event_id": event_id,
-        "sections": {
-            "overview":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
-            "section_metrics": {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
-            "raw_tevo":        {"last_pull_at": last_listings_at, "cadence_seconds": listings_cad},
-            "espn_injuries":   {"last_pull_at": last_inj_at,      "cadence_seconds": 60 * 10},
-            "espn_team":       {"last_pull_at": last_team_at,     "cadence_seconds": 60 * 60 * 24},
-        },
-    }
+# (broker_event_cadences moved to routers/broker.py — slice 12, uses
+#  core.helpers.listings_cadence_seconds)
 
 
 # ============================================================================
@@ -4094,240 +3424,24 @@ def _get_seatdata_client():
         return None
 
 
-@app.get("/api/seatdata/account")
-def seatdata_account(_=Depends(require_auth)):
-    """Diagnostic: SeatData account identity, plans, server-side rate-limit catalog."""
-    client = _get_seatdata_client()
-    if not client:
-        raise HTTPException(503, "SEATDATA_API_KEY not set on this Railway env")
-    return client.account()
+# SeatData READ routes (account/usage/budget/event/event-sales) moved to
+# routers/seatdata.py (BR-CODE-1 slice 7). The link/auto-search/sync POSTs stay
+# in app.py. Getters resolve the live _get_seatdata_client + require_sb at
+# request time (keeps monkeypatch tests).
+from routers.seatdata import build_seatdata_router  # noqa: E402
+
+app.include_router(build_seatdata_router(
+    get_seatdata_client=lambda: _get_seatdata_client(),
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+))
 
 
-@app.get("/api/seatdata/usage")
-def seatdata_usage(_=Depends(require_auth)):
-    """Diagnostic: SeatData billing-period usage totals (server-reported)."""
-    client = _get_seatdata_client()
-    if not client:
-        raise HTTPException(503, "SEATDATA_API_KEY not set on this Railway env")
-    return client.usage()
+# AXS box-office READ routes (event/sections/listings/series) moved to
+# routers/axs.py (BR-CODE-1 slice 8). All read-only require_sb reads.
+from routers.axs import build_axs_router  # noqa: E402
 
-
-@app.get("/api/seatdata/budget")
-def seatdata_budget(_=Depends(require_auth)):
-    """Our DB-tracked pull budget (independent of SeatData's internal counters).
-    Hard-capped at 100/day, 2000/month per migration 20260509060000.
-    Returns: {allowed, used, daily_cap, monthly_used, monthly_cap, reason}.
-    """
-    db = require_sb()
-    res = db.rpc("seatdata_check_budget", {"p_endpoint": "paid"}).execute()
-    return res.data or {}
-
-
-@app.get("/api/seatdata/event/{event_id}")
-def seatdata_event(event_id: int, _=Depends(require_auth)):
-    """Read SeatData state for a TEvo event_id (xref + persisted snapshots).
-    Free — no SeatData API calls. Returns null fields if not yet linked/pulled."""
-    db = require_sb()
-    xref = (
-        db.table("seatdata_event_xref").select("*")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    ).data or []
-    if not xref:
-        return {"tevo_event_id": event_id, "linked": False, "xref": None,
-                "sales_count": 0, "stats_count": 0, "latest_stats": None}
-    sales_n = (
-        db.table("seatdata_sales_snapshots").select("id", count="exact")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    )
-    stats_n = (
-        db.table("seatdata_event_stats").select("id", count="exact")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    )
-    latest = (
-        db.table("seatdata_event_latest").select("*")
-        .eq("tevo_event_id", event_id).limit(1).execute()
-    ).data or []
-    return {
-        "tevo_event_id": event_id,
-        "linked": True,
-        "xref": xref[0],
-        "sales_count": getattr(sales_n, "count", None) or 0,
-        "stats_count": getattr(stats_n, "count", None) or 0,
-        "latest_stats": latest[0] if latest else None,
-    }
-
-
-@app.get("/api/seatdata/event/{event_id}/sales")
-def seatdata_event_sales(event_id: int, limit: int = 500, _=Depends(require_auth)):
-    """Read persisted sales rows for an event. Free — no SeatData API call.
-    Sorted by sale_timestamp DESC (most recent first)."""
-    limit = max(1, min(int(limit), 5000))
-    db = require_sb()
-    rows = (
-        db.table("seatdata_sales_snapshots")
-        .select("sale_timestamp,quantity,price,zone,section,row")
-        .eq("tevo_event_id", event_id)
-        .order("sale_timestamp", desc=True)
-        .limit(limit).execute()
-    ).data or []
-    if not rows:
-        return {"event_id": event_id, "count": 0, "sales": [],
-                "summary": {"avg": None, "median": None, "min": None, "max": None,
-                            "tickets_total": 0, "zones": [], "first_sale": None, "last_sale": None}}
-    prices = sorted(r["price"] for r in rows if r.get("price") is not None)
-    n = len(prices)
-    median = prices[n // 2] if n % 2 == 1 else (prices[n // 2 - 1] + prices[n // 2]) / 2 if n else None
-    return {
-        "event_id": event_id,
-        "count": len(rows),
-        "sales": rows,
-        "summary": {
-            "avg":    round(sum(prices) / n, 2) if n else None,
-            "median": round(median, 2) if median is not None else None,
-            "min":    min(prices) if prices else None,
-            "max":    max(prices) if prices else None,
-            "tickets_total": sum(max(int(r.get("quantity") or 1), 1) for r in rows),
-            "zones":  sorted({r.get("zone") for r in rows if r.get("zone")}),
-            "first_sale": rows[-1]["sale_timestamp"],
-            "last_sale":  rows[0]["sale_timestamp"],
-        },
-    }
-
-
-@app.get("/api/axs/event/{event_id}")
-def axs_event(event_id: int, _=Depends(require_auth)):
-    """AXS box-office state for a TEvo event_id (latest persisted snapshot).
-    Free — reads axs_event_snapshots; no AXS API call. Null fields if not yet
-    AQ-linked / pulled. is_axs_primary reflects the /fetch probe classifier."""
-    db = require_sb()
-    snap = (
-        db.table("axs_event_snapshots")
-        .select("id,captured_at,axs_event_id,event_url,event_name,venue_name,"
-                "occurs_at_local,currency,price_min,price_max,getin,listings_count,"
-                "sections_count,offers_count,seats_primary,seats_resale,onsale_now,"
-                "in_axs_list,response_s")
-        .eq("tevo_event_id", event_id)
-        .order("captured_at", desc=True).limit(1).execute()
-    ).data or []
-    if not snap:
-        return {"tevo_event_id": event_id, "linked": False, "latest": None,
-                "captured_at": None}
-    return {"tevo_event_id": event_id, "linked": True, "latest": snap[0],
-            "captured_at": snap[0]["captured_at"]}
-
-
-@app.get("/api/axs/event/{event_id}/sections")
-def axs_event_sections(event_id: int, limit: int = 1000, _=Depends(require_auth)):
-    """Per-section availability + pricing from the latest AXS snapshot. Free —
-    no AXS API call. Sorted cheapest-first. Mirrors the SeatData sales shape."""
-    limit = max(1, min(int(limit), 5000))
-    db = require_sb()
-    snap = (
-        db.table("axs_event_snapshots")
-        .select("id,captured_at,event_name,venue_name,currency,price_min,price_max,getin")
-        .eq("tevo_event_id", event_id)
-        .order("captured_at", desc=True).limit(1).execute()
-    ).data or []
-    if not snap:
-        return {"event_id": event_id, "count": 0, "sections": [], "summary": None,
-                "captured_at": None}
-    s0 = snap[0]
-    rows = (
-        db.table("axs_section_snapshots")
-        .select("section_label,neighborhood,is_ga,sold_out,avail_qty,price_min,"
-                "price_max,seat_types,has_resale,connection_fee")
-        .eq("snapshot_id", s0["id"])
-        .order("price_min", desc=False).limit(limit).execute()
-    ).data or []
-    prices = sorted(r["price_min"] for r in rows if r.get("price_min") is not None)
-    return {
-        "event_id": event_id,
-        "count": len(rows),
-        "captured_at": s0["captured_at"],
-        "event_name": s0.get("event_name"),
-        "venue_name": s0.get("venue_name"),
-        "currency": s0.get("currency"),
-        "sections": rows,
-        "summary": {
-            "total_sections": len(rows),
-            "available_qty": sum(int(r.get("avail_qty") or 0) for r in rows),
-            "resale_sections": sum(1 for r in rows if r.get("has_resale")),
-            "sold_out_sections": sum(1 for r in rows if r.get("sold_out")),
-            "min_price": prices[0] if prices else s0.get("getin"),
-            "max_price": prices[-1] if prices else s0.get("price_max"),
-        },
-    }
-
-
-@app.get("/api/axs/event/{event_id}/listings")
-def axs_event_listings(event_id: int, limit: int = 3000, _=Depends(require_auth)):
-    """AXS box-office inventory in the EVO listing standard (consecutive-seat
-    blocks), latest snapshot. Free — reads v_axs_listings. Each row is a block:
-    section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only
-    seat_numbers (TEvo ticket groups don't carry exact seats)."""
-    limit = max(1, min(int(limit), 10000))
-    db = require_sb()
-    snap = (
-        db.table("axs_event_snapshots").select("id,captured_at,event_name,venue_name")
-        .eq("tevo_event_id", event_id).order("captured_at", desc=True).limit(1).execute()
-    ).data or []
-    if not snap:
-        return {"event_id": event_id, "count": 0, "listings": [], "summary": None,
-                "captured_at": None}
-    s0 = snap[0]
-    rows = (
-        db.table("v_axs_listings")
-        .select("section,row,quantity,retail_price,type,format,wheelchair,seat_numbers,"
-                "src,neighborhood,is_ga,seat_from,seat_to")
-        .eq("snapshot_id", s0["id"])
-        .order("section").order("row").order("seat_from")
-        .limit(limit).execute()
-    ).data or []
-    prices = [r["retail_price"] for r in rows if r.get("retail_price") is not None]
-    return {
-        "event_id": event_id,
-        "captured_at": s0["captured_at"],
-        "event_name": s0.get("event_name"),
-        "venue_name": s0.get("venue_name"),
-        "count": len(rows),
-        "listings": rows,
-        "summary": {
-            "blocks": len(rows),
-            "total_seats": sum(int(r.get("quantity") or 0) for r in rows),
-            "min_price": min(prices) if prices else None,
-            "max_price": max(prices) if prices else None,
-            "biggest_block": max((int(r.get("quantity") or 0) for r in rows), default=0),
-            "resale_blocks": sum(1 for r in rows if r.get("src") == "resale"),
-        },
-    }
-
-
-@app.get("/api/axs/event/{event_id}/series")
-def axs_event_series(event_id: int, range: str | None = None, hours: int | None = None,
-                     days: int = 30, _=Depends(require_auth)):
-    """AXS box-office time series for the event charts: median section price +
-    listing count per snapshot. Free — reads axs_event_snapshots via RPC.
-    Shape mirrors chart-data's {t,v} series so the FE merges it straight in."""
-    rmap = {"6h": 6, "24h": 24, "1d": 24, "3d": 72, "7d": 168, "30d": 720, "all": None}
-    if range is not None:
-        range_hours = rmap.get(range.lower(), 720)
-    elif hours is not None:
-        range_hours = max(6, min(int(hours), 8760))
-    else:
-        range_hours = max(1, min(int(days), 365)) * 24
-    since_iso = ("1970-01-01T00:00:00+00:00" if range_hours is None
-                 else (datetime.now(timezone.utc) - timedelta(hours=range_hours)).isoformat())
-    db = require_sb()
-    try:
-        rows = (db.rpc("get_axs_event_price_series",
-                       {"p_event_id": event_id, "p_since": since_iso}).execute()).data or []
-    except Exception:
-        rows = []
-    return {
-        "event_id": event_id,
-        "prices_axs": [{"t": r["captured_at"], "v": r.get("median_price")} for r in rows],
-        "counts_axs": [{"t": r["captured_at"], "v": r.get("listings_count")} for r in rows],
-    }
+app.include_router(build_axs_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
 @app.post("/api/seatdata/event/{event_id}/link")
@@ -4406,34 +3520,7 @@ def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
     return require_auth(authorization)
 
 
-def _parse_iso_or_none(s):
-    if not s:
-        return None
-    try:
-        # TEvo emits 'Z' suffix; Python 3.11+ fromisoformat handles it
-        return s.replace("Z", "+00:00") if isinstance(s, str) and s.endswith("Z") else s
-    except Exception:
-        return None
-
-
-def _to_int_or_none(v):
-    if v is None or v == "":
-        return None
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_num_or_none(v):
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
+# _parse_iso_or_none + _to_int_or_none + _to_num_or_none -> core/helpers.py (BR-CODE-1); aliased at top.
 def _flatten_order(order: dict) -> dict:
     """Project a TEvo /v9/orders row to our evo_orders schema."""
     buyer = order.get("buyer") or {}
@@ -4653,16 +3740,12 @@ def _get_seatgeek_client():
         raise
 
 
-@app.get("/api/seatgeek/event/{event_id}")
-def seatgeek_event(event_id: int, _=Depends(require_auth)):
-    """Read SeatGeek state for a TEvo event_id (xref + latest snapshot rollup).
-    Free — no SG API call. Returns null fields if not yet linked."""
-    db = require_sb()
-    rows = (db.table("seatgeek_event_latest").select("*")
-            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    if not rows:
-        return {"tevo_event_id": event_id, "linked": False}
-    return {"tevo_event_id": event_id, "linked": True, **rows[0]}
+# SeatGeek READ routes (event/listings/sales/seller-listings/seller-orders/
+# seller-status) moved to routers/seatgeek.py (BR-CODE-1 slice 9). The
+# link/sync POSTs stay in app.py. All read-only require_sb reads.
+from routers.seatgeek import build_seatgeek_router  # noqa: E402
+
+app.include_router(build_seatgeek_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
 @app.post("/api/seatgeek/event/{event_id}/link")
@@ -4746,81 +3829,7 @@ def seatgeek_sync_sales(event_id: int, _=Depends(require_auth)):
     }
 
 
-@app.get("/api/seatgeek/event/{event_id}/listings")
-def seatgeek_event_listings(event_id: int, latest_only: bool = True, limit: int = 1000,
-                            _=Depends(require_auth)):
-    """Read persisted SG listings. latest_only=true returns only the most
-    recent snapshot per sglid; false returns the full history."""
-    db = require_sb()
-    if latest_only:
-        # latest snapshot per event = MAX(captured_at) for that tevo_event_id
-        last = (db.table("seatgeek_listings_snapshots")
-                .select("captured_at").eq("tevo_event_id", event_id)
-                .order("captured_at", desc=True).limit(1).execute()).data or []
-        if not last:
-            return {"event_id": event_id, "listings": [], "summary": None}
-        rows = (db.table("seatgeek_listings_snapshots")
-                .select("sglid,section,row,quantity,retail_price_all_in,broadcast_price,"
-                        "deal_quality_score,is_broker_owned,is_b2b,is_instant_download,"
-                        "is_sro,has_limited_view,delivery_method,in_hand_date,"
-                        "market_source,stock_type,splits,captured_at")
-                .eq("tevo_event_id", event_id)
-                .eq("captured_at", last[0]["captured_at"])
-                .limit(int(limit)).execute()).data or []
-    else:
-        rows = (db.table("seatgeek_listings_snapshots")
-                .select("*")
-                .eq("tevo_event_id", event_id)
-                .order("captured_at", desc=True)
-                .limit(int(limit)).execute()).data or []
-    if not rows:
-        return {"event_id": event_id, "listings": [], "summary": None}
-    # Quick rollup
-    prices = sorted([r["retail_price_all_in"] for r in rows if r.get("retail_price_all_in") is not None])
-    n = len(prices)
-    median = prices[n // 2] if n and n % 2 else (prices[n // 2 - 1] + prices[n // 2]) / 2 if n else None
-    return {
-        "event_id": event_id, "listings": rows,
-        "summary": {
-            "total_listings": len({r.get("sglid") for r in rows if r.get("sglid")}),
-            "total_tickets": sum(int(r.get("quantity") or 0) for r in rows),
-            "broker_owned":  sum(1 for r in rows if r.get("is_broker_owned")),
-            "b2b_sourced":   sum(1 for r in rows if r.get("is_b2b")),
-            "median_retail_all_in": round(median, 2) if median is not None else None,
-            "min_retail_all_in":    min(prices) if prices else None,
-            "max_retail_all_in":    max(prices) if prices else None,
-            "captured_at": rows[0].get("captured_at"),
-        },
-    }
-
-
-@app.get("/api/seatgeek/event/{event_id}/sales")
-def seatgeek_event_sales(event_id: int, limit: int = 1000, _=Depends(require_auth)):
-    """Read persisted SG sales. Sorted newest first."""
-    db = require_sb()
-    rows = (db.table("seatgeek_sales_snapshots")
-            .select("sg_sale_id,broadcast_price,quantity,section,row,stock_type,"
-                    "delivery_method,in_hand_date,is_instant,sale_at_utc")
-            .eq("tevo_event_id", event_id)
-            .order("sale_at_utc", desc=True)
-            .limit(int(limit)).execute()).data or []
-    if not rows:
-        return {"event_id": event_id, "sales": [], "summary": None}
-    bps = sorted([r["broadcast_price"] for r in rows if r.get("broadcast_price") is not None])
-    n = len(bps)
-    median_bp = bps[n // 2] if n and n % 2 else (bps[n // 2 - 1] + bps[n // 2]) / 2 if n else None
-    return {
-        "event_id": event_id, "sales": rows,
-        "summary": {
-            "total_sales": len(rows),
-            "total_tickets_sold": sum(int(r.get("quantity") or 0) for r in rows),
-            "median_broadcast_price": round(median_bp, 2) if median_bp is not None else None,
-            "min_broadcast_price":    min(bps) if bps else None,
-            "max_broadcast_price":    max(bps) if bps else None,
-            "first_sale": rows[-1].get("sale_at_utc"),
-            "last_sale":  rows[0].get("sale_at_utc"),
-        },
-    }
+# (seatgeek_event_listings + seatgeek_event_sales moved to routers/seatgeek.py — slice 9)
 
 
 # ----------------------------------------------------------------------------
@@ -4880,127 +3889,21 @@ def collect_sg_seller(
     return summary
 
 
-@app.get("/api/seatgeek/event/{event_id}/seller-listings")
-def seatgeek_seller_listings_for_event(event_id: int, latest_only: bool = True,
-                                       limit: int = 1000, _=Depends(require_auth)):
-    """Read persisted seller-direct listings for a TEvo event."""
-    db = require_sb()
-    if latest_only:
-        last = (db.table("seatgeek_seller_listings")
-                .select("pulled_at").eq("tevo_event_id", event_id)
-                .order("pulled_at", desc=True).limit(1).execute()).data or []
-        if not last:
-            return {"event_id": event_id, "listings": [], "summary": None}
-        rows = (db.table("seatgeek_seller_listings")
-                .select("sg_listing_id,seller_listing_id,sg_event_id,sg_event_name,"
-                        "sg_venue,sg_event_date,sg_event_time,quantity,section,row,"
-                        "cost,is_edelivery,is_instant,in_hand_date,notes,pulled_at")
-                .eq("tevo_event_id", event_id)
-                .eq("pulled_at", last[0]["pulled_at"])
-                .limit(int(limit)).execute()).data or []
-    else:
-        rows = (db.table("seatgeek_seller_listings").select("*")
-                .eq("tevo_event_id", event_id)
-                .order("pulled_at", desc=True)
-                .limit(int(limit)).execute()).data or []
-    if not rows:
-        return {"event_id": event_id, "listings": [], "summary": None}
-    return {
-        "event_id": event_id, "listings": rows,
-        "summary": {
-            "total_listings": len({r.get("sg_listing_id") for r in rows if r.get("sg_listing_id")}),
-            "total_tickets": sum(int(r.get("quantity") or 0) for r in rows),
-            "median_cost": (sorted([r["cost"] for r in rows if r.get("cost") is not None])[len(rows) // 2]
-                            if any(r.get("cost") is not None for r in rows) else None),
-            "captured_at": rows[0].get("pulled_at"),
-        },
-    }
+# (seatgeek seller-listings / seller-orders / seller-status moved to
+#  routers/seatgeek.py — slice 9)
 
 
-@app.get("/api/seatgeek/event/{event_id}/seller-orders")
-def seatgeek_seller_orders_for_event(event_id: int, _=Depends(require_auth)):
-    """Read persisted seller-direct orders for a TEvo event."""
-    db = require_sb()
-    rows = (db.table("seatgeek_orders")
-            .select("sg_order_id,status,created_at_sg,sale_price,sale_quantity,"
-                    "sale_section,sale_row,sg_event_name,sg_venue,sg_event_date,"
-                    "delivery_method,stock_type,fulfillment_issue_message,"
-                    "payment_total,last_status_at")
-            .eq("tevo_event_id", event_id)
-            .order("created_at_sg", desc=True).execute()).data or []
-    if not rows:
-        return {"event_id": event_id, "orders": [], "summary": None}
-    by_status: dict[str, int] = {}
-    tickets_sold = 0
-    gross = 0.0
-    for r in rows:
-        st = r.get("status") or "unknown"
-        by_status[st] = by_status.get(st, 0) + 1
-        if st in ("confirmed", "fulfilled", "delivered"):
-            q = int(r.get("sale_quantity") or 0)
-            p = float(r.get("sale_price") or 0)
-            tickets_sold += q
-            gross += p * q
-    return {
-        "event_id": event_id, "orders": rows,
-        "summary": {
-            "total_orders": len(rows),
-            "by_status": by_status,
-            "tickets_sold": tickets_sold,
-            "gross_sold":   round(gross, 2),
-            "last_order_at": rows[0].get("last_status_at") if rows else None,
-        },
-    }
+# (config_info + cross_source_event moved to routers/misc.py — slice 10)
+from routers.misc import build_misc_router  # noqa: E402
 
-
-@app.get("/api/seatgeek/seller-status")
-def seatgeek_seller_status(_=Depends(require_auth)):
-    """Diagnostic: how many SG events have we seen, how many auto-linked
-    to TEvo, what's the latest pull?"""
-    db = require_sb()
-    pull_log = (db.table("seatgeek_seller_pull_log").select("*")
-                .order("called_at", desc=True).limit(20).execute()).data or []
-    listing_stats = (db.table("seatgeek_seller_listings")
-                     .select("sg_event_id,tevo_event_id,pulled_at")
-                     .order("pulled_at", desc=True).limit(2000).execute()).data or []
-    distinct_sg = len({r["sg_event_id"] for r in listing_stats if r.get("sg_event_id")})
-    linked_sg = len({r["sg_event_id"] for r in listing_stats
-                     if r.get("sg_event_id") and r.get("tevo_event_id")})
-    order_count_q = (db.table("seatgeek_orders").select("id", count="exact").limit(1).execute())
-    return {
-        "recent_pulls": pull_log[:10],
-        "distinct_sg_events_in_listings": distinct_sg,
-        "auto_linked_to_tevo": linked_sg,
-        "auto_link_rate": (linked_sg / distinct_sg) if distinct_sg else None,
-        "total_orders_persisted": getattr(order_count_q, "count", None) or 0,
-        "last_listings_pulled_at": listing_stats[0]["pulled_at"] if listing_stats else None,
-    }
-
-
-@app.get("/api/cross-source/event/{event_id}")
-def cross_source_event(event_id: int, _=Depends(require_auth)):
-    """One-stop view of all 3 external xrefs for a TEvo event.
-    Returns ESPN + SeatGeek + SeatData ids together so frontend doesn't
-    need 3 separate calls. Free."""
-    db = require_sb()
-    ev = (db.table("events")
-          .select("id,name,occurs_at_local,venue_id,venue_name,primary_performer_id,primary_performer_name,event_type")
-          .eq("id", event_id).limit(1).execute()).data or []
-    if not ev:
-        raise HTTPException(404, f"event {event_id} not found")
-    espn = (db.table("event_xref").select("espn_event_id,espn_league,espn_slug,match_method,matched_at")
-            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    sg = (db.table("seatgeek_event_xref").select("sg_event_id,sg_event_name,sg_event_type,sg_event_location,match_method,matched_at,last_listings_at,last_sales_at")
-          .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    sd = (db.table("seatdata_event_xref").select("sd_event_id,match_method,matched_at,last_paid_pull_at")
-          .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    return {
-        "tevo_event": ev[0],
-        "espn":     espn[0] if espn else None,
-        "seatgeek": sg[0]   if sg   else None,
-        "seatdata": sd[0]   if sd   else None,
-        "matched_count": sum(1 for x in (espn, sg, sd) if x),
-    }
+app.include_router(build_misc_router(
+    get_sb=lambda: sb,
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+    cron_secret=CRON_SECRET,
+    supabase_url=SUPABASE_URL,
+    sandbox=SANDBOX,
+))
 
 
 @app.post("/api/seatdata/event/{event_id}/sync-sales")
@@ -5044,25 +3947,8 @@ def seatdata_sync_sales(
 # /v9/ticket_groups?owned=true for live inventory; the catalog page uses
 # event_metrics.owned_tickets_count > 0 to find events worth listing.
 
-def _ticket_group_to_listing(tg: dict) -> dict:
-    """Reduce a TEvo ticket_group payload to the public-safe fields a buyer
-    needs. Strips wholesale price, signature, office/brokerage attribution."""
-    return {
-        "id": tg.get("id"),
-        "section": tg.get("section"),
-        "row": tg.get("row"),
-        "available_quantity": tg.get("available_quantity") or tg.get("quantity"),
-        "splits": tg.get("splits") or [],
-        "retail_price": tg.get("retail_price"),
-        "format": tg.get("format"),
-        "type": tg.get("type") or "event",
-        "in_hand": tg.get("in_hand"),
-        "in_hand_on": tg.get("in_hand_on"),
-        "instant_delivery": tg.get("instant_delivery"),
-        "public_notes": tg.get("public_notes"),
-        "view_type": tg.get("view_type"),
-        "wheelchair": tg.get("wheelchair"),
-    }
+# _ticket_group_to_listing -> core/helpers.py (BR-CODE-1 shared event/listings
+# layer; pure dict reshape). Imported (aliased) near the top of this module.
 
 
 # Our TEvo brokerage's office id. Resolved via probe `/v9/orders` (probe v2,
@@ -5300,16 +4186,7 @@ def store_events(
     return {"count": len(out), "events": out, "limit": cap, "offset": offset}
 
 
-def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle distance in miles between two (lat,lon) pairs."""
-    R_MI = 3958.7613  # Earth's mean radius in miles
-    lat1r, lat2r = math.radians(lat1), math.radians(lat2)
-    dlat = lat2r - lat1r
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1r) * math.cos(lat2r) * math.sin(dlon / 2) ** 2
-    return 2 * R_MI * math.asin(math.sqrt(a))
-
-
+# _haversine_miles -> core/helpers.py (BR-CODE-1 pure-utility pass); aliased at top.
 def _attach_owned_metadata(
     db,
     candidate_ids: list[int],
@@ -5450,33 +4327,16 @@ def _normalize_search_key(q: str) -> str:
 # PostgREST ILIKE pattern wildcards we need to escape so a user-supplied
 # query like "%" doesn't become a match-everything pattern. Backslash
 # escaped FIRST so we don't double-escape our own escapes.
-_ILIKE_WILDCARDS = ("\\", "%", "_")
-
-
-def _escape_ilike(s: str) -> str:
-    """Escape PostgREST ILIKE wildcards in a user-supplied substring."""
-    for ch in _ILIKE_WILDCARDS:
-        s = s.replace(ch, "\\" + ch)
-    return s
+# _ILIKE_WILDCARDS + _escape_ilike + _search_sql_only -> core/search.py
+# (BR-CODE-1). app.py imports search_sql_only (aliased) near the top.
 
 
 # Characters that, if present in an .or_() clause VALUE, force PostgREST to
 # treat the value as ending early. Wrapping the value in double quotes tells
 # PostgREST to read the value verbatim. Required for hard-coded patterns
 # like "%, NY%" — the comma would otherwise be parsed as a clause separator.
-_OR_VALUE_RESERVED = (",", "(", ")")
-
-
-def _or_ilike_clause(col: str, pattern: str) -> str:
-    """Build a single `col.ilike.<pattern>` clause for PostgREST `.or_()`.
-    Wraps the pattern in double quotes when it contains characters that
-    conflict with the or-clause parser (commas, parens). Embedded double
-    quotes are doubled per PostgREST's quoting rules.
-    """
-    if any(c in pattern for c in _OR_VALUE_RESERVED) or '"' in pattern:
-        escaped = pattern.replace('"', '""')
-        return f'{col}.ilike."{escaped}"'
-    return f"{col}.ilike.{pattern}"
+# _OR_VALUE_RESERVED + _or_ilike_clause -> core/helpers.py (BR-CODE-1 leaf-helper
+# pass). Imported (aliased) near the top of this module.
 
 
 def _is_tbd(name: str | None) -> bool:
@@ -5503,21 +4363,8 @@ def _is_tbd(name: str | None) -> bool:
     )
 
 
-def _clean_opt_url(v) -> str | None:
-    """Coerce sentinel non-URLs to real None.
-
-    `v_event_seating_chart` (and occasionally TEvo's inline config) carry the
-    literal string "null" / "None" / "" for an absent seat-map URL. Passed
-    through verbatim, the frontend treats the truthy string "null" as a URL
-    and renders a broken <img> whose src resolves to /store/event/null. Coerce
-    those sentinels to None so the no-chart placeholder path is taken.
-    """
-    if v is None:
-        return None
-    s = str(v).strip()
-    if s.lower() in ("null", "none", ""):
-        return None
-    return v
+# _clean_opt_url + _tevo_runtime_to_http (+ _TEVO_STATUS_RE) -> core/helpers.py
+# (BR-CODE-1 shared event/listings layer). Imported (aliased) near the top.
 
 
 def _search_cache_get(key: str) -> dict | None:
@@ -5540,155 +4387,85 @@ def _search_cache_put(key: str, payload: dict) -> None:
         _search_cache.pop(oldest[0], None)
 
 
-def _search_sql_only(db, q_norm: str, limit: int) -> dict:
-    """SQL-only search: ILIKE across our `events` + `performer_metadata` for
-    queries when STOREFRONT_SQL_ONLY=true. Always hits Supabase, never TEvo.
-    Returns the same shape as the live path so the client is mode-agnostic.
+# _search_sql_only -> core/search.py (BR-CODE-1); imported (aliased) at top.
+
+
+def _search_players(db, q_norm: str, limit: int) -> list[dict]:
+    """Sports player search for the storefront. Resolves a player name to their
+    team + the team's upcoming events via the shared PUBLIC RPC
+    `sports_player_search` (mig 20260617120000), then enriches each event with
+    the same we_own/from_price tags as _search_sql_only so the dropdown can show
+    "tickets you can buy" under a player.
+
+    Public sports data only (rosters, team names, public listings) — the only
+    money shown is the consumer-facing from_price already on every event card.
+    Returns [] on any failure: the players block is additive and must never 500
+    the whole search.
     """
-    today_iso = datetime.now(timezone.utc).date().isoformat()
-    # Strip characters that break PostgREST's or_() clause parser:
-    # commas (clause separator), periods (operator separator), parens
-    # (grouping). The replacement char is a space so multi-token queries
-    # still work via ILIKE's wildcard handling.
-    safe_q = re.sub(r"[,.()\"]", " ", q_norm).strip()
-    if not safe_q:
-        return {"events": [], "performers": [], "venues": [], "source": "sql"}
-    # Escape ILIKE wildcards (%, _, \) so a user-supplied "%" doesn't
-    # become a match-everything pattern. We wrap with our own %...%
-    # after the escape.
-    pattern = f"%{_escape_ilike(safe_q)}%"
-
-    # Events: search by event name, venue name, venue location, primary
-    # performer name. Limit to future + active so we don't surface ghosts.
-    # Uses _or_ilike_clause for defense-in-depth: today the pattern has
-    # been sanitized at line ~4467 so the legacy raw f-string would work,
-    # but if that sanitization ever loosens this site would re-introduce
-    # the PostgREST or-clause-separator bug that broke /api/store/movers.
     try:
-        ev_rows = (db.table("events")
-                     .select("id,name,occurs_at_local,venue_name,venue_location,"
-                             "primary_performer_id,primary_performer_name")
-                     .gte("occurs_at_local", today_iso)
-                     .or_(",".join([
-                         _or_ilike_clause("name", pattern),
-                         _or_ilike_clause("venue_name", pattern),
-                         _or_ilike_clause("venue_location", pattern),
-                         _or_ilike_clause("primary_performer_name", pattern),
-                     ]))
-                     .order("occurs_at_local", desc=False)
-                     .limit(80)
-                     .execute().data) or []
+        players = (db.rpc("sports_player_search",
+                          {"p_q": q_norm, "p_limit": limit}).execute().data) or []
     except Exception as e:
-        print(f"search_sql_only events query failed: {e}")
-        ev_rows = []
+        print(f"_search_players rpc failed: {e}")
+        return []
+    if not players:
+        return []
 
-    # Tag with we_own + from_price via latest_event_metrics. Drop speculative
-    # names (CANCELLED / (If Necessary) / (Date TBD)) — consumer storefront
-    # should not surface playoff "may not happen" inventory.
-    ev_rows = [e for e in ev_rows if not _is_speculative_event_name(e.get("name"))]
-    if ev_rows:
-        ev_ids = [int(e["id"]) for e in ev_rows if e.get("id")]
-        metrics: dict[int, dict] = {}
-        if ev_ids:
-            try:
-                rows = (db.table("latest_event_metrics")
-                          .select("event_id,owned_tickets_count,owned_groups_count,retail_min")
-                          .in_("event_id", ev_ids).execute().data) or []
-                metrics = {int(r["event_id"]): r for r in rows if r.get("event_id")}
-            except Exception:
-                metrics = {}
-        # Drop inactive (ghost/cancelled) events.
+    # One batched tag lookup across every event id from every matched player.
+    all_ids = [
+        int(ev.get("tevo_event_id") or 0)
+        for pl in players for ev in (pl.get("events") or [])
+        if ev.get("tevo_event_id")
+    ]
+    metrics: dict[int, dict] = {}
+    inactive: set[int] = set()
+    if all_ids:
+        uniq = list(set(all_ids))
+        try:
+            rows = (db.table("latest_event_metrics")
+                      .select("event_id,owned_tickets_count,retail_min")
+                      .in_("event_id", uniq).execute().data) or []
+            metrics = {int(r["event_id"]): r for r in rows if r.get("event_id")}
+        except Exception:
+            metrics = {}
         try:
             lc = (db.table("event_lifecycle")
                     .select("event_id,is_active")
-                    .in_("event_id", ev_ids).execute().data) or []
+                    .in_("event_id", uniq).execute().data) or []
             inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
         except Exception:
             inactive = set()
-        ev_rows = [e for e in ev_rows if int(e.get("id") or 0) not in inactive]
-    else:
-        metrics = {}
 
-    # Bias toward owned inventory: when a query like "aces" matches multiple
-    # teams (Reno Aces minor-league + Las Vegas Aces WNBA), the soonest event
-    # wins under the default occurs_at_local ASC sort even when we don't own
-    # any inventory for that team. Audit 2026-05-16 found "aces" returning
-    # Reno Aces first; we own Las Vegas Aces 5/17. Re-sort so events with
-    # owned inventory come first, soonest among them next.
-    ev_rows_sorted = sorted(
-        ev_rows,
-        key=lambda e: (
-            0 if (metrics.get(int(e.get("id") or 0)) or {}).get("owned_tickets_count") else 1,
-            e.get("occurs_at_local") or "9999-12-31",
-        ),
-    )
-
-    events_out = []
-    for e in ev_rows_sorted[:limit]:
-        eid = int(e.get("id") or 0)
-        m = metrics.get(eid) or {}
-        events_out.append({
-            "id": eid,
-            "name": e.get("name"),
-            "venue_name": e.get("venue_name"),
-            "location": e.get("venue_location"),
-            "occurs_at": e.get("occurs_at_local"),
-            "we_own": bool(m.get("owned_tickets_count")),
-            "from_price": m.get("retail_min"),
-            "owned_tix": m.get("owned_tickets_count"),
-        })
-
-    # Performers via performer_metadata name match.
-    try:
-        pf_rows = (db.table("performer_metadata")
-                     .select("performer_id,name,espn_league")
-                     .ilike("name", pattern)
-                     .limit(limit)
-                     .execute().data) or []
-    except Exception:
-        pf_rows = []
-    performers_out = [{
-        "id": int(p.get("performer_id") or 0),
-        "name": p.get("name"),
-        "league": p.get("espn_league"),
-    } for p in pf_rows if p.get("performer_id")]
-
-    # Venues — derive from events distinct venue rows for SQL-only mode.
-    # We don't have a public venues table; use distinct venue_name from
-    # upcoming events matching the query.
-    venues_out: list[dict] = []
-    try:
-        vn_rows = (db.table("events")
-                     .select("venue_id,venue_name,venue_location")
-                     .gte("occurs_at_local", today_iso)
-                     .or_(",".join([
-                         _or_ilike_clause("venue_name", pattern),
-                         _or_ilike_clause("venue_location", pattern),
-                     ]))
-                     .limit(40)
-                     .execute().data) or []
-        seen: set[int] = set()
-        for v in vn_rows:
-            vid = int(v.get("venue_id") or 0)
-            if vid in seen or not vid:
+    out: list[dict] = []
+    for pl in players:
+        events_out = []
+        for ev in (pl.get("events") or []):
+            eid = int(ev.get("tevo_event_id") or 0)
+            if not eid or eid in inactive or _is_speculative_event_name(ev.get("name")):
                 continue
-            seen.add(vid)
-            venues_out.append({
-                "id": vid,
-                "name": v.get("venue_name"),
-                "location": v.get("venue_location"),
+            m = metrics.get(eid) or {}
+            events_out.append({
+                "id": eid,
+                "name": ev.get("name"),
+                "venue_name": ev.get("venue_name"),
+                "location": ev.get("venue_location"),
+                "occurs_at": ev.get("occurs_at_local"),
+                "we_own": bool(m.get("owned_tickets_count")),
+                "from_price": m.get("retail_min"),
+                "owned_tix": m.get("owned_tickets_count"),
             })
-            if len(venues_out) >= limit:
-                break
-    except Exception:
-        pass
-
-    return {
-        "events": events_out,
-        "performers": performers_out,
-        "venues": venues_out,
-        "source": "sql",
-    }
+        out.append({
+            "performer_id": int(pl.get("tevo_performer_id") or 0),
+            "name": pl.get("full_name") or pl.get("display_name"),
+            "team_name": pl.get("team_name"),
+            "league": pl.get("espn_league"),
+            "position": pl.get("position_abbr"),
+            "jersey": pl.get("jersey"),
+            "status": pl.get("status"),
+            "headshot_url": pl.get("headshot_url"),
+            "events": events_out,
+        })
+    return out
 
 
 def _search_live(db, q_norm: str, limit: int) -> dict:
@@ -5802,7 +4579,7 @@ def store_search(
     """
     q_norm = (q or "").strip()
     if not q_norm:
-        return {"q": "", "events": [], "performers": [], "venues": [],
+        return {"q": "", "players": [], "events": [], "performers": [], "venues": [],
                 "source": "empty", "latency_ms": 0}
 
     # Cap at 50; the upstream cap is 20, so anything past that just trims.
@@ -5829,6 +4606,11 @@ def store_search(
         payload = _search_sql_only(db, q_norm, lim)
     else:
         payload = _search_live(db, q_norm, lim)
+
+    # Sports player layer (mode-agnostic): "messi"/"lebron" → their team's
+    # upcoming events. Independent of the events/performers/venues path so it
+    # works under both SQL and live modes; cached as part of payload below.
+    payload["players"] = _search_players(db, q_norm, lim)
 
     elapsed_ms = int((time.time() - t0) * 1000)
     payload["q"] = q_norm
@@ -5946,670 +4728,10 @@ def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _section_moving_fast(candidates: list[dict], cap: int = 10) -> list[dict]:
-    """Demand velocity (TEvo): supply leaving our broker market fast — a 24h
-    ticket-count drop of ≥50. EVO-only; no SeatGeek sales signal."""
-    out = []
-    for c in candidates:
-        d24h = c.get("tix_d24h")
-        if isinstance(d24h, int) and d24h <= -50:
-            out.append(c)
-    out.sort(key=lambda c: (
-        -abs(c.get("tix_d24h") or 0),
-        c.get("occurs_at_local") or "9999",
-    ))
-    return out[:cap]
-
-
-def _section_price_drops(candidates: list[dict], cap: int = 10) -> list[dict]:
-    """Our get-in price fell ≥10% in the last 24h (TEvo get-in movement).
-    EVO-only — no SeatGeek market comparison. Displayed as "↓ X% in 24h"."""
-    out = []
-    for c in candidates:
-        getin_pct = c.get("getin_pct_24h")
-        if isinstance(getin_pct, (int, float)) and getin_pct <= -10.0:
-            c["_discount_pct"] = round(abs(getin_pct), 1)
-            out.append(c)
-    out.sort(key=lambda c: (-c.get("_discount_pct", 0.0),
-                            c.get("occurs_at_local") or "9999"))
-    return out[:cap]
-
-
-def _section_climbing(candidates: list[dict], cap: int = 10) -> list[dict]:
-    """Price firming (TEvo): tickets dropping AND get-in climbing ≥5% in 24h.
-    EVO-only; the former SeatGeek-median path was removed."""
-    out = []
-    for c in candidates:
-        d24h = c.get("tix_d24h")
-        getin_pct = c.get("getin_pct_24h")
-        tevo_climb = (isinstance(d24h, int) and d24h < 0
-                      and isinstance(getin_pct, (int, float)) and getin_pct >= 5.0)
-        if tevo_climb:
-            c["_climb_pct"] = round(getin_pct, 1)
-            out.append(c)
-    out.sort(key=lambda c: (-(c.get("_climb_pct") or 0),
-                            c.get("occurs_at_local") or "9999"))
-    return out[:cap]
-
-
-def _section_specials(candidates: list[dict],
-                      holiday_by_eid: dict[int, dict],
-                      rivalry_by_eid: dict[int, str],
-                      cap: int = 10) -> list[dict]:
-    """Curated rail — events that qualify on a non-market basis. Two
-    sources fold in here:
-      1. v_event_holidays + holiday-window expansion: day-of OR ±2 day
-         (Memorial Day vs Memorial Day Weekend, etc.)
-      2. v_rivalry_events: known rivalry games (Yankees-Red Sox, etc.)
-    Both gated to owned > 100 — same depth bar the operator set for
-    the "specials" rail. Each card is tagged with `_special` describing
-    what earned its slot (e.g. "Memorial Day", "Memorial Day Weekend",
-    or "Yankees vs Red Sox").
-    """
-    out = []
-    for c in candidates:
-        if (c.get("owned_tickets_count") or 0) <= 100:
-            continue
-        eid = c.get("id")
-        try:
-            eid_int = int(eid) if eid is not None else None
-        except (TypeError, ValueError):
-            eid_int = None
-        if eid_int is None:
-            continue
-        holiday = holiday_by_eid.get(eid_int)
-        rivalry = rivalry_by_eid.get(eid_int)
-        if holiday or rivalry:
-            # Prefer rivalry tag when both apply — more specific narrative.
-            if rivalry:
-                c["_special"] = rivalry
-            else:
-                hname = (holiday or {}).get("name") or ""
-                # Weekend-of holidays get "Memorial Day Weekend" framing;
-                # day-of keeps the bare holiday name.
-                c["_special"] = f"{hname} Weekend" if (holiday or {}).get("weekend") else hname
-            c["_special_kind"] = "rivalry" if rivalry else "holiday"
-            out.append(c)
-    out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
-    return out[:cap]
-
-
-def _section_featured(candidates: list,
-                      holiday_by_eid: dict,
-                      rivalry_by_eid: dict,
-                      cap: int = 20) -> list:
-    """Featured rail — operator directive 2026-05-19 v3. Multi-signal
-    curation. All branches require `owned_tickets_count > 100`. Tag
-    selection: playoff > world_cup > rivalry > holiday > marquee > premium.
-
-      1. Playoff games           — `_classify_playoff()` regex hit
-      2. World Cup matches       — `_classify_world_cup()` (D3 2026-06-16).
-                                   FIFA World Cup 2026 soccer matches we own,
-                                   tagged "World Cup". Exempt from the owned>100
-                                   gate (marquee international inventory is thin
-                                   per match, like playoffs).
-      3. Holiday calendar games  — date within holiday window (±2 days
-                                   from observed_date; weekend coverage).
-                                   Tag = "Memorial Day" for day-of,
-                                   "Memorial Day Weekend" for ±1/±2.
-      4. Rivalry games           — `v_rivalry_events` membership
-      5. Marquee competitions    — US Open Tennis / F1 / Inter Miami away
-      6. Other category          — `owned_median_retail > $50` catch-all
-                                   (concerts, regular-season home games,
-                                   anything not in 1-5)
-
-    Premium-only events show no tag (section title "Featured" carries the
-    framing). Internal owned-count labels not exposed.
-    """
-    out = []
-    for c in candidates:
-        eid = c.get("id")
-        if eid is None:
-            continue
-        try:
-            eid_int = int(eid)
-        except (TypeError, ValueError):
-            continue
-        owned = c.get("owned_tickets_count") or 0
-        playoff = _classify_playoff(c.get("name") or "")
-        world_cup = _classify_world_cup(c.get("name"), c.get("primary_performer_name"))
-        if owned <= 100 and not playoff and not world_cup:
-            # Global depth gate for non-playoff events. Playoff games are
-            # exempt (operator directive 2026-05-26) — they're the highest-
-            # value NYC inventory even at thin owned counts (e.g. Knicks
-            # Game 7 sits at owned ~60, well under the regular-season bar).
-            # World Cup matches share the exemption (D3 2026-06-16): marquee
-            # international inventory is thin per match (e.g. Match 72 owned
-            # ~62) but exactly what the Featured rail is for.
-            continue
-        rivalry = rivalry_by_eid.get(eid_int)
-        holiday = holiday_by_eid.get(eid_int)
-        marquee = _classify_marquee_competition(c.get("name") or "")
-        # Branches 1-5: specific narrative signals (any of) → always Featured
-        if playoff:
-            c["_featured_tag"] = (playoff.get("label") or "Playoff")
-            c["_featured_kind"] = "playoff"
-        elif world_cup:
-            c["_featured_tag"] = "World Cup"
-            c["_featured_kind"] = "world_cup"
-        elif rivalry:
-            c["_featured_tag"] = rivalry
-            c["_featured_kind"] = "rivalry"
-        elif holiday:
-            # Holiday tag — day-of keeps bare name ("Memorial Day"); ±1/±2
-            # gets the weekend framing ("Memorial Day Weekend").
-            hname = (holiday or {}).get("name") or ""
-            c["_featured_tag"] = f"{hname} Weekend" if (holiday or {}).get("weekend") else hname
-            c["_featured_kind"] = "holiday"
-        elif marquee:
-            c["_featured_tag"] = marquee
-            c["_featured_kind"] = "marquee"
-        else:
-            # Branch 5a: "any other category" — requires median > $50
-            # Branch 5b: market-anchor fallback (operator 2026-05-19 v4):
-            #   owned > 200 AND owned_share >= 20% catches bargain-tier
-            #   games where we dominate inventory but pricing is consumer-
-            #   friendly. Threshold based on Yankees distribution audit:
-            #   regular games sit 12-22% share; >=20% = "we are the market".
-            med = c.get("owned_median_retail")
-            try:
-                med_f = float(med) if med is not None else None
-            except (TypeError, ValueError):
-                med_f = None
-            share = c.get("owned_share")
-            try:
-                share_f = float(share) if share is not None else None
-            except (TypeError, ValueError):
-                share_f = None
-            is_premium = (med_f is not None and med_f > 50.0)
-            is_market_anchor = (owned > 200) and (share_f is not None and share_f >= 0.20)
-            if not (is_premium or is_market_anchor):
-                continue
-            c["_featured_tag"] = ""  # no internal-metric chip on consumer UI
-            c["_featured_kind"] = "premium" if is_premium else "market_anchor"
-        out.append(c)
-    out.sort(key=lambda c: c.get("occurs_at_local") or "9999")
-    return out[:cap]
-
-
-def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
-    """Pure compute path for the movers endpoint. Extracted from the route
-    handler so both the cold-cache code path AND the background-refresh
-    task call the same implementation. Returns the exact response dict
-    the route emits (`city`, `days`, `count`, `events`).
-    """
-    # City filter — hardcoded NYC venue patterns for v1. Matches everywhere
-    # the storefront would consider "New York metro" inventory.
-    city_norm = (city or "").upper()
-    if city_norm in ("NYC", "NEW YORK", "NEW YORK CITY"):
-        venue_patterns = ("%New York%", "%Brooklyn%", "%Bronx%",
-                          "%Queens%", "%Manhattan%", "%, NY%")
-    else:
-        # Unknown city → empty result; cleaner than a 400 for the home view.
-        return {"city": city, "days": day_cap, "count": 0, "events": []}
-
-    today_iso = datetime.now(timezone.utc).date().isoformat()
-    horizon_iso = (datetime.now(timezone.utc) + timedelta(days=day_cap)).date().isoformat()
-
-    # Pull events in the window with owned inventory + active lifecycle.
-    # Two queries + merge (consistent with the catalog pattern; view-to-
-    # table FK inference under PostgREST has been flaky).
-    try:
-        ev_q = db.table("events").select(
-            "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-            "primary_performer_id,primary_performer_name,performer_ids"
-        ).gte("occurs_at_local", today_iso).lte("occurs_at_local", horizon_iso + "T23:59:59")
-        # PostgREST `or_()` with a comma-separated list of `<col>.ilike.<pat>`
-        # supports OR filters across multiple patterns. Use _or_ilike_clause so
-        # patterns containing literal commas (e.g. "%, NY%") are double-quoted
-        # and don't get split by PostgREST's clause parser — that bug silently
-        # returned 0 movers for ~309 owned NYC events until the fix landed.
-        or_clauses = ",".join(_or_ilike_clause("venue_location", p) for p in venue_patterns)
-        ev_q = ev_q.or_(or_clauses)
-        events_rows = ev_q.limit(800).execute().data or []
-    except Exception as e:
-        # Conservative fallback: don't break the homepage if the filter
-        # syntax ever drifts.
-        print(f"store_movers events query failed: {e}")
-        return {"city": city, "days": day_cap, "count": 0, "events": []}
-
-    # ----- World Cup inclusion (D3, 2026-06-16) -----
-    # The Featured rail is NYC-anchored (venue_patterns above), but FIFA World
-    # Cup 2026 matches are a national draw and our owned WC inventory can sit
-    # at any host venue (e.g. Match 72 at Mercedes-Benz Stadium, Atlanta —
-    # which the NYC venue filter would exclude). Pull owned World Cup events
-    # regardless of city and merge them into events_rows so they flow through
-    # the same metrics/lifecycle/curation pipeline and can reach Featured.
-    # Wrapped so a failure here degrades to NYC-only behavior, never 500s.
-    try:
-        wc_rows = (db.table("events").select(
-            "id,name,occurs_at_local,venue_id,venue_name,venue_location,"
-            "primary_performer_id,primary_performer_name,performer_ids"
-        ).gte("occurs_at_local", today_iso)
-         .lte("occurs_at_local", horizon_iso + "T23:59:59")
-         .ilike("primary_performer_name", "%World Cup Soccer%")
-         .limit(100).execute().data) or []
-        seen_eids = {int(e["id"]) for e in events_rows if e.get("id")}
-        for e in wc_rows:
-            eid = e.get("id")
-            if eid is not None and int(eid) not in seen_eids:
-                events_rows.append(e)
-                seen_eids.add(int(eid))
-    except Exception as e:
-        print(f"store_movers world-cup pull failed: {e}")
-
-    if not events_rows:
-        return {"city": city, "days": day_cap, "count": 0, "events": []}
-    # Drop speculative names (CANCELLED / (If Necessary)) — playoff "may not
-    # happen" placeholders normally shouldn't surface to consumers. EXCEPTION
-    # (operator directive 2026-05-26): playoff games keep their "(If Necessary)"
-    # slot in the movers strip — they're the highest-value NYC inventory (e.g.
-    # Knicks Game 7, $5,880 median) and are exactly what the Featured rail is
-    # for. Genuine CANCELLED games still drop, even playoff ones. This relaxes
-    # the filter ONLY for the movers strip; search + home still hide these.
-    events_rows = [
-        e for e in events_rows
-        if not _is_speculative_event_name(e.get("name"))
-        or (_classify_playoff(e.get("name"))
-            and "CANCELLED" not in (e.get("name") or "").upper())
-    ]
-    if not events_rows:
-        return {"city": city, "days": day_cap, "count": 0, "events": []}
-    events_by_id = {int(e["id"]): e for e in events_rows if e.get("id")}
-    ev_ids = list(events_by_id.keys())
-
-    # Owned-only metrics so we don't list events we can't actually sell.
-    metrics = (db.table("latest_event_metrics")
-                 .select("event_id,owned_tickets_count,owned_groups_count,"
-                         "tickets_count,retail_min,owned_median_retail,owned_share,"
-                         "captured_at")
-                 .gt("owned_tickets_count", 0)
-                 .in_("event_id", ev_ids)
-                 .execute().data) or []
-    if not metrics:
-        return {"city": city, "days": day_cap, "count": 0, "events": []}
-    metrics_by_id = {int(m["event_id"]): m for m in metrics if m.get("event_id")}
-
-    # Lifecycle filter — drop ghost/cancelled/postponed.
-    try:
-        lc = (db.table("event_lifecycle")
-                .select("event_id,is_active")
-                .in_("event_id", list(metrics_by_id.keys()))
-                .execute().data) or []
-        inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
-    except Exception:
-        inactive = set()
-
-    # World Cup exemption (D3, 2026-06-16): the ghost detector eliminates events
-    # whose TEvo event row hasn't been re-polled recently (e.g. Match 72 flagged
-    # `ghost_eliminated` / `sports_stale_135hr`). That recency signal is about
-    # the events-feed cadence, NOT inventory — and we have live owned listings on
-    # these matches, so dropping them is a false negative. Keep owned World Cup
-    # matches out of `inactive`. Genuinely cancelled ones are still removed by the
-    # speculative-name filter above ("CANCELLED" never qualifies as WC here).
-    for _eid in list(inactive):
-        _ev = events_by_id.get(_eid) or {}
-        if _classify_world_cup(_ev.get("name"), _ev.get("primary_performer_name")):
-            inactive.discard(_eid)
-
-    # Velocity windows for the 1h/24h ticket delta + getin pct moves.
-    try:
-        vw = (db.table("v_event_velocity_windows")
-                .select("tevo_event_id,tevo_tix_now,tevo_tix_d24h,"
-                        "tevo_getin_now,tevo_getin_d24h_pct,tevo_now_at")
-                .in_("tevo_event_id", list(metrics_by_id.keys()))
-                .execute().data) or []
-    except Exception:
-        vw = []
-    velocity_by_id = {int(v["tevo_event_id"]): v for v in vw if v.get("tevo_event_id") is not None}
-
-    # Bulk performer assets — fetch BOTH home (primary_performer_id) AND
-    # away (first secondary in performer_ids array) so cards can render
-    # home-vs-away branding. performer_ids is a text[] column on `events`;
-    # cast to int and dedupe. 2026-05-19: extends prior home-only fetch.
-    perf_ids_set: set[int] = set()
-    for i in metrics_by_id:
-        if i in inactive:
-            continue
-        ev = events_by_id[i]
-        pp = ev.get("primary_performer_id")
-        if pp:
-            try: perf_ids_set.add(int(pp))
-            except (TypeError, ValueError): pass
-        for raw_pid in (ev.get("performer_ids") or []):
-            try: perf_ids_set.add(int(raw_pid))
-            except (TypeError, ValueError): pass
-    perf_assets = _bulk_performer_assets(db, list(perf_ids_set)) if perf_ids_set else {}
-
-    # Freshness gate for velocity signals. v_event_velocity_windows computes
-    # the d24h ticket delta from the latest event_metrics sample vs the one
-    # ~24h before it. If the latest sample is itself ancient, that delta is a
-    # stale read, so we bound how old it can be before we stop trusting it for
-    # rail membership (moving_fast / climbing).
-    #
-    # Window sizing (revised 2026-05-25 — was 3h, which silently emptied the
-    # moving_fast/price_drops/climbing rails): the storefront's owned MLB/NBA
-    # events are re-polled on a ~24-48h cadence (the featured playoff events
-    # poll faster, but the long-tail regular-season games — exactly the ones
-    # that trend "moving fast" — refresh daily-ish). A 3h gate excluded EVERY
-    # qualifying event (samples were 21-141h old) so the rails rendered empty.
-    # 48h admits the freshest-available sample for the typical cadence while
-    # still excluding genuinely cold data (e.g. a 6-day-old sample). The d24h
-    # value is NOT displayed on the mover card (which shows only "from $X"),
-    # so a lagged-but-bounded delta is fine here — it only governs which
-    # events qualify as a discovery-rail signal, not a precise live count.
-    _VELOCITY_FRESH_MAX_AGE_SEC = 48 * 3600  # 48 hours — matches collector cadence
-
-    def _is_velocity_fresh(v: dict) -> bool:
-        ts = v.get("tevo_now_at")
-        if not ts:
-            return False
-        try:
-            captured = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - captured).total_seconds()
-            return 0 <= age <= _VELOCITY_FRESH_MAX_AGE_SEC
-        except (TypeError, ValueError):
-            return False
-
-    # ----- EVO-only storefront (operator directive 2026-06-16) -----
-    # The consumer store features EVO/TEvo inventory ONLY — no SeatGeek
-    # information or values surface to customers. The former SG enrichment
-    # (xref + sales + listings windows) was removed; the discovery rails below
-    # (moving_fast / price_drops / climbing) run purely off TEvo velocity
-    # signals (ticket-count delta + get-in price movement).
-
-    # ----- Build candidate pool with all signal data attached -----
-    # Every owned (>=1) event lands in `candidates` with its full signal
-    # payload. Each section helper below filters this pool independently;
-    # an event can qualify for 0, 1, or multiple sections.
-    # `all_owned_cards` collects EVERY owned event (incl. owned<=50) so the
-    # empty-rail fallback below has a pool to draw from when nothing clears
-    # the curation gates (operator directive 2026-05-26).
-    candidates: list[dict] = []
-    all_owned_cards: list[dict] = []
-    for eid, m in metrics_by_id.items():
-        if eid in inactive:
-            continue
-        ev = events_by_id.get(eid) or {}
-        v = velocity_by_id.get(eid) or {}
-        velocity_fresh = _is_velocity_fresh(v)
-        tix_d24h = v.get("tevo_tix_d24h") if velocity_fresh else None
-        getin_pct_24h = v.get("tevo_getin_d24h_pct") if velocity_fresh else None
-        getin_now = v.get("tevo_getin_now")
-        from_price = m.get("retail_min") if m.get("retail_min") is not None else getin_now
-
-        try:
-            d24h_val = int(tix_d24h) if tix_d24h is not None else None
-        except (TypeError, ValueError):
-            d24h_val = None
-        try:
-            pct_val = float(getin_pct_24h) if getin_pct_24h is not None else None
-        except (TypeError, ValueError):
-            pct_val = None
-
-        # Home-team assets (primary performer)
-        primary_pid_raw = ev.get("primary_performer_id")
-        primary_pid: int | None = None
-        try:
-            primary_pid = int(primary_pid_raw) if primary_pid_raw else None
-        except (TypeError, ValueError):
-            primary_pid = None
-        a = perf_assets.get(primary_pid) if primary_pid else None
-        # Away-team assets — first performer_id in array that's NOT primary.
-        # Sports matchups: events.performer_ids = [home_id, away_id, ...].
-        # Playoff/single-team entries may have only the primary; in that
-        # case away_* fields stay null (graceful no-op on FE).
-        away_pid: int | None = None
-        for raw_pid in (ev.get("performer_ids") or []):
-            try:
-                pid_int = int(raw_pid)
-            except (TypeError, ValueError):
-                continue
-            if primary_pid is not None and pid_int == primary_pid:
-                continue
-            away_pid = pid_int
-            break
-        b = perf_assets.get(away_pid) if away_pid else None
-        owned_tickets = m.get("owned_tickets_count") or 0
-        card = {
-            "id": ev.get("id"),
-            "name": ev.get("name"),
-            "occurs_at_local": ev.get("occurs_at_local"),
-            "venue_name": ev.get("venue_name"),
-            "venue_location": ev.get("venue_location"),
-            "primary_performer_name": ev.get("primary_performer_name"),
-            "primary_performer_logo": (a or {}).get("logo_default_url"),
-            "primary_performer_color": (a or {}).get("color_primary"),
-            # Away-team assets — 2026-05-19: "populate all store events
-            # with team assets where available". Null when no away
-            # performer in array (e.g. playoff placeholder events).
-            "away_performer_id":    away_pid,
-            "away_performer_name":  (b or {}).get("name"),
-            "away_performer_logo":  (b or {}).get("logo_default_url"),
-            "away_performer_color": (b or {}).get("color_primary"),
-            "from_price": from_price,
-            "tix_d24h": d24h_val,
-            "getin_pct_24h": pct_val,
-            "owned_tickets_count": owned_tickets,
-            "owned_median_retail": m.get("owned_median_retail"),
-            "owned_share": m.get("owned_share"),
-        }
-        all_owned_cards.append(card)
-        if owned_tickets > 50:
-            # Sections (except holidays) require owned > 50 for inventory depth;
-            # holidays/specials are tighter at > 100, applied in the section
-            # helpers. Playoff games additionally bypass the owned>100 Featured
-            # gate (see _section_featured).
-            candidates.append(card)
-
-    # ----- Specials enrichment: pull holiday-window matches + rivalry
-    # tags. Both wrapped in try/except so a view-side failure degrades
-    # to no-specials rather than killing the whole movers response.
-    candidate_ids = [int(c["id"]) for c in candidates if c.get("id") is not None]
-    # holiday_by_eid value shape (2026-05-19): {"name": str, "weekend": bool}
-    # weekend=False → event is ON the holiday's observed_date (label "Memorial Day")
-    # weekend=True  → event is ±1/±2 days from observed_date (label "Memorial Day Weekend")
-    # Operator directive: distinguish day-of from weekend-of so the actual
-    # holiday day stands apart in the rail badges.
-    holiday_by_eid: dict[int, dict] = {}
-    rivalry_by_eid: dict[int, str] = {}
-    if candidate_ids:
-        try:
-            hrows = (db.table("v_event_holidays")
-                       .select("tevo_event_id,holiday_name")
-                       .in_("tevo_event_id", candidate_ids)
-                       .execute().data) or []
-            # First match wins per event — v_event_holidays can emit
-            # multiple rows when a date hits multiple holidays. The view
-            # already orders by match_specificity DESC server-side. This
-            # view is exact-date only (see line 5856 landmine note), so
-            # all matches from here are day-of → weekend=False.
-            for r in hrows:
-                eid = r.get("tevo_event_id")
-                if eid is None:
-                    continue
-                key = int(eid)
-                if key not in holiday_by_eid and r.get("holiday_name"):
-                    holiday_by_eid[key] = {"name": r["holiday_name"], "weekend": False}
-        except Exception as e:
-            print(f"store_movers v_event_holidays query failed: {e}")
-        try:
-            rrows = (db.table("v_rivalry_events")
-                       .select("tevo_event_id,rivalry_name,rivalry_intensity")
-                       .in_("tevo_event_id", candidate_ids)
-                       .execute().data) or []
-            # v_rivalry_events emits duplicate rows when both teams in a
-            # matchup are competitors (app.py:1198 bible landmine).
-            # Dedupe Python-side; first row wins.
-            for r in rrows:
-                eid = r.get("tevo_event_id")
-                if eid is None:
-                    continue
-                key = int(eid)
-                if key not in rivalry_by_eid and r.get("rivalry_name"):
-                    rivalry_by_eid[key] = r["rivalry_name"]
-        except Exception as e:
-            print(f"store_movers v_rivalry_events query failed: {e}")
-
-    # ----- Build the 4 themed sliders. Each section is independent and
-    # gets its own copy of qualifying candidates (cards may appear in
-    # more than one section, e.g. a rivalry game that's also moving fast).
-    # Cross-list dedup (operator directive 2026-05-19 v2): an event appears
-    # in at most ONE rail. Process in priority order; each rail consumes
-    # events from a shared `seen` set, so subsequent rails skip them.
-    # Priority: Featured > moving_fast > price_drops > climbing > specials.
-    seen: set = set()
-    def _consume(items: list) -> list:
-        out = []
-        for c in items:
-            eid = c.get("id")
-            try:
-                eid_int = int(eid) if eid is not None else None
-            except (TypeError, ValueError):
-                eid_int = None
-            if eid_int is None or eid_int in seen:
-                continue
-            seen.add(eid_int)
-            out.append(c)
-        return out
-
-    # Holiday-window expansion (operator directive 2026-05-19 v3, refined v4):
-    # base `v_event_holidays` exact-date join misses weekend games. Pull all
-    # in-window holidays + apply per-event applicability rules:
-    #   - US country-level     → tag (storefront is NYC)
-    #   - US state=NY or city=New York → tag
-    #   - US state/city != NY  → skip
-    #   - CA country-level     → tag ONLY when event has a Canadian team
-    #   - CA province-level (QC etc.) → never tag
-    # Priority: Father's/Mother's Day > Memorial/Independence/Labor/Thanks/
-    # Christmas > New Year's > Juneteenth > everything else.
-    try:
-        cand_dates = sorted({
-            (c.get("occurs_at_local") or "")[:10]
-            for c in candidates if c.get("occurs_at_local")
-        })
-        if cand_dates:
-            from datetime import date as _date_cls
-            win_lo = (_date_cls.fromisoformat(cand_dates[0])  - timedelta(days=2)).isoformat()
-            win_hi = (_date_cls.fromisoformat(cand_dates[-1]) + timedelta(days=2)).isoformat()
-            holiday_rows = (db.table("holidays")
-                              .select("observed_date,holiday_name,country,state,city")
-                              .gte("observed_date", win_lo)
-                              .lte("observed_date", win_hi)
-                              .execute().data) or []
-            # Group: date_str → list of (holiday_row) within ±2 day window
-            date_to_options: dict[str, list[dict]] = {}
-            for h in holiday_rows:
-                obs = h.get("observed_date")
-                if not obs:
-                    continue
-                try:
-                    obs_d = _date_cls.fromisoformat(obs)
-                except (TypeError, ValueError):
-                    continue
-                # Window: -2 day through +1 day inclusive.
-                # observed_date itself is included (dd=0) — used to flag
-                # day-of matches that v_event_holidays may have missed.
-                for dd in range(-2, 2):
-                    ds = (obs_d + timedelta(days=dd)).isoformat()
-                    date_to_options.setdefault(ds, []).append(h)
-            # Resolve per candidate. Apply applicability + priority.
-            for c in candidates:
-                eid = c.get("id")
-                if eid is None:
-                    continue
-                try:
-                    eid_int = int(eid)
-                except (TypeError, ValueError):
-                    continue
-                if eid_int in holiday_by_eid:
-                    continue  # exact-date join from v_event_holidays already set
-                cd = (c.get("occurs_at_local") or "")[:10]
-                options = date_to_options.get(cd, [])
-                if not options:
-                    continue
-                ev_name = c.get("name") or ""
-                applicable: list[dict] = []
-                for h in options:
-                    country = h.get("country")
-                    state = h.get("state")
-                    city = h.get("city")
-                    if country == "US":
-                        # NY-state / New-York-city restrictions OK (storefront
-                        # is NYC). Skip other-city / other-state US holidays.
-                        if city and city != "New York":
-                            continue
-                        if state and state != "NY":
-                            continue
-                        applicable.append(h)
-                    elif country == "CA":
-                        # Canadian holiday — only tag when a Canadian team
-                        # is visiting NYC. Skip province-specific holidays.
-                        if state:
-                            continue
-                        if not _has_canadian_team(ev_name):
-                            continue
-                        applicable.append(h)
-                    # other countries → silently skip
-                if not applicable:
-                    continue
-                # Priority sort: higher _HOLIDAY_PRIORITY wins; tie-break to US
-                applicable.sort(key=lambda hh: (
-                    -_HOLIDAY_PRIORITY.get(hh.get("holiday_name", ""), 0),
-                    0 if hh.get("country") == "US" else 1,
-                ))
-                chosen = applicable[0]
-                hname = chosen.get("holiday_name", "")
-                # Day-of vs weekend-of vs skip: see _classify_holiday_proximity
-                # docstring. Operator 2026-05-19 v6: Tuesday after Memorial Day
-                # Monday is NOT "Memorial Day Weekend" — only Sat/Sun in the
-                # ±2 window earn the weekend tag.
-                proximity = _classify_holiday_proximity(cd, chosen.get("observed_date") or "")
-                if proximity == "day_of":
-                    holiday_by_eid[eid_int] = {"name": hname, "weekend": False}
-                elif proximity == "weekend_of":
-                    holiday_by_eid[eid_int] = {"name": hname, "weekend": True}
-                # else: non-weekend weekday in window → no tag
-    except Exception as e:
-        print(f"store_movers holiday-window expansion failed: {e}")
-
-    # Featured = playoff OR holiday-weekend OR rivalry OR marquee competition
-    # OR (other category with owned_median > $50). Owned > 100 required globally.
-    # Runs FIRST so curated picks win over generic-velocity rails.
-    featured = _consume(_section_featured(candidates, holiday_by_eid, rivalry_by_eid))
-    moving_fast = _consume(_section_moving_fast(candidates))
-    price_drops = _consume(_section_price_drops(candidates))
-    climbing = _consume(_section_climbing(candidates))
-    # Specials brought back as its own rail (was folded into Featured in
-    # PR #279; operator narrowed Featured + asked specials to "populate to
-    # other lists we have"). Holiday/rivalry events with owned > 100 that
-    # don't qualify for Featured land here.
-    specials = _consume(_section_specials(candidates, holiday_by_eid, rivalry_by_eid))
-
-    # Empty-rail fallback (operator directive 2026-05-26): never render a blank
-    # homepage. When nothing clears the curation gates — common in thin-
-    # inventory windows (offseason, between playoff rounds) — surface the
-    # soonest upcoming owned NYC events in the Featured rail so it always has
-    # something bookable. These qualify on recency + owned inventory alone, so
-    # they carry no curation chip (_featured_tag = "").
-    if not (featured or moving_fast or price_drops or climbing or specials):
-        fallback = sorted(all_owned_cards,
-                          key=lambda c: c.get("occurs_at_local") or "9999")[:cap]
-        for fc in fallback:
-            fc.setdefault("_featured_tag", "")
-            fc["_featured_kind"] = "fallback"
-        featured = fallback
-
-    return {
-        "city": city,
-        "days": day_cap,
-        "count": len(featured) + len(moving_fast) + len(price_drops) + len(climbing) + len(specials),
-        "featured": featured,
-        "moving_fast": moving_fast,
-        "price_drops": price_drops,
-        "climbing": climbing,
-        "specials": specials,
-    }
+# The movers engine (_section_moving_fast/_price_drops/_climbing/_specials/
+# _featured + _compute_movers) lives in core/movers.py (BR-CODE-1). It's
+# imported as `_compute_movers` near the top of this module; the store/broker
+# movers routes call it unchanged.
 
 
 @app.get("/api/store/home")
@@ -7104,8 +5226,8 @@ def _section_sort_key(s: str) -> tuple:
     return (1, int(digits) if digits else 0, s.lower())
 
 
-def _csv(v: str | None) -> list[str]:
-    return [s.strip() for s in (v or "").split(",") if s.strip()]
+# _csv + _normalize_filters -> core/helpers.py (BR-CODE-1 shared event/listings
+# layer); imported (aliased) near the top of this module.
 
 
 def _build_zone_resolver(performer_id: int | None, venue_id: int | None):
@@ -7141,37 +5263,7 @@ def _build_zone_resolver(performer_id: int | None, venue_id: int | None):
     return resolve
 
 
-def _normalize_filters(raw: dict | None) -> dict:
-    """Coerce a free-form filter dict (URL params or share_links.filters JSON)
-    into the canonical shape the resolver expects. Drops empty values."""
-    raw = raw or {}
-    def _maybe_csv(v):
-        if v is None:
-            return []
-        if isinstance(v, list):
-            return [str(x).strip() for x in v if str(x).strip()]
-        return _csv(str(v))
-    def _maybe_num(v):
-        if v is None or v == "":
-            return None
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-    def _maybe_int(v):
-        if v is None or v == "":
-            return None
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return None
-    return {
-        "section": _maybe_csv(raw.get("section")),
-        "zones": _maybe_csv(raw.get("zones")),
-        "min_price": _maybe_num(raw.get("min_price")),
-        "max_price": _maybe_num(raw.get("max_price")),
-        "min_qty": _maybe_int(raw.get("min_qty")),
-    }
+# _normalize_filters -> core/helpers.py (BR-CODE-1); imported (aliased) at top.
 
 
 def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
@@ -7452,29 +5544,9 @@ def _fetch_owned_ticket_groups(
     return groups, "live"
 
 
-# Map an EvoClient RuntimeError to a semantically correct HTTP status.
-# evo_client raises RuntimeError("TEvo API returned <code>") for a non-2xx
-# upstream response, or "TEvo API returned no response" for a connection/
-# timeout/DNS failure. A 400/404 from TEvo means the event id doesn't
-# resolve → that's a client-facing 404 (Not Found), NOT a gateway error.
-# Everything else (5xx, no-response) is a genuine upstream failure → 502;
-# 429/503 surface as 503 so callers/crawlers back off ("try again") rather
-# than treating it as a hard gateway break. Never echoes upstream body/URL —
-# only the mapped status + a caller-supplied generic detail reach the client
-# (the evo_client already scrubbed everything but the status into the message).
-_TEVO_STATUS_RE = re.compile(r"\b(\d{3})\b")
-
-
-def _tevo_runtime_to_http(
-    e: Exception, *, not_found_detail: str, failure_detail: str
-) -> HTTPException:
-    m = _TEVO_STATUS_RE.search(str(e))
-    upstream = int(m.group(1)) if m else None
-    if upstream in (400, 404):
-        return HTTPException(404, not_found_detail)
-    if upstream in (429, 503):
-        return HTTPException(503, failure_detail)
-    return HTTPException(502, failure_detail)
+# _tevo_runtime_to_http (maps an EvoClient RuntimeError to a 404/503/502) +
+# _TEVO_STATUS_RE moved to core/helpers.py (BR-CODE-1 shared event/listings
+# layer). Imported (aliased) near the top of this module.
 
 
 def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: bool = False) -> dict:
@@ -8082,8 +6154,34 @@ def store_event_zones(event_id: int):
     }
 
 
+@app.post("/api/store/verify-human")
+def store_verify_human(request: Request, payload: dict = Body(...)):
+    """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
+    session with a v3 token (action 'gate'); on a passing score we set a
+    short-lived signed cookie that the write endpoints accept, so the gate runs
+    once rather than on every action. No-op success when the gate is dormant."""
+    if not RECAPTCHA_ENABLED:
+        return JSONResponse({"ok": True, "enabled": False})
+    token = payload.get("recaptcha_token") or payload.get("token")
+    xff = request.headers.get("x-forwarded-for") or ""
+    ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
+    if not _verify_recaptcha(token, "gate", ip):
+        raise HTTPException(403, "verification failed")
+    resp = JSONResponse({"ok": True, "enabled": True})
+    resp.set_cookie(
+        _HUMAN_COOKIE_NAME,
+        _issue_human_token(),
+        max_age=_HUMAN_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        path="/",
+    )
+    return resp
+
+
 @app.post("/api/store/reserve")
-def store_reserve(payload: dict = Body(...), authorization: str | None = Header(None)):
+def store_reserve(request: Request, payload: dict = Body(...), authorization: str | None = Header(None)):
     """MVP placeholder: a real checkout is not wired up yet. Validates that
     the requested ticket_group + quantity matches the live owned inventory in
     TEvo, then returns a mock confirmation. NEVER calls /v9/orders.
@@ -8094,6 +6192,8 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
     once the front-end attaches Authorization headers."""
     if STOREFRONT_RESERVE_REQUIRES_AUTH:
         require_auth(authorization)
+    # Bot gate: honeypot (always) + reCAPTCHA human-cookie/token (when enabled).
+    _require_human(request, payload)
     try:
         event_id = int(payload.get("event_id") or 0)
         ticket_group_id = int(payload.get("ticket_group_id") or 0)
@@ -8163,9 +6263,143 @@ def store_reserve(payload: dict = Body(...), authorization: str | None = Header(
     }
 
 
+# ---------- Retail chat (natural-language price/inventory assistant) ----------
+#
+# Thin proxy in front of the deployed `chat` Supabase edge function (the same
+# tool-using assistant behind the SMS/web bots). It already resolves events,
+# aggregates price zones, and filters owned-EVO listings by qty + budget
+# ("next Yankees home game with tickets under $5"). We proxy rather than let
+# the browser call the function directly so that (a) the LLM key stays on the
+# edge function, (b) the terminal call is email-gated, (c) the storefront call
+# is hard-locked to OWNED inventory, and (d) we avoid the function's
+# localhost-only CORS allowlist.
+#
+# scope discipline: the proxy sets `scope` server-side — the client cannot
+# choose it. Terminal → "all" (full market); storefront → "owned" (our owned
+# EVO inventory only). The edge function clamps include_all accordingly, so a
+# consumer can never widen the storefront beyond owned inventory.
+
+_RETAIL_CHAT_MAX_TURNS = 24
+_RETAIL_CHAT_MAX_CHARS = 4000
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort real client IP behind the Render/Railway proxy. Forwarded
+    to the edge function so its per-IP rate limit is per-user, not per-proxy."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
+    return (request.client.host if request.client else "") or "unknown"
+
+
+def _sanitize_chat_history(payload: dict) -> list[dict]:
+    """Validate + bound the client-supplied transcript before forwarding.
+    Accepts either {history:[{role,content}...]} or {message:"..."}."""
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "expected a JSON object")
+    hist = payload.get("history")
+    if hist is None and payload.get("message"):
+        hist = [{"role": "user", "content": str(payload.get("message"))}]
+    if not isinstance(hist, list) or not hist:
+        raise HTTPException(400, "history or message required")
+    out: list[dict] = []
+    for item in hist[-_RETAIL_CHAT_MAX_TURNS:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in ("user", "assistant") or not isinstance(content, str):
+            continue
+        content = content.strip()
+        if not content:
+            continue
+        out.append({"role": role, "content": content[:_RETAIL_CHAT_MAX_CHARS]})
+    if not out:
+        raise HTTPException(400, "no valid messages in history")
+    if out[-1]["role"] != "user":
+        raise HTTPException(400, "last message must be from the user")
+    return out
+
+
+def _proxy_retail_chat(history: list[dict], scope: str, client_ip: str) -> JSONResponse:
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+        raise HTTPException(503, "chat service not configured")
+    url = f"{SUPABASE_URL.rstrip('/')}/functions/v1/chat"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "apikey": SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+        "x-real-ip": client_ip,
+        "x-forwarded-for": client_ip,
+    }
+    try:
+        r = requests.post(
+            url,
+            headers=headers,
+            json={"history": history, "scope": "all" if scope == "all" else "owned"},
+            timeout=45,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).error("retail-chat proxy upstream error: %s", e)
+        raise HTTPException(502, "chat service unreachable")
+    try:
+        body = r.json()
+    except Exception:
+        body = {"error": "assistant returned a malformed response"}
+    status = r.status_code if r.status_code >= 400 else 200
+    return JSONResponse(body, status_code=status)
+
+
+@app.post("/api/retail-chat")
+def retail_chat_terminal(request: Request, payload: dict = Body(...), _=Depends(require_auth)):
+    """Operator-facing retail chat (email-gated). scope=all → full market."""
+    history = _sanitize_chat_history(payload)
+    return _proxy_retail_chat(history, "all", _client_ip(request))
+
+
+@app.post("/api/store/retail-chat")
+def retail_chat_store(request: Request, payload: dict = Body(...)):
+    """Public storefront retail chat. scope=owned → hard-locked to our owned
+    EVO inventory (enforced server-side; the consumer cannot widen it)."""
+    history = _sanitize_chat_history(payload)
+    return _proxy_retail_chat(history, "owned", _client_ip(request))
+
+
+@app.api_route("/store/chat", methods=["GET", "HEAD"])
+def store_chat_page():
+    """Storefront concierge chat. Mounts the shared retail-chat widget
+    (static/shared/retail-chat-widget.js) against /api/store/retail-chat."""
+    return _render_storefront_page("chat.html")
+
+
 @app.api_route("/store", methods=["GET", "HEAD"])
 def store_index_page():
     return _render_storefront_page("index.html")
+
+
+@app.api_route("/store-sw.js", methods=["GET", "HEAD"], include_in_schema=False)
+def store_service_worker():
+    """Serve the storefront PWA service worker from a ROOT path so it can claim
+    the '/store' scope. A service worker only controls pages at/below its own URL
+    directory, so served from /static/store/ it could never cover the /store
+    routes. store.js registers it with { scope: '/store' }; the
+    Service-Worker-Allowed header authorizes that broader-than-directory scope."""
+    path = os.path.join(STATIC_DIR, "store", "sw.js")
+    with open(path, "r", encoding="utf-8") as f:
+        body = f.read()
+    return Response(
+        content=body,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "Service-Worker-Allowed": "/store",
+        },
+    )
 
 
 @app.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
@@ -8582,48 +6816,13 @@ except Exception as _d2_import_err:  # pragma: no cover — d2 module optional i
 
 # ---------- Site essentials (SEO + browser-tab UX) ----------
 #
-# Browsers + crawlers probe these at fixed paths. Without explicit routes,
-# /robots.txt + /sitemap.xml + /favicon.ico would 404. Railway audit
-# 2026-05-16 found all 3 missing on the deployed storefront.
+# Browsers + crawlers probe /robots.txt + /sitemap.xml + /favicon.ico at fixed
+# paths; without explicit routes they'd 404 (Railway audit 2026-05-16). These
+# moved to routers/site_essentials.py (BR-CODE-1 app.py decomposition); the
+# factory takes this deploy's base URL so each env advertises its own sitemap.
+from routers.site_essentials import build_site_essentials_router  # noqa: E402
 
-_ROBOTS_TXT = (
-    "User-agent: *\n"
-    "Allow: /\n"
-    "Disallow: /api/\n"
-    "Disallow: /store/test\n"
-    "Disallow: /store/test/\n"
-    f"Sitemap: {_STOREFRONT_BASE_URL}/sitemap.xml\n"
-)
-
-
-@app.get("/robots.txt", include_in_schema=False)
-def robots_txt():
-    """Crawler directive — public pages allowed, /api/ + test harness denied.
-    Sitemap URL self-references this deploy's base so each environment
-    advertises its own sitemap correctly."""
-    return Response(content=_ROBOTS_TXT, media_type="text/plain; charset=utf-8")
-
-
-@app.get("/sitemap.xml", include_in_schema=False)
-def sitemap_xml():
-    """Minimal sitemap covering the public storefront entry points. Per-event
-    URLs are dynamic + ranked elsewhere; this is the static surface map only.
-    """
-    base = _STOREFRONT_BASE_URL
-    urls = ["/store", "/store/about", "/store/privacy", "/store/terms"]
-    body = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    body += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-    for path in urls:
-        body += f"  <url><loc>{base}{path}</loc></url>\n"
-    body += "</urlset>\n"
-    return Response(content=body, media_type="application/xml; charset=utf-8")
-
-
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon_ico():
-    """Browsers probe /favicon.ico even when the page declares an SVG.
-    Redirect to the canonical SVG so users get the icon instead of a 404."""
-    return RedirectResponse(url="/static/store/favicon.svg", status_code=308)
+app.include_router(build_site_essentials_router(_STOREFRONT_BASE_URL))
 
 
 # Static assets (CSS / JS / images) served from /static.

@@ -251,6 +251,7 @@
   }
 
   window.Terminal = {
+    API_BASE,
     setStatus, getAuthHeader, api, getEventId,
     fmtDate, fmtNum, fmtPct, daysUntil, latestNonNull,
     temporalChipHtml,

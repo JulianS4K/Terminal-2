@@ -35,7 +35,7 @@ When `gh pr merge` returns "head not up to date":
 
 ## Lane sign-off
 
-- **D1/D2 PRs**: require visible D0 approval in `#terminal-2-d0` before A1 merges (per `LANE_DISCIPLINE.md` D-tier reorg).
+- **D1/D2 PRs**: require visible D0 approval in `#terminal-2-d0` before A1 merges (per `PROJECT_BIBLE.md §2` D-tier reorg).
 - **B1 security PRs**: B1 sign-off implicit when B1 authored; C1 coordinates with B1 before merging or closing B1's queue.
 - **C1 PRs**: A1 reviews + merges (no self-merge).
 
@@ -78,4 +78,4 @@ This doc is a proposal from C1 to A1. On A1 ack:
 - [docs/edit_coordination_protocol.md](docs/edit_coordination_protocol.md) — file-claim before cross-lane edits
 - [docs/bot_chat_conventions.md](docs/bot_chat_conventions.md) — resolve protocol, channel routing
 - [MIGRATION_CONVENTIONS.md](MIGRATION_CONVENTIONS.md) — migration filename + header
-- [LANE_DISCIPLINE.md](LANE_DISCIPLINE.md) — per-lane write surfaces
+- [PROJECT_BIBLE.md §2](PROJECT_BIBLE.md §2) — per-lane write surfaces
