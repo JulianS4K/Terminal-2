@@ -2865,8 +2865,10 @@
         // side= flows to the follow-the-tour page so it plans the away leg.
         const side = isTeam ? (t.team_side === "home" ? "home" : "away") : "";
         const gamesLabel = side === "home" ? "home games" : "away games";
+        // Hand off to the budget-first tour planner: performer + name (pre-fills the
+        // search box) + side for teams. No coordinates — the tour flow is budget-only.
         const follow = `/store/tour?performer=${t.performer_id}`
-          + `&home_lat=${encodeURIComponent($("dLat").value)}&home_lon=${encodeURIComponent($("dLon").value)}`
+          + `&name=${encodeURIComponent(t.performer || "")}`
           + (isTeam ? `&side=${side}` : "");
         return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
           + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? gamesLabel : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
@@ -2888,9 +2890,11 @@
     run();
   }
 
-  // Follow-the-tour — pick a ticket count, attend a performer's whole tour;
-  // seats auto-selected per date. Backed by /api/store/performers/{id}/tour-package.
-  // Performer id + home come from the URL (set by the Discover page).
+  // Follow-the-tour — search an artist/team, set a date range + how many stops, tickets/show
+  // and a TOTAL BUDGET; we plan the most stops that fit (cheapest seats per show) and show
+  // what the next one would cost. Budget-first — no location needed (the optimizer plans on
+  // ticket spend alone). Backed by /api/store/performers/{id}/tour-package. ?performer=&name=
+  // pre-fills (e.g. arriving from Discover).
   function mountTourFollow() {
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -2901,29 +2905,71 @@
       catch (_) { return iso; }
     };
     const u = new URLSearchParams(location.search);
-    const performer = parseInt(u.get("performer"), 10);
+    let performer = parseInt(u.get("performer"), 10);   // mutated by search selection
+    let performerName = u.get("name") || "";
     let side = u.get("side") || "auto";   // teams: away (road trip) vs home (home stand)
-    if (u.get("home_lat")) $("ftLat").value = u.get("home_lat");
-    if (u.get("home_lon")) $("ftLon").value = u.get("home_lon");
     if (u.get("qty")) $("ftQty").value = u.get("qty");
 
-    async function run() {
+    // Default the date range to the next 6 months (local-date ISO, no TZ shift).
+    const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const _today = new Date();
+    const _plus6 = new Date(_today.getTime()); _plus6.setMonth(_plus6.getMonth() + 6);
+    if (!$("ftStart").value) $("ftStart").value = isoDate(_today);
+    if (!$("ftEnd").value) $("ftEnd").value = isoDate(_plus6);
+
+    // ---- performer typeahead (artist or team) ----
+    const box = $("ftPerformer"), sug = $("ftSuggest");
+    if (performerName) box.value = performerName;
+    let searchTimer = null;
+    const hideSug = () => { sug.hidden = true; sug.innerHTML = ""; };
+    async function search(q) {
+      if (q.length < 2) { hideSug(); return; }
+      try {
+        const r = await api("/api/store/search?q=" + encodeURIComponent(q) + "&limit=8");
+        const perfs = (r && r.performers) || [];
+        if (!perfs.length) { hideSug(); return; }
+        sug.innerHTML = perfs.map((p) =>
+          `<div class="opt" role="option" data-id="${Number(p.id) || 0}" data-name="${esc(p.name)}">`
+          + `${esc(p.name)}${p.location ? `<small>${esc(p.location)}</small>` : ""}</div>`).join("");
+        sug.hidden = false;
+      } catch (_) { hideSug(); }
+    }
+    box.addEventListener("input", () => {
+      performer = NaN;            // typing invalidates the prior pick
+      const q = box.value.trim();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => search(q), 200);
+    });
+    sug.addEventListener("click", (e) => {
+      const opt = e.target.closest(".opt");
+      if (!opt) return;
+      performer = parseInt(opt.dataset.id, 10);
+      performerName = opt.dataset.name || "";
+      box.value = performerName;
+      side = "auto";              // re-detect concert vs team for the new pick
+      hideSug();
+      run();
+    });
+    document.addEventListener("click", (e) => {
+      if (e.target !== box && !sug.contains(e.target)) hideSug();
+    });
+
+    function run() {
       if (!Number.isFinite(performer) || performer <= 0) {
-        $("ftStatus").textContent = "No performer selected — start from Discover.";
+        $("ftStatus").textContent = "Search and pick an artist or team to follow.";
+        $("ftResult").hidden = true;
         return;
       }
-      const p = new URLSearchParams({
-        home_lat: $("ftLat").value, home_lon: $("ftLon").value,
-        qty: $("ftQty").value || "2", budget_km: "50000", days: "365", side: side,
-      });
+      const p = new URLSearchParams({ qty: $("ftQty").value || "2", side: side });
       if ($("ftBudget").value) p.set("budget_usd", $("ftBudget").value);
+      if ($("ftStops").value) p.set("max_events", $("ftStops").value);
+      if ($("ftStart").value) p.set("start", $("ftStart").value);
+      if ($("ftEnd").value) p.set("end", $("ftEnd").value);
       $("ftStatus").textContent = "Building your tour…";
       $("ftResult").hidden = true;
-      try {
-        render(await api(`/api/store/performers/${performer}/tour-package?` + p.toString()));
-      } catch (e) {
-        $("ftStatus").textContent = "Error: " + e.message;
-      }
+      api(`/api/store/performers/${performer}/tour-package?` + p.toString())
+        .then(render)
+        .catch((e) => { $("ftStatus").textContent = "Error: " + e.message; });
     }
 
     function render(d) {
@@ -2931,14 +2977,16 @@
       const qty = d.qty_per_show;
       const isTeam = String(d.mode || "").indexOf("team") === 0;
       const away = d.mode === "team_away";
-      let name;
-      if (isTeam) {
-        const ev = (d.all_stops && d.all_stops[0]) || {};
-        const parts = String(ev.event_name || "").split(" at ");   // "Away at Home"
-        name = parts.length === 2 ? (away ? parts[0] : parts[1]) : (ev.performer || "this team");
-      } else {
-        name = (pk.legs && pk.legs[0] && pk.legs[0].performer)
-          || (d.all_stops && d.all_stops[0] && d.all_stops[0].performer) || "this performer";
+      let name = performerName;
+      if (!name) {
+        if (isTeam) {
+          const ev = (d.all_stops && d.all_stops[0]) || {};
+          const parts = String(ev.event_name || "").split(" at ");   // "Away at Home"
+          name = parts.length === 2 ? (away ? parts[0] : parts[1]) : (ev.performer || "this team");
+        } else {
+          name = (pk.legs && pk.legs[0] && pk.legs[0].performer)
+            || (d.all_stops && d.all_stops[0] && d.all_stops[0].performer) || "this performer";
+        }
       }
       $("ftTitle").textContent = isTeam
         ? `Follow ${name} ${away ? "on the road" : "at home"}`
@@ -2984,10 +3032,25 @@
           + `<span>${esc(l.event_name || l.venue || "")}</span>`
           + seat + line + "</li>";
       }).join("");
+
+      // "Add one more" — the cheapest stop we left out, so the fan sees exactly
+      // what raising the budget (or stop count) by a little would buy them.
+      const more = $("ftMore");
+      const left = (d.all_stops || []).filter((l) => !picked.has(l.event_id) && l.unit_price != null);
+      if (left.length) {
+        const cheapest = left.reduce((a, b) => (b.unit_price < a.unit_price ? b : a));
+        more.innerHTML = `Add one more stop: <b>${esc(cheapest.city || "another date")}</b> `
+          + `${fmtD(cheapest.date)} for +${money(cheapest.unit_price * qty)}`
+          + ` (${money(cheapest.unit_price)} ea × ${qty}).`;
+        more.hidden = false;
+      } else {
+        more.hidden = true;
+      }
       $("ftResult").hidden = false;
     }
 
     $("ftGo").addEventListener("click", run);
+    box.addEventListener("keydown", (e) => { if (e.key === "Enter" && sug.hidden) run(); });
     const sideToggle = $("ftSide");
     if (sideToggle) sideToggle.addEventListener("click", (e) => {
       const b = e.target.closest(".ftside");
@@ -2995,16 +3058,10 @@
       side = b.dataset.side;     // "away" | "home"
       run();
     });
-    $("ftGeo").addEventListener("click", () => {
-      if (!navigator.geolocation) return;
-      $("ftStatus").textContent = "Locating…";
-      navigator.geolocation.getCurrentPosition((pos) => {
-        $("ftLat").value = pos.coords.latitude.toFixed(4);
-        $("ftLon").value = pos.coords.longitude.toFixed(4);
-        run();
-      }, () => { $("ftStatus").textContent = "Couldn't get your location — enter it manually."; });
-    });
-    run();
+    // Auto-run only when we arrived with a performer already chosen (e.g. from
+    // Discover); otherwise wait for the user to search + pick one.
+    if (Number.isFinite(performer) && performer > 0) run();
+    else $("ftStatus").textContent = "Search and pick an artist or team to follow.";
   }
 
   // Auto-mount based on body data-page. Lets HTML pages drop their inline

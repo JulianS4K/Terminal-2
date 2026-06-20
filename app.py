@@ -1232,29 +1232,62 @@ def _tour_dates(days: int):
     return start, start + timedelta(days=max(1, min(int(days), 730)))
 
 
-def _tour_package_payload(performer_id: int, home_lat: float, home_lon: float,
+# Geographic center of the contiguous US — the neutral "home" used when a caller
+# plans location-free (ticket-budget only). Paired with an unlimited travel budget
+# so the travel-km dimension never binds and the plan is driven purely by spend.
+_US_CENTER_LAT, _US_CENTER_LON = 39.8283, -98.5795
+
+
+def _tour_package_payload(performer_id: int, home_lat: float | None, home_lon: float | None,
                           qty: int, budget_km: float, home_name: str, days: int,
                           budget_usd: float | None, side: str, clear_at: float,
                           away_margin: float, section_like: str | None = None,
-                          prefer_owned: bool = False) -> dict:
+                          prefer_owned: bool = False, max_events: int | None = None,
+                          start_date: str | None = None, end_date: str | None = None) -> dict:
     """Shared body for the retail 'tour with the artist' routes (D0 + store).
 
     Dual-mode: owned-splits where we hold inventory (concerts), market-sourced buy-to-fulfill
     for a team's away games (road owned ~ 0). Pure read + compute — no writes, no upstream API.
-    """
+
+    Location-free planning: when home_lat/home_lon are omitted, we plan on the ticket budget
+    alone — neutral US-center home + unlimited travel budget so distance never constrains the
+    pick (the fan just wants the most stops their money buys, anywhere on the tour).
+    max_events caps how many stops to follow; the optimizer keeps the best set that fits.
+    start_date/end_date (ISO) set an explicit window; otherwise it's [today, today+days]."""
+    from datetime import date as _date, timedelta
+
     from trip_planner import plan_performer_tour
 
     db = require_sb()
     start, end = _tour_dates(days)
+    today = _date.today()
+    if start_date:
+        try:
+            start = max(today, _date.fromisoformat(start_date[:10]))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            end = min(today + timedelta(days=730), _date.fromisoformat(end_date[:10]))
+        except ValueError:
+            pass
+    if end <= start:                       # guard against an inverted/empty window
+        end = start + timedelta(days=1)
     spend = None if budget_usd is None else max(0.0, min(float(budget_usd), 10_000_000.0))
+    loc_free = home_lat is None or home_lon is None
+    hlat = _US_CENTER_LAT if loc_free else float(home_lat)
+    hlon = _US_CENTER_LON if loc_free else float(home_lon)
+    bkm = 50000.0 if loc_free else max(100.0, min(float(budget_km), 50000.0))
+    me = None if max_events is None else max(1, min(int(max_events), 12))
     return plan_performer_tour(
-        db, int(performer_id), float(home_lat), float(home_lon),
-        max(1, min(int(qty), 50)), max(100.0, min(float(budget_km), 50000.0)),
+        db, int(performer_id), hlat, hlon,
+        max(1, min(int(qty), 50)), bkm,
         start, end, home_name=(home_name or "Home").strip()[:60], budget_usd=spend,
         side=(side if side in ("auto", "away", "home", "concert") else "auto"),
         clear_at=min(max(float(clear_at), 0.01), 1.0),
         away_margin=min(max(float(away_margin), 0.0), 2.0),
         section_like=_clean_section(section_like), prefer_owned=bool(prefer_owned),
+        max_events=me,
     )
 
 
@@ -6980,25 +7013,33 @@ def store_performer_trip_plan(
 @app.get("/api/store/performers/{performer_id}/tour-package")
 def store_performer_tour_package(
     performer_id: int,
-    home_lat: float,
-    home_lon: float,
-    qty: int = 3,
+    qty: int = 2,
+    budget_usd: float | None = None,
+    max_events: int | None = None,
+    days: int = 365,
+    start: str | None = None,
+    end: str | None = None,
+    side: str = "auto",
+    # Location is optional — the storefront flow is budget-first. Omit home_lat/home_lon
+    # to plan on ticket spend alone (most stops your money buys, anywhere on the tour).
+    home_lat: float | None = None,
+    home_lon: float | None = None,
     budget_km: float = 8000.0,
     home_name: str = "Home",
-    days: int = 365,
-    budget_usd: float | None = None,
-    side: str = "auto",
     clear_at: float = 0.15,
     away_margin: float = 0.18,
     section_like: str | None = None,
     prefer_owned: bool = False,
 ):
-    """D1 store: retail 'tour with the artist' agent. Builds a routed multi-city package and
-    prices it — owned-splits where we hold inventory (concerts), market-sourced for a team's
-    away games. Shares the engine with the D0 route via `trip_planner`."""
+    """D1 store: retail 'follow the tour' agent. Pick a performer, a date range, how many
+    stops to follow (max_events), tickets per show (qty) and a total budget (budget_usd);
+    returns the most stops that fit, cheapest seats per show, with the rest of the tour in
+    all_stops (so the UI can offer 'add $X for one more'). Budget-first — no location needed.
+    Shares the optimizer with the D0 route via `trip_planner`."""
     return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km, home_name,
                                  days, budget_usd, side, clear_at, away_margin,
-                                 section_like, prefer_owned)
+                                 section_like, prefer_owned, max_events=max_events,
+                                 start_date=start, end_date=end)
 
 
 @app.get("/api/store/tours/multi")
