@@ -1343,13 +1343,21 @@ def broker_news(
                   .eq("tevo_event_id", event_id).limit(1).execute().data or [])
         if xref:
             resolved_league = xref[0]["espn_league"]
-            snap = (db.table("espn_event_snapshots")
-                      .select("home_team_id, away_team_id")
-                      .eq("espn_event_id", xref[0]["espn_event_id"])
-                      .order("captured_at", desc=True).limit(1).execute().data or [])
-            if snap:
+            # Forward-look first: espn_event_snapshots is gameday-scope only, so for an
+            # upcoming event it returns nothing and the news panel loses team-scoping.
+            # espn_event_date_lookup carries home/away for every scheduled game; fall back
+            # to the latest snapshot for past games. (PROJECT_BIBLE §3 forward-look rule.)
+            teams_src = (db.table("espn_event_date_lookup")
+                           .select("home_team_id, away_team_id")
+                           .eq("espn_event_id", xref[0]["espn_event_id"]).limit(1).execute().data or [])
+            if not teams_src:
+                teams_src = (db.table("espn_event_snapshots")
+                               .select("home_team_id, away_team_id")
+                               .eq("espn_event_id", xref[0]["espn_event_id"])
+                               .order("captured_at", desc=True).limit(1).execute().data or [])
+            if teams_src:
                 for k in ("home_team_id", "away_team_id"):
-                    v = snap[0].get(k)
+                    v = teams_src[0].get(k)
                     if v: resolved_teams.append(str(v))
     elif team_ids:
         resolved_teams = [t.strip() for t in team_ids.split(",") if t.strip()]
