@@ -490,6 +490,10 @@
         <div class="seatmap-mapwrap">
           <div id="seatmapHost" class="seatmap-host"></div>
         </div>
+        <!-- Real-time unmapped-section tracker: distinct sections the map can't color for
+             the selected source, with an inline control to map each to a venue-map polygon
+             (persisted via set_event_section_manual_map; survives the refresh cron). -->
+        <div id="seatmapUnmapped" class="seatmap-unmapped"></div>
         <div class="seatmap-side-hd row">
           <span id="seatmapSelLabel">Click a section to filter listings</span>
           <button type="button" id="seatmapResetBtn" class="seatmap-reset" hidden>Reset</button>

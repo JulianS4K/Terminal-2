@@ -3601,6 +3601,14 @@
   let _seatmapUserPicked = false; // user clicked a source → stop auto-picking
   let _seatmapConfigName = '';
   let _seatmapVenueLabel = '';
+  // Operator manual overrides (persisted in venue_section_map, match_method='manual').
+  // Shape: { evo: Map(section_raw_lower → real-case manifest key), sg: …, … }. Loaded once
+  // per event from get_event_section_map; authoritative — they win over the heuristic matcher
+  // and the */10 refresh cron cannot clobber them (mig 20260620130000).
+  let _seatmapManual = {};
+  // Frontend source key → venue_section_map.platform. GT is absent (the crosswalk's CHECK
+  // allows only evo/sg/tp/vd/sh), so GameTime sections can be TRACKED but not manually mapped.
+  const _SM_PLATFORM = { EVO: 'evo', SG: 'sg', SH: 'sh', VD: 'vd', TP: 'tp' };
   const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
   // Source registry — TM excluded (primary/box-office, no section-level resale
   // listings for these events). TP is INCLUDED but is ZONE-ONLY: it lists whole
@@ -3770,8 +3778,30 @@
   // Match one listing section → manifest key (cached per venue). Tier chain:
   // numberless (GA/Pit/Lawn) → name exact, else name token-overlap;
   // numbered → T1/T2 exact (num+suffix) → T2b suffixed-but-only-numeric → T3 family → T4 bowl.
+  // Lowercased manifest key → real-case key (the map library needs exact case).
+  // venue_section_map stores keys lowercased; we translate back through the manifest index.
+  function _seatmapKeyByLower(idx) {
+    if (!idx) return new Map();
+    if (idx._keyByLower) return idx._keyByLower;
+    const m = new Map();
+    _seatmapAllKeys(idx).forEach(k => m.set(String(k).toLowerCase(), k));
+    idx._keyByLower = m;
+    return m;
+  }
+
+  // Does the CURRENT source have a manual override for this raw section? → real manifest key.
+  function _seatmapManualKey(section) {
+    const plat = _SM_PLATFORM[_seatmapSource];
+    if (!plat) return null;
+    const m = _seatmapManual[plat];
+    if (!m) return null;
+    return m.get(String(section == null ? '' : section).trim().toLowerCase()) || null;
+  }
+
   function _seatmapMatchSection(section, idx) {
     if (!idx) return null;
+    const manual = _seatmapManualKey(section);   // operator override wins over the heuristic
+    if (manual) return manual;
     if (idx.cache.has(section)) return idx.cache.get(section);
     const p = _smParse(section);
     let key = null;
@@ -3828,6 +3858,8 @@
   }
   function _seatmapZoneKeys(label, idx) {
     if (!idx) return [];
+    const manual = _seatmapManualKey(label);   // operator override wins over zone expansion
+    if (manual) return [manual];
     const cache = idx._zoneCache || (idx._zoneCache = new Map());
     if (cache.has(label)) return cache.get(label);
     const norm = _smNorm(label);
@@ -3902,6 +3934,170 @@
     }
   }
 
+  // ----- Manual-map persistence (real-time tracking surface + operator mapping) -----
+  // Load this event's persisted crosswalk and keep the match_method='manual' rows as
+  // authoritative overrides. Fetched once per event; non-manual rows are ignored here
+  // (the live heuristic + manifest still drive auto-coloring for every source incl. GT).
+  async function _seatmapLoadManual(eventId) {
+    _seatmapManual = {};
+    const r = await rpcOrNull('get_event_section_map', { p_event_id: eventId });
+    const rows = (r && r.data) || [];
+    if (!Array.isArray(rows)) return;
+    const keyByLower = _seatmapKeyByLower(_seatmapRemap);
+    rows.forEach(row => {
+      if (!row || row.match_method !== 'manual' || !row.seatmap_key) return;
+      const plat = row.platform;
+      const real = keyByLower.get(String(row.seatmap_key).toLowerCase()) || row.seatmap_key;
+      (_seatmapManual[plat] || (_seatmapManual[plat] = new Map()))
+        .set(String(row.section_raw).toLowerCase(), real);
+    });
+  }
+
+  // <option> list of every manifest polygon key (built once per venue index).
+  function _seatmapKeyOptionsHtml(idx) {
+    if (!idx) return '';
+    if (idx._keyOptsHtml) return idx._keyOptsHtml;
+    const keys = _seatmapAllKeys(idx).slice().sort((a, b) => String(a).localeCompare(String(b)));
+    idx._keyOptsHtml = '<option value="">— pick a venue-map section —</option>' +
+      keys.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join('');
+    return idx._keyOptsHtml;
+  }
+
+  // Distinct CURRENT-source sections that DON'T resolve to a polygon (the live tracker rows).
+  function _seatmapUnmappedSections() {
+    const zoneSrc = _seatmapIsZoneSource(_seatmapSource);
+    const rows = _seatmapRowsBySource[_seatmapSource] || [];
+    const agg = new Map();   // sectionLower → { section, count, minPrice }
+    rows.forEach(r => {
+      const sec = (r.section || '').trim();
+      if (!sec || _seatmapIsParking(sec)) return;
+      if (_seatmapRowMapped(r, zoneSrc) !== false) return;   // skip mapped / no-manifest
+      const k = sec.toLowerCase();
+      const cur = agg.get(k) || { section: sec, count: 0, minPrice: Infinity };
+      cur.count += 1;
+      const p = Number(r.retail_price);
+      if (isFinite(p) && p > 0 && p < cur.minPrice) cur.minPrice = p;
+      agg.set(k, cur);
+    });
+    return Array.from(agg.values()).sort((a, b) => b.count - a.count);
+  }
+
+  // Sections this source has manually mapped (so the operator can review / clear them).
+  function _seatmapManualList() {
+    const plat = _SM_PLATFORM[_seatmapSource];
+    const m = plat && _seatmapManual[plat];
+    if (!m) return [];
+    return Array.from(m, ([section, key]) => ({ section, key })).sort((a, b) => a.section.localeCompare(b.section));
+  }
+
+  // Re-color the map for the current source (after a manual map/clear) without an SVG rebuild.
+  function _seatmapRecolor() {
+    if (!_seatmapApi || typeof _seatmapApi.updateTicketGroups !== 'function') return;
+    const rows = _seatmapRowsBySource[_seatmapSource] || [];
+    const tg = _seatmapTicketGroups(rows, _seatmapRemap, _seatmapIsZoneSource(_seatmapSource));
+    try { _seatmapApi.updateTicketGroups(tg); } catch (_) { /* ignore */ }
+    updateSeatmapMeta(tg.length);
+  }
+
+  // Renders the real-time "unmapped sections" tracker for the current source: each distinct
+  // section the map can't color, with its listing count + floor and an inline control to map
+  // it to a venue-map polygon. Manual maps are listed separately with a Clear control.
+  function renderSeatmapUnmapped() {
+    const host = document.getElementById('seatmapUnmapped');
+    if (!host) return;
+    if (!_seatmapRemap) { host.innerHTML = ''; return; }   // no manifest → nothing to judge
+    const plat = _SM_PLATFORM[_seatmapSource];
+    const src = _seatmapSrcLabel(_seatmapSource);
+    const unmapped = _seatmapUnmappedSections();
+    const manual = _seatmapManualList();
+    if (!unmapped.length && !manual.length) { host.innerHTML = ''; return; }
+
+    let html = '';
+    if (unmapped.length) {
+      const total = unmapped.reduce((s, u) => s + u.count, 0);
+      html += `<div class="sm-track-hd">${unmapped.length} unmapped ${escapeHtml(src)} section${unmapped.length === 1 ? '' : 's'} · ${T.fmtNum(total)} listing${total === 1 ? '' : 's'} not on the map</div>`;
+      if (!plat) {
+        html += `<div class="sm-track-note">Manual mapping isn't available for ${escapeHtml(src)} (not a tracked crosswalk source).</div>`;
+      }
+      html += '<table class="sm-track-tbl"><tbody>';
+      unmapped.slice(0, 200).forEach(u => {
+        const floor = isFinite(u.minPrice) ? '$' + T.fmtNum(Math.round(u.minPrice)) : '—';
+        const secAttr = escapeHtml(u.section.toLowerCase());
+        const ctrl = plat
+          ? `<button type="button" class="sm-map-btn" data-sec="${secAttr}">Map ▾</button>`
+          : '';
+        html += `<tr data-sec="${secAttr}">
+          <td class="sm-track-sec">${escapeHtml(u.section)}</td>
+          <td class="num">${T.fmtNum(u.count)}</td>
+          <td class="num">${floor}</td>
+          <td class="sm-track-ctrl">${ctrl}</td></tr>`;
+      });
+      html += '</tbody></table>';
+    }
+    if (manual.length) {
+      html += `<div class="sm-track-hd manual">${manual.length} manually mapped</div>`;
+      html += '<table class="sm-track-tbl"><tbody>';
+      manual.forEach(mp => {
+        const secAttr = escapeHtml(mp.section);
+        html += `<tr>
+          <td class="sm-track-sec">${escapeHtml(mp.section)}</td>
+          <td class="sm-track-arrow">→ ${escapeHtml(mp.key)}</td>
+          <td class="sm-track-ctrl"><button type="button" class="sm-unmap-btn" data-sec="${secAttr}">Clear</button></td></tr>`;
+      });
+      html += '</tbody></table>';
+    }
+    host.innerHTML = html;
+  }
+
+  // Open the inline polygon picker for one unmapped row.
+  function _seatmapOpenMapEditor(tr, secLower) {
+    if (!tr || tr.querySelector('.sm-map-pick')) return;
+    const cell = tr.querySelector('.sm-track-ctrl');
+    if (!cell) return;
+    cell.innerHTML =
+      `<select class="sm-map-pick">${_seatmapKeyOptionsHtml(_seatmapRemap)}</select>` +
+      `<button type="button" class="sm-map-save" data-sec="${escapeHtml(secLower)}">Save</button>` +
+      `<button type="button" class="sm-map-cancel">✕</button>`;
+  }
+
+  // Transient inline error banner (the terminal has no toast helper; avoids alert()).
+  function _seatmapFlash(msg) {
+    const host = document.getElementById('seatmapUnmapped');
+    if (!host) return;
+    const b = document.createElement('div');
+    b.className = 'sm-track-err';
+    b.textContent = msg;
+    host.prepend(b);
+    setTimeout(() => { try { b.remove(); } catch (_) { /* gone */ } }, 5000);
+  }
+
+  async function _seatmapSaveManual(secLower, key) {
+    const plat = _SM_PLATFORM[_seatmapSource];
+    if (!plat || !key) return;
+    const r = await rpcOrNull('set_event_section_manual_map', {
+      p_event_id: _seatmapEventId, p_platform: plat, p_section_raw: secLower, p_seatmap_key: key,
+    });
+    if (r.error) { _seatmapFlash('Map failed: ' + (r.error.message || 'error')); return; }
+    const real = _seatmapKeyByLower(_seatmapRemap).get(String(key).toLowerCase()) || key;
+    (_seatmapManual[plat] || (_seatmapManual[plat] = new Map())).set(secLower, real);
+    _seatmapRecolor();
+    renderSeatmapUnmapped();
+    renderSeatmapList();
+  }
+
+  async function _seatmapClearManual(secLower) {
+    const plat = _SM_PLATFORM[_seatmapSource];
+    if (!plat) return;
+    const r = await rpcOrNull('clear_event_section_manual_map', {
+      p_event_id: _seatmapEventId, p_platform: plat, p_section_raw: secLower,
+    });
+    if (r.error) { _seatmapFlash('Clear failed: ' + (r.error.message || 'error')); return; }
+    const m = _seatmapManual[plat]; if (m) m.delete(secLower);
+    _seatmapRecolor();
+    renderSeatmapUnmapped();
+    renderSeatmapList();
+  }
+
   async function loadSeatmap(eventId) {
     _tabState.loaded['seatmap'] = true;
     _seatmapEventId = eventId;
@@ -3951,6 +4147,8 @@
     _seatmapSource = 'EVO';
     _seatmapSelected = [];
     _seatmapUserPicked = false;
+    _seatmapManual = {};
+    await _seatmapLoadManual(eventId);   // persisted operator overrides (venue_section_map)
 
     // (3) Default source = TEvo. Build the map ONCE with its floors; later source
     //     switches re-color via updateTicketGroups() rather than rebuilding the SVG.
@@ -3979,6 +4177,7 @@
     wireSeatmapControls();
     renderSeatmapSelector();
     renderSeatmapList();
+    renderSeatmapUnmapped();
     updateSeatmapMeta(ticketGroups.length);
     _seatmapProbeSources(eventId);   // fire-and-forget: enable/disable + count the other sources
   }
@@ -4004,6 +4203,7 @@
     }
     renderSeatmapSelector();   // refresh active state
     renderSeatmapList();
+    renderSeatmapUnmapped();
     updateSeatmapMeta(ticketGroups.length);
   }
 
@@ -4142,12 +4342,13 @@
       if (cls.length) tr.className = cls.join(' ');
       const ownPill = r.is_owned ? '<span class="pill owned">ours</span>' : '<span class="pill market">market</span>';
       const unmappedPill = mapped === false ? ' <span class="pill unmapped" title="section not on the venue map — not colored">unmapped</span>' : '';
+      const manualPill = (mapped !== false && _seatmapManualKey(r.section)) ? ' <span class="pill manual" title="mapped to the venue map by hand">manual</span>' : '';
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
         <td class="num">${T.fmtNum(r.quantity)}</td>
         <td class="num">${r.retail_price != null ? '$' + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
-        <td>${ownPill}${unmappedPill}</td>`;
+        <td>${ownPill}${unmappedPill}${manualPill}</td>`;
       tb.appendChild(tr);
     });
     if (unmappedCount) {
@@ -4182,6 +4383,23 @@
           });
         }
         onSeatmapSelection([]);
+      });
+    }
+    // Unmapped-tracker controls (delegated; survives re-renders): open picker, save, cancel, clear.
+    const track = document.getElementById('seatmapUnmapped');
+    if (track) {
+      track.addEventListener('click', (e) => {
+        const mapBtn = e.target.closest('.sm-map-btn');
+        if (mapBtn) { _seatmapOpenMapEditor(mapBtn.closest('tr'), mapBtn.dataset.sec); return; }
+        const saveBtn = e.target.closest('.sm-map-save');
+        if (saveBtn) {
+          const sel = saveBtn.parentElement.querySelector('.sm-map-pick');
+          _seatmapSaveManual(saveBtn.dataset.sec, sel ? sel.value : '');
+          return;
+        }
+        if (e.target.closest('.sm-map-cancel')) { renderSeatmapUnmapped(); return; }
+        const clearBtn = e.target.closest('.sm-unmap-btn');
+        if (clearBtn) { _seatmapClearManual(clearBtn.dataset.sec); return; }
       });
     }
     _seatmapWired = true;
