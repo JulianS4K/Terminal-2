@@ -1121,6 +1121,42 @@ a.perf-chip:hover {
   justify-content: flex-end;
 }
 
+/* ----- Social share row (event share modal) -----
+   Native sheet (📲 Share…) is the Instagram-Stories / TikTok path on mobile;
+   Facebook / X / WhatsApp are URL-intent links opened in a new tab. */
+.social-share {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.social-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 96px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: 600 13px/1 system-ui;
+  text-decoration: none;
+  cursor: pointer;
+}
+.social-btn:hover {
+  border-color: var(--accent);
+  background: rgba(255,92,42,0.06);
+}
+#shareNative {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+#shareNative:hover { background: var(--accent-2); }
+
 .tag.zone {
   background: rgba(74,158,255,0.12);
   color: #7cb5ff;

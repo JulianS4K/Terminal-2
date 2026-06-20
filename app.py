@@ -216,6 +216,11 @@ from core.helpers import is_bowl_pattern_name as _is_bowl_pattern_name  # noqa: 
 from core.helpers import tour_dates as _tour_dates  # noqa: E402
 from core.helpers import share_to_dict as _share_to_dict  # noqa: E402
 from core.helpers import flatten_order_items as _flatten_order_items  # noqa: E402
+from core.seo import (  # noqa: E402
+    is_link_crawler as _is_link_crawler,
+    event_seo_summary as _event_seo_summary,
+    build_event_meta_tags as _build_event_meta_tags,
+)
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
@@ -6217,9 +6222,53 @@ def store_service_worker():
     )
 
 
+_SSR_META_START = "<!-- SSR_META_START -->"
+_SSR_META_END = "<!-- SSR_META_END -->"
+_OG_DEFAULT_IMAGE = "/static/store/og-default.svg"
+
+
+def _inject_event_meta(shell: str, event_id: int, base_url: str) -> str:
+    """Replace the SSR_META block in the event-page shell with per-event Open
+    Graph / Twitter / JSON-LD tags so link-unfurl + SEO crawlers (which don't
+    run JS) see the real event preview.
+
+    Fully defensive: any failure to resolve the event (DB/TEvo down, bad id,
+    missing markers) returns the shell unchanged, so the crawler path can never
+    be worse than the existing static-shell behavior. Humans never reach here —
+    the caller gates on the crawler User-Agent.
+    """
+    start = shell.find(_SSR_META_START)
+    end = shell.find(_SSR_META_END)
+    if start == -1 or end == -1 or end < start:
+        return shell
+    try:
+        payload = _resolve_event_with_filters(
+            event_id,
+            {"section": None, "min_price": None, "max_price": None,
+             "min_qty": None, "zones": None},
+        )
+    except Exception as e:  # noqa: BLE001 — never let SEO break the page
+        print(f"[store_event_page] SSR meta fetch failed for {event_id}: {e!r}")
+        return shell
+    summary = _event_seo_summary(payload)
+    if not summary:
+        return shell
+    canonical = f"{base_url}/store/event/{event_id}"
+    default_image = f"{base_url}{_OG_DEFAULT_IMAGE}"
+    tags = _build_event_meta_tags(summary, canonical, default_image)
+    return shell[:start] + tags + shell[end + len(_SSR_META_END):]
+
+
 @app.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
-def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
-    return _render_storefront_page("event.html")
+def store_event_page(event_id: int, request: Request):
+    """Serve the event-page shell. For link-unfurl / SEO crawlers (no JS),
+    inject per-event Open Graph / Twitter / JSON-LD metadata server-side so
+    shared links render a real preview. Humans get the fast static shell and
+    store.js fills the per-event tags client-side once the payload resolves."""
+    shell = _read_storefront_html("event.html")
+    if _is_link_crawler(request.headers.get("user-agent")):
+        shell = _inject_event_meta(shell, event_id, _STOREFRONT_BASE_URL)
+    return HTMLResponse(content=shell, headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 @app.api_route("/store/discover", methods=["GET", "HEAD"])
