@@ -27,8 +27,10 @@
 -- operator-gated and lands via A1 (CLAUDE.md §1 / PROJECT_BIBLE §2.3).
 
 CREATE OR REPLACE FUNCTION public.get_discovery_gaps(
-  p_gap_type text DEFAULT NULL,   -- NULL = all active gap types
-  p_limit    int  DEFAULT 200
+  p_gap_type  text     DEFAULT NULL,   -- NULL = all active gap types
+  p_limit     int      DEFAULT 200,
+  p_event_ids bigint[] DEFAULT NULL    -- NULL = all events; else restrict to these event_ids
+                                       --   (used by the Home movers table's gap-chip enrichment)
 ) RETURNS TABLE (
   id           bigint,
   event_id     bigint,
@@ -74,7 +76,8 @@ BEGIN
   LEFT JOIN public.events e
     ON e.id = g.event_id
   WHERE g.resolved_at IS NULL
-    AND (p_gap_type IS NULL OR g.gap_type = p_gap_type)
+    AND (p_gap_type  IS NULL OR g.gap_type = p_gap_type)
+    AND (p_event_ids IS NULL OR g.event_id = ANY(p_event_ids))
   ORDER BY g.signal_score DESC NULLS LAST
   LIMIT GREATEST(p_limit, 1);
 END;
@@ -82,7 +85,7 @@ $function$;
 
 -- Same exposure as the sibling Discovery RPCs: terminal (authenticated) +
 -- service_role may read; anon/public may not.
-REVOKE ALL ON FUNCTION public.get_discovery_gaps(text,int) FROM anon, public;
+REVOKE ALL ON FUNCTION public.get_discovery_gaps(text,int,bigint[]) FROM anon, public;
 
 COMMENT ON FUNCTION public.get_discovery_gaps IS
   'Terminal Discovery gaps panel: active discovery_gap_alerts (resolved_at IS NULL), '

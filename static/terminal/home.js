@@ -316,9 +316,11 @@
   }
 
   // ---------- Phase 2: GapChip batch loader ----------
-  // discovery_gap_alerts has no RLS (relrowsecurity=false) — direct read OK.
-  // Queries all active gaps for the current mover rows in one round-trip, then
-  // re-renders the movers table so gap badges appear in event name cells.
+  // Queries active gaps for the current mover rows via get_discovery_gaps
+  // (mig 20260620010000), then re-renders the movers table so gap badges appear
+  // in event name cells. NOTE: a prior direct .from('discovery_gap_alerts') read
+  // failed silently — that table is RLS-on with no grant for `authenticated`, so
+  // the chips never loaded; the curated RPC is the working read path.
 
   async function loadGapMap(rows) {
     if (!rows || !rows.length) return;
@@ -326,13 +328,12 @@
     if (!Auth || !Auth.client) return;
     const ids = [...new Set(rows.map(r => r.event_id).filter(Boolean))];
     if (!ids.length) return;
-    const { data, error } = await Auth.client
-      .from('discovery_gap_alerts')
-      .select('event_id,gap_type,detail,signal_score')
-      .in('event_id', ids)
-      .is('resolved_at', null)
-      .order('signal_score', { ascending: false });
-    if (error || !data) return;
+    const { data, error } = await Auth.client.rpc('get_discovery_gaps', {
+      p_gap_type:  null,
+      p_limit:     500,
+      p_event_ids: ids,
+    });
+    if (error || !data) return;   // RPC missing/forbidden → chips simply absent
     const m = new Map();
     data.forEach(g => {
       if (!m.has(g.event_id)) m.set(g.event_id, []);
