@@ -362,3 +362,58 @@ def test_venue_overlap_jaccard():
     assert abs(venue_overlap("Daikin Park", "Daikin Park Houston") - 2/3) < 1e-9
     assert venue_overlap("Citi Field", "Yankee Stadium") == 0.0
     assert venue_overlap("", "Citi Field") == 0.0
+
+
+# ---------- section / event-name predicates + cache keys ----------
+
+def test_is_event_seat_rejects_parking_and_nonevent():
+    from core.helpers import is_event_seat
+    assert is_event_seat({"type": "event", "section": "104"}) is True
+    assert is_event_seat({"section": "Garage A"}) is False        # parking section
+    assert is_event_seat({"type": "parking", "section": "1"}) is False
+    assert is_event_seat({"type": "event", "format": "Parking Pass"}) is False
+    assert is_event_seat({"type": "event", "section": "Valet Lot"}) is False
+
+
+def test_clean_section_trims_and_caps():
+    from core.helpers import clean_section
+    assert clean_section("  104  ") == "104"
+    assert clean_section("") is None
+    assert clean_section(None) is None
+    assert len(clean_section("x" * 50)) == 24
+
+
+def test_movers_cache_key_case_folds_city():
+    from core.helpers import movers_cache_key
+    assert movers_cache_key("nyc", 7, 20) == movers_cache_key("NYC", 7, 20) == "NYC|7|20"
+
+
+def test_normalize_search_key_collapses_ws_and_case():
+    from core.helpers import normalize_search_key
+    assert normalize_search_key("  Knicks  ") == "knicks"
+    assert normalize_search_key("NEW   YORK") == "new york"
+
+
+def test_is_tbd_patterns():
+    from core.helpers import is_tbd
+    assert is_tbd("Game (Date TBD)") is True
+    assert is_tbd("Concert · Date and Time TBD") is True
+    assert is_tbd("Playoff (If Necessary)") is True
+    assert is_tbd("(date tbd)") is True   # case-insensitive
+    assert is_tbd("Yankees vs Red Sox") is False
+    assert is_tbd(None) is False
+
+
+def test_section_sort_key_letters_before_digits_natural():
+    from core.helpers import section_sort_key
+    rows = ["100", "9", "Floor", "21", "GA", "100A"]
+    assert sorted(rows, key=section_sort_key) == ["Floor", "GA", "9", "21", "100", "100A"]
+    assert section_sort_key("") == (2, "")
+
+
+def test_is_bowl_pattern_name():
+    from core.helpers import is_bowl_pattern_name
+    assert is_bowl_pattern_name("Lower (100s)") is True
+    assert is_bowl_pattern_name("Club (200s)") is True
+    assert is_bowl_pattern_name("Section 104") is False
+    assert is_bowl_pattern_name(None) is False

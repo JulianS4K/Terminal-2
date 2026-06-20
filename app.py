@@ -238,6 +238,13 @@ from core.helpers import to_num_or_none as _to_num_or_none  # noqa: E402
 from core.helpers import haversine_miles as _haversine_miles  # noqa: E402
 from core.helpers import venue_tokens as _venue_tokens  # noqa: E402
 from core.helpers import venue_overlap as _venue_overlap  # noqa: E402
+from core.helpers import is_event_seat as _is_event_seat  # noqa: E402
+from core.helpers import clean_section as _clean_section  # noqa: E402
+from core.helpers import movers_cache_key as _movers_cache_key  # noqa: E402
+from core.helpers import normalize_search_key as _normalize_search_key  # noqa: E402
+from core.helpers import is_tbd as _is_tbd  # noqa: E402
+from core.helpers import section_sort_key as _section_sort_key  # noqa: E402
+from core.helpers import is_bowl_pattern_name as _is_bowl_pattern_name  # noqa: E402
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
@@ -909,25 +916,7 @@ def public_config():
 # /api/events (search) moved to routers/catalog.py (BR-CODE-1 slice 6).
 
 
-_PARKING_RE = re.compile(r"\b(parking|garage|valet|lot)\b", re.IGNORECASE)
-
-def _is_event_seat(tg: dict) -> bool:
-    """True if this ticket_group is a real event seat (not parking / suite /
-    hospitality). TEvo's `type` field is the canonical signal — defaults to
-    'event' for actual seats. As a backup, scan section/format strings for
-    parking-style tokens."""
-    t = (tg.get("type") or "event").lower()
-    if t != "event":
-        return False
-    section = (tg.get("section") or "")
-    if _PARKING_RE.search(section):
-        return False
-    fmt = (tg.get("format") or "").lower()
-    if "parking" in fmt:
-        return False
-    return True
-
-
+# _is_event_seat (+ _PARKING_RE) -> core/helpers.py (BR-CODE-1 pure-helper pass); aliased at top.
 @app.get("/api/events/{event_id}")
 def event_detail(event_id: int, include_ancillary: bool = False, _=Depends(require_auth)):
     """Event detail. By default filters out parking/suite/hospitality
@@ -1194,11 +1183,7 @@ def broker_performer_trip_plan(
                               home_name, days, max_events, budget_usd, qty)
 
 
-def _clean_section(s: str | None) -> str | None:
-    s = (s or "").strip()[:24]
-    return s or None
-
-
+# _clean_section -> core/helpers.py (BR-CODE-1); aliased at top.
 def _tour_dates(days: int):
     from datetime import date, timedelta
     start = date.today()
@@ -4271,22 +4256,8 @@ _MOVERS_CACHE_TTL = 300.0  # 5 min — conservative vs. hourly velocity refresh
 _MOVERS_CACHE_REFRESHING: set[str] = set()
 
 
-def _movers_cache_key(city: str, days: int, limit: int) -> str:
-    """Canonical cache key — case-folds city so 'nyc'/'NYC'/'New York' map
-    to a single slot. The endpoint already maps 'NEW YORK' + 'NEW YORK CITY'
-    aliases through the same venue_patterns, so the cache key uppercase
-    matches that intent."""
-    return f"{(city or '').upper()}|{int(days)}|{int(limit)}"
-
-
-def _normalize_search_key(q: str) -> str:
-    """Normalize a user query for cache slot identity. Collapses runs of
-    whitespace + lowercases + strips, so "  Knicks  ", "knicks", "KNICKS"
-    all collapse to the same slot. Mode (sql vs live) is appended at the
-    callsite so the cache stays correct across STOREFRONT_SQL_ONLY flips."""
-    return re.sub(r"\s+", " ", (q or "").strip().lower())
-
-
+# _movers_cache_key -> core/helpers.py (BR-CODE-1); aliased at top.
+# _normalize_search_key -> core/helpers.py (BR-CODE-1); aliased at top.
 # PostgREST ILIKE pattern wildcards we need to escape so a user-supplied
 # query like "%" doesn't become a match-everything pattern. Backslash
 # escaped FIRST so we don't double-escape our own escapes.
@@ -4302,30 +4273,7 @@ def _normalize_search_key(q: str) -> str:
 # pass). Imported (aliased) near the top of this module.
 
 
-def _is_tbd(name: str | None) -> bool:
-    """Detect whether an event name signals a TBD date/opponent/necessity.
-
-    TEvo doesn't expose a boolean `tbd` column on our `events` SQL table —
-    only on the live API response. For SQL-only paths (e.g. /api/store/home)
-    we detect it from the name string. Patterns observed in prod (verified
-    against latest_event_metrics owned-future sample):
-
-      "(Date TBD)"          — playoff games with unscheduled date
-      "Date and Time TBD"   — concerts / non-sports with unscheduled time
-      "(If Necessary)"      — playoff games not yet locked in
-
-    All checks are case-insensitive.
-    """
-    if not name:
-        return False
-    up = name.upper()
-    return (
-        "(DATE TBD)" in up
-        or "DATE AND TIME TBD" in up
-        or "(IF NECESSARY)" in up
-    )
-
-
+# _is_tbd -> core/helpers.py (BR-CODE-1); aliased at top.
 # _clean_opt_url + _tevo_runtime_to_http (+ _TEVO_STATUS_RE) -> core/helpers.py
 # (BR-CODE-1 shared event/listings layer). Imported (aliased) near the top.
 
@@ -5156,26 +5104,7 @@ def store_tours_near(
     return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
 
 
-def _section_sort_key(s: str) -> tuple:
-    """Sort key for venue sections. Letters before digits (Floor, Courtside,
-    GA come before 100, 101, etc.); within each group, natural-numeric for
-    digits and case-insensitive alpha for letters. Mixed strings (e.g. "100A")
-    sort with the numeric group by their leading digits."""
-    s = (s or "").strip()
-    if not s:
-        return (2, "")
-    if s[0].isalpha():
-        return (0, s.lower())
-    # Numeric or mixed (digit-leading) — extract leading digits for natural sort.
-    digits = ""
-    for ch in s:
-        if ch.isdigit():
-            digits += ch
-        else:
-            break
-    return (1, int(digits) if digits else 0, s.lower())
-
-
+# _section_sort_key -> core/helpers.py (BR-CODE-1); aliased at top.
 # _csv + _normalize_filters -> core/helpers.py (BR-CODE-1 shared event/listings
 # layer); imported (aliased) near the top of this module.
 
@@ -5906,21 +5835,13 @@ def store_seatmap_manifest(venue_id: int, configuration_id: int):
 #      hand-curated layer.
 #   2. Within a "has-granular" pair, classify each individual zone by name
 #      regex (bowl-pattern → consumer, else granular).
-_CONSUMER_ZONE_NAME_RE = re.compile(
-    r"^(Lower|Club|Upper|Floor|Field|Mezzanine|Balcony|Loge|Terrace)\s*\(\d+s\)$",
-    re.IGNORECASE,
-)
 # Threshold above which a pair almost certainly has hand-curated granular
 # zones in addition to the consumer-bowl baseline. The seeded consumer
 # baseline tops out at ~5–7 zones per pair empirically.
 _GRANULAR_LAYER_ZONE_COUNT_THRESHOLD = 8
 
 
-def _is_bowl_pattern_name(name: str | None) -> bool:
-    """Whether a zone name matches the programmatic bowl-level pattern."""
-    return bool(_CONSUMER_ZONE_NAME_RE.match((name or "").strip()))
-
-
+# _is_bowl_pattern_name (+ _CONSUMER_ZONE_NAME_RE) -> core/helpers.py (BR-CODE-1); aliased at top.
 @app.get("/api/store/events/{event_id}/zones")
 def store_event_zones(event_id: int):
     """List curated zones with owned-ticket counts so the Share dialog can
