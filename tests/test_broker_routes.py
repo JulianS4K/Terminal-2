@@ -59,6 +59,9 @@ class _FakeQuery:
     def eq(self, *_a, **_k):
         return self
 
+    def in_(self, *_a, **_k):
+        return self
+
     def order(self, *_a, **_k):
         return self
 
@@ -267,3 +270,81 @@ def test_section_metrics_groups_deltas_and_sorts(client, monkeypatch):
     assert secs[1]["metrics"]["tickets_count"]["delta"] is None
     # latest captured_at across sections
     assert body["last_pull_at"] == "2026-05-10T12:00:00Z"
+
+
+# ---------- /api/broker/event/{id}/zones ----------
+
+def test_zones_empty_returns_null_source(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"zone_metrics": []}))
+    body = client.get("/api/broker/event/1/zones").json()
+    assert body == {"zones": [], "count": 0, "source": None, "available_sources": []}
+
+
+def test_zones_curated_wins_dedupes_hides_parking_sorts(client, monkeypatch):
+    # rows pre-sorted captured_at desc (the route relies on the DB order); curated
+    # is present so the fallback row must be dropped, latest-per-zone kept, parking
+    # hidden, and the survivors sorted by tickets_count desc.
+    rows = [
+        {"zone": "Lower", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 100},
+        {"zone": "Upper", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 200},
+        {"zone": "Parking East", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 5},
+        {"zone": "Lower", "zone_source": "curated", "captured_at": "2026-05-09T12:00:00Z", "tickets_count": 80},  # older dup
+        {"zone": "Club", "zone_source": "fallback", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 300},  # non-chosen source
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={"zone_metrics": rows}))
+    body = client.get("/api/broker/event/1/zones").json()
+    assert body["source"] == "curated"
+    assert [z["zone"] for z in body["zones"]] == ["Upper", "Lower"]  # tickets desc, parking gone
+    assert body["count"] == 2
+    assert body["parking_hidden"] == 1
+    assert body["available_sources"] == ["curated", "fallback"]
+    assert body["include_parking"] is False
+
+
+# ---------- /api/broker/watchlist-movers ----------
+
+def test_watchlist_movers_empty_watchlist(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"watch_sources": []}))
+    body = client.get("/api/broker/watchlist-movers").json()
+    assert body == {"window_hours": 24, "sort": "value", "count": 0, "events": []}
+
+
+def test_watchlist_movers_filters_to_watchlist_and_computes_vals(client, monkeypatch):
+    fake = FakeSupabase(
+        table_data={"watch_sources": [{"event_id": 1}]},
+        rpc_data={"get_event_movers": [
+            {"event_id": 1, "name": "Knicks", "cur_market_med": 150, "cur_market_tix": 10,
+             "prev_market_med": 120, "prev_market_tix": 10},
+            {"event_id": 3, "name": "Not Watched", "cur_market_med": 999, "cur_market_tix": 1,
+             "prev_market_med": 100, "prev_market_tix": 1},  # not in watchlist -> dropped
+        ]},
+    )
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/watchlist-movers").json()
+    assert body["count"] == 1
+    e = body["events"][0]
+    assert e["event_id"] == 1
+    assert e["delta_market_pct"] == 25.0          # (150-120)/120*100
+    assert e["cur_market_val"] == 1500.0          # 150*10
+    assert e["delta_market_val"] == 300.0         # 1500-1200
+    assert fake.rpc_calls[0][0] == "get_event_movers"
+
+
+# ---------- /api/broker/news ----------
+
+def test_news_global_feed_passthrough(client, monkeypatch):
+    items = [{"headline": "Trade", "espn_league": "NBA", "espn_team_id": "18"}]
+    _use_db(monkeypatch, FakeSupabase(table_data={"espn_news": items}))
+    body = client.get("/api/broker/news").json()
+    assert body["count"] == 1
+    assert body["items"] == items
+    assert body["filter"] == {"league": None, "team_ids": [], "event_id": None}
+
+
+def test_news_team_ids_mode_parses_filter(client, monkeypatch):
+    # team_ids mode exercises the .in_() path; FakeQuery ignores filters but the
+    # route must still parse the CSV into the echoed filter.
+    _use_db(monkeypatch, FakeSupabase(table_data={"espn_news": []}))
+    body = client.get("/api/broker/news?team_ids=20,18&limit=5").json()
+    assert body["filter"]["team_ids"] == ["20", "18"]
+    assert body["count"] == 0
