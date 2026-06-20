@@ -1157,6 +1157,84 @@ a.perf-chip:hover {
 }
 #shareNative:hover { background: var(--accent-2); }
 
+/* ----- "Deal & demand" panel (event page market context) ----- */
+.market-panel {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.mp-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted, #9aa0a6);
+}
+.mp-deal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
+  margin-bottom: 10px;
+}
+.mp-deal-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(46,160,67,0.16);
+  color: #4ade80;
+  font: 700 13px/1 system-ui;
+}
+.mp-deal-sub { font-size: 12px; color: var(--muted, #9aa0a6); }
+.mp-demand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text);
+}
+.mp-demand-dot { font-size: 11px; }
+.mp-demand-rising .mp-demand-dot { color: #f97316; }
+.mp-demand-cooling .mp-demand-dot { color: #4a9eff; }
+.mp-demand-firm .mp-demand-dot { color: var(--muted, #9aa0a6); }
+.mp-compare { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.mp-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.mp-row span { color: var(--muted, #9aa0a6); }
+.mp-row strong { color: var(--text); }
+.mp-row-ours { background: rgba(255,92,42,0.08); }
+.mp-row-ours span, .mp-row-ours strong { color: var(--accent); }
+.mp-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted, #9aa0a6);
+  margin-bottom: 4px;
+}
+.mp-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.mp-legend i {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-right: 2px;
+  vertical-align: middle;
+}
+.mp-key-ours { background: var(--accent); }
+.mp-key-market { background: #6b7280; }
+.mp-spark { display: block; overflow: visible; }
+.mp-spark-ours { stroke: var(--accent); stroke-width: 2; }
+.mp-spark-market { stroke: #6b7280; stroke-width: 1.5; stroke-dasharray: 3 3; }
+
 .tag.zone {
   background: rgba(74,158,255,0.12);
   color: #7cb5ff;

@@ -108,6 +108,12 @@
       <a href="" id="clearShared" class="banner-link">show all listings</a>
     </div>
 
+    <!-- "Deal & demand" panel — cross-source market context (our price vs the
+         public secondary market, 30-day price history, demand read). Populated
+         by store.js loadMarketContext() from /api/store/events/:id/market-context;
+         stays hidden when the event has no cross-source coverage. -->
+    <section id="marketPanel" class="market-panel" hidden aria-label="Deal and demand"></section>
+
     <section id="body" class="event-body" hidden>
       <aside class="map">
         <!-- Interactive TEvo seat map. store.js mounts the vendored Tevomaps

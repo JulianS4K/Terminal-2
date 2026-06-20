@@ -1192,6 +1192,119 @@
     host.hidden = false;
   }
 
+  // ---------- "Deal & demand" panel ----------
+  // Cross-source market context: how our price compares to the public
+  // secondary market (SeatGeek/StubHub/Vivid/TickPick), a 30-day price
+  // history sparkline, and a demand read. All numbers are consumer-safe
+  // (server projects only public market + our-listed prices — never
+  // owned/wholesale fields). Fire-and-forget + self-hiding: any failure or
+  // an event with no cross-source coverage simply leaves the panel hidden.
+  async function loadMarketContext(eventId) {
+    const host = document.getElementById("marketPanel");
+    if (!host || !eventId) return;
+    let ctx;
+    try {
+      ctx = await api(`/api/store/events/${encodeURIComponent(eventId)}/market-context`);
+    } catch {
+      return; // network/timeout — leave the panel hidden, never block listings
+    }
+    if (!ctx || ctx.available === false) return;
+    const html = renderMarketContext(ctx);
+    if (!html) return;
+    host.innerHTML = html;
+    host.hidden = false;
+  }
+
+  // Tiny dependency-free SVG sparkline: two polylines (ours vs market) over
+  // the daily series. Nulls are skipped (the series has market gaps). Returns
+  // "" when there's nothing plottable.
+  function priceSparkline(series) {
+    const pts = (series || []).filter((p) => p && (p.ours != null || p.market != null));
+    if (pts.length < 2) return "";
+    const W = 280, H = 56, padX = 4, padY = 6;
+    const ys = [];
+    pts.forEach((p) => { if (p.ours != null) ys.push(+p.ours); if (p.market != null) ys.push(+p.market); });
+    const ymin = Math.min(...ys), ymax = Math.max(...ys);
+    const span = ymax - ymin || 1;
+    const x = (i) => padX + (i * (W - 2 * padX)) / (pts.length - 1);
+    const y = (v) => padY + (H - 2 * padY) * (1 - (v - ymin) / span);
+    const line = (key) => pts
+      .map((p, i) => (p[key] == null ? null : `${x(i).toFixed(1)},${y(+p[key]).toFixed(1)}`))
+      .filter(Boolean)
+      .join(" ");
+    const market = line("market"), ours = line("ours");
+    return (
+      `<svg class="mp-spark" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" ` +
+      `preserveAspectRatio="none" aria-hidden="true">` +
+      (market ? `<polyline class="mp-spark-market" points="${market}" fill="none" />` : "") +
+      (ours ? `<polyline class="mp-spark-ours" points="${ours}" fill="none" />` : "") +
+      `</svg>`
+    );
+  }
+
+  function renderMarketContext(ctx) {
+    const m = ctx.market || {};
+    const bm = ctx.below_market;
+    const demand = ctx.demand;
+    const sources = Array.isArray(m.by_source) ? m.by_source : [];
+    const blocks = [];
+
+    // Headline: below-market deal proof.
+    if (bm && bm.amount > 0) {
+      blocks.push(
+        `<div class="mp-deal">` +
+          `<span class="mp-deal-badge">${bm.pct}% below market</span>` +
+          `<span class="mp-deal-sub">about ${fmtMoney(bm.amount)} under the ${escapeHtml(bm.vs || "market")}` +
+          (m.recent_sale_median ? ` · recently selling around ${fmtMoney(m.recent_sale_median)}` : "") +
+          `</span>` +
+        `</div>`
+      );
+    }
+
+    // Demand read (honest — price-movement based, not fabricated urgency).
+    if (demand && demand.label) {
+      const arrow = demand.label === "rising" ? "▲" : demand.label === "cooling" ? "▼" : "•";
+      const pct = demand.getin_change_24h_pct;
+      const sub = pct != null && Number(pct) !== 0
+        ? `get-in price ${Number(pct) > 0 ? "+" : ""}${Number(pct).toFixed(0)}% in 24h`
+        : "prices steady";
+      blocks.push(
+        `<div class="mp-demand mp-demand-${escapeHtml(demand.label)}">` +
+          `<span class="mp-demand-dot">${arrow}</span> Demand ${escapeHtml(demand.label)} · ${escapeHtml(sub)}` +
+        `</div>`
+      );
+    }
+
+    // Cross-marketplace comparison rows. "ours" first, then each public source.
+    const rows = [];
+    if (ctx.our_from_price != null) {
+      rows.push(`<div class="mp-row mp-row-ours"><span>VibePass (our price)</span><strong>${fmtMoney(ctx.our_from_price)}</strong></div>`);
+    }
+    sources.forEach((s) => {
+      if (s && s.median != null) {
+        rows.push(`<div class="mp-row"><span>${escapeHtml(s.label)} median</span><strong>${fmtMoney(s.median)}</strong></div>`);
+      }
+    });
+    if (rows.length >= 2) {
+      blocks.push(`<div class="mp-compare">${rows.join("")}</div>`);
+    }
+
+    // Price-history sparkline.
+    const spark = priceSparkline(ctx.history);
+    if (spark) {
+      blocks.push(
+        `<div class="mp-history">` +
+          `<div class="mp-history-head">Price history` +
+            `<span class="mp-legend"><i class="mp-key-ours"></i>ours <i class="mp-key-market"></i>market</span>` +
+          `</div>` + spark +
+        `</div>`
+      );
+    }
+
+    if (!blocks.length) return "";
+    return `<h2 class="mp-title">Deal &amp; demand</h2>${blocks.join("")}`;
+  }
+
   // ---------- Event detail page ----------
   // SEO + share-card metadata updater. Runs after /api/store/events/:id
   // resolves so document.title + OG tags reflect the event name + venue.
@@ -2212,6 +2325,10 @@
       // up these mutations; static fallback values in <head> cover the
       // no-JS / static-snapshot path.
       updateEventMeta(event);
+
+      // "Deal & demand" panel — fire-and-forget cross-source market context.
+      // Non-blocking and self-hiding; a failure never affects the listings.
+      loadMarketContext(event.id || eventId);
 
       // Venue hero image (audit-lane venue_assets.hero_image_url). Subtle
       // backdrop, dimmed by CSS so the heading stays legible.

@@ -5968,6 +5968,39 @@ def store_event_zones(event_id: int):
     }
 
 
+@app.get("/api/store/events/{event_id}/market-context")
+def store_event_market_context(event_id: int):
+    """Consumer-safe cross-source market context for the event-page
+    "Deal & demand" panel: our price vs the public secondary market
+    (SeatGeek / StubHub / Vivid / TickPick medians + realized sales), a
+    30-day price-history series, and a demand read.
+
+    Backed by the SECURITY DEFINER RPC get_event_market_context_public
+    (mig 20260620120000), which projects ONLY consumer-safe fields — never
+    owned/wholesale/broker fields or our raw ticket counts (PROJECT_BIBLE
+    §2.6 wall). Fully defensive: if the RPC is unavailable or the event has
+    no cross-source coverage, returns {available: false} so the panel
+    simply hides rather than erroring."""
+    empty = {"event_id": event_id, "available": False}
+    if sb is None:
+        return empty
+    try:
+        ctx = sb.rpc(
+            "get_event_market_context_public",
+            {"p_event_id": event_id, "p_history_days": 30},
+        ).execute().data
+    except Exception as e:  # noqa: BLE001 — panel is non-critical; never break the page
+        print(f"[store_event_market_context] RPC failed for {event_id}: {e!r}")
+        return empty
+    if not isinstance(ctx, dict) or not ctx:
+        return empty
+    # Panel is worth showing only if there's at least a market comparison or history.
+    if not (ctx.get("market") or ctx.get("history") or ctx.get("below_market")):
+        return empty
+    ctx["available"] = True
+    return ctx
+
+
 @app.post("/api/store/verify-human")
 def store_verify_human(request: Request, payload: dict = Body(...)):
     """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
