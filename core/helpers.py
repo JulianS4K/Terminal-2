@@ -316,3 +316,102 @@ def venue_overlap(a: str, b: str) -> float:
     inter = ta & tb
     union = ta | tb
     return len(inter) / len(union) if union else 0.0
+
+
+# ---- section / event-name predicates + cache-key normalization ----
+
+_PARKING_RE = re.compile(r"\b(parking|garage|valet|lot)\b", re.IGNORECASE)
+
+
+def is_event_seat(tg: dict) -> bool:
+    """True if this ticket_group is a real event seat (not parking / suite /
+    hospitality). TEvo's `type` field is the canonical signal — defaults to
+    'event' for actual seats. As a backup, scan section/format strings for
+    parking-style tokens."""
+    t = (tg.get("type") or "event").lower()
+    if t != "event":
+        return False
+    section = (tg.get("section") or "")
+    if _PARKING_RE.search(section):
+        return False
+    fmt = (tg.get("format") or "").lower()
+    if "parking" in fmt:
+        return False
+    return True
+
+
+def clean_section(s: str | None) -> str | None:
+    """Trim a section label to <=24 chars; empty -> None."""
+    s = (s or "").strip()[:24]
+    return s or None
+
+
+def movers_cache_key(city: str, days: int, limit: int) -> str:
+    """Canonical cache key — case-folds city so 'nyc'/'NYC'/'New York' map
+    to a single slot. The endpoint already maps 'NEW YORK' + 'NEW YORK CITY'
+    aliases through the same venue_patterns, so the cache key uppercase
+    matches that intent."""
+    return f"{(city or '').upper()}|{int(days)}|{int(limit)}"
+
+
+def normalize_search_key(q: str) -> str:
+    """Normalize a user query for cache slot identity. Collapses runs of
+    whitespace + lowercases + strips, so "  Knicks  ", "knicks", "KNICKS"
+    all collapse to the same slot. Mode (sql vs live) is appended at the
+    callsite so the cache stays correct across STOREFRONT_SQL_ONLY flips."""
+    return re.sub(r"\s+", " ", (q or "").strip().lower())
+
+
+def is_tbd(name: str | None) -> bool:
+    """Detect whether an event name signals a TBD date/opponent/necessity.
+
+    TEvo doesn't expose a boolean `tbd` column on our `events` SQL table —
+    only on the live API response. For SQL-only paths (e.g. /api/store/home)
+    we detect it from the name string. Patterns observed in prod (verified
+    against latest_event_metrics owned-future sample):
+
+      "(Date TBD)"          — playoff games with unscheduled date
+      "Date and Time TBD"   — concerts / non-sports with unscheduled time
+      "(If Necessary)"      — playoff games not yet locked in
+
+    All checks are case-insensitive.
+    """
+    if not name:
+        return False
+    up = name.upper()
+    return (
+        "(DATE TBD)" in up
+        or "DATE AND TIME TBD" in up
+        or "(IF NECESSARY)" in up
+    )
+
+
+def section_sort_key(s: str) -> tuple:
+    """Sort key for venue sections. Letters before digits (Floor, Courtside,
+    GA come before 100, 101, etc.); within each group, natural-numeric for
+    digits and case-insensitive alpha for letters. Mixed strings (e.g. "100A")
+    sort with the numeric group by their leading digits."""
+    s = (s or "").strip()
+    if not s:
+        return (2, "")
+    if s[0].isalpha():
+        return (0, s.lower())
+    # Numeric or mixed (digit-leading) — extract leading digits for natural sort.
+    digits = ""
+    for ch in s:
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    return (1, int(digits) if digits else 0, s.lower())
+
+
+_CONSUMER_ZONE_NAME_RE = re.compile(
+    r"^(Lower|Club|Upper|Floor|Field|Mezzanine|Balcony|Loge|Terrace)\s*\(\d+s\)$",
+    re.IGNORECASE,
+)
+
+
+def is_bowl_pattern_name(name: str | None) -> bool:
+    """Whether a zone name matches the programmatic bowl-level pattern."""
+    return bool(_CONSUMER_ZONE_NAME_RE.match((name or "").strip()))
