@@ -105,6 +105,7 @@ def build_broker_router(
         quantity: int = 1,
         revenue: float | None = None,
         source: str = "owned",
+        fee_pct: float = 0.0,
         _=Depends(require_auth),
     ):
         """Substitution checker — ROW phase.
@@ -131,6 +132,9 @@ def build_broker_router(
           quantity  seats needed; a candidate must have quantity >= this (default 1)
           revenue   total $ received on the sale (optional; enables P&L)
           source    "owned" (default) | "market"
+          fee_pct   buy-in buyer-fee % applied to a market ask so P&L reflects
+                    landed cost (only used when source="market"; owned swaps
+                    are stock we already hold, no purchase fee)
         """
         db = get_require_sb()()
         qty = max(1, int(quantity or 1))
@@ -179,8 +183,12 @@ def build_broker_router(
                     "inv_source": "sg_seller",
                 })
 
+        # Buy-in fees only apply to a market purchase; an owned swap is stock we
+        # already hold (no fee).
+        eff_fee_pct = fee_pct if source == "market" else 0.0
         result = find_row_substitutions(section, row, qty, pool,
-                                        revenue_per_ticket=rev_per_ticket)
+                                        revenue_per_ticket=rev_per_ticket,
+                                        fee_pct=eff_fee_pct)
 
         # Better-SECTION fallback: rank sections by market quality (retail_median
         # per section) and offer cheapest acceptable upgrades from the same pool.
@@ -198,9 +206,11 @@ def build_broker_router(
             if sec and sec not in section_quality and r.get("retail_median") is not None:
                 section_quality[sec] = r.get("retail_median")  # latest wins (desc order)
         result["section_subs"] = find_section_substitutions(
-            section, qty, pool, section_quality, revenue_per_ticket=rev_per_ticket)
+            section, qty, pool, section_quality, revenue_per_ticket=rev_per_ticket,
+            fee_pct=eff_fee_pct)
 
-        result.update({"captured_at": captured_at, "event_id": event_id, "source": source})
+        result.update({"captured_at": captured_at, "event_id": event_id,
+                       "source": source, "fee_pct": eff_fee_pct})
         return result
 
     return router

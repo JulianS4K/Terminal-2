@@ -33,8 +33,13 @@
         first, then a better-section fallback. Enter the sold ticket below.
       </p>
       <form id="subsForm" class="subs-form" autocomplete="off">
-        <div class="subs-field">
-          <label for="subEvent">Event ID <span class="muted small">(tevo_event_id)</span></label>
+        <div class="subs-field event-search">
+          <label for="subEventSearch">Event <span class="muted small">(search by name)</span></label>
+          <input id="subEventSearch" type="text" placeholder="Braves at Padres…" autocomplete="off" />
+          <div id="subEventResults" class="subs-typeahead" hidden></div>
+        </div>
+        <div class="subs-field narrow">
+          <label for="subEvent">Event ID</label>
           <input id="subEvent" name="event" type="number" inputmode="numeric" min="1" placeholder="3100123" required />
         </div>
         <div class="subs-field">
@@ -59,6 +64,10 @@
             <option value="owned">Owned (free swap)</option>
             <option value="market">Market (buy-in)</option>
           </select>
+        </div>
+        <div class="subs-field narrow" id="subFeeField" hidden>
+          <label for="subFee">Buy-in fee %</label>
+          <input id="subFee" name="fee_pct" type="number" inputmode="decimal" min="0" step="0.1" placeholder="0" />
         </div>
         <div class="subs-field submit">
           <button type="submit" class="btn-primary" id="subsRun">Find subs</button>

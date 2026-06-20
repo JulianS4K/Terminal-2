@@ -508,6 +508,21 @@ def test_substitutions_section_fallback_offers_better_section(client, monkeypatc
     assert ss["sold_quality"] == 50
 
 
+def test_substitutions_market_fee_lands_cost(client, monkeypatch):
+    rows = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "310", "row": "14", "quantity": 4, "retail_price": 100, "is_owned": False},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={"listings_snapshots": rows}))
+    body = client.get("/api/broker/event/1/substitutions"
+                      "?section=310&row=14&quantity=4&revenue=400&source=market&fee_pct=25").json()
+    assert body["fee_pct"] == 25.0
+    b = body["best"]
+    assert b["unit_cost"] == 100      # raw ask
+    assert b["landed_cost"] == 125.0  # +25% buyer fee
+    assert b["pnl_per_ticket"] == round(100 - 125.0, 2)  # revenue 400/4=100/tix
+
+
 def test_substitutions_quantity_filter_and_ambiguous_bucket(client, monkeypatch):
     rows = [
         {"tevo_ticket_group_id": "toofew", "captured_at": "2026-05-10T12:00:00Z",

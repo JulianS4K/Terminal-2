@@ -237,3 +237,31 @@ def test_section_subs_unknown_candidate_section_excluded():
     out = find_section_substitutions("310", 1, [_c("777", "1", gid="unk")], quality)
     assert out["section_subs"] == []
     assert out["counts"]["scanned"] == 0
+
+
+# ---------- buy-in fees (market P&L) ----------
+
+def test_find_fee_pct_lands_cost_and_pnl():
+    # Market buy-in: $100 ask + 30% buyer fee = $130 landed. P&L vs $90/tix
+    # revenue is computed on the LANDED cost, not the bare ask.
+    cands = [_c("104", "12", quantity=2, gid="m", price=100)]
+    out = find_row_substitutions("104", "12", 2, cands,
+                                 revenue_per_ticket=90, fee_pct=30)
+    b = out["best"]
+    assert b["unit_cost"] == 100.0          # raw ask preserved
+    assert b["landed_cost"] == 130.0        # ask + 30%
+    assert b["pnl_per_ticket"] == round(90 - 130.0, 2)
+    assert b["pnl_total"] == round((90 - 130.0) * 2, 2)
+
+
+def test_find_fee_changes_cheapest_ranking():
+    # Without fees A ($100) beats B ($110). A flat-ish % fee that hits the
+    # pricier ask harder can't flip order here, but a per-listing fee model
+    # would; assert fees at least re-rank on landed cost monotonically.
+    cands = [
+        _c("104", "12", quantity=2, gid="A", price=100),
+        _c("104", "10", quantity=2, gid="B", price=110),
+    ]
+    out = find_row_substitutions("104", "12", 1, cands, fee_pct=50)
+    assert out["best"]["ticket_group_id"] == "A"
+    assert out["best"]["landed_cost"] == 150.0   # 100 * 1.5

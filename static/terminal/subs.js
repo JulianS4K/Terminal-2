@@ -18,7 +18,67 @@
   function init() {
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
+    wireEventSearch();
+    wireFeeToggle();
     prefillFromQuery();
+  }
+
+  // ---------- event-name search (typeahead → tevo_event_id) ----------
+
+  function wireEventSearch() {
+    const inp = document.getElementById('subEventSearch');
+    const box = document.getElementById('subEventResults');
+    if (!inp || !box) return;
+    let t = 0;
+    inp.addEventListener('input', () => {
+      clearTimeout(t);
+      const q = inp.value.trim();
+      if (q.length < 2) { box.hidden = true; box.innerHTML = ''; return; }
+      t = setTimeout(() => searchEvents(q), 250);
+    });
+    document.addEventListener('click', (e) => {
+      if (!box.contains(e.target) && e.target !== inp) box.hidden = true;
+    });
+  }
+
+  async function searchEvents(q) {
+    const box = document.getElementById('subEventResults');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      box.innerHTML = '<div class="ta-empty">search needs @s4kent.com sign-in</div>';
+      box.hidden = false; return;
+    }
+    box.innerHTML = '<div class="ta-empty">searching…</div>'; box.hidden = false;
+    try {
+      const res = await Auth.client.rpc('terminal_search', { p_q: q, p_limit: 8 });
+      if (res.error) { box.innerHTML = `<div class="ta-empty err">${esc(res.error.message || 'search error')}</div>`; return; }
+      const evs = (res.data && res.data.events) || [];
+      if (!evs.length) { box.innerHTML = '<div class="ta-empty">no events</div>'; return; }
+      box.innerHTML = evs.map(e => {
+        const meta = [e.venue_name, T.fmtDate(e.occurs_at_local)].filter(Boolean).join(' · ');
+        return `<button type="button" class="ta-row" data-eid="${esc(e.tevo_event_id)}" data-name="${esc(e.name || '')}">` +
+               `<span class="ta-name">${esc(e.name || '(unnamed)')}</span>` +
+               `<span class="ta-meta">${esc(meta)}</span></button>`;
+      }).join('');
+      box.querySelectorAll('.ta-row').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.getElementById('subEvent').value = btn.dataset.eid;
+          document.getElementById('subEventSearch').value = btn.dataset.name;
+          box.hidden = true;
+        });
+      });
+    } catch (err) {
+      box.innerHTML = `<div class="ta-empty err">${esc(String(err.message || err))}</div>`;
+    }
+  }
+
+  function wireFeeToggle() {
+    const src = document.getElementById('subSource');
+    const fee = document.getElementById('subFeeField');
+    if (!src || !fee) return;
+    const sync = () => { fee.hidden = src.value !== 'market'; };
+    src.addEventListener('change', sync);
+    sync();
   }
 
   function setStatus(s, cls) { T.setStatus(s, cls); }
@@ -53,6 +113,7 @@
       quantity: parseInt(val('subQty'), 10) || 1,
       revenue: val('subRevenue'),
       source: val('subSource') || 'owned',
+      fee_pct: val('subFee'),
     };
   }
 
@@ -67,6 +128,7 @@
     qs.set('quantity', String(f.quantity));
     if (f.revenue !== '') qs.set('revenue', f.revenue);
     qs.set('source', f.source);
+    if (f.source === 'market' && f.fee_pct !== '') qs.set('fee_pct', f.fee_pct);
 
     const btn = document.getElementById('subsRun');
     if (btn) btn.disabled = true;
@@ -134,7 +196,7 @@
     const cols = ['Row', 'Match', 'Δrow', 'Qty', 'Cost/tix', 'P&L total', 'Source'];
     const rows = subs.map(s => [
       esc(s.row), esc(s.match_type), s.row_delta != null ? `+${esc(s.row_delta)}` : '—',
-      esc(s.quantity), money(s.unit_cost), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
+      esc(s.quantity), costDisp(s), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
     ]);
     document.getElementById('subsRowTable').innerHTML =
       rows.length ? tableHtml(cols, rows) : emptyHtml('No same-section same-or-better-row sub.');
@@ -152,7 +214,7 @@
     const cols = ['To section', 'Δquality', 'Row', 'Qty', 'Cost/tix', 'P&L total', 'Source'];
     const rows = subs.map(s => [
       esc(s.to_section), s.section_delta != null ? `+${money(s.section_delta)}` : '—',
-      esc(s.row || '—'), esc(s.quantity), money(s.unit_cost), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
+      esc(s.row || '—'), esc(s.quantity), costDisp(s), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
     ]);
     document.getElementById('subsSecTable').innerHTML =
       rows.length ? tableHtml(cols, rows) : emptyHtml('No better-section sub in this pool.');
@@ -182,6 +244,16 @@
   function money(v) {
     if (v === null || v === undefined || v === '' || Number.isNaN(+v)) return '—';
     return '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // Display cost = landed (ask + fees). Flag when fees moved it off the ask.
+  function costDisp(s) {
+    const landed = s.landed_cost, raw = s.unit_cost;
+    if (landed === null || landed === undefined) return money(raw);
+    if (raw !== null && raw !== undefined && Math.abs(+landed - +raw) > 0.005) {
+      return `<span title="ask ${esc(money(raw))} + fee">${money(landed)}*</span>`;
+    }
+    return money(landed);
   }
 
   function signedMoney(v) {

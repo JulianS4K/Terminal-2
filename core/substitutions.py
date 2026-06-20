@@ -159,6 +159,18 @@ def _row_sort_key(unit_cost: float | None, over_delivery: int | None,
     return (cost, over, qty)
 
 
+def _landed(unit_cost: float | None, fee_pct: float, fee_flat: float) -> float | None:
+    """Landed per-ticket cost = ask + buy-in fees. For a market buy-in the ask
+    isn't what we actually pay — marketplace buyer fees (a % and/or a flat
+    per-ticket charge) push it up, so P&L must be computed on the landed cost.
+    Owned swaps pass fee_pct=fee_flat=0 (we already hold them — no purchase)."""
+    if unit_cost is None:
+        return None
+    if not fee_pct and not fee_flat:
+        return unit_cost
+    return round(unit_cost * (1 + (fee_pct or 0) / 100.0) + (fee_flat or 0), 2)
+
+
 def find_row_substitutions(
     section: str | None,
     row: str | None,
@@ -168,6 +180,8 @@ def find_row_substitutions(
     exclude_group_id=None,
     revenue_per_ticket: float | None = None,
     cost_fields: tuple[str, ...] = ("cost", "retail_price"),
+    fee_pct: float = 0.0,
+    fee_flat: float = 0.0,
 ) -> dict:
     """Find same-section, same-or-better-row substitutes, ranked by COST.
 
@@ -242,9 +256,10 @@ def find_row_substitutions(
             row_delta = target.rank - cand_rank.rank
 
         unit_cost = _unit_cost(c)
+        landed_cost = _landed(unit_cost, fee_pct, fee_flat)
         pnl_per_ticket = pnl_total = None
-        if revenue_per_ticket is not None and unit_cost is not None:
-            pnl_per_ticket = round(revenue_per_ticket - unit_cost, 2)
+        if revenue_per_ticket is not None and landed_cost is not None:
+            pnl_per_ticket = round(revenue_per_ticket - landed_cost, 2)
             pnl_total = round(pnl_per_ticket * qty_needed, 2)
 
         entry = {
@@ -253,6 +268,7 @@ def find_row_substitutions(
             "row": c.get("row"),
             "quantity": qty,
             "unit_cost": unit_cost,
+            "landed_cost": landed_cost,
             "row_delta": row_delta,
             "ticket_group_id": gid,
             "inv_source": c.get("inv_source"),
@@ -265,7 +281,7 @@ def find_row_substitutions(
             # over_delivery = rows better than sold (0 for same row). Unknown
             # when not rank-comparable (exact-match SAME on unknown kinds).
             over = row_delta if row_delta is not None else None
-            subs.append((_row_sort_key(unit_cost, over, qty), entry))
+            subs.append((_row_sort_key(landed_cost, over, qty), entry))
 
     subs.sort(key=lambda x: x[0])
     sub_entries = [e for _, e in subs]
@@ -309,6 +325,8 @@ def find_section_substitutions(
     exclude_group_id=None,
     revenue_per_ticket: float | None = None,
     cost_fields: tuple[str, ...] = ("cost", "retail_price"),
+    fee_pct: float = 0.0,
+    fee_flat: float = 0.0,
 ) -> dict:
     """Find BETTER-section substitutes — the fallback when no same-section row
     sub works.
@@ -365,9 +383,10 @@ def find_section_substitutions(
         scanned += 1
 
         unit_cost = _read_unit_cost(c, cost_fields)
+        landed_cost = _landed(unit_cost, fee_pct, fee_flat)
         pnl_per_ticket = pnl_total = None
-        if revenue_per_ticket is not None and unit_cost is not None:
-            pnl_per_ticket = round(revenue_per_ticket - unit_cost, 2)
+        if revenue_per_ticket is not None and landed_cost is not None:
+            pnl_per_ticket = round(revenue_per_ticket - landed_cost, 2)
             pnl_total = round(pnl_per_ticket * qty_needed, 2)
         section_delta = round(q - sold_q, 2)
 
@@ -379,12 +398,13 @@ def find_section_substitutions(
             "row": c.get("row"),
             "quantity": qty,
             "unit_cost": unit_cost,
+            "landed_cost": landed_cost,
             "ticket_group_id": gid,
             "inv_source": c.get("inv_source"),
             "pnl_per_ticket": pnl_per_ticket,
             "pnl_total": pnl_total,
         }
-        cost_key = unit_cost if unit_cost is not None else _INF
+        cost_key = landed_cost if landed_cost is not None else _INF
         out.append(((cost_key, section_delta, qty), entry))
 
     out.sort(key=lambda x: x[0])
