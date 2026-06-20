@@ -211,6 +211,10 @@ def _json_ld(summary: dict, canonical_url: str, image_url: str) -> str:
     return f'<script type="application/ld+json">{raw}</script>'
 
 
+def _esc(v) -> str:
+    return html.escape(str(v), quote=True)
+
+
 def build_event_meta_tags(
     summary: dict,
     canonical_url: str,
@@ -226,13 +230,9 @@ def build_event_meta_tags(
     title = _title(summary)
     desc = _description(summary)
     image = summary.get("image_url") or default_image_url
-
-    def esc(v: str) -> str:
-        return html.escape(str(v), quote=True)
-
-    t, d, u, img = esc(title), esc(desc), esc(canonical_url), esc(image)
+    t, d, u, img = _esc(title), _esc(desc), _esc(canonical_url), _esc(image)
     lines = [
-        f"<title>{esc(title)}</title>",
+        f"<title>{_esc(title)}</title>",
         f'<meta name="description" content="{d}" />',
         f'<meta property="og:type" content="event" />',
         f'<meta property="og:site_name" content="VibePass" />',
@@ -246,5 +246,70 @@ def build_event_meta_tags(
         f'<meta name="twitter:image" content="{img}" />',
         f'<link rel="canonical" href="{u}" />',
         _json_ld(summary, canonical_url, image),
+    ]
+    return "\n  ".join(lines)
+
+
+def build_collection_meta_tags(
+    summary: dict,
+    canonical_url: str,
+    default_image_url: str,
+) -> str:
+    """Build the `<head>` block for a COLLECTION landing page (performer or
+    venue) listing upcoming events: title, description, Open Graph, Twitter,
+    canonical, and schema.org JSON-LD (the entity + an ItemList of its events).
+
+    `summary` keys: kind ('performer'|'venue'), name, subtitle (optional),
+    count (int), image_url (optional), events (list of {name, url, date_iso}).
+    All attribute values HTML-escaped; JSON-LD '<' escaped against breakout.
+    """
+    name = str(summary.get("name") or "").strip() or "VibePass"
+    kind = summary.get("kind") or "performer"
+    count = summary.get("count") or 0
+    noun = "tour dates" if kind == "performer" else "events"
+    title = f"{name} tickets · {count} upcoming {noun} · VibePass" if count \
+        else f"{name} tickets · VibePass"
+    where = summary.get("subtitle")
+    desc = (
+        f"Buy {name} tickets on VibePass — {count} upcoming {noun}"
+        + (f" {where}" if where else "")
+        + ". Direct-inventory seats, transparent all-in pricing, no daisy chains."
+    )
+    image = summary.get("image_url") or default_image_url
+    t, d, u, img = _esc(title), _esc(desc), _esc(canonical_url), _esc(image)
+
+    # schema.org: the entity (MusicGroup/SportsTeam fold to a generic Thing via
+    # 'Organization' for performers, 'Place' for venues) + an ItemList of events.
+    entity_type = "Place" if kind == "venue" else "PerformingGroup"
+    items = []
+    for i, ev in enumerate(summary.get("events") or [], start=1):
+        ev_obj = {"@type": "Event", "name": ev.get("name"), "url": ev.get("url")}
+        if ev.get("date_iso"):
+            ev_obj["startDate"] = str(ev["date_iso"])
+        items.append({"@type": "ListItem", "position": i, "item": ev_obj})
+    ld = {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "name": title,
+        "url": canonical_url,
+        "about": {"@type": entity_type, "name": name},
+        "mainEntity": {"@type": "ItemList", "itemListElement": items},
+    }
+    raw = json.dumps(ld, ensure_ascii=False).replace("<", "\\u003c")
+    lines = [
+        f"<title>{_esc(title)}</title>",
+        f'<meta name="description" content="{d}" />',
+        f'<meta property="og:type" content="website" />',
+        f'<meta property="og:site_name" content="VibePass" />',
+        f'<meta property="og:title" content="{t}" />',
+        f'<meta property="og:description" content="{d}" />',
+        f'<meta property="og:url" content="{u}" />',
+        f'<meta property="og:image" content="{img}" />',
+        f'<meta name="twitter:card" content="summary_large_image" />',
+        f'<meta name="twitter:title" content="{t}" />',
+        f'<meta name="twitter:description" content="{d}" />',
+        f'<meta name="twitter:image" content="{img}" />',
+        f'<link rel="canonical" href="{u}" />',
+        f'<script type="application/ld+json">{raw}</script>',
     ]
     return "\n  ".join(lines)

@@ -3343,6 +3343,89 @@
     else $("ftStatus").textContent = "Search and pick an artist or team to follow.";
   }
 
+  // ---------- Performer landing page (programmatic SEO) ----------
+  // Reuses the catalog card classes (.card/.card-head/.when/.name/.where/.meta)
+  // so no new CSS is needed. Event shape comes from /api/store/performers/:id
+  // (the _public RPCs): {id, name, when_local, venue_name, city, from_price}.
+  function renderLandingCards(grid, events) {
+    grid.replaceChildren();
+    for (const ev of events) {
+      const a = document.createElement("a");
+      a.className = "card";
+      a.href = `/store/event/${ev.id}`;
+
+      const head = document.createElement("div");
+      head.className = "card-head";
+      const headText = document.createElement("div");
+      const when = document.createElement("div");
+      when.className = "when";
+      when.textContent = fmtWhen(ev.when_local);
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = ev.name || "Untitled event";
+      headText.append(when, name);
+      head.append(headText);
+
+      const where = document.createElement("div");
+      where.className = "where";
+      where.textContent = [ev.venue_name, ev.city].filter(Boolean).join(" · ");
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const left = document.createElement("div");
+      left.className = "from";
+      const priceSpan = document.createElement("span");
+      priceSpan.className = "price";
+      priceSpan.textContent = fmtMoney(ev.from_price);
+      if (ev.from_price != null) left.append("from ", priceSpan);
+      else left.append(priceSpan);
+      meta.append(left);
+
+      a.append(head, where, meta);
+      grid.append(a);
+    }
+  }
+
+  function mountPerformer() {
+    const grid = document.getElementById("grid");
+    const status = document.getElementById("status");
+    const head = document.getElementById("landingHead");
+    const body = document.getElementById("landingBody");
+    const empty = document.getElementById("empty");
+    const heading = document.getElementById("gridHeading");
+    const m = location.pathname.match(/\/store\/performer\/(\d+)/);
+    const id = m && m[1];
+    if (!id || !grid) {
+      if (status) status.textContent = "Performer not found.";
+      return;
+    }
+    (async () => {
+      let data;
+      try {
+        data = await api(`/api/store/performers/${encodeURIComponent(id)}`);
+      } catch {
+        if (status) status.textContent = "Couldn't load this performer. Try again shortly.";
+        return;
+      }
+      const p = data.performer || {};
+      const nameEl = document.getElementById("landingName");
+      const subEl = document.getElementById("landingSub");
+      if (nameEl) nameEl.textContent = p.name || "Performer";
+      if (subEl) {
+        subEl.textContent = [p.category, p.home_venue_name && `home: ${p.home_venue_name}`]
+          .filter(Boolean).join(" · ");
+      }
+      document.title = `${p.name || "Performer"} tickets — VibePass`;
+      if (status) status.hidden = true;
+      if (head) head.hidden = false;
+      if (body) body.hidden = false;
+      const events = data.events || [];
+      renderLandingCards(grid, events);
+      if (heading) heading.hidden = events.length === 0;
+      if (empty) empty.hidden = events.length !== 0;
+    })();
+  }
+
   // Auto-mount based on body data-page. Lets HTML pages drop their inline
   // `<script>Store.mountX()</script>` so we can ship a strict CSP without
   // 'unsafe-inline'. Added 2026-05-11 (security chat).
@@ -3353,6 +3436,7 @@
     else if (page === "shares") mountSharesAdmin();
     else if (page === "discover") mountDiscover();
     else if (page === "tour") mountTourFollow();
+    else if (page === "performer") mountPerformer();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _autoMount);

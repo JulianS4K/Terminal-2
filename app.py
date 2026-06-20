@@ -220,6 +220,7 @@ from core.seo import (  # noqa: E402
     is_link_crawler as _is_link_crawler,
     event_seo_summary as _event_seo_summary,
     build_event_meta_tags as _build_event_meta_tags,
+    build_collection_meta_tags as _build_collection_meta_tags,
 )
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
@@ -6001,6 +6002,70 @@ def store_event_market_context(event_id: int):
     return ctx
 
 
+def _performer_landing_payload(performer_id: int) -> dict | None:
+    """Assemble the performer landing payload (entity + upcoming events) from
+    the consumer-safe _public RPCs. Returns None when the performer has no
+    resolvable landing row. Drops s4k_total_tickets from the event cards (our
+    inventory depth — kept off the public surface, §2.6)."""
+    if sb is None:
+        return None
+    try:
+        rows = sb.rpc("get_performer_landing_public", {"p_performer_id": performer_id}).execute().data or []
+    except Exception as e:  # noqa: BLE001
+        print(f"[performer_landing] landing RPC failed for {performer_id}: {e!r}")
+        return None
+    if not rows:
+        return None
+    p = rows[0]
+    try:
+        ev_rows = sb.rpc(
+            "get_events_by_performer_public",
+            {"p_performer_id": performer_id, "p_days_ahead": 365, "p_limit": 60},
+        ).execute().data or []
+    except Exception as e:  # noqa: BLE001
+        print(f"[performer_landing] events RPC failed for {performer_id}: {e!r}")
+        ev_rows = []
+    events = [
+        {
+            "id": e.get("event_id"),
+            "name": e.get("name"),
+            "what": e.get("what"),
+            "when_local": e.get("when_local"),
+            "venue_name": e.get("where_venue"),
+            "city": e.get("where_city"),
+            "from_price": e.get("min_price"),
+            "has_seating_chart": e.get("has_seating_chart"),
+        }
+        for e in ev_rows
+        if e.get("event_id")
+    ]
+    return {
+        "performer": {
+            "id": p.get("performer_id"),
+            "name": p.get("name"),
+            "slug": p.get("slug"),
+            "category": p.get("category_name") or p.get("top_category"),
+            "genre": p.get("genre"),
+            "home_venue_name": p.get("home_venue_name"),
+            "upcoming_first": p.get("upcoming_first"),
+            "upcoming_last": p.get("upcoming_last"),
+        },
+        "events": events,
+        "events_count": len(events),
+    }
+
+
+@app.get("/api/store/performers/{performer_id}")
+def store_performer_landing(performer_id: int):
+    """Performer landing data: the performer plus their upcoming events, from
+    the consumer-safe _public RPCs. Powers the /store/performer/{id} SEO
+    landing page. 404 when the performer has no landing row."""
+    payload = _performer_landing_payload(performer_id)
+    if payload is None:
+        raise HTTPException(404, "performer not found")
+    return payload
+
+
 @app.post("/api/store/verify-human")
 def store_verify_human(request: Request, payload: dict = Body(...)):
     """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
@@ -6301,6 +6366,50 @@ def store_event_page(event_id: int, request: Request):
     shell = _read_storefront_html("event.html")
     if _is_link_crawler(request.headers.get("user-agent")):
         shell = _inject_event_meta(shell, event_id, _STOREFRONT_BASE_URL)
+    return HTMLResponse(content=shell, headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+def _inject_performer_meta(shell: str, performer_id: int, base_url: str) -> str:
+    """Replace the SSR_META block in the performer-landing shell with
+    collection meta (entity + ItemList of events) for crawlers. Defensive:
+    any failure returns the shell unchanged."""
+    start = shell.find(_SSR_META_START)
+    end = shell.find(_SSR_META_END)
+    if start == -1 or end == -1 or end < start:
+        return shell
+    payload = _performer_landing_payload(performer_id)
+    if not payload:
+        return shell
+    p = payload["performer"]
+    name = (p.get("name") or "").strip()
+    if not name:
+        return shell
+    canonical = f"{base_url}/store/performer/{performer_id}"
+    summary = {
+        "kind": "performer",
+        "name": name,
+        "subtitle": (f"at {p['home_venue_name']}" if p.get("home_venue_name") else None),
+        "count": payload["events_count"],
+        "image_url": None,
+        "events": [
+            {"name": e.get("name"), "url": f"{base_url}/store/event/{e['id']}",
+             "date_iso": e.get("when_local")}
+            for e in payload["events"][:25]
+        ],
+    }
+    tags = _build_collection_meta_tags(summary, canonical, f"{base_url}{_OG_DEFAULT_IMAGE}")
+    return shell[:start] + tags + shell[end + len(_SSR_META_END):]
+
+
+@app.api_route("/store/performer/{performer_id}", methods=["GET", "HEAD"])
+def store_performer_page(performer_id: int, request: Request):
+    """Programmatic performer SEO landing page. For link-unfurl / SEO crawlers,
+    inject collection meta (title/desc/OG/JSON-LD ItemList) server-side so the
+    page is indexable with its event list; humans get the static shell and
+    store.js fills the grid from /api/store/performers/:id."""
+    shell = _read_storefront_html("performer.html")
+    if _is_link_crawler(request.headers.get("user-agent")):
+        shell = _inject_performer_meta(shell, performer_id, _STOREFRONT_BASE_URL)
     return HTMLResponse(content=shell, headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
@@ -6693,7 +6802,40 @@ except Exception as _d2_import_err:  # pragma: no cover — d2 module optional i
 # factory takes this deploy's base URL so each env advertises its own sitemap.
 from routers.site_essentials import build_site_essentials_router  # noqa: E402
 
-app.include_router(build_site_essentials_router(_STOREFRONT_BASE_URL))
+
+def _sitemap_dynamic_paths() -> list[str]:
+    """Per-event + per-performer landing URLs for the sitemap. Bounded and
+    fully defensive — any failure returns [] so the sitemap still renders its
+    static surface. Filters to upcoming events (occurs_at_local is offset-
+    bearing ISO TEXT; a lexical >= today prefix is good enough for a sitemap)."""
+    if sb is None:
+        return []
+    try:
+        today = datetime.now().date().isoformat()
+        rows = (
+            sb.table("events").select("id,primary_performer_id,occurs_at_local")
+            .gte("occurs_at_local", today)
+            .order("occurs_at_local")
+            .limit(3000)
+            .execute().data
+        ) or []
+    except Exception as e:  # noqa: BLE001
+        print(f"[sitemap] dynamic paths query failed: {e!r}")
+        return []
+    paths: list[str] = []
+    seen_perf: set = set()
+    for r in rows:
+        eid = r.get("id")
+        if eid:
+            paths.append(f"/store/event/{eid}")
+        pid = r.get("primary_performer_id")
+        if pid and pid not in seen_perf:
+            seen_perf.add(pid)
+            paths.append(f"/store/performer/{pid}")
+    return paths
+
+
+app.include_router(build_site_essentials_router(_STOREFRONT_BASE_URL, _sitemap_dynamic_paths))
 
 
 # Static assets (CSS / JS / images) served from /static.
