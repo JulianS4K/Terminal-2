@@ -3089,6 +3089,36 @@ def broker_event_chart_data(
     }
 
 
+@app.get("/api/broker/event/{event_id}/signals")
+def broker_event_signals(event_id: int, _=Depends(require_auth)):
+    """Consolidated trading signals for one event, for the terminal 'Signals' panel:
+      - forecast_24h: predict_event_median_24h (naive anchor + empirical cat x DTE band + spike prob)
+      - primary_vs_secondary: AXS face vs secondary get-in (flip margin / below-face dump risk)
+      - comps: get_event_comps (performer/venue baselines + tour & venue comparables)
+    Each block degrades to null independently so one slow/missing source never blanks the panel.
+    """
+    db = require_sb()
+
+    def _safe(fn):
+        try:
+            return fn()
+        except Exception:
+            return None
+
+    forecast = _safe(lambda: db.rpc("predict_event_median_24h", {"p_event_id": event_id}).execute().data)
+    pvs_rows = _safe(lambda: db.table("v_event_primary_vs_secondary")
+                     .select("axs_primary_getin,best_secondary_getin,flip_margin,flip_margin_pct,signal")
+                     .eq("tevo_event_id", event_id).limit(1).execute().data)
+    comps = _safe(lambda: db.rpc("get_event_comps", {"p_tevo_event_id": event_id}).execute().data)
+
+    return {
+        "event_id": event_id,
+        "forecast_24h": forecast,
+        "primary_vs_secondary": (pvs_rows[0] if pvs_rows else None),
+        "comps": comps,
+    }
+
+
 def _broker_movers_v2(source: str, window_days: int, category=None, include_inactive: bool = False):
     """v2 movers path: reads from event_movers_index (SMA-based signal scoring).
     Returns events grouped by category with cross-source spread data.
