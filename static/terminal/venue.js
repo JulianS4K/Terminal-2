@@ -221,6 +221,66 @@
     setText('vrMarketTix',      T.fmtNum(ag.market_tickets_total));
     setText('vrOwnedTix',       T.fmtNum(ag.owned_tickets_total));
     setText('vrOwnedNotional',  ag.owned_notional ? '$' + T.fmtNum(Math.round(+ag.owned_notional)) : '—');
+
+    // Price band — TRUE venue-level percentiles from the RPC (mig 20260620130000).
+    const pb = ag.price_band || {};
+    const $r = v => (v != null ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    setText('vrGetin',  $r(pb.getin));
+    setText('vrP25',    $r(pb.p25));
+    setText('vrMedian', $r(pb.median));
+    setText('vrP90',    $r(pb.p90));
+    setText('vrSg7d',   ag.sg_sales_7d_total != null ? T.fmtNum(ag.sg_sales_7d_total) : '—');
+    const meta = document.getElementById('vrBandMeta');
+    if (meta) {
+      meta.textContent = pb.listing_rows
+        ? `${T.fmtNum(pb.listing_rows)} listings · ${T.fmtNum(pb.market_tickets || 0)} tickets · max ${$r(pb.max)}`
+        : 'no live listings across upcoming events';
+    }
+  }
+
+  // ---------- Event popularity / "heat" score ----------
+  // Relative demand signal computed across THIS venue's upcoming events (0–100).
+  // Blends signals the RPC returns per event:
+  //   • price level   (retail_median, normalized) — marquee / willingness-to-pay
+  //   • market tightness (inverse price_dispersion) — firm pricing reads hot
+  //   • SG velocity   (sg_sales_7d, normalized) — actual sales pressure
+  // SG sales are sparse (e.g. preseason NFL = 0); when the whole venue has zero
+  // velocity the weight collapses onto price + tightness. Thin pseudo-events
+  // (season packages / parking, < 50 tickets) are flagged and excluded from the
+  // hot ranking so they don't masquerade as demand. Relative within the venue —
+  // a 100 here is "hottest at this venue," not an absolute cross-venue score.
+  const HEAT_MIN_TICKETS = 50;
+  function computeHeat(events) {
+    const arr = events || [];
+    const liquid = arr.filter(e => (+e.tickets_count || 0) >= HEAT_MIN_TICKETS);
+    const norm = (vals) => {
+      const lo = Math.min(...vals), hi = Math.max(...vals), sp = hi - lo;
+      return (v) => (sp > 0 ? (v - lo) / sp : 0);
+    };
+    const heat = {};
+    if (!liquid.length) { arr.forEach(e => { heat[e.id] = null; }); return heat; }
+    const meds = liquid.map(e => +e.retail_median || 0);
+    const disps = liquid.map(e => +e.price_dispersion || 0);
+    const vels = liquid.map(e => +e.sg_sales_7d || 0);
+    const nMed = norm(meds), nDisp = norm(disps), nVel = norm(vels);
+    const velActive = vels.some(v => v > 0);
+    arr.forEach(e => {
+      if ((+e.tickets_count || 0) < HEAT_MIN_TICKETS) { heat[e.id] = null; return; }
+      const pl    = nMed(+e.retail_median || 0);
+      const tight = 1 - nDisp(+e.price_dispersion || 0);
+      const vl    = nVel(+e.sg_sales_7d || 0);
+      const score = velActive
+        ? 0.40 * pl + 0.20 * tight + 0.40 * vl
+        : 0.70 * pl + 0.30 * tight;
+      heat[e.id] = Math.round(score * 100);
+    });
+    return heat;
+  }
+  function heatBadge(score) {
+    if (score == null) return '<span class="muted small" title="thin liquidity — package/parking, excluded from ranking">pkg</span>';
+    const cls = score >= 67 ? 'pos' : score >= 34 ? '' : 'muted small';
+    const flame = score >= 67 ? '🔥 ' : '';
+    return `<span class="badge ${cls}" title="relative demand vs other events at this venue">${flame}${score}</span>`;
   }
 
   // ---------- Upcoming Events tab ----------
@@ -241,14 +301,18 @@
     // T.moversChipHtml(e.id) can produce inline chips in the event-name cell.
     // Idempotent + cached.
     await T.moversPreloadIndex();
+    const heat = computeHeat(events);
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
         <th>Event</th><th>Performer</th><th class="num">T-days</th>
-        <th class="num">Mkt qty</th><th class="num">Mkt median</th>
+        <th class="num" title="relative demand vs other events at this venue (0–100)">Heat</th>
+        <th class="num">Mkt qty</th><th class="num">Get-in</th>
+        <th class="num">Mkt median</th><th class="num" title="90th-percentile listing price">p90</th>
         <th class="num">Owned qty</th><th class="num">Owned med</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
+    const $r = v => (v ? '$' + T.fmtNum(Math.round(+v)) : '—');
     events.forEach(e => {
       const d = T.daysUntil(e.occurs_at_local);
       const tr = document.createElement('tr');
@@ -256,10 +320,13 @@
         <td><a href="event.html?event=${e.id}">${escapeHtml(e.name || ('Event ' + e.id))}</a> ${T.moversChipHtml(e.id)} ${T.temporalChipHtml(e.occurs_at_local)}</td>
         <td>${escapeHtml(e.primary_performer_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
+        <td class="num">${heatBadge(heat[e.id])}</td>
         <td class="num">${T.fmtNum(e.tickets_count || 0)}</td>
-        <td class="num">${e.retail_median ? '$' + T.fmtNum(Math.round(+e.retail_median)) : '—'}</td>
+        <td class="num">${$r(e.getin_price)}</td>
+        <td class="num">${$r(e.retail_median)}</td>
+        <td class="num">${$r(e.retail_p90)}</td>
         <td class="num ${(e.owned_tickets_count || 0) > 0 ? 'ours' : ''}">${T.fmtNum(e.owned_tickets_count || 0)}</td>
-        <td class="num">${e.owned_median_retail ? '$' + T.fmtNum(Math.round(+e.owned_median_retail)) : '—'}</td>`;
+        <td class="num">${$r(e.owned_median_retail)}</td>`;
       tb.appendChild(tr);
     });
     body.appendChild(tbl);
@@ -417,16 +484,27 @@
     const allGaps   = Object.values(gapsByEvent).flat();
     const gapCount  = allGaps.length;
 
-    const sgSpreadPct = (avgEvo && avgSg) ? ((avgSg - avgEvo) / avgEvo * 100) : null;
+    // TRUE venue median from the RPC price band (percentile_cont over the latest
+    // listings snapshot of every event) — replaces the old mean-of-per-event-
+    // medians that was mislabeled "EVO MEDIAN".
+    const pb = ag.price_band || {};
+    const venueMedian = pb.median != null ? Math.round(+pb.median) : null;
+    const venueGetin  = pb.getin  != null ? Math.round(+pb.getin)  : null;
+    const sgSpreadPct = (venueMedian && avgSg) ? ((avgSg - venueMedian) / venueMedian * 100) : null;
     const $p = v => (v != null ? '$' + T.fmtNum(v) : '—');
+
+    // Hottest event at the venue (relative demand) for the ticker headline.
+    const heat = computeHeat(events);
+    let hottest = null, hottestScore = -1;
+    events.forEach(e => { const s = heat[e.id]; if (s != null && s > hottestScore) { hottestScore = s; hottest = e; } });
 
     if (tickerBody) {
       tickerBody.innerHTML = `
         <div class="market-ticker-strip">
           <div class="ticker-cell ticker-price">
-            <span class="ticker-lbl">EVO MEDIAN</span>
-            <span class="ticker-val">${$p(avgEvo)}</span>
-            ${avgSg ? `<span class="ticker-sub ${sgSpreadPct && sgSpreadPct > 0 ? 'pos' : sgSpreadPct && sgSpreadPct < 0 ? 'neg' : ''}">${sgSpreadPct != null ? (sgSpreadPct >= 0 ? '+' : '') + sgSpreadPct.toFixed(1) + '% vs SG' : ''}</span>` : ''}
+            <span class="ticker-lbl">VENUE MEDIAN</span>
+            <span class="ticker-val">${$p(venueMedian)}</span>
+            <span class="ticker-sub">${venueGetin != null ? 'get-in ' + $p(venueGetin) : ''}${avgSg && sgSpreadPct != null ? ` · <span class="${sgSpreadPct > 0 ? 'pos' : sgSpreadPct < 0 ? 'neg' : ''}">${(sgSpreadPct >= 0 ? '+' : '') + sgSpreadPct.toFixed(1)}% vs SG</span>` : ''}</span>
           </div>
           <div class="ticker-cell">
             <span class="ticker-lbl">PLATFORM MED</span>
@@ -447,6 +525,11 @@
             <span class="ticker-lbl">SIGNALS</span>
             <span class="ticker-val ${priceUp > priceDown ? 'pos' : priceDown > priceUp ? 'neg' : ''}">${priceUp > 0 ? '↑' + priceUp : ''}${priceDown > 0 ? ' ↓' + priceDown : ''}${!priceUp && !priceDown ? '—' : ''}</span>
             <span class="ticker-sub">${gapCount ? gapCount + ' gap' + (gapCount > 1 ? 's' : '') : 'no gaps'}</span>
+          </div>
+          <div class="ticker-cell">
+            <span class="ticker-lbl">HOTTEST EVENT</span>
+            <span class="ticker-val ${hottestScore >= 67 ? 'pos' : ''}">${hottest ? (hottestScore >= 67 ? '🔥 ' : '') + escapeHtml((hottest.primary_performer_name || hottest.name || 'Event').slice(0, 22)) : '—'}</span>
+            <span class="ticker-sub">${hottest ? 'heat ' + hottestScore + ' · ' + $p(Math.round(+hottest.retail_median || 0)) + ' med' : ''}</span>
           </div>
         </div>`;
     }
