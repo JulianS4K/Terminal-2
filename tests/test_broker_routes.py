@@ -190,3 +190,80 @@ def test_cadences_sections_and_listings_cadence(client, monkeypatch):
     assert body["sections"]["overview"]["cadence_seconds"] == 3600
     assert body["sections"]["overview"]["last_pull_at"] == "2026-05-10T00:00:00Z"
     assert body["sections"]["espn_injuries"]["cadence_seconds"] == 600
+
+
+# ---------- /api/broker/performers/by-league/{league} ----------
+
+def test_by_league_empty_returns_zero_count(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"get_performers_by_league": []}))
+    body = client.get("/api/broker/performers/by-league/NBA").json()
+    assert body == {
+        "league": "NBA", "count": 0, "performers": [],
+        "_inactive_filter_applied": False, "_include_inactive_param": False,
+    }
+
+
+def test_by_league_maps_rows_and_computes_delta_pct(client, monkeypatch):
+    row = {
+        "performer_id": 16303, "performer_name": "New York Knicks", "league": "NBA",
+        "home_venue_id": 99, "home_venue_name": "MSG",
+        "home_events": 5, "home_market_med": 150, "home_owned_med": 140,
+        "home_market_tix": 200, "home_owned_tix": 50,
+        "home_prev_market_med": 120, "home_prev_owned_med": 130,
+        "road_events": 3, "road_market_med": 200, "road_market_tix": 80,
+        "road_prev_market_med": 200,
+    }
+    fake = FakeSupabase(rpc_data={"get_performers_by_league": [row]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/performers/by-league/NBA").json()
+    assert body["count"] == 1
+    p = body["performers"][0]
+    assert p["performer_name"] == "New York Knicks"
+    # (150-120)/120*100 = 25.0 ; (140-130)/130*100 = 7.69 (rounded)
+    assert p["home"]["delta_market_pct"] == 25.0
+    assert p["home"]["delta_owned_pct"] == 7.69
+    # flat market => 0.0, not None
+    assert p["road"]["delta_market_pct"] == 0.0
+    # missing prev (road_prev_owned_med absent) => None
+    assert p["road"]["delta_owned_pct"] is None
+    # tix/events default to 0 when absent
+    assert p["road"]["owned_tix"] == 0
+    assert fake.rpc_calls[0] == ("get_performers_by_league", {"p_league": "NBA"})
+
+
+# ---------- /api/broker/event/{id}/section-metrics ----------
+
+def test_section_metrics_empty(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"section_metrics": []}))
+    body = client.get("/api/broker/event/1/section-metrics").json()
+    assert body["sections"] == []
+    assert body["last_pull_at"] is None
+    # no events row => occurs_at_local None => 24h default cadence
+    assert body["cadence_seconds"] == 60 * 60 * 24
+
+
+def test_section_metrics_groups_deltas_and_sorts(client, monkeypatch):
+    rows = [
+        {"captured_at": "2026-05-10T12:00:00Z", "section": "104", "is_ancillary": False,
+         "tickets_count": 50, "groups_count": 10, "retail_min": 100,
+         "retail_median": 150, "retail_mean": 160, "retail_max": 300},
+        {"captured_at": "2026-05-09T12:00:00Z", "section": "104", "is_ancillary": False,
+         "tickets_count": 40, "groups_count": 8, "retail_min": 90,
+         "retail_median": 140, "retail_mean": 150, "retail_max": 280},
+        {"captured_at": "2026-05-10T11:00:00Z", "section": "Parking", "is_ancillary": True,
+         "tickets_count": 5, "groups_count": 2, "retail_min": 20,
+         "retail_median": 25, "retail_mean": 25, "retail_max": 30},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={"section_metrics": rows}))
+    body = client.get("/api/broker/event/1/section-metrics").json()
+    secs = body["sections"]
+    # non-ancillary "104" sorts before ancillary "Parking"
+    assert [s["section"] for s in secs] == ["104", "Parking"]
+    # 104 has a prior snapshot -> delta computed (50 vs 40 = up)
+    assert secs[0]["metrics"]["tickets_count"]["v"] == 50
+    assert secs[0]["metrics"]["tickets_count"]["delta"]["dir"] == "up"
+    # Parking has only one snapshot -> delta None
+    assert secs[1]["is_ancillary"] is True
+    assert secs[1]["metrics"]["tickets_count"]["delta"] is None
+    # latest captured_at across sections
+    assert body["last_pull_at"] == "2026-05-10T12:00:00Z"
