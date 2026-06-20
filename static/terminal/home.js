@@ -3,8 +3,11 @@
 // Movers panel reads `event_movers_index` via Path-C RPCs (mig 20260527260000):
 //   get_event_movers_v2(source, window_days, category, limit)
 //   get_event_movers_index_summary(source, window_days)
-// Coverage band, full movers table (source / window / segment controls), and
-// owned-events list all derive from the v2 rows.
+// Coverage band and the full movers table (source / window / segment controls)
+// derive from the v2 rows. The owned-events panel is INDEPENDENT — it reads
+// get_owned_events_upcoming(30) (mig 20260620000000) so it reflects the whole
+// owned book, not just whichever events are in the movers index for the current
+// toggle.
 //
 // Semantic shift from the prior /api/broker/movers?window_hours= path:
 //   • OLD: events that moved in the last N hours (rolling-window delta).
@@ -22,7 +25,10 @@
 
   const state = {
     source: 'merged',         // 'merged' | 'evo' | 'sg' | 'td_sh' | 'td_gt' | 'td_vd'
-    windowDays: 7,            // 7 | 15 | 30 | 180 (rpc-supported buckets)
+    windowDays: 30,           // 7 | 15 | 30 | 180 | 365 (rpc buckets). Default 30:
+                              //   the near-term 7d/15d horizons are frequently empty
+                              //   (few qualifying movers), so the panel opened to
+                              //   "no movers"; 30d is the richest populated bucket.
     segment: 'all',           // 'all' | 'owned'
     rows: [],
     sortKey: 'delta_market_pct',
@@ -40,6 +46,10 @@
     // Top-50 chart fires its own RPC, independent of movers — runs in parallel.
     wireChartTabs();
     renderMarketChart().catch(e => console.error('[sgChart]', e));
+    // Owned-events panel ("NEXT 30 DAYS") has its OWN RPC — it must reflect the
+    // whole owned book, not just whichever events happen to be in the movers
+    // index for the current source/window toggle. Runs in parallel with movers.
+    loadOwnedEvents().catch(e => console.error('[ownedEvents]', e));
     load();
   }
 
@@ -253,8 +263,7 @@
       const summary = summaryRes.data || [];
 
       // Reshape v2 columns to the legacy field aliases that renderMovers /
-      // renderCoverage / renderOwnedEvents consume. Fields not in v2 become null
-      // and render as "—".
+      // renderCoverage consume. Fields not in v2 become null and render as "—".
       state.rows = rawRows.map(reshapeV2Row);
       state.gapMap = new Map();   // reset on each load
 
@@ -262,7 +271,8 @@
       renderSummaryStrip(summary);
       renderCoverage(state.rows);
       renderMovers();
-      renderOwnedEvents(state.rows);
+      // NOTE: the owned-events panel is NOT rendered here — it loads independently
+      // via loadOwnedEvents() so the movers source/window toggle doesn't reshape it.
       // Phase 2: batch-load gap alerts for all mover event_ids, then re-render
       // so GapChips appear in the table without blocking the initial paint.
       loadGapMap(state.rows).catch(e => console.error('[gapMap]', e));
@@ -635,60 +645,86 @@
   }
 
   // ---------- Owned events list (next 30d) ----------
+  //
+  // Independent of the movers panel. Reads get_owned_events_upcoming(30)
+  // (mig 20260620000000) — the WHOLE owned book over the next 30 days, straight
+  // from latest_event_metrics, not the movers index. (The movers index only holds
+  // events that qualify as movers for one source×window, so deriving this panel
+  // from it hid ~95% of owned upcoming inventory and made the list jump around
+  // when the unrelated movers toggle changed.) The RPC LEFT JOINs the merged
+  // movers index so the %Δ / Category cols still populate when an owned event is
+  // also a mover; otherwise they render "—".
+
+  const OWNED_HORIZON_DAYS = 30;
+
+  async function loadOwnedEvents() {
+    const body = document.getElementById('ownedEventsBody');
+    const countEl = document.getElementById('ownedEventCount');
+    if (!body) return;
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading…</div>';
+
+    const res = await Auth.client.rpc('get_owned_events_upcoming', { p_days: OWNED_HORIZON_DAYS });
+    if (res.error) {
+      // RPC not applied yet → honest empty state, no crash.
+      if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+        body.innerHTML = '<div class="empty">owned-events feed not enabled yet</div>';
+        if (countEl) countEl.textContent = '';
+        return;
+      }
+      console.error('[ownedEvents] rpc', res.error);
+      body.innerHTML = '<div class="empty">failed to load owned events</div>';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    renderOwnedEvents(res.data || []);
+  }
 
   function renderOwnedEvents(rows) {
     const body = document.getElementById('ownedEventsBody');
     const countEl = document.getElementById('ownedEventCount');
+    if (!body) return;
     body.innerHTML = '';
-    const now = Date.now();
-    const day = 86400000;
-    const upcoming = rows.filter(r => {
-      if (!((+r.cur_owned_tix || 0) > 0)) return false;
-      const t = new Date(r.occurs_at_local || r.occurs_at).getTime();
-      if (!Number.isFinite(t)) return false;
-      const days = (t - now) / day;
-      return days >= -1 && days <= 30;
-    }).sort((a, b) => {
-      // Soonest-first by event date.
-      const ta = new Date(a.occurs_at_local || a.occurs_at).getTime();
-      const tb = new Date(b.occurs_at_local || b.occurs_at).getTime();
-      if (!Number.isFinite(ta)) return 1;
-      if (!Number.isFinite(tb)) return -1;
-      return ta - tb;
-    });
 
-    countEl.textContent = upcoming.length ? `${upcoming.length} events` : '';
-
-    if (!upcoming.length) {
+    // RPC already filters to owned + within-horizon, soonest-first.
+    if (countEl) countEl.textContent = rows.length ? `${rows.length} events` : '';
+    if (!rows.length) {
       body.innerHTML = '<div class="empty">no owned events in the next 30d</div>';
       return;
     }
 
-    // v2 RPC: cur_owned_med / delta_owned_val not available.
-    // Show qty + cur price (cur_market_med alias) + %Δ + mover chip.
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
         <th>Event</th>
         <th class="num">T-days</th>
-        <th class="num">Owned qty</th>
-        <th class="num">Cur $</th>
-        <th class="num">%Δ</th>
+        <th class="num" title="Tickets we own across all sources">Owned qty</th>
+        <th class="num" title="Median current listing price — market">Cur $</th>
+        <th class="num" title="Median price of OUR owned listings">Owned $</th>
+        <th class="num" title="Merged-mover price delta, when this owned event is also a mover">%Δ</th>
         <th class="num">Category</th>
       </tr></thead>
       <tbody></tbody>
     `;
     const tb = tbl.querySelector('tbody');
-    upcoming.slice(0, 30).forEach(r => {
-      const ot = +r.cur_owned_tix || 0;
-      const d  = T.daysUntil(r.occurs_at_local || r.occurs_at);
-      const mDPct = r.delta_market_pct != null ? +r.delta_market_pct : NaN;
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    rows.slice(0, 50).forEach(r => {
+      const ot = +r.owned_tickets_count || 0;
+      const d  = (r.days_to_event != null) ? r.days_to_event : T.daysUntil(r.occurs_at_local);
+      const mDPct = r.price_delta_pct != null ? +r.price_delta_pct : NaN;
+      const venueLine = r.venue_name ? `<div class="muted small">${escapeHtml(r.venue_name)}</div>` : '';
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a></td>
+        <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a> ${T.temporalChipHtml(r.occurs_at_local)}${venueLine}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num ours">${T.fmtNum(ot)}</td>
-        <td class="num">${r.cur_market_med != null ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>
+        <td class="num">${money(r.retail_median)}</td>
+        <td class="num ours">${money(r.owned_median_retail)}</td>
         <td class="num ${pctCls(mDPct)}">${Number.isFinite(mDPct) ? T.fmtPct(mDPct, 1) : '—'}</td>
         <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
       `;
