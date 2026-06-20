@@ -583,6 +583,17 @@ async def _runtime_error_handler(request, exc: RuntimeError):
 
 STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower() == "true"
 
+# Storefront "Ask the concierge" (retail-chat) kill-switch. Disabled for now to
+# stop paid Anthropic spend on the public concierge (each turn fans out into a
+# multi-call tool-use loop on Claude Haiku 4.5). When off, /api/store/retail-chat
+# short-circuits with a friendly canned reply and never calls the chat edge fn.
+# Re-enable by setting STOREFRONT_CONCIERGE_ENABLED=true (no code change needed).
+STOREFRONT_CONCIERGE_ENABLED = os.environ.get("STOREFRONT_CONCIERGE_ENABLED", "false").lower() == "true"
+_CONCIERGE_OFFLINE_REPLY = (
+    "Our concierge is taking a short break right now. In the meantime you can browse "
+    "everything we hold from the home page, or reach us directly and we'll find your seats."
+)
+
 
 @app.get("/")
 def root_landing():
@@ -6163,7 +6174,13 @@ def retail_chat_terminal(request: Request, payload: dict = Body(...), _=Depends(
 @app.post("/api/store/retail-chat")
 def retail_chat_store(request: Request, payload: dict = Body(...)):
     """Public storefront retail chat. scope=owned → hard-locked to our owned
-    EVO inventory (enforced server-side; the consumer cannot widen it)."""
+    EVO inventory (enforced server-side; the consumer cannot widen it).
+
+    Gated by STOREFRONT_CONCIERGE_ENABLED (off for now): when disabled we return
+    a friendly canned reply with HTTP 200 so the widget renders it as a normal
+    assistant message — and crucially never call the paid chat edge function."""
+    if not STOREFRONT_CONCIERGE_ENABLED:
+        return JSONResponse({"reply": _CONCIERGE_OFFLINE_REPLY}, status_code=200)
     history = _sanitize_chat_history(payload)
     return _proxy_retail_chat(history, "owned", _client_ip(request))
 
