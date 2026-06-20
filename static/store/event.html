@@ -134,6 +134,12 @@
       <div class="listings">
         <h2>Available from us <span id="listCount" class="muted"></span></h2>
 
+        <!-- Honest-scarcity cues — derived from the unfiltered owned-inventory
+             payload (sections/quantities/listings remaining). Each chip only
+             appears when its real threshold is crossed; no fabricated urgency.
+             Populated by store.js renderScarcity() from the event response. -->
+        <div id="scarcityStrip" class="scarcity-strip" hidden></div>
+
         <!-- Tab toggle: Seats (always) + Parking (only when at least one
              parking listing exists for this event). TEvo's ticket_groups
              type field separates 'event' (seats) from 'parking'; we keep

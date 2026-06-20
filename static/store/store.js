@@ -1192,6 +1192,46 @@
     host.hidden = false;
   }
 
+  // ---------- Honest-scarcity cues ----------
+  // Real availability facts from the UNFILTERED owned set, summarized as
+  // urgency only when a genuine threshold is crossed. Every value here is
+  // already visible in the listings table below (sections, quantities, row
+  // count) — this just surfaces it. No fabricated "N people viewing" theater,
+  // and nothing wall-sensitive (it's our own retail availability, already shown).
+  function renderScarcity(res) {
+    const host = document.getElementById("scarcityStrip");
+    if (!host) return;
+    host.replaceChildren();
+    const total = res.total_before_filters || res.listings_count || (res.listings || []).length || 0;
+    const sections = Array.isArray(res.sections_available) ? res.sections_available.length : 0;
+    const splits = Array.isArray(res.splits_available) ? res.splits_available.length : 0;
+
+    const chips = [];
+    if (sections > 0 && sections <= 3) {
+      chips.push({ kind: "warn", text: `Only ${sections} section${sections === 1 ? "" : "s"} left` });
+    }
+    if (total > 0 && total <= 6) {
+      chips.push({ kind: "warn", text: `Only ${total} listing${total === 1 ? "" : "s"} remaining` });
+    } else if (total >= 40) {
+      // Honest reassurance for deep inventory — the opposite of false urgency.
+      chips.push({ kind: "calm", text: "Plenty of seats available" });
+    }
+    if (splits === 1) {
+      chips.push({ kind: "info", text: "Limited quantity options" });
+    }
+    if (!chips.length) {
+      host.hidden = true;
+      return;
+    }
+    for (const c of chips) {
+      const el = document.createElement("span");
+      el.className = `scarcity-chip scarcity-${c.kind}`;
+      el.textContent = c.text;
+      host.appendChild(el);
+    }
+    host.hidden = false;
+  }
+
   // ---------- "Deal & demand" panel ----------
   // Cross-source market context: how our price compares to the public
   // secondary market (SeatGeek/StubHub/Vivid/TickPick), a 30-day price
@@ -2317,6 +2357,9 @@
         rebuildMinQtyOptions(splitsAvailable, readFiltersFromUI().min_qty);
       }
       const filters = res.filters || readFiltersFromUI();
+
+      // Honest-scarcity cues from the unfiltered owned set.
+      renderScarcity(res);
 
       $("#evName").textContent = event.name || "Untitled event";
 
