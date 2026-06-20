@@ -15,7 +15,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Orders</title>
-  <link rel="stylesheet" href="style.css?v=20260620b" />
+  <link rel="stylesheet" href="style.css?v=20260620c" />
 </head>
 <body data-page="orders">
 
@@ -54,6 +54,16 @@
           <button class="ctrl-btn" data-term="1">All</button>
         </div>
         <div class="ctrl-group">
+          <span class="ctrl-lbl">DATE</span>
+          <button class="ctrl-btn is-active" data-when="all">All</button>
+          <button class="ctrl-btn" data-when="upcoming">Upcoming</button>
+          <button class="ctrl-btn" data-when="past">Past</button>
+        </div>
+        <div class="ctrl-group">
+          <input type="search" id="ordersSearch" class="ctrl-input"
+                 placeholder="search event…" autocomplete="off" />
+        </div>
+        <div class="ctrl-group">
           <button class="ctrl-btn" id="refreshBtn">↻ Refresh</button>
         </div>
       </div>
@@ -65,6 +75,11 @@
 
     <section id="orders-table">
       <div id="ordersBody"><div class="empty">loading…</div></div>
+      <div class="ctrl-row orders-pager" id="ordersPager" hidden>
+        <button class="ctrl-btn" id="pagePrev">← Prev</button>
+        <span class="ctrl-lbl" id="pageLabel">Page 1</span>
+        <button class="ctrl-btn" id="pageNext">Next →</button>
+      </div>
     </section>
 
     <section id="orders-note">
@@ -81,6 +96,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260620b"></script>
-  <script src="orders.js?v=20260620a"></script>
+  <script src="orders.js?v=20260620b"></script>
 </body>
 </html>
