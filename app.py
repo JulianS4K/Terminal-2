@@ -2698,17 +2698,35 @@ def broker_event_chart_data(
     if xref:
         x = xref[0]
         home_league = x["espn_league"]
-        snap = (
-            db.table("espn_event_snapshots")
+        # Resolve home/away ESPN team ids. espn_event_snapshots is GAMEDAY-SCOPE only
+        # (no row exists until ~game day), so for any upcoming event it returns nothing
+        # and the injury / standings / last-5 overlays silently go empty — the most
+        # common case a broker charts. espn_event_date_lookup is the forward-look table
+        # (home/away team id for every scheduled game), so resolve from it FIRST and fall
+        # back to the latest gameday snapshot only for past games.
+        # (PROJECT_BIBLE §3 — "ESPN team-ID resolution for forward-look events".)
+        dl = (
+            db.table("espn_event_date_lookup")
             .select("home_team_id,away_team_id")
-            .eq("espn_event_id", x["espn_event_id"])
-            .order("captured_at", desc=True).limit(1)
+            .eq("espn_event_id", x["espn_event_id"]).limit(1)
             .execute()
         ).data or []
-        if snap:
-            home_team_id = snap[0].get("home_team_id")
-            away_team_id = snap[0].get("away_team_id")
+        if dl:
+            home_team_id = dl[0].get("home_team_id")
+            away_team_id = dl[0].get("away_team_id")
             home_slug = away_slug = x["espn_slug"]
+        if not (home_team_id or away_team_id):
+            snap = (
+                db.table("espn_event_snapshots")
+                .select("home_team_id,away_team_id")
+                .eq("espn_event_id", x["espn_event_id"])
+                .order("captured_at", desc=True).limit(1)
+                .execute()
+            ).data or []
+            if snap:
+                home_team_id = snap[0].get("home_team_id")
+                away_team_id = snap[0].get("away_team_id")
+                home_slug = away_slug = x["espn_slug"]
 
     def _team_standings(team_id: str | None) -> list:
         if not team_id or not home_league:
@@ -2743,27 +2761,27 @@ def broker_event_chart_data(
                        "seed": r.get("playoff_seed"), "rec": r.get("record_summary")}
                       for r in away_standings_rows]
 
-    # 3) Injury rows. Originally filtered is_baseline=false ("real status flips
-    # only") but espn-collect's is_baseline detection only works for MLB+NHL —
-    # NBA/NFL/MLS/WNBA/WC always come back with is_baseline=true, so the strict
-    # filter hid 100% of their injury data. Relaxed to include baseline rows
-    # too. Front-end tags each marker with `is_change` so the user can tell
-    # status flips apart from initial-baseline injuries (copilot lane: fix
-    # the upstream is_baseline detection in espn-collect).
+    # 3) Injury rows — HOME TEAM ONLY (operator directive 2026-06-20: keep the
+    # injuries overlay local to the home team; the home roster drives the event's
+    # local demand). away-team injuries are intentionally excluded here.
+    # Originally filtered is_baseline=false ("real status flips only") but
+    # espn-collect's is_baseline detection only works for MLB+NHL — NBA/NFL/MLS/
+    # WNBA/WC always come back with is_baseline=true, so the strict filter hid 100%
+    # of their injury data. Relaxed to include baseline rows too; the front-end tags
+    # each marker with `is_change` so status flips read apart from baseline rows.
     # CRITICAL: filter by espn_league too — espn_team_id is league-scoped
     # (id "18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18).
-    # Without the league filter we'd pull 229 rows when only 12 are real.
     inj_rows = (
         db.table("espn_injuries_snapshots")
         .select("captured_at,athlete_name,status,injury_type,short_comment,espn_team_id,is_baseline")
-        .in_("espn_team_id", [t for t in (home_team_id, away_team_id) if t])
+        .eq("espn_team_id", home_team_id)
         .eq("espn_league", home_league or "")
         .gte("captured_at", since_iso)
         .order("captured_at")
         .execute()
-    ).data or [] if (home_team_id or away_team_id) and home_league else []
+    ).data or [] if home_team_id and home_league else []
     injuries = [{"t": r["captured_at"], "athlete": r.get("athlete_name"),
-                 "status": r.get("status"), "team": "home" if r.get("espn_team_id") == home_team_id else "away",
+                 "status": r.get("status"), "team": "home",
                  "comment": r.get("short_comment"),
                  "is_change": (r.get("is_baseline") is False)}  # true = real status flip; false = baseline row
                 for r in inj_rows]

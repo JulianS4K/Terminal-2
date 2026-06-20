@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.0.0 (2026-06-19 dense rewrite; history in git/CHANGELOG)
+> **Doc version:** v2.1.0 (2026-06-20; +cross-market signals views/RPC + venue_section_map_build_state — mig 20260620; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -89,7 +89,7 @@ Performer: `entity_performer_map` (**start here** — PK tevo_performer_id, espn
 `weather_observations` (232 MB; Open-Meteo; `is_forecast` flag), `nws_alerts` (250 MB), `nws_alert_zones`/`_references`/`_pending`, `weather_forecast_pending`, `venue_nws_points_pending`.
 
 ### 2.8 Performer/venue metadata
-`performer_metadata` (branding + espn_team_id), `performer_wikipedia`, `performer_home_venues`, `performer_zones`(+`_rules`)/`zone_rules`, `important_x_accounts`, `why_signals`, `venue_assets`, `venue_section_map` (+ `seatmap_manifest`).
+`performer_metadata` (branding + espn_team_id), `performer_wikipedia`, `performer_home_venues`, `performer_zones`(+`_rules`)/`zone_rules`, `important_x_accounts`, `why_signals`, `venue_assets`, `venue_section_map` (+ `seatmap_manifest`; builder state `venue_section_map_build_state` — per-(venue,platform) attempt log so `build_venue_section_map_batch` round-robins instead of starving on zero-row combos, mig 20260620160000).
 
 ### 2.9 Chat/NLU
 `chat_corpus`, `chat_aliases`, `chat_term_freq*`, `chat_audit_findings`, `chat_rate_limits`/`_stopwords`/`_glossary_known`.
@@ -120,7 +120,8 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 ## 4. Views (178; patterns)
 - Canonical: `v_canonical_{event,performer,venue}`, `v_canonical_coverage[_v2]`/`_drift`, `sg_canonical_match_view`, `cross_source_{coverage,event_audit}`.
 - Event-context: `v_event_*` (~40 — full/sports/weather/injuries/espn_state/calendar/competitors/rivalries/velocity/why_context/…). Product-boundary: `broker_event_*` (full) vs `retail_event_*` (S4K-owned, no wholesale).
-- Listings/orders: `unified_listings`, `unified_orders`(+`_by_event`), `our_orders`(+`_by_event`/`_with_net`), `v_market_listings_by_event`, `v_pricing_cross_source`.
+- Listings/orders: `unified_listings`, `unified_orders`(+`_by_event`), `our_orders`(+`_by_event`/`_with_net`), `v_market_listings_by_event`, `v_pricing_cross_source`, `v_event_price_arbitrage` (TEvo↔SG secondary).
+- Cross-market signals (mig 20260620): `v_event_primary_vs_secondary` (AXS primary face vs TEvo/SG secondary getin → `flip_margin`/below-face dump signal); `v_event_price_index_daily`/`_latest` (per-category ticket price index over `event_listing_snapshot_daily`; base-100 + DoD/WoW; E1 settlement substrate). RPC `get_event_comps(tevo_event_id)` → jsonb {target, performer/venue baselines, same-performer (tour)+same-venue comps}.
 - SG: `seatgeek_event_latest`, `v_sg_*` (sales_by_{event,section}, broker_sales_by_*, historic_*, events_by_status, token_budget, broker_429_health, blindspot_*).
 - Health/ops: `v_cron_health`, `v_pg_net_queue_health`, `v_bot_chat_unresolved`, `v_dashboard_{coverage,freshness}`, `v_macro_indicators_{health,latest}`, `v_td_poll_health`.
 - AXS: `v_axs_{listings,seat_groups,events_classified,venues_mapped,venues_unmapped}`.
