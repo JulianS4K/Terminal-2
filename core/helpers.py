@@ -6,6 +6,7 @@ core, never reverse). Moved verbatim from app.py.
 """
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 
@@ -248,3 +249,70 @@ def ticket_group_to_listing(tg: dict) -> dict:
         "view_type": tg.get("view_type"),
         "wheelchair": tg.get("wheelchair"),
     }
+
+
+# ---- numeric / date coercion (lenient: bad input -> None, never raises) ----
+
+def parse_iso_or_none(s):
+    """Normalize a TEvo ISO timestamp's 'Z' suffix to '+00:00' (Python 3.11+
+    fromisoformat handles the rest). Returns None for falsy/bad input."""
+    if not s:
+        return None
+    try:
+        # TEvo emits 'Z' suffix; Python 3.11+ fromisoformat handles it
+        return s.replace("Z", "+00:00") if isinstance(s, str) and s.endswith("Z") else s
+    except Exception:
+        return None
+
+
+def to_int_or_none(v):
+    """int(v) or None — empty/None/uncoercible -> None, never raises."""
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_num_or_none(v):
+    """float(v) or None — empty/None/uncoercible -> None, never raises."""
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# ---- geo / venue-name fuzzy matching ----
+
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in miles between two (lat,lon) pairs."""
+    R_MI = 3958.7613  # Earth's mean radius in miles
+    lat1r, lat2r = math.radians(lat1), math.radians(lat2)
+    dlat = lat2r - lat1r
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1r) * math.cos(lat2r) * math.sin(dlon / 2) ** 2
+    return 2 * R_MI * math.asin(math.sqrt(a))
+
+
+def venue_tokens(name: str) -> set[str]:
+    """Crude venue-name token bag for fuzzy match. Strips 'Parking' suffix
+    so 'Citi Field Parking' matches 'Citi Field'."""
+    if not name:
+        return set()
+    n = name.lower().replace(" parking", "").replace("parking", "")
+    return {tok for tok in re.split(r"[^a-z0-9]+", n) if len(tok) >= 3}
+
+
+def venue_overlap(a: str, b: str) -> float:
+    """Jaccard overlap between two venue names. 1.0 = identical, 0 = nothing
+    in common. ~0.5 typically indicates a real match (e.g. 'Daikin Park'
+    vs 'Daikin Park Houston')."""
+    ta, tb = venue_tokens(a), venue_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    inter = ta & tb
+    union = ta | tb
+    return len(inter) / len(union) if union else 0.0
