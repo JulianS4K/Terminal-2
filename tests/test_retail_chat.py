@@ -60,6 +60,9 @@ def capture_post(monkeypatch):
         return _FakeResp({"reply": "here you go"}, 200)
 
     monkeypatch.setattr(app_module.requests, "post", fake_post)
+    # The storefront concierge is gated OFF by default (cost kill-switch). These
+    # tests exercise the live forwarding/validation path, so enable it here.
+    monkeypatch.setattr(app_module, "STOREFRONT_CONCIERGE_ENABLED", True)
     return calls
 
 
@@ -132,6 +135,27 @@ def test_upstream_status_passthrough(monkeypatch):
     def fake_post(url, headers=None, json=None, timeout=None):  # noqa: A002
         return _FakeResp({"error": "rate limited"}, 429)
     monkeypatch.setattr(app_module.requests, "post", fake_post)
+    monkeypatch.setattr(app_module, "STOREFRONT_CONCIERGE_ENABLED", True)
     r = client.post("/api/store/retail-chat", json={"message": "hi"})
     assert r.status_code == 429
     assert "error" in r.json()
+
+
+# ---------- kill-switch: storefront concierge disabled by default ----------
+
+def test_store_concierge_disabled_returns_canned_reply_without_upstream(monkeypatch):
+    """With STOREFRONT_CONCIERGE_ENABLED off (the default), the storefront route
+    returns a friendly canned reply and never calls the chat edge function — so
+    no paid Anthropic spend. Re-enabling is an env flip, no code change."""
+    calls = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):  # noqa: A002
+        calls.append(url)
+        return _FakeResp({"reply": "should not happen"}, 200)
+
+    monkeypatch.setattr(app_module.requests, "post", fake_post)
+    monkeypatch.setattr(app_module, "STOREFRONT_CONCIERGE_ENABLED", False)
+    r = client.post("/api/store/retail-chat", json={"message": "knicks tickets"})
+    assert r.status_code == 200
+    assert r.json()["reply"] == app_module._CONCIERGE_OFFLINE_REPLY
+    assert calls == []  # edge function never called
