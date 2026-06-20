@@ -37,12 +37,42 @@
     chartTab: 'top',          // 'top' (rank 1-50) | 'rest' (rank 51+)
   };
 
+  // Global alerts feed — recent fired signals across the whole book from
+  // /api/broker/alerts (the v2 volatility/hysteresis engine). The cross-event
+  // "what to look at now" surface. Each row links to its event page. Defensive:
+  // any failure degrades to an empty state so the home hub is never blocked.
+  async function loadAlertsFeed() {
+    const body = document.getElementById('alertsFeedBody');
+    const count = document.getElementById('alertsFeedCount');
+    if (!body) return;
+    let d;
+    try { d = await T.api('/api/broker/alerts?hours=48&limit=60'); }
+    catch (e) { body.innerHTML = '<div class="empty">Alerts unavailable.</div>'; if (count) count.textContent = ''; return; }
+    const rows = (d && d.alerts) || [];
+    if (!rows.length) { body.innerHTML = '<div class="empty">No recent alerts.</div>'; if (count) count.textContent = ''; return; }
+    if (count) count.textContent = `${rows.length} in ${d.hours || 48}h`;
+    const dot = sev => sev === 'critical' ? '#f85149' : (sev === 'warn' ? '#d29922' : '#3fb950');
+    const trs = rows.map(r => {
+      const ev = r.event_name ? escapeHtml(r.event_name) : ('event ' + r.tevo_event_id);
+      const href = r.tevo_event_id ? `event.html?event=${encodeURIComponent(r.tevo_event_id)}` : '#';
+      const when = r.fired_at ? escapeHtml(T.fmtDate(r.fired_at)) : '';
+      return '<tr>' +
+        `<td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dot(r.severity)}"></span></td>` +
+        `<td><a href="${href}">${ev}</a></td>` +
+        `<td class="small">${escapeHtml(r.message || '')}</td>` +
+        `<td class="muted small">${when}</td></tr>`;
+    }).join('');
+    body.innerHTML = '<table><thead><tr><th></th><th>Event</th><th>Signal</th><th>When</th></tr></thead><tbody>' +
+      trs + '</tbody></table>';
+  }
+
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireMoversControls();
     // Watchlist is the first table — the user's own tracked events. Independent
     // RPC, runs in parallel with movers/blind-spots.
     loadWatchlist().catch(e => console.error('[watchlist]', e));
+    loadAlertsFeed().catch(e => console.error('[alertsFeed]', e));
     // Top-50 chart fires its own RPC, independent of movers — runs in parallel.
     wireChartTabs();
     renderMarketChart().catch(e => console.error('[sgChart]', e));
