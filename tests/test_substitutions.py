@@ -15,9 +15,11 @@ from core.substitutions import (  # noqa: E402
     DOWNGRADE,
     INCOMPARABLE,
     SAME,
+    SECTION_UPGRADE,
     UPGRADE,
     compare_rows,
     find_row_substitutions,
+    find_section_substitutions,
     parse_row,
 )
 
@@ -197,3 +199,41 @@ def test_find_empty_candidates_is_clean():
     assert out["subs"] == [] and out["ambiguous"] == []
     assert out["counts"] == {"subs": 0, "ambiguous": 0, "scanned": 0}
     assert out["target"]["row_kind"] == "numeric"
+
+
+# ---------- find_section_substitutions (better-section phase) ----------
+
+def test_section_subs_only_better_or_equal_sections_cheapest_first():
+    # Sold section 310 (quality 50). 108 (quality 200) is better; 305 (quality
+    # 80) is better; 320 (quality 30) is WORSE -> excluded; 310 itself skipped.
+    quality = {"310": 50, "108": 200, "305": 80, "320": 30}
+    cands = [
+        _c("108", "20", quantity=4, gid="lower", price=180),
+        _c("305", "5", quantity=4, gid="mid", price=70),
+        _c("320", "1", quantity=4, gid="worse", price=10),  # better seat, worse section
+        _c("310", "1", quantity=4, gid="samesec", price=5),  # same section -> row phase
+    ]
+    out = find_section_substitutions("310", 4, cands, quality, revenue_per_ticket=100)
+    # cheapest acceptable better-section first: 305 ($70) before 108 ($180).
+    assert [s["ticket_group_id"] for s in out["section_subs"]] == ["mid", "lower"]
+    assert out["best"]["to_section"] == "305"
+    assert out["best"]["match_type"] == SECTION_UPGRADE
+    assert out["best"]["section_delta"] == 30  # 80 - 50
+    assert out["best"]["pnl_total"] == round((100 - 70) * 4, 2)
+    assert "worse" not in [s["ticket_group_id"] for s in out["section_subs"]]
+    assert "samesec" not in [s["ticket_group_id"] for s in out["section_subs"]]
+
+
+def test_section_subs_no_quality_for_sold_section_returns_note():
+    out = find_section_substitutions("999", 2, [_c("100", "1", gid="x")], {"100": 50})
+    assert out["section_subs"] == []
+    assert out["sold_quality"] is None
+    assert "note" in out
+
+
+def test_section_subs_unknown_candidate_section_excluded():
+    # Candidate section has no quality entry -> can't prove it's better -> skip.
+    quality = {"310": 50}
+    out = find_section_substitutions("310", 1, [_c("777", "1", gid="unk")], quality)
+    assert out["section_subs"] == []
+    assert out["counts"]["scanned"] == 0

@@ -483,6 +483,31 @@ def test_substitutions_owned_pool_merges_sg_seller_book(client, monkeypatch):
     assert [s["ticket_group_id"] for s in body["subs"]] == ["SLR1", "tevo_up"]
 
 
+def test_substitutions_section_fallback_offers_better_section(client, monkeypatch):
+    # No same-section (310) sub, but we own a better-section lot (108). The
+    # section phase should rank it by market quality (retail_median).
+    ls = [
+        {"tevo_ticket_group_id": "lower", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "108", "row": "20", "quantity": 4, "retail_price": 180, "is_owned": True},
+    ]
+    section_metrics = [
+        {"section": "310", "retail_median": 50, "is_ancillary": False, "captured_at": "2026-05-10T12:00:00Z"},
+        {"section": "108", "retail_median": 200, "is_ancillary": False, "captured_at": "2026-05-10T12:00:00Z"},
+        {"section": "LOT A", "retail_median": 999, "is_ancillary": True, "captured_at": "2026-05-10T12:00:00Z"},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "section_metrics": section_metrics,
+    }))
+    body = client.get("/api/broker/event/1/substitutions"
+                      "?section=310&row=14&quantity=4&revenue=400").json()
+    assert body["subs"] == []  # nothing in-section
+    ss = body["section_subs"]
+    assert ss["best"]["to_section"] == "108"
+    assert ss["best"]["match_type"] == "section_upgrade"
+    assert ss["best"]["section_delta"] == 150  # 200 - 50
+    assert ss["sold_quality"] == 50
+
+
 def test_substitutions_quantity_filter_and_ambiguous_bucket(client, monkeypatch):
     rows = [
         {"tevo_ticket_group_id": "toofew", "captured_at": "2026-05-10T12:00:00Z",

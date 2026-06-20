@@ -287,3 +287,112 @@ def find_row_substitutions(
         },
         "best": sub_entries[0] if sub_entries else None,
     }
+
+
+def _read_unit_cost(c: dict, cost_fields: tuple[str, ...]) -> float | None:
+    for f in cost_fields:
+        v = _coerce_float(c.get(f))
+        if v is not None:
+            return v
+    return None
+
+
+SECTION_UPGRADE = "section_upgrade"
+
+
+def find_section_substitutions(
+    section: str | None,
+    qty_needed: int,
+    candidates: list[dict],
+    section_quality: dict,
+    *,
+    exclude_group_id=None,
+    revenue_per_ticket: float | None = None,
+    cost_fields: tuple[str, ...] = ("cost", "retail_price"),
+) -> dict:
+    """Find BETTER-section substitutes — the fallback when no same-section row
+    sub works.
+
+    A "better section" is one whose market quality score is >= the sold
+    section's. `section_quality` maps a (cleaned) section label to a numeric
+    quality score where HIGHER = better; the caller supplies it, typically the
+    market `retail_median` per section (a pricier section is a better section).
+    The row WITHIN a better section need not beat the sold row — moving up a
+    section is itself the upgrade.
+
+    Ranked cheapest-first, then by the SMALLEST section over-upgrade (closest in
+    quality to what was sold, so we don't burn a premium section needlessly),
+    then the smallest lot. Same-section candidates are skipped (the row phase
+    owns those). Returns:
+      {
+        "sold_section", "sold_quality",
+        "section_subs": [ {match_type:"section_upgrade", to_section,
+                           section_quality, section_delta, row, quantity,
+                           unit_cost, ticket_group_id, inv_source,
+                           pnl_per_ticket, pnl_total}, ... ],
+        "best", "counts": {"section_subs","scanned"}, "note"?
+      }
+    """
+    sold = clean_section(section)
+    qty_needed = max(1, int(qty_needed or 1))
+    sold_q = _coerce_float(section_quality.get(sold))
+    if sold_q is None:
+        return {
+            "sold_section": sold, "sold_quality": None,
+            "section_subs": [], "best": None,
+            "counts": {"section_subs": 0, "scanned": 0},
+            "note": "no market quality signal for the sold section; cannot rank sections",
+        }
+
+    out: list[tuple[tuple, dict]] = []
+    scanned = 0
+    for c in candidates:
+        gid = c.get("tevo_ticket_group_id", c.get("id"))
+        if exclude_group_id is not None and gid is not None and gid == exclude_group_id:
+            continue
+        sec = clean_section(c.get("section"))
+        if sec is None or sec == sold:
+            continue  # same section is the row phase's job
+        q = _coerce_float(section_quality.get(sec))
+        if q is None or q < sold_q:
+            continue  # unknown or worse section — never a section upgrade
+        try:
+            qty = int(c.get("quantity") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if qty < qty_needed:
+            continue
+        scanned += 1
+
+        unit_cost = _read_unit_cost(c, cost_fields)
+        pnl_per_ticket = pnl_total = None
+        if revenue_per_ticket is not None and unit_cost is not None:
+            pnl_per_ticket = round(revenue_per_ticket - unit_cost, 2)
+            pnl_total = round(pnl_per_ticket * qty_needed, 2)
+        section_delta = round(q - sold_q, 2)
+
+        entry = {
+            "match_type": SECTION_UPGRADE,
+            "to_section": sec,
+            "section_quality": q,
+            "section_delta": section_delta,
+            "row": c.get("row"),
+            "quantity": qty,
+            "unit_cost": unit_cost,
+            "ticket_group_id": gid,
+            "inv_source": c.get("inv_source"),
+            "pnl_per_ticket": pnl_per_ticket,
+            "pnl_total": pnl_total,
+        }
+        cost_key = unit_cost if unit_cost is not None else _INF
+        out.append(((cost_key, section_delta, qty), entry))
+
+    out.sort(key=lambda x: x[0])
+    section_subs = [e for _, e in out]
+    return {
+        "sold_section": sold,
+        "sold_quality": sold_q,
+        "section_subs": section_subs,
+        "best": section_subs[0] if section_subs else None,
+        "counts": {"section_subs": len(section_subs), "scanned": scanned},
+    }

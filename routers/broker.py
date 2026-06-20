@@ -18,8 +18,8 @@ from typing import Callable
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 
-from core.helpers import listings_cadence_seconds
-from core.substitutions import find_row_substitutions
+from core.helpers import clean_section, listings_cadence_seconds
+from core.substitutions import find_row_substitutions, find_section_substitutions
 
 
 def build_broker_router(
@@ -181,6 +181,25 @@ def build_broker_router(
 
         result = find_row_substitutions(section, row, qty, pool,
                                         revenue_per_ticket=rev_per_ticket)
+
+        # Better-SECTION fallback: rank sections by market quality (retail_median
+        # per section) and offer cheapest acceptable upgrades from the same pool.
+        sm = (
+            db.table("section_metrics")
+            .select("section,retail_median,is_ancillary,captured_at")
+            .eq("event_id", event_id).order("captured_at", desc=True)
+            .execute().data or []
+        )
+        section_quality: dict = {}
+        for r in sm:
+            if r.get("is_ancillary"):
+                continue  # parking/ancillary aren't seating upgrades
+            sec = clean_section(r.get("section"))
+            if sec and sec not in section_quality and r.get("retail_median") is not None:
+                section_quality[sec] = r.get("retail_median")  # latest wins (desc order)
+        result["section_subs"] = find_section_substitutions(
+            section, qty, pool, section_quality, revenue_per_ticket=rev_per_ticket)
+
         result.update({"captured_at": captured_at, "event_id": event_id, "source": source})
         return result
 
