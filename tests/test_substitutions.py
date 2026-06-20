@@ -111,21 +111,49 @@ def test_find_filters_to_same_section():
     assert out["counts"]["scanned"] == 1  # other section never scanned
 
 
-def test_find_orders_upgrades_first_then_closer_in():
+def test_find_orders_cheapest_first():
+    # The Petco lesson: a big upgrade that costs a fortune must NOT outrank a
+    # break-even same-row seat. Cost is the primary sort.
     cands = [
-        _c("104", "12", gid="same"),   # SAME row
-        _c("104", "5", gid="best"),    # big upgrade
-        _c("104", "10", gid="mid"),    # smaller upgrade
-        _c("104", "20", gid="worse"),  # downgrade -> dropped
+        _c("104", "12", gid="same", price=100),   # SAME row, cheap
+        _c("104", "5", gid="best", price=500),     # big upgrade, expensive
+        _c("104", "10", gid="mid", price=50),      # small upgrade, cheapest
+        _c("104", "20", gid="worse", price=10),    # downgrade -> dropped despite cheapest
     ]
     out = find_row_substitutions("104", "12", 1, cands)
-    assert [s["ticket_group_id"] for s in out["subs"]] == ["best", "mid", "same"]
+    assert [s["ticket_group_id"] for s in out["subs"]] == ["mid", "same", "best"]
     assert all(s["ticket_group_id"] != "worse" for s in out["subs"])
-    # row_delta = how many rows closer (positive = better).
-    best = next(s for s in out["subs"] if s["ticket_group_id"] == "best")
-    assert best["row_delta"] == 7
+    assert out["best"]["ticket_group_id"] == "mid"
     same = next(s for s in out["subs"] if s["ticket_group_id"] == "same")
     assert same["match_type"] == SAME and same["row_delta"] == 0
+
+
+def test_find_without_cost_falls_back_to_smallest_upgrade():
+    # No prices => prefer the smallest acceptable upgrade (closest to sold row,
+    # i.e. least over-delivery), since a smaller upgrade is generally cheaper.
+    cands = [
+        _c("104", "5", gid="big"),    # 7 rows better
+        _c("104", "12", gid="same"),  # same row
+        _c("104", "10", gid="near"),  # 2 rows better
+    ]
+    out = find_row_substitutions("104", "12", 1, cands)
+    assert [s["ticket_group_id"] for s in out["subs"]] == ["same", "near", "big"]
+
+
+def test_find_pnl_against_revenue_petco_shape():
+    # Mirrors the real Petco case: sold 4 @ $16.78/tix; cover from market.
+    cands = [
+        _c("310", "14", quantity=4, gid="cheap", price=17.95),  # same row, break-even
+        _c("310", "9", quantity=5, gid="pricey", price=281.05),  # upgrade, ruinous
+    ]
+    out = find_row_substitutions("310", "14", 4, cands, revenue_per_ticket=16.78)
+    # cheapest acceptable wins -> the same-row $17.95 lot, not the $281 upgrade.
+    assert out["best"]["ticket_group_id"] == "cheap"
+    assert out["best"]["unit_cost"] == 17.95
+    assert out["best"]["pnl_per_ticket"] == round(16.78 - 17.95, 2)
+    assert out["best"]["pnl_total"] == round((16.78 - 17.95) * 4, 2)
+    pricey = next(s for s in out["subs"] if s["ticket_group_id"] == "pricey")
+    assert pricey["pnl_total"] < out["best"]["pnl_total"]  # far worse loss
 
 
 def test_find_respects_quantity_needed():

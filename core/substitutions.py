@@ -128,13 +128,35 @@ def compare_rows(target: str | None, candidate: str | None) -> str:
     return INCOMPARABLE
 
 
-def _row_sort_key(verdict: str, cand: RowRank) -> tuple:
-    """Order substitutes best-first: upgrades before same-row, and within a
-    bucket the closer-in (lower rank) seat first. Ranks may be None for
-    exact-match SAME on unknown kinds — those sort last within their bucket."""
-    bucket = 0 if verdict == UPGRADE else 1  # upgrades first
-    rank = cand.rank if cand.rank is not None else 10**9
-    return (bucket, rank)
+_INF = float("inf")
+
+
+def _coerce_float(v) -> float | None:
+    """Best-effort numeric parse for cost/price fields ($, commas tolerated)."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip().replace("$", "").replace(",", "")
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_sort_key(unit_cost: float | None, over_delivery: int | None,
+                  qty: int) -> tuple:
+    """Cost-aware ordering. A valid sub must already be same-or-better row +
+    enough quantity; among those the cheapest is best, because over-delivering
+    a better seat than was sold is wasted money. Tiebreak by the SMALLEST
+    acceptable upgrade (closest to the row actually sold) then the smallest
+    lot (don't burn a big block to cover a few seats).
+
+    Missing cost sorts last (we can't prove it's cheap), and missing/unknown
+    over-delivery sorts after known ones."""
+    cost = unit_cost if unit_cost is not None else _INF
+    over = over_delivery if over_delivery is not None else 10**9
+    return (cost, over, qty)
 
 
 def find_row_substitutions(
@@ -144,32 +166,50 @@ def find_row_substitutions(
     candidates: list[dict],
     *,
     exclude_group_id=None,
+    revenue_per_ticket: float | None = None,
+    cost_fields: tuple[str, ...] = ("cost", "retail_price"),
 ) -> dict:
-    """Find same-section, same-or-better-row substitutes from owned inventory.
+    """Find same-section, same-or-better-row substitutes, ranked by COST.
 
     Args:
       section: the section of the ticket we need to cover.
       row: the row of the ticket we need to cover.
       qty_needed: how many seats we must replace; a candidate must have
         `quantity >= qty_needed` to qualify.
-      candidates: owned listings. Each dict should carry at least
-        `section`, `row`, `quantity`; `tevo_ticket_group_id`/`id` and
-        `retail_price` are surfaced when present.
-      exclude_group_id: a ticket-group id to drop from the candidate pool
-        (e.g. the very listing that got double-sold).
+      candidates: candidate listings (our owned inventory, or a market book to
+        buy into). Each dict should carry at least `section`, `row`,
+        `quantity`; `tevo_ticket_group_id`/`id` is surfaced when present, and a
+        unit cost is read from the first present of `cost_fields`.
+      exclude_group_id: a ticket-group id to drop (e.g. the listing that got
+        double-sold).
+      revenue_per_ticket: what we received per seat on the sale. When given,
+        each sub carries `pnl_per_ticket` / `pnl_total` (revenue − unit cost,
+        projected over qty_needed) so the loss/margin of covering is explicit.
+      cost_fields: ordered field names to read a unit cost from. Owned books
+        carry a real cost basis (`cost`); a market buy-in uses the ask
+        (`retail_price`).
 
-    Returns a dict:
+    Subs are ordered cheapest-first (then smallest acceptable upgrade, then
+    smallest lot). Returns:
       {
-        "target": {"section","row","row_kind","quantity_needed"},
-        "subs":   [ {match_type, section, row, quantity, retail_price,
-                     ticket_group_id, row_delta}, ... ],   # best-first
+        "target": {"section","row","row_kind","quantity_needed","revenue_per_ticket"},
+        "subs":   [ {match_type, section, row, quantity, unit_cost, row_delta,
+                     ticket_group_id, pnl_per_ticket, pnl_total}, ... ],
         "ambiguous": [ ... same shape, match_type="incomparable" ... ],
         "counts": {"subs","ambiguous","scanned"},
+        "best": <the cheapest sub or None>,
       }
     """
     target_section = clean_section(section)
     target = parse_row(row)
     qty_needed = max(1, int(qty_needed or 1))
+
+    def _unit_cost(c: dict) -> float | None:
+        for f in cost_fields:
+            v = _coerce_float(c.get(f))
+            if v is not None:
+                return v
+        return None
 
     subs: list[tuple[tuple, dict]] = []
     ambiguous: list[dict] = []
@@ -201,19 +241,30 @@ def find_row_substitutions(
             # Positive = rows of improvement (target rank minus candidate rank).
             row_delta = target.rank - cand_rank.rank
 
+        unit_cost = _unit_cost(c)
+        pnl_per_ticket = pnl_total = None
+        if revenue_per_ticket is not None and unit_cost is not None:
+            pnl_per_ticket = round(revenue_per_ticket - unit_cost, 2)
+            pnl_total = round(pnl_per_ticket * qty_needed, 2)
+
         entry = {
             "match_type": verdict,
             "section": c.get("section"),
             "row": c.get("row"),
             "quantity": qty,
-            "retail_price": c.get("retail_price"),
-            "ticket_group_id": gid,
+            "unit_cost": unit_cost,
             "row_delta": row_delta,
+            "ticket_group_id": gid,
+            "pnl_per_ticket": pnl_per_ticket,
+            "pnl_total": pnl_total,
         }
         if verdict == INCOMPARABLE:
             ambiguous.append(entry)
         else:
-            subs.append((_row_sort_key(verdict, cand_rank), entry))
+            # over_delivery = rows better than sold (0 for same row). Unknown
+            # when not rank-comparable (exact-match SAME on unknown kinds).
+            over = row_delta if row_delta is not None else None
+            subs.append((_row_sort_key(unit_cost, over, qty), entry))
 
     subs.sort(key=lambda x: x[0])
     sub_entries = [e for _, e in subs]
@@ -224,6 +275,7 @@ def find_row_substitutions(
             "row": row,
             "row_kind": target.kind,
             "quantity_needed": qty_needed,
+            "revenue_per_ticket": revenue_per_ticket,
         },
         "subs": sub_entries,
         "ambiguous": ambiguous,
@@ -232,4 +284,5 @@ def find_row_substitutions(
             "ambiguous": len(ambiguous),
             "scanned": scanned,
         },
+        "best": sub_entries[0] if sub_entries else None,
     }

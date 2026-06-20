@@ -103,25 +103,31 @@ def build_broker_router(
         section: str,
         row: str | None = None,
         quantity: int = 1,
+        revenue: float | None = None,
+        source: str = "owned",
         _=Depends(require_auth),
     ):
         """Substitution checker — ROW phase.
 
-        Given an owned ticket we need to cover (its section + row + quantity),
-        find same-section substitutes from OUR OWN inventory with the same or a
-        better (closer-in) row. Used when a listing is double-sold and we need
-        replacement seats we already hold.
+        Given a ticket we need to cover (its section + row + quantity), find
+        same-section substitutes with the same or a better (closer-in) row,
+        ranked CHEAPEST-FIRST — over-delivering a better seat than was sold is
+        wasted money, so the least-cost acceptable seat wins.
 
-        Source = the latest `listings_snapshots` snapshot for the event, filtered
-        to `is_owned=true` (our book). Matching/ranking is pure logic in
-        core.substitutions; "better SECTION" matching is a deliberate future
-        phase and is NOT attempted here.
+        `source` selects the candidate pool from the latest `listings_snapshots`
+        snapshot for the event:
+          owned  (default) our held inventory (is_owned=true) — a free swap
+          market the rest of the book — a buy-in when we hold no sub
+        `revenue` (total $ received for the sale) turns on per-sub P&L so the
+        loss/margin of each cover is explicit. Ranking/matching is pure logic in
+        core.substitutions; "better SECTION" matching is a deliberate future phase.
 
         Query params:
           section   (required) the section to cover
-          row       the row to cover (omit/empty => only same-section listings
-                    with a comparable row can ever qualify as "same")
+          row       the row to cover
           quantity  seats needed; a candidate must have quantity >= this (default 1)
+          revenue   total $ received on the sale (optional; enables P&L)
+          source    "owned" (default) | "market"
         """
         db = get_require_sb()()
         latest = (
@@ -129,22 +135,24 @@ def build_broker_router(
             .eq("event_id", event_id).order("captured_at", desc=True).limit(1)
             .execute().data or []
         )
+        qty = max(1, int(quantity or 1))
+        rev_per_ticket = (revenue / qty) if revenue is not None else None
         if not latest:
-            empty = find_row_substitutions(section, row, quantity, [])
-            empty["captured_at"] = None
-            empty["event_id"] = event_id
+            empty = find_row_substitutions(section, row, qty, [],
+                                           revenue_per_ticket=rev_per_ticket)
+            empty.update({"captured_at": None, "event_id": event_id, "source": source})
             return empty
         captured_at = latest[0]["captured_at"]
-        owned = (
+        q = (
             db.table("listings_snapshots")
             .select("tevo_ticket_group_id,section,row,quantity,retail_price,is_owned")
             .eq("event_id", event_id).eq("captured_at", captured_at)
-            .eq("is_owned", True)
-            .execute().data or []
+            .eq("is_owned", source == "owned")
         )
-        result = find_row_substitutions(section, row, quantity, owned)
-        result["captured_at"] = captured_at
-        result["event_id"] = event_id
+        pool = q.execute().data or []
+        result = find_row_substitutions(section, row, qty, pool,
+                                        revenue_per_ticket=rev_per_ticket)
+        result.update({"captured_at": captured_at, "event_id": event_id, "source": source})
         return result
 
     return router

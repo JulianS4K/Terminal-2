@@ -443,12 +443,16 @@ def test_substitutions_finds_same_section_better_row(client, monkeypatch):
          "section": "105", "row": "1", "quantity": 2, "retail_price": 900, "is_owned": True},
     ]
     _use_db(monkeypatch, FakeSupabase(table_data={"listings_snapshots": rows}))
-    body = client.get("/api/broker/event/1/substitutions?section=104&row=12&quantity=2").json()
+    body = client.get("/api/broker/event/1/substitutions?section=104&row=12&quantity=2&revenue=600").json()
     assert body["captured_at"] == "2026-05-10T12:00:00Z"
-    # upgrade first, then same row; downgrade + other section excluded.
-    assert [s["ticket_group_id"] for s in body["subs"]] == ["best", "same"]
-    assert body["subs"][0]["match_type"] == "upgrade"
-    assert body["subs"][0]["row_delta"] == 7
+    assert body["source"] == "owned"
+    # cheapest-first: same-row $250 outranks the $400 upgrade; downgrade +
+    # other section excluded.
+    assert [s["ticket_group_id"] for s in body["subs"]] == ["same", "best"]
+    assert body["best"]["ticket_group_id"] == "same"
+    # revenue 600 / qty 2 = 300/tix; same-row cost 250 -> +50/tix, +100 total.
+    assert body["best"]["pnl_per_ticket"] == 50.0
+    assert body["best"]["pnl_total"] == 100.0
     assert body["counts"]["scanned"] == 3  # 3 in section 104
 
 
