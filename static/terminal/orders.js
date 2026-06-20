@@ -4,9 +4,11 @@
 // linking out to a separate d2-orders-dashboard service. The d2_dashboard
 // router is mounted same-origin into this FastAPI shell (app.py —
 // `app.include_router(d2_router)`), so /api/d2/orders is reachable with the
-// terminal's own Supabase JWT (TerminalAuth) via Terminal.api(). All five
-// sources (evo / seatgeek_sales / seatdata / tickpick / vivid) come from
-// public.unified_orders — SQL-only, read-only (2026-05-13 lockdown).
+// terminal's own Supabase JWT (TerminalAuth) via Terminal.api(). The order
+// sources (evo / seatgeek_sales / tickpick / vivid) come from
+// public.unified_orders — SQL-only, read-only (2026-05-13 lockdown). The
+// view excludes seatdata: it's a third-party completed-sales market feed,
+// not our broker order book (see HIDDEN_SOURCES).
 
 (function () {
   'use strict';
@@ -17,10 +19,14 @@
   const SOURCE_LABELS = {
     evo: 'EVO',
     seatgeek_sales: 'SG',
-    seatdata: 'SeatData',
     tickpick: 'TickPick',
     vivid: 'Vivid',
   };
+
+  // Sources hidden from this view. seatdata is third-party completed-sales
+  // analytics (a market feed), not our broker order book — exclude its rows
+  // and freshness chip entirely.
+  const HIDDEN_SOURCES = new Set(['seatdata']);
 
   const state = {
     source: 'all',        // 'all' | one of SOURCE_LABELS keys
@@ -90,11 +96,14 @@
     const body = document.getElementById('ordersBody');
     const countEl = document.getElementById('ordersCount');
     if (!body) return;
-    let rows = data.rows || [];
+    // Drop hidden sources (seatdata — third-party market feed) before any
+    // count or per-source filtering so they never surface in this view.
+    const visible = (data.rows || []).filter(r => !HIDDEN_SOURCES.has(r.source));
+    let rows = visible;
     if (state.source !== 'all') rows = rows.filter(r => r.source === state.source);
 
     if (countEl) {
-      const total = (data.rows || []).length;
+      const total = visible.length;
       countEl.textContent = state.source === 'all'
         ? `${total} row${total === 1 ? '' : 's'} · ${state.includeTerminal ? 'all states' : 'active only'}`
         : `${rows.length} of ${total} · ${SOURCE_LABELS[state.source] || state.source}`;
@@ -153,6 +162,7 @@
   function renderFreshness(sources) {
     const strip = document.getElementById('freshStrip');
     if (!strip) return;
+    sources = sources.filter(s => !HIDDEN_SOURCES.has(s.source));
     if (!sources.length) { strip.innerHTML = ''; return; }
     strip.innerHTML = sources.map(s => {
       const lbl = SOURCE_LABELS[s.source] || s.source;
