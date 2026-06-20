@@ -47,11 +47,19 @@ class RowRank:
     `rank` is a sortable number where LOWER = a better (closer-in) seat, defined
     only when `kind` is "numeric" or "alpha". `norm` is the normalized label used
     for exact-match fallback on "unknown"/"ga" kinds.
+
+    `alpha_width` is the letter count for alpha rows (1 for "A".."Z", 2 for
+    "AA".."ZZ", ...). It exists because the ordering of double-letter rows
+    relative to single-letter rows is VENUE-DEPENDENT: stadiums run A..Z then
+    AA (AA behind Z), while some theaters put AA/BB as premium rows IN FRONT of
+    A (AA ahead of Z). So two alpha rows are only safely comparable when their
+    widths match; cross-width pairs ("A" vs "AA") are deliberately incomparable.
     """
     kind: str          # "numeric" | "alpha" | "ga" | "unknown"
     rank: int | None   # lower = better; None when not rank-comparable
     raw: str | None
     norm: str          # upper/trimmed label ("" when empty)
+    alpha_width: int = 0  # letter count for alpha rows; 0 otherwise
 
 
 def _alpha_to_rank(letters: str) -> int:
@@ -77,7 +85,7 @@ def parse_row(row: str | None) -> RowRank:
     if _NUMERIC_RE.match(norm):
         return RowRank("numeric", int(norm), row, norm)
     if _ALPHA_RE.match(norm):
-        return RowRank("alpha", _alpha_to_rank(norm), row, norm)
+        return RowRank("alpha", _alpha_to_rank(norm), row, norm, alpha_width=len(norm))
     return RowRank("unknown", None, row, norm)
 
 
@@ -97,8 +105,13 @@ def compare_rows(target: str | None, candidate: str | None) -> str:
     t = parse_row(target)
     c = parse_row(candidate)
 
-    # Rank-comparable kinds (numeric vs numeric, alpha vs alpha).
+    # Rank-comparable kinds (numeric vs numeric, alpha vs alpha). Alpha rows
+    # only compare within the same letter-width — the AA-vs-Z direction is
+    # venue-specific (see RowRank.alpha_width), so cross-width pairs fall
+    # through to INCOMPARABLE for a human to judge.
     if t.kind == c.kind and t.kind in ("numeric", "alpha"):
+        if t.kind == "alpha" and t.alpha_width != c.alpha_width:
+            return INCOMPARABLE
         if c.rank == t.rank:
             return SAME
         return UPGRADE if c.rank < t.rank else DOWNGRADE  # type: ignore[operator]

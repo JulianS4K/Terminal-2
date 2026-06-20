@@ -34,9 +34,12 @@ def test_parse_row_alpha_single_and_double():
     assert parse_row("A").kind == "alpha"
     assert parse_row("A").rank == 1
     assert parse_row("Z").rank == 26
-    # Spreadsheet-column ordering keeps AA after Z.
-    assert parse_row("AA").rank == 27
-    assert parse_row("AA").rank > parse_row("Z").rank
+    # alpha_width distinguishes single- vs double-letter rows (so the
+    # venue-dependent AA-vs-Z direction isn't silently assumed).
+    assert parse_row("A").alpha_width == 1
+    assert parse_row("AA").alpha_width == 2
+    # Within a width, ordering is monotonic and unambiguous.
+    assert parse_row("BB").rank > parse_row("AA").rank
 
 
 def test_parse_row_ga_variants():
@@ -62,6 +65,15 @@ def test_compare_alpha_earlier_is_upgrade():
     assert compare_rows("C", "A") == UPGRADE
     assert compare_rows("C", "C") == SAME
     assert compare_rows("C", "D") == DOWNGRADE
+    # Same-width double letters compare cleanly too.
+    assert compare_rows("CC", "AA") == UPGRADE
+    assert compare_rows("AA", "BB") == DOWNGRADE
+
+
+def test_compare_alpha_cross_width_is_incomparable():
+    # AA-vs-Z direction is venue-specific -> never guessed.
+    assert compare_rows("Z", "AA") == INCOMPARABLE
+    assert compare_rows("AA", "A") == INCOMPARABLE
 
 
 def test_compare_cross_kind_is_incomparable():
@@ -135,6 +147,15 @@ def test_find_routes_cross_kind_to_ambiguous():
     assert [s["ticket_group_id"] for s in out["subs"]] == ["num"]
     assert [s["ticket_group_id"] for s in out["ambiguous"]] == ["alpha"]
     assert out["counts"]["ambiguous"] == 1
+
+
+def test_find_cross_width_alpha_goes_to_ambiguous():
+    # Target row "C" (width 1); "AA" (width 2) is venue-dependent -> ambiguous,
+    # while "A" (width 1) is a clean upgrade.
+    cands = [_c("FLOOR", "A", gid="up"), _c("FLOOR", "AA", gid="wide")]
+    out = find_row_substitutions("FLOOR", "C", 1, cands)
+    assert [s["ticket_group_id"] for s in out["subs"]] == ["up"]
+    assert [s["ticket_group_id"] for s in out["ambiguous"]] == ["wide"]
 
 
 def test_find_section_normalization_matches_whitespace():
