@@ -417,3 +417,57 @@ def test_is_bowl_pattern_name():
     assert is_bowl_pattern_name("Club (200s)") is True
     assert is_bowl_pattern_name("Section 104") is False
     assert is_bowl_pattern_name(None) is False
+
+
+# ---------- tour_dates / share_to_dict / flatten_order_items ----------
+
+def test_tour_dates_clamps_window():
+    from datetime import date
+    from core.helpers import tour_dates
+    start, end = tour_dates(30)
+    assert start == date.today()
+    assert (end - start).days == 30
+    # clamps: <1 -> 1, >730 -> 730
+    assert (tour_dates(0)[1] - tour_dates(0)[0]).days == 1
+    assert (tour_dates(9999)[1] - tour_dates(9999)[0]).days == 730
+
+
+def test_share_to_dict_active_and_url():
+    from core.helpers import share_to_dict
+    assert share_to_dict({}) == {}
+    out = share_to_dict({"id": "abc", "event_id": 5, "revoked_at": None, "expires_at": None})
+    assert out["url"] == "/s/abc"
+    assert out["active"] is True
+    assert out["view_count"] == 0          # default
+    assert out["filters"] == {}            # default
+
+
+def test_share_to_dict_inactive_when_revoked_or_expired():
+    from core.helpers import share_to_dict
+    assert share_to_dict({"id": "r", "revoked_at": "2026-01-01T00:00:00Z"})["active"] is False
+    assert share_to_dict({"id": "e", "expires_at": "2000-01-01T00:00:00Z"})["active"] is False
+
+
+def test_flatten_order_items_projects_and_coerces():
+    from core.helpers import flatten_order_items
+    order = {"id": "100", "items": [{
+        "id": "7", "quantity": "2", "price": "150.5",
+        "ticket_group": {"id": "9", "office_id": "42029", "section": "104",
+                         "event": {"id": "555", "name": "Knicks",
+                                   "occurs_at": "2026-05-01T00:00:00Z",
+                                   "venue": {"id": "12", "name": "MSG"}}},
+    }]}
+    rows = flatten_order_items(order)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["evo_order_id"] == 100 and r["evo_item_id"] == 7   # coerced to int
+    assert r["price"] == 150.5 and r["quantity"] == 2
+    assert r["event_id"] == 555 and r["venue_name"] == "MSG"
+    assert r["occurs_at"] == "2026-05-01T00:00:00+00:00"        # Z normalized
+    assert r["raw"] is order["items"][0]
+
+
+def test_flatten_order_items_empty():
+    from core.helpers import flatten_order_items
+    assert flatten_order_items({}) == []
+    assert flatten_order_items({"items": []}) == []

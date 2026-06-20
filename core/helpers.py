@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
@@ -415,3 +415,74 @@ _CONSUMER_ZONE_NAME_RE = re.compile(
 def is_bowl_pattern_name(name: str | None) -> bool:
     """Whether a zone name matches the programmatic bowl-level pattern."""
     return bool(_CONSUMER_ZONE_NAME_RE.match((name or "").strip()))
+
+
+# ---- order / share-link projections + tour date window ----
+
+def tour_dates(days: int):
+    """Return (start_date, end_date) for a tour window, clamped to 1..730 days."""
+    start = date.today()
+    return start, start + timedelta(days=max(1, min(int(days), 730)))
+
+
+def share_to_dict(row: dict) -> dict:
+    """Public-safe representation of a share_links row."""
+    if not row:
+        return {}
+    revoked = row.get("revoked_at")
+    expires = row.get("expires_at")
+    expired = False
+    if expires:
+        try:
+            expired = datetime.fromisoformat(str(expires).replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        except ValueError:
+            expired = False
+    return {
+        "id": row.get("id"),
+        "url": f"/s/{row.get('id')}",
+        "event_id": row.get("event_id"),
+        "filters": row.get("filters") or {},
+        "note": row.get("note"),
+        "created_at": row.get("created_at"),
+        "expires_at": expires,
+        "revoked_at": revoked,
+        "view_count": row.get("view_count") or 0,
+        "last_viewed_at": row.get("last_viewed_at"),
+        "active": (revoked is None) and (not expired),
+    }
+
+
+def flatten_order_items(order: dict) -> list[dict]:
+    """Project order.items[] into evo_order_items schema, mapping event_id."""
+    out = []
+    for it in (order.get("items") or []):
+        tg = it.get("ticket_group") or {}
+        ev = tg.get("event") or {}
+        venue = ev.get("venue") or {}
+        out.append({
+            "evo_order_id":              to_int_or_none(order.get("id")),
+            "evo_item_id":               to_int_or_none(it.get("id")),
+            "quantity":                  to_int_or_none(it.get("quantity")),
+            "price":                     to_num_or_none(it.get("price")),
+            "ticket_group_id":           to_int_or_none(tg.get("id")),
+            "ticket_group_remote_id":    tg.get("remote_id"),
+            "ticket_group_office_id":    to_int_or_none(tg.get("office_id")),
+            "ticket_group_section":      tg.get("section"),
+            "ticket_group_row":          tg.get("row"),
+            "ticket_group_seats":        tg.get("seats") or [],
+            "ticket_group_quantity":     to_int_or_none(tg.get("quantity")),
+            "ticket_group_retail_price": to_num_or_none(tg.get("retail_price")),
+            "ticket_group_wholesale_price": to_num_or_none(tg.get("wholesale_price")),
+            "ticket_group_external_notes": tg.get("external_notes"),
+            "event_id":                  to_int_or_none(ev.get("id")),
+            "event_name":                ev.get("name"),
+            "occurs_at":                 parse_iso_or_none(ev.get("occurs_at")),
+            "venue_id":                  to_int_or_none(venue.get("id")),
+            "venue_name":                venue.get("name"),
+            "eticket_available":         it.get("eticket_available"),
+            "eticket_delivery":          it.get("eticket_delivery"),
+            "eticket_downloaded_at":     parse_iso_or_none(it.get("eticket_downloaded_at")) or None,
+            "eticket_downloaded_by":     to_int_or_none(it.get("eticket_downloaded_by")),
+            "raw":                       it,
+        })
+    return out
