@@ -16,7 +16,6 @@ Optional:
 
 from __future__ import annotations
 
-import hmac
 import logging
 import math
 import os
@@ -173,6 +172,7 @@ from core.config import (  # noqa: E402
 # (one-directional import). The security tests force the gate ON by patching
 # `core.auth.AUTH_DISABLED`.
 from core.auth import require_auth, AUTH_DISABLED, _is_production  # noqa: E402
+from core.auth import require_cron_or_auth as _require_cron_or_auth  # noqa: E402
 # Human bot-gate cookie helpers -> core/auth.py (BR-CODE-1 config/auth seam),
 # aliased to their historical `_`-prefixed names so consumers keep resolving.
 from core.auth import (  # noqa: E402
@@ -3413,15 +3413,8 @@ def seatdata_auto_search(
 # CRON_SECRET is declared once at module top (line ~216) — no re-declaration.
 
 
-def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
-    """Allow either authenticated user OR matching X-Cron-Secret.
-
-    Fails closed if CRON_SECRET is not configured on the server — never
-    accepts an empty/placeholder secret.
-    """
-    if x_cron_secret and CRON_SECRET and hmac.compare_digest(x_cron_secret, CRON_SECRET):
-        return {"cron": True}
-    return require_auth(authorization)
+# _require_cron_or_auth -> core/auth.py (BR-CODE-1 config/auth seam). Imported
+# (aliased) near the top of this module.
 
 
 # _parse_iso_or_none + _to_int_or_none + _to_num_or_none -> core/helpers.py (BR-CODE-1); aliased at top.

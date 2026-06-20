@@ -157,3 +157,14 @@ def verify_recaptcha(token: str | None, expected_action: str, remote_ip: str | N
     if action and expected_action and action != expected_action:
         return False
     return float(data.get("score") or 0.0) >= RECAPTCHA_MIN_SCORE
+
+
+def require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
+    """Allow either an authenticated user OR a matching X-Cron-Secret.
+
+    Fails closed if CRON_SECRET is not configured on the server — never
+    accepts an empty/placeholder secret.
+    """
+    if x_cron_secret and CRON_SECRET and hmac.compare_digest(x_cron_secret, CRON_SECRET):
+        return {"cron": True}
+    return require_auth(authorization)
