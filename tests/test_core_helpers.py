@@ -281,3 +281,32 @@ def test_normalize_filters_empty_and_bad_values():
     # non-numeric price / qty coerce to None, not raise
     bad = normalize_filters({"min_price": "abc", "min_qty": "x"})
     assert bad["min_price"] is None and bad["min_qty"] is None
+
+
+# ---------- ticket_group_to_listing ----------
+
+def test_ticket_group_to_listing_public_safe_projection():
+    from core.helpers import ticket_group_to_listing
+    tg = {
+        "id": 7, "section": "104", "row": "G", "quantity": 4,
+        "retail_price": 220, "wholesale_price": 150,   # wholesale must be dropped
+        "signature": "broker-sig", "office_id": 42029,  # attribution must be dropped
+        "in_hand": True, "public_notes": "aisle",
+    }
+    out = ticket_group_to_listing(tg)
+    # public-safe fields kept
+    assert out["id"] == 7 and out["section"] == "104" and out["retail_price"] == 220
+    # quantity falls back into available_quantity
+    assert out["available_quantity"] == 4
+    # wholesale / signature / office attribution never leak
+    assert "wholesale_price" not in out
+    assert "signature" not in out
+    assert "office_id" not in out
+
+
+def test_ticket_group_to_listing_defaults():
+    from core.helpers import ticket_group_to_listing
+    out = ticket_group_to_listing({})
+    assert out["type"] == "event"   # default
+    assert out["splits"] == []      # default
+    assert out["available_quantity"] is None
