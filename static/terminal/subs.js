@@ -18,9 +18,53 @@
   function init() {
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
+    wireOrderLoad();
     wireEventSearch();
     wireFeeToggle();
     prefillFromQuery();
+  }
+
+  // ---------- order # → auto-fill the sold ticket ----------
+
+  function wireOrderLoad() {
+    const btn = document.getElementById('subOrderLoad');
+    if (btn) btn.addEventListener('click', loadOrder);
+    const inp = document.getElementById('subOrderId');
+    if (inp) inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); loadOrder(); }
+    });
+  }
+
+  function setVal(id, v) {
+    const el = document.getElementById(id);
+    if (el && v !== null && v !== undefined && v !== '') el.value = v;
+  }
+
+  async function loadOrder() {
+    const id = (document.getElementById('subOrderId').value || '').trim();
+    const src = document.getElementById('subOrderSource').value;
+    const msg = document.getElementById('subOrderMsg');
+    if (!id) { msg.innerHTML = '<span class="neg">enter an order number</span>'; return; }
+    msg.textContent = 'looking up…';
+    try {
+      const qs = new URLSearchParams({ order_id: id });
+      if (src) qs.set('source', src);
+      const o = await T.api(`/api/broker/order-lookup?${qs.toString()}`);
+      if (!o.found) { msg.innerHTML = `<span class="neg">${esc(o.note || 'order not found')}</span>`; return; }
+      setVal('subEvent', o.tevo_event_id);
+      setVal('subSection', o.section);
+      setVal('subRow', o.row);
+      setVal('subQty', o.quantity || 1);
+      setVal('subRevenue', o.revenue);
+      if (o.event_name) document.getElementById('subEventSearch').value = o.event_name;
+      const multi = (o.line_items && o.line_items > 1)
+        ? ` · ⚠ ${esc(o.line_items)} line items — showing the first` : '';
+      msg.innerHTML = `<span class="pos">loaded ${esc(o.source)} order</span> · ` +
+        `${esc(o.event_name || ('event ' + o.tevo_event_id))}${multi}`;
+      run();  // auto-search subs from the loaded details
+    } catch (err) {
+      msg.innerHTML = `<span class="neg">${esc(String(err.message || err))}</span>`;
+    }
   }
 
   // ---------- event-name search (typeahead → tevo_event_id) ----------

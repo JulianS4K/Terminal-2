@@ -535,3 +535,50 @@ def test_substitutions_quantity_filter_and_ambiguous_bucket(client, monkeypatch)
     # numeric "3" would upgrade but lacks quantity; alpha "A" is incomparable.
     assert body["subs"] == []
     assert [s["ticket_group_id"] for s in body["ambiguous"]] == ["alpha"]
+
+
+# ---------- /api/broker/order-lookup (order # -> sub fields) ----------
+
+def test_order_lookup_seatgeek(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"seatgeek_orders": [{
+        "sg_order_id": "SG123", "tevo_event_id": 3100123, "sg_event_name": "Braves at Padres",
+        "sale_section": "310", "sale_row": "14", "sale_quantity": 4,
+        "payment_total": 67.12, "payment_price": 60.0,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=SG123").json()
+    assert body["found"] is True and body["source"] == "seatgeek"
+    assert body["tevo_event_id"] == 3100123
+    assert body["section"] == "310" and body["row"] == "14" and body["quantity"] == 4
+    assert body["revenue"] == 67.12
+
+
+def test_order_lookup_tickpick_when_source_pinned(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"tickpick_orders": [{
+        "tp_order_id": "TP9", "tevo_event_id": 5, "event_name": "X", "section": "A",
+        "row": "2", "quantity": 2, "total": 100,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=TP9&source=tickpick").json()
+    assert body["source"] == "tickpick" and body["section"] == "A" and body["revenue"] == 100
+
+
+def test_order_lookup_evo_uses_first_item_and_counts(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "evo_orders": [{"evo_order_id": 42, "tevo_event_id": 7, "total": 500, "subtotal": 450}],
+        "evo_order_items": [
+            {"ticket_group_section": "100", "ticket_group_row": "5", "quantity": 2,
+             "event_name": "Y", "event_id": 7},
+            {"ticket_group_section": "200", "ticket_group_row": "9", "quantity": 2,
+             "event_name": "Y", "event_id": 7},
+        ],
+    }))
+    body = client.get("/api/broker/order-lookup?order_id=42").json()
+    assert body["source"] == "evo" and body["section"] == "100" and body["row"] == "5"
+    assert body["revenue"] == 450  # subtotal preferred
+    assert body["line_items"] == 2
+
+
+def test_order_lookup_not_found(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    body = client.get("/api/broker/order-lookup?order_id=NOPE").json()
+    assert body["found"] is False
+    assert "note" in body
