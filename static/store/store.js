@@ -2293,6 +2293,20 @@
     }
 
     // ---- Banner: shows when any filter is active or arriving via /s/{id} ----
+    // Translate raw filters into shopper-friendly "fit" criteria for the
+    // curated/concierge view (e.g. min_qty:2 → "2+ seats together").
+    function friendlyFitChips(filters) {
+      const f = filters || {};
+      const chips = [];
+      if (f.zones?.length) chips.push(f.zones.join(", "));
+      if (f.section?.length) chips.push(`Section ${f.section.join(", ")}`);
+      if (f.min_price != null && f.max_price != null) chips.push(`${fmtMoney(f.min_price)}–${fmtMoney(f.max_price)}`);
+      else if (f.max_price != null) chips.push(`under ${fmtMoney(f.max_price)}`);
+      else if (f.min_price != null) chips.push(`from ${fmtMoney(f.min_price)}`);
+      if (f.min_qty != null) chips.push(`${f.min_qty}+ seats together`);
+      return chips;
+    }
+
     function showSharedBanner(filters, totalBefore, listingsCount, share) {
       const banner = $("#sharedBanner");
       const summary = $("#sharedSummary");
@@ -2300,44 +2314,74 @@
       const isFiltered = hasActiveFilters(filters || {});
       if (!isFiltered && !share) {
         banner.hidden = true;
+        banner.classList.remove("concierge");
         return;
       }
-      const parts = [];
-      if (filters.zones?.length) parts.push(`zone: ${filters.zones.join(", ")}`);
-      if (filters.section?.length) parts.push(`section: ${filters.section.join(", ")}`);
-      if (filters.min_price != null) parts.push(`min ${fmtMoney(filters.min_price)}`);
-      if (filters.max_price != null) parts.push(`max ${fmtMoney(filters.max_price)}`);
-      if (filters.min_qty != null) parts.push(`${filters.min_qty}+ seats`);
-      const filterText = parts.length ? parts.join(" · ") : "no filters";
-
-      // Build via DOM — filterText carries URL-param + server data unescaped.
-      // Hardened 2026-05-11 (PR #57 A1 security review). Distinguishes
-      // "Filtered view" (user just filtered inline) from "Shared view"
-      // (arrived via /s/{id}).
       summary.replaceChildren();
-      const strong = document.createElement("strong");
-      strong.textContent = share ? "Shared view" : "Filtered view";
-      summary.append(
-        strong,
-        document.createTextNode(
-          ` · ${filterText} · showing ${Number(listingsCount) || 0} of ${Number(totalBefore) || 0}`
-        ),
-      );
+
       if (share) {
-        const track = document.createElement("span");
-        track.className = "muted";
-        track.textContent = ` · link viewed ${Number(share.view_count) || 0}×`;
-        summary.append(document.createTextNode(" "), track);
-      }
-      if (share?.note) {
-        summary.append(document.createElement("br"));
-        const noteSpan = document.createElement("span");
-        noteSpan.style.fontStyle = "italic";
-        noteSpan.textContent = `"${share.note}"`;
-        summary.append(noteSpan);
+        // ---- Concierge / "hand-picked for you" framing (arrived via /s/{id}) ----
+        // This is the core VibePass loop: a curated set sent to a buyer who
+        // picks one. Present it as a recommendation, not a raw filtered list.
+        banner.classList.add("concierge");
+        const count = Number(listingsCount) || 0;
+
+        const eyebrow = document.createElement("div");
+        eyebrow.className = "concierge-eyebrow";
+        eyebrow.textContent = "🎟️ Hand-picked for you";
+        summary.append(eyebrow);
+
+        if (share.note) {
+          const note = document.createElement("p");
+          note.className = "concierge-note";
+          note.textContent = `"${share.note}"`;
+          summary.append(note);
+        }
+
+        const fit = friendlyFitChips(filters);
+        if (fit.length) {
+          const fitWrap = document.createElement("div");
+          fitWrap.className = "fit-chips";
+          const lead = document.createElement("span");
+          lead.className = "fit-lead";
+          lead.textContent = "Matched to:";
+          fitWrap.append(lead);
+          fit.forEach((c) => {
+            const chip = document.createElement("span");
+            chip.className = "fit-chip";
+            chip.textContent = c;
+            fitWrap.append(chip);
+          });
+          summary.append(fitWrap);
+        }
+
+        const line = document.createElement("p");
+        line.className = "concierge-line";
+        line.textContent = count === 1
+          ? "1 option that fits — review the details and grab it below."
+          : `${count} options that fit — pick the one you like below.`;
+        summary.append(line);
+
+        // Set the listings heading so the set reads as recommendations.
+        const h = document.querySelector(".listings h2");
+        if (h && h.firstChild && h.firstChild.nodeType === 3) {
+          h.firstChild.textContent = "Your options ";
+        }
+      } else {
+        // ---- Inline filtered view (user narrowed on the page themselves) ----
+        const filterText = friendlyFitChips(filters).join(" · ") || "no filters";
+        const strong = document.createElement("strong");
+        strong.textContent = "Filtered view";
+        summary.append(
+          strong,
+          document.createTextNode(
+            ` · ${filterText} · showing ${Number(listingsCount) || 0} of ${Number(totalBefore) || 0}`
+          ),
+        );
       }
 
       if (clearLink && eventId) clearLink.href = `/store/event/${Number(eventId) || 0}`;
+      if (clearLink) clearLink.textContent = share ? "see all available seats" : "show all listings";
       banner.hidden = false;
     }
 
