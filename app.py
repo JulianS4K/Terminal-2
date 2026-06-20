@@ -1188,29 +1188,63 @@ def broker_performer_trip_plan(
 
 # _clean_section -> core/helpers.py (BR-CODE-1); aliased at top.
 # _tour_dates -> core/helpers.py (BR-CODE-1 pure-helper pass); aliased at top.
-def _tour_package_payload(performer_id: int, home_lat: float, home_lon: float,
+
+# Geographic center of the contiguous US — the neutral "home" used when a caller
+# plans location-free (ticket-budget only). Paired with an unlimited travel budget
+# so the travel-km dimension never binds and the plan is driven purely by spend.
+_US_CENTER_LAT, _US_CENTER_LON = 39.8283, -98.5795
+
+
+def _tour_package_payload(performer_id: int, home_lat: float | None, home_lon: float | None,
                           qty: int, budget_km: float, home_name: str, days: int,
                           budget_usd: float | None, side: str, clear_at: float,
                           away_margin: float, section_like: str | None = None,
-                          prefer_owned: bool = False) -> dict:
+                          prefer_owned: bool = False, max_events: int | None = None,
+                          start_date: str | None = None, end_date: str | None = None) -> dict:
     """Shared body for the retail 'tour with the artist' routes (D0 + store).
 
     Dual-mode: owned-splits where we hold inventory (concerts), market-sourced buy-to-fulfill
     for a team's away games (road owned ~ 0). Pure read + compute — no writes, no upstream API.
-    """
+
+    Location-free planning: when home_lat/home_lon are omitted, we plan on the ticket budget
+    alone — neutral US-center home + unlimited travel budget so distance never constrains the
+    pick (the fan just wants the most stops their money buys, anywhere on the tour).
+    max_events caps how many stops to follow; the optimizer keeps the best set that fits.
+    start_date/end_date (ISO) set an explicit window; otherwise it's [today, today+days]."""
+    from datetime import date as _date, timedelta
+
     from trip_planner import plan_performer_tour
 
     db = require_sb()
     start, end = _tour_dates(days)
+    today = _date.today()
+    if start_date:
+        try:
+            start = max(today, _date.fromisoformat(start_date[:10]))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            end = min(today + timedelta(days=730), _date.fromisoformat(end_date[:10]))
+        except ValueError:
+            pass
+    if end <= start:                       # guard against an inverted/empty window
+        end = start + timedelta(days=1)
     spend = None if budget_usd is None else max(0.0, min(float(budget_usd), 10_000_000.0))
+    loc_free = home_lat is None or home_lon is None
+    hlat = _US_CENTER_LAT if loc_free else float(home_lat)
+    hlon = _US_CENTER_LON if loc_free else float(home_lon)
+    bkm = 50000.0 if loc_free else max(100.0, min(float(budget_km), 50000.0))
+    me = None if max_events is None else max(1, min(int(max_events), 12))
     return plan_performer_tour(
-        db, int(performer_id), float(home_lat), float(home_lon),
-        max(1, min(int(qty), 50)), max(100.0, min(float(budget_km), 50000.0)),
+        db, int(performer_id), hlat, hlon,
+        max(1, min(int(qty), 50)), bkm,
         start, end, home_name=(home_name or "Home").strip()[:60], budget_usd=spend,
         side=(side if side in ("auto", "away", "home", "concert") else "auto"),
         clear_at=min(max(float(clear_at), 0.01), 1.0),
         away_margin=min(max(float(away_margin), 0.0), 2.0),
         section_like=_clean_section(section_like), prefer_owned=bool(prefer_owned),
+        max_events=me,
     )
 
 
@@ -1286,8 +1320,11 @@ def broker_multi_tour(
 
 
 def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: int,
-                      min_shows: int, concerts_only: bool) -> dict:
-    """Shared body for reverse-discovery ('tours near me'). Read-only."""
+                      min_shows: int, concerts_only: bool, team_side: str = "home") -> dict:
+    """Shared body for reverse-discovery ('tours near me'). Read-only.
+
+    team_side: 'home' (default — D0 broker discover, legacy home-stand grouping) or
+    'away' (D1 storefront — surfaces a team by its road games that come to your area)."""
     from trip_planner import discover_tours_near
 
     db = require_sb()
@@ -1297,6 +1334,7 @@ def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: 
         max(5.0, min(float(within_mi), 1000.0)), start, end,
         min_shows=max(1, min(int(min_shows), 6)),
         event_types=["concert"] if concerts_only else None,
+        team_side=(team_side if team_side in ("home", "away") else "home"),
     )
 
 
@@ -5009,25 +5047,33 @@ def store_performer_trip_plan(
 @app.get("/api/store/performers/{performer_id}/tour-package")
 def store_performer_tour_package(
     performer_id: int,
-    home_lat: float,
-    home_lon: float,
-    qty: int = 3,
+    qty: int = 2,
+    budget_usd: float | None = None,
+    max_events: int | None = None,
+    days: int = 365,
+    start: str | None = None,
+    end: str | None = None,
+    side: str = "auto",
+    # Location is optional — the storefront flow is budget-first. Omit home_lat/home_lon
+    # to plan on ticket spend alone (most stops your money buys, anywhere on the tour).
+    home_lat: float | None = None,
+    home_lon: float | None = None,
     budget_km: float = 8000.0,
     home_name: str = "Home",
-    days: int = 365,
-    budget_usd: float | None = None,
-    side: str = "auto",
     clear_at: float = 0.15,
     away_margin: float = 0.18,
     section_like: str | None = None,
     prefer_owned: bool = False,
 ):
-    """D1 store: retail 'tour with the artist' agent. Builds a routed multi-city package and
-    prices it — owned-splits where we hold inventory (concerts), market-sourced for a team's
-    away games. Shares the engine with the D0 route via `trip_planner`."""
+    """D1 store: retail 'follow the tour' agent. Pick a performer, a date range, how many
+    stops to follow (max_events), tickets per show (qty) and a total budget (budget_usd);
+    returns the most stops that fit, cheapest seats per show, with the rest of the tour in
+    all_stops (so the UI can offer 'add $X for one more'). Budget-first — no location needed.
+    Shares the optimizer with the D0 route via `trip_planner`."""
     return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km, home_name,
                                  days, budget_usd, side, clear_at, away_margin,
-                                 section_like, prefer_owned)
+                                 section_like, prefer_owned, max_events=max_events,
+                                 start_date=start, end_date=end)
 
 
 @app.get("/api/store/tours/multi")
@@ -5062,9 +5108,14 @@ def store_tours_near(
     min_shows: int = 2,
     concerts_only: bool = False,
 ):
-    """D1 store reverse discovery — 'what tours can I catch near me'. Performers with
-    >= min_shows within `within_mi` of home in the window, with price-from + demand."""
-    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
+    """D1 store reverse discovery — for fans who want to travel ALONG a favorite
+    artist or team's run (go city to city with them), not just catch one show. Returns
+    performers/teams playing >= min_shows within `within_mi` of home in the window (a
+    multi-stop run you can follow in person), with price-from + demand. Teams surface
+    by their AWAY games near you (road trips that come to your area), not the local
+    team's home stand — team_side='away'."""
+    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only,
+                             team_side="away")
 
 
 # _section_sort_key -> core/helpers.py (BR-CODE-1); aliased at top.
@@ -5754,34 +5805,128 @@ def store_event_detail(
     )
 
 
-@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/manifest")
-def store_seatmap_manifest(venue_id: int, configuration_id: int):
-    """Same-origin proxy for the TEvo seat-map section manifest.
+def _fetch_tevo_seatmap_file(venue_id: int, configuration_id: int, filename: str, accept: str):
+    """Server-side GET of a TEvo seat-map asset, returned to the caller.
 
-    The interactive storefront seat map (static/store/lib/seatmap.js) needs the
-    venue/configuration `manifest.json` to map listing sections → map sections
-    for price-coloring. Fetching it directly from maps.ticketevolution.com in the
-    browser is origin-gated by the CDN (it 403s / omits CORS for the storefront
-    origin), so the manifest never loads and the map silently fell back to the
-    static image on every event. Proxying it through our own origin removes the
-    cross-origin dependency entirely. Read-only GET passthrough (RULE 2 OK —
-    maps.ticketevolution.com is a public read host, no write).
+    Same-origin proxy for the interactive storefront seat map. The Tevomaps
+    bundle builds every asset URL as
+    `${mapsDomain}/${venueId}/${configurationId}/<file>` and fetches BOTH
+    `map.svg` and `manifest.json` from maps.ticketevolution.com in the browser.
+    That CDN omits CORS / origin-gates the storefront host, so those cross-origin
+    fetches fail, `SeatmapFactory.build()` rejects, and the map silently fell
+    back to the static image on every event. Routing the bundle's `mapsDomain`
+    at this proxy (see static/store/lib/seatmap.js) removes the cross-origin
+    dependency entirely. Read-only GET passthrough (RULE 2 OK —
+    maps.ticketevolution.com is a public read host, no write). venue_id /
+    configuration_id are int-typed so the upstream path can't be injected.
     """
-    url = f"https://maps.ticketevolution.com/{venue_id}/{configuration_id}/manifest.json"
+    url = f"https://maps.ticketevolution.com/{venue_id}/{configuration_id}/{filename}"
     try:
-        r = requests.get(url, timeout=8, headers={"Accept": "application/json"})
+        r = requests.get(url, timeout=8, headers={"Accept": accept})
     except requests.RequestException:
-        raise HTTPException(502, "manifest fetch failed")
+        raise HTTPException(502, "seatmap fetch failed")
     if r.status_code == 404:
-        raise HTTPException(404, "no manifest for this venue/configuration")
+        raise HTTPException(404, "no seatmap for this venue/configuration")
     if not r.ok:
-        raise HTTPException(502, f"manifest upstream {r.status_code}")
+        raise HTTPException(502, f"seatmap upstream {r.status_code}")
+    return r
+
+
+# Maps/manifests are immutable per venue/config — cache hard at the edge + browser.
+_SEATMAP_CACHE = "public, max-age=86400"
+
+
+@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/manifest.json")
+def store_seatmap_manifest(venue_id: int, configuration_id: int):
+    """Section manifest proxy. Consumed by the Tevomaps bundle (price-region
+    matching) AND by seatmap.js's own listing→section price-coloring index."""
+    r = _fetch_tevo_seatmap_file(venue_id, configuration_id, "manifest.json", "application/json")
     try:
         body = r.json()
     except ValueError:
         raise HTTPException(502, "manifest not JSON")
-    # Manifests are immutable per venue/config — cache hard at the edge + browser.
-    return JSONResponse(content=body, headers={"Cache-Control": "public, max-age=86400"})
+    return JSONResponse(content=body, headers={"Cache-Control": _SEATMAP_CACHE})
+
+
+@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/map.svg")
+def store_seatmap_svg(venue_id: int, configuration_id: int):
+    """Map SVG proxy. The Tevomaps bundle fetches this then injects it as the
+    interactive map; without the proxy the cross-origin fetch fails and the map
+    never builds."""
+    r = _fetch_tevo_seatmap_file(venue_id, configuration_id, "map.svg", "image/svg+xml")
+    return Response(
+        content=r.content,
+        media_type="image/svg+xml",
+        headers={
+            "Cache-Control": _SEATMAP_CACHE,
+            # Defense-in-depth: this is the only same-origin route that returns
+            # SVG. An SVG opened directly as a document executes embedded
+            # scripts; the bundle's inline-injection path reads .text() so these
+            # headers don't affect it, but a direct hit to this URL would
+            # otherwise be a same-origin script-execution sink. `sandbox` with no
+            # tokens blocks script execution on direct navigation; nosniff stops
+            # content-type confusion.
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/api/store/seatmap/{venue_id}/{configuration_id}/section-map")
+def store_seatmap_section_map(venue_id: int, configuration_id: int, platform: str = "evo"):
+    """Authoritative section -> seatmap-key crosswalk for the storefront seat map.
+
+    The interactive map colors manifest polygons by cheapest listing price, which
+    requires mapping each raw listing section to a map polygon key. seatmap.js has
+    a client-side heuristic matcher, but the SERVER-SIDE crosswalk
+    (`public.venue_section_map`, built by `build_venue_section_map()` with
+    exact/token/token_base tiers) is far more complete. D0's terminal reads it via
+    the `get_event_section_map` RPC — but that RPC is `@s4kent.com`-gated, so the
+    public storefront can't call it. This endpoint bridges the SAME table to the
+    storefront through the service-role client (read-only SELECT — RULE 1 OK; no
+    write, no cross-lane mutation), so D0 and D1 share one source of truth.
+
+    Config-aware: prefer the event's configuration bucket, falling back to the
+    union bucket (configuration_id = 0) — mirrors `get_event_section_map`. seatmap.js
+    still falls back to its heuristic for any section the crosswalk hasn't mapped.
+    """
+    plat = (platform or "evo").lower()
+    if plat not in ("evo", "sg"):
+        raise HTTPException(400, "unsupported platform")
+    if sb is None:
+        return JSONResponse(content={"sections": {}, "config_used": None, "count": 0})
+
+    def _rows(cfg: int):
+        try:
+            return (
+                sb.table("venue_section_map")
+                .select("section_raw,seatmap_key")
+                .eq("tevo_venue_id", venue_id)
+                .eq("configuration_id", cfg)
+                .eq("platform", plat)
+                .execute().data
+            ) or []
+        except Exception:
+            return []
+
+    config_used = configuration_id
+    rows = _rows(configuration_id)
+    if not rows and configuration_id != 0:
+        config_used = 0
+        rows = _rows(0)
+
+    sections: dict[str, str] = {}
+    for row in rows:
+        raw = (row.get("section_raw") or "").strip()
+        key = (row.get("seatmap_key") or "").strip()
+        if raw and key:
+            sections[raw] = key
+    # Crosswalk is rebuilt by the venue_section_map_refresh cron — cache modestly
+    # (not the 24h used for immutable manifests/SVGs).
+    return JSONResponse(
+        content={"sections": sections, "config_used": config_used, "count": len(sections)},
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 # Consumer-grade zone names match a programmatic bowl pattern:
