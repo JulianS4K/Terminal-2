@@ -3386,36 +3386,36 @@
     }
   }
 
-  function mountPerformer() {
+  // Shared driver for the performer + venue landing pages — identical layout,
+  // only the URL pattern, API path, entity key, and subtitle differ.
+  function _mountLanding(opts) {
     const grid = document.getElementById("grid");
     const status = document.getElementById("status");
     const head = document.getElementById("landingHead");
     const body = document.getElementById("landingBody");
     const empty = document.getElementById("empty");
     const heading = document.getElementById("gridHeading");
-    const m = location.pathname.match(/\/store\/performer\/(\d+)/);
+    const m = location.pathname.match(opts.pathRe);
     const id = m && m[1];
     if (!id || !grid) {
-      if (status) status.textContent = "Performer not found.";
+      if (status) status.textContent = `${opts.noun} not found.`;
       return;
     }
     (async () => {
       let data;
       try {
-        data = await api(`/api/store/performers/${encodeURIComponent(id)}`);
+        data = await api(`${opts.apiBase}/${encodeURIComponent(id)}`);
       } catch {
-        if (status) status.textContent = "Couldn't load this performer. Try again shortly.";
+        if (status) status.textContent = `Couldn't load this ${opts.noun.toLowerCase()}. Try again shortly.`;
         return;
       }
-      const p = data.performer || {};
+      const entity = data[opts.entityKey] || {};
+      const name = entity.name || opts.noun;
       const nameEl = document.getElementById("landingName");
       const subEl = document.getElementById("landingSub");
-      if (nameEl) nameEl.textContent = p.name || "Performer";
-      if (subEl) {
-        subEl.textContent = [p.category, p.home_venue_name && `home: ${p.home_venue_name}`]
-          .filter(Boolean).join(" · ");
-      }
-      document.title = `${p.name || "Performer"} tickets — VibePass`;
+      if (nameEl) nameEl.textContent = name;
+      if (subEl) subEl.textContent = opts.subtitle(entity);
+      document.title = `${name} tickets — VibePass`;
       if (status) status.hidden = true;
       if (head) head.hidden = false;
       if (body) body.hidden = false;
@@ -3424,6 +3424,27 @@
       if (heading) heading.hidden = events.length === 0;
       if (empty) empty.hidden = events.length !== 0;
     })();
+  }
+
+  function mountPerformer() {
+    _mountLanding({
+      pathRe: /\/store\/performer\/(\d+)/,
+      apiBase: "/api/store/performers",
+      entityKey: "performer",
+      noun: "Performer",
+      subtitle: (p) =>
+        [p.category, p.home_venue_name && `home: ${p.home_venue_name}`].filter(Boolean).join(" · "),
+    });
+  }
+
+  function mountVenue() {
+    _mountLanding({
+      pathRe: /\/store\/venue\/(\d+)/,
+      apiBase: "/api/store/venues",
+      entityKey: "venue",
+      noun: "Venue",
+      subtitle: (v) => v.city || "",
+    });
   }
 
   // Auto-mount based on body data-page. Lets HTML pages drop their inline
@@ -3437,6 +3458,7 @@
     else if (page === "discover") mountDiscover();
     else if (page === "tour") mountTourFollow();
     else if (page === "performer") mountPerformer();
+    else if (page === "venue") mountVenue();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _autoMount);

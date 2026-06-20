@@ -50,6 +50,8 @@ class _FakeSb:
         data = {
             "get_performer_landing_public": self._landing,
             "get_events_by_performer_public": self._events,
+            "get_events_by_venue_public": self._events,
+            "get_venue_assets_public": None,
         }.get(name, [])
         return type("Q", (), {"execute": lambda s: type("R", (), {"data": data})()})()
 
@@ -87,6 +89,31 @@ def test_performer_page_human_keeps_shell(monkeypatch):
     r = client.get("/store/performer/123", headers={"User-Agent": "Mozilla/5.0 (iPhone)"})
     assert r.status_code == 200
     assert "<!-- SSR_META_START -->" in r.text
+
+
+def test_venue_landing_api_derives_name_from_events(monkeypatch):
+    monkeypatch.setattr(app_module, "sb", _FakeSb())
+    r = client.get("/api/store/venues/55")
+    assert r.status_code == 200
+    body = r.json()
+    # venue name/city derived from the event rows (assets RPC returns null)
+    assert body["venue"]["name"] == "MetLife Stadium"
+    assert body["venue"]["city"] == "East Rutherford"
+    assert body["events_count"] == 1
+    assert "s4k_total_tickets" not in body["events"][0]
+
+
+def test_venue_landing_api_404_when_no_events(monkeypatch):
+    monkeypatch.setattr(app_module, "sb", _FakeSb(events=[]))
+    assert client.get("/api/store/venues/999").status_code == 404
+
+
+def test_venue_page_crawler_gets_collection_meta(monkeypatch):
+    monkeypatch.setattr(app_module, "sb", _FakeSb())
+    r = client.get("/store/venue/55", headers={"User-Agent": "facebookexternalhit/1.1"})
+    assert r.status_code == 200
+    assert "<!-- SSR_META_START -->" not in r.text
+    assert "MetLife Stadium tickets" in r.text and "CollectionPage" in r.text
 
 
 def test_sitemap_includes_dynamic_paths(monkeypatch):

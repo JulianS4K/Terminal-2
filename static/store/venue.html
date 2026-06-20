@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0b0e" />
+  <link rel="apple-touch-icon" href="/static/store/favicon.svg" />
+  <link rel="manifest" href="/static/store/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://www.google.com https://*.supabase.co https://maps.ticketevolution.com; frame-src https://www.google.com; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+  <!-- For link-unfurl / SEO crawlers (no JS), app.store_venue_page replaces
+       everything between SSR_META_START and SSR_META_END with a collection meta
+       block (title/desc/OG/JSON-LD ItemList of upcoming events). Humans keep
+       these generic defaults; store.js fills the page client-side. -->
+  <!-- SSR_META_START -->
+  <title>Venue tickets — VibePass</title>
+  <meta name="description" content="Upcoming events at this venue on VibePass. Transparent all-in pricing, no daisy chains." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="VibePass" />
+  <meta property="og:title" content="Venue tickets — VibePass" />
+  <meta property="og:description" content="Upcoming events at this venue on VibePass." />
+  <meta property="og:image" content="https://vibepass-storefront-test.onrender.com/static/store/og-default.svg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="canonical" href="" />
+  <!-- SSR_META_END -->
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <link rel="stylesheet" href="/static/store/style.css" />
+</head>
+<body data-page="venue">
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <div class="badge mvp">MVP · browse only · no real purchases</div>
+  </header>
+
+  <main class="wrap">
+    <a class="back" href="/store">← all events</a>
+
+    <div id="status" class="status" aria-live="polite">Loading…</div>
+
+    <section id="landingHead" class="event-head" hidden>
+      <div class="head-row">
+        <div>
+          <h1 id="landingName"></h1>
+          <p class="event-meta"><span id="landingSub"></span></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="landingBody" hidden>
+      <h2 id="gridHeading" class="grid-heading" hidden>Upcoming events</h2>
+      <div id="grid" class="grid" aria-busy="false"></div>
+      <p id="empty" class="empty" hidden>No upcoming events here right now — check back soon.</p>
+    </section>
+  </main>
+
+  <script src="/static/store/store.js"></script>
+</body>
+</html>

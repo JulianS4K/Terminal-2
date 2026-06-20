@@ -6066,6 +6066,70 @@ def store_performer_landing(performer_id: int):
     return payload
 
 
+def _venue_landing_payload(venue_id: int) -> dict | None:
+    """Assemble the venue landing payload (venue + upcoming events) from the
+    consumer-safe _public RPCs. The venue name/city are derived from the events
+    (get_venue_assets_public is sparsely populated); assets enrich when present.
+    Returns None when the venue has no sellable upcoming events. Drops
+    s4k_total_tickets from the cards (§2.6)."""
+    if sb is None:
+        return None
+    try:
+        ev_rows = sb.rpc(
+            "get_events_by_venue_public",
+            {"p_venue_id": venue_id, "p_days_ahead": 365, "p_limit": 60},
+        ).execute().data or []
+    except Exception as e:  # noqa: BLE001
+        print(f"[venue_landing] events RPC failed for {venue_id}: {e!r}")
+        return None
+    if not ev_rows:
+        return None
+    events = [
+        {
+            "id": e.get("event_id"),
+            "name": e.get("name"),
+            "what": e.get("what"),
+            "when_local": e.get("when_local"),
+            "venue_name": e.get("where_venue"),
+            "city": e.get("where_city"),
+            "from_price": e.get("min_price"),
+            "has_seating_chart": e.get("has_seating_chart"),
+        }
+        for e in ev_rows
+        if e.get("event_id")
+    ]
+    if not events:
+        return None
+    name = events[0].get("venue_name") or "Venue"
+    city = events[0].get("city")
+    assets = None
+    try:
+        assets = sb.rpc("get_venue_assets_public", {"p_venue_id": venue_id}).execute().data
+    except Exception:  # noqa: BLE001 — optional enrichment
+        assets = None
+    return {
+        "venue": {
+            "id": venue_id,
+            "name": name,
+            "city": city,
+            "assets": assets if isinstance(assets, dict) else None,
+        },
+        "events": events,
+        "events_count": len(events),
+    }
+
+
+@app.get("/api/store/venues/{venue_id}")
+def store_venue_landing(venue_id: int):
+    """Venue landing data: the venue plus its upcoming events. Powers the
+    /store/venue/{id} SEO landing page. 404 when the venue has no sellable
+    upcoming events."""
+    payload = _venue_landing_payload(venue_id)
+    if payload is None:
+        raise HTTPException(404, "venue not found")
+    return payload
+
+
 @app.post("/api/store/verify-human")
 def store_verify_human(request: Request, payload: dict = Body(...)):
     """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
@@ -6410,6 +6474,47 @@ def store_performer_page(performer_id: int, request: Request):
     shell = _read_storefront_html("performer.html")
     if _is_link_crawler(request.headers.get("user-agent")):
         shell = _inject_performer_meta(shell, performer_id, _STOREFRONT_BASE_URL)
+    return HTMLResponse(content=shell, headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+def _inject_venue_meta(shell: str, venue_id: int, base_url: str) -> str:
+    """Replace the SSR_META block in the venue-landing shell with collection
+    meta for crawlers. Defensive: any failure returns the shell unchanged."""
+    start = shell.find(_SSR_META_START)
+    end = shell.find(_SSR_META_END)
+    if start == -1 or end == -1 or end < start:
+        return shell
+    payload = _venue_landing_payload(venue_id)
+    if not payload:
+        return shell
+    v = payload["venue"]
+    name = (v.get("name") or "").strip()
+    if not name:
+        return shell
+    canonical = f"{base_url}/store/venue/{venue_id}"
+    summary = {
+        "kind": "venue",
+        "name": name,
+        "subtitle": (f"in {v['city']}" if v.get("city") else None),
+        "count": payload["events_count"],
+        "image_url": None,
+        "events": [
+            {"name": e.get("name"), "url": f"{base_url}/store/event/{e['id']}",
+             "date_iso": e.get("when_local")}
+            for e in payload["events"][:25]
+        ],
+    }
+    tags = _build_collection_meta_tags(summary, canonical, f"{base_url}{_OG_DEFAULT_IMAGE}")
+    return shell[:start] + tags + shell[end + len(_SSR_META_END):]
+
+
+@app.api_route("/store/venue/{venue_id}", methods=["GET", "HEAD"])
+def store_venue_page(venue_id: int, request: Request):
+    """Programmatic venue SEO landing page. Crawler-gated server-side
+    collection meta; humans get the static shell + store.js grid."""
+    shell = _read_storefront_html("venue.html")
+    if _is_link_crawler(request.headers.get("user-agent")):
+        shell = _inject_venue_meta(shell, venue_id, _STOREFRONT_BASE_URL)
     return HTMLResponse(content=shell, headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
@@ -6813,7 +6918,7 @@ def _sitemap_dynamic_paths() -> list[str]:
     try:
         today = datetime.now().date().isoformat()
         rows = (
-            sb.table("events").select("id,primary_performer_id,occurs_at_local")
+            sb.table("events").select("id,primary_performer_id,venue_id,occurs_at_local")
             .gte("occurs_at_local", today)
             .order("occurs_at_local")
             .limit(3000)
@@ -6824,6 +6929,7 @@ def _sitemap_dynamic_paths() -> list[str]:
         return []
     paths: list[str] = []
     seen_perf: set = set()
+    seen_venue: set = set()
     for r in rows:
         eid = r.get("id")
         if eid:
@@ -6832,6 +6938,10 @@ def _sitemap_dynamic_paths() -> list[str]:
         if pid and pid not in seen_perf:
             seen_perf.add(pid)
             paths.append(f"/store/performer/{pid}")
+        vid = r.get("venue_id")
+        if vid and vid not in seen_venue:
+            seen_venue.add(vid)
+            paths.append(f"/store/venue/{vid}")
     return paths
 
 
