@@ -348,3 +348,71 @@ def test_news_team_ids_mode_parses_filter(client, monkeypatch):
     body = client.get("/api/broker/news?team_ids=20,18&limit=5").json()
     assert body["filter"]["team_ids"] == ["20", "18"]
     assert body["count"] == 0
+
+
+# ---------- /api/broker/event/{id}/section-zones (degradation paths) ----------
+
+def test_section_zones_no_event_returns_empty(client, monkeypatch):
+    # Unknown event -> empty map, no crash (the curated/fallback machinery below
+    # is never reached).
+    _use_db(monkeypatch, FakeSupabase(table_data={"events": []}))
+    body = client.get("/api/broker/event/999/section-zones").json()
+    assert body == {"map": {}, "source_mix": {}}
+
+
+def test_section_zones_no_listings_returns_empty(client, monkeypatch):
+    # Event exists but has no listings snapshot yet -> empty map (no sections to
+    # classify).
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "events": [{"primary_performer_id": 16303, "venue_id": 42}],
+        "listings_snapshots": [],
+    }))
+    body = client.get("/api/broker/event/1/section-zones").json()
+    assert body == {"map": {}, "source_mix": {}}
+
+
+# ---------- /api/broker/tours/near (param plumbing) ----------
+
+def test_tours_near_passes_params_to_discovery(client, monkeypatch):
+    captured = {}
+    def _fake_discover(home_lat, home_lon, within_mi, days, min_shows, concerts_only):
+        captured.update(dict(home_lat=home_lat, home_lon=home_lon, within_mi=within_mi,
+                             days=days, min_shows=min_shows, concerts_only=concerts_only))
+        return {"ok": True, "performers": []}
+    monkeypatch.setattr(app_module, "_discover_payload", _fake_discover)
+    body = client.get("/api/broker/tours/near"
+                      "?home_lat=40.75&home_lon=-73.99&within_mi=100&days=60"
+                      "&min_shows=3&concerts_only=true").json()
+    assert body == {"ok": True, "performers": []}
+    assert captured == {"home_lat": 40.75, "home_lon": -73.99, "within_mi": 100.0,
+                        "days": 60, "min_shows": 3, "concerts_only": True}
+
+
+# ---------- /api/broker/event/{id}/orders ----------
+
+def test_orders_empty_returns_null_summary(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"evo_order_items": []}))
+    body = client.get("/api/broker/event/1/orders").json()
+    assert body == {"event_id": 1, "items": [], "orders": [], "summary": None}
+
+
+def test_orders_rolls_up_state_counts_and_sold(client, monkeypatch):
+    items = [
+        {"evo_order_id": 10, "evo_item_id": 1, "quantity": 2, "price": 100},  # accepted
+        {"evo_order_id": 11, "evo_item_id": 2, "quantity": 1, "price": 50},   # pending
+    ]
+    orders = [
+        {"evo_order_id": 10, "state": "accepted", "evo_updated_at": "2026-05-10T12:00:00Z"},
+        {"evo_order_id": 11, "state": "pending", "evo_updated_at": "2026-05-09T12:00:00Z"},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "evo_order_items": items, "evo_orders": orders,
+    }))
+    body = client.get("/api/broker/event/1/orders").json()
+    s = body["summary"]
+    assert s["total_items"] == 2
+    assert s["by_state"] == {"accepted": 1, "pending": 1}
+    # only accepted/completed items count toward sold totals
+    assert s["tickets_sold"] == 2
+    assert s["gross_sold"] == 200.0       # 100 * 2
+    assert s["last_update_at"] == "2026-05-10T12:00:00Z"

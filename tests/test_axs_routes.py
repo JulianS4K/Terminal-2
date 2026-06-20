@@ -88,16 +88,22 @@ def test_axs_events_list(client, monkeypatch):
               "currency": "USD", "getin": 55, "price_min": 55, "price_max": 250,
               "listings_count": 120, "sections_count": 18, "offers_count": 3,
               "seats_primary": 100, "seats_resale": 20, "onsale_now": True}]
-    _db(monkeypatch, tables={"axs_events": evs, "axs_event_snapshots": snaps})
+    metrics = [{"event_id": 42, "owned_tickets_count": 8, "owned_groups_count": 2,
+                "owned_share": 0.25}]
+    _db(monkeypatch, tables={"axs_events": evs, "axs_event_snapshots": snaps,
+                             "latest_event_metrics": metrics})
     body = client.get("/api/axs/events").json()
     assert body["count"] == 2
     assert body["linked"] == 1
     assert body["pulled"] == 1
+    assert body["owned"] == 1
     a = next(e for e in body["events"] if e["axs_event_id"] == "ev-a")
     assert a["linked"] is True and a["event_name"] == "Show A"
     assert a["getin"] == 55 and a["seats_resale"] == 20
+    assert a["we_own"] is True and a["owned_tickets"] == 8 and a["owned_share"] == 0.25
     b = next(e for e in body["events"] if e["axs_event_id"] == "ev-b")
     assert b["linked"] is False and b["event_name"] is None and b["captured_at"] is None
+    assert b["we_own"] is False and b["owned_tickets"] is None
 
 
 def test_axs_event_unlinked(client, monkeypatch):

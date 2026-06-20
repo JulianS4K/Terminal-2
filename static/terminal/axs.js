@@ -18,7 +18,7 @@
   'use strict';
   const T = window.Terminal;
 
-  const state = { active: true, filter: '' };
+  const state = { active: true, ownedOnly: false, filter: '' };
   let _rows = [];  // last fetched events, for client-side filtering
 
   function init() {
@@ -39,6 +39,15 @@
         document.querySelectorAll('[data-axs-active]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         refreshAxsEvents();
+      });
+    });
+    // Holdings filter is purely client-side over the already-fetched rows.
+    document.querySelectorAll('[data-axs-owned]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.ownedOnly = btn.dataset.axsOwned === '1';
+        document.querySelectorAll('[data-axs-owned]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        renderTable();
       });
     });
     const filterEl = document.getElementById('axsFilter');
@@ -75,7 +84,8 @@
       summaryEl.innerHTML = _rows.length
         ? `<span class="badge">${data.count} tracked</span> ` +
           `<span class="badge">${data.linked} mapped → TEvo</span> ` +
-          `<span class="badge">${data.pulled} pulled</span>`
+          `<span class="badge">${data.pulled} pulled</span> ` +
+          `<span class="badge pos">${data.owned || 0} we hold tickets</span>`
         : '';
     }
     renderTable();
@@ -87,6 +97,9 @@
     if (!body) return;
 
     let rows = _rows;
+    if (state.ownedOnly) {
+      rows = rows.filter(r => r.we_own);
+    }
     if (state.filter) {
       rows = rows.filter(r =>
         (r.event_name || '').toLowerCase().includes(state.filter) ||
@@ -133,6 +146,7 @@
         <th class="num" title="Sections with availability">Sec</th>
         <th class="num" title="Primary box-office seats">Prim</th>
         <th class="num" title="AXS Marketplace resale seats">Resale</th>
+        <th class="num" title="Tickets WE hold for this event (S4K owned inventory, latest_event_metrics)">Owned</th>
         <th class="num" title="Last AXS pull">Pulled</th>
         <th>Links</th>
       </tr></thead>
@@ -150,6 +164,15 @@
         : escapeHtml(name);
       const onsale = r.onsale_now ? ' <span class="badge pos" title="On sale now">on sale</span>' : '';
       const unmapped = r.tevo_event_id ? '' : ' <span class="badge muted" title="Not yet mapped to a canonical TEvo event">unmapped</span>';
+      // We-hold-tickets flag: S4K owned inventory for the mapped TEvo event.
+      const sharePct = (r.owned_share != null && Number.isFinite(+r.owned_share))
+        ? ` · ${(+r.owned_share * 100).toFixed(0)}% of mkt` : '';
+      const hold = r.we_own
+        ? ` <span class="badge pos" title="We hold ${T.fmtNum(r.owned_tickets)} ticket(s)${sharePct}">HOLD</span>`
+        : '';
+      const ownedCell = r.we_own
+        ? `<span class="pos">${T.fmtNum(r.owned_tickets)}</span>`
+        : (r.linked ? '<span class="muted">0</span>' : '<span class="muted small">—</span>');
 
       const band = (r.price_min != null && r.price_max != null)
         ? `${cur}${T.fmtNum(Math.round(r.price_min))}–${cur}${T.fmtNum(Math.round(r.price_max))}`
@@ -162,7 +185,7 @@
       if (r.tevo_event_id) links.push(`<a href="event.html?event=${r.tevo_event_id}">EVENT</a>`);
 
       tr.innerHTML = `
-        <td>${nameCell}${onsale}${unmapped}</td>
+        <td>${nameCell}${hold}${onsale}${unmapped}</td>
         <td>${escapeHtml(r.venue_name || '—')}</td>
         <td class="num">${r.occurs_at_local ? T.temporalChipHtml(r.occurs_at_local) : '<span class="muted small">—</span>'}</td>
         <td class="num">${r.getin != null ? cur + T.fmtNum(Math.round(r.getin)) : '—'}</td>
@@ -171,6 +194,7 @@
         <td class="num">${T.fmtNum(r.sections_count)}</td>
         <td class="num">${T.fmtNum(r.seats_primary)}</td>
         <td class="num">${T.fmtNum(r.seats_resale)}</td>
+        <td class="num">${ownedCell}</td>
         <td class="num muted small">${fmtDateShort(r.last_pulled_at)}</td>
         <td class="small">${links.join(' · ') || '—'}</td>`;
       tb.appendChild(tr);

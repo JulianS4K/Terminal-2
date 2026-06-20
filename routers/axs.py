@@ -46,9 +46,25 @@ def build_axs_router(get_require_sb: Callable[[], Callable], require_auth: Calla
             ).data or []
             snaps = {r["id"]: r for r in rows}
 
+        # Owned-inventory peg: which mapped events do WE hold tickets for. Batch
+        # the canonical latest_event_metrics view (keyed on tevo event_id, one
+        # latest row per event) over the mapped ids — owned_tickets_count is the
+        # broker-pool truth (is_owned/brokerage 1768 rolled up by the collector).
+        tevo_ids = [e["tevo_event_id"] for e in evs if e.get("tevo_event_id")]
+        owned: dict = {}
+        if tevo_ids:
+            mrows = (
+                db.table("latest_event_metrics")
+                .select("event_id,owned_tickets_count,owned_groups_count,owned_share")
+                .in_("event_id", tevo_ids).execute()
+            ).data or []
+            owned = {r["event_id"]: r for r in mrows}
+
         out = []
         for e in evs:
             s = snaps.get(e.get("last_snapshot_id")) or {}
+            m = owned.get(e.get("tevo_event_id")) or {}
+            owned_tix = m.get("owned_tickets_count")
             out.append({
                 "axs_event_id": e.get("axs_event_id"),
                 "event_url": e.get("event_url"),
@@ -56,6 +72,10 @@ def build_axs_router(get_require_sb: Callable[[], Callable], require_auth: Calla
                 "tevo_venue_id": e.get("tevo_venue_id"),
                 "active": e.get("active"),
                 "linked": e.get("tevo_event_id") is not None,
+                "we_own": bool(owned_tix and owned_tix > 0),
+                "owned_tickets": owned_tix,
+                "owned_groups": m.get("owned_groups_count"),
+                "owned_share": m.get("owned_share"),
                 "last_pulled_at": e.get("last_pulled_at"),
                 "captured_at": s.get("captured_at"),
                 "event_name": s.get("event_name"),
@@ -76,6 +96,7 @@ def build_axs_router(get_require_sb: Callable[[], Callable], require_auth: Calla
             "count": len(out),
             "linked": sum(1 for e in out if e["linked"]),
             "pulled": sum(1 for e in out if e["captured_at"]),
+            "owned": sum(1 for e in out if e["we_own"]),
             "events": out,
         }
 
