@@ -27,11 +27,12 @@
   <main class="wrap orders">
 
     <!-- Inline orders dashboard. The D2 order surface (Evo + SeatGeek +
-         SeatData + TickPick + Vivid, mirrored to public.unified_orders) is
-         served by the d2_dashboard router, mounted same-origin into this
-         FastAPI shell (app.py — `app.include_router(d2_router)`). The terminal
-         reads /api/d2/orders directly with the operator's Supabase JWT — no
-         hop to a separate d2-orders-dashboard service. -->
+         TickPick + Vivid, mirrored to public.unified_orders) is served by the
+         d2_dashboard router, mounted same-origin into this FastAPI shell
+         (app.py — `app.include_router(d2_router)`). The terminal reads
+         /api/d2/orders directly with the operator's Supabase JWT — no hop to a
+         separate d2-orders-dashboard service. seatdata is excluded here —
+         it's third-party completed-sales analytics, not our order book. -->
     <section id="orders-controls">
       <div class="panel-title row">
         <span>ORDERS · UNIFIED BOOK</span>
@@ -44,7 +45,6 @@
           <button class="ctrl-btn is-active" data-source="all">All</button>
           <button class="ctrl-btn" data-source="evo">EVO</button>
           <button class="ctrl-btn" data-source="seatgeek_sales">SG</button>
-          <button class="ctrl-btn" data-source="seatdata">SeatData</button>
           <button class="ctrl-btn" data-source="tickpick">TickPick</button>
           <button class="ctrl-btn" data-source="vivid">Vivid</button>
         </div>
@@ -81,6 +81,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260620"></script>
-  <script src="orders.js?v=20260620"></script>
+  <script src="orders.js?v=20260620a"></script>
 </body>
 </html>
