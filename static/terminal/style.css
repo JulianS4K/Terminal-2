@@ -2257,3 +2257,5 @@ body[data-page="login"] {
 .subs-typeahead .ta-meta { font-size: 10px; color: var(--muted); }
 .subs-typeahead .ta-empty { padding: 8px 10px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .subs-typeahead .ta-empty.err { color: var(--neg); }
+.sub-link { color: var(--accent); text-decoration: none; font-size: 10px; margin-left: 6px; font-family: var(--mono); }
+.sub-link:hover { text-decoration: underline; }

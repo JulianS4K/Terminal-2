@@ -353,13 +353,22 @@
     if (meta) meta.textContent = rows.length ? `${rows.length} listings` : '';
     if (!rows.length) { body.innerHTML = '<div class="empty">No current SeatGeek listings.</div>'; return; }
     const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    // For an OURS row, link to the substitution checker pre-filled from the
+    // listing (event/section/row/qty) so a double-sell can be covered fast.
+    const eid = T.getEventId();
+    const subLink = (r) => {
+      if (!eid) return '';
+      const qs = `event=${eid}&section=${encodeURIComponent(r.section || '')}` +
+        `&row=${encodeURIComponent(r.row || '')}&quantity=${r.quantity || 1}`;
+      return ` <a class="sub-link" href="subs.html?${qs}" title="find substitutes">subs ↗</a>`;
+    };
     const trs = rows.map(r => '<tr>' +
       `<td>${escapeHtml(r.section || '—')}</td>` +
       `<td>${escapeHtml(r.row || '—')}</td>` +
       `<td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>` +
       `<td class="num">${money(r.retail_price_all_in)}</td>` +
       `<td class="num">${money(r.broadcast_price)}</td>` +
-      `<td>${r.is_broker_owned ? '<span class="badge">OURS</span>' : ''}</td>` +
+      `<td>${r.is_broker_owned ? '<span class="badge">OURS</span>' + subLink(r) : ''}</td>` +
       '</tr>').join('');
     body.innerHTML = '<table><thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th>' +
       '<th class="num">All-in</th><th class="num">List</th><th></th></tr></thead><tbody>' + trs + '</tbody></table>';

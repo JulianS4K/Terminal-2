@@ -57,7 +57,7 @@ There are **two data paths** out of the browser:
 | `venue.js` | 509 | Venue index + detail + Market Carpet tab. |
 | `orders.js` | 50 | Doorway to the D2 orders dashboard (health ping only). |
 
-**HTML pages (8):** `index.html` (home), `event.html`, `movers.html`, `discovery.html`, `performer.html`, `venue.html`, `orders.html`, `login.html`.
+**HTML pages (9):** `index.html` (home), `event.html`, `movers.html`, `discovery.html`, `performer.html`, `venue.html`, `subs.html`, `orders.html`, `login.html`.
 Each sets `data-page` on `<body>` and loads the chain **`lib/supabase.js → auth.js → app.js → nav.js → <page>.js`**, with two exceptions:
 - `login.html` loads only `lib/supabase.js → auth.js → login.js` (no app.js/nav.js — you're not authed yet).
 - `event.html` additionally loads `lib/uplot.iife.min.js` + `lib/uplot.min.css` (charts) and `lib/tevomaps.bundle.js` (Seat Map, §B11).
@@ -98,6 +98,7 @@ Pages call `TerminalAuth.client.rpc('fn_name', {args})` or `.from('table').selec
 | **Discovery** (`discovery.html` / `discovery.js`) | C | `from('discovery_gap_alerts').select().is('resolved_at',null)` (`discovery.js:73-79`); rpc `get_blind_spots_tevo_selling` (`:260`), `get_returning_entities` (`:374`); enrich via `sg_events_canonical` + `events` | `discovery_gap_alerts`, `sg_events_canonical`, `events` |
 | **Performer** (`performer.html` / `performer.js`) | A + C | index rpc `get_broker_performer_index` (`:48`); detail `T.api('/api/broker/performer/{id}/assets')` + `T.api('/api/portfolio?performer_id={id}')` (`:111-112`); ESPN rpc `get_broker_performer_page({p_performer_id})` (`:355`); Market Carpet reads `event_listing_snapshot_daily`/`event_movers_index`/`discovery_gap_alerts` (`:491-508`) | `performer_metadata`, `entity_performer_map`, `espn_*`, portfolio |
 | **Venue** (`venue.html` / `venue.js`) | C | index rpc `get_broker_venue_index` (`:45`); detail rpc `get_broker_venue_page({p_venue_id})` — one round-trip for 4 tabs (`:108`); Market Carpet same 3 tables (`:332-349`) | `venue_assets`, `entity_venue_map` |
+| **Subs** (`subs.html` / `subs.js`) | A + C | `T.api('/api/broker/event/{id}/substitutions?section=&row=&quantity=&revenue=&source=&fee_pct=')` (`subs.js`); event-name typeahead rpc `terminal_search` | `listings_snapshots`, `seatgeek_seller_listings`, `section_metrics` (logic in `core/substitutions.py`) |
 | **Orders** (`orders.html` / `orders.js`) | — | health ping to `https://d2-orders-dashboard.onrender.com/healthz` (`orders.js:9,25`); **no broker API** | (D2 dashboard, separate service) |
 | **Login** (`login.html` / `login.js`) | C (auth) | Supabase Google OAuth via `TerminalAuth.signInWithGoogle`; no broker API | Supabase auth |
 | **(global)** `nav.js` | C | rpc `terminal_search({p_q, p_limit:6})` (`nav.js:115`) | `terminal_search` |
