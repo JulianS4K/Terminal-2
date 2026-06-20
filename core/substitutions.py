@@ -255,6 +255,7 @@ def find_row_substitutions(
             "unit_cost": unit_cost,
             "row_delta": row_delta,
             "ticket_group_id": gid,
+            "inv_source": c.get("inv_source"),
             "pnl_per_ticket": pnl_per_ticket,
             "pnl_total": pnl_total,
         }

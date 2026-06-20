@@ -114,10 +114,13 @@ def build_broker_router(
         ranked CHEAPEST-FIRST — over-delivering a better seat than was sold is
         wasted money, so the least-cost acceptable seat wins.
 
-        `source` selects the candidate pool from the latest `listings_snapshots`
-        snapshot for the event:
-          owned  (default) our held inventory (is_owned=true) — a free swap
-          market the rest of the book — a buy-in when we hold no sub
+        `source` selects the candidate pool:
+          owned  (default) our held inventory — the latest `listings_snapshots`
+                 `is_owned=true` rows (TEvo, cost≈list `retail_price`) MERGED
+                 with our SeatGeek SellerDirect book (`seatgeek_seller_listings`,
+                 real `cost` basis) — a free swap from stock we already hold
+          market the rest of the `listings_snapshots` book — a buy-in when we
+                 hold no sub
         `revenue` (total $ received for the sale) turns on per-sub P&L so the
         loss/margin of each cover is explicit. Ranking/matching is pure logic in
         core.substitutions; "better SECTION" matching is a deliberate future phase.
@@ -130,26 +133,52 @@ def build_broker_router(
           source    "owned" (default) | "market"
         """
         db = get_require_sb()()
+        qty = max(1, int(quantity or 1))
+        rev_per_ticket = (revenue / qty) if revenue is not None else None
+
         latest = (
             db.table("listings_snapshots").select("captured_at")
             .eq("event_id", event_id).order("captured_at", desc=True).limit(1)
             .execute().data or []
         )
-        qty = max(1, int(quantity or 1))
-        rev_per_ticket = (revenue / qty) if revenue is not None else None
-        if not latest:
-            empty = find_row_substitutions(section, row, qty, [],
-                                           revenue_per_ticket=rev_per_ticket)
-            empty.update({"captured_at": None, "event_id": event_id, "source": source})
-            return empty
-        captured_at = latest[0]["captured_at"]
-        q = (
-            db.table("listings_snapshots")
-            .select("tevo_ticket_group_id,section,row,quantity,retail_price,is_owned")
-            .eq("event_id", event_id).eq("captured_at", captured_at)
-            .eq("is_owned", source == "owned")
-        )
-        pool = q.execute().data or []
+        captured_at = latest[0]["captured_at"] if latest else None
+        pool: list[dict] = []
+        if captured_at is not None:
+            ls = (
+                db.table("listings_snapshots")
+                .select("tevo_ticket_group_id,section,row,quantity,retail_price,is_owned")
+                .eq("event_id", event_id).eq("captured_at", captured_at)
+                .eq("is_owned", source == "owned")
+                .execute().data or []
+            )
+            for r in ls:
+                r["inv_source"] = "tevo_owned" if source == "owned" else "tevo_market"
+            pool.extend(ls)
+
+        # Owned pool also spans our SeatGeek SellerDirect book (its own `cost`
+        # basis), so a sub we hold there isn't missed as a "buy-in".
+        if source == "owned":
+            seller_raw = (
+                db.table("seatgeek_seller_listings")
+                .select("seller_listing_id,section,row,quantity,cost,pulled_at")
+                .eq("tevo_event_id", event_id)
+                .execute().data or []
+            )
+            latest_seller: dict = {}
+            for r in seller_raw:
+                k = r.get("seller_listing_id")
+                if k not in latest_seller or (r.get("pulled_at") or "") > (latest_seller[k].get("pulled_at") or ""):
+                    latest_seller[k] = r
+            for r in latest_seller.values():
+                pool.append({
+                    "id": r.get("seller_listing_id"),
+                    "section": r.get("section"),
+                    "row": r.get("row"),
+                    "quantity": r.get("quantity"),
+                    "cost": r.get("cost"),
+                    "inv_source": "sg_seller",
+                })
+
         result = find_row_substitutions(section, row, qty, pool,
                                         revenue_per_ticket=rev_per_ticket)
         result.update({"captured_at": captured_at, "event_id": event_id, "source": source})
