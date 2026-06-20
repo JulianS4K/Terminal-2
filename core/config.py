@@ -11,6 +11,7 @@ monkeypatched there. Only the pure config values live here.
 from __future__ import annotations
 
 import os
+import time
 
 # ---------- Supabase + cross-cutting ----------
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -72,3 +73,61 @@ if RECAPTCHA_ENABLED:
     print(f"reCAPTCHA v3 ENABLED — sitewide bot gate active (min score {RECAPTCHA_MIN_SCORE}).")
 else:
     print("reCAPTCHA v3 dormant (RECAPTCHA_SITE_KEY/RECAPTCHA_SECRET_KEY unset) — honeypot + rate limits still active.")
+
+
+# ---------- Storefront deploy identity (version tag + base URL) ----------
+
+def build_storefront_version() -> str:
+    """Short-SHA tag used in the `?v=<...>` query string on static asset
+    references inside the served HTML shells.
+
+    Resolution order:
+      1. RENDER_GIT_COMMIT       — auto-set by Render on every deploy.
+      2. RAILWAY_GIT_COMMIT_SHA  — auto-set by Railway on every deploy.
+      3. GIT_COMMIT              — set by some CI workflows; defensive fallback.
+      4. f"dev-{epoch}"          — local dev / unset prod; bumps per container
+         start so a fresh boot always re-fetches even if env wasn't wired.
+
+    Was returning hardcoded "dev" before; Railway audit 2026-05-16 found that
+    every Railway deploy served `?v=dev` (no RENDER_GIT_COMMIT, no GIT_COMMIT)
+    which defeated the cache-bust entirely. Adding Railway env + an epoch
+    fallback restores the invariant.
+    """
+    sha = (os.environ.get("RENDER_GIT_COMMIT")
+           or os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+           or os.environ.get("GIT_COMMIT"))
+    if sha:
+        return sha[:7]
+    # Last-resort: per-container epoch so fresh boots always cache-bust.
+    return f"dev-{int(time.time())}"
+
+
+def build_storefront_base_url() -> str:
+    """Absolute base URL used in OG share-card tags so previews
+    (iMessage/Slack/WhatsApp/Discord/Twitter) point at THIS deploy, not at
+    a hardcoded sibling deploy. Was hardcoded `vibepass-storefront-test.onrender.com`
+    in static/store/index.html (PR #166) so Railway-shared links previewed
+    the Render service.
+
+    Resolution order:
+      1. STOREFRONT_BASE_URL    — manual override (full URL with scheme).
+      2. RENDER_EXTERNAL_URL    — auto-set by Render to https://<service>.onrender.com.
+      3. RAILWAY_PUBLIC_DOMAIN  — auto-set by Railway to <env>.up.railway.app (no scheme).
+      4. Fallback hardcoded Render URL — preserves prior behavior on unconfigured
+         envs so nothing regresses.
+    """
+    override = os.environ.get("STOREFRONT_BASE_URL")
+    if override:
+        return override.rstrip("/")
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if render_url:
+        return render_url.rstrip("/")
+    railway_dom = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if railway_dom:
+        dom = railway_dom.strip().removeprefix("https://").removeprefix("http://")
+        return f"https://{dom}"
+    return "https://vibepass-storefront-test.onrender.com"
+
+
+STOREFRONT_VERSION = build_storefront_version()
+STOREFRONT_BASE_URL = build_storefront_base_url()

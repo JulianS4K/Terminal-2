@@ -611,8 +611,72 @@ async function callAnthropic(apiKey: string, payload: any, attempt = 0): Promise
   if ((resp.status === 429 || resp.status === 529) && attempt < 3) { const ra = resp.headers.get("retry-after"); const waitSec = ra ? Math.max(parseInt(ra, 10) || 1, 1) : Math.min(2 ** attempt, 8); await sleep(waitSec * 1000); return callAnthropic(apiKey, payload, attempt + 1); }
   return resp;
 }
+// ---- xAI / Grok (OpenAI Chat Completions-compatible) ------------------------
+// The agentic loop (runLLMLoop) + its helpers are Anthropic-shaped: top-level
+// `system`, tools as {name, description, input_schema}, and messages as
+// content-block arrays (text / tool_use / tool_result). xAI speaks the OpenAI
+// Chat Completions schema, so callGrok translates the request OUT to OpenAI and
+// the response BACK to the Anthropic shape — the loop and helpers stay untouched.
+// The load-bearing invariant: synthesize each tool_use.id = the xAI tool_call.id,
+// so the next turn's tool_result.tool_use_id round-trips to the right tool_call_id.
+// INERT until LLM_PROVIDER=grok (default stays anthropic).
+function anthToolsToOpenAI(tools: any[]): any[] {
+  return (tools ?? []).map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.input_schema },
+  }));
+}
+function anthMessagesToOpenAI(sys: string, messages: any[]): any[] {
+  const out: any[] = [{ role: "system", content: sys }];
+  for (const m of messages) {
+    if (typeof m.content === "string") { out.push({ role: m.role, content: m.content }); continue; }
+    const blocks = Array.isArray(m.content) ? m.content : [];
+    if (m.role === "assistant") {
+      const text = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+      const toolCalls = blocks.filter((b: any) => b.type === "tool_use").map((b: any) => ({
+        id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+      }));
+      const msg: any = { role: "assistant", content: text || null };
+      if (toolCalls.length) msg.tool_calls = toolCalls;
+      out.push(msg);
+    } else {
+      // user turn: tool_result blocks -> one OpenAI `tool` message each; else plain text.
+      const results = blocks.filter((b: any) => b.type === "tool_result");
+      if (results.length) {
+        for (const r of results) out.push({ role: "tool", tool_call_id: r.tool_use_id, content: typeof r.content === "string" ? r.content : JSON.stringify(r.content) });
+      } else {
+        out.push({ role: "user", content: blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("") });
+      }
+    }
+  }
+  return out;
+}
+function openAIChoiceToAnth(choice: any): any {
+  const msg = choice?.message ?? {};
+  const content: any[] = [];
+  if (msg.content) content.push({ type: "text", text: String(msg.content) });
+  const toolCalls = msg.tool_calls ?? [];
+  for (const tc of toolCalls) {
+    let input: any = {};
+    try { input = JSON.parse(tc.function?.arguments || "{}"); } catch (_) { input = {}; }
+    content.push({ type: "tool_use", id: tc.id, name: tc.function?.name, input });
+  }
+  return { stop_reason: toolCalls.length ? "tool_use" : "end_turn", content };
+}
+async function callGrok(apiKey: string, sys: string, tools: any[], messages: any[], attempt = 0): Promise<Response> {
+  const body = { model: LLM_MODEL, max_tokens: 1024, tool_choice: "auto", tools: anthToolsToOpenAI(tools), messages: anthMessagesToOpenAI(sys, messages) };
+  const resp = await fetch("https://api.x.ai/v1/chat/completions", { method: "POST", headers: { "authorization": `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  if ((resp.status === 429 || resp.status >= 500) && attempt < 3) { const ra = resp.headers.get("retry-after"); const waitSec = ra ? Math.max(parseInt(ra, 10) || 1, 1) : Math.min(2 ** attempt, 8); await sleep(waitSec * 1000); return callGrok(apiKey, sys, tools, messages, attempt + 1); }
+  return resp;
+}
 async function llmCall(apiKey: string, sys: string, tools: any[], messages: any[]): Promise<{ status: number; body: any }> {
   if (LLM_PROVIDER === "anthropic") { const r = await callAnthropic(apiKey, { model: LLM_MODEL, max_tokens: 1024, system: sys, tools, messages }); return { status: r.status, body: r.ok ? await r.json() : { error: await r.text() } }; }
+  if (LLM_PROVIDER === "grok" || LLM_PROVIDER === "xai") {
+    const r = await callGrok(apiKey, sys, tools, messages);
+    if (!r.ok) return { status: r.status, body: { error: await r.text() } };
+    const data = await r.json();
+    return { status: 200, body: openAIChoiceToAnth(data.choices?.[0]) };
+  }
   return { status: 501, body: { error: `provider ${LLM_PROVIDER} not yet implemented` } };
 }
 function sanitizeReply(text: string): string {
@@ -795,7 +859,11 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
   if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: { ...corsHeaders(req), "content-type": "text/plain" } });
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const apiKey = LLM_PROVIDER === "anthropic" ? await resolveSecret(db, "anthropic_api_key", "ANTHROPIC_API_KEY") : Deno.env.get("LLM_API_KEY");
+  const apiKey = LLM_PROVIDER === "anthropic"
+    ? await resolveSecret(db, "anthropic_api_key", "ANTHROPIC_API_KEY")
+    : (LLM_PROVIDER === "grok" || LLM_PROVIDER === "xai")
+      ? ((await resolveSecret(db, "xai_api_key", "XAI_API_KEY")) ?? Deno.env.get("LLM_API_KEY"))
+      : Deno.env.get("LLM_API_KEY");
   if (!apiKey) return jsonResponse(req, { error: "service not configured" }, 503);
   let body: any = null;
   try { body = await req.json(); } catch (_) { return jsonResponse(req, { error: "expected JSON body" }, 400); }

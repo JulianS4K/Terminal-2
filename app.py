@@ -16,7 +16,6 @@ Optional:
 
 from __future__ import annotations
 
-import hmac
 import logging
 import math
 import os
@@ -49,60 +48,9 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 # "not deployed" from the operator's perspective for hours after the
 # actual merge — see Round 4 of docs/d1-bot-continues-here audit.
 
-def _build_storefront_version() -> str:
-    """Short-SHA tag used in the `?v=<...>` query string on static asset
-    references inside the served HTML shells.
-
-    Resolution order:
-      1. RENDER_GIT_COMMIT       — auto-set by Render on every deploy.
-      2. RAILWAY_GIT_COMMIT_SHA  — auto-set by Railway on every deploy.
-      3. GIT_COMMIT              — set by some CI workflows; defensive fallback.
-      4. f"dev-{epoch}"          — local dev / unset prod; bumps per container
-         start so a fresh boot always re-fetches even if env wasn't wired.
-
-    Was returning hardcoded "dev" before; Railway audit 2026-05-16 found that
-    every Railway deploy served `?v=dev` (no RENDER_GIT_COMMIT, no GIT_COMMIT)
-    which defeated the cache-bust entirely. Adding Railway env + an epoch
-    fallback restores the invariant.
-    """
-    sha = (os.environ.get("RENDER_GIT_COMMIT")
-           or os.environ.get("RAILWAY_GIT_COMMIT_SHA")
-           or os.environ.get("GIT_COMMIT"))
-    if sha:
-        return sha[:7]
-    # Last-resort: per-container epoch so fresh boots always cache-bust.
-    return f"dev-{int(time.time())}"
-
-
-def _build_storefront_base_url() -> str:
-    """Absolute base URL used in OG share-card tags so previews
-    (iMessage/Slack/WhatsApp/Discord/Twitter) point at THIS deploy, not at
-    a hardcoded sibling deploy. Was hardcoded `vibepass-storefront-test.onrender.com`
-    in static/store/index.html (PR #166) so Railway-shared links previewed
-    the Render service.
-
-    Resolution order:
-      1. STOREFRONT_BASE_URL    — manual override (full URL with scheme).
-      2. RENDER_EXTERNAL_URL    — auto-set by Render to https://<service>.onrender.com.
-      3. RAILWAY_PUBLIC_DOMAIN  — auto-set by Railway to <env>.up.railway.app (no scheme).
-      4. Fallback hardcoded Render URL — preserves prior behavior on unconfigured
-         envs so nothing regresses.
-    """
-    override = os.environ.get("STOREFRONT_BASE_URL")
-    if override:
-        return override.rstrip("/")
-    render_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if render_url:
-        return render_url.rstrip("/")
-    railway_dom = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    if railway_dom:
-        dom = railway_dom.strip().removeprefix("https://").removeprefix("http://")
-        return f"https://{dom}"
-    return "https://vibepass-storefront-test.onrender.com"
-
-
-_STOREFRONT_VERSION = _build_storefront_version()
-_STOREFRONT_BASE_URL = _build_storefront_base_url()
+# _build_storefront_version + _build_storefront_base_url (+ the computed
+# _STOREFRONT_VERSION / _STOREFRONT_BASE_URL) -> core/config.py (BR-CODE-1
+# config seam). Imported (aliased) near the top of this module.
 _STOREFRONT_HTML_CACHE: dict[str, str] = {}
 
 
@@ -205,7 +153,17 @@ from core.config import (  # noqa: E402
     ALLOWED_EMAIL_DOMAIN, STOREFRONT_SQL_ONLY, STOREFRONT_SEARCH_SQL_ONLY,
     STOREFRONT_PREFER_INTERNAL_ZONES, STOREFRONT_RESERVE_REQUIRES_AUTH,
     STOREFRONT_CHECKOUT_DOMAIN, STOREFRONT_CHECKOUT_DISABLED,
-    RECAPTCHA_SITE_KEY, RECAPTCHA_SECRET_KEY, RECAPTCHA_MIN_SCORE, RECAPTCHA_ENABLED,
+    RECAPTCHA_SITE_KEY, RECAPTCHA_ENABLED,
+)
+# Storefront deploy identity -> core/config.py (BR-CODE-1 config seam). Aliased
+# to the historical `_`-prefixed names so consumers + the test monkeypatch
+# (app._STOREFRONT_VERSION) + the direct test calls (app._build_storefront_version)
+# all keep resolving the app-module binding.
+from core.config import (  # noqa: E402
+    build_storefront_version as _build_storefront_version,
+    build_storefront_base_url as _build_storefront_base_url,
+    STOREFRONT_VERSION as _STOREFRONT_VERSION,
+    STOREFRONT_BASE_URL as _STOREFRONT_BASE_URL,
 )
 
 # Auth gate moved to core/auth.py (BR-CODE-1 core extraction): require_auth +
@@ -214,6 +172,16 @@ from core.config import (  # noqa: E402
 # (one-directional import). The security tests force the gate ON by patching
 # `core.auth.AUTH_DISABLED`.
 from core.auth import require_auth, AUTH_DISABLED, _is_production  # noqa: E402
+from core.auth import require_cron_or_auth as _require_cron_or_auth  # noqa: E402
+# Human bot-gate cookie helpers -> core/auth.py (BR-CODE-1 config/auth seam),
+# aliased to their historical `_`-prefixed names so consumers keep resolving.
+from core.auth import (  # noqa: E402
+    issue_human_token as _issue_human_token,
+    valid_human_token as _valid_human_token,
+    verify_recaptcha as _verify_recaptcha,
+    HUMAN_COOKIE_NAME as _HUMAN_COOKIE_NAME,
+    HUMAN_TTL_SECONDS as _HUMAN_TTL_SECONDS,
+)
 
 # Helpers moved to core/ (BR-CODE-1 helper pass). Aliased to the historical
 # `_`-prefixed names so every call site + the route tests' monkeypatch
@@ -252,61 +220,13 @@ from core.helpers import flatten_order_items as _flatten_order_items  # noqa: E4
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
 
-# HMAC key for the signed human-session cookie. Prefer a stable secret so the
-# cookie survives restarts; fall back to a per-process random (cookies simply
-# re-issue on the next interaction after a restart — fine for a demo).
-_HUMAN_COOKIE_SECRET = (
-    os.environ.get("SESSION_SIGNING_SECRET") or CRON_SECRET or secrets.token_hex(32)
-).encode()
-_HUMAN_COOKIE_NAME = "vp_human"
-_HUMAN_TTL_SECONDS = 1800  # 30 min
+# _HUMAN_COOKIE_SECRET + _HUMAN_COOKIE_NAME + _HUMAN_TTL_SECONDS +
+# _issue_human_token + _valid_human_token -> core/auth.py (BR-CODE-1 config/auth
+# seam). Imported (aliased) near the top of this module.
 
 
-def _issue_human_token(ttl: int = _HUMAN_TTL_SECONDS) -> str:
-    """Mint a signed, expiring opaque token: '<exp>.<hex-hmac>'."""
-    exp = int(time.time()) + ttl
-    sig = hmac.new(_HUMAN_COOKIE_SECRET, str(exp).encode(), "sha256").hexdigest()
-    return f"{exp}.{sig}"
-
-
-def _valid_human_token(tok: str | None) -> bool:
-    if not tok or "." not in tok:
-        return False
-    exp_s, _, sig = tok.partition(".")
-    try:
-        exp = int(exp_s)
-    except ValueError:
-        return False
-    if exp < int(time.time()):
-        return False
-    expected = hmac.new(_HUMAN_COOKIE_SECRET, exp_s.encode(), "sha256").hexdigest()
-    return hmac.compare_digest(sig, expected)
-
-
-def _verify_recaptcha(token: str | None, expected_action: str, remote_ip: str | None) -> bool:
-    """Verify a reCAPTCHA v3 token with Google. Returns True when the gate is
-    dormant (no keys). Fails OPEN on a network/Google error (demo availability),
-    CLOSED on an explicit failure / low score / action mismatch."""
-    if not RECAPTCHA_ENABLED:
-        return True
-    if not token:
-        return False
-    try:
-        resp = requests.post(
-            "https://www.google.com/recaptcha/api/siteverify",
-            data={"secret": RECAPTCHA_SECRET_KEY, "response": token, "remoteip": remote_ip or ""},
-            timeout=5,
-        )
-        data = resp.json()
-    except Exception as e:  # noqa: BLE001 — network/parse: fail open so a Google blip can't break the demo
-        print(f"[recaptcha] verify call failed ({e!r}) — failing open")
-        return True
-    if not data.get("success"):
-        return False
-    action = data.get("action")
-    if action and expected_action and action != expected_action:
-        return False
-    return float(data.get("score") or 0.0) >= RECAPTCHA_MIN_SCORE
+# _verify_recaptcha -> core/auth.py (BR-CODE-1 config/auth seam; pairs with the
+# human-token bot gate). Imported (aliased) near the top of this module.
 
 
 def _require_human(request: Request, payload: dict | None = None):
@@ -662,6 +582,17 @@ async def _runtime_error_handler(request, exc: RuntimeError):
 # UI gets built next.
 
 STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower() == "true"
+
+# Storefront "Ask the concierge" (retail-chat) kill-switch. Disabled for now to
+# stop paid Anthropic spend on the public concierge (each turn fans out into a
+# multi-call tool-use loop on Claude Haiku 4.5). When off, /api/store/retail-chat
+# short-circuits with a friendly canned reply and never calls the chat edge fn.
+# Re-enable by setting STOREFRONT_CONCIERGE_ENABLED=true (no code change needed).
+STOREFRONT_CONCIERGE_ENABLED = os.environ.get("STOREFRONT_CONCIERGE_ENABLED", "false").lower() == "true"
+_CONCIERGE_OFFLINE_REPLY = (
+    "Our concierge is taking a short break right now. In the meantime you can browse "
+    "everything we hold from the home page, or reach us directly and we'll find your seats."
+)
 
 
 @app.get("/")
@@ -3493,15 +3424,8 @@ def seatdata_auto_search(
 # CRON_SECRET is declared once at module top (line ~216) — no re-declaration.
 
 
-def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
-    """Allow either authenticated user OR matching X-Cron-Secret.
-
-    Fails closed if CRON_SECRET is not configured on the server — never
-    accepts an empty/placeholder secret.
-    """
-    if x_cron_secret and CRON_SECRET and hmac.compare_digest(x_cron_secret, CRON_SECRET):
-        return {"cron": True}
-    return require_auth(authorization)
+# _require_cron_or_auth -> core/auth.py (BR-CODE-1 config/auth seam). Imported
+# (aliased) near the top of this module.
 
 
 # _parse_iso_or_none + _to_int_or_none + _to_num_or_none -> core/helpers.py (BR-CODE-1); aliased at top.
@@ -6250,7 +6174,13 @@ def retail_chat_terminal(request: Request, payload: dict = Body(...), _=Depends(
 @app.post("/api/store/retail-chat")
 def retail_chat_store(request: Request, payload: dict = Body(...)):
     """Public storefront retail chat. scope=owned → hard-locked to our owned
-    EVO inventory (enforced server-side; the consumer cannot widen it)."""
+    EVO inventory (enforced server-side; the consumer cannot widen it).
+
+    Gated by STOREFRONT_CONCIERGE_ENABLED (off for now): when disabled we return
+    a friendly canned reply with HTTP 200 so the widget renders it as a normal
+    assistant message — and crucially never call the paid chat edge function."""
+    if not STOREFRONT_CONCIERGE_ENABLED:
+        return JSONResponse({"reply": _CONCIERGE_OFFLINE_REPLY}, status_code=200)
     history = _sanitize_chat_history(payload)
     return _proxy_retail_chat(history, "owned", _client_ip(request))
 

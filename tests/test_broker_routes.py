@@ -59,6 +59,9 @@ class _FakeQuery:
     def eq(self, *_a, **_k):
         return self
 
+    def in_(self, *_a, **_k):
+        return self
+
     def order(self, *_a, **_k):
         return self
 
@@ -190,3 +193,158 @@ def test_cadences_sections_and_listings_cadence(client, monkeypatch):
     assert body["sections"]["overview"]["cadence_seconds"] == 3600
     assert body["sections"]["overview"]["last_pull_at"] == "2026-05-10T00:00:00Z"
     assert body["sections"]["espn_injuries"]["cadence_seconds"] == 600
+
+
+# ---------- /api/broker/performers/by-league/{league} ----------
+
+def test_by_league_empty_returns_zero_count(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"get_performers_by_league": []}))
+    body = client.get("/api/broker/performers/by-league/NBA").json()
+    assert body == {
+        "league": "NBA", "count": 0, "performers": [],
+        "_inactive_filter_applied": False, "_include_inactive_param": False,
+    }
+
+
+def test_by_league_maps_rows_and_computes_delta_pct(client, monkeypatch):
+    row = {
+        "performer_id": 16303, "performer_name": "New York Knicks", "league": "NBA",
+        "home_venue_id": 99, "home_venue_name": "MSG",
+        "home_events": 5, "home_market_med": 150, "home_owned_med": 140,
+        "home_market_tix": 200, "home_owned_tix": 50,
+        "home_prev_market_med": 120, "home_prev_owned_med": 130,
+        "road_events": 3, "road_market_med": 200, "road_market_tix": 80,
+        "road_prev_market_med": 200,
+    }
+    fake = FakeSupabase(rpc_data={"get_performers_by_league": [row]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/performers/by-league/NBA").json()
+    assert body["count"] == 1
+    p = body["performers"][0]
+    assert p["performer_name"] == "New York Knicks"
+    # (150-120)/120*100 = 25.0 ; (140-130)/130*100 = 7.69 (rounded)
+    assert p["home"]["delta_market_pct"] == 25.0
+    assert p["home"]["delta_owned_pct"] == 7.69
+    # flat market => 0.0, not None
+    assert p["road"]["delta_market_pct"] == 0.0
+    # missing prev (road_prev_owned_med absent) => None
+    assert p["road"]["delta_owned_pct"] is None
+    # tix/events default to 0 when absent
+    assert p["road"]["owned_tix"] == 0
+    assert fake.rpc_calls[0] == ("get_performers_by_league", {"p_league": "NBA"})
+
+
+# ---------- /api/broker/event/{id}/section-metrics ----------
+
+def test_section_metrics_empty(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"section_metrics": []}))
+    body = client.get("/api/broker/event/1/section-metrics").json()
+    assert body["sections"] == []
+    assert body["last_pull_at"] is None
+    # no events row => occurs_at_local None => 24h default cadence
+    assert body["cadence_seconds"] == 60 * 60 * 24
+
+
+def test_section_metrics_groups_deltas_and_sorts(client, monkeypatch):
+    rows = [
+        {"captured_at": "2026-05-10T12:00:00Z", "section": "104", "is_ancillary": False,
+         "tickets_count": 50, "groups_count": 10, "retail_min": 100,
+         "retail_median": 150, "retail_mean": 160, "retail_max": 300},
+        {"captured_at": "2026-05-09T12:00:00Z", "section": "104", "is_ancillary": False,
+         "tickets_count": 40, "groups_count": 8, "retail_min": 90,
+         "retail_median": 140, "retail_mean": 150, "retail_max": 280},
+        {"captured_at": "2026-05-10T11:00:00Z", "section": "Parking", "is_ancillary": True,
+         "tickets_count": 5, "groups_count": 2, "retail_min": 20,
+         "retail_median": 25, "retail_mean": 25, "retail_max": 30},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={"section_metrics": rows}))
+    body = client.get("/api/broker/event/1/section-metrics").json()
+    secs = body["sections"]
+    # non-ancillary "104" sorts before ancillary "Parking"
+    assert [s["section"] for s in secs] == ["104", "Parking"]
+    # 104 has a prior snapshot -> delta computed (50 vs 40 = up)
+    assert secs[0]["metrics"]["tickets_count"]["v"] == 50
+    assert secs[0]["metrics"]["tickets_count"]["delta"]["dir"] == "up"
+    # Parking has only one snapshot -> delta None
+    assert secs[1]["is_ancillary"] is True
+    assert secs[1]["metrics"]["tickets_count"]["delta"] is None
+    # latest captured_at across sections
+    assert body["last_pull_at"] == "2026-05-10T12:00:00Z"
+
+
+# ---------- /api/broker/event/{id}/zones ----------
+
+def test_zones_empty_returns_null_source(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"zone_metrics": []}))
+    body = client.get("/api/broker/event/1/zones").json()
+    assert body == {"zones": [], "count": 0, "source": None, "available_sources": []}
+
+
+def test_zones_curated_wins_dedupes_hides_parking_sorts(client, monkeypatch):
+    # rows pre-sorted captured_at desc (the route relies on the DB order); curated
+    # is present so the fallback row must be dropped, latest-per-zone kept, parking
+    # hidden, and the survivors sorted by tickets_count desc.
+    rows = [
+        {"zone": "Lower", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 100},
+        {"zone": "Upper", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 200},
+        {"zone": "Parking East", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 5},
+        {"zone": "Lower", "zone_source": "curated", "captured_at": "2026-05-09T12:00:00Z", "tickets_count": 80},  # older dup
+        {"zone": "Club", "zone_source": "fallback", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 300},  # non-chosen source
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={"zone_metrics": rows}))
+    body = client.get("/api/broker/event/1/zones").json()
+    assert body["source"] == "curated"
+    assert [z["zone"] for z in body["zones"]] == ["Upper", "Lower"]  # tickets desc, parking gone
+    assert body["count"] == 2
+    assert body["parking_hidden"] == 1
+    assert body["available_sources"] == ["curated", "fallback"]
+    assert body["include_parking"] is False
+
+
+# ---------- /api/broker/watchlist-movers ----------
+
+def test_watchlist_movers_empty_watchlist(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"watch_sources": []}))
+    body = client.get("/api/broker/watchlist-movers").json()
+    assert body == {"window_hours": 24, "sort": "value", "count": 0, "events": []}
+
+
+def test_watchlist_movers_filters_to_watchlist_and_computes_vals(client, monkeypatch):
+    fake = FakeSupabase(
+        table_data={"watch_sources": [{"event_id": 1}]},
+        rpc_data={"get_event_movers": [
+            {"event_id": 1, "name": "Knicks", "cur_market_med": 150, "cur_market_tix": 10,
+             "prev_market_med": 120, "prev_market_tix": 10},
+            {"event_id": 3, "name": "Not Watched", "cur_market_med": 999, "cur_market_tix": 1,
+             "prev_market_med": 100, "prev_market_tix": 1},  # not in watchlist -> dropped
+        ]},
+    )
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/watchlist-movers").json()
+    assert body["count"] == 1
+    e = body["events"][0]
+    assert e["event_id"] == 1
+    assert e["delta_market_pct"] == 25.0          # (150-120)/120*100
+    assert e["cur_market_val"] == 1500.0          # 150*10
+    assert e["delta_market_val"] == 300.0         # 1500-1200
+    assert fake.rpc_calls[0][0] == "get_event_movers"
+
+
+# ---------- /api/broker/news ----------
+
+def test_news_global_feed_passthrough(client, monkeypatch):
+    items = [{"headline": "Trade", "espn_league": "NBA", "espn_team_id": "18"}]
+    _use_db(monkeypatch, FakeSupabase(table_data={"espn_news": items}))
+    body = client.get("/api/broker/news").json()
+    assert body["count"] == 1
+    assert body["items"] == items
+    assert body["filter"] == {"league": None, "team_ids": [], "event_id": None}
+
+
+def test_news_team_ids_mode_parses_filter(client, monkeypatch):
+    # team_ids mode exercises the .in_() path; FakeQuery ignores filters but the
+    # route must still parse the CSV into the echoed filter.
+    _use_db(monkeypatch, FakeSupabase(table_data={"espn_news": []}))
+    body = client.get("/api/broker/news?team_ids=20,18&limit=5").json()
+    assert body["filter"]["team_ids"] == ["20", "18"]
+    assert body["count"] == 0

@@ -20,9 +20,17 @@
   <style>
     .disc-wrap { max-width: 880px; margin: 0 auto; padding: 16px 18px 48px; }
     .disc-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 14px 0; }
-    .disc-form label { display: block; font-size: 12px; color: #8a93a6; margin-bottom: 3px; }
-    .disc-form input, .disc-form select { width: 100%; padding: 9px 10px; box-sizing: border-box; }
-    .disc-wrap button { padding: 9px 18px; margin: 0 8px 8px 0; cursor: pointer; }
+    .disc-form label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+    .disc-form input, .disc-form select { width: 100%; padding: 9px 10px; box-sizing: border-box;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; font: inherit; outline: none; }
+    .disc-form input:focus, .disc-form select:focus { border-color: var(--accent); }
+    .disc-wrap button { padding: 9px 18px; margin: 0 8px 8px 0; cursor: pointer;
+      font: 600 13px/1 system-ui; border-radius: 999px; }
+    #dGo { background: var(--accent); color: #fff; border: none; }
+    #dGo:hover { background: var(--accent-2); }
+    #dGeo { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+    #dGeo:hover { border-color: var(--accent-2); }
     .tour-card { border: 1px solid rgba(127,127,127,.22); border-radius: 10px; padding: 13px 16px; margin: 10px 0; }
     .tour-card h3 { margin: 0 0 4px; font-size: 17px; }
     .tour-meta { font-size: 13px; color: #8a93a6; }

@@ -1578,7 +1578,7 @@ a.perf-chip:hover {
 /* ----- Concierge hero ----- */
 .hero-concierge {
   padding: 64px 0 40px;
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
 }
 .hero-eyebrow {
@@ -1604,7 +1604,7 @@ a.perf-chip:hover {
   line-height: 1.55;
   color: var(--muted);
 }
-.hero-concierge .search { max-width: 600px; }
+.hero-concierge .search { max-width: 720px; }
 .hero-concierge .search input { padding: 15px 18px; border-radius: 999px; }
 .hero-concierge .search button { border-radius: 999px; padding: 14px 26px; }
 
@@ -1619,6 +1619,7 @@ a.perf-chip:hover {
   text-decoration: none;
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
   color: var(--text);
   padding: 8px 15px;
   border: 1px solid var(--line);
@@ -1652,7 +1653,20 @@ a.perf-chip:hover {
   padding: 20px 22px;
   background: var(--panel);
 }
-.trust-ic { color: var(--gold); font-size: 15px; line-height: 1; }
+/* Rounded icon chip — mirrors the concierge .svc-ic treatment so the
+   guarantee strip reads as designed rather than four bare glyphs. */
+.trust-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 14px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
 .trust-h { font-weight: 700; font-size: 14.5px; letter-spacing: 0.1px; }
 .trust-s { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
 
@@ -1767,6 +1781,25 @@ a.perf-chip:hover {
   .concierge-grid { grid-template-columns: repeat(2, 1fr); }
   .how-steps { grid-template-columns: 1fr; }
   .foot-rich .foot-nav { justify-content: flex-start; }
+}
+/* Hero quick-links: on phones, swap the ragged centered wrap for a single
+   full-bleed horizontal scroll-rail (edge-to-edge swipe, no scrollbar). The
+   negative margins cancel .wrap's padding so the rail reaches the viewport
+   edge; the matching padding re-insets the first/last chip. */
+@media (max-width: 600px) {
+  .hero-chips {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    margin-left: calc(-1 * (24px + env(safe-area-inset-left)));
+    margin-right: calc(-1 * (24px + env(safe-area-inset-right)));
+    padding-left: calc(24px + env(safe-area-inset-left));
+    padding-right: calc(24px + env(safe-area-inset-right));
+  }
+  .hero-chips::-webkit-scrollbar { display: none; }
+  .hero-chips .chip { flex: 0 0 auto; }
 }
 @media (max-width: 480px) {
   .trust { grid-template-columns: 1fr; }
