@@ -49,9 +49,12 @@
   }
 
   // -------- Discovery Gaps panel --------------------------------
-  // Queries discovery_gap_alerts (resolved_at IS NULL) via Supabase client.
-  // Groups by gap_type, enriches with event names from sg_events_canonical.
-  // Populated by evo_sg_discovery_gaps() cron (mig 250000, daily 9am UTC).
+  // Calls get_discovery_gaps(p_gap_type, p_limit) (mig 20260620010000) — active
+  // discovery_gap_alerts (resolved_at IS NULL), enriched server-side with event
+  // name/date. (Was a direct .from('discovery_gap_alerts') read, which fails:
+  // the table is RLS-on with no policy/grant for `authenticated`, so the panel
+  // errored despite the feed being healthy.) Populated by evo_sg_discovery_gaps()
+  // cron (mig 250000, daily 9am UTC).
 
   function wireGapControls() {
     document.querySelectorAll('[data-gap-type]').forEach(btn => {
@@ -77,46 +80,32 @@
     body.innerHTML = '<div class="empty">loading…</div>';
 
     try {
-      // Fetch active gaps (optional type filter)
-      let q = Auth.client
-        .from('discovery_gap_alerts')
-        .select('id,event_id,gap_type,detail,signal_score,detected_at')
-        .is('resolved_at', null)
-        .order('signal_score', { ascending: false })
-        .limit(200);
-      if (gapState.type) q = q.eq('gap_type', gapState.type);
-
-      const gapsRes = await q;
-      if (gapsRes.error) throw new Error(gapsRes.error.message);
-      const gaps = gapsRes.data || [];
-
-      // Enrich with event names + dates from sg_events_canonical
-      const eventIds = [...new Set(gaps.map(g => g.event_id).filter(Boolean))];
-      const eventMeta = {};
-      if (eventIds.length) {
-        const [sgRes, evoRes] = await Promise.all([
-          Auth.client
-            .from('sg_events_canonical')
-            .select('tevo_event_id,sg_event_name,sg_datetime_utc')
-            .in('tevo_event_id', eventIds),
-          // Fallback: TEvo events table for evo_no_sg gaps (no SG canonical match)
-          Auth.client
-            .from('events')
-            .select('id,name,occurs_at_local')
-            .in('id', eventIds),
-        ]);
-        if (!sgRes.error) {
-          (sgRes.data || []).forEach(e => { eventMeta[e.tevo_event_id] = e; });
+      // Single curated RPC — active gaps (optional type filter), enriched with
+      // event name/date server-side. p_gap_type NULL = all types.
+      const res = await Auth.client.rpc('get_discovery_gaps', {
+        p_gap_type: gapState.type || null,
+        p_limit:    200,
+      });
+      if (res.error) {
+        // 42883 = function does not exist (migration not applied yet) → honest hint.
+        if (res.error.code === '42883' || /does not exist/i.test(res.error.message || '')) {
+          body.innerHTML = '<div class="empty">discovery-gaps feed not enabled yet — pending migration 20260620010000</div>';
+          if (summaryEl) summaryEl.innerHTML = '';
+          if (countEl) countEl.textContent = '';
+          return;
         }
-        if (!evoRes.error) {
-          (evoRes.data || []).forEach(e => {
-            if (!eventMeta[e.id]) {
-              // Only use TEvo fallback when no SG canonical row exists
-              eventMeta[e.id] = { sg_event_name: e.name, sg_datetime_utc: e.occurs_at_local };
-            }
-          });
-        }
+        throw new Error(res.error.message);
       }
+      const gaps = res.data || [];
+
+      // RPC returns event_name + occurs_at inline; build the meta map the render
+      // loop expects (keyed by event_id, with the legacy sg_* field names).
+      const eventMeta = {};
+      gaps.forEach(g => {
+        if (g.event_id != null && !eventMeta[g.event_id]) {
+          eventMeta[g.event_id] = { sg_event_name: g.event_name, sg_datetime_utc: g.occurs_at };
+        }
+      });
 
       // Counts
       const total = gaps.length;
