@@ -1706,6 +1706,13 @@
         return;
       }
       noListings.hidden = true;
+      // Cheapest option in the current view — an honest anchor for the
+      // "pick one" decision (factual; only shown when there's a choice).
+      const _prices = allListings
+        .map((l) => Number(l.retail_price))
+        .filter((v) => !isNaN(v) && v > 0);
+      const _minPrice = _prices.length ? Math.min(..._prices) : null;
+      let _badgedLowest = false;
       for (const l of allListings) {
         const li = document.createElement("li");
         li.className = "row";
@@ -1720,6 +1727,15 @@
           zChip.className = "tag zone";
           zChip.textContent = l.zone;
           section.append(" ", zChip);
+        }
+        // Badge the first listing that matches the minimum price (once).
+        if (!_badgedLowest && _minPrice != null && allListings.length > 1
+            && Number(l.retail_price) === _minPrice) {
+          const best = document.createElement("span");
+          best.className = "tag best";
+          best.textContent = "Lowest price";
+          section.append(" ", best);
+          _badgedLowest = true;
         }
         const rowLabel = document.createElement("div");
         rowLabel.className = "row-label";
