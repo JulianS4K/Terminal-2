@@ -416,6 +416,86 @@ def test_orders_response_carries_per_leg_timings(monkeypatch, client):
     assert "total;dur="       in server_timing
 
 
+def test_orders_source_filter_routes_to_filtered_fetch(monkeypatch, client):
+    """?source=evo routes to the single-source filtered fetch (full per_page
+    window, not the balanced ~20/source cap) and echoes source + has_more so
+    the client can page through ALL of that source's book."""
+    captured = {}
+
+    def fake_filtered(source, per_page, page=1, include_terminal=False, q=None, when="all"):
+        captured.update(source=source, per_page=per_page, page=page,
+                        include_terminal=include_terminal, q=q, when=when)
+        return {
+            "rows": [{"source": "evo", "order_id": "111", "event_name": "Knicks vs Lakers",
+                      "event_date": "2026-06-01T19:30:00Z", "qty": 2, "status": "accepted",
+                      "canonical_status": "accepted", "amount": 450.0, "currency": None,
+                      "ordered_at": "2026-05-10T12:00:00Z"}],
+            "per_source_count": {"evo": 1},
+            "per_source_as_of": {"evo": "2026-05-13T20:35:00Z"},
+            "has_more": True,
+        }
+
+    # The balanced path must NOT be used when a source filter is set.
+    def fail_balanced(*a, **kw):
+        raise AssertionError("balanced fan-out should not run for a source filter")
+
+    monkeypatch.setattr(d2_main, "_fetch_filtered_orders", fake_filtered)
+    monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fail_balanced)
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+
+    body = client.get("/api/d2/orders?source=evo&per_page=100&page=2").json()
+    assert body["phase"] == "filtered"
+    assert body["source"] == "evo"
+    assert body["has_more"] is True
+    assert body["page"] == 2
+    assert captured["source"] == "evo"
+    assert captured["per_page"] == 100
+    assert captured["page"] == 2
+    assert [r["source"] for r in body["rows"]] == ["evo"]
+
+
+def test_orders_search_and_when_route_to_filtered_fetch(monkeypatch, client):
+    """?q= and ?when= (even with source=all) route to the filtered fetch and
+    forward the normalized filter args."""
+    captured = {}
+
+    def fake_filtered(source, per_page, page=1, include_terminal=False, q=None, when="all"):
+        captured.update(source=source, q=q, when=when)
+        return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "has_more": False}
+
+    monkeypatch.setattr(d2_main, "_fetch_filtered_orders", fake_filtered)
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+
+    body = client.get("/api/d2/orders?q=Knicks&when=upcoming").json()
+    assert body["phase"] == "filtered"
+    assert captured["source"] == "all"
+    assert captured["q"] == "Knicks"
+    assert captured["when"] == "upcoming"
+    assert body["when"] == "upcoming"
+
+
+def test_orders_default_all_stays_on_balanced_path(monkeypatch, client):
+    """No source/q/when → the original balanced fan-out (phase=full) runs,
+    and the filtered fetch is NOT called. Guards the back-compat default."""
+    def fail_filtered(*a, **kw):
+        raise AssertionError("filtered fetch should not run for the default view")
+
+    monkeypatch.setattr(
+        d2_main, "_fetch_unified_orders_page",
+        lambda n, p=1, include_terminal=False: {
+            "rows": [], "per_source_count": {"evo": 20}, "per_source_as_of": {},
+        },
+    )
+    monkeypatch.setattr(d2_main, "_fetch_filtered_orders", fail_filtered)
+    monkeypatch.setattr(d2_main, "_pull_event_window", lambda *a, **kw: [])
+
+    body = client.get("/api/d2/orders?per_page=100").json()
+    assert body["phase"] == "full"
+    assert body["source"] == "all"
+    # per_source slice = 100//5 = 20; evo filled it → more pages exist.
+    assert body["has_more"] is True
+
+
 def test_cron_freshness_endpoint_returns_per_source(monkeypatch, client):
     """/api/d2/cron-freshness returns the same per-source blob the orders
     endpoint used to carry inline. Front-end polls this on a 60s timer."""

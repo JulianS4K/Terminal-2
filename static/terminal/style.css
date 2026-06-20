@@ -659,6 +659,17 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 }
 .ctrl-input::placeholder { color: var(--muted); }
 .ctrl-input:focus { outline: none; border-color: var(--accent); }
+.ctrl-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ctrl-btn:disabled:hover { color: var(--muted); border-color: var(--line); }
+.orders-pager {
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.orders-pager .ctrl-lbl { margin-right: 0; }
 .movers-tbl td a { color: var(--text); text-decoration: none; }
 .movers-tbl td a:hover { color: var(--accent); text-decoration: underline; }
 

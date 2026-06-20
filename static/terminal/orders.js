@@ -31,10 +31,14 @@
   const state = {
     source: 'all',        // 'all' | one of SOURCE_LABELS keys
     includeTerminal: 0,   // 0 = active-only, 1 = all states
+    when: 'all',          // 'all' | 'upcoming' | 'past' (event_date filter)
+    q: '',                // event-name search
+    page: 1,              // 1-based; server paginates
     perPage: 100,
   };
 
   let lastPayload = null; // cache the last /api/d2/orders response for re-filter
+  let searchTimer = null; // debounce handle for the search box
 
   function init() {
     if (window.TerminalAuth) {
@@ -45,12 +49,14 @@
   }
 
   function wire() {
-    // Source pills — client-side filter, no refetch needed.
+    // Source pills — server-side filter now, so a single source returns its
+    // FULL page (not the balanced ~20/source cap). Reset to page 1 + refetch.
     document.querySelectorAll('[data-source]').forEach(btn => {
       btn.addEventListener('click', () => {
         setActive('[data-source]', btn);
         state.source = btn.dataset.source;
-        if (lastPayload) renderRows(lastPayload);
+        state.page = 1;
+        load();
       });
     });
     // State toggle — Active vs All changes the server query (include_terminal).
@@ -58,8 +64,47 @@
       btn.addEventListener('click', () => {
         setActive('[data-term]', btn);
         state.includeTerminal = +btn.dataset.term;
+        state.page = 1;
         load();
       });
+    });
+    // Date filter — all / upcoming / past (event_date around now-12h).
+    document.querySelectorAll('[data-when]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        setActive('[data-when]', btn);
+        state.when = btn.dataset.when;
+        state.page = 1;
+        load();
+      });
+    });
+    // Search box — debounced event-name filter pushed to the server.
+    const search = document.getElementById('ordersSearch');
+    if (search) {
+      search.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          state.q = search.value.trim();
+          state.page = 1;
+          load();
+        }, 350);
+      });
+      search.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          clearTimeout(searchTimer);
+          state.q = search.value.trim();
+          state.page = 1;
+          load();
+        }
+      });
+    }
+    // Pager.
+    const prev = document.getElementById('pagePrev');
+    const next = document.getElementById('pageNext');
+    if (prev) prev.addEventListener('click', () => {
+      if (state.page > 1) { state.page--; load(); }
+    });
+    if (next) next.addEventListener('click', () => {
+      if (lastPayload && lastPayload.has_more) { state.page++; load(); }
     });
     const refresh = document.getElementById('refreshBtn');
     if (refresh) refresh.addEventListener('click', load);
@@ -75,11 +120,19 @@
     const body = document.getElementById('ordersBody');
     if (body) body.innerHTML = '<div class="empty">loading…</div>';
     if (T && T.setStatus) T.setStatus('loading orders…', '');
-    const qs = `per_page=${state.perPage}&page=1&include_terminal=${state.includeTerminal}`;
+    const params = new URLSearchParams({
+      per_page: state.perPage,
+      page: state.page,
+      include_terminal: state.includeTerminal,
+      source: state.source,
+      when: state.when,
+    });
+    if (state.q) params.set('q', state.q);
     try {
-      const data = await T.api(`/api/d2/orders?${qs}`);
+      const data = await T.api(`/api/d2/orders?${params.toString()}`);
       lastPayload = data;
       renderRows(data);
+      renderPager(data);
       renderFreshness(data.sources || []);
       // Cron cadence is a separate, slower poll — enrich the chips when it lands.
       loadCronFreshness();
@@ -88,8 +141,26 @@
     } catch (e) {
       lastPayload = null;
       if (body) body.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+      renderPager(null);
       if (T && T.setStatus) T.setStatus(e.message, 'err');
     }
+  }
+
+  // Pager: show Prev when past page 1, Next when the server reports has_more.
+  // Hidden entirely on page 1 with nothing more to load (keeps the chrome
+  // clean for small result sets).
+  function renderPager(data) {
+    const pager = document.getElementById('ordersPager');
+    const prev = document.getElementById('pagePrev');
+    const next = document.getElementById('pageNext');
+    const label = document.getElementById('pageLabel');
+    if (!pager) return;
+    const hasMore = !!(data && data.has_more);
+    const show = state.page > 1 || hasMore;
+    pager.hidden = !show;
+    if (prev) prev.disabled = state.page <= 1;
+    if (next) next.disabled = !hasMore;
+    if (label) label.textContent = `Page ${state.page}`;
   }
 
   function renderRows(data) {
