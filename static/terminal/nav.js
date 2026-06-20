@@ -30,6 +30,10 @@
     // performers/venues. Companion to Movers; same nav grouping for the
     // "what to watch" surface. Wired 2026-05-19 (PR A1 blindspot stack).
     { id: 'discovery', label: 'DISCOVERY', href: 'discovery.html' },
+    // AXS — every event in the axs_events registry (PRIMARY box office) with
+    // its latest snapshot get-in / price band / listing depth. Backed by
+    // /api/axs/events (service-role read; axs_* tables are RLS-locked). 2026-06-20.
+    { id: 'axs',       label: 'AXS',       href: 'axs.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
   ];
 

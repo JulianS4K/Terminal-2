@@ -16,6 +16,69 @@ from fastapi import APIRouter, Depends
 def build_axs_router(get_require_sb: Callable[[], Callable], require_auth: Callable) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/api/axs/events")
+    def axs_events(active: bool = True, limit: int = 500, _=Depends(require_auth)):
+        """All AXS events in the tracked registry (axs_events) enriched with each
+        event's latest snapshot summary (event/venue name, get-in, price band,
+        listing/section counts, primary/resale seats). `active=false` includes
+        retired rows. Service-role read (axs_* tables are RLS service-role-only),
+        so this is the only path the terminal's user-JWT client has to the set."""
+        limit = max(1, min(int(limit), 2000))
+        db = get_require_sb()()
+        q = (
+            db.table("axs_events")
+            .select("axs_event_id,event_url,tevo_event_id,tevo_venue_id,active,"
+                    "last_pulled_at,last_snapshot_id")
+        )
+        if active:
+            q = q.eq("active", True)
+        evs = (q.order("last_pulled_at", desc=True).limit(limit).execute()).data or []
+
+        snap_ids = [e["last_snapshot_id"] for e in evs if e.get("last_snapshot_id")]
+        snaps: dict = {}
+        if snap_ids:
+            rows = (
+                db.table("axs_event_snapshots")
+                .select("id,captured_at,event_name,venue_name,occurs_at_local,currency,"
+                        "price_min,price_max,getin,listings_count,sections_count,"
+                        "offers_count,seats_primary,seats_resale,onsale_now")
+                .in_("id", snap_ids).execute()
+            ).data or []
+            snaps = {r["id"]: r for r in rows}
+
+        out = []
+        for e in evs:
+            s = snaps.get(e.get("last_snapshot_id")) or {}
+            out.append({
+                "axs_event_id": e.get("axs_event_id"),
+                "event_url": e.get("event_url"),
+                "tevo_event_id": e.get("tevo_event_id"),
+                "tevo_venue_id": e.get("tevo_venue_id"),
+                "active": e.get("active"),
+                "linked": e.get("tevo_event_id") is not None,
+                "last_pulled_at": e.get("last_pulled_at"),
+                "captured_at": s.get("captured_at"),
+                "event_name": s.get("event_name"),
+                "venue_name": s.get("venue_name"),
+                "occurs_at_local": s.get("occurs_at_local"),
+                "currency": s.get("currency"),
+                "getin": s.get("getin"),
+                "price_min": s.get("price_min"),
+                "price_max": s.get("price_max"),
+                "listings_count": s.get("listings_count"),
+                "sections_count": s.get("sections_count"),
+                "offers_count": s.get("offers_count"),
+                "seats_primary": s.get("seats_primary"),
+                "seats_resale": s.get("seats_resale"),
+                "onsale_now": s.get("onsale_now"),
+            })
+        return {
+            "count": len(out),
+            "linked": sum(1 for e in out if e["linked"]),
+            "pulled": sum(1 for e in out if e["captured_at"]),
+            "events": out,
+        }
+
     @router.get("/api/axs/event/{event_id}")
     def axs_event(event_id: int, _=Depends(require_auth)):
         db = get_require_sb()()

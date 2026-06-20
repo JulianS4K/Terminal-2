@@ -649,6 +649,16 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   color: #000;
   border-color: var(--accent);
 }
+.ctrl-input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: var(--mono); font-size: 11px;
+  padding: 4px 10px;
+  min-width: 180px;
+}
+.ctrl-input::placeholder { color: var(--muted); }
+.ctrl-input:focus { outline: none; border-color: var(--accent); }
 .movers-tbl td a { color: var(--text); text-decoration: none; }
 .movers-tbl td a:hover { color: var(--accent); text-decoration: underline; }
 
