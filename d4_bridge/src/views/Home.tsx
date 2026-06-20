@@ -7,25 +7,109 @@ import { motion } from 'motion/react';
 import { formatInTz } from '../lib/datetime';
 import { formatCurrency } from '../lib/utils';
 
+// Coarse date buckets for the discovery filter. Mirrors the "what can I do
+// this weekend" mental model a retail buyer brings — not a full date picker.
+type DateBucket = 'all' | 'today' | 'weekend' | 'month';
+
+const DATE_BUCKETS: { key: DateBucket; label: string }[] = [
+  { key: 'all', label: 'Any Date' },
+  { key: 'today', label: 'Today' },
+  { key: 'weekend', label: 'This Weekend' },
+  { key: 'month', label: 'This Month' },
+];
+
+// Returns true when `d` falls inside the requested bucket. "Weekend" is the
+// upcoming Sat+Sun (or the current one if it's already the weekend); "month"
+// is the remainder of the current calendar month. All comparisons are in the
+// viewer's local time — good enough for a coarse browse filter.
+function inDateBucket(d: Date, bucket: DateBucket): boolean {
+  if (bucket === 'all') return true;
+  const now = new Date();
+
+  if (bucket === 'today') {
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    );
+  }
+
+  if (bucket === 'weekend') {
+    // Day of week: 0 Sun … 6 Sat. Find the coming Saturday (or today if
+    // it's already Sat/Sun), then the window is that Sat 00:00 → Mon 00:00.
+    const day = now.getDay();
+    const daysUntilSat = day === 0 ? 6 : 6 - day; // Sun → next Sat is 6 away
+    const satStart = new Date(now);
+    satStart.setHours(0, 0, 0, 0);
+    // If today is already the weekend (Sat=6 or Sun=0), anchor on it.
+    if (day === 0) satStart.setDate(now.getDate() - 1); // back to Saturday
+    else satStart.setDate(now.getDate() + daysUntilSat);
+    const monStart = new Date(satStart);
+    monStart.setDate(satStart.getDate() + 2);
+    return d >= satStart && d < monStart;
+  }
+
+  // 'month' — from now until the end of the current calendar month.
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return d >= now && d < monthEnd;
+}
+
 export default function Home() {
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [activeDate, setActiveDate] = useState<DateBucket>('all');
+
+  // Categories present in the loaded catalog, in first-seen order. We derive
+  // these from real data rather than the canonical taxonomy so we never show
+  // a pill that filters to zero events.
+  const categories = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const ev of events) {
+      const c = (ev.category || '').trim();
+      if (c && !seen.has(c)) {
+        seen.add(c);
+        out.push(c);
+      }
+    }
+    return out;
+  }, [events]);
 
   // Client-side fuzzy filter — hits the in-memory event set so it
   // stays sub-millisecond even with a few hundred events. We filter
-  // on title + location + category for a casual "where can I find
-  // this thing on Saturday" experience without needing a real
-  // search index. When the catalog crosses ~1000 events we'll wire
-  // an Algolia-style index.
+  // on title + location + category + genres, plus the category and date
+  // facets. When the catalog crosses ~1000 events we'll wire an
+  // Algolia-style index and push facets server-side.
   const filteredEvents = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (term.length === 0) return events;
     return events.filter((ev) => {
-      const haystack = `${ev.title || ''} ${ev.location || ''} ${ev.category || ''}`.toLowerCase();
-      return haystack.includes(term);
+      if (activeCategory !== 'all') {
+        if ((ev.category || '').trim().toLowerCase() !== activeCategory.toLowerCase()) {
+          return false;
+        }
+      }
+      if (activeDate !== 'all') {
+        const d = ev.date?.toDate?.();
+        if (!d || !inDateBucket(d, activeDate)) return false;
+      }
+      if (term.length > 0) {
+        const haystack = `${ev.title || ''} ${ev.location || ''} ${ev.category || ''} ${(ev.genres || []).join(' ')}`.toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
+      return true;
     });
-  }, [events, searchTerm]);
+  }, [events, searchTerm, activeCategory, activeDate]);
+
+  const filtersActive =
+    searchTerm.trim().length > 0 || activeCategory !== 'all' || activeDate !== 'all';
+
+  function clearFilters() {
+    setSearchTerm('');
+    setActiveCategory('all');
+    setActiveDate('all');
+  }
 
   useEffect(() => {
     async function fetchEvents() {
@@ -34,7 +118,9 @@ export default function Home() {
         // NOTE: customUrlOnly (private/presale) events aren't excluded yet —
         // `exclusivity` isn't exposed on the public view. Pending follow-up
         // before storefront launch (add a customUrlOnly filter to the view).
-        const list = await listPublicEvents(20);
+        // Fetch a wider page now that browse filters run client-side, so the
+        // category/date facets have enough to work with.
+        const list = await listPublicEvents(48);
         setEvents(list);
       } catch (err) {
         console.error('Failed to load events', err);
@@ -45,13 +131,18 @@ export default function Home() {
     fetchEvents();
   }, []);
 
+  const pillBase =
+    'px-4 py-2 text-[10px] font-black uppercase tracking-tighter border transition-all whitespace-nowrap';
+  const pillOn = 'bg-brand-primary text-black border-brand-primary';
+  const pillOff = 'bg-[#111111] text-white/60 border-white/10 hover:text-white hover:border-white/30';
+
   return (
     <div className="bg-[#000000] min-h-screen">
       <div className="max-w-7xl mx-auto px-4 py-8">
         {/* Hero Section */}
-        <section className="mb-20 pt-10 pb-20 border-b border-white/10">
+        <section className="mb-12 pt-10 pb-12 border-b border-white/10">
           <div className="max-w-4xl">
-            <motion.h1 
+            <motion.h1
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               className="text-6xl md:text-8xl font-black mb-8 tracking-tighter uppercase italic leading-[0.85]"
@@ -75,14 +166,71 @@ export default function Home() {
           </div>
         </section>
 
+        {/* Discovery filters — category + date facets over the loaded catalog */}
+        <section className="mb-10 space-y-4">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by category">
+            <button
+              type="button"
+              onClick={() => setActiveCategory('all')}
+              aria-pressed={activeCategory === 'all'}
+              className={`${pillBase} ${activeCategory === 'all' ? pillOn : pillOff}`}
+            >
+              All Events
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setActiveCategory(c)}
+                aria-pressed={activeCategory.toLowerCase() === c.toLowerCase()}
+                className={`${pillBase} ${activeCategory.toLowerCase() === c.toLowerCase() ? pillOn : pillOff}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by date">
+            {DATE_BUCKETS.map((b) => (
+              <button
+                key={b.key}
+                type="button"
+                onClick={() => setActiveDate(b.key)}
+                aria-pressed={activeDate === b.key}
+                className={`${pillBase} ${activeDate === b.key ? pillOn : pillOff}`}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </section>
+
         {/* Featured Events */}
         <section className="mb-20">
           <div className="flex justify-between items-end mb-12">
             <div>
-              <h2 className="text-4xl font-black tracking-tighter uppercase italic">Trending Experiences</h2>
+              <h2 className="text-4xl font-black tracking-tighter uppercase italic">
+                {filtersActive ? 'Results' : 'Trending Experiences'}
+              </h2>
               <div className="h-1 w-20 bg-brand-primary mt-2"></div>
+              {!loading && (
+                <p className="text-white/30 text-[10px] font-black uppercase tracking-tighter mt-3">
+                  {filteredEvents.length} {filteredEvents.length === 1 ? 'Event' : 'Events'}
+                </p>
+              )}
             </div>
-            <Link to="/" className="text-white font-black text-xs tracking-tighter uppercase border-b-2 border-white hover:text-brand-primary hover:border-brand-primary transition-all pb-1">View All</Link>
+            {filtersActive ? (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-white font-black text-xs tracking-tighter uppercase border-b-2 border-white hover:text-brand-primary hover:border-brand-primary transition-all pb-1"
+              >
+                Clear Filters
+              </button>
+            ) : (
+              <span className="text-white/30 font-black text-xs tracking-tighter uppercase border-b-2 border-white/10 pb-1">
+                View All
+              </span>
+            )}
           </div>
 
           {loading ? (
@@ -101,13 +249,15 @@ export default function Home() {
           ) : filteredEvents.length === 0 ? (
             <div className="text-center py-32 border border-white/5 border-dashed">
               <p className="text-white/30 mb-2 text-xl font-black uppercase italic tracking-tighter">
-                Nothing matches "{searchTerm}".
+                {searchTerm.trim().length > 0
+                  ? `Nothing matches "${searchTerm}".`
+                  : 'Nothing matches these filters.'}
               </p>
               <button
-                onClick={() => setSearchTerm('')}
+                onClick={clearFilters}
                 className="text-brand-primary text-xs font-black uppercase tracking-widest underline hover:no-underline"
               >
-                Clear search
+                Clear filters
               </button>
             </div>
           ) : (
@@ -119,8 +269,8 @@ export default function Home() {
                 >
                   <Link to={`/event/${event.id}`} className="flex-shrink-0 relative overflow-hidden">
                     <div className="aspect-[3/4] relative">
-                      <img 
-                        src={event.image || 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?q=80&w=600'} 
+                      <img
+                        src={event.image || 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?q=80&w=600'}
                         alt={event.title}
                         className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700 scale-105 group-hover:scale-100"
                       />
@@ -170,7 +320,7 @@ export default function Home() {
                           <span className="font-black text-2xl text-brand-primary tracking-tighter">{formatCurrency(event.price)}</span>
                         )}
                       </div>
-                      <Link 
+                      <Link
                         to={`/event/${event.id}`}
                         className="bg-white text-black text-[10px] font-black uppercase tracking-tighter px-6 py-3 hover:bg-brand-primary transition-colors"
                       >
