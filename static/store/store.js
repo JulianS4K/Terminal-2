@@ -3200,17 +3200,46 @@
       }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";
     }
 
+    // City quick-picks: set coords without making the shopper know their
+    // latitude. Presets carry hardcoded metro coords; "My location" uses the
+    // browser geolocation API. Exact coords stay available under <details>.
+    const cityChips = Array.from(document.querySelectorAll("#dCities .city-chip[data-lat]"));
+    function markActive(el) {
+      cityChips.forEach((c) => c.classList.toggle("active", c === el));
+      const geo = $("dGeo");
+      if (geo) geo.classList.toggle("active", el === geo);
+    }
+    function pickCity(el) {
+      $("dLat").value = el.dataset.lat;
+      $("dLon").value = el.dataset.lon;
+      markActive(el);
+      const sel = $("dSelected");
+      if (sel) sel.textContent = `Showing tours within range of ${el.dataset.city}.`;
+      run();
+    }
+    cityChips.forEach((c) => c.addEventListener("click", () => pickCity(c)));
+
     $("dGo").addEventListener("click", run);
     $("dGeo").addEventListener("click", () => {
-      if (!navigator.geolocation) return;
+      if (!navigator.geolocation) {
+        $("dStatus").textContent = "Location isn't available — pick a city above.";
+        return;
+      }
       $("dStatus").textContent = "Locating…";
       navigator.geolocation.getCurrentPosition((pos) => {
         $("dLat").value = pos.coords.latitude.toFixed(4);
         $("dLon").value = pos.coords.longitude.toFixed(4);
+        markActive($("dGeo"));
+        const sel = $("dSelected");
+        if (sel) sel.textContent = "Showing tours within range of your location.";
         run();
-      }, () => { $("dStatus").textContent = "Couldn't get your location — enter it manually."; });
+      }, () => { $("dStatus").textContent = "Couldn't get your location — pick a city above."; });
     });
-    run();
+
+    // Default to the first preset (New York) so the page loads with content
+    // instead of an arbitrary raw-coordinate default.
+    if (cityChips.length) pickCity(cityChips[0]);
+    else run();
   }
 
   // Follow-the-tour — search an artist/team, set a date range + how many stops, tickets/show
