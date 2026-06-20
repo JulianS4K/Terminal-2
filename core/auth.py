@@ -24,7 +24,10 @@ import time
 import requests
 from fastapi import Header, HTTPException
 
-from core.config import ALLOWED_EMAIL_DOMAIN, CRON_SECRET, SUPABASE_ANON_KEY, SUPABASE_URL
+from core.config import (
+    ALLOWED_EMAIL_DOMAIN, CRON_SECRET, SUPABASE_ANON_KEY, SUPABASE_URL,
+    RECAPTCHA_SECRET_KEY, RECAPTCHA_MIN_SCORE,
+)
 
 # AUTH_DISABLED is a local-dev kill switch. To prevent a misconfig from
 # accidentally opening the whole API, it ONLY takes effect when:
@@ -129,3 +132,28 @@ def valid_human_token(tok: str | None) -> bool:
         return False
     expected = hmac.new(_HUMAN_COOKIE_SECRET, exp_s.encode(), "sha256").hexdigest()
     return hmac.compare_digest(sig, expected)
+
+
+def verify_recaptcha(token: str | None, expected_action: str, remote_ip: str | None) -> bool:
+    """Verify a reCAPTCHA v3 token with Google. Callers gate on RECAPTCHA_ENABLED
+    before calling this (so the dormant case never reaches here). Fails OPEN on a
+    network/Google error (demo availability), CLOSED on a missing token / explicit
+    failure / low score / action mismatch."""
+    if not token:
+        return False
+    try:
+        resp = requests.post(
+            "https://www.google.com/recaptcha/api/siteverify",
+            data={"secret": RECAPTCHA_SECRET_KEY, "response": token, "remoteip": remote_ip or ""},
+            timeout=5,
+        )
+        data = resp.json()
+    except Exception as e:  # noqa: BLE001 — network/parse: fail open so a Google blip can't break the demo
+        print(f"[recaptcha] verify call failed ({e!r}) — failing open")
+        return True
+    if not data.get("success"):
+        return False
+    action = data.get("action")
+    if action and expected_action and action != expected_action:
+        return False
+    return float(data.get("score") or 0.0) >= RECAPTCHA_MIN_SCORE
