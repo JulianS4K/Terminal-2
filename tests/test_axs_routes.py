@@ -40,6 +40,9 @@ class _Q:
     def eq(self, *a, **k):
         return self
 
+    def in_(self, *a, **k):
+        return self
+
     def order(self, *a, **k):
         return self
 
@@ -69,6 +72,32 @@ def client():
 
 def _db(monkeypatch, **kw):
     monkeypatch.setattr(app_module, "require_sb", lambda: _Sb(**kw))
+
+
+def test_axs_events_list(client, monkeypatch):
+    evs = [
+        {"axs_event_id": "ev-a", "event_url": "https://axs.com/a", "tevo_event_id": 42,
+         "tevo_venue_id": 7, "active": True, "last_pulled_at": "2026-06-19T00:00:00Z",
+         "last_snapshot_id": 100},
+        {"axs_event_id": "ev-b", "event_url": "https://axs.com/b", "tevo_event_id": None,
+         "tevo_venue_id": None, "active": True, "last_pulled_at": None,
+         "last_snapshot_id": None},
+    ]
+    snaps = [{"id": 100, "captured_at": "2026-06-19T00:00:00Z", "event_name": "Show A",
+              "venue_name": "Arena", "occurs_at_local": "2026-07-01T20:00:00-04:00",
+              "currency": "USD", "getin": 55, "price_min": 55, "price_max": 250,
+              "listings_count": 120, "sections_count": 18, "offers_count": 3,
+              "seats_primary": 100, "seats_resale": 20, "onsale_now": True}]
+    _db(monkeypatch, tables={"axs_events": evs, "axs_event_snapshots": snaps})
+    body = client.get("/api/axs/events").json()
+    assert body["count"] == 2
+    assert body["linked"] == 1
+    assert body["pulled"] == 1
+    a = next(e for e in body["events"] if e["axs_event_id"] == "ev-a")
+    assert a["linked"] is True and a["event_name"] == "Show A"
+    assert a["getin"] == 55 and a["seats_resale"] == 20
+    b = next(e for e in body["events"] if e["axs_event_id"] == "ev-b")
+    assert b["linked"] is False and b["event_name"] is None and b["captured_at"] is None
 
 
 def test_axs_event_unlinked(client, monkeypatch):
