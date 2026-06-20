@@ -213,4 +213,83 @@ def build_broker_router(
                        "source": source, "fee_pct": eff_fee_pct})
         return result
 
+    @router.get("/api/broker/order-lookup")
+    def broker_order_lookup(order_id: str, source: str | None = None,
+                            _=Depends(require_auth)):
+        """Resolve one of OUR order numbers to the fields the substitution
+        checker needs (event/section/row/quantity/revenue), so a broker can
+        paste an order # instead of typing the sold ticket by hand.
+
+        Searches the 4 ingested order sources (seatgeek / tickpick / vivid /
+        evo). `source` narrows the search; omit it to try all. StubHub is NOT
+        ingested as an order source — those orders won't resolve here, use the
+        manual fields. `revenue` is the order's own total/payment (editable in
+        the UI). EVO orders use the first line item for section/row and report
+        `line_items` so a multi-section order can be flagged.
+        """
+        db = get_require_sb()()
+        oid = (order_id or "").strip()
+        if not oid:
+            raise HTTPException(400, "order_id required")
+        src = ((source or "").strip().lower()) or None
+
+        def payload(source_name, tev, ev_name, section, row, qty, revenue, **extra):
+            return {
+                "found": True, "source": source_name, "order_id": oid,
+                "tevo_event_id": tev, "event_name": ev_name,
+                "section": section, "row": row, "quantity": qty,
+                "revenue": revenue, **extra,
+            }
+
+        if src in (None, "seatgeek"):
+            r = (db.table("seatgeek_orders")
+                 .select("sg_order_id,tevo_event_id,sg_event_name,sale_section,sale_row,sale_quantity,payment_total,payment_price")
+                 .eq("sg_order_id", oid).limit(1).execute().data or [])
+            if r:
+                o = r[0]
+                return payload("seatgeek", o.get("tevo_event_id"), o.get("sg_event_name"),
+                               o.get("sale_section"), o.get("sale_row"), o.get("sale_quantity"),
+                               o.get("payment_total") if o.get("payment_total") is not None else o.get("payment_price"))
+
+        if src in (None, "tickpick"):
+            r = (db.table("tickpick_orders")
+                 .select("tp_order_id,tevo_event_id,event_name,section,row,quantity,total")
+                 .eq("tp_order_id", oid).limit(1).execute().data or [])
+            if r:
+                o = r[0]
+                return payload("tickpick", o.get("tevo_event_id"), o.get("event_name"),
+                               o.get("section"), o.get("row"), o.get("quantity"), o.get("total"))
+
+        if src in (None, "vivid"):
+            r = (db.table("vivid_orders")
+                 .select("vivid_order_id,tevo_event_id,event_name,section,row,quantity,total")
+                 .eq("vivid_order_id", oid).limit(1).execute().data or [])
+            if r:
+                o = r[0]
+                return payload("vivid", o.get("tevo_event_id"), o.get("event_name"),
+                               o.get("section"), o.get("row"), o.get("quantity"), o.get("total"))
+
+        if src in (None, "evo"):
+            try:
+                eoid = int(oid)
+            except (TypeError, ValueError):
+                eoid = None
+            if eoid is not None:
+                hdr = (db.table("evo_orders")
+                       .select("evo_order_id,tevo_event_id,total,subtotal")
+                       .eq("evo_order_id", eoid).limit(1).execute().data or [])
+                if hdr:
+                    items = (db.table("evo_order_items")
+                             .select("ticket_group_section,ticket_group_row,quantity,event_name,event_id")
+                             .eq("evo_order_id", eoid).execute().data or [])
+                    it = items[0] if items else {}
+                    tev = hdr[0].get("tevo_event_id") or it.get("event_id")
+                    rev = hdr[0].get("subtotal") if hdr[0].get("subtotal") is not None else hdr[0].get("total")
+                    return payload("evo", tev, it.get("event_name"),
+                                   it.get("ticket_group_section"), it.get("ticket_group_row"),
+                                   it.get("quantity"), rev, line_items=len(items))
+
+        return {"found": False, "order_id": oid, "source": src,
+                "note": "no matching order in seatgeek/tickpick/vivid/evo (StubHub orders aren't ingested — enter details manually)"}
+
     return router

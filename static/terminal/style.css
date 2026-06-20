@@ -2181,3 +2181,6 @@ body[data-page="login"] {
 .subs-typeahead .ta-empty.err { color: var(--neg); }
 .sub-link { color: var(--accent); text-decoration: none; font-size: 10px; margin-left: 6px; font-family: var(--mono); }
 .sub-link:hover { text-decoration: underline; }
+.subs-orderbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; }
+.subs-order-msg { flex-basis: 100%; min-height: 14px; }
+.subs-or { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; margin: 14px 0 2px; }

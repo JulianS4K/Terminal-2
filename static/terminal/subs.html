@@ -15,7 +15,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Subs</title>
-  <link rel="stylesheet" href="style.css?v=20260620b" />
+  <link rel="stylesheet" href="style.css?v=20260620c" />
 </head>
 <body data-page="subs">
 
@@ -30,8 +30,29 @@
       <p class="muted small">
         Cover a sold / double-sold ticket from our own inventory. Finds the
         <strong>cheapest acceptable</strong> sub — same section &amp; same-or-better row
-        first, then a better-section fallback. Enter the sold ticket below.
+        first, then a better-section fallback. Paste an order # to auto-fill, or enter the sold ticket below.
       </p>
+      <div class="subs-orderbar">
+        <div class="subs-field">
+          <label for="subOrderId">Order # <span class="muted small">(auto-fill from a sale)</span></label>
+          <input id="subOrderId" type="text" placeholder="paste an order number" autocomplete="off" />
+        </div>
+        <div class="subs-field narrow">
+          <label for="subOrderSource">Order source</label>
+          <select id="subOrderSource">
+            <option value="">Auto</option>
+            <option value="seatgeek">SeatGeek</option>
+            <option value="tickpick">TickPick</option>
+            <option value="vivid">Vivid</option>
+            <option value="evo">EVO</option>
+          </select>
+        </div>
+        <div class="subs-field submit">
+          <button type="button" class="btn-primary" id="subOrderLoad">Load order →</button>
+        </div>
+        <div id="subOrderMsg" class="subs-order-msg muted small"></div>
+      </div>
+      <div class="subs-or">— or enter the sold ticket manually —</div>
       <form id="subsForm" class="subs-form" autocomplete="off">
         <div class="subs-field event-search">
           <label for="subEventSearch">Event <span class="muted small">(search by name)</span></label>
@@ -98,6 +119,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260620b"></script>
-  <script src="subs.js?v=20260620"></script>
+  <script src="subs.js?v=20260620c"></script>
 </body>
 </html>
