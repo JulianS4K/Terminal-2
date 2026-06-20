@@ -864,87 +864,9 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 }
 .topbar .status.warn { color: var(--warn); }
 
-/* ---------- ORDERS doorway (D0 ↔ D2 merge) ---------- */
-
-.doorway {
-  padding: 24px 8px;
-}
-.doorway h1 {
-  margin: 8px 0 12px;
-  font-size: 28px;
-  color: var(--text);
-}
-.doorway p {
-  color: var(--muted);
-  max-width: 720px;
-  line-height: 1.6;
-  margin: 8px 0;
-}
-.doorway p strong { color: var(--text); }
-.doorway-tag {
-  display: inline-block;
-  font-family: var(--mono); font-size: 10px;
-  text-transform: uppercase; letter-spacing: 0.8px;
-  padding: 3px 10px;
-  background: var(--panel-2);
-  border: 1px solid var(--accent);
-  color: var(--accent);
-}
-.doorway-cta {
-  display: flex; align-items: center; gap: 12px;
-  margin: 16px 0;
-}
-.btn-primary {
-  display: inline-block;
-  background: var(--accent);
-  color: #000;
-  text-decoration: none;
-  font-family: var(--mono); font-size: 13px; font-weight: 600;
-  padding: 10px 20px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  border: 1px solid var(--accent);
-}
-.btn-primary:hover { background: #fde047; border-color: #fde047; text-decoration: none; }
-.health-badge {
-  font-family: var(--mono); font-size: 11px;
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  letter-spacing: 0.5px;
-}
-.health-badge.live { color: var(--pos); border-color: var(--pos); }
-.health-badge.down { color: var(--neg); border-color: var(--neg); }
-.health-badge.dim  { color: var(--muted); }
-
-.merge-grid, .feature-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-.mg-cell, .ft-cell {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  padding: 12px;
-}
-.mg-lbl, .ft-lbl {
-  display: block;
-  font-family: var(--mono); font-size: 10px;
-  color: var(--accent);
-  text-transform: uppercase; letter-spacing: 0.8px;
-  margin-bottom: 8px;
-}
-.mg-cell ul {
-  margin: 0; padding-left: 18px;
-  color: var(--muted); font-size: 12px;
-}
-.mg-cell li { padding: 3px 0; }
-.ft-cell p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
+/* Per-source freshness chips on the orders controls strip. */
+#freshStrip { flex-wrap: wrap; gap: 6px; }
+#freshStrip:empty { display: none; }
 
 /* ---------- v3 enrichment panels (PR pending) ---------- */
 
