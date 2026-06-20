@@ -2819,8 +2819,9 @@
 
   window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
 
-  // Reverse discovery — "what tours can I catch near me". Location-first:
-  // performers with >= min_shows within a radius of home in the window.
+  // Reverse discovery — for fans who follow a favorite artist or team on tour and
+  // want to catch them near home. Location-first: performers (and teams, via their
+  // away games) with >= min_shows within a radius of home in the window.
   // Backed by /api/store/tours/near; each show links to its /store/event page.
   function mountDiscover() {
     const $ = (id) => document.getElementById(id);

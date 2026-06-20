@@ -653,11 +653,14 @@ def discover_tours_near(db, lat: float, lon: float, within_mi: float, start: dat
                         min_shows: int = 2, limit: int = 20,
                         event_types: list[str] | None = None,
                         team_side: str = "home") -> dict:
-    """Location-first discovery: performers with >= min_shows within `within_mi` of home,
-    enriched with price-from + popularity + whether we hold inventory. Read-only.
+    """For fans who follow a favorite artist or team on tour: given where you are,
+    find the performers/teams playing >= min_shows within `within_mi` of home in the
+    window, so you can catch them when they come to your area. Each tour is enriched
+    with price-from + popularity + whether we hold inventory. Read-only.
 
-    team_side='away' surfaces teams by their ROAD games near the user (see
-    rank_tours_near); 'home' (default) keeps the legacy home-stand grouping."""
+    team_side='away' surfaces teams by their ROAD games near the user (a team's tour
+    = the away games it plays in your area; see rank_tours_near); 'home' (default)
+    keeps the legacy home-stand grouping. Concerts always group by the touring artist."""
     dlat = within_mi / 69.0
     dlon = within_mi / (69.0 * max(0.2, cos(radians(lat))))
     q = (db.table("v_event_base")
