@@ -3165,6 +3165,42 @@ def broker_event_signals(event_id: int, _=Depends(require_auth)):
     }
 
 
+@app.get("/api/broker/alerts")
+def broker_alerts(hours: int = 48, severity: str | None = None, rule: str | None = None,
+                  limit: int = 100, _=Depends(require_auth)):
+    """Global alerts feed — recent fired rows from event_alerts (the v2 volatility/hysteresis
+    + discrete rules) enriched with event name/venue/date, newest first. The cross-event
+    'what should I look at now' surface. Filterable by severity (info|warn|critical) and rule.
+    """
+    db = require_sb()
+    hours = max(1, min(int(hours), 168))
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    q = (db.table("event_alerts")
+         .select("id,rule_key,tevo_event_id,severity,message,payload,fired_at")
+         .gte("fired_at", since)
+         .order("fired_at", desc=True)
+         .limit(max(1, min(int(limit), 500))))
+    if severity in ("info", "warn", "critical"):
+        q = q.eq("severity", severity)
+    if rule:
+        q = q.eq("rule_key", rule)
+    rows = q.execute().data or []
+
+    ids = list({r["tevo_event_id"] for r in rows if r.get("tevo_event_id")})
+    ev_by_id: dict = {}
+    if ids:
+        ev = (db.table("events").select("id,name,venue_name,occurs_at_local")
+              .in_("id", ids).execute().data) or []
+        ev_by_id = {e["id"]: e for e in ev}
+    for r in rows:
+        e = ev_by_id.get(r.get("tevo_event_id")) or {}
+        r["event_name"] = e.get("name")
+        r["venue_name"] = e.get("venue_name")
+        r["occurs_at_local"] = e.get("occurs_at_local")
+
+    return {"alerts": rows, "count": len(rows), "hours": hours}
+
+
 def _broker_movers_v2(source: str, window_days: int, category=None, include_inactive: bool = False):
     """v2 movers path: reads from event_movers_index (SMA-based signal scoring).
     Returns events grouped by category with cross-source spread data.

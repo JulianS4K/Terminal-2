@@ -152,7 +152,7 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 
 ## 9. HTTP API surface (`app.py`; full: `grep '@app\.\(get\|post\|delete\)' app.py`)
 - **Public storefront `/api/store/*`** (D1): `events`(+`/{id}`,`/zones`,`/near`), `search`, `movers`, `share`(+CRUD), `reserve` (MOCK — never charges). `/api/public/config` (anon key).
-- **Terminal/broker `/api/broker/*`** (A1+D0, 40+): `event/{id}/{overview,zones,section-metrics,raw-tevo,chart-data,cadences,espn,signals}` (`signals` bundles `predict_event_median_24h` + `v_event_primary_vs_secondary` + `get_event_comps` for the terminal Signals panel), `movers` (v2 `?window_days=&source=&category=`), `performer/{id}/assets`, `news`, `leagues`. Plus `/api/{events,performers,venues,configurations,portfolio,watchlist}`, `/api/axs/event/{id}/{listings,sections,series}`, `/api/collect/run`, `/api/admin/*`.
+- **Terminal/broker `/api/broker/*`** (A1+D0, 40+): `event/{id}/{overview,zones,section-metrics,raw-tevo,chart-data,cadences,espn,signals}` (`signals` bundles `predict_event_median_24h` + `v_event_primary_vs_secondary` + `get_event_comps` for the terminal Signals panel), `movers` (v2 `?window_days=&source=&category=`), `performer/{id}/assets`, `news`, `leagues`. `alerts` (global feed: recent `event_alerts` rows enriched w/ event name/venue/date; `?hours=&severity=&rule=&limit=`). Plus `/api/{events,performers,venues,configurations,portfolio,watchlist}`, `/api/axs/event/{id}/{listings,sections,series}`, `/api/collect/run`, `/api/admin/*`.
 - DB platform statement_timeout 120s (overridable); MCP runs service_role (NO timeout cap → bound audit scans).
 
 ## 10. Cross-cutting data RULES (durable)
