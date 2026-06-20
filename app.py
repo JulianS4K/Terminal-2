@@ -231,6 +231,7 @@ from core.search import search_sql_only as _search_sql_only  # noqa: E402
 from core.helpers import clean_opt_url as _clean_opt_url  # noqa: E402
 from core.helpers import tevo_runtime_to_http as _tevo_runtime_to_http  # noqa: E402
 from core.helpers import normalize_filters as _normalize_filters  # noqa: E402
+from core.helpers import ticket_group_to_listing as _ticket_group_to_listing  # noqa: E402
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
@@ -3950,25 +3951,8 @@ def seatdata_sync_sales(
 # /v9/ticket_groups?owned=true for live inventory; the catalog page uses
 # event_metrics.owned_tickets_count > 0 to find events worth listing.
 
-def _ticket_group_to_listing(tg: dict) -> dict:
-    """Reduce a TEvo ticket_group payload to the public-safe fields a buyer
-    needs. Strips wholesale price, signature, office/brokerage attribution."""
-    return {
-        "id": tg.get("id"),
-        "section": tg.get("section"),
-        "row": tg.get("row"),
-        "available_quantity": tg.get("available_quantity") or tg.get("quantity"),
-        "splits": tg.get("splits") or [],
-        "retail_price": tg.get("retail_price"),
-        "format": tg.get("format"),
-        "type": tg.get("type") or "event",
-        "in_hand": tg.get("in_hand"),
-        "in_hand_on": tg.get("in_hand_on"),
-        "instant_delivery": tg.get("instant_delivery"),
-        "public_notes": tg.get("public_notes"),
-        "view_type": tg.get("view_type"),
-        "wheelchair": tg.get("wheelchair"),
-    }
+# _ticket_group_to_listing -> core/helpers.py (BR-CODE-1 shared event/listings
+# layer; pure dict reshape). Imported (aliased) near the top of this module.
 
 
 # Our TEvo brokerage's office id. Resolved via probe `/v9/orders` (probe v2,

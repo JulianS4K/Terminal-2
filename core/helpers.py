@@ -227,3 +227,24 @@ def normalize_filters(raw: dict | None) -> dict:
         "max_price": _maybe_num(raw.get("max_price")),
         "min_qty": _maybe_int(raw.get("min_qty")),
     }
+
+
+def ticket_group_to_listing(tg: dict) -> dict:
+    """Reduce a TEvo ticket_group payload to the public-safe fields a buyer
+    needs. Strips wholesale price, signature, office/brokerage attribution."""
+    return {
+        "id": tg.get("id"),
+        "section": tg.get("section"),
+        "row": tg.get("row"),
+        "available_quantity": tg.get("available_quantity") or tg.get("quantity"),
+        "splits": tg.get("splits") or [],
+        "retail_price": tg.get("retail_price"),
+        "format": tg.get("format"),
+        "type": tg.get("type") or "event",
+        "in_hand": tg.get("in_hand"),
+        "in_hand_on": tg.get("in_hand_on"),
+        "instant_delivery": tg.get("instant_delivery"),
+        "public_notes": tg.get("public_notes"),
+        "view_type": tg.get("view_type"),
+        "wheelchair": tg.get("wheelchair"),
+    }
