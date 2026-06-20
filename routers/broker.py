@@ -19,6 +19,7 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.helpers import listings_cadence_seconds
+from core.substitutions import find_row_substitutions
 
 
 def build_broker_router(
@@ -95,5 +96,55 @@ def build_broker_router(
                 "espn_team":       {"last_pull_at": last_team_at,     "cadence_seconds": 60 * 60 * 24},
             },
         }
+
+    @router.get("/api/broker/event/{event_id}/substitutions")
+    def broker_event_substitutions(
+        event_id: int,
+        section: str,
+        row: str | None = None,
+        quantity: int = 1,
+        _=Depends(require_auth),
+    ):
+        """Substitution checker — ROW phase.
+
+        Given an owned ticket we need to cover (its section + row + quantity),
+        find same-section substitutes from OUR OWN inventory with the same or a
+        better (closer-in) row. Used when a listing is double-sold and we need
+        replacement seats we already hold.
+
+        Source = the latest `listings_snapshots` snapshot for the event, filtered
+        to `is_owned=true` (our book). Matching/ranking is pure logic in
+        core.substitutions; "better SECTION" matching is a deliberate future
+        phase and is NOT attempted here.
+
+        Query params:
+          section   (required) the section to cover
+          row       the row to cover (omit/empty => only same-section listings
+                    with a comparable row can ever qualify as "same")
+          quantity  seats needed; a candidate must have quantity >= this (default 1)
+        """
+        db = get_require_sb()()
+        latest = (
+            db.table("listings_snapshots").select("captured_at")
+            .eq("event_id", event_id).order("captured_at", desc=True).limit(1)
+            .execute().data or []
+        )
+        if not latest:
+            empty = find_row_substitutions(section, row, quantity, [])
+            empty["captured_at"] = None
+            empty["event_id"] = event_id
+            return empty
+        captured_at = latest[0]["captured_at"]
+        owned = (
+            db.table("listings_snapshots")
+            .select("tevo_ticket_group_id,section,row,quantity,retail_price,is_owned")
+            .eq("event_id", event_id).eq("captured_at", captured_at)
+            .eq("is_owned", True)
+            .execute().data or []
+        )
+        result = find_row_substitutions(section, row, quantity, owned)
+        result["captured_at"] = captured_at
+        result["event_id"] = event_id
+        return result
 
     return router

@@ -416,3 +416,51 @@ def test_orders_rolls_up_state_counts_and_sold(client, monkeypatch):
     assert s["tickets_sold"] == 2
     assert s["gross_sold"] == 200.0       # 100 * 2
     assert s["last_update_at"] == "2026-05-10T12:00:00Z"
+
+
+# ---------- /api/broker/event/{id}/substitutions (substitution checker, row phase) ----------
+
+def test_substitutions_empty_event_degrades_cleanly(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"listings_snapshots": []}))
+    body = client.get("/api/broker/event/1/substitutions?section=104&row=12").json()
+    assert body["event_id"] == 1
+    assert body["captured_at"] is None
+    assert body["subs"] == [] and body["ambiguous"] == []
+    assert body["counts"]["scanned"] == 0
+
+
+def test_substitutions_finds_same_section_better_row(client, monkeypatch):
+    # All owned rows share one captured_at so the FakeSupabase "latest" probe
+    # and the row pull resolve to the same snapshot.
+    rows = [
+        {"tevo_ticket_group_id": "best", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "104", "row": "5", "quantity": 2, "retail_price": 400, "is_owned": True},
+        {"tevo_ticket_group_id": "same", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "104", "row": "12", "quantity": 2, "retail_price": 250, "is_owned": True},
+        {"tevo_ticket_group_id": "worse", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "104", "row": "20", "quantity": 2, "retail_price": 150, "is_owned": True},
+        {"tevo_ticket_group_id": "othersec", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "105", "row": "1", "quantity": 2, "retail_price": 900, "is_owned": True},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={"listings_snapshots": rows}))
+    body = client.get("/api/broker/event/1/substitutions?section=104&row=12&quantity=2").json()
+    assert body["captured_at"] == "2026-05-10T12:00:00Z"
+    # upgrade first, then same row; downgrade + other section excluded.
+    assert [s["ticket_group_id"] for s in body["subs"]] == ["best", "same"]
+    assert body["subs"][0]["match_type"] == "upgrade"
+    assert body["subs"][0]["row_delta"] == 7
+    assert body["counts"]["scanned"] == 3  # 3 in section 104
+
+
+def test_substitutions_quantity_filter_and_ambiguous_bucket(client, monkeypatch):
+    rows = [
+        {"tevo_ticket_group_id": "toofew", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "FLOOR", "row": "3", "quantity": 1, "retail_price": 100, "is_owned": True},
+        {"tevo_ticket_group_id": "alpha", "captured_at": "2026-05-10T12:00:00Z",
+         "section": "FLOOR", "row": "A", "quantity": 4, "retail_price": 100, "is_owned": True},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={"listings_snapshots": rows}))
+    body = client.get("/api/broker/event/1/substitutions?section=FLOOR&row=5&quantity=2").json()
+    # numeric "3" would upgrade but lacks quantity; alpha "A" is incomparable.
+    assert body["subs"] == []
+    assert [s["ticket_group_id"] for s in body["ambiguous"]] == ["alpha"]
