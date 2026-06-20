@@ -2210,3 +2210,34 @@ body[data-page="login"] {
   .src-link-row { margin-left: 0; }
   .wl-pager { flex-wrap: wrap; }
 }
+
+/* ===== Substitution checker (subs.html) ===== */
+.wrap.subs { display: flex; flex-direction: column; gap: 16px; }
+#subs-form-panel, #subs-results { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.subs-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; }
+.subs-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 130px; }
+.subs-field.narrow { flex: 0 1 90px; }
+.subs-field.submit { flex: 0 0 auto; }
+.subs-field label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+.subs-field input, .subs-field select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; font-family: var(--mono); font-size: 13px; width: 100%;
+}
+.subs-field input:focus, .subs-field select:focus { outline: none; border-color: var(--accent); }
+.subs-recap { font-family: var(--mono); font-size: 13px; margin-bottom: 12px; }
+.subs-recap .recap-line { margin-bottom: 2px; }
+.subs-best { margin-bottom: 16px; }
+.best-card {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: var(--shade); border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; font-family: var(--mono); font-size: 13px;
+}
+.best-tag { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--accent); }
+.best-where { font-weight: 600; }
+.best-meta { color: var(--muted); font-size: 12px; }
+.best-none { color: var(--muted); font-family: var(--mono); font-size: 13px; padding: 8px 0; }
+.subs-table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+.subs-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+.subs-table th { text-align: left; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.subs-table td { padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.subs-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+#subsAmbiguousWrap summary { cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 6px 0; }
