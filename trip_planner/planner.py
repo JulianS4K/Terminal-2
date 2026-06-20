@@ -563,9 +563,20 @@ _SPORTS_TYPES = {"game", "mlb", "wnba", "nwsl", "mls-major-league-soccer", "ncaa
 
 
 def rank_tours_near(events: list[dict], lat: float, lon: float, within_mi: float,
-                    min_shows: int) -> list[dict]:
-    """Pure: group nearby events by performer into candidate 'tours' (>= min_shows reachable)."""
-    by_perf: dict = {}
+                    min_shows: int, team_side: str = "home",
+                    away_map: dict | None = None) -> list[dict]:
+    """Pure: group nearby events by performer into candidate 'tours' (>= min_shows reachable).
+
+    team_side controls how SPORTS events are grouped (non-sports always group by the
+    primary performer = the touring artist):
+      - 'home' (default): group by the primary performer = the HOME team, so a team's
+        'tour near you' is its home stand (legacy behavior; D0 broker discover).
+      - 'away': group by the VISITING performer (from away_map: tevo_event_id ->
+        (away_id, away_name)), so a team's 'tour near you' is its ROAD games that come
+        to your area. Sports events whose away team can't be resolved are skipped.
+    """
+    away_map = away_map or {}
+    by_perf: dict = {}   # group_id -> {"name", "kind", "event_type", "evs": [...]}
     for e in events:
         vl, vo = e.get("venue_lat"), e.get("venue_lon")
         if vl is None or vo is None:
@@ -573,20 +584,37 @@ def rank_tours_near(events: list[dict], lat: float, lon: float, within_mi: float
         mi = _miles(lat, lon, float(vl), float(vo))
         if mi > within_mi:
             continue
-        by_perf.setdefault(e.get("tevo_performer_id"), []).append({**e, "_mi": mi})
+        et = (e.get("event_type") or "").lower()
+        is_sports = et in _SPORTS_TYPES
+        if is_sports and team_side == "away":
+            eid = e.get("tevo_event_id")
+            am = away_map.get(int(eid)) if eid is not None else None
+            if not am or am[0] is None:
+                continue  # can't resolve the visiting team -> can't show it as an away game
+            gid, gname = am[0], am[1]
+        else:
+            gid, gname = e.get("tevo_performer_id"), e.get("primary_performer_name")
+        if gid is None:
+            continue
+        g = by_perf.setdefault(int(gid), {"name": gname, "is_sports": is_sports,
+                                          "event_type": e.get("event_type"), "evs": []})
+        g["evs"].append({**e, "_mi": mi})
 
     tours: list[dict] = []
-    for pid, evs in by_perf.items():
-        if pid is None or len(evs) < min_shows:
+    for gid, g in by_perf.items():
+        evs = g["evs"]
+        if len(evs) < min_shows:
             continue
         evs.sort(key=lambda x: str(x.get("event_date")))
         cities = sorted({x.get("venue_city") for x in evs if x.get("venue_city")})
-        et = (evs[0].get("event_type") or "").lower()
         tours.append({
-            "performer": evs[0].get("primary_performer_name"),
-            "performer_id": int(pid),
-            "event_type": evs[0].get("event_type"),
-            "kind": "sports" if et in _SPORTS_TYPES else "live",
+            "performer": g["name"],
+            "performer_id": int(gid),
+            "event_type": g["event_type"],
+            "kind": "sports" if g["is_sports"] else "live",
+            # For sports, tell the FE which side these games are (drives the label +
+            # the follow-link side=). None for non-sports.
+            "team_side": (team_side if g["is_sports"] else None),
             "nearby_shows": len(evs),
             "cities": len(cities) or 1,
             "nearest_mi": round(min(x["_mi"] for x in evs)),
@@ -598,11 +626,38 @@ def rank_tours_near(events: list[dict], lat: float, lon: float, within_mi: float
     return tours
 
 
+def _fetch_away_performers(db, event_ids: list[int]) -> dict[int, tuple]:
+    """tevo_event_id -> (away_performer_id, away_performer_name) from v_event_home_away.
+
+    Used by 'tours near me' when team_side='away' so a team's tour = its ROAD games
+    near the user (the visiting performer), not the local home team's home stand.
+    v_event_base only carries the primary (home) performer, so the away side is
+    looked up here. Read-only."""
+    ids = [i for i in dict.fromkeys(event_ids) if i is not None]
+    out: dict[int, tuple] = {}
+    if not ids:
+        return out
+    rows = (db.table("v_event_home_away")
+            .select("tevo_event_id, away_performer_id, away_performer_name")
+            .in_("tevo_event_id", ids)
+            .not_.is_("away_performer_id", "null")
+            .execute().data) or []
+    for r in rows:
+        aid = r.get("away_performer_id")
+        out[int(r["tevo_event_id"])] = (int(aid) if aid is not None else None,
+                                        r.get("away_performer_name"))
+    return out
+
+
 def discover_tours_near(db, lat: float, lon: float, within_mi: float, start: date, end: date,
                         min_shows: int = 2, limit: int = 20,
-                        event_types: list[str] | None = None) -> dict:
+                        event_types: list[str] | None = None,
+                        team_side: str = "home") -> dict:
     """Location-first discovery: performers with >= min_shows within `within_mi` of home,
-    enriched with price-from + popularity + whether we hold inventory. Read-only."""
+    enriched with price-from + popularity + whether we hold inventory. Read-only.
+
+    team_side='away' surfaces teams by their ROAD games near the user (see
+    rank_tours_near); 'home' (default) keeps the legacy home-stand grouping."""
     dlat = within_mi / 69.0
     dlon = within_mi / (69.0 * max(0.2, cos(radians(lat))))
     q = (db.table("v_event_base")
@@ -616,7 +671,15 @@ def discover_tours_near(db, lat: float, lon: float, within_mi: float, start: dat
         q = q.in_("event_type", event_types)
     events = q.execute().data or []
 
-    tours = rank_tours_near(events, lat, lon, within_mi, min_shows)
+    away_map = None
+    if team_side == "away":
+        sports_ids = [int(e["tevo_event_id"]) for e in events
+                      if (e.get("event_type") or "").lower() in _SPORTS_TYPES
+                      and e.get("tevo_event_id") is not None]
+        away_map = _fetch_away_performers(db, sports_ids)
+
+    tours = rank_tours_near(events, lat, lon, within_mi, min_shows,
+                            team_side=team_side, away_map=away_map)
     all_ids = [ev["event_id"] for t in tours for ev in t["events"]]
     pop = fetch_event_popularity(db, all_ids)
     pricing = fetch_event_pricing(db, all_ids)

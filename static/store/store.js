@@ -2859,11 +2859,15 @@
           .join("");
         const price = t.price_from != null ? ` · from ${money(t.price_from)}` : "";
         const isTeam = t.kind === "sports";
+        // Teams surface by their road games near you (backend team_side='away'); the
+        // side= flows to the follow-the-tour page so it plans the away leg.
+        const side = isTeam ? (t.team_side === "home" ? "home" : "away") : "";
+        const gamesLabel = side === "home" ? "home games" : "away games";
         const follow = `/store/tour?performer=${t.performer_id}`
           + `&home_lat=${encodeURIComponent($("dLat").value)}&home_lon=${encodeURIComponent($("dLon").value)}`
-          + (isTeam ? "&side=home" : "");
+          + (isTeam ? `&side=${side}` : "");
         return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
-          + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? "home games" : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
+          + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? gamesLabel : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
           + `<div style="margin:6px 0"><a href="${follow}"><b>${isTeam ? "Follow this team →" : "Follow this tour →"}</b></a></div>`
           + `<div class="tour-shows">${shows}</div></div>`;
       }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";

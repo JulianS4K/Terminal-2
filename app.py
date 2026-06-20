@@ -1330,8 +1330,11 @@ def broker_multi_tour(
 
 
 def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: int,
-                      min_shows: int, concerts_only: bool) -> dict:
-    """Shared body for reverse-discovery ('tours near me'). Read-only."""
+                      min_shows: int, concerts_only: bool, team_side: str = "home") -> dict:
+    """Shared body for reverse-discovery ('tours near me'). Read-only.
+
+    team_side: 'home' (default — D0 broker discover, legacy home-stand grouping) or
+    'away' (D1 storefront — surfaces a team by its road games that come to your area)."""
     from trip_planner import discover_tours_near
 
     db = require_sb()
@@ -1341,6 +1344,7 @@ def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: 
         max(5.0, min(float(within_mi), 1000.0)), start, end,
         min_shows=max(1, min(int(min_shows), 6)),
         event_types=["concert"] if concerts_only else None,
+        team_side=(team_side if team_side in ("home", "away") else "home"),
     )
 
 
@@ -7030,8 +7034,11 @@ def store_tours_near(
     concerts_only: bool = False,
 ):
     """D1 store reverse discovery — 'what tours can I catch near me'. Performers with
-    >= min_shows within `within_mi` of home in the window, with price-from + demand."""
-    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
+    >= min_shows within `within_mi` of home in the window, with price-from + demand.
+    Teams surface by their AWAY games near you (road trips that come to your area),
+    not the local team's home stand — team_side='away'."""
+    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only,
+                             team_side="away")
 
 
 def _section_sort_key(s: str) -> tuple:
