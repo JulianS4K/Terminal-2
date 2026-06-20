@@ -348,3 +348,41 @@ def test_news_team_ids_mode_parses_filter(client, monkeypatch):
     body = client.get("/api/broker/news?team_ids=20,18&limit=5").json()
     assert body["filter"]["team_ids"] == ["20", "18"]
     assert body["count"] == 0
+
+
+# ---------- /api/broker/event/{id}/section-zones (degradation paths) ----------
+
+def test_section_zones_no_event_returns_empty(client, monkeypatch):
+    # Unknown event -> empty map, no crash (the curated/fallback machinery below
+    # is never reached).
+    _use_db(monkeypatch, FakeSupabase(table_data={"events": []}))
+    body = client.get("/api/broker/event/999/section-zones").json()
+    assert body == {"map": {}, "source_mix": {}}
+
+
+def test_section_zones_no_listings_returns_empty(client, monkeypatch):
+    # Event exists but has no listings snapshot yet -> empty map (no sections to
+    # classify).
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "events": [{"primary_performer_id": 16303, "venue_id": 42}],
+        "listings_snapshots": [],
+    }))
+    body = client.get("/api/broker/event/1/section-zones").json()
+    assert body == {"map": {}, "source_mix": {}}
+
+
+# ---------- /api/broker/tours/near (param plumbing) ----------
+
+def test_tours_near_passes_params_to_discovery(client, monkeypatch):
+    captured = {}
+    def _fake_discover(home_lat, home_lon, within_mi, days, min_shows, concerts_only):
+        captured.update(dict(home_lat=home_lat, home_lon=home_lon, within_mi=within_mi,
+                             days=days, min_shows=min_shows, concerts_only=concerts_only))
+        return {"ok": True, "performers": []}
+    monkeypatch.setattr(app_module, "_discover_payload", _fake_discover)
+    body = client.get("/api/broker/tours/near"
+                      "?home_lat=40.75&home_lon=-73.99&within_mi=100&days=60"
+                      "&min_shows=3&concerts_only=true").json()
+    assert body == {"ok": True, "performers": []}
+    assert captured == {"home_lat": 40.75, "home_lon": -73.99, "within_mi": 100.0,
+                        "days": 60, "min_shows": 3, "concerts_only": True}
