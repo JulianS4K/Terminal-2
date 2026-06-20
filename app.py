@@ -173,6 +173,14 @@ from core.config import (  # noqa: E402
 # (one-directional import). The security tests force the gate ON by patching
 # `core.auth.AUTH_DISABLED`.
 from core.auth import require_auth, AUTH_DISABLED, _is_production  # noqa: E402
+# Human bot-gate cookie helpers -> core/auth.py (BR-CODE-1 config/auth seam),
+# aliased to their historical `_`-prefixed names so consumers keep resolving.
+from core.auth import (  # noqa: E402
+    issue_human_token as _issue_human_token,
+    valid_human_token as _valid_human_token,
+    HUMAN_COOKIE_NAME as _HUMAN_COOKIE_NAME,
+    HUMAN_TTL_SECONDS as _HUMAN_TTL_SECONDS,
+)
 
 # Helpers moved to core/ (BR-CODE-1 helper pass). Aliased to the historical
 # `_`-prefixed names so every call site + the route tests' monkeypatch
@@ -211,35 +219,9 @@ from core.helpers import flatten_order_items as _flatten_order_items  # noqa: E4
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
 
-# HMAC key for the signed human-session cookie. Prefer a stable secret so the
-# cookie survives restarts; fall back to a per-process random (cookies simply
-# re-issue on the next interaction after a restart — fine for a demo).
-_HUMAN_COOKIE_SECRET = (
-    os.environ.get("SESSION_SIGNING_SECRET") or CRON_SECRET or secrets.token_hex(32)
-).encode()
-_HUMAN_COOKIE_NAME = "vp_human"
-_HUMAN_TTL_SECONDS = 1800  # 30 min
-
-
-def _issue_human_token(ttl: int = _HUMAN_TTL_SECONDS) -> str:
-    """Mint a signed, expiring opaque token: '<exp>.<hex-hmac>'."""
-    exp = int(time.time()) + ttl
-    sig = hmac.new(_HUMAN_COOKIE_SECRET, str(exp).encode(), "sha256").hexdigest()
-    return f"{exp}.{sig}"
-
-
-def _valid_human_token(tok: str | None) -> bool:
-    if not tok or "." not in tok:
-        return False
-    exp_s, _, sig = tok.partition(".")
-    try:
-        exp = int(exp_s)
-    except ValueError:
-        return False
-    if exp < int(time.time()):
-        return False
-    expected = hmac.new(_HUMAN_COOKIE_SECRET, exp_s.encode(), "sha256").hexdigest()
-    return hmac.compare_digest(sig, expected)
+# _HUMAN_COOKIE_SECRET + _HUMAN_COOKIE_NAME + _HUMAN_TTL_SECONDS +
+# _issue_human_token + _valid_human_token -> core/auth.py (BR-CODE-1 config/auth
+# seam). Imported (aliased) near the top of this module.
 
 
 def _verify_recaptcha(token: str | None, expected_action: str, remote_ip: str | None) -> bool:

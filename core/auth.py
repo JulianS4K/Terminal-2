@@ -15,13 +15,16 @@ One-directional import: core.auth -> core.config; never imports app.py.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
+import secrets
+import time
 
 import requests
 from fastapi import Header, HTTPException
 
-from core.config import ALLOWED_EMAIL_DOMAIN, SUPABASE_ANON_KEY, SUPABASE_URL
+from core.config import ALLOWED_EMAIL_DOMAIN, CRON_SECRET, SUPABASE_ANON_KEY, SUPABASE_URL
 
 # AUTH_DISABLED is a local-dev kill switch. To prevent a misconfig from
 # accidentally opening the whole API, it ONLY takes effect when:
@@ -91,3 +94,38 @@ def require_auth(authorization: str | None = Header(None)):
     if not email.endswith("@" + ALLOWED_EMAIL_DOMAIN.lower()):
         raise HTTPException(403, f"access restricted to @{ALLOWED_EMAIL_DOMAIN}")
     return user
+
+
+# ---------- "human" cookie — lightweight signed bot-gate token ----------
+# A signed, expiring opaque token proving a request cleared the bot gate
+# (honeypot / rate-limit / reCAPTCHA). HMAC over the expiry; no PII. The secret
+# prefers an explicit SESSION_SIGNING_SECRET, falls back to CRON_SECRET, then a
+# per-process random (so a restart just re-issues on next interaction — fine for
+# a demo).
+_HUMAN_COOKIE_SECRET = (
+    os.environ.get("SESSION_SIGNING_SECRET") or CRON_SECRET or secrets.token_hex(32)
+).encode()
+HUMAN_COOKIE_NAME = "vp_human"
+HUMAN_TTL_SECONDS = 1800  # 30 min
+
+
+def issue_human_token(ttl: int = HUMAN_TTL_SECONDS) -> str:
+    """Mint a signed, expiring opaque token: '<exp>.<hex-hmac>'."""
+    exp = int(time.time()) + ttl
+    sig = hmac.new(_HUMAN_COOKIE_SECRET, str(exp).encode(), "sha256").hexdigest()
+    return f"{exp}.{sig}"
+
+
+def valid_human_token(tok: str | None) -> bool:
+    """True iff `tok` is a non-expired token whose HMAC verifies."""
+    if not tok or "." not in tok:
+        return False
+    exp_s, _, sig = tok.partition(".")
+    try:
+        exp = int(exp_s)
+    except ValueError:
+        return False
+    if exp < int(time.time()):
+        return False
+    expected = hmac.new(_HUMAN_COOKIE_SECRET, exp_s.encode(), "sha256").hexdigest()
+    return hmac.compare_digest(sig, expected)
