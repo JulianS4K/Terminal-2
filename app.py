@@ -245,6 +245,9 @@ from core.helpers import normalize_search_key as _normalize_search_key  # noqa: 
 from core.helpers import is_tbd as _is_tbd  # noqa: E402
 from core.helpers import section_sort_key as _section_sort_key  # noqa: E402
 from core.helpers import is_bowl_pattern_name as _is_bowl_pattern_name  # noqa: E402
+from core.helpers import tour_dates as _tour_dates  # noqa: E402
+from core.helpers import share_to_dict as _share_to_dict  # noqa: E402
+from core.helpers import flatten_order_items as _flatten_order_items  # noqa: E402
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
@@ -1184,12 +1187,7 @@ def broker_performer_trip_plan(
 
 
 # _clean_section -> core/helpers.py (BR-CODE-1); aliased at top.
-def _tour_dates(days: int):
-    from datetime import date, timedelta
-    start = date.today()
-    return start, start + timedelta(days=max(1, min(int(days), 730)))
-
-
+# _tour_dates -> core/helpers.py (BR-CODE-1 pure-helper pass); aliased at top.
 def _tour_package_payload(performer_id: int, home_lat: float, home_lon: float,
                           qty: int, budget_km: float, home_name: str, days: int,
                           budget_usd: float | None, side: str, clear_at: float,
@@ -3515,42 +3513,7 @@ def _flatten_order(order: dict) -> dict:
     }
 
 
-def _flatten_order_items(order: dict) -> list[dict]:
-    """Project order.items[] into evo_order_items schema, mapping event_id."""
-    out = []
-    for it in (order.get("items") or []):
-        tg = it.get("ticket_group") or {}
-        ev = tg.get("event") or {}
-        venue = ev.get("venue") or {}
-        out.append({
-            "evo_order_id":              _to_int_or_none(order.get("id")),
-            "evo_item_id":               _to_int_or_none(it.get("id")),
-            "quantity":                  _to_int_or_none(it.get("quantity")),
-            "price":                     _to_num_or_none(it.get("price")),
-            "ticket_group_id":           _to_int_or_none(tg.get("id")),
-            "ticket_group_remote_id":    tg.get("remote_id"),
-            "ticket_group_office_id":    _to_int_or_none(tg.get("office_id")),
-            "ticket_group_section":      tg.get("section"),
-            "ticket_group_row":          tg.get("row"),
-            "ticket_group_seats":        tg.get("seats") or [],
-            "ticket_group_quantity":     _to_int_or_none(tg.get("quantity")),
-            "ticket_group_retail_price": _to_num_or_none(tg.get("retail_price")),
-            "ticket_group_wholesale_price": _to_num_or_none(tg.get("wholesale_price")),
-            "ticket_group_external_notes": tg.get("external_notes"),
-            "event_id":                  _to_int_or_none(ev.get("id")),
-            "event_name":                ev.get("name"),
-            "occurs_at":                 _parse_iso_or_none(ev.get("occurs_at")),
-            "venue_id":                  _to_int_or_none(venue.get("id")),
-            "venue_name":                venue.get("name"),
-            "eticket_available":         it.get("eticket_available"),
-            "eticket_delivery":          it.get("eticket_delivery"),
-            "eticket_downloaded_at":     _parse_iso_or_none(it.get("eticket_downloaded_at")) or None,
-            "eticket_downloaded_by":     _to_int_or_none(it.get("eticket_downloaded_by")),
-            "raw":                       it,
-        })
-    return out
-
-
+# _flatten_order_items -> core/helpers.py (BR-CODE-1); aliased at top.
 @app.post("/api/admin/collect-orders")
 def collect_evo_orders(
     max_pages: int = 50,                   # 50 * 10 = 500 orders per tick
@@ -6228,33 +6191,7 @@ def store_terms_page():
 _SHARE_FILTER_KEYS = ("zones", "section", "min_price", "max_price", "min_qty")
 
 
-def _share_to_dict(row: dict) -> dict:
-    """Public-safe representation of a share_links row."""
-    if not row:
-        return {}
-    revoked = row.get("revoked_at")
-    expires = row.get("expires_at")
-    expired = False
-    if expires:
-        try:
-            expired = datetime.fromisoformat(str(expires).replace("Z", "+00:00")) <= datetime.now(timezone.utc)
-        except ValueError:
-            expired = False
-    return {
-        "id": row.get("id"),
-        "url": f"/s/{row.get('id')}",
-        "event_id": row.get("event_id"),
-        "filters": row.get("filters") or {},
-        "note": row.get("note"),
-        "created_at": row.get("created_at"),
-        "expires_at": expires,
-        "revoked_at": revoked,
-        "view_count": row.get("view_count") or 0,
-        "last_viewed_at": row.get("last_viewed_at"),
-        "active": (revoked is None) and (not expired),
-    }
-
-
+# _share_to_dict -> core/helpers.py (BR-CODE-1); aliased at top.
 @app.post("/api/store/share")
 def store_share_create(payload: dict = Body(...), user=Depends(require_auth)):
     """Create a revocable share link for one event with saved filters.
