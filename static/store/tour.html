@@ -20,12 +20,18 @@
   <style>
     .ft-wrap { max-width: 820px; margin: 0 auto; padding: 16px 18px 48px; }
     .ft-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 14px 0; }
-    .ft-controls label { display: block; font-size: 12px; color: #8a93a6; margin-bottom: 3px; }
-    .ft-controls input { padding: 9px 10px; box-sizing: border-box; }
+    .ft-controls label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+    .ft-controls input { padding: 9px 10px; box-sizing: border-box;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; font: inherit; outline: none; }
+    .ft-controls input:focus { border-color: var(--accent); }
     .ft-controls input[type=number] { width: 110px; }
-    .ft-wrap button { padding: 9px 18px; margin: 0 8px 8px 0; cursor: pointer; }
-    .ftside { padding: 6px 14px !important; border: 1px solid rgba(127,127,127,.4); border-radius: 999px; background: transparent; }
-    .ftside.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .ft-wrap button { padding: 9px 18px; margin: 0 8px 8px 0; cursor: pointer;
+      font: 600 13px/1 system-ui; border-radius: 999px; }
+    #ftGo { background: var(--accent); color: #fff; border: none; }
+    #ftGo:hover { background: var(--accent-2); }
+    .ftside { padding: 6px 14px !important; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); }
+    .ftside.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .ft-stat { display: flex; gap: 24px; flex-wrap: wrap; margin: 14px 0; padding: 14px 16px; border: 1px solid rgba(127,127,127,.22); border-radius: 10px; }
     .ft-stat b { font-size: 22px; display: block; line-height: 1.1; }
     .ft-stat .l { font-size: 11px; color: #8a93a6; text-transform: uppercase; letter-spacing: .04em; }
@@ -41,12 +47,12 @@
     .ft-search { position: relative; min-width: 280px; flex: 1 1 280px; }
     .ft-search input { width: 100%; box-sizing: border-box; }
     .ft-suggest { position: absolute; z-index: 20; left: 0; right: 0; top: 100%;
-      background: Canvas; color: CanvasText; border: 1px solid rgba(127,127,127,.32);
-      border-radius: 8px; max-height: 280px; overflow: auto; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
-    .ft-suggest .opt { padding: 8px 10px; cursor: pointer; font-size: 14px; border-bottom: 1px solid rgba(127,127,127,.14); }
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; max-height: 280px; overflow: auto; box-shadow: var(--shadow); }
+    .ft-suggest .opt { padding: 8px 10px; cursor: pointer; font-size: 14px; border-bottom: 1px solid var(--line); }
     .ft-suggest .opt:last-child { border-bottom: 0; }
-    .ft-suggest .opt:hover, .ft-suggest .opt.active { background: rgba(37,99,235,.18); }
-    .ft-suggest .opt small { color: #8a93a6; margin-left: 6px; }
+    .ft-suggest .opt:hover, .ft-suggest .opt.active { background: var(--panel-2); }
+    .ft-suggest .opt small { color: var(--muted); margin-left: 6px; }
     .ft-more { margin: 10px 0 0; font-size: 13px; padding: 9px 12px; border: 1px dashed rgba(127,127,127,.32); border-radius: 8px; }
   </style>
 </head>
