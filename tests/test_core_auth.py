@@ -45,3 +45,13 @@ def test_human_token_rejects_extended_expiry_with_old_sig():
     _exp_s, _, sig = tok.partition(".")
     forged = f"{int(time.time()) + 99999}.{sig}"
     assert valid_human_token(forged) is False
+
+
+from core.auth import verify_recaptcha  # noqa: E402
+
+
+def test_verify_recaptcha_missing_token_fails_closed():
+    # No token -> False without any network call (callers gate on RECAPTCHA_ENABLED
+    # before reaching here, so the dormant case never hits this function).
+    assert verify_recaptcha(None, "submit", "1.2.3.4") is False
+    assert verify_recaptcha("", "submit", None) is False

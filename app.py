@@ -154,7 +154,7 @@ from core.config import (  # noqa: E402
     ALLOWED_EMAIL_DOMAIN, STOREFRONT_SQL_ONLY, STOREFRONT_SEARCH_SQL_ONLY,
     STOREFRONT_PREFER_INTERNAL_ZONES, STOREFRONT_RESERVE_REQUIRES_AUTH,
     STOREFRONT_CHECKOUT_DOMAIN, STOREFRONT_CHECKOUT_DISABLED,
-    RECAPTCHA_SITE_KEY, RECAPTCHA_SECRET_KEY, RECAPTCHA_MIN_SCORE, RECAPTCHA_ENABLED,
+    RECAPTCHA_SITE_KEY, RECAPTCHA_ENABLED,
 )
 # Storefront deploy identity -> core/config.py (BR-CODE-1 config seam). Aliased
 # to the historical `_`-prefixed names so consumers + the test monkeypatch
@@ -178,6 +178,7 @@ from core.auth import require_auth, AUTH_DISABLED, _is_production  # noqa: E402
 from core.auth import (  # noqa: E402
     issue_human_token as _issue_human_token,
     valid_human_token as _valid_human_token,
+    verify_recaptcha as _verify_recaptcha,
     HUMAN_COOKIE_NAME as _HUMAN_COOKIE_NAME,
     HUMAN_TTL_SECONDS as _HUMAN_TTL_SECONDS,
 )
@@ -224,30 +225,8 @@ from core.helpers import flatten_order_items as _flatten_order_items  # noqa: E4
 # seam). Imported (aliased) near the top of this module.
 
 
-def _verify_recaptcha(token: str | None, expected_action: str, remote_ip: str | None) -> bool:
-    """Verify a reCAPTCHA v3 token with Google. Returns True when the gate is
-    dormant (no keys). Fails OPEN on a network/Google error (demo availability),
-    CLOSED on an explicit failure / low score / action mismatch."""
-    if not RECAPTCHA_ENABLED:
-        return True
-    if not token:
-        return False
-    try:
-        resp = requests.post(
-            "https://www.google.com/recaptcha/api/siteverify",
-            data={"secret": RECAPTCHA_SECRET_KEY, "response": token, "remoteip": remote_ip or ""},
-            timeout=5,
-        )
-        data = resp.json()
-    except Exception as e:  # noqa: BLE001 — network/parse: fail open so a Google blip can't break the demo
-        print(f"[recaptcha] verify call failed ({e!r}) — failing open")
-        return True
-    if not data.get("success"):
-        return False
-    action = data.get("action")
-    if action and expected_action and action != expected_action:
-        return False
-    return float(data.get("score") or 0.0) >= RECAPTCHA_MIN_SCORE
+# _verify_recaptcha -> core/auth.py (BR-CODE-1 config/auth seam; pairs with the
+# human-token bot gate). Imported (aliased) near the top of this module.
 
 
 def _require_human(request: Request, payload: dict | None = None):
