@@ -310,3 +310,55 @@ def test_ticket_group_to_listing_defaults():
     assert out["type"] == "event"   # default
     assert out["splits"] == []      # default
     assert out["available_quantity"] is None
+
+
+# ---------- coercion: parse_iso_or_none / to_int_or_none / to_num_or_none ----------
+
+def test_to_int_or_none():
+    from core.helpers import to_int_or_none
+    assert to_int_or_none("42") == 42
+    assert to_int_or_none(7) == 7
+    assert to_int_or_none("") is None
+    assert to_int_or_none(None) is None
+    assert to_int_or_none("abc") is None
+
+
+def test_to_num_or_none():
+    from core.helpers import to_num_or_none
+    assert to_num_or_none("19.95") == 19.95
+    assert to_num_or_none("") is None
+    assert to_num_or_none("x") is None
+
+
+def test_parse_iso_or_none_z_suffix():
+    from core.helpers import parse_iso_or_none
+    assert parse_iso_or_none("2026-05-01T00:00:00Z") == "2026-05-01T00:00:00+00:00"
+    assert parse_iso_or_none("2026-05-01T00:00:00+00:00") == "2026-05-01T00:00:00+00:00"
+    assert parse_iso_or_none(None) is None
+    assert parse_iso_or_none("") is None
+
+
+# ---------- geo / venue matching ----------
+
+def test_haversine_miles_known_distance():
+    from core.helpers import haversine_miles
+    # NYC (Times Sq) -> LA (City Hall) is ~2450 mi; allow generous tolerance
+    d = haversine_miles(40.758, -73.985, 34.054, -118.243)
+    assert 2400 < d < 2500
+    # identical points -> 0
+    assert haversine_miles(40.0, -73.0, 40.0, -73.0) == 0
+
+
+def test_venue_tokens_strips_parking_and_short_tokens():
+    from core.helpers import venue_tokens
+    assert venue_tokens("Citi Field Parking") == {"citi", "field"}
+    assert venue_tokens("") == set()
+
+
+def test_venue_overlap_jaccard():
+    from core.helpers import venue_overlap
+    assert venue_overlap("Daikin Park", "Daikin Park") == 1.0
+    # "Daikin Park" {daikin,park} vs "Daikin Park Houston" {daikin,park,houston} = 2/3
+    assert abs(venue_overlap("Daikin Park", "Daikin Park Houston") - 2/3) < 1e-9
+    assert venue_overlap("Citi Field", "Yankee Stadium") == 0.0
+    assert venue_overlap("", "Citi Field") == 0.0

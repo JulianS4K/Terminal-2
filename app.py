@@ -232,6 +232,12 @@ from core.helpers import clean_opt_url as _clean_opt_url  # noqa: E402
 from core.helpers import tevo_runtime_to_http as _tevo_runtime_to_http  # noqa: E402
 from core.helpers import normalize_filters as _normalize_filters  # noqa: E402
 from core.helpers import ticket_group_to_listing as _ticket_group_to_listing  # noqa: E402
+from core.helpers import parse_iso_or_none as _parse_iso_or_none  # noqa: E402
+from core.helpers import to_int_or_none as _to_int_or_none  # noqa: E402
+from core.helpers import to_num_or_none as _to_num_or_none  # noqa: E402
+from core.helpers import haversine_miles as _haversine_miles  # noqa: E402
+from core.helpers import venue_tokens as _venue_tokens  # noqa: E402
+from core.helpers import venue_overlap as _venue_overlap  # noqa: E402
 
 # (storefront-mode flags + reCAPTCHA config moved to core/config.py — imported
 # at the top of this bootstrap block, BR-CODE-1 core extraction.)
@@ -2403,27 +2409,7 @@ def admin_seed_home_venues(league: str, _=Depends(require_auth)):
 #
 # RULE 2 compliant — every TEvo call is GET via the read-only client.
 
-def _venue_tokens(name: str) -> set[str]:
-    """Crude venue-name token bag for fuzzy match. Strips 'Parking' suffix
-    so 'Citi Field Parking' matches 'Citi Field'."""
-    if not name:
-        return set()
-    n = name.lower().replace(" parking", "").replace("parking", "")
-    return {tok for tok in re.split(r"[^a-z0-9]+", n) if len(tok) >= 3}
-
-
-def _venue_overlap(a: str, b: str) -> float:
-    """Jaccard overlap between two venue names. 1.0 = identical, 0 = nothing
-    in common. ~0.5 typically indicates a real match (e.g. 'Daikin Park'
-    vs 'Daikin Park Houston')."""
-    ta, tb = _venue_tokens(a), _venue_tokens(b)
-    if not ta or not tb:
-        return 0.0
-    inter = ta & tb
-    union = ta | tb
-    return len(inter) / len(union) if union else 0.0
-
-
+# _venue_tokens + _venue_overlap -> core/helpers.py (BR-CODE-1 pure-utility pass); aliased at top.
 def _upsert_tevo_event_into_events(db, ev: dict) -> int | None:
     """Upsert a TEvo event-detail dict into our `events` table. Returns the
     event id if upserted, None otherwise."""
@@ -3497,34 +3483,7 @@ def _require_cron_or_auth(authorization: str | None, x_cron_secret: str | None):
     return require_auth(authorization)
 
 
-def _parse_iso_or_none(s):
-    if not s:
-        return None
-    try:
-        # TEvo emits 'Z' suffix; Python 3.11+ fromisoformat handles it
-        return s.replace("Z", "+00:00") if isinstance(s, str) and s.endswith("Z") else s
-    except Exception:
-        return None
-
-
-def _to_int_or_none(v):
-    if v is None or v == "":
-        return None
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_num_or_none(v):
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
+# _parse_iso_or_none + _to_int_or_none + _to_num_or_none -> core/helpers.py (BR-CODE-1); aliased at top.
 def _flatten_order(order: dict) -> dict:
     """Project a TEvo /v9/orders row to our evo_orders schema."""
     buyer = order.get("buyer") or {}
@@ -4190,16 +4149,7 @@ def store_events(
     return {"count": len(out), "events": out, "limit": cap, "offset": offset}
 
 
-def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle distance in miles between two (lat,lon) pairs."""
-    R_MI = 3958.7613  # Earth's mean radius in miles
-    lat1r, lat2r = math.radians(lat1), math.radians(lat2)
-    dlat = lat2r - lat1r
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1r) * math.cos(lat2r) * math.sin(dlon / 2) ** 2
-    return 2 * R_MI * math.asin(math.sqrt(a))
-
-
+# _haversine_miles -> core/helpers.py (BR-CODE-1 pure-utility pass); aliased at top.
 def _attach_owned_metadata(
     db,
     candidate_ids: list[int],
