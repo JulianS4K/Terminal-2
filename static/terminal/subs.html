@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Subs</title>
+  <link rel="stylesheet" href="style.css?v=20260620" />
+</head>
+<body data-page="subs">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">—</span>
+  </header>
+
+  <main class="wrap subs">
+    <section id="subs-form-panel">
+      <div class="panel-title">SUBSTITUTION CHECKER</div>
+      <p class="muted small">
+        Cover a sold / double-sold ticket from our own inventory. Finds the
+        <strong>cheapest acceptable</strong> sub — same section &amp; same-or-better row
+        first, then a better-section fallback. Enter the sold ticket below.
+      </p>
+      <form id="subsForm" class="subs-form" autocomplete="off">
+        <div class="subs-field event-search">
+          <label for="subEventSearch">Event <span class="muted small">(search by name)</span></label>
+          <input id="subEventSearch" type="text" placeholder="Braves at Padres…" autocomplete="off" />
+          <div id="subEventResults" class="subs-typeahead" hidden></div>
+        </div>
+        <div class="subs-field narrow">
+          <label for="subEvent">Event ID</label>
+          <input id="subEvent" name="event" type="number" inputmode="numeric" min="1" placeholder="3100123" required />
+        </div>
+        <div class="subs-field">
+          <label for="subSection">Section</label>
+          <input id="subSection" name="section" type="text" placeholder="310" required />
+        </div>
+        <div class="subs-field">
+          <label for="subRow">Row</label>
+          <input id="subRow" name="row" type="text" placeholder="14" />
+        </div>
+        <div class="subs-field narrow">
+          <label for="subQty">Qty</label>
+          <input id="subQty" name="quantity" type="number" inputmode="numeric" min="1" value="1" />
+        </div>
+        <div class="subs-field narrow">
+          <label for="subRevenue">Revenue $ <span class="muted small">(total)</span></label>
+          <input id="subRevenue" name="revenue" type="number" inputmode="decimal" min="0" step="0.01" placeholder="67.12" />
+        </div>
+        <div class="subs-field narrow">
+          <label for="subSource">Pool</label>
+          <select id="subSource" name="source">
+            <option value="owned">Owned (free swap)</option>
+            <option value="market">Market (buy-in)</option>
+          </select>
+        </div>
+        <div class="subs-field narrow" id="subFeeField" hidden>
+          <label for="subFee">Buy-in fee %</label>
+          <input id="subFee" name="fee_pct" type="number" inputmode="decimal" min="0" step="0.1" placeholder="0" />
+        </div>
+        <div class="subs-field submit">
+          <button type="submit" class="btn-primary" id="subsRun">Find subs</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="subs-results" hidden>
+      <div id="subsRecap" class="subs-recap"></div>
+      <div id="subsBest" class="subs-best"></div>
+
+      <div class="panel-title row"><span>SAME-SECTION ROW SUBS</span><span id="subsRowCount" class="muted small"></span></div>
+      <div id="subsRowTable" class="subs-table-wrap"></div>
+
+      <div class="panel-title row"><span>BETTER-SECTION SUBS</span><span id="subsSecCount" class="muted small"></span></div>
+      <div id="subsSecTable" class="subs-table-wrap"></div>
+
+      <details id="subsAmbiguousWrap" hidden>
+        <summary>Ambiguous <span id="subsAmbCount" class="muted small"></span></summary>
+        <div id="subsAmbTable" class="subs-table-wrap"></div>
+        <p class="muted small">Row vs sold row not safely comparable (different kind, or venue-dependent letter rows). Eyeball before using.</p>
+      </details>
+    </section>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <!-- Cache-busting: bump ?v=<date> on any first-party asset change. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260620"></script>
+  <script src="subs.js?v=20260620"></script>
+</body>
+</html>
