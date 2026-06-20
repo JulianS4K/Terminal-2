@@ -22,10 +22,6 @@
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
-    // Subs — substitution checker. Given a sold ticket (event/section/row/qty)
-    // find the cheapest acceptable cover: same-section same-or-better row, then
-    // a better-section fallback. Backed by /api/broker/event/{id}/substitutions.
-    { id: 'subs',      label: 'SUBS',      href: 'subs.html' },
     // Retail chat — natural-language price/inventory lookups over the book
     // (full market on the terminal; owned-EVO-only on the storefront). Talks
     // to /api/retail-chat → the `chat` edge fn. Wired 2026-06-19.
@@ -38,6 +34,11 @@
     // its latest snapshot get-in / price band / listing depth. Backed by
     // /api/axs/events (service-role read; axs_* tables are RLS-locked). 2026-06-20.
     { id: 'axs',       label: 'AXS',       href: 'axs.html' },
+    // Subs — substitution checker. Given a sold ticket (event/section/row/qty)
+    // find the cheapest acceptable cover: same-section same-or-better row, then
+    // a better-section fallback. Backed by /api/broker/event/{id}/substitutions.
+    // Grouped with the discovery/axs tools cluster.
+    { id: 'subs',      label: 'SUBS',      href: 'subs.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
   ];
 
