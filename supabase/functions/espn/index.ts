@@ -413,63 +413,73 @@ async function aggregateEvent(db: any, tevoEventId: number) {
   };
 }
 
-// MMA fight-card aggregate. ESPN's mma/ufc summary exposes bouts under one of
-// several keys depending on card state (`cards[].competitions`, `competitions`,
-// or `header.competitions`); we pull from whichever is present and normalize
-// each bout to two fighters + result, so the shape degrades gracefully.
+// MMA fight-card aggregate. ESPN's team `/summary?event=` 404s for MMA; the
+// fight card lives at the v3 fightcenter endpoint on site.web.api.espn.com:
+//   /apis/common/v3/sports/mma/ufc/fightcenter/{eventId}
+// -> { event, venue, cards: { main, prelims1, prelims2, ... } } where each card
+// group has competitions[] (bouts) with type.text (weight class), note, status,
+// and competitors[].athlete + displayRecord + winner. We flatten main-card-first.
 async function aggregateMmaEvent(xref: { espn_event_id: string; espn_slug: string; espn_league: string }) {
-  let summary: any;
+  let fc: any;
   try {
-    summary = await site(`/apis/site/v2/sports/${xref.espn_slug}/summary`, { event: xref.espn_event_id });
+    fc = await espnGet("site.web.api.espn.com", `/apis/common/v3/sports/${xref.espn_slug}/fightcenter/${xref.espn_event_id}`);
   } catch (e) {
     return {
       applicable: true, espn_event_id: xref.espn_event_id, league: xref.espn_league,
-      sport_slug: xref.espn_slug, error: `summary fetch failed: ${String((e as Error).message)}`,
+      sport_slug: xref.espn_slug, error: `fightcenter fetch failed: ${String((e as Error).message)}`,
     };
   }
 
-  const h = summary?.header ?? {};
-  const comp0 = h.competitions?.[0] ?? {};
-  const boutSrc: any[] =
-    summary?.cards?.flatMap((c: any) => c?.competitions ?? []) ??
-    summary?.competitions ??
-    h.competitions ??
-    [];
+  const cards = fc?.cards ?? {};
+  const preferred = ["main", "prelims1", "prelims2", "prelims", "early"];
+  const groupKeys = [
+    ...preferred.filter((k) => cards[k]),
+    ...Object.keys(cards).filter((k) => !preferred.includes(k)),
+  ];
 
   const fighter = (x: any) => x && {
     name: x.athlete?.displayName ?? x.athlete?.fullName,
     id: x.athlete?.id,
-    record: x.records?.[0]?.summary,
+    record: x.displayRecord,
     winner: x.winner ?? null,
   };
-  const fights = boutSrc.map((c: any) => ({
-    bout: c?.type?.text ?? c?.note ?? c?.description ?? null,
-    status: c?.status?.type?.shortDetail ?? c?.status?.type?.description,
-    result: c?.status?.result?.shortDisplayName ?? c?.status?.result?.description ?? null,
-    fighters: (c?.competitors ?? []).map(fighter).filter(Boolean),
-  })).filter((f: any) => f.fighters.length);
 
+  const fights: any[] = [];
+  for (const gk of groupKeys) {
+    const g = cards[gk];
+    for (const c of (g?.competitions ?? [])) {
+      const fr = (c?.competitors ?? [])
+        .slice()
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+        .map(fighter)
+        .filter(Boolean);
+      if (!fr.length) continue;
+      fights.push({
+        segment: g?.displayName ?? gk,
+        bout: c?.note ?? c?.type?.text ?? null,
+        weight_class: c?.type?.text ?? null,
+        status: c?.status?.type?.shortDetail ?? c?.status?.type?.description,
+        result: c?.status?.result?.shortDisplayName ?? c?.status?.result?.description ?? null,
+        fighters: fr,
+      });
+    }
+  }
+
+  const ev = fc?.event ?? {};
   return {
     applicable: true,
     espn_event_id: xref.espn_event_id,
     league: xref.espn_league,
     sport_slug: xref.espn_slug,
     header: {
-      name: h.name ?? summary?.gameInfo?.event?.name,
-      date: comp0?.date,
-      venue: summary?.gameInfo?.venue?.fullName ?? summary?.gameInfo?.venue?.address?.city,
-      status: comp0?.status?.type?.shortDetail ?? comp0?.status?.type?.description,
-      state: comp0?.status?.type?.state,            // 'pre' | 'in' | 'post'
+      name: ev.name ?? ev.shortName,
+      date: ev.date,
+      venue: fc?.venue?.fullName ?? fc?.venue?.displayNameLocation,
+      status: fights[0]?.status ?? null,
       main_event: fights[0] ?? null,
     },
     fight_count: fights.length,
     fights,
-    article: summary?.article && {
-      headline: summary.article.headline,
-      description: summary.article.description,
-      images: (summary.article.images ?? []).slice(0, 1).map((i: any) => i.url),
-    },
-    broadcasts: (summary?.broadcasts ?? []).map((b: any) => ({ market: b.market, names: b.names })).slice(0, 3),
   };
 }
 
