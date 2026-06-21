@@ -8,6 +8,13 @@
 // v2 (2026-05-07): switched lookup from deprecated team_xref to canonical
 // performer_external_ids. Coverage went from 38 to 217 teams (big-5 + WNBA + WC).
 //
+// v3 (2026-06-21): MMA/UFC support. UFC is an ORG (no per-team schedule), so a
+// performer_external_ids row with meta.is_org + espn_slug 'mma/ufc' routes the
+// event resolver to date-match the league scoreboard and renders a fight card
+// (aggregateMmaEvent) instead of a team box score. Performer page falls back to
+// news + upcoming/recent cards (aggregateMmaOrg). Pairs with migration
+// 20260621000000_espn_mma_ufc_support.sql (seeds UFC performer 25507).
+//
 // Routes:
 //   GET /espn/applicable?event_id=N        -> { applicable: bool, league?, sport_slug?, espn_team_id? }
 //   GET /espn/applicable?performer_id=N    -> { applicable: bool, league?, sport_slug?, espn_team_id? }
@@ -84,6 +91,16 @@ interface XrefHit {
   espn_league: string;
   espn_slug: string;
   espn_abbr: string | null;
+  // true for league ORGS that have no per-team schedule endpoint (e.g. UFC).
+  // Drives the MMA resolver/aggregator path instead of the team-schedule one.
+  is_org: boolean;
+}
+
+// MMA/combat orgs are resolved + rendered differently from team sports:
+// ESPN has no /teams/{id}/schedule for them, so we date-match against the
+// league scoreboard and render a fight card rather than a team box score.
+function isMmaSlug(slug: string | null | undefined): boolean {
+  return !!slug && slug.startsWith("mma/");
 }
 
 // v2: reads performer_external_ids (canonical) instead of deprecated team_xref.
@@ -105,6 +122,7 @@ async function lookupTeamXref(db: any, performerId: number): Promise<XrefHit | n
     espn_league: data.league,
     espn_slug: slug,
     espn_abbr: data.meta?.espn_abbr ?? null,
+    is_org: data.meta?.is_org === true || isMmaSlug(slug),
   };
 }
 
@@ -136,6 +154,11 @@ async function getOrPopulateEventXref(db: any, tevoEventId: number): Promise<{ e
   }
   if (!team) return null;
 
+  // MMA orgs (UFC): no team schedule — resolve via the league scoreboard by date.
+  if (team.is_org || isMmaSlug(team.espn_slug)) {
+    return await resolveMmaEventXref(db, tevoEventId, ev, team);
+  }
+
   // 3. Fetch the team's ESPN schedule, find an event within ±36h of our event
   let schedule: any;
   try {
@@ -158,6 +181,64 @@ async function getOrPopulateEventXref(db: any, tevoEventId: number): Promise<{ e
     espn_slug: team.espn_slug,
     match_method: "team_date",
     meta: { matched_team: team.espn_team_id, espn_event_name: match.name, espn_event_date: match.date, tevo_event_local: ev.occurs_at_local },
+  };
+  try { await db.from("event_xref").upsert(row, { onConflict: "tevo_event_id" }); } catch (_) { /* best-effort */ }
+  return { espn_event_id: row.espn_event_id, espn_slug: row.espn_slug, espn_league: row.espn_league };
+}
+
+// YYYYMMDD in UTC — ESPN scoreboard ?dates= param format.
+function espnDateStr(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+// Resolve a UFC/MMA event to its ESPN event id via the league scoreboard.
+// ESPN MMA has no per-team schedule, so we date-match the fight card:
+//   /apis/site/v2/sports/mma/ufc/scoreboard?dates=YYYYMMDD  -> events[] (cards)
+// Each card has a .date; we accept a card within ±36h of our local start, and
+// probe the UTC day plus ±1 day to absorb timezone / past-midnight cards.
+async function resolveMmaEventXref(
+  db: any,
+  tevoEventId: number,
+  ev: any,
+  org: XrefHit,
+): Promise<{ espn_event_id: string; espn_slug: string; espn_league: string } | null> {
+  const ourTs = new Date(ev.occurs_at_local).getTime();
+  if (isNaN(ourTs)) return null;
+  const dayMs = 24 * 3600 * 1000;
+  const days = [
+    espnDateStr(ev.occurs_at_local),
+    espnDateStr(new Date(ourTs - dayMs).toISOString()),
+    espnDateStr(new Date(ourTs + dayMs).toISOString()),
+  ].filter(Boolean);
+  const window = 36 * 3600 * 1000;
+
+  let match: any = null;
+  for (const d of days) {
+    let board: any;
+    try { board = await site(`/apis/site/v2/sports/${org.espn_slug}/scoreboard`, { dates: d }); }
+    catch (_) { continue; }
+    match = (board?.events ?? []).find((e: any) => {
+      const t = new Date(e?.date).getTime();
+      return !isNaN(t) && Math.abs(t - ourTs) < window;
+    });
+    if (match) break;
+  }
+  if (!match) return null;
+
+  const row = {
+    tevo_event_id: tevoEventId,
+    espn_event_id: String(match.id),
+    espn_league: org.espn_league,
+    espn_slug: org.espn_slug,
+    match_method: "mma_scoreboard_date",
+    meta: {
+      matched_org: org.espn_team_id,
+      espn_event_name: match.name ?? match.shortName,
+      espn_event_date: match.date,
+      tevo_event_local: ev.occurs_at_local,
+    },
   };
   try { await db.from("event_xref").upsert(row, { onConflict: "tevo_event_id" }); } catch (_) { /* best-effort */ }
   return { espn_event_id: row.espn_event_id, espn_slug: row.espn_slug, espn_league: row.espn_league };
@@ -307,6 +388,9 @@ async function aggregateEvent(db: any, tevoEventId: number) {
   const xref = await getOrPopulateEventXref(db, tevoEventId);
   if (!xref) return { applicable: false, reason: "no performer_external_ids match or no schedule match (date/team)" };
 
+  // MMA fight cards have no team box score — render the bout card instead.
+  if (isMmaSlug(xref.espn_slug)) return await aggregateMmaEvent(xref);
+
   const summary = await site(`/apis/site/v2/sports/${xref.espn_slug}/summary`, { event: xref.espn_event_id });
 
   return {
@@ -329,6 +413,97 @@ async function aggregateEvent(db: any, tevoEventId: number) {
   };
 }
 
+// MMA fight-card aggregate. ESPN's mma/ufc summary exposes bouts under one of
+// several keys depending on card state (`cards[].competitions`, `competitions`,
+// or `header.competitions`); we pull from whichever is present and normalize
+// each bout to two fighters + result, so the shape degrades gracefully.
+async function aggregateMmaEvent(xref: { espn_event_id: string; espn_slug: string; espn_league: string }) {
+  let summary: any;
+  try {
+    summary = await site(`/apis/site/v2/sports/${xref.espn_slug}/summary`, { event: xref.espn_event_id });
+  } catch (e) {
+    return {
+      applicable: true, espn_event_id: xref.espn_event_id, league: xref.espn_league,
+      sport_slug: xref.espn_slug, error: `summary fetch failed: ${String((e as Error).message)}`,
+    };
+  }
+
+  const h = summary?.header ?? {};
+  const comp0 = h.competitions?.[0] ?? {};
+  const boutSrc: any[] =
+    summary?.cards?.flatMap((c: any) => c?.competitions ?? []) ??
+    summary?.competitions ??
+    h.competitions ??
+    [];
+
+  const fighter = (x: any) => x && {
+    name: x.athlete?.displayName ?? x.athlete?.fullName,
+    id: x.athlete?.id,
+    record: x.records?.[0]?.summary,
+    winner: x.winner ?? null,
+  };
+  const fights = boutSrc.map((c: any) => ({
+    bout: c?.type?.text ?? c?.note ?? c?.description ?? null,
+    status: c?.status?.type?.shortDetail ?? c?.status?.type?.description,
+    result: c?.status?.result?.shortDisplayName ?? c?.status?.result?.description ?? null,
+    fighters: (c?.competitors ?? []).map(fighter).filter(Boolean),
+  })).filter((f: any) => f.fighters.length);
+
+  return {
+    applicable: true,
+    espn_event_id: xref.espn_event_id,
+    league: xref.espn_league,
+    sport_slug: xref.espn_slug,
+    header: {
+      name: h.name ?? summary?.gameInfo?.event?.name,
+      date: comp0?.date,
+      venue: summary?.gameInfo?.venue?.fullName ?? summary?.gameInfo?.venue?.address?.city,
+      status: comp0?.status?.type?.shortDetail ?? comp0?.status?.type?.description,
+      state: comp0?.status?.type?.state,            // 'pre' | 'in' | 'post'
+      main_event: fights[0] ?? null,
+    },
+    fight_count: fights.length,
+    fights,
+    article: summary?.article && {
+      headline: summary.article.headline,
+      description: summary.article.description,
+      images: (summary.article.images ?? []).slice(0, 1).map((i: any) => i.url),
+    },
+    broadcasts: (summary?.broadcasts ?? []).map((b: any) => ({ market: b.market, names: b.names })).slice(0, 3),
+  };
+}
+
+// MMA org page (UFC): no team record/standings — surface news + upcoming and
+// recent cards pulled from the league scoreboard.
+async function aggregateMmaOrg(org: XrefHit) {
+  const [news, board] = await Promise.all([
+    site(`/apis/site/v2/sports/${org.espn_slug}/news`, { limit: "5" }).catch(() => null),
+    site(`/apis/site/v2/sports/${org.espn_slug}/scoreboard`).catch(() => null),
+  ]);
+  const now = Date.now();
+  const cards = (board?.events ?? []).map((e: any) => ({
+    id: e.id,
+    name: e.shortName ?? e.name,
+    date: e.date,
+    status: e.competitions?.[0]?.status?.type?.shortDetail,
+  }));
+  return {
+    applicable: true,
+    league: org.espn_league,
+    sport_slug: org.espn_slug,
+    org: { name: "UFC", abbreviation: org.espn_abbr ?? "UFC" },
+    upcoming: cards.filter((c: any) => new Date(c.date).getTime() > now).slice(0, 5),
+    recent: cards.filter((c: any) => new Date(c.date).getTime() <= now).slice(-3),
+    news: (news?.articles ?? []).slice(0, 5).map((a: any) => ({
+      headline: a.headline,
+      description: a.description,
+      published: a.published,
+      link: a.links?.web?.href,
+      image: a.images?.[0]?.url,
+    })),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // /espn/performer/{id} — aggregate team page
 // ---------------------------------------------------------------------------
@@ -336,6 +511,9 @@ async function aggregateEvent(db: any, tevoEventId: number) {
 async function aggregatePerformer(db: any, tevoPerformerId: number) {
   const team = await lookupTeamXref(db, tevoPerformerId);
   if (!team) return { applicable: false, reason: "no performer_external_ids entry (source=espn)" };
+
+  // MMA orgs (UFC): no team page — surface news + upcoming/recent cards.
+  if (team.is_org || isMmaSlug(team.espn_slug)) return await aggregateMmaOrg(team);
 
   const [teamData, schedule, news, leagueInjuries] = await Promise.all([
     site(`/apis/site/v2/sports/${team.espn_slug}/teams/${team.espn_team_id}`).catch(() => null),
@@ -437,7 +615,7 @@ Deno.serve(async (req) => {
 
   try {
     if (sub === "/" || sub === "/health") {
-      return json({ ok: true, function: "espn", version: 2 }, 200, origin);
+      return json({ ok: true, function: "espn", version: 3 }, 200, origin);
     }
 
     if (sub === "/applicable") {
