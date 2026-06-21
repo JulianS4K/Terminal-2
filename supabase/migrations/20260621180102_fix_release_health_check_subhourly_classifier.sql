@@ -1,11 +1,11 @@
 -- ============================================================================
--- Migration 20260621150000 — fix release_health_check() sub-hourly classifier
+-- Migration 20260621180102 — fix release_health_check() sub-hourly classifier
 --
 -- Lane:     A1 (data plane / release-health harness)
 -- Touches:  public.release_health_check (W, CREATE OR REPLACE)
 -- Pre-reqs: 20260515170000 (function exists), later format/aging edits folded in
--- Apply:    PROPOSAL — authored under operator-directed automated-runs review;
---           apply is A1/operator-gated (CLAUDE.md §1).
+-- Apply:    APPLIED to prod 2026-06-21 (operator-authorized, full permissions).
+--           Verified: subhourly_jobs_silent_90min fail->warn, metric 5->1.
 --
 -- WHY:
 --   The `subhourly_jobs_silent_90min` check mis-classifies daily / multi-hour

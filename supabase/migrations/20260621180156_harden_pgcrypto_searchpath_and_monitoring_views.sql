@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260621153000 — pgcrypto search_path + monitoring-view hardening
+-- Migration 20260621180156 — pgcrypto search_path + monitoring-view hardening
 --
 -- Lane:     A1 (DB security)
 -- Touches:  public.build_watchlist_daily_email (W, ALTER search_path),
@@ -8,8 +8,11 @@
 --           public.v_sg_blindspot_movers, v_tevo_blindspot_movers,
 --           public.v_td_poll_health           (W, ALTER ... security_invoker)
 -- Pre-reqs: 20260519130000 (429 views); objects exist
--- Apply:    PROPOSAL — authored under operator-directed automated-runs review;
---           apply is A1/operator-gated (CLAUDE.md §1). See ⚠ below before apply.
+-- Apply:    APPLIED to prod 2026-06-21 (operator-authorized, full permissions).
+--           Verified: pgcrypto check fail->ok; security_definer_views 37->32;
+--           views still return rows. ⚠ FOLLOW-UP (A1): v_td_poll_health is
+--           anon-granted — with security_invoker on, confirm no anon/authenticated
+--           surface relies on definer reads (REVOKE anon is the cleaner endgame).
 --
 -- WHY:
 --   Two release_health_check FAILs are chronic security-hygiene backlog, not

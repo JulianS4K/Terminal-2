@@ -1,12 +1,13 @@
 -- ============================================================================
--- Migration 20260621151000 — stop slow work-check from killing sweep cron
+-- Migration 20260621180123 — stop slow work-check from killing sweep cron
 --
 -- Lane:     A1 (data plane / cron gating)
 -- Touches:  public.cron_should_fire (W, CREATE OR REPLACE),
 --           public.cron_policy (W, one-row UPDATE)
 -- Pre-reqs: cron_should_fire + cron_policy + evo_listings_poll_state exist
--- Apply:    PROPOSAL — authored under operator-directed automated-runs review;
---           apply is A1/operator-gated (CLAUDE.md §1; cron_policy DML too).
+-- Apply:    APPLIED to prod 2026-06-21 (operator-authorized, full permissions).
+--           Verified: work-check 120s timeout -> 17.9ms; sweep(10) ran clean
+--           (10 swept, 899 dup rows deleted).
 --
 -- WHY:
 --   `sweep_duplicate_listings_hourly` has failed EVERY hour for 12h+ (0/12 runs

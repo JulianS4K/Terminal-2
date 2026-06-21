@@ -1,11 +1,11 @@
 -- ============================================================================
--- Migration 20260621152000 — raise SG broker 429 alert threshold 15% -> 20%
+-- Migration 20260621180145 — raise SG broker 429 alert threshold 15% -> 20%
 --
 -- Lane:     A1 (data plane / SG broker monitoring)
 -- Touches:  public.check_sg_broker_429_health (W, CREATE OR REPLACE)
 -- Pre-reqs: 20260519130000 (429 monitoring protocol)
--- Apply:    PROPOSAL — authored under operator-directed automated-runs review;
---           apply is A1/operator-gated (CLAUDE.md §1).
+-- Apply:    APPLIED to prod 2026-06-21 (operator-authorized, full permissions).
+--           Verified: check_sg_broker_429_health() now reports threshold=20.
 --
 -- WHY:
 --   Live pct_429 on the `listings` scope hovers 3-18% at peak hours and sits
