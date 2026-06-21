@@ -35,13 +35,50 @@ static/terminal/auth.js:generic-api-key:19
 # === Test fixtures ===
 # tests/fixtures/* — synthetic data, no real credentials
 
-# (Real fingerprints get appended below as the first scan run flags
-# allowlist candidates.)
+# ----------------------------------------------------------------------------
+# Weekly full-history scan triage (2026-06-21, B1)
+# ----------------------------------------------------------------------------
+# The PR-trigger scan only sees a PR's own diff, but the weekly `schedule`
+# trigger runs `gitleaks detect --full-history --all`, which re-surfaces every
+# historical commit on every branch. Since 2026-05-18 that weekly run failed
+# every week (issue #242, never triaged) on 15 findings — all verified below as
+# either the semi-public anon JWT or low-entropy false positives. None is a
+# real credential (the migration JWTs decode to `"role":"anon"`).
+#
+# Entries use the COMMIT-LESS "global fingerprint" form (`<file>:<rule>:<line>`)
+# so one line silences a finding across ALL commits/branches — the per-commit
+# form (e.g. the old 198878f… bridge pin) is brittle: each rebuild/commit mints
+# a new hash and re-trips the scan. Verified honored by gitleaks 8.24.3
+# ("skipping finding: global fingerprint …").
 
-# D4 Bridge static bundle — Supabase anon JWT baked in at Vite build time.
-# VITE_SUPABASE_ANON_KEY is the publishable key, designed to be shipped to
-# browsers. Same key already in static/terminal/auth.js (silenced above).
-# See PROJECT_BIBLE.md §9 PR #316: "Landmine: these Vite env vars must be
-# present in .env.local whenever a new Bridge build is cut."
-# Commit 198878f is the v1.0.0-beta PR #369 checkpoint; key is still live.
-198878f61f85dcce11a671bc030fda731ec2e089:static/bridge/assets/index-C747K8Em.js:jwt:96
+# --- Supabase anon JWT (role:anon, semi-public — same key as auth.js above) ---
+# SUPABASE_ANON_KEY constant; publishable by design (see top block).
+app.py:jwt:35
+# pg_net cron calls pass the anon JWT in the Authorization header to invoke
+# verify_jwt edge functions. Decoded payload = {"role":"anon",…}. Not service_role.
+supabase/migrations/20260508240000_crawl_espn_assets_cron.sql:jwt:23
+supabase/migrations/20260508016000_schedule_venue_crawl.sql:jwt:14
+supabase/migrations/20260507000024_schedule_event_config_backfill.sql:jwt:12
+# Historical `.scratch/` probes (const ANON = …); dir no longer on main but the
+# commits persist in full history. Anon key.
+.scratch/search-unmatched.js:jwt:4
+.scratch/search-wc.js:jwt:2
+
+# --- D4 Bridge static bundles — VITE_SUPABASE_ANON_KEY baked in at Vite build ---
+# Publishable key shipped to browsers by design (replaces the old 198878f pin;
+# global form covers every rebuilt bundle hash). See PROJECT_BIBLE.md §9 PR #316.
+static/bridge/assets/index-IH4rvVoG.js:jwt:96
+static/bridge/assets/index-C747K8Em.js:jwt:96
+static/bridge/assets/index-_aPs-rIh.js:jwt:96
+static/bridge/assets/index-CE2Uoz8P.js:jwt:96
+static/bridge/assets/index-DSCN77-b.js:jwt:96
+
+# --- Low-entropy false positives (not credentials) ---
+# localStorage key NAME for the marketing-consent flag, not a secret value.
+d4_bridge/src/lib/consent.ts:generic-api-key:13
+# Alert rule identifier string `tevo_inventory_low_48h`, not a credential.
+supabase/migrations/20260510060000_dashboard_signal_health_fixes.sql:generic-api-key:89
+# Code comment ("// Auth: … Manual-invocation"), no secret value.
+supabase/functions/probe-espn-data/index.ts:generic-api-key:9
+# TEvo `venue_key` in a synthetic checkout test fixture (tests/fixtures/*).
+tests/fixtures/checkout_sections_six.html:generic-api-key:18
