@@ -99,8 +99,13 @@ jobs:
           )" \
             --label "bug,uptime-failure"
 
-      - name: Notify Slack on failure (optional)
-        if: failure() && env.SLACK_BOT_TOKEN != ''
+      - name: Notify Slack on failure (optional — DISABLED 2026-06-21)
+        # Slack posting is intentionally OFF: the terminal-2-* channels live in
+        # the s4kent-bots workspace, but sessions connect to s4kent (no such
+        # channels) so posts 404 (channel_not_found). Wiring is preserved — to
+        # re-enable, set repo variable SLACK_ENABLED=true (and the SLACK_* secrets).
+        # See docs/b1_operating_constraints.md → Slack posture monitoring.
+        if: failure() && vars.SLACK_ENABLED == 'true' && env.SLACK_BOT_TOKEN != ''
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ALERTS_CHANNEL_ID: ${{ secrets.SLACK_ALERTS_CHANNEL_ID }}
