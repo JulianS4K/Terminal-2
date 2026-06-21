@@ -275,6 +275,22 @@ Added 2026-05-16 per operator directive: "communication channel, Librarians and 
 
 ## Slack posture monitoring
 
+> **⚠ SLACK POSTING DISABLED — 2026-06-21 (operator directive). Do NOT attempt any Slack post.**
+> The channels below live in the `s4kent-bots` workspace, but every headless/MCP session
+> connects to the **`s4kent`** (S4K Entertainment) workspace, which contains **none** of the
+> `terminal-2-*` channels. Verified 2026-06-21: a `terminal` channel search returns 0 results
+> and `C0B3PR8MJ07` reads back `channel_not_found`. Every bot's Slack post therefore 404s and
+> falls back to an operator self-DM — the recurring cycle-waste seen across C1 checkpoints and
+> the D2 aging sweep.
+>
+> **Until re-enabled:** use `bot_chat` (canonical durable record) for all coordination; ping the
+> operator DM (`U9J35KARF` = julian@s4kent.com) only if a human signal is genuinely essential.
+> The wiring is **preserved, not deleted** — the channel matrix below, the scheduled-task
+> targets, and the `uptime-check.yml` Slack step all remain for re-enable. **To re-enable:**
+> connect the Slack app to `s4kent-bots` (or recreate the `terminal-2-*` channels in the
+> connected workspace), then set repo variable `SLACK_ENABLED=true`. Treat everything below as
+> dormant reference, not an instruction to post.
+
 **Current state (2026-05-16, canonical per bot_chat 207 standing rule)**: Slack MCP is installed at workspace `s4kent-bots`. Three channels mirror the lane hierarchy:
 
 | Channel | ID | Audience | B1 posting authority |
