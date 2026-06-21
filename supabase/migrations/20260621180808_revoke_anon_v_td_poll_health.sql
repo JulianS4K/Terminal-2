@@ -1,0 +1,24 @@
+-- ============================================================================
+-- Migration 20260621180808 — revoke anon access to v_td_poll_health
+--
+-- Lane:     A1 (DB security)
+-- Touches:  public.v_td_poll_health (W, REVOKE)
+-- Pre-reqs: 20260621180156 (security_invoker flip on the monitoring views)
+-- Apply:    APPLIED to prod 2026-06-21 (operator-authorized, full permissions).
+--           Verified: anon now holds 0 grants on the view.
+--
+-- WHY:
+--   Follow-up to 20260621180156. v_td_poll_health is a TicketsData poll-health
+--   monitoring view, but `anon` had ALL privileges on it (the only one of the 5
+--   newest monitoring views exposed to anon). security_invoker=true already
+--   makes anon reads RLS-bound, but the grant itself is needless surface area.
+--   Revoke it outright; authenticated + service_role retain access, so the
+--   admin dashboards and cron paths are unaffected.
+--
+-- VERIFICATION (run after apply):
+--   SELECT count(*) FROM information_schema.role_table_grants
+--    WHERE table_schema='public' AND table_name='v_td_poll_health' AND grantee='anon';
+--   -- expect 0
+-- ============================================================================
+
+REVOKE ALL ON public.v_td_poll_health FROM anon;
