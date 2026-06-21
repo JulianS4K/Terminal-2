@@ -1343,6 +1343,13 @@ tr.wl-cur td { background: rgba(251, 191, 36, 0.07); }
 .espn-injuries .inj-pos { color: var(--muted); font-size: 10px; margin: 0 4px; }
 .espn-injuries .inj-status { color: var(--accent); font-size: 11px; }
 
+/* MMA/UFC fight card (renderEspnFightCard) */
+.espn-fightlist { margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; }
+.espn-fightlist li { padding: 4px 0; border-bottom: 1px solid var(--line-2); }
+.espn-fighter { color: var(--text); }
+.espn-fighter-win { color: var(--pos); font-weight: 600; }
+.espn-vs { color: var(--muted); font-size: 10px; margin: 0 5px; }
+
 /* Weather strip */
 #weather .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
 #weather .panel-title .muted { color: var(--dim); font-size: 10px; font-weight: normal; text-transform: none; letter-spacing: 0; }

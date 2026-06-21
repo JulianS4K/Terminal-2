@@ -473,6 +473,12 @@
       // loads via loadSgZonesSplits (renderZones no-ops without its DOM node).
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
+      // MMA/UFC events have no team-snapshot ESPN data, so renderEspn() hides the
+      // panel. Lazy-load the fight card from the espn edge fn (broker proxy) and
+      // render it in the same ESPN panel. Fire-and-forget; no-ops for team sports.
+      if (!data.espn || data.espn.hidden) {
+        loadEspnFightCard(eventId).catch(e => console.error('[espn-mma]', e));
+      }
       // Weather now lazy-loaded via loadWeatherLocalized (drops global-alert path).
       // ORDERS — ALL SOURCES panel removed (2026-06-08) — covered by the Our Orders tab.
       safe('coverage',   () => renderCoverage(cadences, overview, data.freshness, bridge));
@@ -2257,6 +2263,68 @@
     if (sev === 'out' || sev === 'ir') return 'inj-out';
     if (sev === 'questionable' || sev === 'q') return 'inj-q';
     return 'inj-p';
+  }
+
+  // ---------- ESPN fight card (MMA/UFC) ----------
+  // Team-sport events render via renderEspn() (team snapshots). Combat sports
+  // have no team snapshots, so we lazy-load the espn edge fn's fight-card shape
+  // (header + fights[]) from the broker proxy and render it in the ESPN panel.
+  async function loadEspnFightCard(eventId) {
+    let fc;
+    try { fc = await T.api(`/api/broker/event/${eventId}/espn`); }
+    catch (_) { return; }
+    if (!fc || !fc.applicable) return;
+    const isMma = typeof fc.sport_slug === 'string' && fc.sport_slug.indexOf('mma') === 0;
+    if (!isMma && !Array.isArray(fc.fights)) return;
+    renderEspnFightCard(fc);
+  }
+
+  function espnFighterChip(f) {
+    if (!f) return '<span class="muted">TBD</span>';
+    const win = f.winner === true ? ' espn-fighter-win' : '';
+    const rec = f.record ? ` <span class="espn-rec">(${escapeHtml(f.record)})</span>` : '';
+    return `<span class="espn-fighter${win}">${escapeHtml(f.name || 'TBD')}</span>${rec}`;
+  }
+
+  function renderEspnFightCard(fc) {
+    const section = document.getElementById('espn');
+    const body = document.getElementById('espnBody');
+    const subtitle = document.getElementById('espnSubtitle');
+    if (!body || !section) return;
+    section.style.display = '';
+    const h = fc.header || {};
+    if (subtitle) {
+      const lg = (fc.league || 'UFC').toString().toUpperCase();
+      subtitle.textContent = `${lg}${h.venue ? ' · ' + h.venue : ''}${h.status ? ' · ' + h.status : ''}`;
+    }
+    body.innerHTML = '';
+
+    const fights = Array.isArray(fc.fights) ? fc.fights : [];
+    if (!fights.length) {
+      body.innerHTML = `<div class="muted small">ESPN fight card linked (event ${escapeHtml(String(fc.espn_event_id || '?'))}) — bouts not yet published.</div>`;
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'espn-fightcard';
+    const sub = document.createElement('div');
+    sub.className = 'espn-sublabel';
+    sub.textContent = `FIGHT CARD (${fights.length})`;
+    wrap.appendChild(sub);
+
+    const ul = document.createElement('ul');
+    ul.className = 'espn-fightlist';
+    fights.forEach((ft, i) => {
+      const li = document.createElement('li');
+      const fr = Array.isArray(ft.fighters) ? ft.fighters : [];
+      const tag = i === 0 ? '<span class="espn-tag">MAIN</span> ' : '';
+      const meta = [ft.bout, ft.result || ft.status].filter(Boolean).map(escapeHtml).join(' · ');
+      li.innerHTML = `${tag}${espnFighterChip(fr[0])} <span class="espn-vs">vs</span> ${espnFighterChip(fr[1])}` +
+                     (meta ? ` <span class="muted small">${meta}</span>` : '');
+      ul.appendChild(li);
+    });
+    wrap.appendChild(ul);
+    body.appendChild(wrap);
   }
 
   // ---------- Weather (localized via get_event_weather_localized) ----------
