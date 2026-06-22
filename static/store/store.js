@@ -2946,8 +2946,7 @@
   // /api/store/tours/near; "Travel the whole tour" → /store/tour plans the dates.
   function mountDiscover() {
     const $ = (id) => document.getElementById(id);
-    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const esc = escapeHtml;  // single source of truth (defined above)
     const money = (n) => "$" + Math.round(n).toLocaleString();
     const fmtD = (iso) => {
       try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
@@ -3017,8 +3016,7 @@
   // pre-fills (e.g. arriving from Discover).
   function mountTourFollow() {
     const $ = (id) => document.getElementById(id);
-    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const esc = escapeHtml;  // single source of truth (defined above)
     const money = (n) => "$" + Math.round(n).toLocaleString();
     const fmtD = (iso) => {
       try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
