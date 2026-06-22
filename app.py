@@ -6141,11 +6141,16 @@ _RETAIL_CHAT_MAX_CHARS = 4000
 def _client_ip(request: Request) -> str:
     """Best-effort real client IP behind the Render/Railway proxy. Forwarded
     to the edge function so its per-IP rate limit is per-user, not per-proxy."""
+    # Use the RIGHTMOST X-Forwarded-For hop: that's the entry appended by our
+    # own edge proxy and is the only one a client can't forge. Keying on the
+    # leftmost (client-supplied) entry let a single client rotate fake IPs to
+    # bypass the edge function's per-IP rate limit (audit 2026-06-10; this
+    # callsite was missed by that fix and aligned 2026-06-22).
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
+        last = xff.split(",")[-1].strip()
+        if last:
+            return last
     real = request.headers.get("x-real-ip")
     if real:
         return real.strip()

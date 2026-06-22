@@ -35,7 +35,7 @@ Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't c
 | [`RESOURCES_BIBLE.md`](RESOURCES_BIBLE.md) | Resource catalog: external services · DB inventory (key tables/views/fns/crons/edge fns + live counts) · **cron scheduling policy (§5)** · **event taxonomy & RULES** · data buckets · vault-secret names |
 | [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) | Migration filename + header rules · level/lane taxonomy · **landmark-migration log (§14)** |
 | [`CHANGELOG.md`](CHANGELOG.md) | Auto-generated release notes (release-please) — **DO NOT hand-edit** |
-| [`KANBAN.md`](KANBAN.md) | Open work · drift watchlist · known data-architecture gaps *(append-only)* |
+| [`KANBAN.md`](KANBAN.md) | Open work · drift watchlist · known data-architecture gaps *(open rows deleted on close per its §closure-protocol; the §Archive sections are append-only)* |
 
 **Historical / non-canonical** (not in the closed set, kept only for the decision trail — do **not** treat as current):
 - `docs/archive/` — superseded audits, checkpoints, session logs, handoffs, and the former `LANE_DISCIPLINE.md` / `BOT_HIERARCHY.md` / `SCHEMA.md` (lane ownership folded into `PROJECT_BIBLE.md §2`; inventory into `RESOURCES_BIBLE.md`).
@@ -100,7 +100,7 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 ├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards)
 ├── docs/                   active references + docs/archive/ (historical)
 ├── design/                 historical wireframes / proposals
-└── <canonical *.md>        the 11 docs in the registry above
+└── <canonical *.md>        the 7 docs in the registry above
 ```
 
 ## Build / run / deploy the terminal

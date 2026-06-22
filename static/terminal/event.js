@@ -1661,7 +1661,7 @@
         const isOn = _chartVisible.get(s.key) !== false;
         const opa = isOn ? '1' : '0.35';
         return `<span class="legend-item" data-key="${escapeHtml(s.key)}" style="opacity:${opa};cursor:pointer" title="Click to toggle">` +
-               `<i style="background:${s.color}"></i> ${escapeHtml(s.label)}</span>`;
+               `<i style="background:${escapeHtml(s.color)}"></i> ${escapeHtml(s.label)}</span>`;
       }).join('');
     } else {
       // Fallback static legend pre-first-render
