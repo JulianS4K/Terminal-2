@@ -298,6 +298,17 @@ def check_plpgsql_writes() -> list[str]:
 def check_guard_tokens() -> list[str]:
     """Each client module must contain the runtime guard tokens."""
     violations: list[str] = []
+    # Opt-OUT, not opt-in: discover every root-level *_client.py and require it
+    # to be registered in CLIENT_FILES. Without this a newly-added client gets
+    # ZERO guard-token enforcement and slips past silently (audit 2026-06-22).
+    for p in sorted(ROOT.glob("*_client.py")):
+        if p.name not in CLIENT_FILES:
+            violations.append(
+                f"{p.name}: unregistered *_client.py — add it to CLIENT_FILES in "
+                "scripts/check_readonly.py with its permitted HTTP methods so the "
+                "RULE 2 guard-token check covers it (every broker client must be "
+                "GET-only by construction)."
+            )
     for client, methods in CLIENT_FILES.items():
         p = ROOT / client
         if not p.exists():

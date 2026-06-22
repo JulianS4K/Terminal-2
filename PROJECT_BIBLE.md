@@ -588,7 +588,7 @@ await supabase.from('exos_orgs').insert({ name: 'My Org' });
 
 ## 11. Self-check before any task
 
-1. ☐ Did I read this playbook (§1-§8)?
+1. ☐ Did I read this playbook (§0-§11)?
 2. ☐ Is my action covered by §1 hard rules?
 3. ☐ Am I editing files in my own lane (§2)?
 4. ☐ Did I verify schema column names against §3 landmines?

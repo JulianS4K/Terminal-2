@@ -1,6 +1,6 @@
 # D4 — The Bridge: Lane Charter & System Architecture
 
-**Status:** ACTIVATING — supersedes the "UNASSIGNED / future · AR codes, custom ticketing" placeholder in `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md`, `docs/bot-hierarchy.mermaid`, `README.md`. (Governance-doc status flips are A1-owned — see §8.)
+**Status:** ACTIVATING — supersedes the "UNASSIGNED / future · AR codes, custom ticketing" placeholder in `PROJECT_BIBLE.md §2` + `README.md`. (Governance-doc status flips are A1-owned — see §8.)
 **Lane:** D4 · `bot_level = data-collection` · reports to C1 (hierarchy), subordinate-coding posture under D0 for any shared frontend surface.
 **Author:** D4 · **Date:** 2026-05-20
 **Source thesis:** *The Bridge — Strategic Opportunity Report* (Julian, Mar 2026, **Confidential**). Held externally (operator's `Downloads`); **not committed to this repo** — it carries BD/financial detail (prospect lists, projections, partner terms) that does not belong in source control. This charter reproduces only the **technical/product architecture** needed to scope the engineering lane.
@@ -143,7 +143,7 @@ Buyer-data capture introduces a **new PII surface** (name/contact/purchase histo
 3. **Upstream-write authorization** (§6.1) — operator go/no-go to begin a per-platform listing-write carve-out, and which platforms first. Note: TEvo is itself a B2B distribution hub that may fan out to multiple downstream points-of-sale — clarify which channels are **direct API integrations** vs. **reached via TEvo / a POS hub** (avoids assuming 10 separate direct integrations).
 4. **Repo location of the fork** — separate repo (recommended; AGPL-3.0 + different stack) vs. monorepo subdir.
 5. **Lane mapping** — **resolved (2026-05-20)**: storefront is **D1** (not D2); **D4 is independent from D0 for now**; D2 = distribution rails; **Automatiq distribution lands as a later D1 addition**.
-6. **Governance status flips** (A1-owned): flip D4 from "UNASSIGNED/future" → "ACTIVE" across `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md`, `docs/bot-hierarchy.mermaid`, `README.md`; claim an aging-sweep minute slot (`CLAUDE.md §5` registry). D4 drafts; **A1 lands** (sole pusher to main + governance-doc owner).
+6. **Governance status flips** (A1-owned): flip D4 from "UNASSIGNED/future" → "ACTIVE" across `PROJECT_BIBLE.md §2` + `README.md`; claim an aging-sweep minute slot (`CLAUDE.md §5` registry). D4 drafts; **A1 lands** (governance-doc owner; push to `main` is per-task per `PROJECT_BIBLE §2.3`).
 
 ---
 

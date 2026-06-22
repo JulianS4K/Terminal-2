@@ -94,12 +94,17 @@ def test_store_cannot_smuggle_scope_all(capture_post):
 
 
 def test_client_ip_is_forwarded(capture_post):
+    # X-Forwarded-For is "client-supplied…, edge-appended-real-ip". The RIGHTMOST
+    # hop is the one our own edge proxy appends and the only one a client can't
+    # forge; keying on the leftmost let a client rotate fake IPs to bypass the
+    # edge function's per-IP rate limit (audit 2026-06-22, aligning _client_ip
+    # with the in-process limiter + recaptcha-ip fix from 2026-06-10).
     client.post("/api/store/retail-chat",
                 json={"message": "hi"},
                 headers={"x-forwarded-for": "203.0.113.7, 10.0.0.1"})
     hdrs = capture_post[0]["headers"]
-    assert hdrs["x-real-ip"] == "203.0.113.7"
-    assert hdrs["x-forwarded-for"] == "203.0.113.7"
+    assert hdrs["x-real-ip"] == "10.0.0.1"
+    assert hdrs["x-forwarded-for"] == "10.0.0.1"
 
 
 # ---------- transcript validation ----------

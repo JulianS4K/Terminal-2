@@ -184,7 +184,7 @@ Operator directive: "plan to decrease code drift and push all to main".
 ### Per-session discipline (always)
 
 - **Branch must merge to main within 24h** of last commit OR explicit deferral note in `bot_chat`.
-- **A1 is sole pusher to main.** Subordinates open PRs against supervisor branch.
+- **Push to `main` is per-task** — the delegated bot pushes its own work after green CI; A1 + B1 are joint `main` maintainers. **Prod-DB apply stays centralized on A1** (git push ≠ DB apply). (Supersedes the prior "A1 sole pusher" rule — operator directive 2026-06-17; see `PROJECT_BIBLE §2.3`.)
 - **No "ghost" migrations.** Every `apply_migration` MCP call must have a corresponding `.sql` file with matching content within the same turn.
 
 ### Drift detection (runtime)
