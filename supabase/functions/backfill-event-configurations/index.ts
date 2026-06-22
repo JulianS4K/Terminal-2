@@ -10,6 +10,17 @@ async function hmac(secret: string, msg: string): Promise<string> {
   const s = await crypto.subtle.sign("HMAC", k, enc.encode(msg));
   let bin = ""; for (const b of new Uint8Array(s)) bin += String.fromCharCode(b); return btoa(bin);
 }
+// TEvo serializes an absent seat-map as the literal string "null" (and
+// occasionally "none"/"undefined"/""). `typeof x === "string"` is true for
+// those, so storing x verbatim poisons events.seating_chart_* — a downstream
+// consumer then renders <img src="null">. Keep only genuine http(s) URLs;
+// coerce every sentinel / non-URL to real null. Mirrors store.js cleanMapUrl
+// and the SQL read-side guards (`<> 'null' AND ILIKE 'http%'`).
+function cleanMapUrl(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s.toLowerCase().startsWith("http") ? s : null;
+}
 async function tevoEvent(token: string, secret: string, id: number, attempt = 0): Promise<any> {
   const path = `/v9/events/${id}`; const sig = await hmac(secret, `GET ${HOST}${path}?`);
   const r = await fetch(`${BASE}${path}?`, { headers: { "X-Token": token, "X-Signature": sig, "Accept": "application/vnd.ticketevolution.api+json; version=9" } });
@@ -50,9 +61,9 @@ Deno.serve(async (req) => {
       const ev = await tevoEvent(m.tevo_token, m.tevo_secret, id);
       const cfg = ev.configuration ?? {};
       const sc = cfg.seating_chart ?? {};
-      const med = typeof sc.medium === "string" ? sc.medium : null;
-      const lg = typeof sc.large === "string" ? sc.large : null;
-      const hasMap = !!(med && med !== "null" && med.startsWith("http"));
+      const med = cleanMapUrl(sc.medium);
+      const lg = cleanMapUrl(sc.large);
+      const hasMap = !!med;
       if (hasMap) withMap++;
       const patch: any = {
         configuration_id: cfg.id ?? null,
