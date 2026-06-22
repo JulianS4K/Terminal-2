@@ -6,7 +6,7 @@
 
 ## The one thing to scrutinize most: the SECURITY DEFINER RLS helper
 
-`public.exos_has_org_role(p_org_id uuid, p_roles text[])` is **SECURITY DEFINER, granted to `authenticated`** — a deliberate deviation from the repo's service-role-only SECDEF convention (`BOT_HIERARCHY §6`). Rationale: it's an RLS helper that must run for normal users, and SECURITY DEFINER is the standard Supabase pattern to avoid infinite recursion when policies on `exos_org_memberships` need to check membership.
+`public.exos_has_org_role(p_org_id uuid, p_roles text[])` is **SECURITY DEFINER, granted to `authenticated`** — a deliberate deviation from the repo's service-role-only SECDEF convention (`PROJECT_BIBLE.md §2 §6`). Rationale: it's an RLS helper that must run for normal users, and SECURITY DEFINER is the standard Supabase pattern to avoid infinite recursion when policies on `exos_org_memberships` need to check membership.
 
 Please confirm:
 - It only ever evaluates **`auth.uid()`'s own** membership (it does — `WHERE m.user_id = auth.uid()`), so it leaks nothing about other users.

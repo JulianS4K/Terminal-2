@@ -34,6 +34,7 @@ Usage:
 """
 from __future__ import annotations
 
+import functools
 import re
 import sys
 from pathlib import Path
@@ -53,6 +54,11 @@ FORBIDDEN_HOSTS = (
     "ticketsdata.com",
     "www.broadway.com",
     "checkout.broadway.com",
+    # AXS has order/hold endpoints that must never be touched. All sanctioned
+    # AXS traffic proxies through ticketsdata.com (covered above); a direct
+    # call to axs.com is forbidden outright. Bare "axs.com" substring-matches
+    # www.axs.com / api.axs.com / any future subdomain.
+    "axs.com",
 )
 
 # Client modules that legitimately reference these hosts, mapped to the HTTP
@@ -71,6 +77,7 @@ CLIENT_FILES = {
     "seatdata_client.py": frozenset({"GET", "POST"}),
     "ticketsdata_client.py": frozenset({"GET"}),
     "broadway_client.py": frozenset({"GET"}),
+    "axs_client.py": frozenset({"GET"}),
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
@@ -95,6 +102,11 @@ PY_FORBIDDEN_PATTERNS = (
     re.compile(r"\.session\.\s*(post|put|patch|delete)\s*\("),
     re.compile(r"http\.\s*(post|put|patch|delete)\s*\("),
     re.compile(r"httpx\.\s*(post|put|patch|delete)\s*\("),
+    # method-as-string variants: session.request("POST", ...), requests.request('PUT', ...)
+    re.compile(r"""\.request\s*\(\s*['"](?:POST|PUT|PATCH|DELETE)['"]""", re.IGNORECASE),
+    re.compile(r"""requests\.request\s*\(\s*['"](?:POST|PUT|PATCH|DELETE)['"]""", re.IGNORECASE),
+    # urllib.request.urlopen(..., data=...) silently becomes a POST
+    re.compile(r"urlopen\s*\([^)]*\bdata\s*="),
 )
 
 # Patterns that signal a write attempt in TS/JS edge functions.
@@ -110,6 +122,15 @@ TS_POST_ALLOWLIST = (
 )
 
 # SKIP_DIRS applies only to .py / .ts walks. plpgsql scan opts in supabase/migrations explicitly.
+# File suffixes each scan covers. Exposed as module constants so external
+# callers (e.g. the terminal2-governance edit-time hook) can mirror this
+# scanner's exact scope instead of maintaining a drift-prone parallel list.
+PY_SCAN_SUFFIXES = (".py",)
+WEB_SCAN_SUFFIXES = (".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs", ".html")
+# .sql is scanned ONLY under this dir (see check_plpgsql_writes); .sql edits
+# elsewhere are out of scanner scope.
+MIGRATIONS_REL = "supabase/migrations"
+
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".claude",
              "supabase/migrations", ".next", "dist", "build",
              # tests/ is allowed to embed synthetic violations as test fixtures
@@ -129,7 +150,12 @@ def _is_skipped(path: Path) -> bool:
     )
 
 
+@functools.lru_cache(maxsize=None)
 def _walk(suffixes: tuple[str, ...]) -> list[Path]:
+    # Cached per-process: main()'s success banner re-requests the same suffix
+    # tuples the checkers already walked, and the edit-time hook puts this
+    # script on the per-edit hot path — without the cache a clean run does
+    # two redundant full-tree rglob() traversals just to print counts.
     out: list[Path] = []
     for p in ROOT.rglob("*"):
         if not p.is_file():
@@ -145,7 +171,7 @@ def _walk(suffixes: tuple[str, ...]) -> list[Path]:
 def check_python_writes() -> list[str]:
     """Find any Python file with requests.post/.put/.patch/.delete or similar."""
     violations: list[str] = []
-    for f in _walk((".py",)):
+    for f in _walk(PY_SCAN_SUFFIXES):
         text = f.read_text(encoding="utf-8", errors="ignore")
         for pattern in PY_FORBIDDEN_PATTERNS:
             for m in pattern.finditer(text):
@@ -194,7 +220,8 @@ def check_ts_writes() -> list[str]:
     targets a forbidden host either by literal URL or by a variable that
     resolves to one."""
     violations: list[str] = []
-    for f in _walk((".ts", ".js", ".tsx", ".jsx")):
+    # .html covers inline <script> blocks; .mjs/.cjs cover module/CommonJS JS.
+    for f in _walk(WEB_SCAN_SUFFIXES):
         text = f.read_text(encoding="utf-8", errors="ignore")
         host_vars = _ts_forbidden_host_vars(text)
         for m in TS_FORBIDDEN_PATTERN.finditer(text):
@@ -205,7 +232,20 @@ def check_ts_writes() -> list[str]:
             # 'fetch(' and the next ',' or method keyword.
             i = preceding.rfind("fetch(")
             if i == -1:
-                # No fetch() context — skip (probably XHR or something else).
+                # No fetch() context — axios/XHR/got-style call. We can't parse
+                # the URL arg structurally, so fall back to a proximity check:
+                # flag if a forbidden host (or a var bound to one) appears in
+                # the surrounding window.
+                window = text[max(0, m.start() - 800) : min(len(text), m.end() + 400)]
+                hits = [h for h in FORBIDDEN_HOSTS if h in window]
+                var_hits = [n for n in host_vars if re.search(rf"\b{re.escape(n)}\b", window)]
+                if hits or var_hits:
+                    line_no = text[: m.start()].count("\n") + 1
+                    violations.append(
+                        f"{f.relative_to(ROOT)}:{line_no}: "
+                        f"'{m.group(0)}' (non-fetch HTTP call) near forbidden "
+                        f"host(s) {hits or var_hits}"
+                    )
                 continue
             url_arg_region = preceding[i + len("fetch(") :]
             # Strip leading whitespace / quotes context up to the comma.
@@ -258,6 +298,17 @@ def check_plpgsql_writes() -> list[str]:
 def check_guard_tokens() -> list[str]:
     """Each client module must contain the runtime guard tokens."""
     violations: list[str] = []
+    # Opt-OUT, not opt-in: discover every root-level *_client.py and require it
+    # to be registered in CLIENT_FILES. Without this a newly-added client gets
+    # ZERO guard-token enforcement and slips past silently (audit 2026-06-22).
+    for p in sorted(ROOT.glob("*_client.py")):
+        if p.name not in CLIENT_FILES:
+            violations.append(
+                f"{p.name}: unregistered *_client.py — add it to CLIENT_FILES in "
+                "scripts/check_readonly.py with its permitted HTTP methods so the "
+                "RULE 2 guard-token check covers it (every broker client must be "
+                "GET-only by construction)."
+            )
     for client, methods in CLIENT_FILES.items():
         p = ROOT / client
         if not p.exists():
@@ -294,8 +345,8 @@ def main() -> int:
 
     mig_count = len(list((ROOT / "supabase" / "migrations").glob("*.sql"))) if (ROOT / "supabase" / "migrations").exists() else 0
     print("RULE 2 clean — no write paths detected to TEvo, SeatGeek, TickPick, or Vivid Seats hosts.")
-    print(f"  - Python files scanned   : {len(_walk(('.py',)))}")
-    print(f"  - TS/JS files scanned    : {len(_walk(('.ts', '.js', '.tsx', '.jsx')))}")
+    print(f"  - Python files scanned   : {len(_walk(PY_SCAN_SUFFIXES))}")
+    print(f"  - TS/JS/HTML files scanned: {len(_walk(WEB_SCAN_SUFFIXES))}")
     print(f"  - plpgsql migrations     : {mig_count}")
     print(f"  - Client guards present  : {', '.join(sorted(CLIENT_FILES))}")
     return 0

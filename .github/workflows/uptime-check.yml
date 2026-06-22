@@ -1,18 +1,22 @@
 name: uptime-check
 
-# Pings vibepass-storefront-test /healthz every 5 minutes from GitHub Actions.
+# Pings vibepass-storefront-test /healthz on a schedule from GitHub Actions.
 # On failure: marks the run failed (GitHub emails owner) AND opens a GitHub
 # issue tagged "bug" so it surfaces in the issue tracker.
 # Optional Slack alert: set SLACK_BOT_TOKEN + SLACK_ALERTS_CHANNEL_ID secrets
 # in Settings → Secrets → Actions to also post to #terminal-2-alerts.
 #
-# Note: GitHub scheduled workflows may fire up to ~5 min late under load.
-# For sub-minute alerting, add an external monitor (Better Uptime / UptimeRobot)
-# pointing to the same /healthz endpoint.
+# CADENCE REALITY (verified 2026-06-21): GitHub heavily throttles high-frequency
+# `schedule` crons on this repo — a nominal `*/5` actually fired only ~hourly
+# with multi-hour overnight gaps (e.g. 06:31→01:42 = 5h). So this is a
+# best-effort liveness check, NOT a tight uptime SLA. The interval is set to
+# `*/15` to stop overstating cadence we never achieve. For real sub-minute
+# alerting, add an external monitor (Better Uptime / UptimeRobot) pointing to
+# the same /healthz endpoint.
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes
+    - cron: '*/15 * * * *'   # best-effort; GitHub throttles to ~hourly (see note above)
   workflow_dispatch:          # manual trigger for testing
 
 # Least-privilege GITHUB_TOKEN (B1 security review 2026-05-26, PR #369 follow-up).
@@ -95,8 +99,13 @@ jobs:
           )" \
             --label "bug,uptime-failure"
 
-      - name: Notify Slack on failure (optional)
-        if: failure() && env.SLACK_BOT_TOKEN != ''
+      - name: Notify Slack on failure (optional — DISABLED 2026-06-21)
+        # Slack posting is intentionally OFF: the terminal-2-* channels live in
+        # the s4kent-bots workspace, but sessions connect to s4kent (no such
+        # channels) so posts 404 (channel_not_found). Wiring is preserved — to
+        # re-enable, set repo variable SLACK_ENABLED=true (and the SLACK_* secrets).
+        # See docs/b1_operating_constraints.md → Slack posture monitoring.
+        if: failure() && vars.SLACK_ENABLED == 'true' && env.SLACK_BOT_TOKEN != ''
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ALERTS_CHANNEL_ID: ${{ secrets.SLACK_ALERTS_CHANNEL_ID }}

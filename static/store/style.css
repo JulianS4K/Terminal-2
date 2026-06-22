@@ -1,17 +1,26 @@
 :root {
-  --bg: #0e0f12;
-  --panel: #16181d;
-  --panel-2: #1d2026;
-  --line: #2a2d35;
-  --text: #eef0f4;
-  --muted: #9aa0a6;
+  --bg: #0a0b0e;
+  --panel: #14161b;
+  --panel-2: #1b1e25;
+  --line: #272b33;
+  --text: #f1f2f5;
+  --muted: #9aa1ab;
   --accent: #ff5c2a;
   --accent-2: #ffa066;
+  --gold: #c9a96a;           /* champagne — premium / concierge chrome */
+  --gold-soft: rgba(201,169,106,0.14);
   --good: #4ade80;
   --warn: #facc15;
   --bad: #ef4444;
-  --radius: 10px;
-  --shadow: 0 1px 0 rgba(255,255,255,0.04), 0 8px 24px rgba(0,0,0,0.3);
+  --radius: 12px;
+  --shadow: 0 1px 0 rgba(255,255,255,0.04), 0 10px 30px rgba(0,0,0,0.38);
+  --maxw: 1200px;
+  /* Editorial serif for display headings — system stack, no external font
+     (CSP blocks remote font-src). Gives the concierge / luxury feel. */
+  --display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, "Times New Roman", serif;
+  /* Render native controls (checkboxes, date/number pickers, <select> lists,
+     scrollbars) in dark mode so they match the theme instead of the OS default. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -21,8 +30,13 @@ body {
   color: var(--text);
   background: var(--bg);
   min-height: 100vh;
+  /* iOS dynamic viewport: avoids the Safari toolbar shrinking/growing 100vh
+     and leaving a background gap. dvh falls back to vh where unsupported. */
+  min-height: 100dvh;
 }
 a { color: inherit; }
+/* Brand-tint the checked/active state of native form controls. */
+input, select, textarea { accent-color: var(--accent); }
 
 /* Screen-reader-only label utility. Visually hidden but exposed to
    assistive tech. Standard inert-block pattern (1×1 clip + non-wrap)
@@ -44,7 +58,12 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 24px;
+  /* Safe-area insets: with apple-mobile-web-app-status-bar-style=black-translucent
+     the standalone PWA draws under the notch/Dynamic Island, so pad the top and
+     the rounded-corner sides on iPhone. Falls back to 0 on non-notched devices. */
+  padding:
+    calc(14px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right))
+    14px calc(24px + env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
@@ -74,7 +93,8 @@ a { color: inherit; }
 .wrap {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 24px;
+  /* Keep content clear of the iPhone's rounded corners in landscape/standalone. */
+  padding: 24px calc(24px + env(safe-area-inset-right)) 24px calc(24px + env(safe-area-inset-left));
 }
 
 /* ----- Hero / search ----- */
@@ -184,6 +204,13 @@ a { color: inherit; }
   font-weight: 700;
   color: var(--accent-2);
 }
+/* Sports player row + its nested team-event rows */
+.suggest-row.player { border-left-color: var(--accent-2); }
+.suggest-row.under-player {
+  padding-left: 26px;
+  font-size: 13px;
+}
+.suggest-row.under-player .suggest-row-name { font-size: 13px; font-weight: 500; }
 .suggest-status {
   /* Loading + error states inside the dropdown — same height/position as
      a hit row so the dropdown doesn't jump-resize when results land. */
@@ -449,7 +476,11 @@ a { color: inherit; }
 .event-meta.sub { margin-top: 4px; font-size: 13px; }
 .dot { margin: 0 8px; opacity: 0.4; }
 
-.event-body {
+/* :not([hidden]) guard — without it `display: grid` overrides the `hidden`
+   attribute, so renderEventError() can't hide the body behind the error
+   screen (and the empty map/listings grid leaked through). Same fix the
+   modal uses. */
+.event-body:not([hidden]) {
   display: grid;
   grid-template-columns: 360px 1fr;
   gap: 24px;
@@ -492,13 +523,16 @@ a { color: inherit; }
    it mounts successfully store.js hides the static .map img above it. */
 .seatmap-host {
   width: 100%;
-  min-height: 320px;
+  /* Definite height (not just min-height): the TEvo SVG sizes to its container,
+     so without a resolved height it collapses to ~0 and the host renders as a
+     blank box. Mirrors the proven terminal pattern (static/terminal/style.css). */
+  height: 480px;
   border-radius: 6px;
   background: #f6f7f9;
   overflow: hidden;
   position: relative;
 }
-.seatmap-host svg { display: block; width: 100%; height: auto; }
+.seatmap-host svg { display: block; width: 100%; height: 100%; }
 /* TEvo injects its own controls/legend; keep them inside the rounded host. */
 .seatmap-host .legend,
 .seatmap-host .controls { font-size: 12px; }
@@ -766,6 +800,39 @@ a { color: inherit; }
 }
 .btn.ghost:hover { border-color: var(--accent); background: rgba(255,92,42,0.06); }
 
+/* ----- Error screen (event-detail load failure) -----
+   Normalized error state rendered by store.js renderEventError(): a centered
+   panel with icon + title + message + actions. Reuses the --panel/--line
+   surface + --shadow so a failed load reads as a designed dead-end, not a
+   crash. .is-unavailable (retryable upstream blip) keeps the warn-tinted ⚠️;
+   .is-notfound (event gone / share expired) shows a calm 🎟️ glyph. */
+.error-screen {
+  max-width: 460px;
+  margin: 48px auto;
+  padding: 32px 24px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.error-screen .error-icon { font-size: 40px; line-height: 1; margin-bottom: 12px; }
+.error-screen.is-notfound .error-icon { opacity: 0.85; }
+.error-title { margin: 0 0 8px; font-size: 20px; color: var(--text); }
+.error-msg { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.error-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+/* :not([hidden]) guard so the inline-flex doesn't override `hidden` on the
+   retry button (it's hidden for non-retryable 404/410). Same trap the modal
+   guards against at .modal:not([hidden]). */
+.error-actions .btn { text-decoration: none; }
+.error-actions .btn:not([hidden]) { display: inline-flex; align-items: center; }
+.error-code {
+  margin: 16px 0 0;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.6;
+}
+
 .notes {
   font-size: 12px;
   color: var(--muted);
@@ -798,7 +865,10 @@ a { color: inherit; }
   align-items: center;
   justify-content: center;
   z-index: 100;
-  padding: 16px;
+  /* Honor the notch + home-indicator so the modal card is never clipped. */
+  padding:
+    calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
 }
 .modal-card {
   background: var(--panel-2);
@@ -949,7 +1019,10 @@ a.perf-chip:hover {
 }
 
 /* ----- Shared-view banner ----- */
-.banner {
+/* :not([hidden]) guard so `display: flex` doesn't override the `hidden`
+   attribute — the share banner must stay hidden on a normal (non-shared)
+   view and behind the error screen. */
+.banner:not([hidden]) {
   background: rgba(255,160,102,0.1);
   border: 1px solid rgba(255,160,102,0.3);
   color: var(--accent-2);
@@ -1130,7 +1203,8 @@ a.perf-chip:hover {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 24px;
+  /* Clear the home-indicator on iPhone (extra bottom inset in standalone). */
+  padding: 24px 24px calc(24px + env(safe-area-inset-bottom));
   color: var(--muted);
   font-size: 12px;
   border-top: 1px solid var(--line);
@@ -1297,6 +1371,16 @@ a.perf-chip:hover {
   border: 1px solid rgba(168, 85, 247, 0.45);
   color: #d8b7fb;
 }
+/* Concierge rail — champagne-gold accent on premium top-band seats. */
+.movers-concierge .mover-accent {
+  background: var(--gold-soft);
+  border: 1px solid rgba(201,169,106,0.45);
+  color: var(--gold);
+}
+.movers-concierge .movers-section-title::before {
+  content: "✦ ";
+  color: var(--gold);
+}
 .mover-title {
   font-size: 14px;
   font-weight: 700;
@@ -1452,4 +1536,278 @@ a.perf-chip:hover {
     font-size: 11px;
     letter-spacing: 1px;
   }
+}
+
+/* ============================================================================
+   Concierge redesign (D3, 2026-06-16) — premium, service-led storefront.
+   Editorial serif display headings + champagne-gold chrome + a guarantee strip
+   and white-glove service band. All JS hooks (#worldCup, #moversSections,
+   #grid, .card, .mover-card, search) are untouched; this is chrome around them.
+   ============================================================================ */
+
+/* Wider, calmer page gutter. */
+.wrap { max-width: var(--maxw); }
+
+/* ----- Topbar nav + concierge CTA ----- */
+.topbar { padding: 16px 28px; }
+.brand { letter-spacing: 0.4px; }
+.topnav {
+  display: flex;
+  gap: 26px;
+  margin: 0 auto 0 36px;
+}
+.topnav a {
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  transition: color .12s;
+}
+.topnav a:hover { color: var(--text); }
+.topcta {
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--gold);
+  padding: 9px 16px;
+  border: 1px solid var(--gold-soft);
+  border-radius: 999px;
+  background: var(--gold-soft);
+  transition: background-color .14s, border-color .14s;
+  white-space: nowrap;
+}
+.topcta:hover { background: rgba(201,169,106,0.22); border-color: var(--gold); }
+
+/* ----- Concierge hero ----- */
+.hero-concierge {
+  padding: 64px 0 40px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.hero-eyebrow {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2.4px;
+  color: var(--gold);
+}
+.hero-concierge h1 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(34px, 5vw, 54px);
+  line-height: 1.05;
+  letter-spacing: -0.4px;
+  margin: 0 0 16px;
+}
+.hero-concierge .sub {
+  max-width: 560px;
+  margin: 0 auto 26px;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.hero-concierge .search { max-width: 720px; }
+.hero-concierge .search input { padding: 15px 18px; border-radius: 999px; }
+.hero-concierge .search button { border-radius: 999px; padding: 14px 26px; }
+
+.hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 20px;
+}
+.chip {
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text);
+  padding: 8px 15px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  transition: border-color .14s, transform .14s, background-color .14s;
+}
+.chip:hover { border-color: var(--accent-2); transform: translateY(-1px); }
+.chip-gold {
+  color: var(--gold);
+  border-color: var(--gold-soft);
+  background: var(--gold-soft);
+}
+.chip-gold:hover { border-color: var(--gold); }
+
+/* ----- Trust / guarantee strip ----- */
+.trust {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 8px 0 40px;
+}
+.trust-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 22px;
+  background: var(--panel);
+}
+/* Rounded icon chip — mirrors the concierge .svc-ic treatment so the
+   guarantee strip reads as designed rather than four bare glyphs. */
+.trust-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 14px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+.trust-h { font-weight: 700; font-size: 14.5px; letter-spacing: 0.1px; }
+.trust-s { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+/* ----- Shared section heading treatment ----- */
+.section-eyebrow {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2.2px;
+  color: var(--gold);
+}
+.section-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(24px, 3.4vw, 34px);
+  letter-spacing: -0.3px;
+  margin: 0 0 26px;
+}
+
+/* ----- White-glove concierge band ----- */
+.concierge { margin: 64px 0 8px; }
+.concierge-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.svc {
+  background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px 20px;
+}
+.svc-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 18px;
+  margin-bottom: 14px;
+}
+.svc h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; letter-spacing: 0.1px; }
+.svc p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+
+/* ----- How it works ----- */
+.how { margin: 64px 0 8px; }
+.how-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+}
+.step { position: relative; padding-top: 8px; }
+.step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--gold-soft);
+  color: var(--gold);
+  font-family: var(--display);
+  font-size: 17px;
+  margin-bottom: 14px;
+}
+.step h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+.step p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+
+/* ----- Rich footer ----- */
+.foot-rich {
+  align-items: stretch;
+  text-align: left;
+  gap: 22px;
+  margin-top: 80px;
+  padding: 40px 28px 28px;
+}
+.foot-cols {
+  display: flex;
+  justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
+  max-width: var(--maxw);
+  width: 100%;
+  margin: 0 auto;
+}
+.foot-brand { max-width: 320px; }
+.foot-brand .brand { font-size: 18px; }
+.foot-tag { margin: 10px 0 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+.foot-rich .foot-nav { justify-content: flex-end; align-content: flex-start; gap: 14px 22px; }
+.foot-base {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  max-width: var(--maxw);
+  width: 100%;
+  margin: 0 auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+/* ----- Concierge responsive ----- */
+@media (max-width: 860px) {
+  .topnav { display: none; }
+  .trust { grid-template-columns: repeat(2, 1fr); }
+  .concierge-grid { grid-template-columns: repeat(2, 1fr); }
+  .how-steps { grid-template-columns: 1fr; }
+  .foot-rich .foot-nav { justify-content: flex-start; }
+}
+/* Hero quick-links: on phones, swap the ragged centered wrap for a single
+   full-bleed horizontal scroll-rail (edge-to-edge swipe, no scrollbar). The
+   negative margins cancel .wrap's padding so the rail reaches the viewport
+   edge; the matching padding re-insets the first/last chip. */
+@media (max-width: 600px) {
+  .hero-chips {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    margin-left: calc(-1 * (24px + env(safe-area-inset-left)));
+    margin-right: calc(-1 * (24px + env(safe-area-inset-right)));
+    padding-left: calc(24px + env(safe-area-inset-left));
+    padding-right: calc(24px + env(safe-area-inset-right));
+  }
+  .hero-chips::-webkit-scrollbar { display: none; }
+  .hero-chips .chip { flex: 0 0 auto; }
+}
+@media (max-width: 480px) {
+  .trust { grid-template-columns: 1fr; }
+  .concierge-grid { grid-template-columns: 1fr; }
+  .hero-concierge { padding: 44px 0 28px; }
 }

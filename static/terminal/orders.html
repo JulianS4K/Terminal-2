@@ -11,104 +11,82 @@
   <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
   <link rel="manifest" href="/manifest.json" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Orders</title>
-  <link rel="stylesheet" href="style.css?v=20260608" />
+  <link rel="stylesheet" href="style.css?v=20260620c" />
 </head>
 <body data-page="orders">
 
   <header class="topbar">
     <span class="brand">TERMINAL · D0</span>
-    <span id="status" class="status">—</span>
+    <span id="status" class="status">Loading…</span>
   </header>
 
   <main class="wrap orders">
-    <section id="orders-doorway">
-      <div class="doorway">
-        <div class="doorway-tag">D0 · D2 MERGE POINT</div>
-        <h1>Orders Dashboard</h1>
-        <p>
-          The orders surface is owned by <strong>D2</strong> (Order Clients lane).
-          A unified Evo + SeatGeek + TickPick + Vivid view, plus a SeatData analytics tab,
-          lives at <strong>d2-orders-dashboard.onrender.com</strong>.
-          D0's terminal nav routes you there — both lanes converge at this page.
-        </p>
-        <div class="doorway-cta">
-          <a id="d2Open" class="btn-primary" href="https://d2-orders-dashboard.onrender.com" target="_blank" rel="noopener">
-            Open Orders Dashboard ↗
-          </a>
-          <span id="d2HealthBadge" class="health-badge dim">checking…</span>
-        </div>
-        <p class="muted small">
-          The dashboard has its own Supabase login (Google OAuth → @s4kent.com).
-          Sign in once; the session persists in <code>localStorage</code> on the d2 origin.
-        </p>
-      </div>
-    </section>
 
-    <section id="orders-merge-contract">
-      <div class="panel-title">MERGE CONTRACT (D0 ↔ D2)</div>
-      <div class="merge-grid">
-        <div class="mg-cell">
-          <span class="mg-lbl">D0 owns</span>
-          <ul>
-            <li>Terminal top-nav including the <code>Orders</code> entry</li>
-            <li>This doorway page (route, branding, link target)</li>
-            <li><code>vibepass-terminal-test.onrender.com</code> service</li>
-          </ul>
-        </div>
-        <div class="mg-cell">
-          <span class="mg-lbl">D2 owns</span>
-          <ul>
-            <li>The full orders dashboard implementation</li>
-            <li>All 4 order sources (Evo, SeatGeek, TickPick, Vivid) + SeatData tab</li>
-            <li><code>d2-orders-dashboard.onrender.com</code> service</li>
-            <li>Auth: Supabase JWT + <code>@s4kent.com</code> allowlist (mirrors <code>app.py</code>)</li>
-          </ul>
-        </div>
-        <div class="mg-cell">
-          <span class="mg-lbl">Shared</span>
-          <ul>
-            <li>Supabase project <code>hzrizjeaxlqcxfrtczpq</code> + auth users</li>
-            <li>Data tables: <code>evo_orders</code>, <code>evo_order_items</code>, <code>seatgeek_orders</code>, <code>tickpick_orders</code>, <code>vivid_orders</code> (D2 writes; D0 read-only)</li>
-            <li>Render branch: <code>main</code> auto-deploys both services</li>
-          </ul>
-        </div>
-        <div class="mg-cell">
-          <span class="mg-lbl">Future</span>
-          <ul>
-            <li>If D0 wants inline summary stats in the terminal: D2 adds CORS allowlist for <code>vibepass-terminal-test.onrender.com</code> on <code>/api/d2/*</code></li>
-            <li>Per-event order strip on the Event Detail page stays on <code>/api/broker/event/{id}/orders</code> (D1's API, already shipped)</li>
-            <li>Path C: an <code>get_broker_orders_*</code> SECDEF RPC suite would let either lane render orders directly from Supabase</li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <section id="orders-feature-list">
+    <!-- Inline orders dashboard. The D2 order surface (Evo + SeatGeek +
+         TickPick + Vivid, mirrored to public.unified_orders) is served by the
+         d2_dashboard router, mounted same-origin into this FastAPI shell
+         (app.py — `app.include_router(d2_router)`). The terminal reads
+         /api/d2/orders directly with the operator's Supabase JWT — no hop to a
+         separate d2-orders-dashboard service. seatdata is excluded here —
+         it's third-party completed-sales analytics, not our order book. -->
+    <section id="orders-controls">
       <div class="panel-title row">
-        <span>WHAT'S OVER THERE</span>
-        <a class="more-link" href="https://github.com/JulianS4K/Terminal-2/blob/main/d2_dashboard/main.py" target="_blank" rel="noopener">source ↗</a>
+        <span>ORDERS · UNIFIED BOOK</span>
+        <span class="muted small" id="ordersCount"></span>
       </div>
-      <div class="feature-grid">
-        <div class="ft-cell">
-          <span class="ft-lbl">Orders tab</span>
-          <p>Single window: Evo <code>list_orders</code> + SG <code>seller_orders(open)</code> + TickPick <code>list_orders(unfulfilled)</code> + Vivid <code>list_active_orders</code>. Active/All filter pill.</p>
+
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SOURCE</span>
+          <button class="ctrl-btn is-active" data-source="all">All</button>
+          <button class="ctrl-btn" data-source="evo">EVO</button>
+          <button class="ctrl-btn" data-source="seatgeek_sales">SG</button>
+          <button class="ctrl-btn" data-source="tickpick">TickPick</button>
+          <button class="ctrl-btn" data-source="vivid">Vivid</button>
         </div>
-        <div class="ft-cell">
-          <span class="ft-lbl">Metrics tab</span>
-          <p>KPI grid + sparkline + hot/top events + biggest sales + gaps + live feed. Backed by <code>d2_metrics_*</code> RPCs (PR #116).</p>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">STATE</span>
+          <button class="ctrl-btn is-active" data-term="0">Active</button>
+          <button class="ctrl-btn" data-term="1">All</button>
         </div>
-        <div class="ft-cell">
-          <span class="ft-lbl">SeatData tab</span>
-          <p>Account + usage analytics (read-only — paid-pull budget protected).</p>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">DATE</span>
+          <button class="ctrl-btn is-active" data-when="all">All</button>
+          <button class="ctrl-btn" data-when="upcoming">Upcoming</button>
+          <button class="ctrl-btn" data-when="past">Past</button>
         </div>
-        <div class="ft-cell">
-          <span class="ft-lbl">Diagnostics</span>
-          <p><code>/api/d2/cron-freshness</code> · <code>/api/d2/health</code> · per-source latency · auth posture.</p>
+        <div class="ctrl-group">
+          <input type="search" id="ordersSearch" class="ctrl-input"
+                 placeholder="search event…" autocomplete="off" />
         </div>
+        <div class="ctrl-group">
+          <button class="ctrl-btn" id="refreshBtn">↻ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Per-source freshness chips (count + last-seen age) from the
+           /api/d2/orders `sources` summary, enriched with cron cadence. -->
+      <div class="ctrl-row" id="freshStrip"></div>
+    </section>
+
+    <section id="orders-table">
+      <div id="ordersBody"><div class="empty">loading…</div></div>
+      <div class="ctrl-row orders-pager" id="ordersPager" hidden>
+        <button class="ctrl-btn" id="pagePrev">← Prev</button>
+        <span class="ctrl-lbl" id="pageLabel">Page 1</span>
+        <button class="ctrl-btn" id="pageNext">Next →</button>
+      </div>
+    </section>
+
+    <section id="orders-note">
+      <div class="muted small">
+        Data is SQL-only from <code>public.unified_orders</code> (no live broker-API
+        calls in the read path) — cron freshness above is the staleness signal.
+        Rows are read-only per the 2026-05-13 listing-source lockdown.
       </div>
     </section>
   </main>
@@ -117,7 +95,7 @@
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260608"></script>
-  <script src="orders.js?v=20260608"></script>
+  <script src="nav.js?v=20260620b"></script>
+  <script src="orders.js?v=20260620b"></script>
 </body>
 </html>

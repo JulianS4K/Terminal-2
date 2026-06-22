@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — AXS Events</title>
+  <link rel="stylesheet" href="style.css?v=20260620c" />
+</head>
+<body data-page="axs">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap movers">
+
+    <!-- AXS tracked events — the full axs_events registry enriched with each
+         event's latest snapshot (event/venue, get-in, price band, listing /
+         section counts, primary vs resale seats). Backed by /api/axs/events
+         (service-role read; axs_* tables are RLS service-role-only, so the
+         backend is the only path the user-JWT client has to this set).
+         AXS is a PRIMARY box-office ticketer (not resale) — see CLAUDE/§3. -->
+    <section id="axs-events">
+      <div class="panel-title row">
+        <span>AXS EVENTS — TRACKED BOX OFFICE</span>
+        <span class="muted small" id="axsEventsCount"></span>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">
+        Every event in the <code>axs_events</code> registry (sourced from the
+        AXS_RESALE workbook), drained into <code>axs_event_snapshots</code> via the
+        AXS <code>/fetch</code> pull (~40s + 1 credit each — not a firehose). Prices
+        are primary box-office get-in / band; <em>resale</em> seats are the AXS
+        Marketplace subset. Click an event to open its terminal page (when mapped to
+        a canonical TEvo id) or the live AXS listing.
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SHOW</span>
+          <button class="ctrl-btn is-active" data-axs-active="1">Active</button>
+          <button class="ctrl-btn"           data-axs-active="0">All</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">HOLDINGS</span>
+          <button class="ctrl-btn is-active" data-axs-owned="0">All</button>
+          <button class="ctrl-btn"           data-axs-owned="1">We hold</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">FILTER</span>
+          <input type="search" id="axsFilter" class="ctrl-input"
+                 placeholder="event / venue…" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+      <div id="axsEventsSummary" class="muted small" style="margin-bottom:6px"></div>
+      <div id="axsEventsBody"><div class="empty">loading…</div></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260620b"></script>
+  <script src="axs.js?v=20260620b"></script>
+</body>
+</html>

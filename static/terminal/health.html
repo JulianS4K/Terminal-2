@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com https://d2-orders-dashboard.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Health</title>
+  <link rel="stylesheet" href="style.css?v=20260617" />
+  <style>
+    /* Health-page-specific bits (style.css carries the shared chrome). */
+    .hz-overall { display:flex; flex-wrap:wrap; align-items:center; gap:18px;
+      padding:18px 20px; border-radius:10px; margin:14px 0; border:1px solid #1e1e1e; }
+    .hz-overall.ok   { background:#0c1c10; border-color:#1f6f3a; }
+    .hz-overall.warn { background:#221b08; border-color:#8a6d1a; }
+    .hz-overall.fail { background:#240d0d; border-color:#8a2222; }
+    .hz-dot { width:14px; height:14px; border-radius:50%; flex:none; }
+    .hz-dot.ok{background:#35c46a;} .hz-dot.warn{background:#e0b13a;} .hz-dot.fail,.hz-dot.down{background:#e05151;}
+    .hz-dot.up{background:#35c46a;}
+    .hz-big { font-size:20px; font-weight:700; letter-spacing:.04em; }
+    .hz-metrics { display:flex; gap:26px; margin-left:auto; flex-wrap:wrap; }
+    .hz-metric .v { font-size:22px; font-weight:700; }
+    .hz-metric .l { font-size:11px; color:#888; text-transform:uppercase; letter-spacing:.06em; }
+    .hz-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin:10px 0 22px; }
+    .hz-card { border:1px solid #1e1e1e; border-radius:9px; padding:12px 14px; background:#0d0d0d; }
+    .hz-card .row1 { display:flex; align-items:center; gap:8px; }
+    .hz-card .nm { font-weight:600; }
+    .hz-card .detail { color:#9a9a9a; font-size:12px; margin-top:6px; word-break:break-word; }
+    .hz-card .up { color:#888; font-size:11px; margin-top:6px; }
+    .hz-pill { margin-left:auto; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; text-transform:uppercase; }
+    .hz-pill.ok{background:#10331c;color:#5fdc8d;} .hz-pill.up{background:#10331c;color:#5fdc8d;}
+    .hz-pill.warn{background:#332a0c;color:#e8c55a;}
+    .hz-pill.fail,.hz-pill.down{background:#331212;color:#f08080;}
+    .hz-class { font-size:11px; color:#777; text-transform:uppercase; letter-spacing:.08em; margin:18px 0 6px; }
+    .hz-timeline { display:flex; gap:2px; align-items:flex-end; height:34px; margin:6px 0 24px; }
+    .hz-tick { flex:1 1 0; min-width:2px; height:100%; border-radius:1px; background:#1a1a1a; }
+    .hz-tick.ok{background:#2f9d57;} .hz-tick.warn{background:#caa233;} .hz-tick.fail{background:#cc4444;}
+    .hz-foot { color:#777; font-size:12px; margin:10px 0 30px; }
+  </style>
+</head>
+<body data-page="health">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">—</span>
+  </header>
+
+  <main class="wrap health">
+    <div class="panel-title row">
+      <span>SYSTEM HEALTH · UPTIME</span>
+      <a class="more-link" href="/healthz" target="_blank" rel="noopener">/healthz ↗</a>
+    </div>
+
+    <div id="hz-overall" class="hz-overall"><span class="hz-dot"></span><span class="hz-big">loading…</span></div>
+
+    <div class="hz-class">WEB SERVICES (HTTP reachability)</div>
+    <div id="hz-web" class="hz-grid"></div>
+
+    <div class="hz-class">24H OVERALL TIMELINE (one bar per snapshot)</div>
+    <div id="hz-timeline" class="hz-timeline"></div>
+
+    <div id="hz-checks"></div>
+
+    <div id="hz-foot" class="hz-foot"></div>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <!-- Cache-busting: bump ?v= on any first-party asset change. -->
+  <script src="auth.js?v=20260617"></script>
+  <script src="app.js?v=20260617"></script>
+  <script src="nav.js?v=20260617"></script>
+  <script src="health.js?v=20260617"></script>
+</body>
+</html>

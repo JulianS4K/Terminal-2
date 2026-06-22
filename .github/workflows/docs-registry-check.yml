@@ -10,12 +10,12 @@ name: docs-registry-check
 #
 # No secrets required — this is a pure repo-structure check.
 
+# NB: deliberately NOT path-filtered. As a required branch-protection check a
+# path-skip reads as perpetually-pending (never green), and a non-.md PR can
+# still invalidate the closed set. check-docs.sh is sub-second, so run it on
+# every PR (audit 2026-06-22).
 on:
   pull_request:
-    paths:
-      - '**.md'
-      - 'bin/check-docs.sh'
-      - '.github/workflows/docs-registry-check.yml'
   push:
     branches: [main]
   workflow_dispatch:

@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://maps.ticketevolution.com; base-uri 'self'; form-action 'self'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0b0e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="VibePass" />
+  <link rel="apple-touch-icon" href="/static/store/favicon.svg" />
+  <link rel="manifest" href="/static/store/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://www.google.com https://*.supabase.co https://maps.ticketevolution.com; frame-src https://www.google.com; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <!-- Title + description are overridden per-event by store.js once the
@@ -43,6 +50,22 @@
     <a class="back" href="/store">← back to events</a>
 
     <div id="status" class="status" aria-live="polite">Loading event…</div>
+
+    <!-- Error screen — shown by store.js when the event fails to load.
+         Normalized states: not-found (404 / expired share 410), temporarily-
+         unavailable (502/503/timeout — retryable), and a generic fallback.
+         Hidden until an error occurs; bootstrap() hides #status/#header/#body
+         and reveals this instead of dumping a raw status string into #status. -->
+    <section id="errorScreen" class="error-screen" hidden role="alert" aria-live="assertive">
+      <div class="error-icon" id="errIcon" aria-hidden="true">⚠️</div>
+      <h1 class="error-title" id="errTitle">Something went wrong</h1>
+      <p class="error-msg" id="errMsg"></p>
+      <div class="error-actions">
+        <button type="button" class="btn" id="errRetry" hidden>Try again</button>
+        <a class="btn ghost" href="/store">← Back to all events</a>
+      </div>
+      <p class="error-code muted" id="errCode" hidden></p>
+    </section>
 
     <section id="header" class="event-head" hidden>
       <!-- Venue hero image — subtle background banner, populated when

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0b0e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="VibePass" />
+  <link rel="apple-touch-icon" href="/static/store/favicon.svg" />
+  <link rel="manifest" href="/static/store/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://www.google.com https://*.supabase.co https://maps.ticketevolution.com; frame-src https://www.google.com; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>VibePass — follow a tour on your budget</title>
+  <meta name="description" content="Search an artist or team, set a date range and a total budget, and we'll plan the most tour stops your money buys — cheapest seats at every show." />
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <link rel="stylesheet" href="/static/store/style.css" />
+  <style>
+    .ft-wrap { max-width: 820px; margin: 0 auto; padding: 16px 18px 48px; }
+    .ft-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 14px 0; }
+    .ft-controls label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+    .ft-controls input { padding: 9px 10px; box-sizing: border-box;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; font: inherit; outline: none; }
+    .ft-controls input:focus { border-color: var(--accent); }
+    .ft-controls input[type=number] { width: 110px; }
+    .ft-wrap button { padding: 9px 18px; margin: 0 8px 8px 0; cursor: pointer;
+      font: 600 13px/1 system-ui; border-radius: 999px; }
+    #ftGo { background: var(--accent); color: #fff; border: none; }
+    #ftGo:hover { background: var(--accent-2); }
+    .ftside { padding: 6px 14px !important; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); }
+    .ftside.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .ft-stat { display: flex; gap: 24px; flex-wrap: wrap; margin: 14px 0; padding: 14px 16px; border: 1px solid rgba(127,127,127,.22); border-radius: 10px; }
+    .ft-stat b { font-size: 22px; display: block; line-height: 1.1; }
+    .ft-stat .l { font-size: 11px; color: #8a93a6; text-transform: uppercase; letter-spacing: .04em; }
+    ul.ft-legs { list-style: none; padding: 0; margin: 10px 0 0; }
+    ul.ft-legs li { display: flex; gap: 12px; padding: 10px 4px; border-bottom: 1px solid rgba(127,127,127,.14); align-items: baseline; flex-wrap: wrap; }
+    ul.ft-legs li.skip { opacity: .45; }
+    ul.ft-legs .d { width: 92px; color: #8a93a6; font-size: 13px; font-variant-numeric: tabular-nums; }
+    ul.ft-legs .c { width: 130px; font-weight: 600; }
+    ul.ft-legs .seat { font-size: 12px; color: #8a93a6; }
+    ul.ft-legs .line { margin-left: auto; font-variant-numeric: tabular-nums; }
+    ul.ft-legs .ea { color: #8a93a6; font-size: 12px; }
+    .hot { margin-left: 5px; }
+    .ft-search { position: relative; min-width: 280px; flex: 1 1 280px; }
+    .ft-search input { width: 100%; box-sizing: border-box; }
+    .ft-suggest { position: absolute; z-index: 20; left: 0; right: 0; top: 100%;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; max-height: 280px; overflow: auto; box-shadow: var(--shadow); }
+    .ft-suggest .opt { padding: 8px 10px; cursor: pointer; font-size: 14px; border-bottom: 1px solid var(--line); }
+    .ft-suggest .opt:last-child { border-bottom: 0; }
+    .ft-suggest .opt:hover, .ft-suggest .opt.active { background: var(--panel-2); }
+    .ft-suggest .opt small { color: var(--muted); margin-left: 6px; }
+    .ft-more { margin: 10px 0 0; font-size: 13px; padding: 9px 12px; border: 1px dashed rgba(127,127,127,.32); border-radius: 8px; }
+  </style>
+</head>
+<body data-page="tour">
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <a href="/store/discover" style="margin-left:14px;font-size:14px">← Discover</a>
+    <div class="badge mvp">MVP · browse only · no real purchases</div>
+  </header>
+  <main class="ft-wrap">
+    <h1 id="ftTitle">Follow a tour</h1>
+    <p>Search an artist or team, set a date range, how many stops you want to catch, tickets
+       per show, and a total budget. We find the most stops your money buys — cheapest seats at
+       each — and tell you what the next one would cost.</p>
+    <div class="ft-controls">
+      <div class="ft-search">
+        <label for="ftPerformer">Artist or team</label>
+        <input id="ftPerformer" type="text" autocomplete="off" spellcheck="false"
+               placeholder="e.g. Taylor Swift, New York Knicks" />
+        <div id="ftSuggest" class="ft-suggest" hidden role="listbox"></div>
+      </div>
+    </div>
+    <div class="ft-controls">
+      <div><label for="ftStart">From</label><input id="ftStart" type="date" /></div>
+      <div><label for="ftEnd">To</label><input id="ftEnd" type="date" /></div>
+      <div><label for="ftStops">Stops to catch</label><input id="ftStops" type="number" min="1" max="12" placeholder="all that fit" /></div>
+      <div><label for="ftQty">Tickets / show</label><input id="ftQty" type="number" min="1" max="12" value="2" /></div>
+      <div><label for="ftBudget">Total budget ($)</label><input id="ftBudget" type="number" min="0" step="100" placeholder="e.g. 1500" /></div>
+      <button id="ftGo">Plan my tour</button>
+    </div>
+    <div id="ftSide" hidden style="margin: 2px 0 6px">
+      <span style="font-size:12px;color:#8a93a6;margin-right:8px">This is a team — follow them:</span>
+      <button class="ftside" data-side="away">Away · road trip</button>
+      <button class="ftside" data-side="home">Home stand</button>
+    </div>
+    <div id="ftStatus" style="color:#8a93a6;font-size:13px;margin:12px 0"></div>
+    <div id="ftResult" hidden>
+      <div class="ft-stat" id="ftStat"></div>
+      <div id="ftMore" class="ft-more" hidden></div>
+      <h2 id="ftHead" style="margin:16px 0 4px">Your shows</h2>
+      <ul class="ft-legs" id="ftLegs"></ul>
+    </div>
+  </main>
+  <script src="/static/store/store.js"></script>
+</body>
+</html>

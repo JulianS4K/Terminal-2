@@ -1,0 +1,164 @@
+name: post-deploy
+
+# Deploy-end smoke test. Triggered by the Render webhook → GitHub bridge
+# (POST /webhooks/render in app.py + render_webhook.py) when a Render deploy
+# of vibepass-storefront-test ENDS successfully — so the new deploy is
+# verified within seconds instead of waiting up to 5 min for the scheduled
+# uptime-check.yml ping.
+#
+# Incorporates render-examples/webhook-github-action: that example's
+# `workflow_dispatch` target re-deploys the service; here we instead run a
+# post-deploy smoke test + Slack notification, which is what a frontend
+# service actually wants on deploy-end.
+#
+# Also runnable by hand (Actions → post-deploy → Run workflow) for testing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      serviceID:
+        type: string
+        required: false
+        description: 'Render Service ID that just deployed (e.g. srv-xxx). Sent by the webhook bridge; optional for manual runs.'
+
+# Least-privilege GITHUB_TOKEN (matches uptime-check.yml). The failure path
+# opens an issue (issues:write); nothing writes code.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: post-deploy
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke-test deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      BASE_URL: https://vibepass-storefront-test.onrender.com
+
+    steps:
+      - name: Wait for the new deploy to settle
+        # Render marks a deploy "live" a beat before the rollout fully drains
+        # the old container. A short pause avoids smoke-testing the old code.
+        run: sleep 20
+
+      - name: Check /healthz
+        id: health
+        run: |
+          # /healthz returns {"ok": true, ...}; require both HTTP 200 AND ok:true.
+          RESP=$(curl -s --max-time 20 --retry 3 --retry-delay 5 \
+            -w "\n%{http_code}" "$BASE_URL/healthz")
+          STATUS=$(echo "$RESP" | tail -n1)
+          BODY=$(echo "$RESP" | sed '$d')
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "HTTP $STATUS"
+          echo "$BODY"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::/healthz returned HTTP $STATUS (expected 200)"
+            exit 1
+          fi
+          if ! echo "$BODY" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+            echo "::error::/healthz HTTP 200 but body did not report ok:true"
+            exit 1
+          fi
+          echo "✅ /healthz OK"
+
+      - name: Check key endpoints respond
+        run: |
+          # Lightweight reachability check on a couple of public surfaces the
+          # storefront serves. We assert HTTP 200, not body shape (that's the
+          # job of the pytest suite); this just catches a deploy that booted
+          # but can't serve routes.
+          fail=0
+          for path in /version.json /api/public/config; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 20 --retry 2 --retry-delay 3 "$BASE_URL$path")
+            echo "$path -> $CODE"
+            if [ "$CODE" != "200" ]; then
+              echo "::error::$path returned HTTP $CODE (expected 200)"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "✅ key endpoints OK"
+
+      - name: Open GitHub issue on failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATUS: ${{ steps.health.outputs.status }}
+          SERVICE_ID: ${{ inputs.serviceID }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          # Avoid duplicate issues: skip if an open post-deploy-failure issue
+          # was created in the last 30 minutes.
+          RECENT=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --label "post-deploy-failure" \
+            --state open --limit 1 \
+            --json createdAt --jq '.[0].createdAt // ""')
+          if [ -n "$RECENT" ]; then
+            CREATED_EPOCH=$(date -d "$RECENT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$RECENT" +%s)
+            DIFF=$(( $(date +%s) - CREATED_EPOCH ))
+            if [ "$DIFF" -lt 1800 ]; then
+              echo "Open post-deploy-failure issue already exists (${DIFF}s ago). Skipping duplicate."
+              exit 0
+            fi
+          fi
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "🔴 Post-deploy smoke test failed ($TIMESTAMP)" \
+            --body "$(cat <<EOF
+          ## Post-deploy smoke test failure
+
+          **Time**: $TIMESTAMP
+          **Service**: ${SERVICE_ID:-unknown}
+          **Base URL**: $BASE_URL
+          **/healthz HTTP status**: ${STATUS:-unknown}
+          **Workflow run**: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          ### Next steps
+          1. Check the [Render dashboard](https://dashboard.render.com) for the deploy + service status
+          2. Roll back to the previous deploy if the new one is broken
+          3. Review the merge that triggered this deploy on \`main\`
+          4. Once resolved, close this issue
+
+          *Auto-opened by the post-deploy workflow (Render webhook → GitHub bridge)*
+          EOF
+          )" \
+            --label "bug,post-deploy-failure"
+
+      - name: Notify Slack (optional)
+        # Reuses the SLACK_BOT_TOKEN / SLACK_ALERTS_CHANNEL_ID pattern from
+        # uptime-check.yml. Posts on both success and failure so deploys are
+        # visible in #terminal-2-alerts. Skipped if the token isn't set.
+        if: always() && env.SLACK_BOT_TOKEN != ''
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ALERTS_CHANNEL_ID: ${{ secrets.SLACK_ALERTS_CHANNEL_ID }}
+          SERVICE_ID: ${{ inputs.serviceID }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            ICON="🟢"; TEXT="deploy verified — smoke test passed"
+          else
+            ICON="🔴"; TEXT="deploy smoke test FAILED"
+          fi
+          curl -s -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"channel\": \"${SLACK_ALERTS_CHANNEL_ID}\",
+              \"text\": \"${ICON} *vibepass-storefront-test* ${TEXT}\",
+              \"blocks\": [{
+                \"type\": \"section\",
+                \"text\": {
+                  \"type\": \"mrkdwn\",
+                  \"text\": \"${ICON} *Post-deploy* — ${TEXT}\\nService: \`${SERVICE_ID:-manual}\` · <https://dashboard.render.com|Render> · <$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|Run>\"
+                }
+              }]
+            }"

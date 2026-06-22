@@ -18,9 +18,15 @@ import { getPublicOrg } from '../lib/orgs';
 import { initOrgPixels, trackPixelEvent } from '../lib/pixels';
 import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
+import WaitlistCTA from '../components/WaitlistCTA';
+import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
+import { claimFreeAddons } from '../lib/addons';
+import VoucherField from '../components/VoucherField';
+import { useT } from '../context/LanguageContext';
 
 export default function EventDetails() {
   const { id } = useParams();
+  const t = useT();
   const { user, isAdmin, signIn } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -35,6 +41,8 @@ export default function EventDetails() {
   // through to the Stripe metadata and the post-purchase usage increment.
   const [appliedDiscountCode, setAppliedDiscountCode] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [addonSel, setAddonSel] = useState<AddonSelection>({ items: [], totalCents: 0 });
+  const [voucher, setVoucher] = useState<{ code: string; canBypass: boolean } | null>(null);
   const [userTicketCount, setUserTicketCount] = useState(0);
   // Per-tier sold/capacity, sourced from the events/{id}/tierSales sub-
   // collection. Buyers can no longer mutate the embedded ticketTiers array
@@ -221,12 +229,18 @@ export default function EventDetails() {
       return;
     }
     const unitPrice = tier.price ?? event.price ?? 0;
+    // A purchase needs Stripe checkout whenever there's anything PRICED — a paid
+    // tier OR paid add-ons. The free-claim path (exos_claim_free_tickets /
+    // _free_addons) only accepts a $0 tier + $0 extras and hard-rejects priced
+    // items, so a paid tier discounted to $0 must STILL go through checkout (the
+    // discount is redeemed server-side there, not via the free path). We
+    // therefore route on the nominal prices, never on a discounted total —
+    // discount codes are org-secret + not yet server-validated.
+    const needsCheckout = unitPrice > 0 || addonSel.totalCents > 0;
 
-    // Paid tiers → Stripe Checkout (edge fn + webhook fulfillment built; dormant
-    // until the publishable key is set). Free tiers fall through to claim below.
-    if (unitPrice > 0) {
+    if (needsCheckout) {
       if (!stripeEnabled) {
-        toast({ kind: 'info', title: 'Coming soon', message: 'Paid checkout is being wired up.' });
+        toast({ kind: 'info', title: t('event.comingSoonTitle'), message: t('event.comingSoon') });
         return;
       }
       setPurchasing(true);
@@ -237,6 +251,8 @@ export default function EventDetails() {
           quantity,
           successUrl: publicUrl('my-tickets?checkout=success'),
           cancelUrl: publicUrl(`event/${event.id}`),
+          addons: addonSel.items,
+          voucherCode: voucher?.code,
         });
         window.location.href = url; // leave the SPA for Stripe-hosted checkout
       } catch (err: any) {
@@ -252,6 +268,8 @@ export default function EventDetails() {
     setPurchasing(true);
     try {
       const params = new URLSearchParams(window.location.search);
+      // Shared idempotency/order ref so any free $0 extras attach to this claim.
+      const orderRef = crypto.randomUUID();
       const ids = await claimFreeTickets({
         eventId: event.id,
         tierId: tier.id,
@@ -260,8 +278,17 @@ export default function EventDetails() {
         channel: params.get('utm_source'),
         // Idempotency key for this claim attempt — a network retry returns the
         // same tickets instead of minting twice (button is disabled meanwhile).
-        orderRef: crypto.randomUUID(),
+        orderRef,
       });
+      // Attach any free extras (best-effort — a swag hiccup shouldn't fail the
+      // ticket claim the buyer already completed).
+      if (addonSel.items.length > 0) {
+        try {
+          await claimFreeAddons(event.id, orderRef, addonSel.items);
+        } catch (addErr) {
+          console.error('claimFreeAddons failed:', addErr);
+        }
+      }
       trackPixelEvent('Purchase', {
         content_name: event.title,
         content_ids: [event.id],
@@ -685,7 +712,7 @@ export default function EventDetails() {
                     <div className="flex justify-between text-[10px] py-4 font-black uppercase tracking-tighter">
                       <span className="text-white/30">Status</span>
                       <span className={soldOut ? 'text-brand-accent' : 'text-brand-primary'}>
-                        {soldOut ? 'Sold Out' : 'Available'}
+                        {soldOut ? t('event.soldOut') : t('event.available')}
                       </span>
                     </div>
                     <div className="flex justify-between text-[10px] py-4 font-black uppercase tracking-tighter">
@@ -702,20 +729,47 @@ export default function EventDetails() {
                   </div>
                 </div>
 
+                {/* A valid voucher can unlock a sold-out event (or pin a price). */}
+                <VoucherField
+                  eventId={event.id}
+                  email={user?.email ?? null}
+                  onApplied={setVoucher}
+                />
+
+                {(!soldOut || voucher?.canBypass) && (
+                  <AddonSelector
+                    eventId={event.id}
+                    currency={event.currency || 'USD'}
+                    onChange={setAddonSel}
+                  />
+                )}
+
                 <button
-                  disabled={soldOut || purchasing}
+                  disabled={(soldOut && !voucher?.canBypass) || purchasing}
                   onClick={handlePurchase}
                   className="primary-button w-full flex items-center justify-center space-x-4 disabled:bg-white/10 disabled:text-white/20"
                 >
                   {purchasing ? (
-                    <span className="animate-pulse uppercase tracking-tighter italic text-xs font-black">Processing...</span>
+                    <span className="animate-pulse uppercase tracking-tighter italic text-xs font-black">{t('event.processing')}</span>
                   ) : (
                     <>
                       <Ticket className="w-5 h-5" />
-                      <span className="uppercase tracking-tighter italic text-sm font-black">{soldOut ? 'Sold Out' : 'Buy Tickets'}</span>
+                      <span className="uppercase tracking-tighter italic text-sm font-black">{(soldOut && !voucher?.canBypass) ? t('event.soldOut') : t('event.buy')}</span>
                     </>
                   )}
                 </button>
+
+                {soldOut && !voucher?.canBypass && (
+                  <div className="mt-3">
+                    <WaitlistCTA
+                      eventId={event.id}
+                      tierId={selectedTierId}
+                      defaultEmail={user?.email ?? null}
+                      defaultName={user?.displayName ?? null}
+                      accentStyle={accentBgStyle}
+                    />
+                  </div>
+                )}
 
                 {/*
                   TEST-MODE bypass — admin-only. Skips Stripe and mints

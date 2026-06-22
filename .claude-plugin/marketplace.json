@@ -1,0 +1,14 @@
+{
+  "name": "terminal2",
+  "owner": {
+    "name": "Terminal-2 operators",
+    "email": "julian@s4kent.com"
+  },
+  "plugins": [
+    {
+      "name": "terminal2-governance",
+      "source": "./.claude-plugins/terminal2-governance",
+      "description": "Repo governance as mechanism: RULE 2 read-only scanner + docs-registry gate run as PostToolUse hooks at edit time; a PreToolUse skill_router surfaces the right workflow skill (e.g. ship-a-migration) at trigger time; /rule2-audit and /new-migration commands + skills/ encode the PROJECT_BIBLE §8 workflows."
+    }
+  ]
+}

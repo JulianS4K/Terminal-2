@@ -221,6 +221,8 @@
 
   <script src="/static/store/test/test.js"></script>
   <script>
+    // HTML-escape API-sourced strings before innerHTML interpolation (XSS).
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const { $, fmtMoney, fmtWhen, api } = Test;
 
     // Compute "is dark" for a hex color so we can pick contrasting text on
@@ -254,19 +256,19 @@
       // Build context badges from the payload's optional fields.
       const badgeBits = [];
       if (ev.primary_performer_league) {
-        badgeBits.push(`<span class="badge league">${ev.primary_performer_league}</span>`);
+        badgeBits.push(`<span class="badge league">${esc(ev.primary_performer_league)}</span>`);
       }
       if (ev.rivalry) badgeBits.push(`<span class="badge">⚡ rivalry</span>`);
       if (ev.playoff) badgeBits.push(`<span class="badge">★ playoff</span>`);
       if (ev.mlb_series) badgeBits.push(`<span class="badge">series</span>`);
       if (ev.tournament) badgeBits.push(`<span class="badge">tournament</span>`);
-      if (ev.weather) badgeBits.push(`<span class="badge">${ev.weather}</span>`);
-      if (ev.holiday) badgeBits.push(`<span class="badge">${ev.holiday}</span>`);
+      if (ev.weather) badgeBits.push(`<span class="badge">${esc(ev.weather)}</span>`);
+      if (ev.holiday) badgeBits.push(`<span class="badge">${esc(ev.holiday)}</span>`);
 
       // Logo frame — img if URL present, otherwise initials on the brand color.
       const logoFrame = ev.primary_performer_logo
-        ? `<div class="logo-frame"><img src="${ev.primary_performer_logo}" alt="" loading="lazy" /></div>`
-        : `<div class="logo-frame"><span class="fallback">${initials(ev.primary_performer_name || ev.name)}</span></div>`;
+        ? `<div class="logo-frame"><img src="${esc(ev.primary_performer_logo)}" alt="" loading="lazy" /></div>`
+        : `<div class="logo-frame"><span class="fallback">${esc(initials(ev.primary_performer_name || ev.name))}</span></div>`;
 
       c.innerHTML = `
         <div class="accent-bar"></div>
@@ -274,8 +276,8 @@
           ${logoFrame}
           <div class="card-meta">
             <div class="when">${fmtWhen(ev.occurs_at_local)}</div>
-            <div class="name">${ev.name || "—"}</div>
-            <div class="where">${[ev.venue_name, ev.venue_location].filter(Boolean).join(" · ")}</div>
+            <div class="name">${esc(ev.name || "—")}</div>
+            <div class="where">${esc([ev.venue_name, ev.venue_location].filter(Boolean).join(" · "))}</div>
             <div class="price">${ev.from_price != null ? "from " + fmtMoney(ev.from_price) : "—"}</div>
             ${badgeBits.length ? `<div class="badges">${badgeBits.join("")}</div>` : ""}
           </div>
@@ -336,16 +338,16 @@
       try {
         const { body } = await api(`/api/store/search?q=${encodeURIComponent(q)}&limit=6`);
         renderBucket("searchEvents", body.events, (h) => `
-          <div><strong>${h.name || "—"}</strong>${h.we_own ? ' <span class="badge">owned</span>' : ""}</div>
-          <div class="where">${[h.venue_name, h.location].filter(Boolean).join(" · ")}</div>
+          <div><strong>${esc(h.name || "—")}</strong>${h.we_own ? ' <span class="badge">owned</span>' : ""}</div>
+          <div class="where">${esc([h.venue_name, h.location].filter(Boolean).join(" · "))}</div>
         `);
         renderBucket("searchPerformers", body.performers, (h) => `
-          <div><strong>${h.name || "—"}</strong>${h.league ? ` · ${h.league}` : ""}</div>
-          <div class="where">${h.location || ""}</div>
+          <div><strong>${esc(h.name || "—")}</strong>${h.league ? ` · ${esc(h.league)}` : ""}</div>
+          <div class="where">${esc(h.location || "")}</div>
         `);
         renderBucket("searchVenues", body.venues, (h) => `
-          <div><strong>${h.name || "—"}</strong></div>
-          <div class="where">${h.location || ""}</div>
+          <div><strong>${esc(h.name || "—")}</strong></div>
+          <div class="where">${esc(h.location || "")}</div>
         `);
       } catch (e) {
         Test.log("search probe failed: " + e.message, "err");

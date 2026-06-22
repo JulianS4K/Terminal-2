@@ -31,10 +31,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { data: { user } } = await sbUser.auth.getUser();
   if (!user) return json({ error: "unauthorized" }, 401);
 
-  let p: { event_id?: string; tier_id?: string; quantity?: number; success_url?: string; cancel_url?: string };
+  let p: {
+    event_id?: string; tier_id?: string; quantity?: number;
+    success_url?: string; cancel_url?: string;
+    addons?: { addon_id?: string; quantity?: number }[];
+    voucher_code?: string;
+  };
   try { p = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const { event_id, tier_id, success_url, cancel_url } = p;
   const quantity = p.quantity ?? 1;
+  const addonReq = Array.isArray(p.addons) ? p.addons : [];
+  const voucherCode = (p.voucher_code ?? "").trim();
   if (!event_id || !tier_id || !success_url || !cancel_url) {
     return json({ error: "missing event_id / tier_id / success_url / cancel_url" }, 400);
   }
@@ -47,13 +54,36 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const { data: tier, error: tierErr } = await sb
     .from("exos_ticket_tiers")
-    .select("id, name, price, capacity, sold, event_id, exos_events!inner(id, org_id, name, status, currency)")
+    .select("id, name, price, capacity, sold, event_id, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax), exos_events!inner(id, org_id, name, status, currency)")
     .eq("id", tier_id).eq("event_id", event_id).maybeSingle();
   if (tierErr || !tier) return json({ error: "tier not found" }, 404);
 
   const ev = (tier as unknown as { exos_events: { org_id: string; name: string; status: string; currency: string | null } }).exos_events;
   if (ev.status !== "published") return json({ error: "event not on sale" }, 409);
-  if (tier.capacity > 0 && tier.sold + quantity > tier.capacity) {
+
+  // Voucher (pretix-style access token) — validated server-side. May bypass a
+  // sold-out tier and/or pin a price; consumed on fulfillment by a DB trigger
+  // (exos_checkout_consume_voucher). Distinct from discount codes.
+  let voucherId: string | null = null;
+  let bypassCapacity = false;
+  let overridePrice: number | null = null;
+  if (voucherCode) {
+    const { data: vRows, error: vErr } = await sb.rpc("exos_check_voucher", {
+      p_event_id: event_id, p_code: voucherCode, p_email: user.email ?? null,
+    });
+    const v = Array.isArray(vRows) ? vRows[0] : vRows;
+    if (vErr || !v?.is_valid) {
+      return json({ error: `voucher ${v?.reason ?? "invalid"}` }, 409);
+    }
+    if (v.restrict_tier_id && v.restrict_tier_id !== tier_id) {
+      return json({ error: "voucher is not valid for this ticket type" }, 409);
+    }
+    voucherId = v.voucher_id;
+    bypassCapacity = v.can_bypass === true;
+    overridePrice = v.override_price != null ? Number(v.override_price) : null;
+  }
+
+  if (!bypassCapacity && tier.capacity > 0 && tier.sold + quantity > tier.capacity) {
     return json({ error: "not enough tickets in this tier" }, 409);
   }
 
@@ -76,10 +106,100 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const currency = (ev.currency ?? "usd").toLowerCase();
-  const unitAmount = Math.round(Number(tier.price) * 100);
-  const amountCents = unitAmount * quantity;
+  // A voucher price override pins the per-ticket price (comp / special rate).
+  const unitAmount = Math.round(Number(overridePrice ?? tier.price) * 100);
+
+  // Validate + price add-ons server-side (never trust the client's prices). Each
+  // must belong to this event, be public, and have stock. Build the priced
+  // snapshot stored on the session (fulfillment reads it to record the purchase).
+  type AddonRow = { addon_id: string; quantity: number; unit_price_cents: number; name: string };
+  const addonsForSession: AddonRow[] = [];
+  let addonTotal = 0;
+  // Tax accumulators: recordedTax = the tax portion of the order (recorded on the
+  // session, whether inclusive or exclusive); exclusiveTax = the part ADDED on top
+  // of the price (a separate Stripe "Tax" line + added to the charge).
+  let recordedTax = 0;
+  let exclusiveTax = 0;
+  const addTax = (amount: number, rule: { rate_percent?: number; price_includes_tax?: boolean } | null | undefined) => {
+    const rate = Number(rule?.rate_percent ?? 0);
+    if (!rate) return;
+    const t = taxCents(amount, rate, rule?.price_includes_tax === true);
+    recordedTax += t;
+    if (rule?.price_includes_tax !== true) exclusiveTax += t;
+  };
+  if (addonReq.length > 0) {
+    // Aggregate duplicate addon_ids FIRST so max_per_order + capacity apply to
+    // the COMBINED quantity — otherwise a client could split one add-on across
+    // entries ([{X,N},{X,N}]) and slip past the per-order/stock ceilings (each
+    // entry checked in isolation), then fulfillment bumps sold per entry with no
+    // re-check → oversell.
+    const wanted = new Map<string, number>();
+    for (const req of addonReq) {
+      const id = req.addon_id;
+      const qty = Number(req.quantity) || 0;
+      if (!id || qty < 1) continue;
+      wanted.set(id, (wanted.get(id) ?? 0) + qty);
+    }
+    const ids = [...wanted.keys()];
+    if (ids.length > 0) {
+      const { data: catalog, error: addErr } = await sb
+        .from("exos_event_addons")
+        .select("id, name, price, capacity, sold, max_per_order, visibility, event_id, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax)")
+        .eq("event_id", event_id).in("id", ids);
+      if (addErr) return json({ error: "could not load add-ons" }, 500);
+      const byId = new Map((catalog ?? []).map((a) => [a.id, a]));
+      for (const [id, qty] of wanted) {
+        const a = byId.get(id);
+        if (!a || a.visibility !== "public") return json({ error: "add-on not available" }, 409);
+        if (a.max_per_order && qty > a.max_per_order) {
+          return json({ error: `add-on "${a.name}" limited to ${a.max_per_order} per order` }, 409);
+        }
+        if (a.capacity > 0 && a.sold + qty > a.capacity) {
+          return json({ error: `add-on "${a.name}" is sold out` }, 409);
+        }
+        const unitCents = Math.round(Number(a.price) * 100);
+        addonsForSession.push({ addon_id: a.id, quantity: qty, unit_price_cents: unitCents, name: a.name });
+        addonTotal += unitCents * qty;
+        addTax(unitCents * qty, (a as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
+      }
+    }
+  }
+
+  // Tier tax (after the voucher price override is applied to unitAmount).
+  addTax(unitAmount * quantity, (tier as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
+
+  const amountCents = unitAmount * quantity + addonTotal + exclusiveTax;
   const feeBps = Number(Deno.env.get("EXOS_PLATFORM_FEE_BPS") ?? "500");
   const applicationFee = Math.round((amountCents * feeBps) / 10000);
+
+  // Only PAID line items go to Stripe ($0 lines are rejected in payment mode), so
+  // a free tier + paid add-ons charges just the add-ons. Ticket quantity is still
+  // recorded on the session for minting regardless of the tier's price.
+  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
+  if (unitAmount > 0) {
+    lineItems.push({
+      quantity,
+      price_data: { currency, unit_amount: unitAmount, product_data: { name: `${ev.name} — ${tier.name}` } },
+    });
+  }
+  for (const a of addonsForSession) {
+    if (a.unit_price_cents > 0) {
+      lineItems.push({
+        quantity: a.quantity,
+        price_data: { currency, unit_amount: a.unit_price_cents, product_data: { name: `${ev.name} — ${a.name}` } },
+      });
+    }
+  }
+  // Exclusive tax → one explicit Tax line so the buyer sees it on Stripe's page.
+  if (exclusiveTax > 0) {
+    lineItems.push({
+      quantity: 1,
+      price_data: { currency, unit_amount: exclusiveTax, product_data: { name: "Tax" } },
+    });
+  }
+  if (lineItems.length === 0) {
+    return json({ error: "nothing to charge — use the free claim path" }, 400);
+  }
 
   const stripe = new Stripe(stripeKey, { httpClient: Stripe.createFetchHttpClient(), apiVersion: "2024-06-20" });
 
@@ -87,14 +207,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     session = await stripe.checkout.sessions.create({
       mode: "payment",
-      line_items: [{
-        quantity,
-        price_data: {
-          currency,
-          unit_amount: unitAmount,
-          product_data: { name: `${ev.name} — ${tier.name}` },
-        },
-      }],
+      line_items: lineItems,
       payment_intent_data: {
         application_fee_amount: applicationFee,
         transfer_data: { destination: payments.connectedAccountId },
@@ -114,6 +227,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     event_id, tier_id, org_id: ev.org_id,
     buyer_uid: user.id, buyer_email: (user.email ?? "").toLowerCase(),
     quantity, amount_cents: amountCents, currency, status: "pending",
+    addons: addonsForSession.length > 0 ? addonsForSession : null,
+    voucher_id: voucherId,
+    tax_cents: recordedTax > 0 ? recordedTax : null,
   });
   if (insErr) {
     console.error("exos-checkout: ledger insert failed", insErr);
@@ -122,6 +238,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   return json({ url: session.url, session_id: session.id });
 });
+
+// Mirrors public.exos_tax_cents: inclusive extracts the embedded tax from the
+// gross; exclusive computes the tax to add on top of the net.
+function taxCents(amount: number, ratePercent: number, inclusive: boolean): number {
+  if (!ratePercent) return 0;
+  return inclusive
+    ? Math.round((amount * ratePercent) / (100 + ratePercent))
+    : Math.round((amount * ratePercent) / 100);
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

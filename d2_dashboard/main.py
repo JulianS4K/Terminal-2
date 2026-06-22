@@ -165,7 +165,11 @@ app.add_middleware(
         "https://vibepass-terminal-test.onrender.com",  # if D0 terminal also fetches /api/d2/*
         "https://d2-orders-dashboard.onrender.com",      # same-origin is fine without CORS, but listing keeps the matrix explicit
     ],
-    allow_origin_regex=r"https?://localhost(:\d+)?",
+    # Localhost origins are a dev convenience only — on a production deploy a
+    # credentialed allow-any-localhost-port grant is broader than needed
+    # (audit 2026-06-10). _is_production() is the same detector the
+    # AUTH_DISABLED kill switch uses.
+    allow_origin_regex=(None if _is_production() else r"https?://localhost(:\d+)?"),
     allow_credentials=True,
     allow_methods=["GET", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -903,6 +907,149 @@ def _fetch_unified_orders_page(per_page: int, page: int = 1, include_terminal: b
         return {"rows": [], "per_source_count": {}, "per_source_as_of": {}, "error": _scrub_err("unified_orders.sql", e)}
 
 
+# Column projection shared by the unified_orders page fetchers.
+_UO_PAGE_SELECT = (
+    "source,source_order_id,tevo_event_id,source_status,canonical_status,"
+    "is_terminal,quantity,gross_value,created_at,last_seen_at,event_name,event_date"
+)
+
+
+def _build_order_rows(sb, all_uo_rows: list[dict]) -> list[dict]:
+    """Map raw unified_orders rows → API row dicts, back-filling event_name +
+    event_date from v_event_base for any row whose source left them null
+    (same fallback the balanced fan-out uses)."""
+    missing_event_ids = list({
+        r["tevo_event_id"] for r in all_uo_rows
+        if r.get("tevo_event_id") and not r.get("event_name")
+    })
+    events_by_id: dict = {}
+    if missing_event_ids:
+        ev_res = (
+            sb.table("v_event_base")
+            .select("tevo_event_id,event_name,event_at_local,event_at_utc")
+            .in_("tevo_event_id", missing_event_ids)
+            .execute()
+        )
+        events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
+    rows = []
+    for r in all_uo_rows:
+        event_name = r.get("event_name")
+        event_date = r.get("event_date")
+        if not event_name:
+            ev = events_by_id.get(r.get("tevo_event_id")) or {}
+            event_name = ev.get("event_name")
+            event_date = ev.get("event_at_local") or ev.get("event_at_utc")
+        rows.append({
+            "source": r.get("source") or "",
+            "order_id": str(r.get("source_order_id") or ""),
+            "event_name": event_name,
+            "event_date": event_date,
+            "qty": _to_int(r.get("quantity")),
+            "status": r.get("source_status"),
+            "canonical_status": r.get("canonical_status"),
+            "amount": _to_float(r.get("gross_value")),
+            "currency": None,
+            "ordered_at": r.get("created_at"),
+        })
+    return rows
+
+
+def _fetch_filtered_orders(
+    source: str,
+    per_page: int,
+    page: int = 1,
+    include_terminal: bool = False,
+    q: str | None = None,
+    when: str = "all",
+) -> dict | None:
+    """Server-side filtered + paginated order fetch backing the terminal's
+    Source / Search / Date controls. Returns None when Supabase isn't wired.
+
+    Crucially this honours an explicit single-source selection: when `source`
+    names one SQL-backed source it gets the FULL per_page window (so the
+    operator can page through ALL of e.g. EVO's book), instead of the
+    balanced fan-out's per_page//n_sources cap that only ever surfaces the
+    first ~20 rows of each source on page 1. `source='all'` keeps the
+    balanced split so every source gets surface area.
+
+    Filters are all pushed down to SQL:
+      - include_terminal=False → active-only (hide terminal canonical_status)
+      - q                      → event_name ILIKE %q%
+      - when='upcoming'        → event_date >= now()-12h
+      - when='past'            → event_date <  now()-12h
+
+    Shape matches `_fetch_unified_orders_page` plus a `has_more` flag derived
+    from whether any pulled source filled its page window (drives the
+    Next-page control without an extra count(*) round-trip)."""
+    sb = _sb()
+    if sb is None:
+        return None
+    try:
+        single = source != "all" and source in _SQL_BACKED_SOURCES
+        sources_to_pull = [source] if single else sorted(_SQL_BACKED_SOURCES)
+        per_source = per_page if single else max(1, per_page // max(1, len(sources_to_pull)))
+        start = max(0, (page - 1) * per_source)
+        end = start + per_source - 1
+
+        cutoff = None
+        if when in ("upcoming", "past"):
+            from datetime import datetime, timedelta, timezone
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+
+        def _pull_one(src: str) -> tuple[str, list[dict], str | None]:
+            try:
+                query = (
+                    sb.table("unified_orders")
+                    .select(_UO_PAGE_SELECT)
+                    .eq("source", src)
+                )
+                if not include_terminal:
+                    query = query.or_(f"canonical_status.is.null,canonical_status.in.({','.join(_ACTIVE_STATUSES)})")
+                if q:
+                    query = query.ilike("event_name", f"%{q}%")
+                if cutoff is not None and when == "upcoming":
+                    query = query.gte("event_date", cutoff)
+                elif cutoff is not None and when == "past":
+                    query = query.lt("event_date", cutoff)
+                res = query.order("created_at", desc=True).range(start, end).execute()
+                return src, (res.data or []), None
+            except Exception as e:
+                return src, [], _scrub_err(f"unified_orders.filtered.{src}", e)
+
+        all_uo_rows: list[dict] = []
+        per_source_as_of: dict[str, str] = {}
+        per_source_count: dict[str, int] = {}
+        per_source_filled: dict[str, bool] = {}
+        any_error = None
+        with ThreadPoolExecutor(max_workers=len(sources_to_pull)) as ex:
+            for src, rows_for_src, err in ex.map(_pull_one, sources_to_pull):
+                if err:
+                    any_error = err
+                per_source_filled[src] = len(rows_for_src) >= per_source
+                for r in rows_for_src:
+                    all_uo_rows.append(r)
+                    ls = r.get("last_seen_at")
+                    if ls and (per_source_as_of.get(src, "") < ls):
+                        per_source_as_of[src] = ls
+                    per_source_count[src] = per_source_count.get(src, 0) + 1
+
+        rows = _build_order_rows(sb, all_uo_rows)
+        result = {
+            "rows": rows,
+            "per_source_count": per_source_count,
+            "per_source_as_of": per_source_as_of,
+            "has_more": any(per_source_filled.values()),
+        }
+        if any_error:
+            result["error"] = any_error
+        return result
+    except Exception as e:
+        return {
+            "rows": [], "per_source_count": {}, "per_source_as_of": {},
+            "has_more": False, "error": _scrub_err("unified_orders.filtered", e),
+        }
+
+
 def _fetch_orders_from_sql(source: str, per_page: int, page: int = 1) -> dict | None:
     """Pull a source's orders out of unified_orders, joined to v_event_base
     for event_name + event_date. Returns None when Supabase isn't configured
@@ -1218,6 +1365,9 @@ def orders(
     page: int = 1,
     fast: int = 0,
     include_terminal: int = 0,
+    source: str = "all",
+    q: str | None = None,
+    when: str = "all",
     _=Depends(require_auth),
 ):
     """SQL-only orders feed. All 5 sources (evo / seatgeek_sales / seatdata /
@@ -1236,6 +1386,14 @@ def orders(
 
     `?include_terminal=1`: show all — no canonical_status filter. The
     primary tab's "All" pill flips this.
+
+    `?source=<evo|seatgeek_sales|tickpick|vivid>`, `?q=<event name>`,
+    `?when=<all|upcoming|past>`: terminal Orders filters. Any non-default
+    value routes to the server-side filtered fetch — a single `source` gets
+    the full `per_page` window (page through ALL of that source's book)
+    instead of the balanced per_page//n_sources cap. `q` is an event-name
+    ILIKE; `when` filters on event_date around now()-12h. Responses carry
+    `has_more` so the client can drive Prev/Next without a count(*).
 
     ?fast=1 mode (two-phase load): single global SQL query, upcoming-only
     (event_date >= now()-12h), event_date ASC, NO event_window join.
@@ -1256,8 +1414,64 @@ def orders(
     page = max(1, page)
     include_terminal_flag = bool(include_terminal)
 
+    # Source / Search / Date filters (terminal Orders controls). When any is
+    # set we route to the server-side filtered fetch: a single source gets the
+    # FULL per_page window (page through all of e.g. EVO), not the balanced
+    # per_page//n_sources cap. `source=all` + no q + when=all keeps the
+    # original balanced fan-out untouched.
+    source_norm = (source or "all").strip().lower()
+    q_norm = (q or "").strip() or None
+    when_norm = (when or "all").strip().lower()
+    if when_norm not in ("all", "upcoming", "past"):
+        when_norm = "all"
+    use_filtered = (source_norm != "all") or (q_norm is not None) or (when_norm != "all")
+
     timings: dict = {}
     t0 = _time.perf_counter()
+
+    if use_filtered and not fast:
+        bundle = _timed(
+            "sql.filtered", _fetch_filtered_orders,
+            source_norm, per_page, page, include_terminal_flag, q_norm, when_norm,
+            _timings=timings,
+        )
+        if bundle is None:
+            raise HTTPException(503, "Supabase not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required)")
+        rows = bundle["rows"]
+        per_source_count = dict(bundle.get("per_source_count") or {})
+        per_source_as_of = dict(bundle.get("per_source_as_of") or {})
+        sql_err = bundle.get("error")
+        sources_summary = [
+            {
+                "source": src,
+                "ok": not bool(sql_err),
+                "count": per_source_count.get(src, 0),
+                "total_reported": None,
+                "error": sql_err,
+                "origin": "sql",
+                "as_of": per_source_as_of.get(src),
+            }
+            for src in _ALL_SOURCES
+        ]
+        rows.sort(key=lambda x: (x.get("ordered_at") or ""), reverse=True)
+        total_ms = (_time.perf_counter() - t0) * 1000
+        response = JSONResponse({
+            "sources": sources_summary,
+            "rows": rows,
+            "page": page,
+            "per_page": per_page,
+            "phase": "filtered",
+            "include_terminal": include_terminal_flag,
+            "source": source_norm,
+            "q": q_norm,
+            "when": when_norm,
+            "has_more": bool(bundle.get("has_more")),
+            "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
+        })
+        response.headers["Server-Timing"] = ", ".join(
+            f"{k.replace('.','_')};dur={v:.1f}" for k, v in timings.items()
+        ) + f", total;dur={total_ms:.1f}"
+        return response
 
     if fast:
         # Single query, single thread, upcoming-only. Phase 1 of two-phase load.
@@ -1317,6 +1531,11 @@ def orders(
     per_source_as_of = dict(bundle.get("per_source_as_of") or {})
     sql_err = bundle.get("error")
 
+    # has_more for the balanced fan-out: any source that filled its per_page//n
+    # slice may have more rows on the next page.
+    _balanced_per_source = max(1, per_page // max(1, len(_SQL_BACKED_SOURCES)))
+    has_more = any(c >= _balanced_per_source for c in per_source_count.values())
+
     sources_summary = [
         {
             "source": src,
@@ -1351,6 +1570,8 @@ def orders(
         "per_page": per_page,
         "phase": "full",
         "include_terminal": include_terminal_flag,
+        "source": "all",
+        "has_more": has_more,
         "timings_ms": {k: round(v, 1) for k, v in timings.items()} | {"total": round(total_ms, 1)},
     })
     response.headers["Server-Timing"] = ", ".join(

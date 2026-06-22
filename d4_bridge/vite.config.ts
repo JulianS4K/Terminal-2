@@ -31,10 +31,14 @@ export default defineConfig(({ mode }) => {
       // entry chunk size considerably.
       rollupOptions: {
         output: {
-          manualChunks: {
-            stripe: ['@stripe/stripe-js'],
-            qr: ['html5-qrcode', 'qrcode.react'],
-            motion: ['motion'],
+          // Vite 8 / Rollup 4 type `manualChunks` as a function only — the
+          // object form no longer satisfies the type (TS2769). Function form
+          // below preserves the original split (stripe / qr / motion).
+          manualChunks: (id: string) => {
+            if (id.includes('node_modules/@stripe/stripe-js')) return 'stripe';
+            if (id.includes('node_modules/html5-qrcode') || id.includes('node_modules/qrcode.react')) return 'qr';
+            if (id.includes('node_modules/motion')) return 'motion';
+            return undefined;
           },
         },
       },

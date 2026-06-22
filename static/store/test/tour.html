@@ -27,6 +27,8 @@
     ul.legs .mm { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; width: 64px; text-align: right; }
     ul.legs .seat { font-size: 11px; color: #cbd5e1; }
     ul.legs .seat.est { opacity: .55; }
+    ul.legs .hot { margin-left: 5px; font-size: 12px; }
+    ul.legs .perf { font-size: 11px; color: #a78bfa; }
   </style>
 </head>
 <body>
@@ -49,7 +51,7 @@
       <p class="subtitle">Follow a performer across cities — one curated package. On <b>Build</b> we auto-select real tickets (your quantity, together) at each stop that fit your budget, priced off our own inventory. For a team it defaults to <b>away games</b> (the road trip).</p>
 
       <div class="tour-form">
-        <div><label>Performer ID</label><input id="pid" type="number" value="87567" /></div>
+        <div><label>Performer ID(s)</label><input id="pid" type="text" value="87567" placeholder="87567 or 87567,40010" /></div>
         <div><label>Home lat</label><input id="hlat" type="number" step="0.0001" value="40.7128" /></div>
         <div><label>Home lon</label><input id="hlon" type="number" step="0.0001" value="-74.0060" /></div>
         <div><label>Home label</label><input id="hname" type="text" value="New York City" /></div>
@@ -57,9 +59,12 @@
         <div><label>Travel budget (km)</label><input id="bkm" type="number" step="500" value="6000" /></div>
         <div><label>Spend cap ($, optional)</label><input id="busd" type="number" step="250" placeholder="none" /></div>
         <div><label>Side</label><select id="side"><option value="auto">auto</option><option value="away">away (team)</option><option value="home">home / primary</option></select></div>
+        <div><label>Section filter</label><input id="section" type="text" placeholder="e.g. FLOOR, 211" /></div>
+        <div><label>Our seats first</label><select id="preferOwned"><option value="">no</option><option value="1">prefer ours</option></select></div>
       </div>
       <button id="go" style="padding: 11px 22px">Build tour</button>
-      <span style="font-size:12px;color:var(--muted);margin-left:10px">Default: Megan Moroney (87567). Try a team, e.g. Yankees 15533.</span>
+      <button id="share" style="padding: 11px 16px; margin-left:8px">Copy link</button>
+      <span style="font-size:12px;color:var(--muted);margin-left:10px">One ID, or comma-separate for "plan my summer". Megan 87567 · Yankees 15533.</span>
 
       <div id="status" style="color: var(--muted); font-size: 13px; margin: 16px 0"></div>
       <div id="result" hidden>
@@ -78,21 +83,47 @@
       const money = (n) => '$' + Math.round(n).toLocaleString();
       function fmtDate(iso) { try { return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (_) { return iso; } }
 
-      async function build() {
-        const pid = parseInt($('pid').value, 10);
+      const FIELDS = ['pid', 'hlat', 'hlon', 'hname', 'qty', 'bkm', 'busd', 'side', 'section', 'preferOwned'];
+
+      function params() {
         const p = new URLSearchParams({
           home_lat: $('hlat').value, home_lon: $('hlon').value, home_name: $('hname').value,
           qty: $('qty').value || '3', budget_km: $('bkm').value || '6000',
           side: $('side').value, days: '365',
         });
         if ($('busd').value) p.set('budget_usd', $('busd').value);
+        if ($('section').value.trim()) p.set('section_like', $('section').value.trim());
+        if ($('preferOwned').value) p.set('prefer_owned', 'true');
+        return p;
+      }
+
+      async function build() {
+        const ids = $('pid').value.replace(/\s/g, '');
+        const multi = ids.includes(',');
+        const p = params();
+        const url = multi
+          ? `/api/store/tours/multi?performer_ids=${encodeURIComponent(ids)}&` + p
+          : `/api/store/performers/${parseInt(ids, 10)}/tour-package?` + p;
         $('status').textContent = 'Building tour…';
         $('result').hidden = true;
         try {
-          const r = await fetch(`/api/store/performers/${pid}/tour-package?` + p);
+          const r = await fetch(url);
           if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
           render(await r.json());
         } catch (e) { $('status').textContent = 'Error: ' + e.message; }
+      }
+
+      function loadFromUrl() {
+        const u = new URLSearchParams(location.search);
+        FIELDS.forEach(f => { if (u.has(f)) $(f).value = u.get(f); });
+      }
+
+      function copyShareLink() {
+        const u = new URLSearchParams();
+        FIELDS.forEach(f => { if ($(f).value) u.set(f, $(f).value); });
+        const link = location.origin + location.pathname + '?' + u.toString();
+        navigator.clipboard?.writeText(link);
+        $('status').textContent = 'Share link copied: ' + link;
       }
 
       function render(d) {
@@ -128,17 +159,21 @@
           const s = l.seats;
           const seat = s ? `<span class="seat">${esc(s.section || 'GA')}${s.row ? ' ' + esc(s.row) : ''}${s.is_owned ? ' ·ours' : ''}</span>`
             : (l.selection === 'estimate' ? '<span class="seat est">est. price</span>' : '');
+          const hot = l.hot ? '<span class="hot" title="high demand">🔥</span>' : '';
+          const perf = (d.mode === 'multi' && l.performer) ? `<span class="perf">${esc(l.performer)}</span>` : '';
           return `<li class="${on ? '' : 'skip'}">`
             + `<span class="d">${fmtDate(l.date)}</span>`
             + `<span class="c">${esc(l.city || '—')}</span>`
-            + `<span>${esc(l.event_name || l.venue || '')}</span>`
-            + seat + src + price + mm
+            + `<span>${esc(l.event_name || l.venue || '')}${hot}</span>`
+            + perf + seat + src + price + mm
             + `</li>`;
         }).join('');
         $('result').hidden = false;
       }
 
       $('go').addEventListener('click', build);
+      $('share').addEventListener('click', copyShareLink);
+      loadFromUrl();
       build();
     })();
   </script>

@@ -1,4 +1,11 @@
-// Supabase Edge Function: chat (v26)
+// Supabase Edge Function: chat (v27)
+//
+// v27: request-level `scope` ('all' | 'owned', default 'owned'), set ONLY by
+//   the trusted app.py proxy (never the browser). It clamps include_all in the
+//   zone/listing tools: 'owned' forces owned-EVO-only (the public storefront
+//   can never widen past our inventory); 'all' defaults to the full market
+//   (the email-gated terminal). Powers the in-app retail-chat surfaces
+//   (/api/retail-chat → all, /api/store/retail-chat → owned).
 //
 // v26: STRICT event_id whitelist + switch-confirmation protocol.
 //   - validateEventId now requires the id be present in the conversation's
@@ -233,7 +240,10 @@ async function cachedTicketGroups(db: any, evo: Evo, eventId: number): Promise<a
   return fresh;
 }
 
-type ValidateOpts = { approvedSet?: Set<number> | null; focusedId?: number | null; confirmSwitch?: boolean };
+// scope (request-level, server-set by the app.py proxy — NEVER the client):
+//   'owned' → owned EVO inventory only (storefront; include_all forced false)
+//   'all'   → full market (terminal; include_all defaults true)
+type ValidateOpts = { approvedSet?: Set<number> | null; focusedId?: number | null; confirmSwitch?: boolean; scope?: "all" | "owned" };
 async function validateEventId(db: any, evo: Evo | null, eventId: any, opts: ValidateOpts = {}): Promise<{ ok: true; id: number } | { ok: false; error: any }> {
   const id = Number(eventId);
   if (!Number.isFinite(id) || id < MIN_PLAUSIBLE_EVENT_ID) {
@@ -471,7 +481,9 @@ async function toolGetEventZones(evo: Evo | null, db: any, args: any, gate: Vali
 
   if (!evo) return { error: "ticket service unavailable" };
   try {
-    const includeAll = !!args.include_all;
+    // scope clamp: storefront ('owned') can NEVER widen past owned EVO; the
+    // terminal ('all') defaults to the full market unless explicitly narrowed.
+    const includeAll = gate.scope === "all" ? (args.include_all !== false) : false;
     const [r, ctx] = await Promise.all([ cachedTicketGroups(db, evo, v.id), getEventContext(db, evo, v.id) ]);
     trackEventForCron(db, evo, v.id);
     const groups = filterRetailGroups(r.ticket_groups ?? [], includeAll);
@@ -499,7 +511,9 @@ async function toolFindListings(evo: Evo | null, db: any, args: any, gate: Valid
 
   if (!evo) return { error: "ticket service unavailable" };
   try {
-    const includeAll = !!args.include_all;
+    // scope clamp: storefront ('owned') can NEVER widen past owned EVO; the
+    // terminal ('all') defaults to the full market unless explicitly narrowed.
+    const includeAll = gate.scope === "all" ? (args.include_all !== false) : false;
     const [r, ctx] = await Promise.all([ cachedTicketGroups(db, evo, v.id), args.zone ? getEventContext(db, evo, v.id) : Promise.resolve({ performer_id: null, venue_id: null, occurs_at_local: null }) ]);
     trackEventForCron(db, evo, v.id);
     let groups = filterRetailGroups(r.ticket_groups ?? [], includeAll);
@@ -543,7 +557,9 @@ async function toolFindBetterSeats(evo: Evo | null, db: any, args: any, gate: Va
 
   if (!evo) return { error: "ticket service unavailable" };
   try {
-    const includeAll = !!args.include_all;
+    // scope clamp: storefront ('owned') can NEVER widen past owned EVO; the
+    // terminal ('all') defaults to the full market unless explicitly narrowed.
+    const includeAll = gate.scope === "all" ? (args.include_all !== false) : false;
     const r = await cachedTicketGroups(db, evo, v.id);
     trackEventForCron(db, evo, v.id);
     let groups = filterRetailGroups(r.ticket_groups ?? [], includeAll);
@@ -595,8 +611,72 @@ async function callAnthropic(apiKey: string, payload: any, attempt = 0): Promise
   if ((resp.status === 429 || resp.status === 529) && attempt < 3) { const ra = resp.headers.get("retry-after"); const waitSec = ra ? Math.max(parseInt(ra, 10) || 1, 1) : Math.min(2 ** attempt, 8); await sleep(waitSec * 1000); return callAnthropic(apiKey, payload, attempt + 1); }
   return resp;
 }
+// ---- xAI / Grok (OpenAI Chat Completions-compatible) ------------------------
+// The agentic loop (runLLMLoop) + its helpers are Anthropic-shaped: top-level
+// `system`, tools as {name, description, input_schema}, and messages as
+// content-block arrays (text / tool_use / tool_result). xAI speaks the OpenAI
+// Chat Completions schema, so callGrok translates the request OUT to OpenAI and
+// the response BACK to the Anthropic shape — the loop and helpers stay untouched.
+// The load-bearing invariant: synthesize each tool_use.id = the xAI tool_call.id,
+// so the next turn's tool_result.tool_use_id round-trips to the right tool_call_id.
+// INERT until LLM_PROVIDER=grok (default stays anthropic).
+function anthToolsToOpenAI(tools: any[]): any[] {
+  return (tools ?? []).map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.input_schema },
+  }));
+}
+function anthMessagesToOpenAI(sys: string, messages: any[]): any[] {
+  const out: any[] = [{ role: "system", content: sys }];
+  for (const m of messages) {
+    if (typeof m.content === "string") { out.push({ role: m.role, content: m.content }); continue; }
+    const blocks = Array.isArray(m.content) ? m.content : [];
+    if (m.role === "assistant") {
+      const text = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+      const toolCalls = blocks.filter((b: any) => b.type === "tool_use").map((b: any) => ({
+        id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+      }));
+      const msg: any = { role: "assistant", content: text || null };
+      if (toolCalls.length) msg.tool_calls = toolCalls;
+      out.push(msg);
+    } else {
+      // user turn: tool_result blocks -> one OpenAI `tool` message each; else plain text.
+      const results = blocks.filter((b: any) => b.type === "tool_result");
+      if (results.length) {
+        for (const r of results) out.push({ role: "tool", tool_call_id: r.tool_use_id, content: typeof r.content === "string" ? r.content : JSON.stringify(r.content) });
+      } else {
+        out.push({ role: "user", content: blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("") });
+      }
+    }
+  }
+  return out;
+}
+function openAIChoiceToAnth(choice: any): any {
+  const msg = choice?.message ?? {};
+  const content: any[] = [];
+  if (msg.content) content.push({ type: "text", text: String(msg.content) });
+  const toolCalls = msg.tool_calls ?? [];
+  for (const tc of toolCalls) {
+    let input: any = {};
+    try { input = JSON.parse(tc.function?.arguments || "{}"); } catch (_) { input = {}; }
+    content.push({ type: "tool_use", id: tc.id, name: tc.function?.name, input });
+  }
+  return { stop_reason: toolCalls.length ? "tool_use" : "end_turn", content };
+}
+async function callGrok(apiKey: string, sys: string, tools: any[], messages: any[], attempt = 0): Promise<Response> {
+  const body = { model: LLM_MODEL, max_tokens: 1024, tool_choice: "auto", tools: anthToolsToOpenAI(tools), messages: anthMessagesToOpenAI(sys, messages) };
+  const resp = await fetch("https://api.x.ai/v1/chat/completions", { method: "POST", headers: { "authorization": `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  if ((resp.status === 429 || resp.status >= 500) && attempt < 3) { const ra = resp.headers.get("retry-after"); const waitSec = ra ? Math.max(parseInt(ra, 10) || 1, 1) : Math.min(2 ** attempt, 8); await sleep(waitSec * 1000); return callGrok(apiKey, sys, tools, messages, attempt + 1); }
+  return resp;
+}
 async function llmCall(apiKey: string, sys: string, tools: any[], messages: any[]): Promise<{ status: number; body: any }> {
   if (LLM_PROVIDER === "anthropic") { const r = await callAnthropic(apiKey, { model: LLM_MODEL, max_tokens: 1024, system: sys, tools, messages }); return { status: r.status, body: r.ok ? await r.json() : { error: await r.text() } }; }
+  if (LLM_PROVIDER === "grok" || LLM_PROVIDER === "xai") {
+    const r = await callGrok(apiKey, sys, tools, messages);
+    if (!r.ok) return { status: r.status, body: { error: await r.text() } };
+    const data = await r.json();
+    return { status: 200, body: openAIChoiceToAnth(data.choices?.[0]) };
+  }
   return { status: 501, body: { error: `provider ${LLM_PROVIDER} not yet implemented` } };
 }
 function sanitizeReply(text: string): string {
@@ -714,7 +794,7 @@ function buildStickyContext(stickyIds: Set<number>): string {
   return ["=== STICKY_CONTEXT (event_ids surfaced earlier in this conversation) ===", `Valid event_ids you've already seen: ${[...stickyIds].sort((a,b)=>a-b).join(", ")}`, "Reuse these instead of guessing."].join("\n");
 }
 
-async function runLLMLoop(apiKey: string, history: any[], db: any, evo: Evo | null): Promise<{ reply: string; trace: any[]; entities: any; resolved_count: number; comprehensive_count: number }> {
+async function runLLMLoop(apiKey: string, history: any[], db: any, evo: Evo | null, scope: "all" | "owned" = "owned"): Promise<{ reply: string; trace: any[]; entities: any; resolved_count: number; comprehensive_count: number }> {
   const today = new Date();
   const todayStr = today.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/New_York" });
   const lastUser = [...history].reverse().find((m) => m.role === "user" && typeof m.content === "string");
@@ -742,7 +822,7 @@ async function runLLMLoop(apiKey: string, history: any[], db: any, evo: Evo | nu
   const trace: any[] = [];
   // v26: build the per-conversation gate — approved set + currently focused id
   const focusedId = extractFocusedEventId(history);
-  const gate: ValidateOpts = { approvedSet: stickyIds, focusedId };
+  const gate: ValidateOpts = { approvedSet: stickyIds, focusedId, scope };
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const { status, body } = await llmCall(apiKey, sys, TOOLS, messages);
     if (status !== 200) {
@@ -779,12 +859,19 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
   if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: { ...corsHeaders(req), "content-type": "text/plain" } });
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const apiKey = LLM_PROVIDER === "anthropic" ? await resolveSecret(db, "anthropic_api_key", "ANTHROPIC_API_KEY") : Deno.env.get("LLM_API_KEY");
+  const apiKey = LLM_PROVIDER === "anthropic"
+    ? await resolveSecret(db, "anthropic_api_key", "ANTHROPIC_API_KEY")
+    : (LLM_PROVIDER === "grok" || LLM_PROVIDER === "xai")
+      ? ((await resolveSecret(db, "xai_api_key", "XAI_API_KEY")) ?? Deno.env.get("LLM_API_KEY"))
+      : Deno.env.get("LLM_API_KEY");
   if (!apiKey) return jsonResponse(req, { error: "service not configured" }, 503);
   let body: any = null;
   try { body = await req.json(); } catch (_) { return jsonResponse(req, { error: "expected JSON body" }, 400); }
   const history = Array.isArray(body?.history) ? body.history : (body?.message ? [{ role: "user", content: body.message }] : []);
   if (!history.length) return jsonResponse(req, { error: "history or message required" }, 400);
+  // scope is set by the trusted server proxy (app.py), not the browser.
+  // Default 'owned' so any unscoped/legacy caller stays locked to owned EVO.
+  const scope: "all" | "owned" = body?.scope === "all" ? "all" : "owned";
   const ip = (req.headers.get("x-real-ip") ?? req.headers.get("cf-connecting-ip") ?? (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() ?? "unknown") || "unknown";
   // Rate limit hardened 2026-05-11: fail-closed on RPC error so an outage
   // doesn't let an attacker burn LLM cost. Limits tightened from 10/min to
@@ -800,8 +887,8 @@ Deno.serve(async (req) => {
   const lastText = typeof last?.content === "string" ? last.content : "";
   try { await db.from("bot_messages").insert({ channel: "web", direction: "in", phone: "anon-retail", body: lastText }); } catch (_) {}
   let result: { reply: string; trace: any[]; entities: any; resolved_count: number; comprehensive_count: number };
-  try { result = await runLLMLoop(apiKey, history, db, evo); }
+  try { result = await runLLMLoop(apiKey, history, db, evo, scope); }
   catch (e) { result = { reply: `sorry, something went wrong: ${(e as Error).message}`, trace: [], entities: null, resolved_count: 0, comprehensive_count: 0 }; }
-  try { await db.from("bot_messages").insert({ channel: "web", direction: "out", phone: "anon-retail", body: result.reply, meta: { trace: result.trace, entities: result.entities, model: LLM_MODEL, provider: LLM_PROVIDER, resolved_events_count: result.resolved_count, comprehensive_events_count: result.comprehensive_count } }); } catch (_) {}
+  try { await db.from("bot_messages").insert({ channel: "web", direction: "out", phone: "anon-retail", body: result.reply, meta: { trace: result.trace, entities: result.entities, model: LLM_MODEL, provider: LLM_PROVIDER, scope, resolved_events_count: result.resolved_count, comprehensive_events_count: result.comprehensive_count } }); } catch (_) {}
   return jsonResponse(req, { reply: result.reply });
 });

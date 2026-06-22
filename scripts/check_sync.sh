@@ -10,7 +10,8 @@
 #   bash scripts/check_sync.sh --quiet   # same, no output on success
 #   bash scripts/check_sync.sh --json    # machine-readable
 #
-# Spec: SYNC_PROTOCOL.md §1.
+# Spec: MIGRATION_CONVENTIONS.md §9 (Sync-check); "synced" = branch base current
+#       with origin/main + no uncommitted changes.
 
 set -euo pipefail
 

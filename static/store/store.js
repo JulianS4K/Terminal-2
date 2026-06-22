@@ -758,8 +758,14 @@
           status.replaceChildren();
           status.style.color = "var(--bad)";
           status.hidden = false;
+          const spec = describeFetchError(err);
           const msg = document.createElement("div");
-          msg.textContent = `Couldn't load events: ${(err && err.message ? String(err.message) : "Unknown error").slice(0, 120)}`;
+          // Same normalized voice as the event-detail screen. Catalog load
+          // never hits a true 404 (the home/events endpoints always answer),
+          // so this is almost always the retryable "temporarily unavailable"
+          // copy — but routing through describeFetchError keeps the wording
+          // consistent if that ever changes.
+          msg.textContent = `${spec.title}. ${spec.message}`;
           const retry = document.createElement("button");
           retry.type = "button";
           retry.className = "btn ghost";
@@ -777,6 +783,13 @@
     // slider. Empty sections are hidden. days=90 to give the 3mo horizon
     // enough pool depth for each section's filter.
     if (!performerId && !venueId) {
+      // Concierge rail — premium top-band EVO seats (leads the curated rails).
+      const cHost = $("#conciergeRail");
+      if (cHost) {
+        api("/api/store/concierge?days=60&limit=18")
+          .then((res) => renderConcierge(cHost, res))
+          .catch(() => { cHost.hidden = true; });
+      }
       const host = $("#moversSections");
       if (host) {
         api("/api/store/movers?city=NYC&days=90")
@@ -858,20 +871,35 @@
     }
   }
 
-  // Render suggestion dropdown body. Three sections:
-  //   Events you can buy now (we_own=true) — top priority, shown first
+  // Render suggestion dropdown body. Sections, in priority order:
+  //   Players — sports search: a matched athlete + their team's upcoming
+  //     events (e.g. "messi" → Inter Miami CF games). Shown first.
+  //   Events you can buy now (we_own=true) — top priority among plain events
   //   Other events (we_own=false) — surfaced but flagged as "browse"
   //   Performers + venues — bottom, clickable filter pivots
   function renderSuggest(host, payload) {
     if (!host) return;
     host.replaceChildren();
+    const players = (payload && payload.players) || [];
     const events = (payload && payload.events) || [];
     const performers = (payload && payload.performers) || [];
     const venues = (payload && payload.venues) || [];
 
-    if (!events.length && !performers.length && !venues.length) {
+    if (!players.length && !events.length && !performers.length && !venues.length) {
       host.hidden = true;
       return;
+    }
+
+    if (players.length) {
+      host.append(suggestHeader("Players"));
+      players.forEach((pl) => {
+        host.append(suggestPlayerRow(pl));
+        (pl.events || []).forEach((e) => {
+          const row = suggestEventRow(e, !!e.we_own);
+          row.classList.add("under-player");
+          host.append(row);
+        });
+      });
     }
 
     const buyable = events.filter((e) => e.we_own);
@@ -928,6 +956,25 @@
     return a;
   }
 
+  function suggestPlayerRow(pl) {
+    // Player → their team's performer filter page. The team's upcoming events
+    // render as nested rows beneath this one (see renderSuggest).
+    const a = document.createElement("a");
+    a.className = "suggest-row player";
+    a.href = `/store?performer_id=${Number(pl.performer_id) || 0}`;
+    a.setAttribute("role", "option");
+    const name = document.createElement("div");
+    name.className = "suggest-row-name";
+    name.textContent = pl.name || "";
+    a.append(name);
+    const meta = document.createElement("div");
+    meta.className = "suggest-row-meta";
+    const who = [pl.jersey ? `#${pl.jersey}` : "", pl.position].filter(Boolean).join(" ");
+    meta.textContent = [pl.team_name, pl.league, who].filter(Boolean).join(" · ");
+    a.append(meta);
+    return a;
+  }
+
   function suggestPerformerRow(p) {
     const a = document.createElement("a");
     a.className = "suggest-row performer";
@@ -966,7 +1013,7 @@
 
   // Section render config — one entry per themed slider in display order.
   // `accent` line is the per-card secondary note describing why this event
-  // qualified for the section (e.g. "↓ 35% below market" for price_drops).
+  // qualified for the section (e.g. "↓ 35% in 24h" for price_drops).
   const SECTIONS = [
     // Featured (operator directive 2026-05-19 v2): narrow criteria — only
     // playoff games + events with owned_median_retail > $50. Other signals
@@ -984,7 +1031,7 @@
     { key: "price_drops", title: "Price drops in NYC",
       accent: (ev) => {
         const d = Number(ev._discount_pct);
-        return Number.isFinite(d) ? `↓ ${d.toFixed(0)}% below market` : "";
+        return Number.isFinite(d) ? `↓ ${d.toFixed(0)}% in 24h` : "";
       } },
     { key: "climbing", title: "Climbing fast in NYC",
       accent: (ev) => {
@@ -1029,6 +1076,61 @@
     }
     a.append(meta);
     return a;
+  }
+
+  // Concierge card — an event where we hold premium top-band seats (EVO only).
+  // `from_price` is the entry price into that event's premium tier (the cheapest
+  // of its top-band owned seats). Bookable link into our /store/event page.
+  function _conciergeCard(ev) {
+    const a = document.createElement("a");
+    a.className = "mover-card concierge-card";
+    a.href = `/store/event/${Number(ev.id) || 0}`;
+    if (ev.primary_performer_color) {
+      a.style.setProperty("--card-accent", ev.primary_performer_color);
+    }
+    const badge = document.createElement("div");
+    badge.className = "mover-accent";
+    badge.textContent = "Premium seats";
+    a.append(badge);
+    const title = document.createElement("div");
+    title.className = "mover-title";
+    title.textContent = ev.name || "Untitled event";
+    a.append(title);
+    const where = document.createElement("div");
+    where.className = "mover-where";
+    where.textContent = [ev.venue_name, fmtWhen(ev.occurs_at_local)]
+      .filter(Boolean).join(" · ");
+    a.append(where);
+    const meta = document.createElement("div");
+    meta.className = "mover-meta";
+    if (ev.from_price != null) {
+      const fp = document.createElement("span");
+      fp.className = "mover-price";
+      fp.textContent = `from ${fmtMoney(ev.from_price)}`;
+      meta.append(fp);
+    }
+    a.append(meta);
+    return a;
+  }
+
+  // Render the Concierge rail as one horizontal slider. Hidden when empty.
+  function renderConcierge(host, payload) {
+    host.replaceChildren();
+    const items = (payload && payload.events) || [];
+    if (!items.length) { host.hidden = true; return; }
+    const section = document.createElement("section");
+    section.className = "movers-section movers-concierge";
+    section.setAttribute("aria-label", "Concierge — premium seats");
+    const h = document.createElement("h2");
+    h.className = "movers-section-title";
+    h.textContent = "Concierge · premium seats";
+    section.append(h);
+    const row = document.createElement("div");
+    row.className = "movers-section-row";
+    for (const ev of items) row.append(_conciergeCard(ev));
+    section.append(row);
+    host.append(section);
+    host.hidden = false;
   }
 
   // Render the 4 themed sliders. Each one builds a labeled <section> with
@@ -1690,7 +1792,14 @@
       const totV = document.createElement("span"); totV.className = "v total"; totV.id = "rcTotal"; totV.textContent = fmtMoney(Number(listing.retail_price) * defaultQ);
       receipt.append(totK, totV);
 
-      const checkoutLive = !!purchaseConfig.purchase_enabled && !!purchaseConfig.checkout_domain;
+      // Live online checkout is DISABLED — the storefront performs no online
+      // checkout. Defensive client guard (server also force-returns checkout
+      // off via /api/public/config): never redirect to a hosted-checkout URL,
+      // regardless of any (stale/cached) purchaseConfig. Re-enabling requires
+      // both this guard and the server kill switch (STOREFRONT_CHECKOUT_DISABLED).
+      const CHECKOUT_DISABLED = true;
+      const checkoutLive = !CHECKOUT_DISABLED
+        && !!purchaseConfig.purchase_enabled && !!purchaseConfig.checkout_domain;
 
       const confirm = document.createElement("button");
       confirm.className = "btn";
@@ -1704,7 +1813,19 @@
         ? "You'll complete payment securely on Ticket Evolution, our ticketing partner. Apple Pay and Google Pay supported."
         : "MVP demo only — no payment will be processed and no order will be sent to Ticket Evolution. This shows what the confirmation flow would look like once checkout is wired up.";
 
-      mb.append(h3, sub, label, receipt, confirm, disc);
+      // Honeypot — hidden from humans (off-screen, not a real "hidden" input so
+      // some bots still see it), aria-hidden + no autofill. A non-empty value on
+      // submit means a bot filled it; the server rejects the reserve.
+      const hp = document.createElement("input");
+      hp.type = "text";
+      hp.id = "rsvCompany";
+      hp.name = "company";
+      hp.tabIndex = -1;
+      hp.autocomplete = "off";
+      hp.setAttribute("aria-hidden", "true");
+      hp.style.cssText = "position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none";
+
+      mb.append(h3, sub, label, receipt, confirm, disc, hp);
 
       qSel.value = String(defaultQ);
       const recompute = () => {
@@ -1731,6 +1852,10 @@
         confirm.disabled = true;
         confirm.textContent = "Validating with TEvo…";
         try {
+          // Bot gate: honeypot value + a fresh reCAPTCHA token as a fallback
+          // when the first-interaction cookie is unavailable (both no-ops when
+          // the gate is dormant). The cookie, if set, rides along automatically.
+          const rcToken = window.StoreBot ? await window.StoreBot.token("submit") : null;
           const res = await api("/api/store/reserve", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1738,6 +1863,8 @@
               event_id: eventId,
               ticket_group_id: listing.id,
               quantity: Number(qSel.value),
+              hp: hp.value || "",
+              recaptcha_token: rcToken || undefined,
             }),
           });
           renderReceipt(mb, res);
@@ -2229,12 +2356,6 @@
         }
       }
 
-      // Interactive seat map — replaces the static image when the venue +
-      // configuration resolve to a published TEvo map. Mounts once (the build
-      // is heavy); on success the static <img>/placeholder is hidden. Failure
-      // is silent — the static fallback above stays put.
-      maybeMountSeatmap();
-
       const freshness = $("#freshness");
       if (freshness) {
         if (res.inventory_source === "cache") {
@@ -2262,6 +2383,16 @@
       head.hidden = false;
       body.hidden = false;
       renderListings();
+
+      // Interactive seat map — replaces the static image when the venue +
+      // configuration resolve to a published TEvo map. Mount AFTER #body is
+      // unhidden: Tevomaps reads the container's size at build() time, so a
+      // zero-size container (hidden ancestor) bakes a blank map that never
+      // re-fits — the white-box bug. rAF lets layout settle so the host has
+      // real clientWidth/Height. Mounts once (the build is heavy); on success
+      // the static <img>/placeholder is hidden. Failure is silent — the static
+      // fallback stays put.
+      requestAnimationFrame(() => maybeMountSeatmap());
       // Re-render section chips against the new listings (sections may have
       // shifted as filters narrowed); zone chips are event-static so don't
       // need re-rendering here.
@@ -2462,12 +2593,9 @@
           renderZoneChips(initialFilters.zones);
         }
       } catch (err) {
-        if (err.message && err.message.includes("410")) {
-          status.textContent = "This share link is no longer active.";
-        } else {
-          status.textContent = `Couldn't load event: ${err.message}`;
-        }
-        status.style.color = "var(--bad)";
+        // Normalized full-page error screen (404 dead-end vs retryable
+        // upstream blip vs expired-share). Retry re-runs bootstrap.
+        renderEventError(err, bootstrap);
       }
     }
 
@@ -2507,6 +2635,92 @@
     ));
   }
   function escapeAttr(s) { return escapeHtml(s); }
+
+  // ---------- Normalized error messaging ----------
+  // Single source of truth for turning a fetch failure from api() into a
+  // user-facing error. api() throws "<status> <tag>: <detail>" for HTTP
+  // errors and "timeout <tag>: …" for aborts; network failures surface the
+  // raw fetch error. Maps to { code, title, message, retryable } so every
+  // store surface (event detail screen, catalog inline error) speaks the
+  // same language: not-found is a calm dead-end, an upstream blip offers a
+  // retry. Keeps the backend's status normalization (404 vs 502/503) honest
+  // on the UI side — a 404 must never read as "outage."
+  function describeFetchError(err) {
+    const raw = (err && err.message) ? String(err.message) : "";
+    const m = raw.match(/^(\d{3})\b/);
+    const code = m ? Number(m[1]) : null;
+    const isTimeout = /\btimeout\b/i.test(raw) || (err && err.name === "AbortError");
+    if (code === 404) return {
+      code, retryable: false, title: "Event not found",
+      message: "This event isn’t available — it may have ended, sold out, or been removed. Browse what’s on sale now.",
+    };
+    if (code === 410) return {
+      code, retryable: false, title: "Share link expired",
+      message: "This share link is no longer active — the seller may have revoked it or it passed its expiry. You can still browse all events.",
+    };
+    if (code === 429) return {
+      code, retryable: true, title: "Too many requests",
+      message: "We’re seeing heavy traffic right now. Give it a moment, then try again.",
+    };
+    if (isTimeout) return {
+      code, retryable: true, title: "This is taking too long",
+      message: "The server didn’t respond in time — it may be waking up. Try again in a few seconds.",
+    };
+    if (code === 502 || code === 503 || code === 504) return {
+      code, retryable: true, title: "Temporarily unavailable",
+      message: "We couldn’t reach our inventory provider just now. This is usually brief — try again in a moment.",
+    };
+    return {
+      code, retryable: true, title: "Couldn’t load this event",
+      message: "Something went wrong loading this event. Try again, or head back to the catalog.",
+    };
+  }
+
+  // Render the full-page event-detail error screen (event.html #errorScreen).
+  // Hides the loading/header/body sections and reveals a normalized error
+  // panel. Retryable errors expose a "Try again" button wired to onRetry
+  // (re-runs bootstrap). Falls back to the legacy inline #status line if the
+  // markup isn't present (older cached event.html).
+  function renderEventError(err, onRetry) {
+    const spec = describeFetchError(err);
+    const status = $("#status");
+    const screen = $("#errorScreen");
+    [$("#header"), $("#body"), $("#sharedBanner")].forEach((el) => { if (el) el.hidden = true; });
+    if (!screen) {
+      if (status) {
+        status.hidden = false;
+        status.textContent = `${spec.title}: ${spec.message}`;
+        status.style.color = "var(--bad)";
+      }
+      return;
+    }
+    if (status) status.hidden = true;
+    const icon = $("#errIcon", screen);
+    const title = $("#errTitle", screen);
+    const msg = $("#errMsg", screen);
+    const retry = $("#errRetry", screen);
+    const codeEl = $("#errCode", screen);
+    screen.classList.toggle("is-unavailable", spec.retryable);
+    screen.classList.toggle("is-notfound", !spec.retryable);
+    if (icon) icon.textContent = spec.retryable ? "⚠️" : "🎟️";
+    if (title) title.textContent = spec.title;
+    if (msg) msg.textContent = spec.message;
+    if (codeEl) {
+      codeEl.hidden = !spec.code;
+      if (spec.code) codeEl.textContent = `error ${spec.code}`;
+    }
+    if (retry) {
+      retry.hidden = !spec.retryable;
+      retry.onclick = (spec.retryable && typeof onRetry === "function")
+        ? () => {
+            screen.hidden = true;
+            if (status) { status.hidden = false; status.textContent = "Loading event…"; status.style.color = ""; }
+            onRetry();
+          }
+        : null;
+    }
+    screen.hidden = false;
+  }
 
   // ---------- Shares admin page ----------
   function mountSharesAdmin() {
@@ -2668,6 +2882,251 @@
 
   window.Store = { mountCatalog, mountEvent, mountSharesAdmin };
 
+  // Reverse discovery — for fans who want to travel ALONG a favorite artist or team's
+  // run (go city to city with them), not just catch one show. Location-first:
+  // performers (and teams, via their away games) playing >= min_shows within a radius
+  // of home in the window — i.e. a multi-stop run you can follow in person. Backed by
+  // /api/store/tours/near; "Travel the whole tour" → /store/tour plans the dates.
+  function mountDiscover() {
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (n) => "$" + Math.round(n).toLocaleString();
+    const fmtD = (iso) => {
+      try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+      catch (_) { return iso; }
+    };
+
+    async function run() {
+      const p = new URLSearchParams({
+        home_lat: $("dLat").value, home_lon: $("dLon").value,
+        within_mi: $("dMi").value || "250", days: $("dDays").value || "120",
+        min_shows: $("dMin").value || "2",
+      });
+      if ($("dKind").value) p.set("concerts_only", "true");
+      $("dStatus").textContent = "Searching…";
+      $("dResults").innerHTML = "";
+      try {
+        render(await api("/api/store/tours/near?" + p.toString()));
+      } catch (e) {
+        $("dStatus").textContent = "Error: " + e.message;
+      }
+    }
+
+    function render(d) {
+      const tours = (d && d.tours) || [];
+      $("dStatus").textContent = `${tours.length} tour${tours.length === 1 ? "" : "s"} within ${d.within_mi} mi`;
+      $("dResults").innerHTML = tours.map((t) => {
+        const badges = (t.hot ? '<span class="pill3 hot">🔥 hot</span>' : "")
+          + (t.we_own ? '<span class="pill3 own">in stock</span>' : "");
+        const shows = (t.events || [])
+          .map((ev) => `<a href="/store/event/${ev.event_id}">${esc(ev.city || "")} ${fmtD(ev.date)}</a>`)
+          .join("");
+        const price = t.price_from != null ? ` · from ${money(t.price_from)}` : "";
+        const isTeam = t.kind === "sports";
+        // Teams surface by their road games near you (backend team_side='away'); the
+        // side= flows to the follow-the-tour page so it plans the away leg.
+        const side = isTeam ? (t.team_side === "home" ? "home" : "away") : "";
+        const gamesLabel = side === "home" ? "home games" : "away games";
+        // Hand off to the budget-first tour planner: performer + name (pre-fills the
+        // search box) + side for teams. No coordinates — the tour flow is budget-only.
+        const follow = `/store/tour?performer=${t.performer_id}`
+          + `&name=${encodeURIComponent(t.performer || "")}`
+          + (isTeam ? `&side=${side}` : "");
+        return `<div class="tour-card"><h3>${esc(t.performer || "")}${badges}</h3>`
+          + `<div class="tour-meta">${isTeam ? "team · " : ""}${t.nearby_shows} ${isTeam ? gamesLabel : "shows"} · ${t.cities} cit${t.cities === 1 ? "y" : "ies"} · nearest ${t.nearest_mi} mi${price}</div>`
+          + `<div style="margin:6px 0"><a href="${follow}"><b>${isTeam ? "Travel with them →" : "Travel the whole tour →"}</b></a></div>`
+          + `<div class="tour-shows">${shows}</div></div>`;
+      }).join("") || "<p>No multi-show tours found near you in that window — widen the radius or window.</p>";
+    }
+
+    $("dGo").addEventListener("click", run);
+    $("dGeo").addEventListener("click", () => {
+      if (!navigator.geolocation) return;
+      $("dStatus").textContent = "Locating…";
+      navigator.geolocation.getCurrentPosition((pos) => {
+        $("dLat").value = pos.coords.latitude.toFixed(4);
+        $("dLon").value = pos.coords.longitude.toFixed(4);
+        run();
+      }, () => { $("dStatus").textContent = "Couldn't get your location — enter it manually."; });
+    });
+    run();
+  }
+
+  // Follow-the-tour — search an artist/team, set a date range + how many stops, tickets/show
+  // and a TOTAL BUDGET; we plan the most stops that fit (cheapest seats per show) and show
+  // what the next one would cost. Budget-first — no location needed (the optimizer plans on
+  // ticket spend alone). Backed by /api/store/performers/{id}/tour-package. ?performer=&name=
+  // pre-fills (e.g. arriving from Discover).
+  function mountTourFollow() {
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const money = (n) => "$" + Math.round(n).toLocaleString();
+    const fmtD = (iso) => {
+      try { return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+      catch (_) { return iso; }
+    };
+    const u = new URLSearchParams(location.search);
+    let performer = parseInt(u.get("performer"), 10);   // mutated by search selection
+    let performerName = u.get("name") || "";
+    let side = u.get("side") || "auto";   // teams: away (road trip) vs home (home stand)
+    if (u.get("qty")) $("ftQty").value = u.get("qty");
+
+    // Default the date range to the next 6 months (local-date ISO, no TZ shift).
+    const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const _today = new Date();
+    const _plus6 = new Date(_today.getTime()); _plus6.setMonth(_plus6.getMonth() + 6);
+    if (!$("ftStart").value) $("ftStart").value = isoDate(_today);
+    if (!$("ftEnd").value) $("ftEnd").value = isoDate(_plus6);
+
+    // ---- performer typeahead (artist or team) ----
+    const box = $("ftPerformer"), sug = $("ftSuggest");
+    if (performerName) box.value = performerName;
+    let searchTimer = null;
+    const hideSug = () => { sug.hidden = true; sug.innerHTML = ""; };
+    async function search(q) {
+      if (q.length < 2) { hideSug(); return; }
+      try {
+        const r = await api("/api/store/search?q=" + encodeURIComponent(q) + "&limit=8");
+        const perfs = (r && r.performers) || [];
+        if (!perfs.length) { hideSug(); return; }
+        sug.innerHTML = perfs.map((p) =>
+          `<div class="opt" role="option" data-id="${Number(p.id) || 0}" data-name="${esc(p.name)}">`
+          + `${esc(p.name)}${p.location ? `<small>${esc(p.location)}</small>` : ""}</div>`).join("");
+        sug.hidden = false;
+      } catch (_) { hideSug(); }
+    }
+    box.addEventListener("input", () => {
+      performer = NaN;            // typing invalidates the prior pick
+      const q = box.value.trim();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => search(q), 200);
+    });
+    sug.addEventListener("click", (e) => {
+      const opt = e.target.closest(".opt");
+      if (!opt) return;
+      performer = parseInt(opt.dataset.id, 10);
+      performerName = opt.dataset.name || "";
+      box.value = performerName;
+      side = "auto";              // re-detect concert vs team for the new pick
+      hideSug();
+      run();
+    });
+    document.addEventListener("click", (e) => {
+      if (e.target !== box && !sug.contains(e.target)) hideSug();
+    });
+
+    function run() {
+      if (!Number.isFinite(performer) || performer <= 0) {
+        $("ftStatus").textContent = "Search and pick an artist or team to follow.";
+        $("ftResult").hidden = true;
+        return;
+      }
+      const p = new URLSearchParams({ qty: $("ftQty").value || "2", side: side });
+      if ($("ftBudget").value) p.set("budget_usd", $("ftBudget").value);
+      if ($("ftStops").value) p.set("max_events", $("ftStops").value);
+      if ($("ftStart").value) p.set("start", $("ftStart").value);
+      if ($("ftEnd").value) p.set("end", $("ftEnd").value);
+      $("ftStatus").textContent = "Building your tour…";
+      $("ftResult").hidden = true;
+      api(`/api/store/performers/${performer}/tour-package?` + p.toString())
+        .then(render)
+        .catch((e) => { $("ftStatus").textContent = "Error: " + e.message; });
+    }
+
+    function render(d) {
+      const pk = (d && d.package) || {};
+      const qty = d.qty_per_show;
+      const isTeam = String(d.mode || "").indexOf("team") === 0;
+      const away = d.mode === "team_away";
+      let name = performerName;
+      if (!name) {
+        if (isTeam) {
+          const ev = (d.all_stops && d.all_stops[0]) || {};
+          const parts = String(ev.event_name || "").split(" at ");   // "Away at Home"
+          name = parts.length === 2 ? (away ? parts[0] : parts[1]) : (ev.performer || "this team");
+        } else {
+          name = (pk.legs && pk.legs[0] && pk.legs[0].performer)
+            || (d.all_stops && d.all_stops[0] && d.all_stops[0].performer) || "this performer";
+        }
+      }
+      $("ftTitle").textContent = isTeam
+        ? `Follow ${name} ${away ? "on the road" : "at home"}`
+        : `Follow ${name}'s tour`;
+      // team -> show the away/home toggle, highlight current side
+      const sideEl = $("ftSide");
+      if (sideEl) {
+        sideEl.hidden = !isTeam;
+        sideEl.querySelectorAll(".ftside").forEach((b) => {
+          b.classList.toggle("active", away ? b.dataset.side === "away" : b.dataset.side === "home");
+        });
+      }
+      if (!d.stops_available || !pk.count) {
+        $("ftStatus").textContent = isTeam
+          ? `No ${away ? "away" : "home"} games in range — try the other side.`
+          : "No routable tour right now — try a wider budget.";
+        $("ftResult").hidden = true;
+        return;
+      }
+      $("ftStatus").textContent = isTeam
+        ? `${away ? "Away games · road trip" : "Home stand"} · ${d.stops_available} dates`
+        : `${d.stops_available} tour dates available`;
+      $("ftStat").innerHTML =
+        `<div><span class="l">Total</span><b>${money(pk.fan_total_bundled)}</b></div>` +
+        `<div><span class="l">Tickets</span><b>${pk.count * qty}</b></div>` +
+        `<div><span class="l">Shows</span><b>${pk.count}</b></div>` +
+        `<div><span class="l">Cities</span><b>${pk.cities}</b></div>`;
+      $("ftHead").textContent = `Your shows — ${qty} ticket${qty === 1 ? "" : "s"} at each of ${pk.count}`;
+      const picked = new Set((pk.legs || []).map((l) => l.event_id));
+      $("ftLegs").innerHTML = (d.all_stops || []).map((l) => {
+        const on = picked.has(l.event_id);
+        const s = l.seats;
+        const seat = s
+          ? `<span class="seat">${esc(s.section || "GA")}${s.row ? " " + esc(s.row) : ""}${s.is_owned ? " · in stock" : ""}</span>`
+          : (l.selection === "estimate" ? '<span class="seat">est. price</span>' : '<span class="seat">no group of that size</span>');
+        const hot = l.hot ? '<span class="hot" title="high demand">🔥</span>' : "";
+        const line = l.unit_price != null
+          ? `<span class="line">${money(l.unit_price * qty)} <span class="ea">(${money(l.unit_price)} ea)</span></span>`
+          : "";
+        return `<li class="${on ? "" : "skip"}">`
+          + `<span class="d">${fmtD(l.date)}</span>`
+          + `<span class="c">${esc(l.city || "—")}${hot}</span>`
+          + `<span>${esc(l.event_name || l.venue || "")}</span>`
+          + seat + line + "</li>";
+      }).join("");
+
+      // "Add one more" — the cheapest stop we left out, so the fan sees exactly
+      // what raising the budget (or stop count) by a little would buy them.
+      const more = $("ftMore");
+      const left = (d.all_stops || []).filter((l) => !picked.has(l.event_id) && l.unit_price != null);
+      if (left.length) {
+        const cheapest = left.reduce((a, b) => (b.unit_price < a.unit_price ? b : a));
+        more.innerHTML = `Add one more stop: <b>${esc(cheapest.city || "another date")}</b> `
+          + `${fmtD(cheapest.date)} for +${money(cheapest.unit_price * qty)}`
+          + ` (${money(cheapest.unit_price)} ea × ${qty}).`;
+        more.hidden = false;
+      } else {
+        more.hidden = true;
+      }
+      $("ftResult").hidden = false;
+    }
+
+    $("ftGo").addEventListener("click", run);
+    box.addEventListener("keydown", (e) => { if (e.key === "Enter" && sug.hidden) run(); });
+    const sideToggle = $("ftSide");
+    if (sideToggle) sideToggle.addEventListener("click", (e) => {
+      const b = e.target.closest(".ftside");
+      if (!b) return;
+      side = b.dataset.side;     // "away" | "home"
+      run();
+    });
+    // Auto-run only when we arrived with a performer already chosen (e.g. from
+    // Discover); otherwise wait for the user to search + pick one.
+    if (Number.isFinite(performer) && performer > 0) run();
+    else $("ftStatus").textContent = "Search and pick an artist or team to follow.";
+  }
+
   // Auto-mount based on body data-page. Lets HTML pages drop their inline
   // `<script>Store.mountX()</script>` so we can ship a strict CSP without
   // 'unsafe-inline'. Added 2026-05-11 (security chat).
@@ -2676,10 +3135,89 @@
     if (page === "catalog") mountCatalog();
     else if (page === "event") mountEvent();
     else if (page === "shares") mountSharesAdmin();
+    else if (page === "discover") mountDiscover();
+    else if (page === "tour") mountTourFollow();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _autoMount);
   } else {
     _autoMount();
   }
+
+  // PWA: register the storefront service worker. Served at /store-sw.js (a root
+  // path) so it can claim the '/store' scope. Progressive enhancement — any
+  // failure (unsupported, blocked, offline) is silent and the site works as-is.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("/store-sw.js", { scope: "/store" })
+        .catch(() => {});
+    });
+  }
+
+  // ---- Bot protection: reCAPTCHA v3 sitewide first-interaction gate ----
+  // Dormant unless the server returns recaptcha_site_key (keys unset = no-op, so
+  // the demo works without provisioning). When enabled: on the first user
+  // gesture we fetch a v3 token and POST it to /api/store/verify-human, which
+  // sets a short-lived signed cookie the write endpoints require — so the gate
+  // runs once per session, not per action. StoreBot.token(action) yields a fresh
+  // token for the reserve fallback. All failures are silent (write endpoints
+  // re-challenge as needed).
+  const StoreBot = (function () {
+    let siteKey = null;
+    let gated = false;
+
+    function loadScript(key) {
+      return new Promise((resolve, reject) => {
+        if (window.grecaptcha && window.grecaptcha.execute) return resolve();
+        const s = document.createElement("script");
+        s.src = "https://www.google.com/recaptcha/api.js?render=" + encodeURIComponent(key);
+        s.async = true;
+        s.defer = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("recaptcha load failed"));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function token(action) {
+      if (!siteKey || !window.grecaptcha || !window.grecaptcha.execute) return null;
+      try {
+        await new Promise((res) => window.grecaptcha.ready(res));
+        return await window.grecaptcha.execute(siteKey, { action: action || "submit" });
+      } catch { return null; }
+    }
+
+    async function gateOnce() {
+      if (gated) return;
+      gated = true;
+      const t = await token("gate");
+      if (!t) return;
+      try {
+        await api("/api/store/verify-human", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recaptcha_token: t }),
+        });
+      } catch { /* gate failed — write endpoints will re-challenge */ }
+    }
+
+    async function init() {
+      let cfg = null;
+      try { cfg = await api("/api/public/config"); } catch { return; }
+      if (!cfg || !cfg.recaptcha_enabled || !cfg.recaptcha_site_key) return;
+      siteKey = cfg.recaptcha_site_key;
+      try { await loadScript(siteKey); } catch { return; }
+      const events = ["pointerdown", "keydown", "touchstart"];
+      const fire = () => {
+        events.forEach((e) => window.removeEventListener(e, fire, true));
+        gateOnce();
+      };
+      events.forEach((e) => window.addEventListener(e, fire, true));
+    }
+
+    return { init, token };
+  })();
+  window.StoreBot = StoreBot;
+  StoreBot.init();
 })();

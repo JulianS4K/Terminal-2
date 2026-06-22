@@ -23,6 +23,7 @@
   // each pane keeps its own state cache + tooltip. No cursor sync.
   let _chartInstances = { price: null, inv: null };
   let _lastPayload = null;
+  let _axsSeries = null;   // {prices_axs:[{t,v}], counts_axs:[{t,v}]} — AXS box office, fetched out-of-band
   // Per-chart window (hours). Default 168h (7d) on first load.
   let _chartPriceHours = DEFAULT_HOURS;
   let _chartInvHours   = DEFAULT_HOURS;
@@ -140,7 +141,11 @@
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const eventId = T.getEventId();
     if (!eventId) {
-      T.setStatus('No event id — pass ?event=<id>', 'err');
+      // SeatGeek-native events (e.g. 2026 World Cup — FIFA primary inventory with
+      // no TEvo event behind them) open the SAME page in a reduced "SG mode".
+      const sgId = getSgEventId();
+      if (sgId) return initSgEvent(sgId);
+      T.setStatus('No event id — pass ?event=<id> or ?sg=<id>', 'err');
       return;
     }
     const Auth = window.TerminalAuth;
@@ -173,6 +178,264 @@
     // Live updates (Supabase Realtime). Best-effort, post-render: if the socket
     // never connects or no pings arrive the page is unchanged from before.
     safe('realtime', () => wireRealtime(eventId));
+  }
+
+  // ── SeatGeek-native event mode (e.g. 2026 World Cup) ───────────────────────
+  // These events are FIFA primary inventory carried by SeatGeek with no TEvo
+  // event behind them, so the standard TEvo-keyed page (get_broker_event_page_v3)
+  // can't load. We open the SAME event page in a reduced view: hero + the daily
+  // SeatGeek all-in price series we already log (get_wc_price_daily). Gated on
+  // ?sg=<id> with no ?event=, so the TEvo path above is completely untouched.
+  function getSgEventId() {
+    const v = new URLSearchParams(location.search).get('sg');
+    if (!v) return null;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  async function initSgEvent(sgId) {
+    const Auth = window.TerminalAuth;
+    if (Auth && !isLocalhost() && !Auth.isAllowedEmail(Auth.getEmail())) {
+      T.setStatus('Not signed in with @s4kent.com — sign in first', 'err');
+      return;
+    }
+    T.setStatus('Loading SeatGeek event…');
+    // Every tab is TEvo-source-specific — hide the nav and non-overview panes.
+    const tabs = document.getElementById('eventTabs');
+    if (tabs) tabs.hidden = true;
+    document.querySelectorAll('.tab-pane').forEach(p => { if (p.id !== 'paneOverview') p.hidden = true; });
+
+    const res = (Auth && Auth.client)
+      ? await Auth.client.rpc('get_wc_price_daily', { p_sg_event_id: sgId, p_days: 365 })
+      : { error: { message: 'not signed in' } };
+    if (res.error) {
+      T.setStatus(res.error.message, 'err');
+      renderSgEvent(sgId, []);
+      return;
+    }
+    T.setStatus('Loaded', 'ok');
+    renderSgEvent(sgId, res.data || []);
+    wireSgTrackButton(sgId).catch(e => console.error('[sg track]', e));
+  }
+
+  function renderSgEvent(sgId, rows) {
+    const latest = rows.length ? rows[rows.length - 1] : null;
+    const name  = (latest && latest.sg_event_name) || ('SeatGeek event ' + sgId);
+    const venue = latest && latest.venue_name;
+    const date  = latest && (latest.match_date || latest.snapshot_date);
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('evTitle', name);
+    set('evVenue', venue || '—');
+    set('evDate', date ? T.fmtDate(date) : '—');
+    // Coverage: SeatGeek only. Hide TEvo-only freshness + weather strips.
+    document.querySelectorAll('#coverage .light').forEach(l =>
+      l.classList.toggle('on', l.getAttribute('data-src') === 'seatgeek'));
+    const mode = document.getElementById('eventMode');
+    if (mode) mode.textContent = 'SeatGeek · primary inventory (no TEvo market)';
+    const fr = document.getElementById('freshness'); if (fr) fr.hidden = true;
+    const hw = document.getElementById('hero-weather'); if (hw) hw.hidden = true;
+
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const num   = v => (v == null ? '—' : T.fmtNum(v));
+    const pane = document.getElementById('paneOverview');
+    if (!pane) return;
+
+    // Price-history section (only when the daily rollup has data).
+    let priceSection;
+    if (!rows.length) {
+      priceSection = '<section class="panel"><div class="empty">No SeatGeek daily price history yet for this match.' +
+        '<div class="muted small">Populates as the World Cup price logger runs (wc_price_daily).</div></div></section>';
+    } else {
+      const kpis = [
+        ['GET-IN (all-in)', money(latest.allin_min)],
+        ['MEDIAN',          money(latest.allin_median)],
+        ['P90',             money(latest.allin_p90)],
+        ['LISTINGS',        num(latest.listings_count)],
+        ['TICKETS',         num(latest.tickets_count)],
+        ['OWNED LISTINGS',  num(latest.owned_listings)],
+      ];
+      const kpiHtml = kpis.map(([l, v]) =>
+        `<div class="kpi-cell"><span class="kpi-lbl">${l}</span><span class="kpi-val">${v}</span></div>`).join('');
+      const tableRows = rows.slice().reverse().map(r =>
+        '<tr>' +
+        `<td>${escapeHtml(T.fmtDate(r.snapshot_date))}</td>` +
+        `<td class="num">${money(r.allin_min)}</td>` +
+        `<td class="num">${money(r.allin_median)}</td>` +
+        `<td class="num">${money(r.allin_p90)}</td>` +
+        `<td class="num">${num(r.listings_count)}</td>` +
+        `<td class="num">${num(r.tickets_count)}</td>` +
+        '</tr>').join('');
+      priceSection =
+        `<section id="kpi-grid">${kpiHtml}</section>` +
+        '<section id="sg-price-history">' +
+          '<div class="panel-title row"><span>SEATGEEK PRICE HISTORY — daily all-in (wc_price_daily)</span>' +
+          `<span class="muted small">${rows.length} days · sg_event_id ${sgId}</span></div>` +
+          '<div id="wcChartHost" class="wc-chart"></div>' +
+          '<table class="wc-daily"><thead><tr><th>Date</th><th class="num">Get-in</th><th class="num">Median</th>' +
+          '<th class="num">P90</th><th class="num">Listings</th><th class="num">Tickets</th></tr></thead>' +
+          `<tbody>${tableRows}</tbody></table>` +
+        '</section>';
+    }
+
+    pane.innerHTML = priceSection +
+      '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
+        '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
+        '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
+        'GameTime needs discovery; seat map / EVO aren\'t available for SeatGeek-native events.</div></section>' +
+      '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
+        '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>' +
+      '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
+        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>';
+
+    if (rows.length) renderWcChart('wcChartHost', rows);
+    loadWcMarkets(sgId).catch(e => console.error('[wc markets]', e));
+    loadSgListingsInline(sgId).catch(e => console.error('[sg listings]', e));
+    loadSgSalesInline(sgId).catch(e => console.error('[sg sales]', e));
+  }
+
+  // Real uPlot price chart for the WC page (get-in / median / p90 daily series).
+  function renderWcChart(hostId, rows) {
+    const host = document.getElementById(hostId);
+    if (!host || typeof uPlot === 'undefined' || !rows || rows.length < 2) return;
+    const asc = rows.slice().sort((a, b) => (a.snapshot_date < b.snapshot_date ? -1 : 1));
+    const xs = asc.map(r => Math.floor(new Date(r.snapshot_date + 'T00:00:00Z').getTime() / 1000));
+    const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
+    const data = [xs, col('allin_min'), col('allin_median'), col('allin_p90')];
+    const width = () => Math.max(320, host.clientWidth || 800);
+    const opts = {
+      width: width(), height: 240,
+      scales: { x: { time: true } },
+      series: [
+        {},
+        { label: 'Get-in', stroke: '#5ab0ff', width: 2 },
+        { label: 'Median', stroke: '#46d39a', width: 2 },
+        { label: 'P90', stroke: '#e0a23c', width: 1 },
+      ],
+    };
+    host.innerHTML = '';
+    const u = new uPlot(opts, data, host);
+    if (!host._wcResize) {
+      host._wcResize = true;
+      window.addEventListener('resize', () => u.setSize({ width: width(), height: 240 }));
+    }
+  }
+
+  // Cross-source markets summary (SeatGeek live + StubHub/VividSeats/Ticketmaster
+  // as their data lands), resolved through the AQ hub by get_wc_markets.
+  async function loadWcMarkets(sgId) {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('wcMktBody'), meta = document.getElementById('wcMktMeta');
+    if (!body || !Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_wc_markets', { p_sg_event_id: sgId });
+    if (res.error) { body.innerHTML = `<div class="empty">${escapeHtml(res.error.message)}</div>`; if (meta) meta.textContent = ''; return; }
+    const rows = res.data || [];
+    if (!rows.length) { body.innerHTML = '<div class="empty">No market data yet — pulls in progress.</div>'; if (meta) meta.textContent = ''; return; }
+    if (meta) meta.textContent = `${rows.length} source${rows.length > 1 ? 's' : ''}`;
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const trs = rows.map(r => '<tr>' +
+      `<td><strong>${escapeHtml(r.source)}</strong></td>` +
+      `<td class="num">${money(r.getin)}</td>` +
+      `<td class="num">${money(r.median)}</td>` +
+      `<td class="num">${r.listings != null ? T.fmtNum(r.listings) : '—'}</td>` +
+      `<td class="muted small">${r.last_pull ? escapeHtml(T.fmtDate(r.last_pull)) : '—'}</td>` +
+      '</tr>').join('');
+    body.innerHTML = '<table><thead><tr><th>Source</th><th class="num">Get-in</th><th class="num">Median</th>' +
+      '<th class="num">Listings</th><th>Last pull</th></tr></thead><tbody>' + trs + '</tbody></table>';
+  }
+
+  async function loadSgListingsInline(sgId) {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('sgLstBody'), meta = document.getElementById('sgLstMeta');
+    if (!body || !Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_wc_sg_listings', { p_sg_event_id: sgId, p_limit: 500 });
+    if (res.error) { body.innerHTML = `<div class="empty">${escapeHtml(res.error.message)}</div>`; if (meta) meta.textContent = ''; return; }
+    const rows = res.data || [];
+    if (meta) meta.textContent = rows.length ? `${rows.length} listings` : '';
+    if (!rows.length) { body.innerHTML = '<div class="empty">No current SeatGeek listings.</div>'; return; }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    // For an OURS row, link to the substitution checker pre-filled from the
+    // listing (event/section/row/qty) so a double-sell can be covered fast.
+    const eid = T.getEventId();
+    const subLink = (r) => {
+      if (!eid) return '';
+      const qs = `event=${eid}&section=${encodeURIComponent(r.section || '')}` +
+        `&row=${encodeURIComponent(r.row || '')}&quantity=${r.quantity || 1}`;
+      return ` <a class="sub-link" href="subs.html?${qs}" title="find substitutes">subs ↗</a>`;
+    };
+    const trs = rows.map(r => '<tr>' +
+      `<td>${escapeHtml(r.section || '—')}</td>` +
+      `<td>${escapeHtml(r.row || '—')}</td>` +
+      `<td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>` +
+      `<td class="num">${money(r.retail_price_all_in)}</td>` +
+      `<td class="num">${money(r.broadcast_price)}</td>` +
+      `<td>${r.is_broker_owned ? '<span class="badge">OURS</span>' + subLink(r) : ''}</td>` +
+      '</tr>').join('');
+    body.innerHTML = '<table><thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th>' +
+      '<th class="num">All-in</th><th class="num">List</th><th></th></tr></thead><tbody>' + trs + '</tbody></table>';
+  }
+
+  async function loadSgSalesInline(sgId) {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('sgSlsBody'), meta = document.getElementById('sgSlsMeta');
+    if (!body || !Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_wc_sg_sales', { p_sg_event_id: sgId, p_days: 90, p_limit: 200 });
+    if (res.error) { body.innerHTML = `<div class="empty">${escapeHtml(res.error.message)}</div>`; if (meta) meta.textContent = ''; return; }
+    const rows = res.data || [];
+    if (meta) meta.textContent = rows.length ? `${rows.length} sales` : '';
+    if (!rows.length) { body.innerHTML = '<div class="empty">No recent SeatGeek sales.</div>'; return; }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const trs = rows.map(r => '<tr>' +
+      `<td class="muted small">${r.sale_at_utc ? escapeHtml(T.fmtDate(r.sale_at_utc)) : '—'}</td>` +
+      `<td>${escapeHtml(r.section || '—')}</td>` +
+      `<td>${escapeHtml(r.row || '—')}</td>` +
+      `<td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>` +
+      `<td class="num">${money(r.broadcast_price)}</td>` +
+      '</tr>').join('');
+    body.innerHTML = '<table><thead><tr><th>Sold</th><th>Section</th><th>Row</th>' +
+      '<th class="num">Qty</th><th class="num">Price</th></tr></thead><tbody>' + trs + '</tbody></table>';
+  }
+
+  // Minimal inline-SVG sparkline of the median-price series (no chart lib needed).
+  function sgSparkline(vals) {
+    if (!vals || vals.length < 2) return '';
+    const w = 600, h = 72, pad = 4;
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const span = (max - min) || 1;
+    const pts = vals.map((v, i) => {
+      const x = pad + (i / (vals.length - 1)) * (w - 2 * pad);
+      const y = h - pad - ((v - min) / span) * (h - 2 * pad);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    return `<svg class="sg-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="median price trend">` +
+      `<polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${pts}" /></svg>`;
+  }
+
+  async function wireSgTrackButton(sgId) {
+    const btn = document.getElementById('trackBtn');
+    const Auth = window.TerminalAuth;
+    if (!btn || !Auth || !Auth.client) return;
+    btn.hidden = false;
+    let tracked = false;
+    const listRes = await Auth.client.rpc('event_watchlist_list');
+    if (listRes && !listRes.error && listRes.data && Array.isArray(listRes.data.items)) {
+      tracked = listRes.data.items.some(it => String(it.sg_event_id) === String(sgId));
+    }
+    paintSgTrackBtn(btn, tracked);
+    btn.addEventListener('click', async () => {
+      const next = !tracked;
+      btn.disabled = true;
+      const res = await Auth.client.rpc('event_watchlist_set_sg', { p_sg_event_id: sgId, p_on: next });
+      btn.disabled = false;
+      if (res.error) { console.error('[sg track] set', res.error); T.setStatus('Track failed', 'err'); return; }
+      tracked = next;
+      paintSgTrackBtn(btn, tracked);
+    });
+  }
+  function paintSgTrackBtn(btn, tracked) {
+    btn.setAttribute('aria-pressed', tracked ? 'true' : 'false');
+    btn.classList.toggle('on', tracked);
+    btn.textContent = tracked ? '★ Tracking' : '☆ Track';
+    btn.title = tracked ? 'On your watchlist — click to remove' : 'Track this event on your watchlist';
   }
 
   function isLocalhost() {
@@ -210,6 +473,12 @@
       // loads via loadSgZonesSplits (renderZones no-ops without its DOM node).
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
+      // MMA/UFC events have no team-snapshot ESPN data, so renderEspn() hides the
+      // panel. Lazy-load the fight card from the espn edge fn (broker proxy) and
+      // render it in the same ESPN panel. Fire-and-forget; no-ops for team sports.
+      if (!data.espn || data.espn.hidden) {
+        loadEspnFightCard(eventId).catch(e => console.error('[espn-mma]', e));
+      }
       // Weather now lazy-loaded via loadWeatherLocalized (drops global-alert path).
       // ORDERS — ALL SOURCES panel removed (2026-06-08) — covered by the Our Orders tab.
       safe('coverage',   () => renderCoverage(cadences, overview, data.freshness, bridge));
@@ -225,6 +494,8 @@
       // Cross-source panel: re-render now that we have v3's sg_broker_sales
       // available (overrides sold_price_median for "Realized sale median" row).
       safe('crossSourceRerender', () => rerenderCrossSourceWithV3(data));
+      // AXS box-office chart series (fire-and-forget; merges into both charts on land)
+      loadAxsChartSeries(eventId).catch(e => console.error('[axs-series]', e));
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
     } catch (e) {
@@ -476,7 +747,12 @@
   }
 
   function adaptChart(c) {
-    if (!c) return { prices_owned: [], prices_market: [], prices_nonowned: [], counts_owned: [], counts_market: [] };
+    // AXS box-office series are fetched out-of-band (separate source from the v2
+    // event_metrics payload) and stashed in _axsSeries; merge them in here so
+    // every adaptChart caller renders them on the price + inventory charts.
+    const axs = _axsSeries || { prices_axs: [], counts_axs: [] };
+    if (!c) return { prices_owned: [], prices_market: [], prices_nonowned: [], counts_owned: [], counts_market: [],
+                     prices_axs: axs.prices_axs || [], counts_axs: axs.counts_axs || [] };
     const rows = c.event_metrics_series || [];
     const slice = (col) => rows.map(r => ({ t: r.captured_at, v: r[col] == null ? null : Number(r[col]) }));
     return {
@@ -485,6 +761,8 @@
       prices_nonowned: slice('nonowned_median_retail'),
       counts_owned:    slice('owned_tickets_count'),
       counts_market:   slice('tickets_count'),
+      prices_axs:      axs.prices_axs || [],
+      counts_axs:      axs.counts_axs || [],
       range: c.range || null,
     };
   }
@@ -830,7 +1108,17 @@
   function clipRangeForHours(hours, xs) {
     if (!xs || !xs.length) return undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    const reqMin = nowSec - hours * 3600;
+    // Freeze 2h after the event starts: once a game/show is underway the market
+    // is settled, so the live "now" should stop dragging the axis rightward.
+    // Past the freeze point the whole window anchors to it (left edge included)
+    // so the chart becomes STATIC instead of scrolling into empty post-event
+    // space. Pre-freeze (future event, or first 2h after start) liveEdge === now,
+    // so behaviour is unchanged. No event start → never freeze.
+    const freezeSec = isFinite(_eventStartMs)
+      ? Math.floor(_eventStartMs / 1000) + 2 * 3600
+      : Infinity;
+    const liveEdge = Math.min(nowSec, freezeSec);
+    const reqMin = liveEdge - hours * 3600;
     const dataMin = xs[0];                 // xs is chronological (buildSeriesData sorts)
     const dataMax = xs[xs.length - 1];
     // Fit-to-history (UI rebuild 2026-06-03): when the window is WIDER than the
@@ -839,9 +1127,10 @@
     // gutter with the data crammed at the right. When we have MORE history than
     // the window (short ranges), reqMin wins and the window is honored as before.
     const minSec = Math.max(reqMin, dataMin);
-    // Right edge: max(now, dataMax) so a future-dated event still shows its
-    // most recent snapshot inside the window.
-    return [minSec, Math.max(nowSec, dataMax)];
+    // Right edge: max(liveEdge, dataMax) so a future-dated event still shows its
+    // most recent snapshot — but never past the freeze point, so any stray
+    // post-event snapshot can't un-freeze the axis.
+    return [minSec, Math.max(liveEdge, Math.min(dataMax, freezeSec))];
   }
 
   // ---------- PRICE CHART ----------
@@ -874,6 +1163,7 @@
       { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
       { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
+      { key: 'prices_axs',      label: 'AXS box office', color: '#38bdf8', width: 1.75, dash: null, data: chart.prices_axs || [] },
     ];
     const { xs } = buildSeriesData(specs);
 
@@ -1100,6 +1390,7 @@
       { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
       { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
       { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
+      { key: 'counts_axs',    label: 'AXS listings',   color: '#38bdf8', width: 1.75, dash: null,  scale: 'y',  data: chart.counts_axs || [] },
       // Market sales (right axis) — STACKED: SG (bottom) + SeatData (top) per
       // bucket. SeatData is listed first so it draws BEHIND at the cumulative
       // height (SG+SeatData); SG draws after with an opaque fill, overdrawing the
@@ -1370,7 +1661,7 @@
         const isOn = _chartVisible.get(s.key) !== false;
         const opa = isOn ? '1' : '0.35';
         return `<span class="legend-item" data-key="${escapeHtml(s.key)}" style="opacity:${opa};cursor:pointer" title="Click to toggle">` +
-               `<i style="background:${s.color}"></i> ${escapeHtml(s.label)}</span>`;
+               `<i style="background:${escapeHtml(s.color)}"></i> ${escapeHtml(s.label)}</span>`;
       }).join('');
     } else {
       // Fallback static legend pre-first-render
@@ -1421,6 +1712,7 @@
     { src: 'SH',   color: '#f97316', keys: ['td_sh_med', 'td-sh-cnt'] },
     { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
     { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
+    { src: 'AXS',  color: '#38bdf8', keys: ['prices_axs', 'counts_axs'] },
   ];
 
   // Which series keys currently carry real data (scanning both build caches).
@@ -1924,7 +2216,7 @@
       const rec = t.record_summary || `${t.wins || 0}-${t.losses || 0}${t.ties ? '-' + t.ties : ''}`;
       card.innerHTML = `
         <div class="espn-card-hd">${escapeHtml(t.espn_team_id || '')}</div>
-        <div class="espn-card-row"><span class="lbl">record</span><span class="val">${rec}</span></div>
+        <div class="espn-card-row"><span class="lbl">record</span><span class="val">${escapeHtml(rec)}</span></div>
         <div class="espn-card-row"><span class="lbl">win %</span><span class="val">${t.win_pct != null ? (t.win_pct * 100).toFixed(1) + '%' : '—'}</span></div>
         <div class="espn-card-row"><span class="lbl">streak</span><span class="val">${escapeHtml(t.streak || '—')}</span></div>
         <div class="espn-card-row"><span class="lbl">seed</span><span class="val">${t.playoff_seed || '—'}</span></div>
@@ -1971,6 +2263,68 @@
     if (sev === 'out' || sev === 'ir') return 'inj-out';
     if (sev === 'questionable' || sev === 'q') return 'inj-q';
     return 'inj-p';
+  }
+
+  // ---------- ESPN fight card (MMA/UFC) ----------
+  // Team-sport events render via renderEspn() (team snapshots). Combat sports
+  // have no team snapshots, so we lazy-load the espn edge fn's fight-card shape
+  // (header + fights[]) from the broker proxy and render it in the ESPN panel.
+  async function loadEspnFightCard(eventId) {
+    let fc;
+    try { fc = await T.api(`/api/broker/event/${eventId}/espn`); }
+    catch (_) { return; }
+    if (!fc || !fc.applicable) return;
+    const isMma = typeof fc.sport_slug === 'string' && fc.sport_slug.indexOf('mma') === 0;
+    if (!isMma && !Array.isArray(fc.fights)) return;
+    renderEspnFightCard(fc);
+  }
+
+  function espnFighterChip(f) {
+    if (!f) return '<span class="muted">TBD</span>';
+    const win = f.winner === true ? ' espn-fighter-win' : '';
+    const rec = f.record ? ` <span class="espn-rec">(${escapeHtml(f.record)})</span>` : '';
+    return `<span class="espn-fighter${win}">${escapeHtml(f.name || 'TBD')}</span>${rec}`;
+  }
+
+  function renderEspnFightCard(fc) {
+    const section = document.getElementById('espn');
+    const body = document.getElementById('espnBody');
+    const subtitle = document.getElementById('espnSubtitle');
+    if (!body || !section) return;
+    section.style.display = '';
+    const h = fc.header || {};
+    if (subtitle) {
+      const lg = (fc.league || 'UFC').toString().toUpperCase();
+      subtitle.textContent = `${lg}${h.venue ? ' · ' + h.venue : ''}${h.status ? ' · ' + h.status : ''}`;
+    }
+    body.innerHTML = '';
+
+    const fights = Array.isArray(fc.fights) ? fc.fights : [];
+    if (!fights.length) {
+      body.innerHTML = `<div class="muted small">ESPN fight card linked (event ${escapeHtml(String(fc.espn_event_id || '?'))}) — bouts not yet published.</div>`;
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'espn-fightcard';
+    const sub = document.createElement('div');
+    sub.className = 'espn-sublabel';
+    sub.textContent = `FIGHT CARD (${fights.length})`;
+    wrap.appendChild(sub);
+
+    const ul = document.createElement('ul');
+    ul.className = 'espn-fightlist';
+    fights.forEach((ft, i) => {
+      const li = document.createElement('li');
+      const fr = Array.isArray(ft.fighters) ? ft.fighters : [];
+      const tag = i === 0 ? '<span class="espn-tag">MAIN</span> ' : '';
+      const meta = [ft.bout, ft.result || ft.status].filter(Boolean).map(escapeHtml).join(' · ');
+      li.innerHTML = `${tag}${espnFighterChip(fr[0])} <span class="espn-vs">vs</span> ${espnFighterChip(fr[1])}` +
+                     (meta ? ` <span class="muted small">${meta}</span>` : '');
+      ul.appendChild(li);
+    });
+    wrap.appendChild(ul);
+    body.appendChild(wrap);
   }
 
   // ---------- Weather (localized via get_event_weather_localized) ----------
@@ -2370,8 +2724,11 @@
     const rows = items.slice(0, 50).map(it => {
       const d = T.daysUntil(it.occurs_at_local);
       const cur = String(it.tevo_event_id) === String(eventId);
+      // SG-native rows (no TEvo id) open in SG mode (?sg=); TEvo rows use ?event=.
+      const href = it.tevo_event_id != null ? `event.html?event=${it.tevo_event_id}` : `event.html?sg=${it.sg_event_id}`;
+      const label = escapeHtml(it.event_name || (it.tevo_event_id != null ? ('Event ' + it.tevo_event_id) : ('SG ' + it.sg_event_id)));
       return `<tr${cur ? ' class="wl-cur"' : ''}>` +
-        `<td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>` +
+        `<td><a href="${href}">${label}</a>` +
         `${cur ? ' <span class="muted small">(this event)</span>' : ''}</td>` +
         `<td class="num">${d === null ? '—' : d}</td>` +
         `<td class="muted small">${escapeHtml(it.venue_name || it.venue_location || '—')}</td>` +
@@ -2991,7 +3348,8 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
-    'sg-sales': false, 'seatdata-sales': false, 'our-orders': false, 'alerts': false,
+    'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
+    'our-orders': false, 'alerts': false,
   } };
 
   function wireTabs(eventId) {
@@ -3026,6 +3384,8 @@
         await loadSgSalesFull(eventId);
       } else if (tabId === 'seatdata-sales' && !_tabState.loaded['seatdata-sales']) {
         await loadSeatdataSalesFull(eventId);
+      } else if (tabId === 'axs-sections' && !_tabState.loaded['axs-sections']) {
+        await loadAxsSectionsFull(eventId);
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
       } else if (tabId === 'alerts') {
@@ -3068,6 +3428,7 @@
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'seatdata-sales': 'paneSeatdataSales',
+      'axs-sections': 'paneAxsSections',
       'td-markets':   'paneTdMarkets',
       'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
@@ -4338,6 +4699,127 @@
     host.appendChild(tbl);
     body.innerHTML = '';
     body.appendChild(host);
+  }
+
+  // ---------- AXS Box Office — chart series (median price + listing count) ----------
+  async function loadAxsChartSeries(eventId) {
+    try {
+      const d = await T.api(`/api/axs/event/${eventId}/series`);
+      _axsSeries = { prices_axs: (d && d.prices_axs) || [], counts_axs: (d && d.counts_axs) || [] };
+    } catch (e) {
+      _axsSeries = { prices_axs: [], counts_axs: [] };
+    }
+    // Re-render both charts now that AXS series are available.
+    if (_lastPayload && _lastPayload.chart_data) {
+      const chart = adaptChart(_lastPayload.chart_data);
+      safe('chartPrice',     () => renderChartPrice(chart, _lastPayload.event_alerts));
+      safe('chartInventory', () => renderChartInventory(chart));
+      safe('chartLegends',   () => refreshChartLegends());
+    }
+  }
+
+  // ---------- AXS Box Office — sections (latest snapshot) ----------
+  async function loadAxsSectionsFull(eventId) {
+    const body = document.getElementById('axsSectionsBody');
+    const meta = document.getElementById('axsSectionsMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading AXS box office…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    let secs = null, lst = null;
+    try {
+      [secs, lst] = await Promise.all([
+        T.api(`/api/axs/event/${eventId}/sections`),
+        T.api(`/api/axs/event/${eventId}/listings`),
+      ]);
+    } catch (err) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">load error: ${escapeHtml(String(err && err.message || err))}</div>`;
+      return;
+    }
+    _tabState.loaded['axs-sections'] = true;
+    renderAxsBoxOffice(secs, lst, performance.now() - t0);
+  }
+
+  function renderAxsBoxOffice(secs, lst, ms) {
+    const body = document.getElementById('axsSectionsBody');
+    const meta = document.getElementById('axsSectionsMeta');
+    const countChip = document.getElementById('tabCountAxsSections');
+    if (!body) return;
+    const sections = (secs && secs.sections) || [];
+    const listings = (lst && lst.listings) || [];
+    if (countChip) countChip.textContent = String(listings.length || sections.length || 0);
+    if (!sections.length && !listings.length) {
+      body.innerHTML = '<div class="empty">no AXS box-office snapshot for this event yet</div>';
+      if (meta) meta.textContent = '0 listings';
+      return;
+    }
+    const cur = ((secs && secs.currency) || 'USD') === 'USD' ? '$' : '';
+    const sm = (secs && secs.summary) || {};
+    const lm = (lst && lst.summary) || {};
+    const cap = secs && secs.captured_at ? T.fmtDate(secs.captured_at) : '—';
+    const seats = lm.total_seats != null ? lm.total_seats : sm.available_qty;
+    if (meta) {
+      meta.textContent = `${seats != null ? T.fmtNum(seats) + ' seats · ' : ''}`
+        + `${listings.length} blocks · ${sections.length} sections · `
+        + `${cur}${lm.min_price != null ? T.fmtNum(Math.round(lm.min_price)) : (sm.min_price != null ? T.fmtNum(Math.round(sm.min_price)) : '—')}–`
+        + `${cur}${lm.max_price != null ? T.fmtNum(Math.round(lm.max_price)) : (sm.max_price != null ? T.fmtNum(Math.round(sm.max_price)) : '—')} · `
+        + `${ms.toFixed(0)}ms · snap ${cap}`;
+    }
+    body.innerHTML = '';
+
+    // 1) by-section rollup
+    if (sections.length) {
+      const h1 = document.createElement('div');
+      h1.className = 'panel-title row'; h1.innerHTML = '<span>BY SECTION</span>';
+      body.appendChild(h1);
+      const host1 = document.createElement('div'); host1.className = 'full-list-host';
+      const t1 = document.createElement('table'); t1.className = 'full-list-tbl';
+      t1.innerHTML = `<thead><tr><th>Section</th><th>Neighborhood</th><th>Type</th><th>GA</th>
+        <th class="num">Avail</th><th class="num">Min</th><th class="num">Max</th><th>Resale</th></tr></thead><tbody></tbody>`;
+      const b1 = t1.querySelector('tbody');
+      sections.forEach(s => {
+        const tr = document.createElement('tr');
+        if (s.sold_out) tr.classList.add('row-muted');
+        tr.innerHTML = `
+          <td>${escapeHtml(s.section_label || '—')}</td>
+          <td>${escapeHtml(s.neighborhood || '—')}</td>
+          <td>${escapeHtml(Array.isArray(s.seat_types) ? s.seat_types.join(',') : (s.seat_types || '—'))}</td>
+          <td>${s.is_ga ? '●' : '—'}</td>
+          <td class="num">${s.sold_out ? 'SOLD' : (s.avail_qty != null ? T.fmtNum(s.avail_qty) : '—')}</td>
+          <td class="num">${s.price_min != null ? cur + T.fmtNum(Math.round(s.price_min)) : '—'}</td>
+          <td class="num">${s.price_max != null ? cur + T.fmtNum(Math.round(s.price_max)) : '—'}</td>
+          <td>${s.has_resale ? 'Yes' : '—'}</td>`;
+        b1.appendChild(tr);
+      });
+      host1.appendChild(t1); body.appendChild(host1);
+    }
+
+    // 2) consecutive-seat listings (EVO standard: section/row/qty/price/type/seats)
+    if (listings.length) {
+      const h2 = document.createElement('div');
+      h2.className = 'panel-title row';
+      h2.innerHTML = `<span>LISTINGS — consecutive-seat blocks${lm.biggest_block ? ' · biggest ' + lm.biggest_block : ''}</span>`;
+      body.appendChild(h2);
+      const host2 = document.createElement('div'); host2.className = 'full-list-host';
+      const t2 = document.createElement('table'); t2.className = 'full-list-tbl';
+      t2.innerHTML = `<thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th>
+        <th class="num">Price</th><th>Type</th><th>Seats</th><th>Src</th></tr></thead><tbody></tbody>`;
+      const b2 = t2.querySelector('tbody');
+      listings.forEach(r => {
+        const tr = document.createElement('tr');
+        if (r.src === 'resale') tr.classList.add('row-muted');
+        tr.innerHTML = `
+          <td>${escapeHtml(r.section || '—')}</td>
+          <td>${escapeHtml(r.row || '—')}</td>
+          <td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>
+          <td class="num">${r.retail_price != null ? cur + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
+          <td>${escapeHtml(r.type || '—')}${r.wheelchair ? ' ♿' : ''}</td>
+          <td>${escapeHtml(r.seat_numbers || '—')}</td>
+          <td>${r.src === 'resale' ? 'resale' : 'primary'}</td>`;
+        b2.appendChild(tr);
+      });
+      host2.appendChild(t2); body.appendChild(host2);
+    }
   }
 
   // ---------- Our TEvo Orders (full) ----------

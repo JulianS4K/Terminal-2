@@ -160,6 +160,11 @@ if (Test-Path $source) {
 Push-Location $target
 $head = git rev-parse --short HEAD
 $branch = git branch --show-current
+# .claude/ was skipped wholesale by /XD above, but .claude/settings.json is a
+# TRACKED file since 2026-06-10 (plugin/marketplace enablement — cloud sessions
+# only see committed config). Restore it from git so the moved checkout isn't
+# missing a tracked file (and a later broad commit can't record its deletion).
+git checkout -- .claude/settings.json 2>$null
 Pop-Location
 Write-Host ""
 Write-Host "  git HEAD at new location: $head on $branch" -ForegroundColor Green

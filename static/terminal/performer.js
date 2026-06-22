@@ -200,6 +200,10 @@
       side: document.getElementById('tourSide').value,
       days: '365',
     });
+    const sec = document.getElementById('tourSection');
+    if (sec && sec.value.trim()) q.set('section_like', sec.value.trim());
+    const po = document.getElementById('tourPreferOwned');
+    if (po && po.value) q.set('prefer_owned', 'true');
     body.innerHTML = '<div class="empty">pricing tour…</div>';
     if (stats) stats.hidden = true;
     try {
@@ -244,10 +248,11 @@
       const s = l.seats;
       const seat = s ? `<span class="muted small" title="auto-selected ticket group${s.is_owned ? ' (ours)' : ''}">${escapeHtml(s.section || 'GA')}${s.row ? ' ' + escapeHtml(s.row) : ''}${s.is_owned ? ' ·ours' : ''}</span>`
         : (l.selection === 'estimate' ? '<span class="muted small" style="opacity:.55">est</span>' : '');
+      const hot = l.hot ? ' <span title="high demand">🔥</span>' : '';
       return `<div class="trip-row${on ? '' : ' skip'}">`
         + `<span class="tr-date">${escapeHtml(_tripDate(l.date))}</span>`
         + `<span class="tr-city">${escapeHtml(l.city || '—')}</span>`
-        + `<span>${escapeHtml(l.event_name || l.venue || '')}</span>`
+        + `<span>${escapeHtml(l.event_name || l.venue || '')}${hot}</span>`
         + seat + src + px + mm + '</div>';
     }).join('');
     body.innerHTML = `<div class="trip-list">${rows}</div>`;

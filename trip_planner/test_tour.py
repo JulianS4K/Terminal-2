@@ -77,6 +77,20 @@ def test_listing_selection():
     assert other["selection"] == "estimate"
 
 
+def test_popularity_hot_and_multi():
+    # a multi-performer package with popularity scores -> legs carry performer + hot badge
+    rows = [dict(r) for r in CONCERT]
+    rows[0]["primary_performer_name"] = "Megan Moroney"; rows[0]["_pop"] = 0.66
+    rows[1]["primary_performer_name"] = "Zach Bryan"; rows[1]["_pop"] = 0.20
+    rows[2]["primary_performer_name"] = "Megan Moroney"; rows[2]["_pop"] = 0.61
+    p = plan_tour_package(rows, HOME, 3, 20000, START, END, mode="multi")
+    legs = p["all_stops"]
+    assert all(set(("hot", "popularity", "performer")) <= set(l) for l in legs)
+    assert {l["performer"] for l in legs} == {"Megan Moroney", "Zach Bryan"}   # multi
+    assert any(l["hot"] and l["popularity"] == 0.66 for l in legs)             # top-third flagged
+    assert not any(l["hot"] and l["popularity"] == 0.20 for l in legs)
+
+
 def main():
     print("\nRetail tour-package — dual mode, qty=3\n")
     for label, rows, mode in [("concert", CONCERT, "concert"), ("team-away", AWAY, "team_away")]:
@@ -89,6 +103,7 @@ def main():
     test_concert_owned_splits()
     test_team_away_market_sourced()
     test_listing_selection()
+    test_popularity_hot_and_multi()
     print("\n  asserts passed: owned-splits premium (concert) + market-sourced spread (team away)\n")
 
 

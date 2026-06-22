@@ -21,6 +21,7 @@ import { canEditEvents } from '../lib/orgs';
 import { useToast } from '../context/ToastContext';
 import SalesChart from '../components/SalesChart';
 import ScanReport from '../components/ScanReport';
+import WaitlistPanel from '../components/WaitlistPanel';
 import { formatCurrency } from '../lib/utils';
 
 interface TierStat {
@@ -254,6 +255,9 @@ export default function OrganizerEventReport() {
           <h2 className="text-sm font-bold text-slate-700 mb-3 mt-2">Door scans</h2>
           <ScanReport eventId={eventId!} totalSold={totalSold} />
         </div>
+
+        {/* Waitlist — demand captured after sell-out; release spots to notify. */}
+        <WaitlistPanel eventId={eventId!} />
 
         {/* Tier breakdown. */}
         <Section title="By Tier" empty="No tier breakdown yet — first sale populates this." rows={tierStats.length}>

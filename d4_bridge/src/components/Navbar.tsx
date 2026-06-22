@@ -2,9 +2,12 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Ticket, User, LogOut, PlusCircle, LayoutDashboard } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useT } from '../context/LanguageContext';
+import LanguageSwitcher from './LanguageSwitcher';
 
 export default function Navbar() {
   const { user, signIn, logout } = useAuth();
+  const t = useT();
 
   return (
     <nav className="sticky top-0 z-50 bg-[#000000] border-b border-white/5 backdrop-blur-xl">
@@ -17,15 +20,16 @@ export default function Navbar() {
             <span className="text-3xl font-black tracking-tighter text-white italic group-hover:text-neon transition-all">EXOS</span>
           </Link>
 
-          <div className="flex items-center space-x-10">
+          <div className="flex items-center space-x-6 sm:space-x-10">
+            <LanguageSwitcher />
             {user ? (
               <>
                 <Link to="/my-tickets" className="text-[11px] font-black uppercase tracking-widest text-white/50 hover:text-white hover:italic transition-all">
-                  My Tickets
+                  {t('nav.myTickets')}
                 </Link>
                 <Link to="/dashboard" className="text-[11px] font-black uppercase tracking-widest text-white/50 hover:text-white hover:italic transition-all flex items-center space-x-2">
                   <LayoutDashboard className="w-4 h-4 text-brand-primary" />
-                  <span className="hidden sm:inline">Dashboard</span>
+                  <span className="hidden sm:inline">{t('nav.dashboard')}</span>
                 </Link>
                 <div className="relative group/user">
                   <button className="flex items-center space-x-3 bg-white/5 p-1 pr-6 border border-white/10 hover:border-white/20 transition-all">
@@ -42,14 +46,14 @@ export default function Navbar() {
                       className="w-full text-left px-4 py-4 text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/5 flex items-center space-x-3 transition-all"
                     >
                       <User className="w-4 h-4" />
-                      <span>Profile & Tastes</span>
+                      <span>{t('nav.profile')}</span>
                     </Link>
-                    <button 
+                    <button
                       onClick={logout}
                       className="w-full text-left px-4 py-4 text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-brand-primary hover:bg-white/5 flex items-center space-x-3 transition-all"
                     >
                       <LogOut className="w-4 h-4" />
-                      <span>Sign Out</span>
+                      <span>{t('nav.signOut')}</span>
                     </button>
                   </div>
                 </div>
@@ -59,7 +63,7 @@ export default function Navbar() {
                 onClick={signIn}
                 className="primary-button py-3 text-[10px] italic"
               >
-                Sign In
+                {t('nav.signIn')}
               </button>
             )}
           </div>

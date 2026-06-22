@@ -4,9 +4,8 @@ Operator directive 2026-05-14: "find a way to streamline project from here on ou
 
 This doc captures the failure patterns we observed shipping today and the practices/tooling that prevent them. Companion to:
 - `MIGRATION_CONVENTIONS.md` — slot reservation + ordering rules (canonical)
-- `BOT_HIERARCHY.md` — push restrictions matrix
-- `LANE_DISCIPLINE.md` — per-bot scope
-- `CRON_HIERARCHY.md` — cron tier budgets
+- `PROJECT_BIBLE.md §2` — push restrictions + lane ownership (absorbed the former BOT_HIERARCHY / LANE_DISCIPLINE)
+- `RESOURCES_BIBLE.md §5` — cron tier budgets
 
 ---
 
@@ -87,7 +86,7 @@ Reality on Terminal-2: A1 applies migrations via MCP `apply_migration` first, th
 
 1. **Apply + codify within the same conversation turn.** Never end a session with prod ahead of repo.
 2. **Every applied migration gets a corresponding file before the session-ending commit.** Run `git diff supabase/migrations/` against a fresh `mcp list_migrations` to confirm parity.
-3. **The migration filename must equal the slot it occupies in prod.** SYNC_PROTOCOL.md's `*0000` slot reservation for A1 holds.
+3. **The migration filename must equal the slot it occupies in prod.** Timestamp/slot collision rules → `MIGRATION_CONVENTIONS.md §3`.
 4. **PR description references the applied state.** Use the "## Already applied to prod" footer convention.
 
 ---
@@ -185,7 +184,7 @@ Operator directive: "plan to decrease code drift and push all to main".
 ### Per-session discipline (always)
 
 - **Branch must merge to main within 24h** of last commit OR explicit deferral note in `bot_chat`.
-- **A1 is sole pusher to main.** Subordinates open PRs against supervisor branch.
+- **Push to `main` is per-task** — the delegated bot pushes its own work after green CI; A1 + B1 are joint `main` maintainers. **Prod-DB apply stays centralized on A1** (git push ≠ DB apply). (Supersedes the prior "A1 sole pusher" rule — operator directive 2026-06-17; see `PROJECT_BIBLE §2.3`.)
 - **No "ghost" migrations.** Every `apply_migration` MCP call must have a corresponding `.sql` file with matching content within the same turn.
 
 ### Drift detection (runtime)

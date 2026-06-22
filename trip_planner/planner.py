@@ -11,6 +11,7 @@ Split so the planning logic is testable offline:
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from math import cos, radians
 
 from .budget_optimizer import plan_by_date_2b, plan_optimal_2b
 from .city_centroids import centroid_for
@@ -295,7 +296,8 @@ def fetch_event_pricing(db, ids: list[int], lookback_days: int = 21) -> dict[int
 
 
 def fetch_event_listings(db, ids: list[int], qty: int, lookback_hours: int = 36,
-                         cap: int = 12000) -> dict[int, dict]:
+                         cap: int = 12000, section_like: str | None = None,
+                         prefer_owned: bool = False) -> dict[int, dict]:
     """Auto-select a concrete listing per event that satisfies `qty` and is cheapest.
 
     From the EVO firehose (`listings_snapshots`): qualifying = `quantity >= qty` AND
@@ -307,20 +309,21 @@ def fetch_event_listings(db, ids: list[int], qty: int, lookback_hours: int = 36,
     if not ids:
         return {}
     since = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
-    rows = (db.table("listings_snapshots")
-            .select("event_id, tevo_ticket_group_id, section, row, quantity, retail_price, "
-                    "is_owned, eticket, instant_delivery, format, captured_at")
-            .in_("event_id", ids)
-            .gte("captured_at", since)
-            .gte("quantity", qty)
-            .contains("splits", [qty])
-            .not_.is_("retail_price", "null")
-            .order("captured_at", desc=True)
-            .limit(cap)
-            .execute().data) or []
+    q = (db.table("listings_snapshots")
+         .select("event_id, tevo_ticket_group_id, section, row, quantity, retail_price, "
+                 "is_owned, eticket, instant_delivery, format, captured_at")
+         .in_("event_id", ids)
+         .gte("captured_at", since)
+         .gte("quantity", qty)
+         .contains("splits", [qty])
+         .not_.is_("retail_price", "null"))
+    if section_like:                              # seat preference: only matching sections
+        q = q.ilike("section", f"%{section_like}%")
+    rows = q.order("captured_at", desc=True).limit(cap).execute().data or []
 
     seen: set[tuple] = set()
-    best: dict[int, dict] = {}
+    cheapest: dict[int, dict] = {}        # cheapest qualifying overall
+    cheapest_owned: dict[int, dict] = {}  # cheapest qualifying that's ours
     counts: dict[int, int] = {}
     for r in rows:
         key = (r["event_id"], r["tevo_ticket_group_id"])
@@ -331,18 +334,26 @@ def fetch_event_listings(db, ids: list[int], qty: int, lookback_hours: int = 36,
         counts[eid] = counts.get(eid, 0) + 1
         price = float(r["retail_price"])
         owned = bool(r.get("is_owned"))
-        cur = best.get(eid)
-        if cur is None or price < cur["unit_price"] - 1e-9 or (
-                abs(price - cur["unit_price"]) <= 1e-9 and owned and not cur["is_owned"]):
-            best[eid] = {
-                "ticket_group_id": int(r["tevo_ticket_group_id"]),
-                "section": r.get("section"), "row": r.get("row"),
-                "available_qty": int(r["quantity"]), "unit_price": round(price, 2),
-                "is_owned": owned, "eticket": bool(r.get("eticket")),
-                "instant": bool(r.get("instant_delivery")), "format": r.get("format"),
-            }
-    for eid, c in best.items():
-        c["candidates"] = counts.get(eid, 0)
+        cand = {
+            "ticket_group_id": int(r["tevo_ticket_group_id"]),
+            "section": r.get("section"), "row": r.get("row"),
+            "available_qty": int(r["quantity"]), "unit_price": round(price, 2),
+            "is_owned": owned, "eticket": bool(r.get("eticket")),
+            "instant": bool(r.get("instant_delivery")), "format": r.get("format"),
+        }
+        if eid not in cheapest or price < cheapest[eid]["unit_price"] - 1e-9 or (
+                abs(price - cheapest[eid]["unit_price"]) <= 1e-9 and owned and not cheapest[eid]["is_owned"]):
+            cheapest[eid] = cand
+        if owned and (eid not in cheapest_owned or price < cheapest_owned[eid]["unit_price"] - 1e-9):
+            cheapest_owned[eid] = cand
+
+    best: dict[int, dict] = {}
+    for eid in cheapest:
+        # prefer_owned -> our cheapest owned group if we have one, else cheapest overall
+        chosen = (cheapest_owned.get(eid) or cheapest[eid]) if prefer_owned else cheapest[eid]
+        chosen = dict(chosen)
+        chosen["candidates"] = counts.get(eid, 0)
+        best[eid] = chosen
     return best
 
 
@@ -413,10 +424,18 @@ def plan_tour_package(rows: list[dict], home: dict, qty: int, budget_km: float,
             pl["selection"] = "estimate"
         pl["city"] = r.get("venue_city")
         pl["event_name"] = r.get("event_name")
+        pl["performer"] = r.get("primary_performer_name") or ""
+        pl["popularity"] = round(float(r["_pop"]), 4) if r.get("_pop") is not None else None
         pl["coord_source"] = r.get("_coord_source", "venue")
         legmeta[eid] = pl
         u = pl.get("unit_price")
         costs[eid] = (u * qty) if u is not None else 0.0    # the fan's spend at this stop
+
+    # "hot" demand badge: top third of the tour by long-term popularity (and meaningfully high)
+    pops = sorted(v["popularity"] for v in legmeta.values() if v.get("popularity") is not None)
+    thr = max(0.4, pops[min(len(pops) - 1, len(pops) * 2 // 3)]) if pops else None
+    for v in legmeta.values():
+        v["hot"] = bool(thr is not None and v.get("popularity") is not None and v["popularity"] >= thr)
 
     c = Constraints(home_name=home["name"], home_lat=float(home["lat"]), home_lon=float(home["lon"]),
                     start=start, end=end, max_travel_km=float(budget_km),
@@ -453,18 +472,31 @@ def plan_tour_package(rows: list[dict], home: dict, qty: int, budget_km: float,
     }
 
 
-def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
-                        qty: int, budget_km: float, start: date, end: date,
-                        home_name: str = "Home", budget_usd: float | None = None,
-                        side: str = "auto", clear_at: float = DEFAULT_CLEAR_AT,
-                        away_margin: float = DEFAULT_AWAY_MARGIN,
-                        max_events: int | None = None) -> dict:
-    """End-to-end retail tour package: detect concert vs team-away, route + dual-mode price."""
-    rows, mode = fetch_tour_events(db, performer_id, start, end, side)
+def fetch_event_popularity(db, ids: list[int]) -> dict[int, float]:
+    """Long-term popularity score per event (events table) — powers the 'hot' demand badge."""
+    if not ids:
+        return {}
+    rows = (db.table("events").select("id, long_term_popularity_score")
+            .in_("id", ids).execute().data) or []
+    out: dict[int, float] = {}
+    for r in rows:
+        v = r.get("long_term_popularity_score")
+        if v is not None:
+            out[int(r["id"])] = float(v)
+    return out
+
+
+def _enrich_and_plan(db, rows: list[dict], mode: str, qty: int, home: dict,
+                     budget_km: float, start: date, end: date, budget_usd: float | None,
+                     clear_at: float, away_margin: float, max_events: int | None,
+                     section_like: str | None, prefer_owned: bool) -> dict:
+    """Shared: coord fallback + pricing + popularity + auto-selected listings -> tour package."""
     _apply_coord_fallback(db, rows)
     ids = [int(r["tevo_event_id"]) for r in rows]
     pricing = fetch_event_pricing(db, ids)
-    listings = fetch_event_listings(db, ids, max(1, int(qty)))   # auto-select real seats
+    listings = fetch_event_listings(db, ids, max(1, int(qty)),
+                                    section_like=section_like, prefer_owned=prefer_owned)
+    popularity = fetch_event_popularity(db, ids)
     for r in rows:
         eid = int(r["tevo_event_id"])
         p = pricing.get(eid)
@@ -472,9 +504,208 @@ def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
             r["_owned"], r["_our_ask"] = p["owned"], p["our_ask"]
             r["_getin"], r["_med"], r["_qty"] = p["getin"], p["med"], p["qty"]
         r["_listing"] = listings.get(eid)
+        r["_pop"] = popularity.get(eid)
+    return plan_tour_package(rows, home, qty, budget_km, start, end,
+                             budget_usd=budget_usd, max_events=max_events,
+                             clear_at=clear_at, away_margin=away_margin, mode=mode)
+
+
+def plan_performer_tour(db, performer_id: int, home_lat: float, home_lon: float,
+                        qty: int, budget_km: float, start: date, end: date,
+                        home_name: str = "Home", budget_usd: float | None = None,
+                        side: str = "auto", clear_at: float = DEFAULT_CLEAR_AT,
+                        away_margin: float = DEFAULT_AWAY_MARGIN, max_events: int | None = None,
+                        section_like: str | None = None, prefer_owned: bool = False) -> dict:
+    """End-to-end retail tour package: detect concert vs team-away, route + dual-mode price."""
+    rows, mode = fetch_tour_events(db, performer_id, start, end, side)
     home = {"name": home_name, "lat": home_lat, "lon": home_lon}
-    payload = plan_tour_package(rows, home, qty, budget_km, start, end,
-                                budget_usd=budget_usd, max_events=max_events,
-                                clear_at=clear_at, away_margin=away_margin, mode=mode)
+    payload = _enrich_and_plan(db, rows, mode, qty, home, budget_km, start, end, budget_usd,
+                               clear_at, away_margin, max_events, section_like, prefer_owned)
     payload["performer_id"] = int(performer_id)
     return payload
+
+
+def plan_multi_performer_tour(db, performer_ids: list[int], home_lat: float, home_lon: float,
+                              qty: int, budget_km: float, start: date, end: date,
+                              home_name: str = "Home", budget_usd: float | None = None,
+                              side: str = "auto", clear_at: float = DEFAULT_CLEAR_AT,
+                              away_margin: float = DEFAULT_AWAY_MARGIN,
+                              max_events: int | None = None, section_like: str | None = None,
+                              prefer_owned: bool = False) -> dict:
+    """"Plan my summer": route + price one package across SEVERAL performers' events at once."""
+    rows: list[dict] = []
+    seen: set[int] = set()
+    for pid in performer_ids:
+        prows, _ = fetch_tour_events(db, int(pid), start, end, side)
+        for r in prows:
+            eid = int(r["tevo_event_id"])
+            if eid not in seen:
+                seen.add(eid)
+                rows.append(r)
+    home = {"name": home_name, "lat": home_lat, "lon": home_lon}
+    payload = _enrich_and_plan(db, rows, "multi", qty, home, budget_km, start, end, budget_usd,
+                               clear_at, away_margin, max_events, section_like, prefer_owned)
+    payload["performer_ids"] = [int(p) for p in performer_ids]
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+# Reverse discovery — "what tours can I catch near me?" (location-first)
+# --------------------------------------------------------------------------- #
+def _miles(lat1, lon1, lat2, lon2) -> float:
+    from .gigtrip.distance import haversine_km
+    return haversine_km(lat1, lon1, lat2, lon2) * 0.621371
+
+
+_SPORTS_TYPES = {"game", "mlb", "wnba", "nwsl", "mls-major-league-soccer", "ncaa", "ncaa--2",
+                 "formula-1", "world-cup", "miscellaneous-sports", "horse-racing",
+                 "independent-league-baseball"}
+
+
+def rank_tours_near(events: list[dict], lat: float, lon: float, within_mi: float,
+                    min_shows: int, team_side: str = "home",
+                    away_map: dict | None = None) -> list[dict]:
+    """Pure: group nearby events by performer into candidate 'tours' (>= min_shows reachable).
+
+    team_side controls how SPORTS events are grouped (non-sports always group by the
+    primary performer = the touring artist):
+      - 'home' (default): group by the primary performer = the HOME team, so a team's
+        'tour near you' is its home stand (legacy behavior; D0 broker discover).
+      - 'away': group by the VISITING performer (from away_map: tevo_event_id ->
+        (away_id, away_name)), so a team's 'tour near you' is its ROAD games that come
+        to your area. Sports events whose away team can't be resolved are skipped.
+    """
+    away_map = away_map or {}
+    by_perf: dict = {}   # group_id -> {"name", "kind", "event_type", "evs": [...]}
+    for e in events:
+        vl, vo = e.get("venue_lat"), e.get("venue_lon")
+        if vl is None or vo is None:
+            continue
+        mi = _miles(lat, lon, float(vl), float(vo))
+        if mi > within_mi:
+            continue
+        et = (e.get("event_type") or "").lower()
+        is_sports = et in _SPORTS_TYPES
+        if is_sports and team_side == "away":
+            eid = e.get("tevo_event_id")
+            am = away_map.get(int(eid)) if eid is not None else None
+            if not am or am[0] is None:
+                continue  # can't resolve the visiting team -> can't show it as an away game
+            gid, gname = am[0], am[1]
+        else:
+            gid, gname = e.get("tevo_performer_id"), e.get("primary_performer_name")
+        if gid is None:
+            continue
+        g = by_perf.setdefault(int(gid), {"name": gname, "is_sports": is_sports,
+                                          "event_type": e.get("event_type"), "evs": []})
+        g["evs"].append({**e, "_mi": mi})
+
+    tours: list[dict] = []
+    for gid, g in by_perf.items():
+        evs = g["evs"]
+        if len(evs) < min_shows:
+            continue
+        evs.sort(key=lambda x: str(x.get("event_date")))
+        cities = sorted({x.get("venue_city") for x in evs if x.get("venue_city")})
+        tours.append({
+            "performer": g["name"],
+            "performer_id": int(gid),
+            "event_type": g["event_type"],
+            "kind": "sports" if g["is_sports"] else "live",
+            # For sports, tell the FE which side these games are (drives the label +
+            # the follow-link side=). None for non-sports.
+            "team_side": (team_side if g["is_sports"] else None),
+            "nearby_shows": len(evs),
+            "cities": len(cities) or 1,
+            "nearest_mi": round(min(x["_mi"] for x in evs)),
+            "soonest": str(min(str(x.get("event_date")) for x in evs))[:10],
+            "events": [{"event_id": int(x["tevo_event_id"]), "city": x.get("venue_city"),
+                        "date": str(x.get("event_date"))[:10], "miles": round(x["_mi"])}
+                       for x in evs[:8]],
+        })
+    return tours
+
+
+def _fetch_away_performers(db, event_ids: list[int]) -> dict[int, tuple]:
+    """tevo_event_id -> (away_performer_id, away_performer_name) from v_event_home_away.
+
+    Used by 'tours near me' when team_side='away' so a team's tour = its ROAD games
+    near the user (the visiting performer), not the local home team's home stand.
+    v_event_base only carries the primary (home) performer, so the away side is
+    looked up here. Read-only."""
+    ids = [i for i in dict.fromkeys(event_ids) if i is not None]
+    out: dict[int, tuple] = {}
+    if not ids:
+        return out
+    rows = (db.table("v_event_home_away")
+            .select("tevo_event_id, away_performer_id, away_performer_name")
+            .in_("tevo_event_id", ids)
+            .not_.is_("away_performer_id", "null")
+            .execute().data) or []
+    for r in rows:
+        aid = r.get("away_performer_id")
+        out[int(r["tevo_event_id"])] = (int(aid) if aid is not None else None,
+                                        r.get("away_performer_name"))
+    return out
+
+
+def discover_tours_near(db, lat: float, lon: float, within_mi: float, start: date, end: date,
+                        min_shows: int = 2, limit: int = 20,
+                        event_types: list[str] | None = None,
+                        team_side: str = "home") -> dict:
+    """For fans who want to travel ALONG a favorite artist or team's run — go city to
+    city with them, not just catch one show. Given where you are, find the
+    performers/teams playing >= min_shows (a multi-stop run you can follow in person)
+    within `within_mi` of home in the window. Each tour is enriched with price-from +
+    popularity + whether we hold inventory. Read-only.
+
+    team_side='away' surfaces teams by their ROAD games near the user (a team's run
+    you can follow = the away games it plays in your area; see rank_tours_near);
+    'home' (default) keeps the legacy home-stand grouping. Concerts always group by
+    the touring artist."""
+    dlat = within_mi / 69.0
+    dlon = within_mi / (69.0 * max(0.2, cos(radians(lat))))
+    q = (db.table("v_event_base")
+         .select("tevo_event_id, tevo_performer_id, primary_performer_name, venue_city, "
+                 "event_date, venue_lat, venue_lon, event_type")
+         .gte("venue_lat", lat - dlat).lte("venue_lat", lat + dlat)
+         .gte("venue_lon", lon - dlon).lte("venue_lon", lon + dlon)
+         .gte("event_date", start.isoformat()).lte("event_date", end.isoformat())
+         .not_.is_("venue_lat", "null").limit(5000))
+    if event_types:
+        q = q.in_("event_type", event_types)
+    events = q.execute().data or []
+
+    away_map = None
+    if team_side == "away":
+        sports_ids = [int(e["tevo_event_id"]) for e in events
+                      if (e.get("event_type") or "").lower() in _SPORTS_TYPES
+                      and e.get("tevo_event_id") is not None]
+        away_map = _fetch_away_performers(db, sports_ids)
+
+    tours = rank_tours_near(events, lat, lon, within_mi, min_shows,
+                            team_side=team_side, away_map=away_map)
+    all_ids = [ev["event_id"] for t in tours for ev in t["events"]]
+    pop = fetch_event_popularity(db, all_ids)
+    pricing = fetch_event_pricing(db, all_ids)
+    for t in tours:
+        eids = [ev["event_id"] for ev in t["events"]]
+        t["popularity"] = round(max((pop.get(i, 0.0) for i in eids), default=0.0), 4)
+        getins = [pricing[i]["getin"] for i in eids
+                  if pricing.get(i) and pricing[i].get("getin") is not None]
+        t["price_from"] = round(min(getins)) if getins else None
+        t["we_own"] = any((pricing.get(i) or {}).get("owned", 0) > 0 for i in eids)
+
+    pops = sorted(t["popularity"] for t in tours)
+    thr = max(0.4, pops[min(len(pops) - 1, len(pops) * 2 // 3)]) if pops else None
+    for t in tours:
+        t["hot"] = bool(thr is not None and t["popularity"] >= thr)
+
+    tours.sort(key=lambda t: (-t["nearby_shows"], -t["popularity"], t["nearest_mi"]))
+    return {
+        "home": {"lat": lat, "lon": lon},
+        "within_mi": within_mi,
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "count": len(tours),
+        "tours": tours[:limit],
+    }

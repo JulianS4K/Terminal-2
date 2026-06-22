@@ -15,7 +15,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Home</title>
-  <link rel="stylesheet" href="style.css?v=20260608" />
+  <link rel="stylesheet" href="style.css?v=20260620c" />
 </head>
 <body data-page="home">
 
@@ -74,10 +74,11 @@
         </div>
         <div class="ctrl-group">
           <span class="ctrl-lbl">WINDOW</span>
-          <button class="ctrl-btn is-active" data-wdays="7">7d</button>
+          <button class="ctrl-btn"           data-wdays="7">7d</button>
           <button class="ctrl-btn"           data-wdays="15">15d</button>
-          <button class="ctrl-btn"           data-wdays="30">30d</button>
+          <button class="ctrl-btn is-active" data-wdays="30">30d</button>
           <button class="ctrl-btn"           data-wdays="180">180d</button>
+          <button class="ctrl-btn"           data-wdays="365">365d</button>
         </div>
         <div class="ctrl-group">
           <span class="ctrl-lbl">SEGMENT</span>
@@ -101,7 +102,7 @@
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260608"></script>
-  <script src="home.js?v=20260608"></script>
+  <script src="nav.js?v=20260620b"></script>
+  <script src="home.js?v=20260620"></script>
 </body>
 </html>

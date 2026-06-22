@@ -3,8 +3,11 @@
 // Movers panel reads `event_movers_index` via Path-C RPCs (mig 20260527260000):
 //   get_event_movers_v2(source, window_days, category, limit)
 //   get_event_movers_index_summary(source, window_days)
-// Coverage band, full movers table (source / window / segment controls), and
-// owned-events list all derive from the v2 rows.
+// Coverage band and the full movers table (source / window / segment controls)
+// derive from the v2 rows. The owned-events panel is INDEPENDENT — it reads
+// get_owned_events_upcoming(30) (mig 20260620000000) so it reflects the whole
+// owned book, not just whichever events are in the movers index for the current
+// toggle.
 //
 // Semantic shift from the prior /api/broker/movers?window_hours= path:
 //   • OLD: events that moved in the last N hours (rolling-window delta).
@@ -22,7 +25,10 @@
 
   const state = {
     source: 'merged',         // 'merged' | 'evo' | 'sg' | 'td_sh' | 'td_gt' | 'td_vd'
-    windowDays: 7,            // 7 | 15 | 30 | 180 (rpc-supported buckets)
+    windowDays: 30,           // 7 | 15 | 30 | 180 | 365 (rpc buckets). Default 30:
+                              //   the near-term 7d/15d horizons are frequently empty
+                              //   (few qualifying movers), so the panel opened to
+                              //   "no movers"; 30d is the richest populated bucket.
     segment: 'all',           // 'all' | 'owned'
     rows: [],
     sortKey: 'delta_market_pct',
@@ -40,6 +46,10 @@
     // Top-50 chart fires its own RPC, independent of movers — runs in parallel.
     wireChartTabs();
     renderMarketChart().catch(e => console.error('[sgChart]', e));
+    // Owned-events panel ("NEXT 30 DAYS") has its OWN RPC — it must reflect the
+    // whole owned book, not just whichever events happen to be in the movers
+    // index for the current source/window toggle. Runs in parallel with movers.
+    loadOwnedEvents().catch(e => console.error('[ownedEvents]', e));
     load();
   }
 
@@ -79,20 +89,31 @@
     const pager = document.getElementById('watchlistPager');
     if (!body) return;
 
+    // Autohide past events: daysUntil < 0 means the event is more than ~a day
+    // in the past (day-of stays visible at 0). Unknown dates (null) are kept.
+    const items = _wlItems.filter(it => {
+      const d = T.daysUntil(it.occurs_at_local);
+      return d === null || d >= 0;
+    });
+    const hidden = _wlItems.length - items.length;
+
     if (countEl) {
       const dLbl = _wlBasis === 'bell' ? ' · Δ since opening bell (12:00 ET)'
                  : _wlBasis === '24h'  ? ' · Δ vs 24h ago' : '';
-      countEl.textContent = _wlItems.length ? `${_wlItems.length} events${dLbl}` : '';
+      const hLbl = hidden ? ` · ${hidden} past hidden` : '';
+      countEl.textContent = items.length ? `${items.length} events${dLbl}${hLbl}` : '';
     }
-    if (!_wlItems.length) {
-      body.innerHTML = '<div class="empty">No tracked events yet — open an event and tap ★ Track to add it.</div>';
+    if (!items.length) {
+      body.innerHTML = _wlItems.length
+        ? '<div class="empty">All tracked events are in the past.</div>'
+        : '<div class="empty">No tracked events yet — open an event and tap ★ Track to add it.</div>';
       if (pager) pager.hidden = true;
       return;
     }
 
-    const pages = Math.ceil(_wlItems.length / WL_PAGE_SIZE);
+    const pages = Math.ceil(items.length / WL_PAGE_SIZE);
     _wlPage = Math.max(0, Math.min(_wlPage, pages - 1));
-    const slice = _wlItems.slice(_wlPage * WL_PAGE_SIZE, (_wlPage + 1) * WL_PAGE_SIZE);
+    const slice = items.slice(_wlPage * WL_PAGE_SIZE, (_wlPage + 1) * WL_PAGE_SIZE);
 
     const dHint = _wlBasis === 'bell' ? 'since today’s 12:00 ET open' : 'vs 24h ago';
     const tbl = document.createElement('table');
@@ -123,9 +144,19 @@
         const pct = (m.d_getin_pct != null) ? ` <span class="small">(${T.fmtPct(+m.d_getin_pct, 1)})</span>` : '';
         dInner = `${fmtDelta(+m.d_getin)}${pct}`;
       }
+      // EVO/TEvo events deep-link to the event page; SeatGeek-native events
+      // (e.g. World Cup) have no TEvo page, so render the title as plain text
+      // with an "SG" badge. Row actions key on whichever id the row carries.
+      const isSg = it.tevo_event_id == null;
+      const title = escapeHtml(it.event_name || (isSg ? ('SG ' + it.sg_event_id) : ('Event ' + it.tevo_event_id)));
+      // SG-native rows (e.g. World Cup) open the event page in SeatGeek mode (?sg=).
+      const titleHtml = isSg
+        ? `<a href="event.html?sg=${it.sg_event_id}">${title}</a> <span class="src-badge sg" title="SeatGeek-native (FIFA primary)">SG</span>`
+        : `<a href="event.html?event=${it.tevo_event_id}">${title}</a>`;
+      const dataAttrs = `data-tevo="${it.tevo_event_id ?? ''}" data-sg="${it.sg_event_id ?? ''}"`;
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="event.html?event=${it.tevo_event_id}">${escapeHtml(it.event_name || ('Event ' + it.tevo_event_id))}</a>
+        <td>${titleHtml}
             ${venueLine ? `<div class="muted small">${escapeHtml(venueLine)}</div>` : ''}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${money(m && m.getin)}</td>
@@ -134,11 +165,11 @@
         <td class="num">${money(m && m.p90)}</td>
         <td class="num">${m && m.tickets != null ? T.fmtNum(m.tickets) : '—'}</td>
         <td class="num">
-          <button class="wl-alert-btn ${it.alert_enabled ? 'on' : 'off'}" data-id="${it.tevo_event_id}"
+          <button class="wl-alert-btn ${it.alert_enabled ? 'on' : 'off'}" ${dataAttrs}
                   title="${it.alert_enabled ? 'Alerts on — click to mute' : 'Alerts muted — click to enable'}">
             ${it.alert_enabled ? '🔔' : '🔕'}</button>
         </td>
-        <td class="num"><button class="wl-remove-btn" data-id="${it.tevo_event_id}" title="Remove from watchlist">✕</button></td>`;
+        <td class="num"><button class="wl-remove-btn" ${dataAttrs} title="Remove from watchlist">✕</button></td>`;
       tb.appendChild(tr);
     });
     body.innerHTML = '';
@@ -162,23 +193,35 @@
 
   function wireWatchlistRowActions(scope) {
     const Auth = window.TerminalAuth;
+    // A row is keyed by its TEvo id (EVO primary) when present, else its
+    // SeatGeek id (secondary) — pick the matching RPC variant per row.
+    const rowKey = b => {
+      const tevo = b.getAttribute('data-tevo');
+      const sg = b.getAttribute('data-sg');
+      return tevo ? { isSg: false, id: parseInt(tevo, 10) } : { isSg: true, id: parseInt(sg, 10) };
+    };
+    const matches = (x, k) => k.isSg ? x.sg_event_id === k.id : x.tevo_event_id === k.id;
     scope.querySelectorAll('.wl-remove-btn').forEach(b =>
       b.addEventListener('click', async () => {
-        const id = parseInt(b.getAttribute('data-id'), 10);
+        const k = rowKey(b);
         b.disabled = true;
-        const res = await Auth.client.rpc('event_watchlist_set', { p_event_id: id, p_on: false });
+        const res = k.isSg
+          ? await Auth.client.rpc('event_watchlist_set_sg', { p_sg_event_id: k.id, p_on: false })
+          : await Auth.client.rpc('event_watchlist_set',    { p_event_id: k.id,    p_on: false });
         if (res.error) { b.disabled = false; console.error('[watchlist] remove', res.error); return; }
-        _wlItems = _wlItems.filter(x => x.tevo_event_id !== id);
+        _wlItems = _wlItems.filter(x => !matches(x, k));
         renderWatchlistPage();
       }));
     scope.querySelectorAll('.wl-alert-btn').forEach(b =>
       b.addEventListener('click', async () => {
-        const id = parseInt(b.getAttribute('data-id'), 10);
-        const item = _wlItems.find(x => x.tevo_event_id === id);
+        const k = rowKey(b);
+        const item = _wlItems.find(x => matches(x, k));
         if (!item) return;
         const next = !item.alert_enabled;
         b.disabled = true;
-        const res = await Auth.client.rpc('event_watchlist_set_alert', { p_event_id: id, p_on: next });
+        const res = k.isSg
+          ? await Auth.client.rpc('event_watchlist_set_alert_sg', { p_sg_event_id: k.id, p_on: next })
+          : await Auth.client.rpc('event_watchlist_set_alert',    { p_event_id: k.id,    p_on: next });
         b.disabled = false;
         if (res.error) { console.error('[watchlist] alert', res.error); return; }
         item.alert_enabled = next;
@@ -220,8 +263,7 @@
       const summary = summaryRes.data || [];
 
       // Reshape v2 columns to the legacy field aliases that renderMovers /
-      // renderCoverage / renderOwnedEvents consume. Fields not in v2 become null
-      // and render as "—".
+      // renderCoverage consume. Fields not in v2 become null and render as "—".
       state.rows = rawRows.map(reshapeV2Row);
       state.gapMap = new Map();   // reset on each load
 
@@ -229,7 +271,8 @@
       renderSummaryStrip(summary);
       renderCoverage(state.rows);
       renderMovers();
-      renderOwnedEvents(state.rows);
+      // NOTE: the owned-events panel is NOT rendered here — it loads independently
+      // via loadOwnedEvents() so the movers source/window toggle doesn't reshape it.
       // Phase 2: batch-load gap alerts for all mover event_ids, then re-render
       // so GapChips appear in the table without blocking the initial paint.
       loadGapMap(state.rows).catch(e => console.error('[gapMap]', e));
@@ -268,14 +311,16 @@
       const cov  = s.data_coverage_pct != null ? ` · ${Math.round(s.data_coverage_pct)}% cov` : '';
       const turn = (+s.entries_24h || 0) + (+s.exits_24h || 0);
       const turnStr = turn ? ` · ${turn} Δ/24h` : '';
-      return `<span class="badge" title="source=${s.source} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category || '')}: ${sz}${cov}${turnStr}</span>`;
+      return `<span class="badge" title="source=${escapeHtml(s.source)} window=${s.window_days}d">${escapeHtml(s.source)}·${s.window_days}d·${escapeHtml(s.category || '')}: ${sz}${cov}${turnStr}</span>`;
     }).join(' ');
   }
 
   // ---------- Phase 2: GapChip batch loader ----------
-  // discovery_gap_alerts has no RLS (relrowsecurity=false) — direct read OK.
-  // Queries all active gaps for the current mover rows in one round-trip, then
-  // re-renders the movers table so gap badges appear in event name cells.
+  // Queries active gaps for the current mover rows via get_discovery_gaps
+  // (mig 20260620010000), then re-renders the movers table so gap badges appear
+  // in event name cells. NOTE: a prior direct .from('discovery_gap_alerts') read
+  // failed silently — that table is RLS-on with no grant for `authenticated`, so
+  // the chips never loaded; the curated RPC is the working read path.
 
   async function loadGapMap(rows) {
     if (!rows || !rows.length) return;
@@ -283,13 +328,12 @@
     if (!Auth || !Auth.client) return;
     const ids = [...new Set(rows.map(r => r.event_id).filter(Boolean))];
     if (!ids.length) return;
-    const { data, error } = await Auth.client
-      .from('discovery_gap_alerts')
-      .select('event_id,gap_type,detail,signal_score')
-      .in('event_id', ids)
-      .is('resolved_at', null)
-      .order('signal_score', { ascending: false });
-    if (error || !data) return;
+    const { data, error } = await Auth.client.rpc('get_discovery_gaps', {
+      p_gap_type:  null,
+      p_limit:     500,
+      p_event_ids: ids,
+    });
+    if (error || !data) return;   // RPC missing/forbidden → chips simply absent
     const m = new Map();
     data.forEach(g => {
       if (!m.has(g.event_id)) m.set(g.event_id, []);
@@ -602,60 +646,86 @@
   }
 
   // ---------- Owned events list (next 30d) ----------
+  //
+  // Independent of the movers panel. Reads get_owned_events_upcoming(30)
+  // (mig 20260620000000) — the WHOLE owned book over the next 30 days, straight
+  // from latest_event_metrics, not the movers index. (The movers index only holds
+  // events that qualify as movers for one source×window, so deriving this panel
+  // from it hid ~95% of owned upcoming inventory and made the list jump around
+  // when the unrelated movers toggle changed.) The RPC LEFT JOINs the merged
+  // movers index so the %Δ / Category cols still populate when an owned event is
+  // also a mover; otherwise they render "—".
+
+  const OWNED_HORIZON_DAYS = 30;
+
+  async function loadOwnedEvents() {
+    const body = document.getElementById('ownedEventsBody');
+    const countEl = document.getElementById('ownedEventCount');
+    if (!body) return;
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading…</div>';
+
+    const res = await Auth.client.rpc('get_owned_events_upcoming', { p_days: OWNED_HORIZON_DAYS });
+    if (res.error) {
+      // RPC not applied yet → honest empty state, no crash.
+      if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+        body.innerHTML = '<div class="empty">owned-events feed not enabled yet</div>';
+        if (countEl) countEl.textContent = '';
+        return;
+      }
+      console.error('[ownedEvents] rpc', res.error);
+      body.innerHTML = '<div class="empty">failed to load owned events</div>';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    renderOwnedEvents(res.data || []);
+  }
 
   function renderOwnedEvents(rows) {
     const body = document.getElementById('ownedEventsBody');
     const countEl = document.getElementById('ownedEventCount');
+    if (!body) return;
     body.innerHTML = '';
-    const now = Date.now();
-    const day = 86400000;
-    const upcoming = rows.filter(r => {
-      if (!((+r.cur_owned_tix || 0) > 0)) return false;
-      const t = new Date(r.occurs_at_local || r.occurs_at).getTime();
-      if (!Number.isFinite(t)) return false;
-      const days = (t - now) / day;
-      return days >= -1 && days <= 30;
-    }).sort((a, b) => {
-      // Soonest-first by event date.
-      const ta = new Date(a.occurs_at_local || a.occurs_at).getTime();
-      const tb = new Date(b.occurs_at_local || b.occurs_at).getTime();
-      if (!Number.isFinite(ta)) return 1;
-      if (!Number.isFinite(tb)) return -1;
-      return ta - tb;
-    });
 
-    countEl.textContent = upcoming.length ? `${upcoming.length} events` : '';
-
-    if (!upcoming.length) {
+    // RPC already filters to owned + within-horizon, soonest-first.
+    if (countEl) countEl.textContent = rows.length ? `${rows.length} events` : '';
+    if (!rows.length) {
       body.innerHTML = '<div class="empty">no owned events in the next 30d</div>';
       return;
     }
 
-    // v2 RPC: cur_owned_med / delta_owned_val not available.
-    // Show qty + cur price (cur_market_med alias) + %Δ + mover chip.
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
         <th>Event</th>
         <th class="num">T-days</th>
-        <th class="num">Owned qty</th>
-        <th class="num">Cur $</th>
-        <th class="num">%Δ</th>
+        <th class="num" title="Tickets we own across all sources">Owned qty</th>
+        <th class="num" title="Median current listing price — market">Cur $</th>
+        <th class="num" title="Median price of OUR owned listings">Owned $</th>
+        <th class="num" title="Merged-mover price delta, when this owned event is also a mover">%Δ</th>
         <th class="num">Category</th>
       </tr></thead>
       <tbody></tbody>
     `;
     const tb = tbl.querySelector('tbody');
-    upcoming.slice(0, 30).forEach(r => {
-      const ot = +r.cur_owned_tix || 0;
-      const d  = T.daysUntil(r.occurs_at_local || r.occurs_at);
-      const mDPct = r.delta_market_pct != null ? +r.delta_market_pct : NaN;
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    rows.slice(0, 50).forEach(r => {
+      const ot = +r.owned_tickets_count || 0;
+      const d  = (r.days_to_event != null) ? r.days_to_event : T.daysUntil(r.occurs_at_local);
+      const mDPct = r.price_delta_pct != null ? +r.price_delta_pct : NaN;
+      const venueLine = r.venue_name ? `<div class="muted small">${escapeHtml(r.venue_name)}</div>` : '';
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.name || r.event_name || ('Event ' + r.event_id))}</a></td>
+        <td><a href="event.html?event=${r.event_id}">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a> ${T.temporalChipHtml(r.occurs_at_local)}${venueLine}</td>
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num ours">${T.fmtNum(ot)}</td>
-        <td class="num">${r.cur_market_med != null ? '$' + T.fmtNum(Math.round(+r.cur_market_med)) : '—'}</td>
+        <td class="num">${money(r.retail_median)}</td>
+        <td class="num ours">${money(r.owned_median_retail)}</td>
         <td class="num ${pctCls(mDPct)}">${Number.isFinite(mDPct) ? T.fmtPct(mDPct, 1) : '—'}</td>
         <td class="muted small">${escapeHtml((r.category || '—').replace(/_/g, ' '))}</td>
       `;

@@ -15,7 +15,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Discovery</title>
-  <link rel="stylesheet" href="style.css?v=20260608" />
+  <link rel="stylesheet" href="style.css?v=20260620c" />
 </head>
 <body data-page="discovery">
 
@@ -93,6 +93,33 @@
       <div id="tevoBlindSpotsBody"><div class="empty">loading…</div></div>
     </section>
 
+    <!-- SG-selling / EVO-tracking panel — TRACK_BLINDSPOT events (≥14d out,
+         owned=0) where SG is selling but we hold 0. SG demand alongside the
+         EVO/TEvo live book. Backed by get_sg_blindspot_evo_tracking RPC
+         (migs 20260609170000 + 20260609180000). SG sold-gross ranked. -->
+    <section id="sg-evo-blind-spots">
+      <div class="panel-title row">
+        <span>SG SELLING, WE'RE NOT IN — EVO TRACKING</span>
+        <span class="muted small" id="sgEvoBlindSpotsCount"></span>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">
+        Events where SeatGeek has realized sales but we hold 0 inventory
+        (<code>TRACK_BLINDSPOT</code>, ≥14 days out). SG demand (sold qty / gross /
+        median) shown beside the EVO/TEvo live book (get-in / median / p90 / depth) —
+        SG only exposes sales here, so EVO is the live ask-side we track &amp; price against.
+        Ranked by SG sold $.
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SHOW</span>
+          <button class="ctrl-btn"           data-sgevo-limit="25">Top 25</button>
+          <button class="ctrl-btn is-active" data-sgevo-limit="50">Top 50</button>
+          <button class="ctrl-btn"           data-sgevo-limit="100">Top 100</button>
+        </div>
+      </div>
+      <div id="sgEvoBlindSpotsBody"><div class="empty">loading…</div></div>
+    </section>
+
     <!-- Returning-entity panel — performers + venues with past activity →
          gap → upcoming events. Backed by get_returning_entities RPC
          (mig 20260519200000). v1: TEvo perf+venue + SG venue;
@@ -139,7 +166,7 @@
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260608"></script>
-  <script src="discovery.js?v=20260608"></script>
+  <script src="nav.js?v=20260620b"></script>
+  <script src="discovery.js?v=20260620"></script>
 </body>
 </html>
