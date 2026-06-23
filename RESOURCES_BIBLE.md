@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.0.0 (2026-06-19 dense rewrite; history in git/CHANGELOG)
+> **Doc version:** v2.3.0 (2026-06-20; +alerts engine v2 (volatility-normalized + hysteresis) + v_event_price_vol/alert_state — mig 20260620; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -89,7 +89,7 @@ Performer: `entity_performer_map` (**start here** — PK tevo_performer_id, espn
 `weather_observations` (232 MB; Open-Meteo; `is_forecast` flag), `nws_alerts` (250 MB), `nws_alert_zones`/`_references`/`_pending`, `weather_forecast_pending`, `venue_nws_points_pending`.
 
 ### 2.8 Performer/venue metadata
-`performer_metadata` (branding + espn_team_id), `performer_wikipedia`, `performer_home_venues`, `performer_zones`(+`_rules`)/`zone_rules`, `important_x_accounts`, `why_signals`, `venue_assets`, `venue_section_map` (+ `seatmap_manifest`).
+`performer_metadata` (branding + espn_team_id), `performer_wikipedia`, `performer_home_venues`, `performer_zones`(+`_rules`)/`zone_rules`, `important_x_accounts`, `why_signals`, `venue_assets`, `venue_section_map` (+ `seatmap_manifest`; builder state `venue_section_map_build_state` — per-(venue,platform) attempt log so `build_venue_section_map_batch` round-robins instead of starving on zero-row combos, mig 20260620160000).
 
 ### 2.9 Chat/NLU
 `chat_corpus`, `chat_aliases`, `chat_term_freq*`, `chat_audit_findings`, `chat_rate_limits`/`_stopwords`/`_glossary_known`.
@@ -120,7 +120,10 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 ## 4. Views (178; patterns)
 - Canonical: `v_canonical_{event,performer,venue}`, `v_canonical_coverage[_v2]`/`_drift`, `sg_canonical_match_view`, `cross_source_{coverage,event_audit}`.
 - Event-context: `v_event_*` (~40 — full/sports/weather/injuries/espn_state/calendar/competitors/rivalries/velocity/why_context/…). Product-boundary: `broker_event_*` (full) vs `retail_event_*` (S4K-owned, no wholesale).
-- Listings/orders: `unified_listings`, `unified_orders`(+`_by_event`), `our_orders`(+`_by_event`/`_with_net`), `v_market_listings_by_event`, `v_pricing_cross_source`.
+- Listings/orders: `unified_listings`, `unified_orders`(+`_by_event`), `our_orders`(+`_by_event`/`_with_net`), `v_market_listings_by_event`, `v_pricing_cross_source`, `v_event_price_arbitrage` (TEvo↔SG secondary).
+- Cross-market signals (mig 20260620): `v_event_primary_vs_secondary` (AXS primary face vs TEvo/SG secondary getin → `flip_margin`/below-face dump signal; pinned to `axs_events.last_snapshot_id` for speed); `v_event_price_index_daily`/`_latest` (per-category ticket price index over `event_listing_snapshot_daily`; base-100 + DoD/WoW; E1 settlement substrate). RPC `get_event_comps(tevo_event_id)` → jsonb {target, performer/venue baselines, same-performer (tour)+same-venue comps}.
+- 24h price forecast (mig 20260620170000): RPC `predict_event_median_24h(tevo_event_id)` → jsonb {current_median, predicted_median_24h, lo/hi band, spike_up_prob_pct} — naive anchor + empirical category×days-to-event drift. Coeffs `price_forecast_coeffs_24h` (rebuilt weekly via `rebuild_price_forecast_coeffs_24h()` / cron `price_forecast_coeffs_weekly`); bucket helper `price_dte_bucket(int)`. Backtest: 24h median is a near-random walk (naive 3% MAPE, momentum worse); only structure is the near-event dispersion/upside-spike tail.
+- Alerts engine v2 (mig 20260620200000, stock-style): `compute_alerts_tick()` price rules are now **volatility-normalized + hysteresis** off `v_event_price_vol` (per-event `sigma_daily` = own ATR; 14d range; trailing drawdown; z-scored 24h move). Rules: `getin_zscore_move` (|z|≥2.5σ, replaces fixed ±10%), `getin_breakout` (14d high/low), `getin_trailing_drawdown` (vol-aware peak drawdown), `competing_event_added` (crowded market ≥5), `cross_source_mispricing` (event-level SG-vs-TEvo median gap ≥30% w/ depth, mig 20260620230000 — fast `v_event_price_arbitrage`; replaces the parked section-level rule). Edge-trigger state in `alert_state` (fire on inactive→active, clear at exit band — kills flip-flop: 837 meet-condition → 1 fires/tick). Plus discrete rules + `primary_flip_opportunity`/`secondary_below_face` (mig 20260620180000). **Section-level `arbitrage_opportunity` still parked** (source `v_arbitrage_opportunities` >55s — needs an SG section-aggregate table; the event-level `cross_source_mispricing` rule covers the signal meanwhile). **Perf (mig 20260620210000):** vol stats precomputed into matview `mv_event_price_vol` (refresh cron `mv_event_price_vol_refresh` `8-59/15`, ~16s); `v_event_price_vol` view now reads it, so the tick is ~12s (was failing at 120s). `compute_alerts_tick_15min` cron **ENABLED**.
 - SG: `seatgeek_event_latest`, `v_sg_*` (sales_by_{event,section}, broker_sales_by_*, historic_*, events_by_status, token_budget, broker_429_health, blindspot_*).
 - Health/ops: `v_cron_health`, `v_pg_net_queue_health`, `v_bot_chat_unresolved`, `v_dashboard_{coverage,freshness}`, `v_macro_indicators_{health,latest}`, `v_td_poll_health`.
 - AXS: `v_axs_{listings,seat_groups,events_classified,venues_mapped,venues_unmapped}`.
@@ -149,7 +152,7 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 
 ## 9. HTTP API surface (`app.py`; full: `grep '@app\.\(get\|post\|delete\)' app.py`)
 - **Public storefront `/api/store/*`** (D1): `events`(+`/{id}`,`/zones`,`/near`), `search`, `movers`, `share`(+CRUD), `reserve` (MOCK — never charges). `/api/public/config` (anon key).
-- **Terminal/broker `/api/broker/*`** (A1+D0, 40+): `event/{id}/{overview,zones,section-metrics,raw-tevo,chart-data,cadences,espn}`, `movers` (v2 `?window_days=&source=&category=`), `performer/{id}/assets`, `news`, `leagues`. Plus `/api/{events,performers,venues,configurations,portfolio,watchlist}`, `/api/axs/event/{id}/{listings,sections,series}`, `/api/collect/run`, `/api/admin/*`.
+- **Terminal/broker `/api/broker/*`** (A1+D0, 40+): `event/{id}/{overview,zones,section-metrics,raw-tevo,chart-data,cadences,espn,signals}` (`signals` bundles `predict_event_median_24h` + `v_event_primary_vs_secondary` + `get_event_comps` for the terminal Signals panel), `movers` (v2 `?window_days=&source=&category=`), `performer/{id}/assets`, `news`, `leagues`. `alerts` (global feed: recent `event_alerts` rows enriched w/ event name/venue/date; `?hours=&severity=&rule=&limit=`). Plus `/api/{events,performers,venues,configurations,portfolio,watchlist}`, `/api/axs/event/{id}/{listings,sections,series}`, `/api/collect/run`, `/api/admin/*`.
 - DB platform statement_timeout 120s (overridable); MCP runs service_role (NO timeout cap → bound audit scans).
 
 ## 10. Cross-cutting data RULES (durable)

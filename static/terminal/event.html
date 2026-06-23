@@ -83,8 +83,6 @@
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
-      <span class="event-tabs-sep" aria-hidden="true">|</span>
-      <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">🔔 Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
     </nav>
 
     <div class="tab-pane active" id="paneOverview" role="tabpanel">
@@ -130,6 +128,14 @@
         <span class="kpi-val" id="kpiOwnedShareVal">—</span>
         <span class="kpi-sub" id="kpiOwnedShareSub"></span>
       </div>
+    </section>
+
+    <section id="signals-panel">
+      <div class="panel-title row">
+        <span>SIGNALS — 24h forecast · flip vs face · comps</span>
+        <span class="muted small" id="signalsMeta"></span>
+      </div>
+      <div id="signalsBody"><div class="empty">Loading…</div></div>
     </section>
 
     <section id="last-snapshot">

@@ -1389,13 +1389,21 @@ def broker_news(
                   .eq("tevo_event_id", event_id).limit(1).execute().data or [])
         if xref:
             resolved_league = xref[0]["espn_league"]
-            snap = (db.table("espn_event_snapshots")
-                      .select("home_team_id, away_team_id")
-                      .eq("espn_event_id", xref[0]["espn_event_id"])
-                      .order("captured_at", desc=True).limit(1).execute().data or [])
-            if snap:
+            # Forward-look first: espn_event_snapshots is gameday-scope only, so for an
+            # upcoming event it returns nothing and the news panel loses team-scoping.
+            # espn_event_date_lookup carries home/away for every scheduled game; fall back
+            # to the latest snapshot for past games. (PROJECT_BIBLE §3 forward-look rule.)
+            teams_src = (db.table("espn_event_date_lookup")
+                           .select("home_team_id, away_team_id")
+                           .eq("espn_event_id", xref[0]["espn_event_id"]).limit(1).execute().data or [])
+            if not teams_src:
+                teams_src = (db.table("espn_event_snapshots")
+                               .select("home_team_id, away_team_id")
+                               .eq("espn_event_id", xref[0]["espn_event_id"])
+                               .order("captured_at", desc=True).limit(1).execute().data or [])
+            if teams_src:
                 for k in ("home_team_id", "away_team_id"):
-                    v = snap[0].get(k)
+                    v = teams_src[0].get(k)
                     if v: resolved_teams.append(str(v))
     elif team_ids:
         resolved_teams = [t.strip() for t in team_ids.split(",") if t.strip()]
@@ -2744,17 +2752,35 @@ def broker_event_chart_data(
     if xref:
         x = xref[0]
         home_league = x["espn_league"]
-        snap = (
-            db.table("espn_event_snapshots")
+        # Resolve home/away ESPN team ids. espn_event_snapshots is GAMEDAY-SCOPE only
+        # (no row exists until ~game day), so for any upcoming event it returns nothing
+        # and the injury / standings / last-5 overlays silently go empty — the most
+        # common case a broker charts. espn_event_date_lookup is the forward-look table
+        # (home/away team id for every scheduled game), so resolve from it FIRST and fall
+        # back to the latest gameday snapshot only for past games.
+        # (PROJECT_BIBLE §3 — "ESPN team-ID resolution for forward-look events".)
+        dl = (
+            db.table("espn_event_date_lookup")
             .select("home_team_id,away_team_id")
-            .eq("espn_event_id", x["espn_event_id"])
-            .order("captured_at", desc=True).limit(1)
+            .eq("espn_event_id", x["espn_event_id"]).limit(1)
             .execute()
         ).data or []
-        if snap:
-            home_team_id = snap[0].get("home_team_id")
-            away_team_id = snap[0].get("away_team_id")
+        if dl:
+            home_team_id = dl[0].get("home_team_id")
+            away_team_id = dl[0].get("away_team_id")
             home_slug = away_slug = x["espn_slug"]
+        if not (home_team_id or away_team_id):
+            snap = (
+                db.table("espn_event_snapshots")
+                .select("home_team_id,away_team_id")
+                .eq("espn_event_id", x["espn_event_id"])
+                .order("captured_at", desc=True).limit(1)
+                .execute()
+            ).data or []
+            if snap:
+                home_team_id = snap[0].get("home_team_id")
+                away_team_id = snap[0].get("away_team_id")
+                home_slug = away_slug = x["espn_slug"]
 
     def _team_standings(team_id: str | None) -> list:
         if not team_id or not home_league:
@@ -2789,27 +2815,27 @@ def broker_event_chart_data(
                        "seed": r.get("playoff_seed"), "rec": r.get("record_summary")}
                       for r in away_standings_rows]
 
-    # 3) Injury rows. Originally filtered is_baseline=false ("real status flips
-    # only") but espn-collect's is_baseline detection only works for MLB+NHL —
-    # NBA/NFL/MLS/WNBA/WC always come back with is_baseline=true, so the strict
-    # filter hid 100% of their injury data. Relaxed to include baseline rows
-    # too. Front-end tags each marker with `is_change` so the user can tell
-    # status flips apart from initial-baseline injuries (copilot lane: fix
-    # the upstream is_baseline detection in espn-collect).
+    # 3) Injury rows — HOME TEAM ONLY (operator directive 2026-06-20: keep the
+    # injuries overlay local to the home team; the home roster drives the event's
+    # local demand). away-team injuries are intentionally excluded here.
+    # Originally filtered is_baseline=false ("real status flips only") but
+    # espn-collect's is_baseline detection only works for MLB+NHL — NBA/NFL/MLS/
+    # WNBA/WC always come back with is_baseline=true, so the strict filter hid 100%
+    # of their injury data. Relaxed to include baseline rows too; the front-end tags
+    # each marker with `is_change` so status flips read apart from baseline rows.
     # CRITICAL: filter by espn_league too — espn_team_id is league-scoped
     # (id "18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18).
-    # Without the league filter we'd pull 229 rows when only 12 are real.
     inj_rows = (
         db.table("espn_injuries_snapshots")
         .select("captured_at,athlete_name,status,injury_type,short_comment,espn_team_id,is_baseline")
-        .in_("espn_team_id", [t for t in (home_team_id, away_team_id) if t])
+        .eq("espn_team_id", home_team_id)
         .eq("espn_league", home_league or "")
         .gte("captured_at", since_iso)
         .order("captured_at")
         .execute()
-    ).data or [] if (home_team_id or away_team_id) and home_league else []
+    ).data or [] if home_team_id and home_league else []
     injuries = [{"t": r["captured_at"], "athlete": r.get("athlete_name"),
-                 "status": r.get("status"), "team": "home" if r.get("espn_team_id") == home_team_id else "away",
+                 "status": r.get("status"), "team": "home",
                  "comment": r.get("short_comment"),
                  "is_change": (r.get("is_baseline") is False)}  # true = real status flip; false = baseline row
                 for r in inj_rows]
@@ -3107,6 +3133,72 @@ def broker_event_chart_data(
             "zones":     zone_series_list,
         },
     }
+
+
+@app.get("/api/broker/event/{event_id}/signals")
+def broker_event_signals(event_id: int, _=Depends(require_auth)):
+    """Consolidated trading signals for one event, for the terminal 'Signals' panel:
+      - forecast_24h: predict_event_median_24h (naive anchor + empirical cat x DTE band + spike prob)
+      - primary_vs_secondary: AXS face vs secondary get-in (flip margin / below-face dump risk)
+      - comps: get_event_comps (performer/venue baselines + tour & venue comparables)
+    Each block degrades to null independently so one slow/missing source never blanks the panel.
+    """
+    db = require_sb()
+
+    def _safe(fn):
+        try:
+            return fn()
+        except Exception:
+            return None
+
+    forecast = _safe(lambda: db.rpc("predict_event_median_24h", {"p_event_id": event_id}).execute().data)
+    pvs_rows = _safe(lambda: db.table("v_event_primary_vs_secondary")
+                     .select("axs_primary_getin,best_secondary_getin,flip_margin,flip_margin_pct,signal")
+                     .eq("tevo_event_id", event_id).limit(1).execute().data)
+    comps = _safe(lambda: db.rpc("get_event_comps", {"p_tevo_event_id": event_id}).execute().data)
+
+    return {
+        "event_id": event_id,
+        "forecast_24h": forecast,
+        "primary_vs_secondary": (pvs_rows[0] if pvs_rows else None),
+        "comps": comps,
+    }
+
+
+@app.get("/api/broker/alerts")
+def broker_alerts(hours: int = 48, severity: str | None = None, rule: str | None = None,
+                  limit: int = 100, _=Depends(require_auth)):
+    """Global alerts feed — recent fired rows from event_alerts (the v2 volatility/hysteresis
+    + discrete rules) enriched with event name/venue/date, newest first. The cross-event
+    'what should I look at now' surface. Filterable by severity (info|warn|critical) and rule.
+    """
+    db = require_sb()
+    hours = max(1, min(int(hours), 168))
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    q = (db.table("event_alerts")
+         .select("id,rule_key,tevo_event_id,severity,message,payload,fired_at")
+         .gte("fired_at", since)
+         .order("fired_at", desc=True)
+         .limit(max(1, min(int(limit), 500))))
+    if severity in ("info", "warn", "critical"):
+        q = q.eq("severity", severity)
+    if rule:
+        q = q.eq("rule_key", rule)
+    rows = q.execute().data or []
+
+    ids = list({r["tevo_event_id"] for r in rows if r.get("tevo_event_id")})
+    ev_by_id: dict = {}
+    if ids:
+        ev = (db.table("events").select("id,name,venue_name,occurs_at_local")
+              .in_("id", ids).execute().data) or []
+        ev_by_id = {e["id"]: e for e in ev}
+    for r in rows:
+        e = ev_by_id.get(r.get("tevo_event_id")) or {}
+        r["event_name"] = e.get("name")
+        r["venue_name"] = e.get("venue_name")
+        r["occurs_at_local"] = e.get("occurs_at_local")
+
+    return {"alerts": rows, "count": len(rows), "hours": hours}
 
 
 def _broker_movers_v2(source: str, window_days: int, category=None, include_inactive: bool = False):

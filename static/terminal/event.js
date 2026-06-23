@@ -170,6 +170,7 @@
     loadHeroMoverChip(eventId).catch(e => console.error('[moverChip]', e));
     loadHeroGapChips(eventId).catch(e => console.error('[gapChips]', e));
     loadSourceLinks(eventId).catch(e => console.error('[sourceLinks]', e));
+    loadSignalsPanel(eventId).catch(e => console.error('[signals]', e));
     wireTrackButton(eventId).catch(e => console.error('[track]', e));
     // Each chart fetches its own extended payload at its own window in parallel
     loadChartExtended('price', eventId, _chartPriceHours).catch(e => console.error('[chartExt price]', e));
@@ -322,6 +323,53 @@
 
   // Cross-source markets summary (SeatGeek live + StubHub/VividSeats/Ticketmaster
   // as their data lands), resolved through the AQ hub by get_wc_markets.
+  // Signals panel — consolidated trading signals (24h forecast + spike risk, primary-vs-
+  // secondary flip-vs-face, comps) from /api/broker/event/{id}/signals. Each block renders
+  // only if present; any failure degrades to an empty state so the page is never blocked.
+  async function loadSignalsPanel(eventId) {
+    const body = document.getElementById('signalsBody');
+    const meta = document.getElementById('signalsMeta');
+    if (!body) return;
+    let d;
+    try { d = await T.api(`/api/broker/event/${eventId}/signals`); }
+    catch (e) { body.innerHTML = '<div class="empty">Signals unavailable.</div>'; return; }
+    if (!d) { body.innerHTML = '<div class="empty">Signals unavailable.</div>'; return; }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const cardCss = 'border:1px solid rgba(127,127,127,0.3);border-radius:6px;padding:8px 10px;min-width:150px;flex:1';
+    const hd = t => `<div style="font-size:11px;letter-spacing:.04em;opacity:.7">${t}</div>`;
+    const cards = [];
+
+    const f = d.forecast_24h;
+    if (f && f.current_median != null) {
+      const spike = f.spike_up_prob_pct != null ? ` · spike ↑ ${f.spike_up_prob_pct}%` : '';
+      cards.push(`<div style="${cardCss}">` + hd(`24H FORECAST <span class="muted small">${escapeHtml(f.dte_bucket || '')}</span>`) +
+        `<div style="font-size:18px;font-weight:600;margin:2px 0">${money(f.current_median)} → ${money(f.predicted_median_24h)}</div>` +
+        `<div class="muted small">band ${money(f.lo_24h)}–${money(f.hi_24h)}${spike}</div></div>`);
+    }
+
+    const p = d.primary_vs_secondary;
+    if (p && p.axs_primary_getin != null && p.flip_margin_pct != null) {
+      const below = p.signal === 'below_face';
+      const color = below ? '#f85149' : '#3fb950';
+      cards.push(`<div style="${cardCss}">` + hd(below ? 'BELOW FACE (dump risk)' : 'FLIP vs FACE') +
+        `<div style="font-size:18px;font-weight:600;margin:2px 0;color:${color}">${p.flip_margin_pct > 0 ? '+' : ''}${p.flip_margin_pct}%</div>` +
+        `<div class="muted small">secondary ${money(p.best_secondary_getin)} vs AXS face ${money(p.axs_primary_getin)}</div></div>`);
+    }
+
+    const c = d.comps;
+    if (c && Array.isArray(c.comps) && c.comps.length) {
+      const pb = c.performer_baseline;
+      const base = pb && pb.median_getin != null ? `<div class="muted small">perf baseline get-in ${money(pb.median_getin)}</div>` : '';
+      const top = c.comps.slice(0, 3).map(x =>
+        `<div class="muted small">${escapeHtml(x.name || '')} — ${money(x.getin_price)}${x.same_venue ? ' (same venue)' : ''}</div>`).join('');
+      cards.push(`<div style="${cardCss}">` + hd(`COMPS <span class="muted small">${c.comps.length}</span>`) + base + top + `</div>`);
+    }
+
+    if (!cards.length) { body.innerHTML = '<div class="empty">No signals for this event.</div>'; if (meta) meta.textContent = ''; return; }
+    if (meta) meta.textContent = '';
+    body.innerHTML = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">${cards.join('')}</div>`;
+  }
+
   async function loadWcMarkets(sgId) {
     const Auth = window.TerminalAuth;
     const body = document.getElementById('wcMktBody'), meta = document.getElementById('wcMktMeta');
