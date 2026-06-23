@@ -5,9 +5,24 @@
 -- Touches:  VALIDATE CONSTRAINT on all public NOT VALID foreign keys (54 at
 --           authoring time). No schema shape change; no data mutation.
 -- Pre-reqs: none. Idempotent — re-running only touches still-NOT-VALID FKs.
--- Apply:    NOT APPLIED. A1/operator to apply. Run under a controlled window
---           (some target tables are large — see note). VALIDATE takes only
---           SHARE UPDATE EXCLUSIVE → does NOT block reads or writes.
+-- Apply:    APPLIED to prod 2026-06-23 (operator-authorized), but NOT via this
+--           single DO — the all-in-one transaction exceeds the 60s MCP gateway
+--           (the client reset rolls the whole txn back). Instead run in size-
+--           bounded batches that each commit independently:
+--             1) one DO over all FKs on tables < ~700k rows  -> 54 -> 13
+--             2) espn_athlete_team_history (2.5M) x2          -> -> 11
+--             3) seatgeek_sales/listings_snapshots (13M/17M) one VALIDATE per
+--                call (each ~60-120s; commits just past the client cutoff) -> 5
+--           Result: 54 -> 5. The 5 left are orphan-bearing and were skipped:
+--             performer_wikipedia (152/746) + seatgeek_performer_xref (31/132)
+--               -> performer_metadata(performer_id)
+--             seatgeek_orders_resolved (2/271) + seatgeek_venue_xref (4/38)
+--               + venue_pulls (1/3) -> venue_assets(tevo_venue_id)
+--           These FKs reference COVERAGE tables (performer_metadata/venue_assets),
+--           not the entity tables — likely a mis-targeted parent. A1 data call:
+--           repoint to the entity table, backfill coverage, or prune orphans.
+--           VALIDATE takes only SHARE UPDATE EXCLUSIVE → never blocks reads/writes.
+--           (This DO remains correct for a future direct-psql run with no gateway.)
 --
 -- ── BACKGROUND ──────────────────────────────────────────────────────────────
 --   release_health_check() → fks.not_valid_fks = warn (metric 54). These FKs

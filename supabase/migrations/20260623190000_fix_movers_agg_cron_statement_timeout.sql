@@ -5,7 +5,10 @@
 -- Touches:  cron.job 'refresh_movers_agg' (W, re-schedule). No table/function DDL.
 -- Pre-reqs: 20260601140000 (two-tier agg cache + refresh_event_movers_agg),
 --           20260608031000 (prior — INEFFECTIVE — per-window timeout attempt).
--- Apply:    NOT APPLIED. A1/operator to apply. See post-apply bootstrap below.
+-- Apply:    APPLIED to prod 2026-06-23 (operator-authorized). Cron re-scheduled.
+--           Post-apply bootstrap: windows 7+15 refreshed + index recomputed via
+--           execute_sql (226/291 entries @ 20:27Z); windows 30/180/365 exceed the
+--           60s MCP gateway, so they self-heal at the next fixed cron run (07:20Z).
 --
 -- ── SYMPTOM ─────────────────────────────────────────────────────────────────
 --   release_health_check() → cron.failed_jobs_90min = warn, every run of

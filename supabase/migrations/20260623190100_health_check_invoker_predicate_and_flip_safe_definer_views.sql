@@ -7,8 +7,11 @@
 --           ALTER VIEW security_invoker on 6 views (W),
 --           REVOKE anon/authenticated on 2 ops views (W).
 -- Pre-reqs: 20260515170000 (release_health_check), 20260621180156 (last view flip).
--- Apply:    NOT APPLIED. A1/operator to apply (PR-reviewed). Behavioral-but-verified
---           — see per-view evidence below. Shared seams flagged for C1.
+-- Apply:    APPLIED to prod 2026-06-23 (operator-authorized). Verified:
+--           security_definer_views 23(fail) -> 2(warn) = {unified_listings,
+--           v_event_full_sports}; the 4 flips + 2 revoke/flip succeeded.
+--           Behavioral-but-verified — see per-view evidence below; shared seams
+--           still flagged for the C1 decision on the remaining 2.
 --
 -- ── PROBLEM ─────────────────────────────────────────────────────────────────
 --   release_health_check() → views.security_definer_views = FAIL, metric 23.
