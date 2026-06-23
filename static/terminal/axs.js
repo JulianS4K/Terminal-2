@@ -18,7 +18,7 @@
   'use strict';
   const T = window.Terminal;
 
-  const state = { active: true, ownedOnly: false, filter: '' };
+  const state = { active: true, hidePast: true, ownedOnly: false, filter: '' };
   let _rows = [];  // last fetched events, for client-side filtering
 
   function init() {
@@ -39,6 +39,15 @@
         document.querySelectorAll('[data-axs-active]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         refreshAxsEvents();
+      });
+    });
+    // Date filter (auto-hide past events) — purely client-side over fetched rows.
+    document.querySelectorAll('[data-axs-past]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.hidePast = btn.dataset.axsPast === '0';
+        document.querySelectorAll('[data-axs-past]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        renderTable();
       });
     });
     // Holdings filter is purely client-side over the already-fetched rows.
@@ -97,6 +106,11 @@
     if (!body) return;
 
     let rows = _rows;
+    // Auto-hide events whose date is before today. Undated rows (no parseable
+    // occurs_at_local — never-pulled / no date returned) are kept: unknown ≠ past.
+    if (state.hidePast) {
+      rows = rows.filter(r => !isPast(r.occurs_at_local));
+    }
     if (state.ownedOnly) {
       rows = rows.filter(r => r.we_own);
     }
@@ -121,9 +135,12 @@
 
     if (countEl) {
       const total = _rows.length;
-      countEl.textContent = state.filter
-        ? `${rows.length} of ${total} event${total === 1 ? '' : 's'}`
-        : (total ? `${total} event${total === 1 ? '' : 's'}` : '');
+      const shown = rows.length;
+      countEl.textContent = total
+        ? (shown === total
+            ? `${total} event${total === 1 ? '' : 's'}`
+            : `${shown} of ${total} event${total === 1 ? '' : 's'}`)
+        : '';
     }
 
     if (!rows.length) {
@@ -209,6 +226,18 @@
     if (c === 'GBP') return '£';
     if (c === 'EUR') return '€';
     return c + ' ';
+  }
+
+  // Past = a parseable event date strictly before the start of today (local).
+  // Times-of-day are ignored so everything happening TODAY stays visible, and
+  // undated rows (unparseable / null) are treated as not-past (kept).
+  function isPast(iso) {
+    if (!iso) return false;
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return false;
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    return t < startOfToday.getTime();
   }
 
   function fmtDateShort(iso) {
