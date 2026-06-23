@@ -8,15 +8,23 @@
   // (a) localhost uvicorn at /static/terminal/, (b) Render static-site CDN
   // at root (publishPath strips static/terminal/). Each link is resolved
   // relative to the current page URL by the browser.
+  // ← HUB target — the unified landing selector (Terminal / Undelivered /
+  // Store / Bridge). The selector lives at static/home/index.html and is
+  // served at `/home/` by an explicit FastAPI route (app.py) on the shell and
+  // on localhost. On the static CDN (vibepass-terminal-test) the home subtree
+  // is NOT reliably reachable at `/home/` — it depends on the wider
+  // publishPath + directory-index serving that render-d0-terminal.yaml flags
+  // as not-guaranteed-live, which is why HUB used to dead-end there. So mirror
+  // app.js's API_BASE topology detection: from the CDN, send HUB cross-origin
+  // to the always-on FastAPI shell that serves /home/ by construction.
+  // Same-origin `/home/` everywhere else (shell + localhost).
+  const HUB_HREF = location.hostname.includes('terminal-test')
+    ? 'https://vibepass-storefront-test.onrender.com/home/'
+    : '/home/';
+
   const PAGES = [
-    // ← HUB takes the operator back to the unified landing selector
-    // (Terminal / Undelivered / Store / Bridge). Points at the explicit
-    // `/home/` path — which serves static/home/index.html directly on the
-    // static CDN (publishPath=static) without depending on the bare-`/`
-    // root rewrite (not guaranteed live, see render-d0-terminal.yaml) AND
-    // resolves on the FastAPI shell via the /home route (app.py). HOME
-    // below remains the terminal's mark-to-market dashboard (broker desk).
-    { id: 'hub',       label: '← HUB',     href: '/home/' },
+    // HOME below remains the terminal's mark-to-market dashboard (broker desk).
+    { id: 'hub',       label: '← HUB',     href: HUB_HREF },
     { id: 'home',      label: 'HOME',      href: './' },
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
