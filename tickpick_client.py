@@ -70,7 +70,7 @@ class TickPickClient:
         }
         clean = {k: v for k, v in (params or {}).items() if v is not None}
         # Retry-After honoring backoff for 429/503; mirrors seatgeek_client._get
-        for attempt in range(5):
+        for attempt in range(5):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < 4 is False there)
             r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
             if r.status_code in (429, 503) and attempt < 4:
                 retry_after = r.headers.get("Retry-After")

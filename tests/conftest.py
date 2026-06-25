@@ -27,7 +27,21 @@ def _clear_app_global_state() -> None:
     hits = getattr(limiter, "_hits", None)
     if hits is not None:
         hits.clear()
-    for name in ("_movers_cache", "_MOVERS_CACHE_REFRESHING"):
+    # Every process-global mutable cache/debounce singleton in app.py. Without a
+    # reset, a value primed by one test module leaks into later modules:
+    #   _search_cache / _movers_cache       — serve a stale primed result
+    #   _collect_run_last_call              — a leaked timestamp throttles a later
+    #                                          /api/collect/run call (debounce)
+    #   _STOREFRONT_HTML_CACHE              — serve HTML primed under a different flag
+    # Anything with a .clear() (dict/set) is reset; missing names are skipped so
+    # this stays a no-op when app isn't imported.
+    for name in (
+        "_movers_cache",
+        "_MOVERS_CACHE_REFRESHING",
+        "_search_cache",
+        "_collect_run_last_call",
+        "_STOREFRONT_HTML_CACHE",
+    ):
         obj = getattr(app, name, None)
         if obj is not None and hasattr(obj, "clear"):
             obj.clear()

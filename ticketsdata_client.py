@@ -169,7 +169,7 @@ class TicketsDataClient:
         # (timeout); do NOT retry 400/401/402/404 (deterministic).
         r = None
         delays = [1.5, 3.0]
-        for attempt in range(len(delays) + 1):
+        for attempt in range(len(delays) + 1):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < len(delays) is False there)
             r = requests.get(url, params=clean, timeout=self.timeout)
             if r.status_code in (429, 503, 504) and attempt < len(delays):
                 retry_after = r.headers.get("Retry-After")

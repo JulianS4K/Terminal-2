@@ -82,7 +82,7 @@ class GoTicketsClient:
         # Network failures (ConnectionError / Timeout) re-raised as GoTicketsError
         # so callers see one consistent exception class at the module boundary.
         r = None
-        for attempt in range(5):
+        for attempt in range(5):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < 4 is False there)
             try:
                 r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
             except (requests.ConnectionError, requests.Timeout) as e:

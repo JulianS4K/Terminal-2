@@ -63,7 +63,7 @@ jobs:
         # --cov-fail-under is a RATCHET: it only moves up. Raise it (never lower)
         # as coverage climbs toward the 100% product-code target. Drop maxfail so
         # the coverage report still prints when an assertion fails.
-        run: pytest tests/ -q --cov --cov-report=term-missing:skip-covered --cov-fail-under=100
+        run: pytest tests/ -q --cov --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=100
 
       - name: mypy type check (warn-only)
         # Informational until the codebase is mypy-clean. Set

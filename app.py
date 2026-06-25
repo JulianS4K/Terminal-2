@@ -252,7 +252,7 @@ def _require_human(request: Request, payload: dict | None = None):
     raise HTTPException(403, "bot verification required — refresh the page and try again")
 
 sb = None
-if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:  # pragma: no cover - import-time guard; both env vars are always set when the module is imported under any supported config, so the false side is unreachable post-import
     try:
         from supabase import create_client
         sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)

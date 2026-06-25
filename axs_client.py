@@ -367,12 +367,12 @@ class AXSClient:
         if self._user and self._pass:
             clean["username"] = self._user
             clean["password"] = self._pass
-        elif self._key:
+        elif self._key:  # pragma: no branch  (always true when reached: ctor guarantees a key when user/pass absent, so the elif-False arc is unreachable)
             headers["Authorization"] = f"Bearer {self._key}"
 
         r = None
         delays = [2.0, 5.0]
-        for attempt in range(len(delays) + 1):
+        for attempt in range(len(delays) + 1):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < len(delays) is False there)
             r = requests.get(self.endpoint, params=clean, headers=headers, timeout=self.timeout)
             if r.status_code in _RETRY_STATUSES and attempt < len(delays):
                 retry_after = r.headers.get("Retry-After")
