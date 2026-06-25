@@ -228,7 +228,14 @@ class SeatDataClient:
             # Some v0.x endpoints return gzipped JSON
             if r.status_code == 200 and expect_gzip:
                 try:
-                    body = gzip.decompress(r.content) if r.headers.get("Content-Encoding") == "gzip" else r.content
+                    # requests/urllib3 already strips transport-level
+                    # Content-Encoding: gzip, so for that case r.content is
+                    # already plain bytes and calling gzip.decompress on it would
+                    # raise. The only gzip we must handle here is an
+                    # application-level gzipped body (served without that header).
+                    # Sniff the gzip magic bytes (1f 8b) instead of trusting the
+                    # header — correct whether the body arrives compressed or not.
+                    body = gzip.decompress(r.content) if r.content[:2] == b"\x1f\x8b" else r.content
                     return r.status_code, json.loads(body), dict(r.headers)
                 except Exception as e:
                     # Don't echo `e` — gzip / json libraries can include
@@ -412,7 +419,11 @@ class SeatDataClient:
         rows = []
         for s in sales:
             ts = s.get("timestamp")
-            if isinstance(ts, (int, float)):
+            # Coerce epoch-as-string too ("1620000000"): JSON feeds often send
+            # numeric timestamps as strings, and the old isinstance-only check
+            # stored them verbatim — a non-ISO value in sale_timestamp that also
+            # made content_hash unstable vs the int form (breaking dedup).
+            if isinstance(ts, (int, float)) or (isinstance(ts, str) and ts.strip().isdigit()):
                 sale_ts = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
             else:
                 sale_ts = str(ts) if ts else None

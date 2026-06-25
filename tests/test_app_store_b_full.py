@@ -1264,3 +1264,15 @@ def test_zones_no_event_meta(client, monkeypatch):
     monkeypatch.setattr(app_module, "sb", sb)
     r = client.get("/api/store/events/3346000/zones")
     assert r.json()["pair_zone_count"] == 0
+
+
+def test_multi_tour_non_numeric_performer_ids_400(client):
+    # Regression: a non-numeric performer_ids token used to raise an uncaught
+    # ValueError -> 500. It must now return a clean 400 (the int() coercion is
+    # guarded, mirroring the catalog perf-id guard).
+    r = client.get("/api/store/tours/multi?performer_ids=abc&home_lat=40&home_lon=-73")
+    assert r.status_code == 400
+    assert "comma-separated integers" in r.json()["detail"]
+    # A mixed valid/invalid list 400s too (one bad token poisons the parse).
+    r2 = client.get("/api/store/tours/multi?performer_ids=1,foo,3&home_lat=40&home_lon=-73")
+    assert r2.status_code == 400

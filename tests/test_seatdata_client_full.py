@@ -254,6 +254,18 @@ def test_request_gzip_uncompressed_branch(monkeypatch):
     assert body == {"listings": []}
 
 
+def test_request_gzip_app_level_without_header(monkeypatch):
+    # Regression: an application-level gzipped body served WITHOUT a
+    # Content-Encoding header (the normal case — requests strips transport
+    # gzip, so any gzip left here is in the payload). The old header-gated
+    # decode handed raw gzip bytes to json.loads (crash); the magic-byte sniff
+    # decodes it correctly.
+    raw = gzip.compress(json.dumps([{"sale": 1}]).encode())
+    c = _make_client(monkeypatch, responses=[_FakeResp(200, content=raw, headers={})])
+    status, body, _ = c._request("GET", "v0.3/salesdata/get", expect_gzip=True)
+    assert body == [{"sale": 1}]
+
+
 def test_request_gzip_decode_failure_raises_clean(monkeypatch):
     c = _make_client(monkeypatch, responses=[_FakeResp(200, content=b"bad",
                      headers={"Content-Encoding": "gzip"})])
@@ -615,6 +627,18 @@ def test_store_sales_numeric_and_string_timestamps(monkeypatch):
     assert payload[1]["sale_timestamp"] == "2026-05-09T00:00:00Z"
     assert payload[2]["sale_timestamp"] is None
     assert all(len(r["content_hash"]) == 32 for r in payload)
+
+
+def test_store_sales_epoch_string_timestamp_coerced(monkeypatch):
+    # Regression: an epoch timestamp sent as a STRING ("1700000000") — common in
+    # JSON feeds — must be coerced to ISO, not stored verbatim. The old
+    # isinstance-only check stored the literal string (bad column value + an
+    # unstable content_hash vs the int form, which broke dedup).
+    db = _FakeDB(upsert_data=[{"id": 1}])
+    c = SeatDataClient(api_key="k", db=db)
+    c.store_sales(7, 8, [{"timestamp": "1700000000", "quantity": 1, "price": 50}])
+    _, payload, _ = db.upserts[0]
+    assert payload[0]["sale_timestamp"].startswith("2023-11-14")  # ISO, not "1700000000"
 
 
 def test_store_sales_swallows_errors(capsys):

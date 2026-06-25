@@ -284,6 +284,33 @@ def test_reserve_exceeds_available_409(client, monkeypatch):
     assert "only 4 available" in r.json()["detail"]
 
 
+def test_reserve_sold_out_group_409(client, monkeypatch):
+    """Regression (money path): a sold-out group reports available_quantity=0
+    while `quantity` (original block size) stays non-zero. The old
+    `available_quantity or quantity` fallback treated 0 as falsy and admitted
+    the reservation; it must now 409 with 0 available."""
+    sold_out = {**_GROUP, "id": 777, "available_quantity": 0, "quantity": 4}
+    monkeypatch.setattr(app_module, "client", _MatchTGFake(sold_out))
+    r = client.post("/api/store/reserve", json={
+        "event_id": 5, "ticket_group_id": 777, "quantity": 4,
+    })
+    assert r.status_code == 409
+    assert "only 0 available" in r.json()["detail"]
+
+
+def test_reserve_falls_back_to_quantity_when_available_absent(client, monkeypatch):
+    """When available_quantity is genuinely absent (None), `quantity` is the
+    intended fallback — this path must still succeed."""
+    no_aq = {"id": 778, "quantity": 4, "splits": [2, 4], "retail_price": 100.0,
+             "section": "100", "row": "A", "format": "Eticket", "in_hand": True}
+    monkeypatch.setattr(app_module, "client", _MatchTGFake(no_aq))
+    r = client.post("/api/store/reserve", json={
+        "event_id": 5, "ticket_group_id": 778, "quantity": 4,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["reservation"]["quantity"] == 4
+
+
 def test_reserve_wrong_split_409(client, monkeypatch):
     """qty not in splits → 409 (line 6099-6100). avail high enough that the
     earlier avail gate passes."""

@@ -1232,7 +1232,14 @@ def _multi_tour_payload(performer_ids: str, home_lat: float, home_lon: float, qt
     """'Plan my summer': one routed+priced package across several performers' events."""
     from trip_planner import plan_multi_performer_tour
 
-    ids = [int(x) for x in str(performer_ids).replace(" ", "").split(",") if x][:8]
+    # Guard the coercion: performer_ids is a free-text query param, so a
+    # non-numeric token (e.g. "abc" or "1,foo,3") must 400, not bubble an
+    # uncaught ValueError into a 500. Mirrors the catalog guard at the
+    # /api/store/events perf-id gather.
+    try:
+        ids = [int(x) for x in str(performer_ids).replace(" ", "").split(",") if x][:8]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "performer_ids must be comma-separated integers")
     if not ids:
         raise HTTPException(400, "performer_ids required (comma-separated, up to 8)")
     db = require_sb()
@@ -2847,11 +2854,21 @@ def broker_event_chart_data(
             .or_(f"home_team_id.eq.{team_id},away_team_id.eq.{team_id}")
             .eq("espn_league", home_league)   # league-scope: id "20" exists in NBA + MLB + NFL etc.
             .eq("state", "post")
-            .order("captured_at", desc=True).limit(5)
+            .order("captured_at", desc=True).limit(25)
             .execute()
         ).data or []
+        # Dedupe by espn_event_id before taking 5 — the collector re-snapshots
+        # each finished game many times, so a raw .limit(5) on snapshot rows
+        # would repeat one game up to 5×. Rows are captured_at-desc, so the
+        # first row per event is its latest snapshot. Mirrors the dedupe in the
+        # /performer/{id}/espn fallback above.
         out = []
+        seen_ev = set()
         for r in rows:
+            ek = r.get("espn_event_id")
+            if ek in seen_ev:
+                continue
+            seen_ev.add(ek)
             h, a = r.get("home_score"), r.get("away_score")
             if h is None or a is None:
                 continue
@@ -2859,6 +2876,8 @@ def broker_event_chart_data(
             won = (is_home and h > a) or (not is_home and a > h)
             out.append({"t": r["captured_at"], "result": "W" if won else "L",
                         "score": f"{h}-{a}", "home": is_home})
+            if len(out) >= 5:
+                break
         return out
 
     last5_home = _last5(home_team_id)
@@ -6103,7 +6122,13 @@ def store_reserve(request: Request, payload: dict = Body(...), authorization: st
         if not match:
             raise HTTPException(404, "ticket group is no longer available from this seller")
 
-    avail = int(match.get("available_quantity") or match.get("quantity") or 0)
+    # available_quantity is authoritative when present. A sold-out group reports
+    # available_quantity=0 while `quantity` (the original block size) stays
+    # non-zero, so the old `available_quantity or quantity` fallback (0 is falsy)
+    # silently admitted reservations against zero sellable inventory. Only fall
+    # back to `quantity` when available_quantity is genuinely absent (None).
+    _aq = match.get("available_quantity")
+    avail = int(_aq if _aq is not None else (match.get("quantity") or 0))
     splits = match.get("splits") or []
     if quantity > avail:
         raise HTTPException(409, f"requested {quantity} but only {avail} available")

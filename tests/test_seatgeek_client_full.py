@@ -1084,3 +1084,38 @@ def test_store_seller_orders_db_error(monkeypatch, capsys):
         [{"id": "o1", "event": {"seatgeek_event_id": 1}, "tickets": []}], "open")
     assert "error" in out
     assert "store_seller_orders failed" in capsys.readouterr().out
+
+
+def test_iter_seller_listings_stops_when_cursor_does_not_advance(monkeypatch):
+    # Regression: a meta that echoes the *current* page_cursor (no next_cursor)
+    # used to make the loop re-request the same page for ALL max_pages,
+    # re-yielding duplicates each time. The echo is only detectable after the
+    # cursor is sent once and comes back unchanged, so the guard caps the damage
+    # at a single redundant fetch (2 total) instead of max_pages (5).
+    c = _client(monkeypatch)
+    calls = []
+
+    def fake_seller_listings(*, per_page, page_cursor):
+        calls.append(page_cursor)
+        # Always echoes "C1" back as page_cursor, never a next_cursor.
+        return {"listings": [{"id": 1}], "meta": {"page_cursor": "C1"}}
+
+    monkeypatch.setattr(c, "seller_listings", fake_seller_listings)
+    out = list(c.iter_seller_listings(max_pages=5))
+    # Without the guard this would be 5 fetches / 5 dupes. With it: 2 then stop.
+    assert calls == [None, "C1"]
+    assert out == [{"id": 1}, {"id": 1}]
+
+
+def test_iter_seller_listings_runs_to_max_pages_when_cursor_advances(monkeypatch):
+    # Advancing cursors with full pages: the loop exits by exhausting max_pages
+    # (the natural for-loop fall-through), not via a break.
+    c = _client(monkeypatch)
+    pages = {None: "A", "A": "B"}  # page1->cursor A, page2->cursor B (advances)
+
+    def fake_seller_listings(*, per_page, page_cursor):
+        return {"listings": [{"c": page_cursor}], "meta": {"next_cursor": pages.get(page_cursor)}}
+
+    monkeypatch.setattr(c, "seller_listings", fake_seller_listings)
+    out = list(c.iter_seller_listings(max_pages=2))
+    assert out == [{"c": None}, {"c": "A"}]  # exactly 2 pages, then range exhausts

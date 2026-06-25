@@ -436,8 +436,13 @@ class SeatGeekClient:
             for l in listings:
                 yield l
             meta = body.get("meta") or {}
+            prev_cursor = cursor
             cursor = meta.get("next_cursor") or meta.get("next_page_cursor") or meta.get("page_cursor")
-            if not cursor:
+            # Stop if the cursor didn't advance. Some APIs echo the *current*
+            # page_cursor back in meta; without this guard the third fallback
+            # would re-request the same page each iteration (re-yielding dupes,
+            # never advancing) until max_pages.
+            if not cursor or cursor == prev_cursor:
                 break
 
     def seller_orders(self, status_filter: str, *, page: int = 1) -> dict:

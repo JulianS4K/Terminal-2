@@ -895,3 +895,34 @@ def test_movers_v1_clamps_window_hours(client, monkeypatch):
     _use_db(monkeypatch, FakeSupabase(rpc_data={"get_event_movers_with_sg": []}))
     body = client.get("/api/broker/movers?window_hours=99999").json()
     assert body["window_hours"] == 168
+
+
+def test_chart_data_last5_dedupes_and_caps_at_five(client, monkeypatch):
+    # Regression for the _last5 bug: the ESPN collector re-snapshots each
+    # finished game many times, so a raw .limit(5) on snapshot rows repeated one
+    # game. _last5 must dedupe by espn_event_id (keeping the latest snapshot)
+    # and cap at 5 distinct games. Feed g1 twice (dup) + 6 distinct games, all
+    # captured_at-desc, to drive both the dedup `continue` and the >=5 `break`.
+    xref = [{"espn_event_id": "espnE", "espn_slug": "knicks-celtics", "espn_league": "NBA"}]
+    snap = [{"captured_at": "2026-05-10T12:00:00Z", "home_team_id": "18", "away_team_id": "20"}]
+
+    def _g(ts, eid, hs, as_):
+        return {"captured_at": ts, "espn_event_id": eid, "home_team_id": "18",
+                "away_team_id": "20", "home_score": hs, "away_score": as_, "state": "post"}
+
+    last5 = [
+        _g("2026-05-09T05:00:00Z", "g1", 110, 100),  # latest g1 -> counted (W)
+        _g("2026-05-09T04:00:00Z", "g1", 108, 101),  # older g1 -> dedup `continue`
+        _g("2026-05-08T00:00:00Z", "g2", 90, 99),
+        _g("2026-05-07T00:00:00Z", "g3", 88, 80),
+        _g("2026-05-06T00:00:00Z", "g4", 70, 71),
+        _g("2026-05-05T00:00:00Z", "g5", 60, 50),
+        _g("2026-05-04T00:00:00Z", "g6", 55, 40),  # 6th distinct -> never reached (break at 5)
+    ]
+    fake = _chart_db(xref=xref, snap=snap, last5=last5)
+    _use_db(monkeypatch, fake)
+    home = client.get("/api/broker/event/1/chart-data?range=30d").json()["last5"]["home"]
+    # Capped at 5 distinct games; g1 counted once (not twice); g6 excluded.
+    assert len(home) == 5
+    assert [r["result"] for r in home] == ["W", "L", "W", "L", "W"]  # g1..g5
+    assert home[0]["score"] == "110-100"  # the LATEST g1 snapshot, not the older one
