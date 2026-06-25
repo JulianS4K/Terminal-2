@@ -629,7 +629,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             eid = c.get("id")
             try:
                 eid_int = int(eid) if eid is not None else None
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # pragma: no cover - card ids are int-validated upstream (events_by_id build)
                 eid_int = None
             if eid_int is None or eid_int in seen:
                 continue
@@ -680,11 +680,11 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             # Resolve per candidate. Apply applicability + priority.
             for c in candidates:
                 eid = c.get("id")
-                if eid is None:
+                if eid is None:  # pragma: no cover - card ids are int-validated upstream (events_by_id build)
                     continue
                 try:
                     eid_int = int(eid)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError):  # pragma: no cover - card ids are int-validated upstream (events_by_id build)
                     continue
                 if eid_int in holiday_by_eid:
                     continue  # exact-date join from v_event_holidays already set

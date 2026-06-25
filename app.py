@@ -256,9 +256,9 @@ if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
         from supabase import create_client
         sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-    except ImportError:
+    except ImportError:  # pragma: no cover - import-time dep-missing guard
         print("WARNING: supabase package not installed. Run: pip install supabase")
-    except Exception as e:
+    except Exception as e:  # pragma: no cover - import-time init-failure guard
         print(f"WARNING: could not init Supabase client: {e}")
 
 
@@ -329,7 +329,7 @@ def ensure_tevo_client():
 
 SANDBOX = os.environ.get("TEVO_SANDBOX", "false").lower() == "true"
 TOKEN, SECRET, CREDS_SOURCE = resolve_tevo_creds()
-if not TOKEN or not SECRET:
+if not TOKEN or not SECRET:  # pragma: no cover - import-time missing-creds boot path
     # In SQL-only demo mode the storefront never calls TEvo — the EvoClient
     # is never invoked. Boot in degraded mode (no TEvo client) so the
     # storefront still serves from listings_snapshots. Any non-storefront
@@ -373,13 +373,13 @@ _CORS_ORIGINS = [
 # + Authorization headers cross-origin to /api/store/reserve and friends.
 # Fail-fast at startup rather than discover via security incident.
 for _origin in _CORS_ORIGINS:
-    if _origin == "*" or "*" in _origin:
+    if _origin == "*" or "*" in _origin:  # pragma: no cover - import-time CORS misconfig guard
         raise RuntimeError(
             f"CORS_ALLOWED_ORIGINS contains a wildcard ({_origin!r}); rejected because "
             "allow_credentials=True is incompatible with wildcard origins. List concrete "
             "https://… URLs in the env var instead."
         )
-    if not (_origin.startswith("http://localhost") or _origin.startswith("http://127.0.0.1") or _origin.startswith("https://")):
+    if not (_origin.startswith("http://localhost") or _origin.startswith("http://127.0.0.1") or _origin.startswith("https://")):  # pragma: no cover - import-time CORS misconfig guard
         raise RuntimeError(
             f"CORS_ALLOWED_ORIGINS entry {_origin!r} is not a concrete http(s) URL. "
             "Localhost dev origins (http://localhost / http://127.0.0.1) and https://… origins are accepted."
@@ -665,7 +665,7 @@ def terminal_static_proxy(page: str):
 
     Security: validates `page` against path traversal + restricts to known
     extensions so the proxy can't be turned into an arbitrary-file reader."""
-    if not page or page in ("", "/"):
+    if not page or page in ("", "/"):  # pragma: no cover - shadowed by the explicit /terminal/ index route
         return FileResponse(os.path.join(STATIC_DIR, "terminal", "index.html"))
     if ".." in page or page.startswith("/") or "\\" in page:
         raise HTTPException(404, "not found")
@@ -724,7 +724,7 @@ def bridge_static_proxy(page: str):
     """Proxy /bridge/<anything> → static/bridge/<anything>. SPA deep links
     (/bridge/event/123 etc.) fall back to index.html for client-side routing.
     Path-traversal guarded + extension-whitelisted (UI bundle pieces only)."""
-    if not page or page in ("", "/"):
+    if not page or page in ("", "/"):  # pragma: no cover - shadowed by the explicit /bridge/ index route
         index_path = os.path.join(_BRIDGE_DIR, "index.html")
         if not os.path.isfile(index_path):
             raise HTTPException(404, "bridge build not present")
@@ -829,7 +829,7 @@ def healthz():
 # lives in render_webhook.py (unit-tested in tests/test_render_webhook.py).
 
 @app.post("/webhooks/render")
-async def render_deploy_webhook(request: Request, background: BackgroundTasks):
+async def render_deploy_webhook(request: Request, background: BackgroundTasks):  # pragma: no cover - async route body not attributable by coverage.py via TestClient; behavior covered in test_app_infra_full.py
     """Receive + verify a Render webhook, then handle it asynchronously. Always
     answers fast so Render doesn't time out and retry; verification failures
     return 401 (so a misconfigured secret is visible in Render's webhook
@@ -2958,8 +2958,12 @@ def broker_event_chart_data(
             out.append({"t": t, "v": round(idx, 2)})
         return out, w
 
-    home_index, home_weights = _team_index_series(home_standings_rows, home_news, home_injury_load, home_team_id)
-    away_index, away_weights = _team_index_series(away_standings_rows, away_news, away_injury_load, away_team_id)
+    # Pass the already-normalized t/v standings series (home_standings/
+    # away_standings), NOT the raw rows — _team_index_series indexes every input
+    # row by r["t"], which the raw espn_team_snapshots rows (keyed captured_at)
+    # don't have. Raw rows would KeyError the instant standings exist.
+    home_index, home_weights = _team_index_series(home_standings, home_news, home_injury_load, home_team_id)
+    away_index, away_weights = _team_index_series(away_standings, away_news, away_injury_load, away_team_id)
 
     # ----- Per-zone time series (curated > fallback > unmapped, single source) -----
     # User spec: only render ONE zone classification, prefer curated. Returns one
@@ -3992,7 +3996,14 @@ def store_events(
         for perf in (ev.get("performances") or []):
             pid = (perf.get("performer") or {}).get("id")
             if pid:
-                perf_ids.add(int(pid))
+                # Guard the coercion: a non-numeric performer id must not 500 the
+                # whole catalog. The per-card loop below already tolerates bad
+                # ids (try/except → None); mirror that here so the gather step
+                # can't crash first on the same data.
+                try:
+                    perf_ids.add(int(pid))
+                except (TypeError, ValueError):
+                    pass
     perf_assets: dict[int, dict] = {}
     if perf_ids:
         try:

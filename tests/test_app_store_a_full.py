@@ -950,3 +950,21 @@ def test_home_limit_clamped(patched):
     r = patched.client.get("/api/store/home?limit=2")
     body = r.json()
     assert body["count"] == 2 and body["limit"] == 2
+
+
+def test_events_non_int_performer_ids_do_not_500(patched):
+    """A non-numeric performer id must not crash the catalog (regression for the
+    unguarded int(pid) gather bug). The event still renders, just without
+    performer assets. Exercises the three int()-coercion guards in the handler:
+    the perf_ids gather + the primary and away per-card coercions."""
+    ev = _tevo_ev(7, performances=[
+        {"primary": True, "performer": {"id": "not-an-int", "name": "Home"}},
+        {"primary": False, "performer": {"id": "also-bad", "name": "Away"}},
+    ])
+    _set_evo(patched, _FakeEvo({1: [ev]}))
+    r = patched.client.get("/api/store/events?limit=1")
+    assert r.status_code == 200
+    card = r.json()["events"][0]
+    # Bad ids coerced to None -> no assets attached, but the card still renders.
+    assert card["primary_performer_logo"] is None
+    assert card["primary_performer_league"] is None

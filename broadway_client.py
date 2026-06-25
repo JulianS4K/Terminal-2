@@ -557,7 +557,7 @@ class BroadwayClient:
                 obj, _end = decoder.raw_decode(html, brace)
             except _json.JSONDecodeError:
                 continue
-            if not isinstance(obj, dict):
+            if not isinstance(obj, dict):  # pragma: no cover - raw_decode anchored on '{' always yields a dict
                 continue
             if "data" in obj and isinstance(obj["data"], dict):
                 return obj["data"]
