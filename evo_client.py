@@ -37,11 +37,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import time
 from typing import Any, Iterator
 from urllib.parse import urlencode
 
-import requests
+from broker_http import get_with_retry
 
 
 # RULE 2 — READ-ONLY across api.ticketevolution.com.
@@ -166,26 +165,21 @@ class EvoClient:
             "Accept": "application/vnd.ticketevolution.api+json; version=9",
         }
 
-        last_resp = None
-        for attempt in range(self._MAX_RETRIES + 1):
-            r = requests.get(url, headers=headers, timeout=self.timeout)
-            last_resp = r
-            if r.ok:
-                return r.json()
-            if r.status_code not in self._RETRY_STATUSES or attempt == self._MAX_RETRIES:
-                break
-            # Honor Retry-After when TEvo provides it; else exponential.
-            wait: float
-            ra = r.headers.get("Retry-After")
-            if ra:
-                try:
-                    wait = float(ra)
-                except (TypeError, ValueError):
-                    wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
-            else:
-                wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
-            wait = min(wait, self._BACKOFF_CAP_SEC)
-            time.sleep(wait)
+        # Unified retry/backoff (broker_http.get_with_retry): honors Retry-After
+        # else exponential, capped, across the canonical transient set. TEvo's
+        # tuned config (4 retries, 0.5s base, 30s cap, 429/502/503/504) is
+        # passed through unchanged. A connection failure propagates as before.
+        r = get_with_retry(
+            url,
+            headers=headers,
+            timeout=self.timeout,
+            retry_statuses=self._RETRY_STATUSES,
+            max_attempts=self._MAX_RETRIES + 1,
+            backoff_base=self._BACKOFF_BASE_SEC,
+            backoff_cap=self._BACKOFF_CAP_SEC,
+        )
+        if r.ok:
+            return r.json()
 
         # Out of retries, or non-retryable status.
         # Security: do NOT include URL or response body in the exception
@@ -195,29 +189,16 @@ class EvoClient:
         # intermediate-proxy info. Pattern matches seatgeek_client.py:495
         # (B1 SEC-MED SW-1, security chat 2026-05-10).
         # Log full detail server-side; only generic status reaches caller.
-        #
-        # Truthiness note: `requests.Response.__bool__` returns `self.ok`
-        # (`status_code < 400`), so `if last_resp` is FALSE for the exact
-        # case we want to log — a non-2xx response. Use `is not None` to
-        # distinguish "no response object at all" (connection failure) from
-        # "response object that happens to be non-2xx". Flagged by D1 in
-        # the 2026-05-13 MVP-deploy debugging session.
         import logging
-        if last_resp is not None:
-            logging.getLogger(__name__).warning(
-                "TEvo API non-2xx response: %s %s on %s %s — body: %s",
-                last_resp.status_code,
-                last_resp.reason,
-                last_resp.request.method,
-                last_resp.url,
-                last_resp.text[:500],
-            )
-            raise RuntimeError(f"TEvo API returned {last_resp.status_code}")
-        else:
-            logging.getLogger(__name__).warning(
-                "TEvo API call failed with no response (connection/timeout/DNS)"
-            )
-            raise RuntimeError("TEvo API returned no response")
+        logging.getLogger(__name__).warning(
+            "TEvo API non-2xx response: %s %s on %s %s — body: %s",
+            r.status_code,
+            r.reason,
+            r.request.method,
+            r.url,
+            r.text[:500],
+        )
+        raise RuntimeError(f"TEvo API returned {r.status_code}")
 
     def _iter_paginated(
         self,

@@ -32,10 +32,9 @@ from __future__ import annotations
 
 import os
 import re
-import time
 from typing import Any
 
-import requests
+from broker_http import get_with_retry, vault_secret
 
 
 # Read-only by design — mirrors the RULE 2 guard the other clients use.
@@ -45,9 +44,6 @@ ALLOWED_HTTP_METHODS = frozenset({"GET"})
 # Only these event links are supported, per the operator:
 #   https://www.axs.com/events/<id>/<slug>-event-tickets
 AXS_EVENT_URL_RE = re.compile(r"^https?://(?:www\.)?axs\.com/events/\d+(?:/|$)", re.I)
-
-# Retry on transient statuses; never on deterministic ones.
-_RETRY_STATUSES = (429, 503, 504)
 
 
 class AXSError(RuntimeError):
@@ -88,16 +84,10 @@ def venue_norm(name: str) -> str:
 
 
 def _vault_secret(db: Any, name: str) -> str | None:
-    """Resolve a secret from Supabase Vault via get_app_secret (service-role db),
-    matching seatgeek_client / ticketsdata_client. Never surfaces the value."""
-    if db is None:
-        return None
-    try:
-        res = db.rpc("get_app_secret", {"p_name": name}).execute()
-        return getattr(res, "data", None) or None
-    except Exception as e:  # only the failure, never the value
-        print(f"axs: vault lookup for {name} failed: {e}")
-        return None
+    """Resolve a secret from Supabase Vault. Thin wrapper over the shared
+    ``broker_http.vault_secret`` (matching seatgeek_client / ticketsdata_client),
+    tagging failures with this client's log prefix. Never surfaces the value."""
+    return vault_secret(db, name, log_prefix="axs")
 
 
 # --------------------------------------------------------------------------
@@ -370,19 +360,12 @@ class AXSClient:
         elif self._key:
             headers["Authorization"] = f"Bearer {self._key}"
 
-        r = None
-        delays = [2.0, 5.0]
-        for attempt in range(len(delays) + 1):
-            r = requests.get(self.endpoint, params=clean, headers=headers, timeout=self.timeout)
-            if r.status_code in _RETRY_STATUSES and attempt < len(delays):
-                retry_after = r.headers.get("Retry-After")
-                try:
-                    delay = float(retry_after) if retry_after else delays[attempt]
-                except (TypeError, ValueError):
-                    delay = delays[attempt]
-                time.sleep(min(delay, 30.0))
-                continue
-            break
+        # Unified retry/backoff (broker_http.get_with_retry): exponential
+        # backoff honoring Retry-After across the canonical transient set
+        # (429/502/503/504). Deterministic statuses (401/402/404) are not
+        # retried. Previously: fixed [2.0, 5.0] delays on 429/503/504 only.
+        r = get_with_retry(self.endpoint, params=clean, headers=headers,
+                           timeout=self.timeout)
 
         if r.status_code == 401:
             raise AXSAuthError("HTTP 401 — invalid AXS credentials")

@@ -39,13 +39,13 @@ import gzip
 import hashlib
 import json
 import os
-import random
 import time
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
 import requests
 
+from broker_http import RETRY_STATUSES, retry_delay
 from supabase import Client
 
 API_BASE = "https://seatdata.io/api"
@@ -209,21 +209,19 @@ class SeatDataClient:
         Handles 429 with exponential backoff respecting Retry-After.
         """
         url = f"{API_BASE}/{path.lstrip('/')}"
+        # Unified backoff via broker_http.retry_delay (1.0s base, 60s cap,
+        # +jitter, honoring Retry-After). Reads (GET) back off across the
+        # canonical transient set (429/502/503/504) — previously 429-only. The
+        # sanctioned POST stays 429-only so a transient 5xx never re-submits an
+        # event-add request.
+        retry_statuses = RETRY_STATUSES if method.upper() == "GET" else frozenset({429})
         attempt = 0
-        backoff = 1.0
         while True:
             attempt += 1
             r = self.session.request(method, url, params=params, json=json_body,
                                      timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                sleep_s = min(60.0, sleep_s + random.random())
-                time.sleep(sleep_s)
-                backoff = min(60.0, backoff * 2)
+            if r.status_code in retry_statuses and attempt <= max_429_retries:
+                time.sleep(retry_delay(r, attempt, base=1.0, cap=60.0, jitter=True))
                 continue
             # Some v0.x endpoints return gzipped JSON
             if r.status_code == 200 and expect_gzip:

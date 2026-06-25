@@ -26,12 +26,12 @@ from __future__ import annotations
 
 import hashlib
 import os
-import random
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 import requests
+
+from broker_http import get_with_retry
 
 # Type-only import: this module's runtime guards (RULE 2) must be importable
 # in environments where the `supabase` package isn't installed (e.g. minimal
@@ -128,25 +128,27 @@ class SeatGeekClient:
             if v is None:
                 continue
             clean[k] = (1 if v else 0) if isinstance(v, bool) else v
-        attempt = 0
-        backoff = 1.0
-        while True:
-            attempt += 1
-            r = self.session.get(url, params=clean, timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                time.sleep(min(60.0, sleep_s + random.random()))
-                backoff = min(60.0, backoff * 2)
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                body = {"raw_text": r.text}
-            return r.status_code, body
+        # Unified retry/backoff (broker_http.get_with_retry) over the shared
+        # Session: exponential backoff (1.0s base, 60s cap, +jitter) honoring
+        # Retry-After across the canonical transient set (429/502/503/504).
+        # Previously only 429 was retried — a transient 502/503/504 failed hard
+        # while the same condition retried on TEvo. 401 scope-denied is not in
+        # the set, so it still surfaces immediately to the caller.
+        r = get_with_retry(
+            url,
+            getter=self.session.get,
+            params=clean,
+            timeout=self.timeout_s,
+            max_attempts=max_429_retries + 1,
+            backoff_base=1.0,
+            backoff_cap=60.0,
+            jitter=True,
+        )
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"raw_text": r.text}
+        return r.status_code, body
 
     @staticmethod
     def _parse_iso(s: str | None):
@@ -375,25 +377,27 @@ class SeatGeekClient:
             if v is None:
                 continue
             clean[k] = (1 if v else 0) if isinstance(v, bool) else v
-        attempt = 0
-        backoff = 1.0
-        while True:
-            attempt += 1
-            r = self.session.get(url, params=clean, timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                time.sleep(min(60.0, sleep_s + random.random()))
-                backoff = min(60.0, backoff * 2)
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                body = {"raw_text": r.text}
-            return r.status_code, body
+        # Unified retry/backoff (broker_http.get_with_retry) over the shared
+        # Session: exponential backoff (1.0s base, 60s cap, +jitter) honoring
+        # Retry-After across the canonical transient set (429/502/503/504).
+        # Previously only 429 was retried — a transient 502/503/504 failed hard
+        # while the same condition retried on TEvo. 401 scope-denied is not in
+        # the set, so it still surfaces immediately to the caller.
+        r = get_with_retry(
+            url,
+            getter=self.session.get,
+            params=clean,
+            timeout=self.timeout_s,
+            max_attempts=max_429_retries + 1,
+            backoff_base=1.0,
+            backoff_cap=60.0,
+            jitter=True,
+        )
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"raw_text": r.text}
+        return r.status_code, body
 
     def seller_listings(self, *, event_id: int | None = None,
                         per_page: int = 200,

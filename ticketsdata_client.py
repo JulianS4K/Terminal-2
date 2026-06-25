@@ -23,10 +23,11 @@ Credit cost (watch the budget — see scripts/ticketsdata_mvp.py):
 from __future__ import annotations
 
 import os
-import time
 from typing import Any
 
-import requests
+import requests  # kept so tests can monkeypatch ``ticketsdata_client.requests.get``
+
+from broker_http import get_with_retry, vault_secret
 
 
 # Read-only by design. Mirrors the RULE 2 guard pattern used by the orders/
@@ -106,16 +107,10 @@ def _validate_platform(platform: str) -> str:
 
 
 def _vault_secret(db: Any, name: str) -> str | None:
-    """Read a secret from Supabase Vault via the get_app_secret RPC (the same
-    bridge seatgeek_client uses). Requires a service-role db client."""
-    if db is None:
-        return None
-    try:
-        res = db.rpc("get_app_secret", {"p_name": name}).execute()
-        return getattr(res, "data", None) or None
-    except Exception as e:  # never surface the value; only the failure
-        print(f"ticketsdata: vault lookup for {name} failed: {e}")
-        return None
+    """Read a secret from Supabase Vault. Thin wrapper over the shared
+    ``broker_http.vault_secret`` (the same bridge seatgeek_client uses),
+    tagging failures with this client's log prefix."""
+    return vault_secret(db, name, log_prefix="ticketsdata")
 
 
 class TicketsDataClient:
@@ -165,21 +160,11 @@ class TicketsDataClient:
         clean["username"] = self._username
         clean["password"] = self._password
 
-        # Per docs: retry 429 (back off), 503 (service_unavailable) and 504
-        # (timeout); do NOT retry 400/401/402/404 (deterministic).
-        r = None
-        delays = [1.5, 3.0]
-        for attempt in range(len(delays) + 1):
-            r = requests.get(url, params=clean, timeout=self.timeout)
-            if r.status_code in (429, 503, 504) and attempt < len(delays):
-                retry_after = r.headers.get("Retry-After")
-                try:
-                    delay = float(retry_after) if retry_after else delays[attempt]
-                except (TypeError, ValueError):
-                    delay = delays[attempt]
-                time.sleep(min(delay, 30.0))
-                continue
-            break
+        # Unified retry/backoff (broker_http.get_with_retry): exponential
+        # backoff honoring Retry-After across the canonical transient set
+        # (429/502/503/504). Deterministic statuses (400/401/402/404) are not
+        # retried. Previously: fixed [1.5, 3.0] delays on 429/503/504 only.
+        r = get_with_retry(url, params=clean, timeout=self.timeout)
 
         if r.status_code == 401:
             raise TicketsDataAuthError("HTTP 401 — invalid TicketsData credentials")

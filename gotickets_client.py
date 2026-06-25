@@ -23,10 +23,11 @@ appears in CLIENT_FILES.
 """
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import requests
+
+from broker_http import get_with_retry
 
 
 # RULE 2 — READ-ONLY against sc.gotickets.com.
@@ -78,24 +79,20 @@ class GoTicketsClient:
             "Accept": "application/json",
         }
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        # Retry-After honoring backoff for 429/503; mirrors tickpick_client._get.
+
         # Network failures (ConnectionError / Timeout) re-raised as GoTicketsError
         # so callers see one consistent exception class at the module boundary.
-        r = None
-        for attempt in range(5):
+        def _getter(u, **kw):
             try:
-                r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
+                return requests.get(u, **kw)
             except (requests.ConnectionError, requests.Timeout) as e:
                 raise GoTicketsError(f"network error: {type(e).__name__}") from e
-            if r.status_code in (429, 503) and attempt < 4:
-                retry_after = r.headers.get("Retry-After")
-                try:
-                    delay = float(retry_after) if retry_after else (0.5 * (2 ** attempt))
-                except (TypeError, ValueError):
-                    delay = 0.5 * (2 ** attempt)
-                time.sleep(min(delay, 30.0))
-                continue
-            break
+
+        # Unified retry/backoff (broker_http.get_with_retry): exponential
+        # backoff honoring Retry-After across the canonical transient set
+        # (429/502/503/504). Previously this loop only backed off on 429/503.
+        r = get_with_retry(url, getter=_getter, headers=headers, params=clean,
+                           timeout=self.timeout)
         if not r.ok:
             raise GoTicketsError(f"HTTP {r.status_code}")
         try:

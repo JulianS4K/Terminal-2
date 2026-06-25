@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import re
 import secrets
@@ -188,7 +187,7 @@ from core.auth import (  # noqa: E402
 # Helpers moved to core/ (BR-CODE-1 helper pass). Aliased to the historical
 # `_`-prefixed names so every call site + the route tests' monkeypatch
 # (app._bulk_performer_assets) keep resolving the app-module binding.
-from core.helpers import classify_playoff as _classify_playoff, _PLAYOFF_SPECIFIC_RE  # noqa: E402
+from core.helpers import classify_playoff as _classify_playoff  # noqa: E402
 from core.helpers import (  # noqa: E402
     or_ilike_clause as _or_ilike_clause,
     is_speculative_event_name as _is_speculative_event_name,
@@ -485,7 +484,6 @@ app.add_middleware(_SecurityHeadersMiddleware)
 # Single-instance Railway deploy makes a process-local limiter sufficient.
 # If you scale to >1 dyno, swap to Redis-backed slowapi or move to Cloudflare.
 import time as _time
-import time  # public alias for in-process caches that want time.time()
 from collections import defaultdict as _dd, deque as _dq
 
 class _IPRateLimiter:
@@ -1951,7 +1949,6 @@ def broker_event_overview(event_id: int, _=Depends(require_auth)):
 
 
 _PARKING_ZONE_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park)\b", re.IGNORECASE)
-_PARKING_SECTION_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park|prepaid|preferred\s*parking|guest\s*parking|vip\s*lot|vip\s*parking)\b", re.IGNORECASE)
 
 
 @app.get("/api/broker/event/{event_id}/section-zones")
@@ -6314,7 +6311,6 @@ def store_terms_page():
 # either way, but a stateful share is revocable, has an optional expiry, and
 # tracks view count.
 
-_SHARE_FILTER_KEYS = ("zones", "section", "min_price", "max_price", "min_qty")
 
 
 # _share_to_dict -> core/helpers.py (BR-CODE-1); aliased at top.
