@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.1.0 (2026-06-25; added the product-code coverage gate to repo-layout + local-run; history in git/CHANGELOG)
+> **Doc version:** v2.2.0 (2026-06-25; coverage gate + Sentry/LOG_LEVEL observability env in local-run; history in git/CHANGELOG)
 
 ---
 
@@ -115,6 +115,8 @@ python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -r requirements.tx
 $env:SUPABASE_URL = "https://<project>.supabase.co"
 $env:SUPABASE_ANON_KEY = "<anon key>"
 $env:SUPABASE_SERVICE_ROLE_KEY = "<service key>"   # + TEVO_API_TOKEN/SECRET etc. as needed
+# Observability (all optional): SENTRY_DSN activates error tracking (unset = off),
+# LOG_LEVEL tunes stdout logging (default INFO). See core/observability.py.
 uvicorn app:app --reload --port 8765
 ```
 

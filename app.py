@@ -168,6 +168,13 @@ from core.config import (  # noqa: E402
     STOREFRONT_BASE_URL as _STOREFRONT_BASE_URL,
 )
 
+# Observability: configure structured stdout logging + (opt-in) Sentry error
+# tracking. No-op for Sentry until the operator sets SENTRY_DSN. Run at import
+# so every code path logs through one configured handler.
+from core.observability import init_observability  # noqa: E402
+_OBSERVABILITY = init_observability()
+_log = logging.getLogger("app")
+
 # Auth gate moved to core/auth.py (BR-CODE-1 core extraction): require_auth +
 # the AUTH_DISABLED kill-switch + _is_production. Imported so existing
 # `app.<NAME>` reads keep working; require_auth reads its deps from core
@@ -257,9 +264,9 @@ if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:  # pragma: no cover - import-time
         from supabase import create_client
         sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     except ImportError:  # pragma: no cover - import-time dep-missing guard
-        print("WARNING: supabase package not installed. Run: pip install supabase")
+        _log.warning("WARNING: supabase package not installed. Run: pip install supabase")
     except Exception as e:  # pragma: no cover - import-time init-failure guard
-        print(f"WARNING: could not init Supabase client: {e}")
+        _log.warning(f"WARNING: could not init Supabase client: {e}")
 
 
 def require_sb():
@@ -292,7 +299,7 @@ def resolve_tevo_creds():
             if t and s:
                 return t, s, "supabase.settings"
         except Exception as e:
-            print(f"Could not load TEvo creds from settings: {e}")
+            _log.warning(f"Could not load TEvo creds from settings: {e}")
     # Env fallback — accept either name convention.
     env_t = os.environ.get("TEVO_TOKEN") or os.environ.get("TEVO_API_TOKEN")
     env_s = os.environ.get("TEVO_SECRET") or os.environ.get("TEVO_API_SECRET")
@@ -323,7 +330,7 @@ def ensure_tevo_client():
         return None  # caller decides what to do; usually 502
     TOKEN, SECRET, CREDS_SOURCE = t, s, src
     client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
-    print(f"TEvo client lazy-initialized (creds source: {src})")
+    _log.info(f"TEvo client lazy-initialized (creds source: {src})")
     return client
 
 
@@ -336,7 +343,7 @@ if not TOKEN or not SECRET:  # pragma: no cover - import-time missing-creds boot
     # route that needs the live client (broker terminal, /api/admin/*) will
     # crash on the missing global, which is the right failure mode.
     if STOREFRONT_SQL_ONLY:
-        print(
+        _log.info(
             "TEvo creds missing — running in STOREFRONT_SQL_ONLY mode without a live "
             "EvoClient. /api/store/* routes will serve from listings_snapshots only."
         )
@@ -348,7 +355,7 @@ if not TOKEN or not SECRET:  # pragma: no cover - import-time missing-creds boot
             "Or set STOREFRONT_SQL_ONLY=true to boot in demo mode without TEvo."
         )
 else:
-    print(f"TEvo creds loaded from: {CREDS_SOURCE}")
+    _log.info(f"TEvo creds loaded from: {CREDS_SOURCE}")
     client = EvoClient(TOKEN, SECRET, sandbox=SANDBOX)
 
 
@@ -795,6 +802,7 @@ def healthz():
         "supabase_client_initialized": sb is not None,
         "evo_client_configured": client is not None,
         "evo_creds_source": CREDS_SOURCE,
+        "error_tracking": "sentry" if _OBSERVABILITY.get("sentry") else "off",
         "tevo_env_resolves": {
             "TEVO_TOKEN_set": bool(os.environ.get("TEVO_TOKEN")),
             "TEVO_API_TOKEN_set": bool(os.environ.get("TEVO_API_TOKEN")),
@@ -1796,7 +1804,7 @@ def _fire_collect(url: str, secret: str) -> None:
             timeout=180,
         )
     except Exception as e:
-        print(f"collect fire error: {e}")
+        _log.warning(f"collect fire error: {e}")
 
 
 # Per-user throttle for /api/collect/run — 1 invocation per 5 min per email.
@@ -2453,7 +2461,7 @@ def _upsert_tevo_event_into_events(db, ev: dict) -> int | None:
         db.table("events").upsert(row, on_conflict="id").execute()
         return int(eid)
     except Exception as e:
-        print(f"events upsert failed for {eid}: {e}")
+        _log.warning(f"events upsert failed for {eid}: {e}")
         return None
 
 
@@ -3991,7 +3999,7 @@ def store_events(
         # Log full upstream error server-side; return a stable string so TEvo's
         # response text (URLs, partial tokens, internal IDs from the requests
         # exception) never reaches the public storefront.
-        print(f"[store_events] TEvo events fetch failed: {e!r}")
+        _log.warning(f"[store_events] TEvo events fetch failed: {e!r}")
         raise HTTPException(502, "events fetch failed")
 
     # TEvo bakes CANCELLED markers into the event name string.
@@ -4031,7 +4039,7 @@ def store_events(
         except Exception as e:
             # Don't break the catalog if performer_metadata is unavailable;
             # cards just render without logos/colors.
-            print(f"performer_metadata bulk-fetch failed: {e}")
+            _log.warning(f"performer_metadata bulk-fetch failed: {e}")
             perf_assets = {}
 
     out: list[dict] = []
@@ -4318,7 +4326,7 @@ def _search_players(db, q_norm: str, limit: int) -> list[dict]:
         players = (db.rpc("sports_player_search",
                           {"p_q": q_norm, "p_limit": limit}).execute().data) or []
     except Exception as e:
-        print(f"_search_players rpc failed: {e}")
+        _log.warning(f"_search_players rpc failed: {e}")
         return []
     if not players:
         return []
@@ -4552,7 +4560,7 @@ def store_concierge(city: str = "NYC", days: int = 60, limit: int = 18):
         q = q.or_(",".join(_or_ilike_clause("venue_location", p) for p in venue_patterns))
         rows = q.order("prem_max_price", desc=True).limit(max(1, min(int(limit), 40))).execute().data or []
     except Exception as e:
-        print(f"store_concierge query failed: {e}")
+        _log.warning(f"store_concierge query failed: {e}")
         return {"count": 0, "events": []}
     # Map event_id -> id so the card links to /store/event/{id}.
     events = [{**r, "id": r.pop("event_id")} for r in rows]
@@ -4623,7 +4631,7 @@ def _refresh_movers(city: str, days: int, limit: int, key: str) -> None:
         fresh = _compute_movers(require_sb(), city, days, limit)
         _movers_cache[key] = (time.time(), fresh)
     except Exception as e:
-        print(f"[movers refresh] failed for {key}: {e!r}")
+        _log.warning(f"[movers refresh] failed for {key}: {e!r}")
     finally:
         _MOVERS_CACHE_REFRESHING.discard(key)
 
@@ -4697,7 +4705,7 @@ def store_home(
         # Conservative fallback so the homepage never breaks on a transient
         # matview read error. Empty payload renders the existing "Loading…"
         # → "No events match" UI path.
-        print(f"[store_home] LEM query failed: {e!r}")
+        _log.warning(f"[store_home] LEM query failed: {e!r}")
         return {"count": 0, "events": [], "source": "sql"}
 
     if not lem_rows:
@@ -4724,7 +4732,7 @@ def store_home(
                      .limit(1000)
                      .execute().data) or []
     except Exception as e:
-        print(f"[store_home] events query failed: {e!r}")
+        _log.warning(f"[store_home] events query failed: {e!r}")
         return {"count": 0, "events": [], "source": "sql"}
 
     events_by_id = {int(e["id"]): e for e in ev_rows if e.get("id")}
@@ -4941,7 +4949,7 @@ def store_events_near(
                 per_page=min(cap, 100),
             )
         except RuntimeError as e:
-            print(f"[store_events_near] TEvo geo lookup failed: {e!r}")
+            _log.warning(f"[store_events_near] TEvo geo lookup failed: {e!r}")
             raise HTTPException(502, "geo lookup failed")
         evs = tevo_resp.get("events") or []
         return {
@@ -4977,7 +4985,7 @@ def store_events_near(
         except RuntimeError as e:
             # On TEvo failure, fall through to supabase mode rather than
             # 502'ing the home page. Logged for observability.
-            print(f"near (hybrid): TEvo failed, falling back to supabase: {e}")
+            _log.warning(f"near (hybrid): TEvo failed, falling back to supabase: {e}")
             source = "supabase"
         else:
             candidate_ids = [int(e["id"]) for e in (tevo_resp.get("events") or []) if e.get("id")]
@@ -5191,7 +5199,7 @@ def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
                 sb.table("events").select("id").eq("id", event_id).limit(1).execute().data
             )
         except Exception as e:
-            print(f"canonical refresh: events lookup failed for {event_id}: {e}")
+            _log.warning(f"canonical refresh: events lookup failed for {event_id}: {e}")
             return
 
         if existing:
@@ -5211,7 +5219,7 @@ def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
         )
         pid = primary.get("id")
         if not pid:
-            print(f"auto-track: event {event_id} has no primary performer; skipping")
+            _log.info(f"auto-track: event {event_id} has no primary performer; skipping")
             return
         pid = int(pid)
         pname = primary.get("name") or f"performer {pid}"
@@ -5224,7 +5232,7 @@ def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
             row = (ins.data or [None])[0]
             if row:
                 watchlist_id = row.get("id")
-                print(f"auto-track: added performer {pid} ({pname}) to watchlist as id={watchlist_id}")
+                _log.info(f"auto-track: added performer {pid} ({pname}) to watchlist as id={watchlist_id}")
         except Exception as e:
             msg = str(e)
             if "duplicate" in msg.lower() or "23505" in msg or "unique" in msg.lower():
@@ -5238,9 +5246,9 @@ def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
                     if found:
                         watchlist_id = found[0]["id"]
                 except Exception as e2:
-                    print(f"auto-track: lookup after dup failed: {e2}")
+                    _log.warning(f"auto-track: lookup after dup failed: {e2}")
             else:
-                print(f"auto-track: watchlist insert failed for performer {pid}: {e}")
+                _log.warning(f"auto-track: watchlist insert failed for performer {pid}: {e}")
 
         if watchlist_id:
             url = f"{SUPABASE_URL}/functions/v1/collect-listings?watchlist_id={watchlist_id}"
@@ -5419,7 +5427,7 @@ def _fetch_owned_ticket_groups(
     try:
         live = client.get_ticket_groups(event_id, owned=True)
     except RuntimeError as e:
-        print(f"[ticket_groups] TEvo ticket_groups failed for {event_id}: {e!r}")
+        _log.warning(f"[ticket_groups] TEvo ticket_groups failed for {event_id}: {e!r}")
         raise HTTPException(502, "ticket listings fetch failed")
     groups = live.get("ticket_groups", []) or []
     if sb is not None:
@@ -5479,7 +5487,7 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
             # TEvo means the event doesn't exist → 404 (not a 502 gateway
             # error, which previously made cycling-id scans + dead share
             # links look like outages); 5xx/timeout → 502, 429/503 → 503.
-            print(f"[store_event_detail] TEvo event lookup failed for {event_id}: {e!r}")
+            _log.warning(f"[store_event_detail] TEvo event lookup failed for {event_id}: {e!r}")
             raise _tevo_runtime_to_http(
                 e,
                 not_found_detail="event not found",
@@ -6113,7 +6121,7 @@ def store_reserve(request: Request, payload: dict = Body(...), authorization: st
         try:
             tg_resp = client.get_ticket_groups(event_id, owned=True)
         except RuntimeError as e:
-            print(f"[store_reserve] TEvo ticket_groups failed for {event_id}: {e!r}")
+            _log.warning(f"[store_reserve] TEvo ticket_groups failed for {event_id}: {e!r}")
             raise HTTPException(502, "ticket listings fetch failed")
         match = next(
             (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
@@ -6473,7 +6481,7 @@ def store_share_create(payload: dict = Body(...), user=Depends(require_auth)):
             # generic string so Supabase exception text (table/constraint
             # names, internal validation) doesn't leak to public callers.
             # Audit S4 2026-05-16.
-            print(f"[store_share_create] share insert failed twice for {share_id}: {e2!r}")
+            _log.warning(f"[store_share_create] share insert failed twice for {share_id}: {e2!r}")
             raise HTTPException(500, "could not create share link") from e
 
     saved = (ins.data or [None])[0] or row

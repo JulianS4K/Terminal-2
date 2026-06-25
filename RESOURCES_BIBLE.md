@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.0.0 (2026-06-19 dense rewrite; history in git/CHANGELOG)
+> **Doc version:** v2.1.0 (2026-06-25; added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -34,6 +34,7 @@ Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_
 |---|---|---|---|---|
 | **Supabase** | Postgres + Edge + Vault + Auth | A1 | project `hzrizjeaxlqcxfrtczpq` | anon + service_role (anon exposed via `/api/public/config`) |
 | **Render** | FastAPI + static hosting | D0 (D1 sub) | `srv-d8140bnaqgkc73al4asg` | env-side |
+| **Sentry** (opt-in) | error tracking / exception capture | B1 | `core/observability.py` (`init_sentry`) | `SENTRY_DSN` (env; **inert until set** — no-op + zero behavior change without it) |
 | **TEvo** (TicketEvolution v9) | listings/orders feed | A1 | `evo_client.py` | `TEVO_API_TOKEN`, `TEVO_SECRET` |
 | **SeatGeek** | marketplace + seller data | A1 | `seatgeek_client.py`, `sg_*` tables | `SEATGEEK_API_TOKEN` |
 | **SeatData** | wholesale sales feed | A1 | `seatdata_client.py`, `seatdata_*` | `SEATDATA_API_KEY` |
@@ -143,6 +144,8 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 
 ## 7. Vault secrets (names only — never values)
 `CRON_SECRET`, `EDGE_FN_ANON_JWT`, `TEVO_API_TOKEN`, `TEVO_SECRET`, `SEATGEEK_API_TOKEN`, `SEATDATA_API_KEY`, `TICKETSDATA_USERNAME`, `TICKETSDATA_PASSWORD`, `FRED_API_KEY` (free), `STRIPE_*` (D4). Rotation: `CRON_SECRET` 128-char, 3-way sync (vault+Edge+Render); legacy JWTs → `sb_publishable_*`/`sb_secret_*`.
+
+**Observability env (Render env-side, not vault):** `SENTRY_DSN` (unset = error tracking off), `SENTRY_TRACES_SAMPLE_RATE` (default `0.0`), `LOG_LEVEL` (default `INFO`). Wired in `core/observability.py`; the app logs structured stdout always and only sends to Sentry once `SENTRY_DSN` is set.
 
 ## 8. Extensions
 `plpgsql`, `pgcrypto`, `uuid-ossp`, `pg_cron 1.6.4` (`max_running_jobs=32`, `use_background_workers=off`), `pg_net 0.20.0` (async — `pg_sleep` does NOT rate-limit it), `pg_stat_statements`, `pg_trgm`, `unaccent`, `supabase_vault`. Absent (enable via migration if needed): postgis, vector, http(sync), pgmq, pg_partman.
