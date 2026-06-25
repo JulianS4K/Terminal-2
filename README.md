@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
+> **Doc version:** v2.1.0 (2026-06-25; added the product-code coverage gate to repo-layout + local-run; history in git/CHANGELOG)
 
 ---
 
@@ -97,7 +97,9 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 ├── scripts/                data/ingest tools + check_readonly.py (RULE 2 static audit, CI gate)
 ├── .claude-plugins/        governance plugin: skills/ (executable §8 workflows) ·
 │   terminal2-governance/   commands/ (/new-migration, /rule2-audit) · hooks/ (Pre+PostToolUse)
-├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards)
+├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards);
+│                           100% product-code line+branch coverage, enforced in CI by
+│                           tests.yml --cov-fail-under=100 (.coveragerc scopes the surface)
 ├── docs/                   active references + docs/archive/ (historical)
 ├── design/                 historical wireframes / proposals
 └── <canonical *.md>        the 7 docs in the registry above
@@ -117,6 +119,21 @@ uvicorn app:app --reload --port 8765
 ```
 
 `http://localhost:8765` → home hub; `/static/terminal/event.html?event=<id>` → D0 broker view.
+
+Run the test suite + coverage gate locally (mirrors the `tests.yml` CI job). The
+dummy creds keep `app.py` from `sys.exit`-ing under coverage's module scan:
+
+```bash
+pip install pytest pytest-cov
+AUTH_DISABLED=true SUPABASE_URL=https://example.invalid SUPABASE_SERVICE_ROLE_KEY=test-key \
+  TEVO_TOKEN=test TEVO_SECRET=test PYTHONPATH=. \
+  pytest tests/ --cov --cov-branch --cov-fail-under=100
+```
+
+The gate is a **ratchet** — it only moves up. Product code (`app.py`, `core/`,
+`routers/`, `d2_dashboard`, the `*_client.py`, `render_webhook.py`) is held at
+100% line + branch coverage; genuinely-unreachable lines carry a justified
+`# pragma: no cover`. Scope + omits live in `.coveragerc`.
 
 ## Conventions — quick pointers (don't restate; link)
 
