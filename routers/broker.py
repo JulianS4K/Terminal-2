@@ -14,7 +14,7 @@ ESPN-league list. requests is the shared module (patched globally by tests).
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import requests
@@ -997,6 +997,89 @@ def build_broker_router(
             "available_sources": sorted(sources_present),
             "parking_hidden": parking_count,
             "include_parking": include_parking,
+        }
+
+    @router.get("/api/broker/performer/{performer_id}/espn")
+    def broker_performer_espn(performer_id: int, _=Depends(require_auth)):
+        """ESPN context for a TEvo performer. Resolves performer_id → ESPN team_id
+        via performer_external_ids (source='espn'), then pulls the latest team
+        snapshot, current injuries, recent news, and the last 5 game snapshots
+        involving that team.
+
+        Returns: {
+          applicable, performer_id, espn_team_id, league,
+          team:    { record_summary, standing_summary, streak, win_pct, captured_at },
+          injuries:[{ athlete_name, position, status, injury_type, return_date, ... }],
+          news:    [{ headline, description, url, published_at, type }],
+          recent:  [{ espn_event_id, captured_at, home_team_id, away_team_id, home_score, away_score, status_short }]
+        }
+        """
+        db = get_require_sb()()
+        pei = (db.table("performer_external_ids")
+                 .select("performer_id, external_id, league, meta")
+                 .eq("performer_id", performer_id).eq("source", "espn")
+                 .limit(1).execute().data or [])
+        if not pei:
+            return {"applicable": False, "reason": "no ESPN mapping for this performer"}
+        espn_team_id = str(pei[0]["external_id"])
+        league       = pei[0]["league"]
+
+        # Latest team snapshot (one row, most recent captured_at).
+        team_rows = (db.table("espn_team_snapshots")
+                       .select("captured_at, wins, losses, ties, win_pct, games_back, playoff_seed, conference_rank, division_rank, record_summary, standing_summary, streak")
+                       .eq("espn_team_id", espn_team_id).eq("espn_league", league)
+                       .order("captured_at", desc=True).limit(1).execute().data or [])
+
+        # Current injuries — latest snapshot per athlete (last 24h).
+        injuries = (db.table("espn_injuries_snapshots")
+                      .select("athlete_id, athlete_name, position, status, injury_type, short_comment, return_date, captured_at")
+                      .eq("espn_team_id", espn_team_id).eq("espn_league", league)
+                      .gte("captured_at", (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat())
+                      .order("captured_at", desc=True).limit(50).execute().data or [])
+        seen = set(); inj_dedup = []
+        for x in injuries:
+            k = x.get("athlete_id")
+            if k in seen: continue
+            seen.add(k); inj_dedup.append(x)
+
+        # Recent news (last 30 days, top 8).
+        news = (db.table("espn_news")
+                  .select("headline, description, url, published_at, type")
+                  .eq("espn_team_id", espn_team_id).eq("espn_league", league)
+                  .order("published_at", desc=True).limit(8).execute().data or [])
+
+        # Last 5 finished/upcoming game snapshots where this team is home or away.
+        recent: list = []
+        try:
+            recent = (db.rpc("get_team_recent_games", {"p_espn_team_id": espn_team_id, "p_league": league, "p_limit": 5}).execute().data or [])
+        except Exception:
+            # Fallback: query espn_event_snapshots directly (latest snap per event).
+            rows_h = (db.table("espn_event_snapshots")
+                        .select("espn_event_id, captured_at, status_short, state, home_team_id, away_team_id, home_score, away_score")
+                        .eq("home_team_id", espn_team_id).eq("espn_league", league)
+                        .order("captured_at", desc=True).limit(15).execute().data or [])
+            rows_a = (db.table("espn_event_snapshots")
+                        .select("espn_event_id, captured_at, status_short, state, home_team_id, away_team_id, home_score, away_score")
+                        .eq("away_team_id", espn_team_id).eq("espn_league", league)
+                        .order("captured_at", desc=True).limit(15).execute().data or [])
+            all_rows = rows_h + rows_a
+            seen_ev = set(); merged = []
+            for x in sorted(all_rows, key=lambda r: r.get("captured_at", ""), reverse=True):
+                ek = x.get("espn_event_id")
+                if ek in seen_ev: continue
+                seen_ev.add(ek); merged.append(x)
+                if len(merged) >= 5: break
+            recent = merged
+
+        return {
+            "applicable": True,
+            "performer_id": performer_id,
+            "espn_team_id": espn_team_id,
+            "league": league,
+            "team":     team_rows[0] if team_rows else None,
+            "injuries": inj_dedup[:20],
+            "news":     news,
+            "recent":   recent,
         }
 
     return router
