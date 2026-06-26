@@ -52,7 +52,7 @@ Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_
 | **GitHub** | source + PR surface | A1 | `JulianS4K/Terminal-2` | PAT (Bash only) |
 | **pg_net** | async HTTP from SQL | A1 | ext `pg_net 0.20.0` + `_cron_invoke_edge_fn` | vault |
 
-Reddit: PAUSED 2026-05-13 (tables `reddit_*` retained, crons dropped). Railway: legacy deploy home, migrating off → Render.
+Reddit: sentiment pipeline (`reddit_posts`/`performer_subreddits`, RSS) still PAUSED 2026-05-13. **News ticker re-enabled 2026-06-26** (operator) as a separate flair-filtered path: `reddit_news`/`reddit_news_flairs`/`v_reddit_news_ticker`, crons `reddit_news_{queue,process,sweep}_*`, sports-only, title-only, 24h retention, link-deduped. Source = search.rss `flair_name:"News"` (the JSON-flair path is 403 to server UAs — see mig 20260509410000). Railway: legacy deploy home, migrating off → Render.
 
 **Render landing:** `/` serves the VibePass **5-surface hub** (`static/home/index.html` — Terminal/Undelivered/Orders/Store/Bridge, auth-gated) on the `vibepass-storefront-test` web service (`uvicorn server:app`, `branch: main`, `autoDeploy`, `STOREFRONT_AS_LANDING=false`); the `vibepass-terminal-test` static CDN redirects `/`→`/home/` to the same hub. Set `STOREFRONT_AS_LANDING=true` to revert `/`→`/store`. Frontend has a Playwright browser net (`tests/frontend/`, `frontend-smoke` CI job) over the hub + store + terminal pages.
 
@@ -193,7 +193,7 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 **RULE 7 — retail product = S4K-owned only.** Storefront surfaces only events we hold inventory for. `/api/store/*` carveout: `we_own`/`owned_tix`/`owned_groups_count` intentionally exposed (availability signals); broader `is_owned`/wholesale/`brokerage_*` stripping still applies to broker/terminal responses.
 
 ## 11. Data buckets (feature vocabulary)
-Core (10): 1 Pricing (`event_metrics`/`zone`/`section_metrics`: retail_*/getin/wholesale) · 2 Inventory volume · 3 Owned position (`brokerage_id=1768`) · 4 Splits/format · 5 Market structure · 6 Standings/form (`espn_team_snapshots`) · 7 Player health (`espn_injuries_snapshots`) · 8 Game context (`espn_event_snapshots`) · 9 News/narrative (`espn_news`/`wiki_*`/`why_signals`) · 10 Map/config (`events`/`performer_zones`/`venue_assets`/`v_broker_configurations.fanvenues_key`).
+Core (10): 1 Pricing (`event_metrics`/`zone`/`section_metrics`: retail_*/getin/wholesale) · 2 Inventory volume · 3 Owned position (`brokerage_id=1768`) · 4 Splits/format · 5 Market structure · 6 Standings/form (`espn_team_snapshots`) · 7 Player health (`espn_injuries_snapshots`) · 8 Game context (`espn_event_snapshots`) · 9 News/narrative (`espn_news`/`wiki_*`/`why_signals`/`reddit_news`) · 10 Map/config (`events`/`performer_zones`/`venue_assets`/`v_broker_configurations.fanvenues_key`).
 ML feature groups (7): 11 Temporal/calendar · 12 Demand/popularity · 13 Historical/narrative · 14 External signals (`why_signals`) · 15 Brokerage microstructure (not yet a metrics table) · 16 Classification (§taxonomy) · 17 Major event calendar (`major_event_calendar` — F1/NASCAR/majors; no team performer).
 
 ## 12. Classification taxonomy
