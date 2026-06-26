@@ -40,6 +40,9 @@ def build_broker_router(
     # Live TEvo client (read-only GET surface) — resolved at request time so the
     # `app.client` monkeypatch tests bind. Used by the raw-tevo passthrough.
     get_client: Callable[[], Any] = lambda: None,
+    # Bulk performer assets (logos/colors) — core/broker_helpers, but tests patch
+    # the server alias `app._bulk_performer_assets`, so resolve via getter.
+    get_bulk_performer_assets: Callable[[], Callable] = lambda: (lambda *a: {}),
 ) -> APIRouter:
     router = APIRouter()
 
@@ -708,6 +711,118 @@ def build_broker_router(
                 "gross_sold":      round(gross_sold, 2),
                 "last_update_at":  max((o.get("evo_updated_at") for o in orders if o.get("evo_updated_at")), default=None),
             },
+        }
+
+    @router.get("/api/broker/event/{event_id}/overview")
+    def broker_event_overview(event_id: int, _=Depends(require_auth)):
+        """Top-left pane: event header + event-level metrics + zone breakdown.
+        Returns latest + prior values so the UI can render delta arrows."""
+        db = get_require_sb()()
+
+        # Event header (use cowork's RPC for the rich payload)
+        detail = db.rpc("get_broker_event_detail", {"p_event_id": event_id}).execute().data or []
+        head = detail[0] if detail else None
+
+        # Latest two event_metrics for delta computation. Pull every column we
+        # collect — frontend slices it into Distribution / Volume / Wholesale /
+        # Market Structure / Owned panels.
+        em_rows = (
+            db.table("event_metrics")
+            .select(
+                "captured_at,"
+                # Inventory
+                "tickets_count,groups_count,sections_count,median_group_size,"
+                "ancillary_groups,ancillary_tickets,"
+                # Retail price distribution
+                "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
+                # Wholesale price distribution
+                "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
+                # Market structure / quality
+                # NOTE: bid_ask_proxy was dropped in mig 20260428000001 (always 0 — TEvo
+                # API doesn't expose true wholesale to this token). Don't re-add to the
+                # select or the query 500s.
+                "getin_price,top5_concentration,"
+                "price_dispersion,tail_premium,"
+                # Owned (S4K)
+                "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
+                # Splits inventory metrics (mig 20260508230000)
+                "splits_min_q,splits_listings_with_singles,splits_listings_with_pairs,"
+                "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split,"
+                "splits_pct_pairs,splits_pct_singles"
+            )
+            .eq("event_id", event_id)
+            .order("captured_at", desc=True)
+            .limit(2)
+            .execute()
+        ).data or []
+        curr = em_rows[0] if len(em_rows) >= 1 else {}
+        prev = em_rows[1] if len(em_rows) >= 2 else {}
+
+        metric_keys = [
+            # Inventory
+            "tickets_count", "groups_count", "sections_count", "median_group_size",
+            "ancillary_groups", "ancillary_tickets",
+            # Retail distribution
+            "retail_min", "retail_p25", "retail_median", "retail_mean", "retail_p75", "retail_p90", "retail_max", "retail_sum",
+            # Wholesale distribution
+            "wholesale_min", "wholesale_median", "wholesale_mean", "wholesale_max",
+            # Market structure
+            "getin_price", "top5_concentration",
+            "price_dispersion", "tail_premium",
+            # Owned
+            "owned_groups_count", "owned_tickets_count", "owned_share", "owned_median_retail",
+            # Splits inventory
+            "splits_min_q", "splits_listings_with_singles", "splits_listings_with_pairs",
+            "splits_listings_with_3", "splits_listings_with_4plus", "splits_listings_no_split",
+            "splits_pct_pairs", "splits_pct_singles",
+        ]
+        metrics = {k: {"v": curr.get(k), "delta": delta(curr.get(k), prev.get(k))} for k in metric_keys}
+
+        # Zone breakdown — owned + market split via cowork's RPC
+        zones_owned = db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": True}).execute().data or []
+        zones_market = db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": False}).execute().data or []
+
+        cadence = listings_cadence_seconds(head.get("occurs_at_local") if head else None)
+        last_pull = curr.get("captured_at")
+
+        # Attach home + away assets (logos, colors). Resolve teams via:
+        # 1) primary_performer_id is "home" (per AGENTS.md performer_home_venues semantics)
+        # 2) other performer_ids[] entries are away/opponent
+        # If event_xref maps to ESPN, additional team_ids come back from espn_event_snapshots.
+        perf_ids: list[int] = []
+        if head:
+            if head.get("primary_performer_id"):
+                perf_ids.append(int(head["primary_performer_id"]))
+            for pid in (head.get("performer_ids") or []):
+                if pid and pid not in perf_ids:
+                    perf_ids.append(int(pid))
+        assets_by_id = get_bulk_performer_assets()(db, perf_ids)
+        home_perf_id = head.get("primary_performer_id") if head else None
+        home_assets = assets_by_id.get(int(home_perf_id)) if home_perf_id else None
+        away_assets_list = [assets_by_id.get(int(p)) for p in perf_ids if p != home_perf_id and assets_by_id.get(int(p))]
+
+        # Lifecycle classification — flags ghost playoff games, completed events,
+        # postponed/cancelled. Used by the UI to render a status banner and to
+        # let movers/league/portfolio surfaces filter ghosts out by default.
+        # See migration 20260509050000_event_lifecycle for rule definitions.
+        try:
+            lc_rows = db.rpc("derive_event_lifecycle", {"p_event_id": event_id}).execute().data or []
+            lc = lc_rows[0] if lc_rows else None
+        except Exception:
+            lc = None
+
+        return {
+            "event": head,
+            "metrics": metrics,
+            "zones": {"owned": zones_owned, "market": zones_market},
+            "last_pull_at": last_pull,
+            "cadence_seconds": cadence,
+            "assets": {
+                "home": home_assets,
+                "away": away_assets_list[0] if away_assets_list else None,
+                "all": list(assets_by_id.values()),
+            },
+            "lifecycle": lc,
         }
 
     return router
