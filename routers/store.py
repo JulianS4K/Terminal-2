@@ -32,6 +32,10 @@ def build_store_router(
     get_require_sb: Callable[[], Callable],
     get_resolve_event: Callable[[], Callable],
     get_prefer_internal_zones: Callable[[], bool],
+    get_trip_plan_payload: Callable[[], Callable],
+    get_tour_package_payload: Callable[[], Callable],
+    get_multi_tour_payload: Callable[[], Callable],
+    get_discover_payload: Callable[[], Callable],
 ) -> APIRouter:
     router = APIRouter()
 
@@ -161,5 +165,90 @@ def build_store_router(
         # Map event_id -> id so the card links to /store/event/{id}.
         events = [{**r, "id": r.pop("event_id")} for r in rows]
         return {"count": len(events), "events": events}
+
+    # --- Trip-planner delegates (thin; the payload builders + the optimizer are
+    # shared with the D0 broker routes and stay in server.py, resolved via
+    # getters so the test stubs bind). ---
+
+    @router.get("/api/store/performers/{performer_id}/trip-plan")
+    def store_performer_trip_plan(
+        performer_id: int,
+        home_lat: float,
+        home_lon: float,
+        budget_km: float = 6000.0,
+        home_name: str = "Home",
+        days: int = 365,
+        max_events: int | None = None,
+        budget_usd: float | None = None,
+        qty: int = 1,
+    ):
+        """D1 store: 'plan a trip around <performer>'. Consumer-facing; shares the
+        optimizer with the D0 broker route via `trip_planner`."""
+        return get_trip_plan_payload()(performer_id, home_lat, home_lon, budget_km,
+                                       home_name, days, max_events, budget_usd, qty)
+
+    @router.get("/api/store/performers/{performer_id}/tour-package")
+    def store_performer_tour_package(
+        performer_id: int,
+        qty: int = 2,
+        budget_usd: float | None = None,
+        max_events: int | None = None,
+        days: int = 365,
+        start: str | None = None,
+        end: str | None = None,
+        side: str = "auto",
+        # Location optional — the storefront flow is budget-first. Omit
+        # home_lat/home_lon to plan on ticket spend alone.
+        home_lat: float | None = None,
+        home_lon: float | None = None,
+        budget_km: float = 8000.0,
+        home_name: str = "Home",
+        clear_at: float = 0.15,
+        away_margin: float = 0.18,
+        section_like: str | None = None,
+        prefer_owned: bool = False,
+    ):
+        """D1 store: retail 'follow the tour' agent. Budget-first; shares the
+        optimizer with the D0 route via `trip_planner`."""
+        return get_tour_package_payload()(performer_id, home_lat, home_lon, qty, budget_km,
+                                          home_name, days, budget_usd, side, clear_at,
+                                          away_margin, section_like, prefer_owned,
+                                          max_events=max_events, start_date=start, end_date=end)
+
+    @router.get("/api/store/tours/multi")
+    def store_multi_tour(
+        performer_ids: str,
+        home_lat: float,
+        home_lon: float,
+        qty: int = 3,
+        budget_km: float = 10000.0,
+        home_name: str = "Home",
+        days: int = 365,
+        budget_usd: float | None = None,
+        side: str = "auto",
+        clear_at: float = 0.15,
+        away_margin: float = 0.18,
+        section_like: str | None = None,
+        prefer_owned: bool = False,
+    ):
+        """D1 store 'plan my summer' — one routed+priced package across several
+        performers (comma-separated `performer_ids`, up to 8)."""
+        return get_multi_tour_payload()(performer_ids, home_lat, home_lon, qty, budget_km,
+                                        home_name, days, budget_usd, side, clear_at,
+                                        away_margin, section_like, prefer_owned)
+
+    @router.get("/api/store/tours/near")
+    def store_tours_near(
+        home_lat: float,
+        home_lon: float,
+        within_mi: float = 250.0,
+        days: int = 120,
+        min_shows: int = 2,
+        concerts_only: bool = False,
+    ):
+        """D1 store reverse discovery — performers/teams playing >= min_shows
+        within `within_mi` of home in the window (teams surface by AWAY games)."""
+        return get_discover_payload()(home_lat, home_lon, within_mi, days, min_shows,
+                                      concerts_only, team_side="away")
 
     return router

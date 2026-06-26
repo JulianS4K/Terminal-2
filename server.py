@@ -4999,102 +4999,9 @@ def store_events_near(
     }
 
 
-@app.get("/api/store/performers/{performer_id}/trip-plan")
-def store_performer_trip_plan(
-    performer_id: int,
-    home_lat: float,
-    home_lon: float,
-    budget_km: float = 6000.0,
-    home_name: str = "Home",
-    days: int = 365,
-    max_events: int | None = None,
-    budget_usd: float | None = None,
-    qty: int = 1,
-):
-    """D1 store: 'plan a trip around <performer>'.
-
-    Consumer-facing. Given a fan's home location + how far they're willing to travel
-    (and optionally a ticket-spend budget + tickets/show), returns the best set of this
-    performer's upcoming shows to attend, alongside the naive sort-by-date plan.
-
-    Shares the optimizer with the D0 broker route via `trip_planner`.
-    """
-    return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
-                              home_name, days, max_events, budget_usd, qty)
-
-
-@app.get("/api/store/performers/{performer_id}/tour-package")
-def store_performer_tour_package(
-    performer_id: int,
-    qty: int = 2,
-    budget_usd: float | None = None,
-    max_events: int | None = None,
-    days: int = 365,
-    start: str | None = None,
-    end: str | None = None,
-    side: str = "auto",
-    # Location is optional — the storefront flow is budget-first. Omit home_lat/home_lon
-    # to plan on ticket spend alone (most stops your money buys, anywhere on the tour).
-    home_lat: float | None = None,
-    home_lon: float | None = None,
-    budget_km: float = 8000.0,
-    home_name: str = "Home",
-    clear_at: float = 0.15,
-    away_margin: float = 0.18,
-    section_like: str | None = None,
-    prefer_owned: bool = False,
-):
-    """D1 store: retail 'follow the tour' agent. Pick a performer, a date range, how many
-    stops to follow (max_events), tickets per show (qty) and a total budget (budget_usd);
-    returns the most stops that fit, cheapest seats per show, with the rest of the tour in
-    all_stops (so the UI can offer 'add $X for one more'). Budget-first — no location needed.
-    Shares the optimizer with the D0 route via `trip_planner`."""
-    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km, home_name,
-                                 days, budget_usd, side, clear_at, away_margin,
-                                 section_like, prefer_owned, max_events=max_events,
-                                 start_date=start, end_date=end)
-
-
-@app.get("/api/store/tours/multi")
-def store_multi_tour(
-    performer_ids: str,
-    home_lat: float,
-    home_lon: float,
-    qty: int = 3,
-    budget_km: float = 10000.0,
-    home_name: str = "Home",
-    days: int = 365,
-    budget_usd: float | None = None,
-    side: str = "auto",
-    clear_at: float = 0.15,
-    away_margin: float = 0.18,
-    section_like: str | None = None,
-    prefer_owned: bool = False,
-):
-    """D1 store 'plan my summer' — one routed+priced package across several performers
-    (comma-separated `performer_ids`, up to 8). Shares the engine with the D0 route."""
-    return _multi_tour_payload(performer_ids, home_lat, home_lon, qty, budget_km, home_name,
-                               days, budget_usd, side, clear_at, away_margin,
-                               section_like, prefer_owned)
-
-
-@app.get("/api/store/tours/near")
-def store_tours_near(
-    home_lat: float,
-    home_lon: float,
-    within_mi: float = 250.0,
-    days: int = 120,
-    min_shows: int = 2,
-    concerts_only: bool = False,
-):
-    """D1 store reverse discovery — for fans who want to travel ALONG a favorite
-    artist or team's run (go city to city with them), not just catch one show. Returns
-    performers/teams playing >= min_shows within `within_mi` of home in the window (a
-    multi-stop run you can follow in person), with price-from + demand. Teams surface
-    by their AWAY games near you (road trips that come to your area), not the local
-    team's home stand — team_side='away'."""
-    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only,
-                             team_side="away")
+# /api/store/performers/{id}/trip-plan|tour-package + /api/store/tours/multi|near
+# -> routers/store.py (BR-CODE-1 slice; thin delegates, payload builders stay
+# in server.py shared with the D0 broker routes, passed via getters).
 
 
 # _section_sort_key -> core/helpers.py (BR-CODE-1); aliased at top.
@@ -5263,6 +5170,10 @@ app.include_router(build_store_router(
     get_require_sb=lambda: require_sb,
     get_resolve_event=lambda: _resolve_event_with_filters,
     get_prefer_internal_zones=lambda: STOREFRONT_PREFER_INTERNAL_ZONES,
+    get_trip_plan_payload=lambda: _trip_plan_payload,
+    get_tour_package_payload=lambda: _tour_package_payload,
+    get_multi_tour_payload=lambda: _multi_tour_payload,
+    get_discover_payload=lambda: _discover_payload,
 ))
 
 
