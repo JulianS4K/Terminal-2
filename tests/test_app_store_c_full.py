@@ -533,9 +533,12 @@ def test_retail_last_message_must_be_user(capture_post):
 
 
 def test_retail_proxy_not_configured_503(monkeypatch):
-    """SUPABASE_URL empty → 503 chat not configured (line 6190-6191)."""
+    """SUPABASE_URL empty → 503 chat not configured. The proxy now lives in
+    routers/retail_chat.py and reads SUPABASE_URL from that module's namespace,
+    so patch it there (post-decomposition)."""
+    import routers.retail_chat as _rc
     monkeypatch.setattr(app_module, "STOREFRONT_CONCIERGE_ENABLED", True)
-    monkeypatch.setattr(app_module, "SUPABASE_URL", "")
+    monkeypatch.setattr(_rc, "SUPABASE_URL", "")
     c = TestClient(app_module.app)
     r = c.post("/api/store/retail-chat", json={"message": "hi"})
     assert r.status_code == 503

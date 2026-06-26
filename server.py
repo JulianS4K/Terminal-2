@@ -598,10 +598,6 @@ STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower()
 # short-circuits with a friendly canned reply and never calls the chat edge fn.
 # Re-enable by setting STOREFRONT_CONCIERGE_ENABLED=true (no code change needed).
 STOREFRONT_CONCIERGE_ENABLED = os.environ.get("STOREFRONT_CONCIERGE_ENABLED", "false").lower() == "true"
-_CONCIERGE_OFFLINE_REPLY = (
-    "Our concierge is taking a short break right now. In the meantime you can browse "
-    "everything we hold from the home page, or reach us directly and we'll find your seats."
-)
 
 
 @app.get("/")
@@ -6062,106 +6058,21 @@ def store_reserve(request: Request, payload: dict = Body(...), authorization: st
 # EVO inventory only). The edge function clamps include_all accordingly, so a
 # consumer can never widen the storefront beyond owned inventory.
 
-_RETAIL_CHAT_MAX_TURNS = 24
-_RETAIL_CHAT_MAX_CHARS = 4000
-
-
-def _client_ip(request: Request) -> str:
-    """Best-effort real client IP behind the Render/Railway proxy. Forwarded
-    to the edge function so its per-IP rate limit is per-user, not per-proxy."""
-    # Use the RIGHTMOST X-Forwarded-For hop: that's the entry appended by our
-    # own edge proxy and is the only one a client can't forge. Keying on the
-    # leftmost (client-supplied) entry let a single client rotate fake IPs to
-    # bypass the edge function's per-IP rate limit (audit 2026-06-10; this
-    # callsite was missed by that fix and aligned 2026-06-22).
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        last = xff.split(",")[-1].strip()
-        if last:
-            return last
-    real = request.headers.get("x-real-ip")
-    if real:
-        return real.strip()
-    return (request.client.host if request.client else "") or "unknown"
-
-
-def _sanitize_chat_history(payload: dict) -> list[dict]:
-    """Validate + bound the client-supplied transcript before forwarding.
-    Accepts either {history:[{role,content}...]} or {message:"..."}."""
-    if not isinstance(payload, dict):
-        raise HTTPException(400, "expected a JSON object")
-    hist = payload.get("history")
-    if hist is None and payload.get("message"):
-        hist = [{"role": "user", "content": str(payload.get("message"))}]
-    if not isinstance(hist, list) or not hist:
-        raise HTTPException(400, "history or message required")
-    out: list[dict] = []
-    for item in hist[-_RETAIL_CHAT_MAX_TURNS:]:
-        if not isinstance(item, dict):
-            continue
-        role = item.get("role")
-        content = item.get("content")
-        if role not in ("user", "assistant") or not isinstance(content, str):
-            continue
-        content = content.strip()
-        if not content:
-            continue
-        out.append({"role": role, "content": content[:_RETAIL_CHAT_MAX_CHARS]})
-    if not out:
-        raise HTTPException(400, "no valid messages in history")
-    if out[-1]["role"] != "user":
-        raise HTTPException(400, "last message must be from the user")
-    return out
-
-
-def _proxy_retail_chat(history: list[dict], scope: str, client_ip: str) -> JSONResponse:
-    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
-        raise HTTPException(503, "chat service not configured")
-    url = f"{SUPABASE_URL.rstrip('/')}/functions/v1/chat"
-    headers = {
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "apikey": SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY,
-        "Content-Type": "application/json",
-        "x-real-ip": client_ip,
-        "x-forwarded-for": client_ip,
-    }
-    try:
-        r = requests.post(
-            url,
-            headers=headers,
-            json={"history": history, "scope": "all" if scope == "all" else "owned"},
-            timeout=45,
-        )
-    except Exception as e:
-        logging.getLogger(__name__).error("retail-chat proxy upstream error: %s", e)
-        raise HTTPException(502, "chat service unreachable")
-    try:
-        body = r.json()
-    except Exception:
-        body = {"error": "assistant returned a malformed response"}
-    status = r.status_code if r.status_code >= 400 else 200
-    return JSONResponse(body, status_code=status)
-
-
-@app.post("/api/retail-chat")
-def retail_chat_terminal(request: Request, payload: dict = Body(...), _=Depends(require_auth)):
-    """Operator-facing retail chat (email-gated). scope=all → full market."""
-    history = _sanitize_chat_history(payload)
-    return _proxy_retail_chat(history, "all", _client_ip(request))
-
-
-@app.post("/api/store/retail-chat")
-def retail_chat_store(request: Request, payload: dict = Body(...)):
-    """Public storefront retail chat. scope=owned → hard-locked to our owned
-    EVO inventory (enforced server-side; the consumer cannot widen it).
-
-    Gated by STOREFRONT_CONCIERGE_ENABLED (off for now): when disabled we return
-    a friendly canned reply with HTTP 200 so the widget renders it as a normal
-    assistant message — and crucially never call the paid chat edge function."""
-    if not STOREFRONT_CONCIERGE_ENABLED:
-        return JSONResponse({"reply": _CONCIERGE_OFFLINE_REPLY}, status_code=200)
-    history = _sanitize_chat_history(payload)
-    return _proxy_retail_chat(history, "owned", _client_ip(request))
+# retail-chat (/api/retail-chat + /api/store/retail-chat) -> routers/retail_chat.py
+# (BR-CODE-1 decomposition slice). The concierge flag stays a server config
+# global; the getter resolves the live value so the test monkeypatch binds.
+from routers.retail_chat import build_retail_chat_router  # noqa: E402
+# Re-export the transcript constants + offline reply the router now owns, so
+# app_module._RETAIL_CHAT_MAX_TURNS / _MAX_CHARS / _CONCIERGE_OFFLINE_REPLY
+# keep resolving for tests (same compat pattern as core/auth).
+from routers.retail_chat import (  # noqa: E402,F401
+    _RETAIL_CHAT_MAX_TURNS, _RETAIL_CHAT_MAX_CHARS, _CONCIERGE_OFFLINE_REPLY,
+    _client_ip, _sanitize_chat_history, _proxy_retail_chat,
+)
+app.include_router(build_retail_chat_router(
+    require_auth=require_auth,
+    get_concierge_enabled=lambda: STOREFRONT_CONCIERGE_ENABLED,
+))
 
 
 @app.api_route("/store/chat", methods=["GET", "HEAD"])
