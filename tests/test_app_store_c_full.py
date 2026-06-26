@@ -38,7 +38,7 @@ sys.path.insert(0, str(REPO_ROOT))
 pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
-import app as app_module  # noqa: E402
+import server as app_module  # noqa: E402
 
 TestClient = starlette_testclient.TestClient
 
@@ -687,7 +687,7 @@ def test_share_create_auth_disabled_null_created_by():
     # Use a fresh fake + override require_auth to None.
     db = _FakeDB()
     app_module.app.dependency_overrides[app_module.require_auth] = lambda: None
-    import app as _a
+    import server as _a
     _a.require_sb = lambda: db  # type: ignore
     try:
         c = TestClient(app_module.app)
@@ -808,7 +808,7 @@ def test_share_revoke_auth_disabled_skips_owner_filter():
         {"id": "s1", "event_id": 1, "created_by": "someone", "revoked_at": None},
     ])
     app_module.app.dependency_overrides[app_module.require_auth] = lambda: None
-    import app as _a
+    import server as _a
     _a.require_sb = lambda: db  # type: ignore
     try:
         c = TestClient(app_module.app)

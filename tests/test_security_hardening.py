@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO_ROOT))
 fastapi = pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
-import app as app_module  # noqa: E402
+import server as app_module  # noqa: E402
 import core.auth as core_auth  # noqa: E402  (require_auth + AUTH_DISABLED live here now)
 from fastapi import HTTPException  # noqa: E402
 

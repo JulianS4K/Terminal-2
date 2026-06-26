@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.1.0 (2026-06-25; added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
+> **Doc version:** v2.2.0 (2026-06-26; app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -150,7 +150,7 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 ## 8. Extensions
 `plpgsql`, `pgcrypto`, `uuid-ossp`, `pg_cron 1.6.4` (`max_running_jobs=32`, `use_background_workers=off`), `pg_net 0.20.0` (async — `pg_sleep` does NOT rate-limit it), `pg_stat_statements`, `pg_trgm`, `unaccent`, `supabase_vault`. Absent (enable via migration if needed): postgis, vector, http(sync), pgmq, pg_partman.
 
-## 9. HTTP API surface (`app.py`; full: `grep '@app\.\(get\|post\|delete\)' app.py`)
+## 9. HTTP API surface (`server.py` + `routers/*`; full: `grep '@app\.\(get\|post\|delete\)' server.py routers/*.py`) — renamed from app.py 2026-06-26 (entrypoint `uvicorn server:app`)
 - **Public storefront `/api/store/*`** (D1): `events`(+`/{id}`,`/zones`,`/near`), `search`, `movers`, `share`(+CRUD), `reserve` (MOCK — never charges). `/api/public/config` (anon key).
 - **Terminal/broker `/api/broker/*`** (A1+D0, 40+): `event/{id}/{overview,zones,section-metrics,raw-tevo,chart-data,cadences,espn}`, `movers` (v2 `?window_days=&source=&category=`), `performer/{id}/assets`, `news`, `leagues`. Plus `/api/{events,performers,venues,configurations,portfolio,watchlist}`, `/api/axs/event/{id}/{listings,sections,series}`, `/api/collect/run`, `/api/admin/*`.
 - DB platform statement_timeout 120s (overridable); MCP runs service_role (NO timeout cap → bound audit scans).

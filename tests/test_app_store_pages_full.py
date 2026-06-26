@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import app as app_module
+import server as app_module
 
 client = TestClient(app_module.app)
 

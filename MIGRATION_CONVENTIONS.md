@@ -87,7 +87,7 @@ If the audit lane is unavailable and a production write is genuinely urgent (dat
 | **xref + macro** *(audit lane)* | `mystifying-lederberg-ea407b` | `event_xref` (W), `espn_event_date_lookup`, `espn_teams_canonical`, `performer_espn_team_xref`, `espn_scoreboard_pending`, `match_events_to_espn_tick()`, `v_event_xref_collisions`, `macro_indicators`, `macro_series_config`, `fred_pending`, all FRED + ESPN scoreboard ingestion |
 | **canonical** | `audit-datasets-schemas-auoc3` | `canonical_external_ids`, `seatgeek_event_xref`, all drift triggers, `v_event_overlay_summary`, `audit_cross_source_health()`, SG candidate normalization, `v_event_sales_combined`, event/performer view wireframe SQL |
 | **broadway** | `broadway-scraper-eChQ6` | `broadway_client.py`, scraper tests, `requirements.txt` Broadway entries (no DB writes currently — when they start, Broadway-prefixed xref tables only) |
-| **storefront** | `eloquent-chatterjee-aaedf0` | `app.py`, `static/store/*`, `share_links` table + endpoints |
+| **storefront** | `eloquent-chatterjee-aaedf0` | `server.py` (ex-app.py), `static/store/*`, `share_links` table + endpoints |
 
 ### Read-only access (everyone)
 

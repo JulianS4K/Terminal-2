@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO_ROOT))
 pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
-import app as app_module  # noqa: E402
+import server as app_module  # noqa: E402
 import core.auth as core_auth  # noqa: E402
 import render_webhook as rw  # noqa: E402
 from fastapi import HTTPException, Request  # noqa: E402

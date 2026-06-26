@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v2.3.0 (2026-06-19; history in git/CHANGELOG) — §4/§0: `sg_attempt_event_xref_v3` exact-date guard documented (same-date-first + off-date-series reject, PR #613 / mig 20260619200000) — was read as a naive "±24h, nearest wins" matcher
+> **Doc version:** v2.4.0 (2026-06-26; app.py renamed → server.py post-decomp, all file/lane refs updated; entrypoint `uvicorn server:app`) · v2.3.0 (2026-06-19; history in git/CHANGELOG) — §4/§0: `sg_attempt_event_xref_v3` exact-date guard documented (same-date-first + off-date-series reject, PR #613 / mig 20260619200000) — was read as a naive "±24h, nearest wins" matcher
 
 **Read FIRST every session — but this doc is large; do NOT linear-read it.** Priority read = **§0** (the AQ hub — the #1 fact most sessions miss) + **§1** (hard rules). Then determine your lane (§2) and **jump to the one section your task needs**:
 
@@ -116,7 +116,7 @@ A1 + B1 maintain `main` (push per-task, not by tier).   ★ D0 PRIORITY; D1–D4
 
 | Lane | Domain | Mandate | Status |
 |---|---|---|---|
-| **A1** | Data plane | Supabase tables/migrations/crons; the **AQ mapper** + cross-source xref; the 9 read-only `*_client.py` + edge functions + **order ingestion** + `app.py` data routes; **DB-layer security** (RLS, SECDEF, RULE-2 lockdown); data freshness + 429/cron monitoring + alerting. | **ACTIVE** |
+| **A1** | Data plane | Supabase tables/migrations/crons; the **AQ mapper** + cross-source xref; the 9 read-only `*_client.py` + edge functions + **order ingestion** + `server.py` data routes; **DB-layer security** (RLS, SECDEF, RULE-2 lockdown); data freshness + 429/cron monitoring + alerting. | **ACTIVE** |
 | **B1** | Git + code | Git history; **git/code security** (secret leaks, insecure patterns — *not* DB RLS/SECDEF); drift prevention; code freshness; module compartmentalization; test-suite + CI-gate health. | **ACTIVE** |
 | **C1** | Docs + coord | `bot_chat`; the **main bible set** + closed registry + structure; **promotion arbiter** (lane-bible → main set); the **shared cross-lane resource register** (§2.6). | **ACTIVE** |
 | **D0** ★ | Terminal FE | Broker terminal (`static/terminal/*` + `/api/broker/*`); UX + speed testing; owns its Render service; **workspace-wide Render parity with A1**. Gating lane for D1–D4 reactivation. | **ACTIVE — PRIORITY** |
@@ -129,7 +129,7 @@ A1 + B1 maintain `main` (push per-task, not by tier).   ★ D0 PRIORITY; D1–D4
 
 ### 2.2 Per-lane writes / never-writes
 
-- **A1** — writes: all migrations (incl. RLS/SECDEF + `*_security_*.sql`); ingest + order tables; `supabase/functions/*` (data pipeline); the 9 `*_client.py`; `app.py` data routes; `requirements.txt`/`Procfile`; `MIGRATION_CONVENTIONS.md`. Reads: everything.
+- **A1** — writes: all migrations (incl. RLS/SECDEF + `*_security_*.sql`); ingest + order tables; `supabase/functions/*` (data pipeline); the 9 `*_client.py`; `server.py` data routes; `requirements.txt`/`Procfile`; `MIGRATION_CONVENTIONS.md`. Reads: everything.
 - **B1** — writes: `KANBAN.md` security backlog; `docs/security-runbook-*.md`; `supabase/functions/_shared/cron-auth.ts`; CI workflows + `bin/`/`scripts/` guard code; cross-cutting security patches (PR comment to the file's owner). No prod tables.
 - **C1** — writes: the main bible set + registry; `bot_chat` checkpoints/drift flags. Never applies prod DB (author files only).
 - **D0** — writes: `static/terminal/*` (html/js/css); `docs/d0-*.md`, wireframes; `/api/broker/*` routes (coordinate with A1). **Never writes:** any DB table directly; any cron schedule (author migration, A1 applies); data-mutating edge functions; paused-lane files.
@@ -175,7 +175,7 @@ One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.m
 | `supabase/functions/exos-*` + `stripe-webhook` | **D4** | Exos app edge fns |
 | 9 read-only `*_client.py` (evo/seatgeek/seatdata/ticketsdata/axs/tickpick/vivid/gotickets) | **A1** | GET-only by construction |
 | `broadway_client.py`, `broadway_extension/`, `broadway_*` | **D3** | Broadway scraper |
-| `app.py` + `routers/*` + `core/*` | **A1** (file/package) | decomposition (BR-CODE-1): `routers/*` = `APIRouter` modules `include_router`'d back; `core/*` = shared runtime (config now; auth/db/client later) both import; **one-directional import** (`app.py`/`routers` → `core`, never reverse); per-surface route blocks lane-owned — D0 `/api/broker/*`, D1 `/api/store/*` (§2.6) |
+| `server.py` + `routers/*` + `core/*` | **A1** (file/package) | decomposition (BR-CODE-1): `routers/*` = `APIRouter` modules `include_router`'d back; `core/*` = shared runtime (config now; auth/db/client later) both import; **one-directional import** (`server.py`/`routers` → `core`, never reverse); per-surface route blocks lane-owned — D0 `/api/broker/*`, D1 `/api/store/*` (§2.6) |
 | order tables + ingestion; AQ mapper + `*_xref` + metrics matviews; RLS/SECDEF/RULE-2 | **A1** | cross-source hub + DB security |
 | `bin/*`, `.github/workflows/*`, `.gitleaks*`, `.gitignore`/`.mcp.json`/release plumbing; `scripts/check_readonly.py`, `tests/*` | **B1** | CI + git guards + tests |
 | canonical `*.md` registry, `.understand-anything/`, `.claude*` governance (hook/scanner code → B1); `bot_chat` + shared-resource register | **C1** | docs + coordination + harness governance |
@@ -194,7 +194,7 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 | Shared resource | Writer | Cross-lane consumers | Rule |
 |---|---|---|---|
 | **Venue/seat map** (`lib/tevomaps.bundle.js`, `venue.js`/`event.js`; `cross_source_venue_map`/`aq_venue_map`/`venue_assets`) | D0 (component) · A1 (data) | D0 terminal + D1 `store.js` | a D0 map change must keep store rendering; tail-remap landmine (§3) applies to both |
-| **API surface** — single `app.py` | A1 (file) | D0 `/api/broker/*` · D1 `/api/store/*` · A1 `/api/public/*` | route blocks lane-owned; shared helpers + `/api/public/config` → PR comment to both FE lanes |
+| **API surface** — single `server.py` | A1 (file) | D0 `/api/broker/*` · D1 `/api/store/*` · A1 `/api/public/*` | route blocks lane-owned; shared helpers + `/api/public/config` → PR comment to both FE lanes |
 | **`trip_planner/`** | shared (D0+D1) | `/api/broker/.../trip-plan` (D0) + `/api/store/.../trip-plan` (D1) | one engine, two routes; regression-test both |
 | **Order data** — `unified_orders`/`cross_source_orders` | A1 (ingest+view) | D0 `orders.js` tiles + D2 dashboard | a view/schema change must serve both; keys on `tevo_event_id` (unmapped = invisible, §0) |
 | **`*_public` RPCs** — wholesale-filtered read boundary | A1 | D1 store (only path) | D1 may never read `broker_*`/wholesale fields; the whitelist is the contract |
@@ -208,14 +208,14 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 | Service | Service ID | Owner | Sub-implementer | Source | IaC |
 |---|---|---|---|---|---|
 | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
-| `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 (PAUSED) | `app.py`, `static/store/*` | `render.yaml` |
+| `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 (PAUSED) | `server.py`, `static/store/*` | `render.yaml` |
 | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D2 (PAUSED) | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
 
 **Testing-unified (2026-05-16, PR #168):** all runtime traffic flows through `vibepass-storefront-test` (starter, no cold starts) — it mounts D0 terminal + D1 storefront + D2 dashboard via `app.include_router`. `vibepass-terminal-test` is the D0 static CDN; `d2-orders-dashboard` is an idle placeholder. Both live services auto-deploy from `main` after green CI. **Render access:** A1 + D0 workspace-wide; all others read-only (writes need operator approval). Full deploy chain → `docs/d0_terminal_build.md`.
 
 ### 2.8 Cross-cutting lane rules + paused-lane scope
 
-1. **Shared files** (`app.py`, `requirements.txt`, `MIGRATION_CONVENTIONS.md`, `KANBAN.md`) — propose via PR comment to the owner before editing.
+1. **Shared files** (`server.py`, `requirements.txt`, `MIGRATION_CONVENTIONS.md`, `KANBAN.md`) — propose via PR comment to the owner before editing.
 2. **Single-writer per table** (§2.4 + `MIGRATION_CONVENTIONS.md §4`).
 3. **Security cross-cutting exception** — B1 may patch any file for a security CRIT/HIGH, surfaced via PR comment to the affected lane.
 4. **Out-of-lane writes** require a PR comment to the lane owner; if offline, `flag` in `bot_chat`. **Never silently write across lanes** — even cache files/logs count.
@@ -248,7 +248,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | Order/sales tables' `tevo_event_id` (`evo_orders`, `tickpick_orders`, `vivid_orders`, `seatgeek_orders`, `sd_sales_normalized`) | filter/join by `tevo_event_id` assuming it's set | **Source-native-keyed; `tevo_event_id` is DERIVED via the AQ mapper and is often NULL on fresh rows.** Each row has the source's own event id (TP `raw->>'event_id'`, `vivid_event_id`, `sg_event_id`, `sd_event_id`; EVO `event_id` = TEvo id). Populate by running/awaiting `backfill_order_tevo_from_aq()` (hourly @ :40); never hand-map by name/date. Terminal order views key on `tevo_event_id` → unmapped = invisible. Full rule: §5 (orders/sales). (A1 2026-05-30) |
 | `axs_*_snapshots` (AXS primary box office) | treat raw amounts as dollars; trust `tevo_event_id`; assume axs.com = resale | **Raw amounts are CENTS** (`/100`); `tevo_event_id` is **AQ-derived (often NULL until `axs_apply_aq` runs)** — snapshots key on it, so unmapped = invisible; `occurs_at_local` is offset-naive AXS-local (±1 day vs TEvo on reschedules — `axs_aq_match` uses a ±48h window); the `9000000…` offerIDs are **resale**, everything else is **primary box office**. AXS is a PRIMARY ticketer, not a resale feed. Map: `axs_aq_match()` → `tevo_event_id`. (A1 2026-06-10) |
 | `seatgeek_sales_snapshots` aggregates | `count(*)` / `SUM(broadcast_price)` directly | **11–23× overcount** — UNIQUE `(sg_event_id, sg_sale_id, pulled_at)` means each logical sale re-inserts every poll. **MANDATORY**: `DISTINCT ON (sg_sale_id) ORDER BY sg_sale_id, pulled_at DESC` before any aggregate. `MAX()` alone is safe (idempotent). Exemplars: `v_event_sales_metrics_filtered`, `v_event_sales_velocity` (PR #161); v3 RPC `sg_broker_sales` (PR #191). |
-| `v_rivalry_events` aggregates | `count(*)` / first-row per `tevo_event_id` | **Duplicate rows emitted when both teams are competitors** — view joins both home + away through `sporting_rivalries`. Dedupe Python-side keyed on `tevo_event_id` (first match wins) before consuming. Exemplars: `app.py:1198` event-page enrichment, `_compute_movers` Specials rail (PR #275). |
+| `v_rivalry_events` aggregates | `count(*)` / first-row per `tevo_event_id` | **Duplicate rows emitted when both teams are competitors** — view joins both home + away through `sporting_rivalries`. Dedupe Python-side keyed on `tevo_event_id` (first match wins) before consuming. Exemplars: `server.py:1198` event-page enrichment, `_compute_movers` Specials rail (PR #275). |
 | `v_event_weather_with_fallback.is_climo_fallback` | (column doesn't exist) | Derive `weather_kind = 'climatology_outdoor'`. Values: `'none' / 'forecast_indoor' / 'forecast_outdoor' / 'climatology_outdoor'`. |
 | `v_event_weather_with_fallback.climo_temp_f` | wrong name (no `_avg`) | Actual is `climo_avg_temp_f`. Sibling climo cols: `climo_avg_precip_in`, `climo_avg_wind_mph`, `climo_stddev_temp_f`, `climo_precip_pct`. The view also exposes top-level pre-resolved `temp_f / precip_in / precip_pct / wind_mph / weather_summary` — use those if you don't need a forecast-vs-climo badge. |
 | `sg_events_canonical` Parking pseudo-events | match against TEvo | **TEvo merges parking into main listing** — skip `sg_category IN ('Parking','parking')` and `*venue_name ILIKE '%parking%'` rows. Matcher v3 enforces this. |

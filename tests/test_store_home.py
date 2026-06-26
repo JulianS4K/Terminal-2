@@ -46,7 +46,7 @@ sys.path.insert(0, str(REPO_ROOT))
 fastapi = pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
-import app as app_module  # noqa: E402
+import server as app_module  # noqa: E402
 # The movers engine (section builders + holiday/marquee classifiers + _compute_movers)
 # moved to core/movers.py (BR-CODE-1). app still re-exports _compute_movers /
 # _classify_world_cup / _or_ilike_clause (reachable via app_module), but the section
