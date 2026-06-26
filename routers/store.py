@@ -12,11 +12,15 @@ itself injects sb/client/etc.), `get_require_sb` → `app.require_sb`,
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from fastapi import APIRouter
 
-from core.helpers import is_bowl_pattern_name
+from core.helpers import is_bowl_pattern_name, or_ilike_clause
+
+_log = logging.getLogger("app")
 
 # A performer+venue pair with more zones than this almost certainly has a
 # hand-curated granular layer on top of the consumer bowl seed (NYK@MSG = 26;
@@ -130,5 +134,32 @@ def build_store_router(
             "has_granular_available": has_granular_layer,  # UI 'switch to expert view' toggle
             "prefer_internal_enabled": prefer_internal,
         }
+
+    @router.get("/api/store/concierge")
+    def store_concierge(city: str = "NYC", days: int = 60, limit: int = 18):
+        """Concierge rail — upcoming owned events where we hold PREMIUM top-band
+        seats (>= $500), EVO/TEvo inventory only (D3, 2026-06-16). Backed by the
+        `concierge_events` rollup; ordered most-premium first. `from_price` is the
+        entry into each event's premium tier. NYC-scoped like the movers rail.
+        """
+        db = get_require_sb()()
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+        horizon_iso = (datetime.now(timezone.utc) + timedelta(days=max(1, min(int(days), 120)))).date().isoformat()
+        venue_patterns = ("%New York%", "%Brooklyn%", "%Bronx%", "%Queens%",
+                          "%Flushing%", "%Elmont%", "%, NY%", "%Newark%", "%East Rutherford%")
+        try:
+            q = (db.table("concierge_events")
+                   .select("event_id,name,venue_name,venue_location,occurs_at_local,"
+                           "from_price,prem_max_price,prem_tickets,primary_performer_name")
+                   .gte("occurs_date", today_iso)
+                   .lte("occurs_date", horizon_iso))
+            q = q.or_(",".join(or_ilike_clause("venue_location", p) for p in venue_patterns))
+            rows = q.order("prem_max_price", desc=True).limit(max(1, min(int(limit), 40))).execute().data or []
+        except Exception as e:
+            _log.warning(f"store_concierge query failed: {e}")
+            return {"count": 0, "events": []}
+        # Map event_id -> id so the card links to /store/event/{id}.
+        events = [{**r, "id": r.pop("event_id")} for r in rows]
+        return {"count": len(events), "events": events}
 
     return router
