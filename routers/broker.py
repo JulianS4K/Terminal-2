@@ -1567,4 +1567,254 @@ def build_broker_router(
             },
         }
 
+    def _broker_movers_v2(source: str, window_days: int, category=None, include_inactive: bool = False):
+        """v2 movers path: reads from event_movers_index (SMA-based signal scoring).
+        Returns events grouped by category with cross-source spread data.
+        Index is seeded 3×/day by compute_movers_index_post_snapshot cron.
+        """
+        db = get_require_sb()()
+        rows = db.rpc("get_event_movers_v2", {
+            "p_source":      source,
+            "p_window_days": window_days,
+            "p_category":    category,   # None → all categories (SQL NULL)
+            "p_limit":       200,        # 6 cat × 25 events = 150 max; 200 gives headroom
+        }).execute().data or []
+        summary = db.rpc("get_event_movers_index_summary", {
+            "p_source":      source,
+            "p_window_days": window_days,
+        }).execute().data or []
+        by_cat: dict = {}
+        for r in rows:
+            cat = r.get("category") or "unknown"
+            by_cat.setdefault(cat, []).append(r)
+        return {
+            "v":                  2,
+            "source":             source,
+            "window_days":        window_days,
+            "category":           category,
+            "event_count":        len(rows),
+            "events_by_category": by_cat,
+            "summary":            summary,
+        }
+
+
+    @router.get("/api/broker/movers")
+    def broker_movers(window_hours: int = 24, source: str = "merged", window_days: int | None = None,
+                      category: str | None = None, include_inactive: bool = False, _=Depends(require_auth)):
+        """Top 10 winners + losers at event / performer / venue level, owned vs market.
+        Window: compare latest event_metrics row vs latest row from `window_hours` ago.
+
+        Owned segment    = events with owned_tickets_count > 0 in current window
+        Market segment   = events with market listings (regardless of owned)
+        Returns 12 lists total: {events,performers,venues} × {owned,market} × {winners,losers}
+
+        `include_inactive`: by default we exclude ghost / completed / cancelled events
+        (lifecycle.is_active=false) so a Raptors playoff bracket that won't happen
+        doesn't pollute the movers list. Pass true to see everything raw.
+
+        v2 path (window_days set): uses event_movers_index (SMA-based, source×window×category).
+        source defaults to "merged"; category=None returns all categories grouped by key.
+        """
+        # v2 path: index-backed SMA signals, source×window×category
+        if window_days is not None:
+            return _broker_movers_v2(source, window_days, category, include_inactive)
+
+        window_hours = max(1, min(int(window_hours), 168))
+        db = get_require_sb()()
+
+        # Pre-aggregated in SQL via get_event_movers_with_sg RPC
+        # (mig 20260518000000 wraps the original get_event_movers from mig
+        # 20260508040000). Adds per-event SG sales count over the same window
+        # — powers the new "SG sales" column on movers + the "BLIND SPOTS —
+        # SG SELLING, WE'RE NOT" panel. DISTINCT ON (sg_sale_id) inside the
+        # RPC handles the 11x SG firehose dedup (PROJECT_BIBLE §3).
+        #
+        # Old approach (Python aggregation over a 50k-row window) was silently
+        # capped at 1000 rows by PostgREST's per-request row limit, producing
+        # an empty Movers report even when the underlying data was rich.
+        rpc_rows = db.rpc("get_event_movers_with_sg", {"p_window_hours": window_hours}).execute().data or []
+
+        # Filter ghost/completed/cancelled events unless caller explicitly opts in.
+        # event_lifecycle is a view over derive_event_lifecycle(); cheap to query
+        # for the small id-set we get from the movers RPC.
+        if rpc_rows and not include_inactive:
+            ids = [r.get("event_id") for r in rpc_rows if r.get("event_id")]
+            if ids:
+                lc_rows = (
+                    db.table("event_lifecycle").select("event_id,status,is_active")
+                    .in_("event_id", ids).execute()
+                ).data or []
+                inactive = {r["event_id"] for r in lc_rows if not r.get("is_active")}
+                if inactive:
+                    rpc_rows = [r for r in rpc_rows if r.get("event_id") not in inactive]
+
+        def pct_delta(cur, prev):
+            if cur is None or prev is None: return None
+            try: c = float(cur); p = float(prev)
+            except (TypeError, ValueError): return None
+            if p == 0: return None
+            return round((c - p) / p * 100, 2)
+
+        def abs_delta(cur, prev):
+            if cur is None or prev is None: return None
+            try: return round(float(cur) - float(prev), 2)
+            except (TypeError, ValueError): return None
+
+        def _val(price, tix):
+            if price is None or tix is None: return None
+            try: return float(price) * float(tix)
+            except (TypeError, ValueError): return None
+
+        rows_built = []
+        for r in rpc_rows:
+            cur_market_val  = _val(r.get("cur_market_med"),  r.get("cur_market_tix"))
+            prev_market_val = _val(r.get("prev_market_med"), r.get("prev_market_tix"))
+            cur_owned_val   = _val(r.get("cur_owned_med"),   r.get("cur_owned_tix"))
+            prev_owned_val  = _val(r.get("prev_owned_med"),  r.get("prev_owned_tix"))
+            rows_built.append({
+                "event_id":       r.get("event_id"),
+                "name":           r.get("name"),
+                "performer_id":   r.get("primary_performer_id"),
+                "performer_name": r.get("primary_performer_name"),
+                "venue_id":       r.get("venue_id"),
+                "venue_name":     r.get("venue_name"),
+                "occurs_at_local": r.get("occurs_at_local"),
+                "latest_at":      r.get("latest_at"),
+                "cur_market_med": r.get("cur_market_med"),
+                "cur_market_tix": r.get("cur_market_tix"),
+                "cur_owned_med":  r.get("cur_owned_med"),
+                "cur_owned_tix":  r.get("cur_owned_tix"),
+                "cur_owned_share": r.get("cur_owned_share"),  # v3: for "we ARE the market" badge
+                "delta_market_pct": pct_delta(r.get("cur_market_med"), r.get("prev_market_med")),
+                "delta_market_abs": abs_delta(r.get("cur_market_med"), r.get("prev_market_med")),
+                "delta_owned_pct":  pct_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
+                "delta_owned_abs":  abs_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
+                # Notional ticket inventory marked-to-market — captures both price moves
+                # AND inventory moves in a single number. Treat each event like a position:
+                # value = price × quantity; Δvalue = (cur_price × cur_qty) − (prev_price × prev_qty).
+                "cur_market_val":   round(cur_market_val,  2) if cur_market_val  is not None else None,
+                "prev_market_val":  round(prev_market_val, 2) if prev_market_val is not None else None,
+                "delta_market_val": (None if cur_market_val is None or prev_market_val is None
+                                     else round(cur_market_val - prev_market_val, 2)),
+                "cur_owned_val":    round(cur_owned_val,  2) if cur_owned_val  is not None else None,
+                "prev_owned_val":   round(prev_owned_val, 2) if prev_owned_val is not None else None,
+                "delta_owned_val":  (None if cur_owned_val is None or prev_owned_val is None
+                                     else round(cur_owned_val - prev_owned_val, 2)),
+                # SG broker-sales count over the same window (DISTINCT ON sg_sale_id
+                # inside the RPC handles 11x firehose dedup). Drives the new SG
+                # column on the movers table + BLIND SPOTS panel (sg_sales > N
+                # AND cur_owned_tix = 0).
+                "sg_sales_window":  r.get("sg_sales_window") or 0,
+            })
+
+        if not rows_built:
+            return {"window_hours": window_hours, "events": {"owned_winners": [], "owned_losers": [], "market_winners": [], "market_losers": []},
+                    "performers": {"owned_winners": [], "owned_losers": [], "market_winners": [], "market_losers": []},
+                    "venues": {"owned_winners": [], "owned_losers": [], "market_winners": [], "market_losers": []}}
+
+        def top10(items, key, desc=True):
+            filtered = [r for r in items if r.get(key) is not None]
+            filtered.sort(key=lambda r: r[key], reverse=desc)
+            return filtered[:10]
+
+        # Owned segment = events where current owned tix > 0
+        owned = [r for r in rows_built if (r.get("cur_owned_tix") or 0) > 0]
+        market = rows_built  # all events being tracked (may or may not have owned)
+
+        # Performer + venue rollups: weight by current market tickets
+        def rollup(rows_in, group_key, name_key, id_key):
+            agg: dict = {}
+            for r in rows_in:
+                gid = r.get(group_key)
+                if gid is None: continue
+                slot = agg.setdefault(gid, {
+                    id_key: gid, name_key: r.get(name_key.replace("name", "name")),
+                    "weighted_market_pct_num": 0.0, "weighted_market_pct_den": 0,
+                    "weighted_owned_pct_num": 0.0,  "weighted_owned_pct_den":  0,
+                    "events_count": 0, "owned_tix_total": 0, "market_tix_total": 0,
+                })
+                slot["events_count"] += 1
+                slot["market_tix_total"] += int(r.get("cur_market_tix") or 0)
+                slot["owned_tix_total"]  += int(r.get("cur_owned_tix") or 0)
+                if r.get("delta_market_pct") is not None and (r.get("cur_market_tix") or 0) > 0:
+                    slot["weighted_market_pct_num"] += float(r["delta_market_pct"]) * int(r["cur_market_tix"])
+                    slot["weighted_market_pct_den"] += int(r["cur_market_tix"])
+                if r.get("delta_owned_pct") is not None and (r.get("cur_owned_tix") or 0) > 0:
+                    slot["weighted_owned_pct_num"] += float(r["delta_owned_pct"]) * int(r["cur_owned_tix"])
+                    slot["weighted_owned_pct_den"] += int(r["cur_owned_tix"])
+            out = []
+            for slot in agg.values():
+                slot["delta_market_pct"] = (round(slot["weighted_market_pct_num"] / slot["weighted_market_pct_den"], 2)
+                                           if slot["weighted_market_pct_den"] else None)
+                slot["delta_owned_pct"]  = (round(slot["weighted_owned_pct_num"]  / slot["weighted_owned_pct_den"], 2)
+                                           if slot["weighted_owned_pct_den"]  else None)
+                out.append({
+                    id_key: slot[id_key], "name": slot.get(name_key.replace("name", "name")),
+                    "events_count": slot["events_count"],
+                    "market_tix_total": slot["market_tix_total"],
+                    "owned_tix_total": slot["owned_tix_total"],
+                    "delta_market_pct": slot["delta_market_pct"],
+                    "delta_owned_pct":  slot["delta_owned_pct"],
+                })
+            return out
+
+        perf_owned  = rollup(owned,  "performer_id", "performer_name", "performer_id")
+        perf_market = rollup(market, "performer_id", "performer_name", "performer_id")
+        venue_owned  = rollup(owned,  "venue_id", "venue_name", "venue_id")
+        venue_market = rollup(market, "venue_id", "venue_name", "venue_id")
+
+        # Build owned lists first, then exclude those entities from the market candidate
+        # pool so a single Knicks game doesn't show up twice (top owned-winner AND top
+        # market-winner). Market lists fill from the next-best non-owned candidates.
+        def dedupe_market(market_pool, owned_w, owned_l, key):
+            excluded = {r.get(key) for r in (owned_w + owned_l) if r.get(key) is not None}
+            return [r for r in market_pool if r.get(key) not in excluded]
+
+        ev_ow  = top10(owned,  "delta_owned_pct",  desc=True)
+        ev_ol  = top10(owned,  "delta_owned_pct",  desc=False)
+        ev_market_dedup = dedupe_market(market, ev_ow, ev_ol, "event_id")
+        ev_mw  = top10(ev_market_dedup, "delta_market_pct", desc=True)
+        ev_ml  = top10(ev_market_dedup, "delta_market_pct", desc=False)
+
+        pf_ow  = top10(perf_owned,  "delta_owned_pct",  desc=True)
+        pf_ol  = top10(perf_owned,  "delta_owned_pct",  desc=False)
+        pf_market_dedup = dedupe_market(perf_market, pf_ow, pf_ol, "performer_id")
+        pf_mw  = top10(pf_market_dedup, "delta_market_pct", desc=True)
+        pf_ml  = top10(pf_market_dedup, "delta_market_pct", desc=False)
+
+        vn_ow  = top10(venue_owned,  "delta_owned_pct",  desc=True)
+        vn_ol  = top10(venue_owned,  "delta_owned_pct",  desc=False)
+        vn_market_dedup = dedupe_market(venue_market, vn_ow, vn_ol, "venue_id")
+        vn_mw  = top10(vn_market_dedup, "delta_market_pct", desc=True)
+        vn_ml  = top10(vn_market_dedup, "delta_market_pct", desc=False)
+
+        # Notional value movers: rank by abs $ change in (price × tickets) — the
+        # mark-to-market on the inventory position. Captures both price drops and
+        # inventory drawdowns in one score, which is what an options-style P&L would
+        # weight too (no convexity in tickets, so it's pure delta×dS plus dN×price).
+        ev_value_winners = top10([r for r in rows_built if r.get("delta_market_val") is not None], "delta_market_val", desc=True)
+        ev_value_losers  = top10([r for r in rows_built if r.get("delta_market_val") is not None], "delta_market_val", desc=False)
+        ev_owned_value_winners = top10([r for r in rows_built if r.get("delta_owned_val") is not None and (r.get("cur_owned_tix") or 0) > 0], "delta_owned_val", desc=True)
+        ev_owned_value_losers  = top10([r for r in rows_built if r.get("delta_owned_val") is not None and (r.get("cur_owned_tix") or 0) > 0], "delta_owned_val", desc=False)
+
+        return {
+            "window_hours": window_hours,
+            # Caption surfaced by the UI so users understand what they're looking at.
+            "ranking": {
+                "metric_owned":  "delta_owned_pct",
+                "metric_market": "delta_market_pct",
+                "metric_value":  "delta_market_val (cur_med × cur_tix − prev_med × prev_tix)",
+                "weighting":     "events: unweighted % change. performer/venue rollups: ticket-count-weighted average. Value lists: absolute $ change in inventory mark-to-market.",
+                "dedupe_rule":   "market_winners/losers exclude any entity already in owned_winners/losers; market lists fill from next-best non-owned candidates.",
+            },
+            "events": {
+                "owned_winners":  ev_ow,  "owned_losers":  ev_ol,
+                "market_winners": ev_mw,  "market_losers": ev_ml,
+                "value_winners":  ev_value_winners, "value_losers": ev_value_losers,
+                "owned_value_winners": ev_owned_value_winners, "owned_value_losers": ev_owned_value_losers,
+            },
+            "performers": {"owned_winners": pf_ow, "owned_losers": pf_ol, "market_winners": pf_mw, "market_losers": pf_ml},
+            "venues":     {"owned_winners": vn_ow, "owned_losers": vn_ol, "market_winners": vn_mw, "market_losers": vn_ml},
+        }
+
     return router
