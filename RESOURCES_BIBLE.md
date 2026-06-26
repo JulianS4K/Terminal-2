@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.3.1 (2026-06-26; §9: keystone `resolve_event_with_filters` now in core/store_events.py); v2.3.0 (§9 code-map ties route groups → router modules; v2.2.0: app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
+> **Doc version:** v2.4.0 (2026-06-26; §7: production-readiness resilience env — `SUPABASE_TIMEOUT_SECONDS`/`DB_CIRCUIT_*`/`REDIS_URL`/`SESSION_SIGNING_SECRET` + their `core/db`·`core/resilience`·`core/ratelimit` modules); v2.3.1 (2026-06-26; §9: keystone `resolve_event_with_filters` now in core/store_events.py); v2.3.0 (§9 code-map ties route groups → router modules; v2.2.0: app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -146,6 +146,12 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 `CRON_SECRET`, `EDGE_FN_ANON_JWT`, `TEVO_API_TOKEN`, `TEVO_SECRET`, `SEATGEEK_API_TOKEN`, `SEATDATA_API_KEY`, `TICKETSDATA_USERNAME`, `TICKETSDATA_PASSWORD`, `FRED_API_KEY` (free), `STRIPE_*` (D4). Rotation: `CRON_SECRET` 128-char, 3-way sync (vault+Edge+Render); legacy JWTs → `sb_publishable_*`/`sb_secret_*`.
 
 **Observability env (Render env-side, not vault):** `SENTRY_DSN` (unset = error tracking off), `SENTRY_TRACES_SAMPLE_RATE` (default `0.0`), `LOG_LEVEL` (default `INFO`). Wired in `core/observability.py`; the app logs structured stdout always and only sends to Sentry once `SENTRY_DSN` is set.
+
+**Resilience env (Render env-side, not vault; production-readiness P0/P1, 2026-06-26):**
+- `SUPABASE_TIMEOUT_SECONDS` (default `30`, clamped `[1,120]`) — bounds the PostgREST/storage/function per-request timeout so a Supabase blip fails fast instead of piling up → OOM. Wired in **`core/db.py`** (`make_supabase_client`), used by `server.py` to build `sb`.
+- `DB_CIRCUIT_FAIL_THRESHOLD` (default `5`) + `DB_CIRCUIT_RESET_SECONDS` (default `30`) — the shared Supabase **circuit breaker** in **`core/resilience.py`** (`CircuitBreaker` + `resilient_call` + `safe_read`); `server.py._db_breaker` is surfaced on `/healthz` as `db_circuit` and storefront reads go through `safe_sb_read` (stale-snapshot fallback; `store_home` first-paint uses it).
+- `REDIS_URL` (unset = in-process limiter) — when set + reachable, **`core/ratelimit.py`** (`make_rate_limiter`) swaps the in-process `_IPRateLimiter` for a Redis fixed-window backend (multi-instance safe). **Set this + `SESSION_SIGNING_SECRET` before scaling past 1 dyno.**
+- `SESSION_SIGNING_SECRET` (falls back to `CRON_SECRET`, then an ephemeral per-process key) — pins the `vp_human` cookie HMAC key so signed cookies survive across instances (`core/auth.py`).
 
 ## 8. Extensions
 `plpgsql`, `pgcrypto`, `uuid-ossp`, `pg_cron 1.6.4` (`max_running_jobs=32`, `use_background_workers=off`), `pg_net 0.20.0` (async — `pg_sleep` does NOT rate-limit it), `pg_stat_statements`, `pg_trgm`, `unaccent`, `supabase_vault`. Absent (enable via migration if needed): postgis, vector, http(sync), pgmq, pg_partman.
