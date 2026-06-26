@@ -1092,36 +1092,8 @@ def event_section_series(
     return {"event_id": event_id, "days": days, "sections": sections}
 
 
-@app.get("/api/performers")
-def performers_search(
-    q: str | None = None,
-    fuzzy: bool = False,
-    category_id: int | None = None,
-    category_tree: bool = True,
-    only_with_upcoming_events: bool | None = None,
-    _=Depends(require_auth),
-):
-    if category_id is not None:
-        performers = []
-        for page in range(1, 21):
-            resp = client.list_performers(
-                category_id=category_id,
-                category_tree=category_tree,
-                only_with_upcoming_events=only_with_upcoming_events,
-                order_by="performers.popularity_score DESC",
-                per_page=100,
-                page=page,
-            )
-            batch = resp.get("performers", [])
-            performers.extend(batch)
-            if len(performers) >= resp.get("total_entries", 0) or not batch:
-                break
-        return {"performers": performers, "total_entries": len(performers)}
-    if q:
-        return client.search_performers(q=q, fuzzy=fuzzy)
-    raise HTTPException(400, "Provide q or category_id")
-
-
+# /api/performers (search) -> routers/catalog.py (BR-CODE-1 slice 31; TEvo
+# client passthrough, joins its /{id} sibling already there).
 # /api/performers/{id} + /api/venues/{id} + /api/configurations[/{id}] moved to
 # routers/catalog.py (BR-CODE-1 slice 2); included once below (search → "wired").
 
@@ -1562,23 +1534,8 @@ def portfolio(
 
 
 
-@app.get("/api/venues")
-def venues_search(
-    q: str | None = None,
-    fuzzy: bool = False,
-    lat: float | None = None,
-    lon: float | None = None,
-    within: int | None = None,
-    postal_code: str | None = None,
-    _=Depends(require_auth),
-):
-    if q:
-        return client.search_venues(q=q, fuzzy=fuzzy)
-    if lat is not None and lon is not None:
-        return client.list_venues(lat=lat, lon=lon, within=within or 15)
-    if postal_code:
-        return client.list_venues(postal_code=postal_code, within=within or 15)
-    raise HTTPException(400, "Provide q, or (lat+lon), or postal_code.")
+# /api/venues (search) -> routers/catalog.py (BR-CODE-1 slice 31; TEvo client
+# passthrough, joins its /{id} sibling already there).
 
 
 # Catalog detail passthroughs (/api/performers/{id}, /api/venues/{id},
