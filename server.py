@@ -1115,6 +1115,12 @@ app.include_router(build_broker_router(
     espn_leagues=_ESPN_LEAGUES,
     get_supabase_url=lambda: SUPABASE_URL,
     get_supabase_anon_key=lambda: SUPABASE_ANON_KEY,
+    # Trip-planner delegates (D0 broker twins of the D1 store routes). Lambdas
+    # resolve the live server payload builders so the monkeypatch tests bind.
+    get_trip_plan_payload=lambda: _trip_plan_payload,
+    get_tour_package_payload=lambda: _tour_package_payload,
+    get_multi_tour_payload=lambda: _multi_tour_payload,
+    get_discover_payload=lambda: _discover_payload,
 ))
 
 
@@ -1145,26 +1151,10 @@ def _trip_plan_payload(performer_id: int, home_lat: float, home_lon: float,
     )
 
 
-@app.get("/api/broker/performers/{performer_id}/trip-plan")
-def broker_performer_trip_plan(
-    performer_id: int,
-    home_lat: float,
-    home_lon: float,
-    budget_km: float = 6000.0,
-    home_name: str = "Home",
-    days: int = 365,
-    max_events: int | None = None,
-    budget_usd: float | None = None,
-    qty: int = 1,
-    _=Depends(require_auth),
-):
-    """D0 terminal: optimal trip around a touring performer's upcoming concert dates.
-
-    Given a home location + travel budget (and optional ticket-spend budget + tickets/show),
-    returns the maximum-value itinerary plus the sort-by-date baseline for comparison.
-    """
-    return _trip_plan_payload(performer_id, home_lat, home_lon, budget_km,
-                              home_name, days, max_events, budget_usd, qty)
+# /api/broker/performers/{id}/trip-plan|tour-package + /api/broker/tours/multi|near
+# -> routers/broker.py (BR-CODE-1 slice 23; thin auth-gated delegates, the D0
+# twins of the D1 store routes). The payload builders below stay in server.py,
+# shared with the store routes + passed to both routers via getters.
 
 
 # _clean_section -> core/helpers.py (BR-CODE-1); aliased at top.
@@ -1260,53 +1250,6 @@ def _multi_tour_payload(performer_ids: str, home_lat: float, home_lon: float, qt
     )
 
 
-@app.get("/api/broker/performers/{performer_id}/tour-package")
-def broker_performer_tour_package(
-    performer_id: int,
-    home_lat: float,
-    home_lon: float,
-    qty: int = 3,
-    budget_km: float = 8000.0,
-    home_name: str = "Home",
-    days: int = 365,
-    budget_usd: float | None = None,
-    side: str = "auto",
-    clear_at: float = 0.15,
-    away_margin: float = 0.18,
-    section_like: str | None = None,
-    prefer_owned: bool = False,
-    _=Depends(require_auth),
-):
-    """D0: retail 'tour with the artist' package — routed multi-city tour priced via the
-    dual-mode model (owned-splits for concerts, market-sourced for a team's away games)."""
-    return _tour_package_payload(performer_id, home_lat, home_lon, qty, budget_km, home_name,
-                                 days, budget_usd, side, clear_at, away_margin,
-                                 section_like, prefer_owned)
-
-
-@app.get("/api/broker/tours/multi")
-def broker_multi_tour(
-    performer_ids: str,
-    home_lat: float,
-    home_lon: float,
-    qty: int = 3,
-    budget_km: float = 10000.0,
-    home_name: str = "Home",
-    days: int = 365,
-    budget_usd: float | None = None,
-    side: str = "auto",
-    clear_at: float = 0.15,
-    away_margin: float = 0.18,
-    section_like: str | None = None,
-    prefer_owned: bool = False,
-    _=Depends(require_auth),
-):
-    """D0 'plan my summer' — one package across several performers (comma-separated ids)."""
-    return _multi_tour_payload(performer_ids, home_lat, home_lon, qty, budget_km, home_name,
-                               days, budget_usd, side, clear_at, away_margin,
-                               section_like, prefer_owned)
-
-
 def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: int,
                       min_shows: int, concerts_only: bool, team_side: str = "home") -> dict:
     """Shared body for reverse-discovery ('tours near me'). Read-only.
@@ -1324,20 +1267,6 @@ def _discover_payload(home_lat: float, home_lon: float, within_mi: float, days: 
         event_types=["concert"] if concerts_only else None,
         team_side=(team_side if team_side in ("home", "away") else "home"),
     )
-
-
-@app.get("/api/broker/tours/near")
-def broker_tours_near(
-    home_lat: float,
-    home_lon: float,
-    within_mi: float = 250.0,
-    days: int = 120,
-    min_shows: int = 2,
-    concerts_only: bool = False,
-    _=Depends(require_auth),
-):
-    """D0 reverse discovery — performers with >= min_shows within `within_mi` of home."""
-    return _discover_payload(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
 
 
 # _bulk_performer_assets -> core/broker_helpers.py and _classify_playoff (+ its
