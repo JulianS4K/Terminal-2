@@ -533,7 +533,17 @@ class _IPRateLimiter:
             dq.append(now)
             return True
 
-_ip_limiter = _IPRateLimiter()
+# Pick the rate-limiter backend: Redis (multi-instance safe) when REDIS_URL is
+# set + reachable, else the in-process limiter above (production-readiness P1 #5).
+# Provision Redis + set REDIS_URL before scaling past 1 dyno — until then the
+# in-process limiter is per-instance and bypassable.
+from core.ratelimit import make_rate_limiter  # noqa: E402
+
+_ip_limiter = make_rate_limiter(
+    os.environ.get("REDIS_URL"),
+    in_process_factory=_IPRateLimiter,
+    log=_log.warning,
+)
 
 
 class _RateLimitMiddleware(BaseHTTPMiddleware):
