@@ -1940,125 +1940,10 @@ def broker_event_zones(event_id: int, include_parking: bool = False, _=Depends(r
     }
 
 
-@app.get("/api/broker/event/{event_id}/section-metrics")
-def broker_event_section_metrics(event_id: int, _=Depends(require_auth)):
-    """Tab 1: section-level metrics with delta vs prior snapshot."""
-    db = require_sb()
-    rows = (
-        db.table("section_metrics")
-        .select("captured_at,section,is_ancillary,tickets_count,groups_count,"
-                "retail_min,retail_median,retail_mean,retail_max")
-        .eq("event_id", event_id)
-        .order("captured_at", desc=True)
-        .limit(2000)
-        .execute()
-    ).data or []
-    # Group by section, take the latest two captured_at per section
-    by_section: dict[str, list] = {}
-    for r in rows:
-        by_section.setdefault(r["section"], []).append(r)
-
-    out = []
-    last_pull = None
-    for section, snaps in by_section.items():
-        snaps.sort(key=lambda x: x["captured_at"], reverse=True)
-        c = snaps[0]
-        p = snaps[1] if len(snaps) >= 2 else {}
-        if last_pull is None or c["captured_at"] > last_pull:
-            last_pull = c["captured_at"]
-        out.append({
-            "section": section,
-            "is_ancillary": bool(c.get("is_ancillary")),
-            "metrics": {k: {"v": c.get(k), "delta": _delta(c.get(k), p.get(k))}
-                        for k in ["tickets_count", "groups_count",
-                                  "retail_min", "retail_median", "retail_mean", "retail_max"]},
-        })
-    out.sort(key=lambda s: (s["is_ancillary"], s["section"]))
-
-    # Cadence matches event listings cadence
-    ev_meta = (db.table("events").select("occurs_at_local").eq("id", event_id).limit(1).execute().data or [{}])[0]
-    cadence = _listings_cadence_seconds(ev_meta.get("occurs_at_local"))
-    return {"sections": out, "last_pull_at": last_pull, "cadence_seconds": cadence}
-
-
+# /api/broker/event/{id}/section-metrics + /api/broker/watchlist-movers +
+# /api/broker/event/{id}/orders -> routers/broker.py (BR-CODE-1 slice 25;
+# standalone DB-read routes, require_sb only + the pure core delta/cadence helpers).
 # /api/broker/event/{id}/raw-tevo -> routers/broker.py (BR-CODE-1 slice 24).
-
-
-@app.get("/api/broker/watchlist-movers")
-def broker_watchlist_movers(
-    window_hours: int = 24,
-    sort: str = "value",       # "value" → Δ market_val, "pct" → Δ market_pct
-    limit: int = 25,
-    _=Depends(require_auth),
-):
-    """Watchlisted events ordered by movement. Backs the WATCHLIST panel
-    on the Events tab. Same row shape as /api/broker/movers events list,
-    so the front-end can render it with shared code.
-
-    Pulls get_event_movers for the window, filters to events present in
-    watch_sources, then sorts by either notional Δ value or Δ %.
-    """
-    window_hours = max(1, min(int(window_hours), 168))
-    db = require_sb()
-
-    # 1. Watchlisted event_ids
-    watch = (db.table("watch_sources").select("event_id").execute().data or [])
-    watch_ids = {int(r["event_id"]) for r in watch if r.get("event_id") is not None}
-    if not watch_ids:
-        return {"window_hours": window_hours, "sort": sort, "count": 0, "events": []}
-
-    # 2. Latest+prior aggregation via the existing RPC
-    rpc_rows = db.rpc("get_event_movers", {"p_window_hours": window_hours}).execute().data or []
-
-    def pct_delta(cur, prev):
-        if cur is None or prev is None: return None
-        try: c = float(cur); p = float(prev)
-        except (TypeError, ValueError): return None
-        if p == 0: return None
-        return round((c - p) / p * 100, 2)
-    def val(price, tix):
-        if price is None or tix is None: return None
-        try: return float(price) * float(tix)
-        except (TypeError, ValueError): return None
-
-    rows = []
-    for r in rpc_rows:
-        if int(r.get("event_id") or 0) not in watch_ids:
-            continue
-        cur_market_val  = val(r.get("cur_market_med"),  r.get("cur_market_tix"))
-        prev_market_val = val(r.get("prev_market_med"), r.get("prev_market_tix"))
-        cur_owned_val   = val(r.get("cur_owned_med"),   r.get("cur_owned_tix"))
-        prev_owned_val  = val(r.get("prev_owned_med"),  r.get("prev_owned_tix"))
-        rows.append({
-            "event_id": r.get("event_id"),
-            "name": r.get("name"),
-            "venue_id": r.get("venue_id"),
-            "venue_name": r.get("venue_name"),
-            "occurs_at_local": r.get("occurs_at_local"),
-            "latest_at":      r.get("latest_at"),
-            "cur_market_med": r.get("cur_market_med"),
-            "cur_market_tix": r.get("cur_market_tix"),
-            "cur_owned_med":  r.get("cur_owned_med"),
-            "cur_owned_tix":  r.get("cur_owned_tix"),
-            "cur_owned_share": r.get("cur_owned_share"),  # v3: for "we ARE the market" badge
-            "delta_market_pct": pct_delta(r.get("cur_market_med"), r.get("prev_market_med")),
-            "delta_owned_pct":  pct_delta(r.get("cur_owned_med"),  r.get("prev_owned_med")),
-            "cur_market_val":  round(cur_market_val,  2) if cur_market_val  is not None else None,
-            "cur_owned_val":   round(cur_owned_val,   2) if cur_owned_val   is not None else None,
-            "delta_market_val": (None if cur_market_val is None or prev_market_val is None
-                                 else round(cur_market_val - prev_market_val, 2)),
-            "delta_owned_val":  (None if cur_owned_val is None or prev_owned_val is None
-                                 else round(cur_owned_val - prev_owned_val, 2)),
-        })
-
-    # Sort: events with no movement signal sink to the bottom
-    sort_key = "delta_market_val" if sort == "value" else "delta_market_pct"
-    rows_with = [r for r in rows if r.get(sort_key) is not None]
-    rows_with.sort(key=lambda r: abs(r[sort_key]), reverse=True)
-    rows_without = [r for r in rows if r.get(sort_key) is None]
-    out = (rows_with + rows_without)[: max(1, min(int(limit), 100))]
-
-    return {"window_hours": window_hours, "sort": sort, "count": len(out), "events": out}
 
 
 @app.get("/api/broker/performer/{performer_id}/espn")
@@ -3396,53 +3281,7 @@ def collect_evo_orders(
     }
 
 
-@app.get("/api/broker/event/{event_id}/orders")
-def broker_event_orders(event_id: int, _=Depends(require_auth)):
-    """Read persisted evo_orders + items for an event. Free, no TEvo call.
-    Used by the event-detail page to show pending/accepted/rejected/completed
-    counts + the actual order rows.
-    """
-    db = require_sb()
-    items = (
-        db.table("evo_order_items")
-        .select("evo_order_id,evo_item_id,quantity,price,"
-                "ticket_group_id,ticket_group_section,ticket_group_row,ticket_group_seats,"
-                "eticket_available,eticket_downloaded_at,occurs_at")
-        .eq("event_id", event_id).execute()
-    ).data or []
-    if not items:
-        return {"event_id": event_id, "items": [], "orders": [], "summary": None}
-    order_ids = list({i["evo_order_id"] for i in items if i.get("evo_order_id")})
-    orders = (
-        db.table("evo_orders")
-        .select("evo_order_id,state,type,fraud_check_status,total,subtotal,refunded,balance,"
-                "buyer_name,seller_name,client_name,evo_created_at,evo_updated_at")
-        .in_("evo_order_id", order_ids).execute()
-    ).data or []
-    state_map = {o["evo_order_id"]: o for o in orders}
-    # Summary roll-up
-    by_state: dict[str, int] = {}
-    tickets_sold = 0
-    gross_sold = 0.0
-    for it in items:
-        oid = it.get("evo_order_id")
-        st = (state_map.get(oid) or {}).get("state") or "unknown"
-        by_state[st] = by_state.get(st, 0) + 1
-        if st in ("accepted", "completed") and it.get("quantity") and it.get("price"):
-            tickets_sold += int(it["quantity"])
-            gross_sold += float(it["price"]) * int(it["quantity"])
-    return {
-        "event_id": event_id,
-        "items": items,
-        "orders": orders,
-        "summary": {
-            "total_items":     len(items),
-            "by_state":        by_state,
-            "tickets_sold":    tickets_sold,
-            "gross_sold":      round(gross_sold, 2),
-            "last_update_at":  max((o.get("evo_updated_at") for o in orders if o.get("evo_updated_at")), default=None),
-        },
-    }
+# /api/broker/event/{id}/orders -> routers/broker.py (BR-CODE-1 slice 25).
 
 
 # ============================================================================
