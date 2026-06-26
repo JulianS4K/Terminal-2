@@ -5280,28 +5280,15 @@ def _resolve_event_with_filters(event_id: int, filters: dict, include_inactive: 
     )
 
 
-@app.get("/api/store/events/{event_id}")
-def store_event_detail(
-    event_id: int,
-    section: str | None = None,         # CSV of exact section names
-    min_price: float | None = None,
-    max_price: float | None = None,
-    min_qty: int | None = None,
-    zones: str | None = None,           # CSV of curated zone names (case-insensitive)
-):
-    """Event detail + live owned-only ticket groups from TEvo, with optional
-    share-link filters applied server-side. Filters are AND-ed; an empty set of
-    matches is a valid response (UI shows "no listings match")."""
-    return _resolve_event_with_filters(
-        event_id,
-        {
-            "section": section,
-            "min_price": min_price,
-            "max_price": max_price,
-            "min_qty": min_qty,
-            "zones": zones,
-        },
-    )
+# /api/store/events/{id} (+ /zones) -> routers/store.py (BR-CODE-1 slice, now
+# unblocked by the resolve_event_with_filters -> core move). Getters bind the
+# live server symbols so the monkeypatch tests still intercept.
+from routers.store import build_store_router  # noqa: E402
+app.include_router(build_store_router(
+    get_require_sb=lambda: require_sb,
+    get_resolve_event=lambda: _resolve_event_with_filters,
+    get_prefer_internal_zones=lambda: STOREFRONT_PREFER_INTERNAL_ZONES,
+))
 
 
 # /api/store/seatmap/* proxy + section crosswalk -> routers/seatmap.py
@@ -5312,114 +5299,9 @@ from routers.seatmap import build_seatmap_router  # noqa: E402
 app.include_router(build_seatmap_router(get_sb=lambda: sb))
 
 
-# Consumer-grade zone names match a programmatic bowl pattern:
-# "{Lower|Club|Upper|Floor|...} (Xs)" — e.g. "Lower (100s)", "Upper (400s)".
-# But many performer+venue pairs ALSO get venue-specific bowl additions like
-# "Floor / Pit / GA" or "Special" that DON'T match this pattern yet are
-# still part of the consumer seed (Lakers at Crypto.com Arena has 5 such
-# zones total, none granular).
-#
-# A name regex alone misclassifies these. So we use a TWO-STEP heuristic:
-#   1. Look at the PAIR (performer + venue) total zone count. NYK at MSG
-#      has 26 zones (22 granular + 4 bowl) — well above the consumer-only
-#      ceiling of ~5–7. Anything > 8 zones almost certainly has a granular
-#      hand-curated layer.
-#   2. Within a "has-granular" pair, classify each individual zone by name
-#      regex (bowl-pattern → consumer, else granular).
-# Threshold above which a pair almost certainly has hand-curated granular
-# zones in addition to the consumer-bowl baseline. The seeded consumer
-# baseline tops out at ~5–7 zones per pair empirically.
-_GRANULAR_LAYER_ZONE_COUNT_THRESHOLD = 8
 
 
 # _is_bowl_pattern_name (+ _CONSUMER_ZONE_NAME_RE) -> core/helpers.py (BR-CODE-1); aliased at top.
-@app.get("/api/store/events/{event_id}/zones")
-def store_event_zones(event_id: int):
-    """List curated zones with owned-ticket counts so the Share dialog can
-    offer zone choices.
-
-    Layer preference (per Julian's 2026-05-11 direction):
-      1. If the event's performer+venue has any INTERNAL (granular) zones
-         with matching owned tickets, return ONLY those. The granular
-         taxonomy is hand-curated (NYK at MSG has 22 zones — Courtside,
-         Club Platinum, etc.) and is the right shopper UX where available.
-      2. Else fall back to CONSUMER (coarse bowl-level) zones — the
-         "Lower (100s) / Club (200s) / Upper (300s) / Upper (400s)" set
-         that's been programmatically seeded across ~30 venues.
-      3. Else empty (most events outside the seeded set).
-
-    Response includes `layer` so the UI can label the chip group
-    appropriately if it ever wants to.
-    """
-    db = require_sb()
-    try:
-        rows = db.rpc(
-            "get_event_zones_rollup",
-            {"p_event_id": event_id, "p_owned_only": True},
-        ).execute().data or []
-    except Exception:
-        rows = []
-    # Only consider curated zones — fallback/unmapped names from
-    # derive_zone_fallback() are noisy and not safe to share by name.
-    curated = [r for r in rows if r.get("source") == "curated"]
-
-    # Step 1: count the FULL zone universe for this event's performer+venue.
-    # If it's larger than the consumer-only ceiling, we know the pair has
-    # been hand-curated with granular zones layered on top of the bowl seed.
-    pair_zone_count = 0
-    try:
-        ev_meta = (
-            db.table("events").select("primary_performer_id,venue_id")
-            .eq("id", event_id).limit(1).execute().data
-        ) or []
-        if ev_meta:
-            perf_id = ev_meta[0].get("primary_performer_id")
-            venue_id_x = ev_meta[0].get("venue_id")
-            if perf_id and venue_id_x:
-                pair_rows = (
-                    db.table("performer_zones").select("id", count="exact")
-                    .eq("performer_id", perf_id).eq("venue_id", venue_id_x)
-                    .execute()
-                )
-                pair_zone_count = pair_rows.count or len(pair_rows.data or [])
-    except Exception:
-        pair_zone_count = 0
-
-    has_granular_layer = pair_zone_count > _GRANULAR_LAYER_ZONE_COUNT_THRESHOLD
-
-    # Step 2: pick the layer to surface. Off by default — granular taxonomy
-    # has coverage gaps right now (NYK at MSG covers ~25 of 89 owned tickets
-    # in section ranges with curated rules; the rest fall through). Once A1
-    # closes those gaps, flip STOREFRONT_PREFER_INTERNAL_ZONES=true.
-    if has_granular_layer and STOREFRONT_PREFER_INTERNAL_ZONES:
-        # Granular layer exists AND we're configured to prefer it.
-        chosen = [r for r in curated if not _is_bowl_pattern_name(r.get("zone"))]
-        layer = "internal" if chosen else "none"
-    else:
-        # Default path — return whatever curated zones exist. For pairs with
-        # both layers (NYK at MSG), this returns the bowl-level set since
-        # match_performer_zone() now picks bowl-pattern names by display
-        # order. For consumer-only pairs (most events), returns those.
-        chosen = curated
-        layer = "consumer" if chosen else "none"
-
-    zones = [
-        {
-            "name": r.get("zone"),
-            "tickets": r.get("tickets") or 0,
-            "min_retail": r.get("min_retail"),
-            "max_retail": r.get("max_retail"),
-        }
-        for r in chosen
-    ]
-    return {
-        "event_id": event_id,
-        "zones": zones,
-        "layer": layer,
-        "pair_zone_count": pair_zone_count,  # debug: # of zones for performer+venue
-        "has_granular_available": has_granular_layer,  # UI can show a 'switch to expert view' toggle
-        "prefer_internal_enabled": STOREFRONT_PREFER_INTERNAL_ZONES,
-    }
 
 
 @app.post("/api/store/verify-human")
