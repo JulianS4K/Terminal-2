@@ -1993,6 +1993,7 @@ app.include_router(build_seatdata_router(
     get_seatdata_client=lambda: _get_seatdata_client(),
     get_require_sb=lambda: require_sb,
     require_auth=require_auth,
+    require_cron_or_auth=_require_cron_or_auth,
 ))
 
 
@@ -2003,58 +2004,8 @@ from routers.axs import build_axs_router  # noqa: E402
 app.include_router(build_axs_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
-@app.post("/api/seatdata/event/{event_id}/link")
-def seatdata_link_event(event_id: int, sd_event_id: int = Query(..., description="SeatData event_id"),
-                        _=Depends(require_auth)):
-    """Manually link a TEvo event to a SeatData event. Free."""
-    db = require_sb()
-    db.table("seatdata_event_xref").upsert({
-        "tevo_event_id": event_id,
-        "sd_event_id": sd_event_id,
-        "match_method": "manual",
-        "match_confidence": 1.0,
-    }, on_conflict="tevo_event_id").execute()
-    return {"linked": True, "tevo_event_id": event_id, "sd_event_id": sd_event_id}
-
-
-@app.post("/api/seatdata/event/{event_id}/auto-search")
-def seatdata_auto_search(
-    event_id: int,
-    authorization: str | None = Header(None),
-    x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
-):
-    """Search SeatData by date+venue and link if a high-confidence match is found.
-    Free (uses /v1/events/search). Returns the chosen sd_event_id or null.
-    Cron-or-auth: pg_cron drives this via pg_net with X-Cron-Secret.
-    """
-    _require_cron_or_auth(authorization, x_cron_secret)
-    client = _get_seatdata_client()
-    if not client:
-        raise HTTPException(503, "SEATDATA_API_KEY not set on this Railway env")
-    db = require_sb()
-    ev = (db.table("events")
-          .select("id,name,occurs_at_local,venue_name,venue_location,primary_performer_name")
-          .eq("id", event_id).limit(1).execute()).data or []
-    if not ev:
-        raise HTTPException(404, f"event {event_id} not found")
-    e = ev[0]
-    perf = (e.get("primary_performer_name") or "").split(",")[0].split()[-1] if e.get("primary_performer_name") else None
-    date_prefix = (e.get("occurs_at_local") or "")[:10]  # YYYY-MM-DD
-    venue = e.get("venue_name") or ""
-    page = client.search_events(event_name=perf or None, event_date=date_prefix or None,
-                                venue_name=venue or None, limit=20)
-    candidates = page.get("data") or []
-    # Match on exact date + venue
-    match = None
-    for c in candidates:
-        if c.get("event_date") == date_prefix and (c.get("venue_name") or "").lower() == venue.lower():
-            match = c; break
-    if not match:
-        return {"matched": False, "candidates": candidates[:5]}
-    sd_event_id = match["event_id"]
-    client.link_event(event_id, sd_event_id, match_method="auto_name_date_venue",
-                      confidence=0.95, meta={"sd_event_name": match.get("event_name")})
-    return {"matched": True, "sd_event_id": sd_event_id, "match": match}
+# (seatdata link + auto-search + sync-sales POSTs moved to routers/seatdata.py
+#  — slice 33; require_cron_or_auth passed in for the cron-driven sync routes.)
 
 
 # ============================================================================
@@ -2302,40 +2253,6 @@ app.include_router(build_misc_router(
     sandbox=SANDBOX,
 ))
 
-
-@app.post("/api/seatdata/event/{event_id}/sync-sales")
-def seatdata_sync_sales(
-    event_id: int,
-    authorization: str | None = Header(None),
-    x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
-):
-    """Pull /v0.3/salesdata/get for a linked event and persist new rows.
-    PAID: 1 pull per call. Will return 503 if SEATDATA_API_KEY not set,
-    402 if budget exhausted. Cron-or-auth: pg_cron drives this via pg_net
-    with X-Cron-Secret.
-    """
-    _require_cron_or_auth(authorization, x_cron_secret)
-    client = _get_seatdata_client()
-    if not client:
-        raise HTTPException(503, "SEATDATA_API_KEY not set on this Railway env")
-    db = require_sb()
-    xref = (db.table("seatdata_event_xref").select("sd_event_id")
-            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    if not xref:
-        raise HTTPException(404, f"event {event_id} not linked to SeatData; call /auto-search or /link first")
-    sd_event_id = int(xref[0]["sd_event_id"])
-    try:
-        sales = client.salesdata(sd_event_id, tevo_event_id=event_id)
-    except Exception as e:
-        msg = str(e)
-        if "budget exhausted" in msg.lower() or "BudgetExceeded" in type(e).__name__:
-            raise HTTPException(402, msg)
-        raise HTTPException(502, f"SeatData call failed: {msg}")
-    inserted = client.store_sales(event_id, sd_event_id, sales)
-    db.table("seatdata_event_xref").update({"last_paid_pull_at": datetime.now(timezone.utc).isoformat()}) \
-      .eq("tevo_event_id", event_id).execute()
-    return {"event_id": event_id, "sd_event_id": sd_event_id,
-            "rows_received": len(sales), "rows_inserted": inserted}
 
 
 # ---------- Store (MVP) ----------
