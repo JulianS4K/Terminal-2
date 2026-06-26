@@ -5128,36 +5128,9 @@ def store_tours_near(
 
 
 def _build_zone_resolver(performer_id: int | None, venue_id: int | None):
-    """Return a fn (section, row) -> zone_name | None for this performer+venue.
-
-    Calls match_performer_zone() once per unique (section, row) pair encountered.
-    Cached within a single request so 100 listings across ~30 unique pairs cost
-    ~30 RPCs at most. Returns a no-op resolver if (performer_id, venue_id) are
-    missing or Supabase is offline."""
-    if sb is None or not performer_id or not venue_id:
-        return lambda section, row: None
-    cache: dict[tuple[str, str], str | None] = {}
-
-    def resolve(section, row):
-        key = (str(section or ""), str(row or ""))
-        if key in cache:
-            return cache[key]
-        try:
-            res = sb.rpc(
-                "match_performer_zone",
-                {
-                    "p_performer_id": performer_id,
-                    "p_venue_id": venue_id,
-                    "p_section": section or "",
-                    "p_row": row or "",
-                },
-            ).execute()
-            cache[key] = res.data if isinstance(res.data, str) else None
-        except Exception:
-            cache[key] = None
-        return cache[key]
-
-    return resolve
+    # Body in core/store_events.py (BR-CODE-1 core/ pass). Wrapper passes the
+    # live sb so the app.sb monkeypatch binds; signature unchanged.
+    return _ce_build_zone_resolver(sb, performer_id, venue_id)
 
 
 # _normalize_filters -> core/helpers.py (BR-CODE-1); imported (aliased) at top.
@@ -5259,6 +5232,8 @@ def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
 from core.store_events import (  # noqa: E402
     fetch_event_from_db as _ce_fetch_event_from_db,
     fetch_owned_ticket_groups_from_db as _ce_fetch_owned_ticket_groups_from_db,
+    build_zone_resolver as _ce_build_zone_resolver,
+    fetch_owned_ticket_groups as _ce_fetch_owned_ticket_groups,
 )
 
 
@@ -5274,62 +5249,9 @@ def _fetch_owned_ticket_groups(
     event_id: int,
     max_age_seconds: int | None = None,
 ) -> tuple[list[dict], str]:
-    """Pull owned-only ticket_groups for an event. Returns (groups, source)
-    where source is 'cache' (≤max_age) or 'live'.
-
-    Cache strategy:
-    - Read: gated on `max_age_seconds`. Storefront passes ~10 to keep retail
-      pages near-real-time; broker terminal passes None (uses the row's own
-      90s expires_at). This lets one cache table serve both consumers with
-      different freshness contracts.
-    - Write: always 90s TTL so the broker terminal still gets long-lived
-      data after a storefront refresh.
-
-    Note: cache key is event_id only; owned=true is implied for both
-    storefront and broker call sites that hit this helper.
-    """
-    if sb is not None:
-        try:
-            cached = sb.rpc("get_cached_ticket_groups", {"p_event_id": event_id}).execute().data
-            if cached:
-                payload_age_ok = True
-                if max_age_seconds is not None:
-                    captured_at_str = (cached or {}).get("captured_at")
-                    if captured_at_str:
-                        try:
-                            captured_at = datetime.fromisoformat(
-                                str(captured_at_str).replace("Z", "+00:00")
-                            )
-                            age = (datetime.now(timezone.utc) - captured_at).total_seconds()
-                            payload_age_ok = age <= max_age_seconds
-                        except (ValueError, TypeError):
-                            payload_age_ok = False
-                    else:
-                        payload_age_ok = False
-                if payload_age_ok:
-                    return (cached or {}).get("ticket_groups", []) or [], "cache"
-        except Exception:
-            # Cache failure must never block the page; fall through to live.
-            pass
-    try:
-        live = client.get_ticket_groups(event_id, owned=True)
-    except RuntimeError as e:
-        _log.warning(f"[ticket_groups] TEvo ticket_groups failed for {event_id}: {e!r}")
-        raise HTTPException(502, "ticket listings fetch failed")
-    groups = live.get("ticket_groups", []) or []
-    if sb is not None:
-        try:
-            sb.rpc("put_cached_ticket_groups", {
-                "p_event_id": event_id,
-                "p_payload": {
-                    "ticket_groups": groups,
-                    "captured_at": datetime.now(timezone.utc).isoformat(),
-                },
-                "p_ttl_seconds": 90,
-            }).execute()
-        except Exception:
-            pass
-    return groups, "live"
+    # Body in core/store_events.py (BR-CODE-1 core/ pass). Wrapper passes the
+    # live sb + client so their monkeypatches bind; signature unchanged.
+    return _ce_fetch_owned_ticket_groups(sb, client, event_id, max_age_seconds)
 
 
 # _tevo_runtime_to_http (maps an EvoClient RuntimeError to a 404/503/502) +

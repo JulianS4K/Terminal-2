@@ -1,19 +1,24 @@
 """SQL-only store event helpers — extracted from server.py (BR-CODE-1 core/ pass).
 
-These synthesize the TEvo /v9 response shapes from our local tables so the
-storefront renders in STOREFRONT_SQL_ONLY mode without a live TEvo call. They
-are leaf helpers — their only external dependency is the Supabase client,
-passed in as the `require_sb` callable so callers (and their monkeypatch tests)
-bind the live accessor at call time. One-directional: core never imports server.
+Leaf helpers for the storefront event/listing path, lifted out of server.py.
+Their only external dependencies — the Supabase client (`require_sb`/`sb`) and
+the TEvo `client` — are INJECTED by the caller (server.py keeps thin wrappers
+that pass the live globals), so the monkeypatch tests bind the live accessors at
+call time. One-directional: core never imports server.
 
-This is the first step of moving the store block's shared helpers into core/ so
-the `/api/store/*` routes can eventually follow.
+This is the in-progress core/ pass that must precede lifting the `/api/store/*`
+routes into a router; `_resolve_event_with_filters` (which composes these) is
+the remaining keystone, still in server.py.
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from typing import Callable
 
 from fastapi import HTTPException
+
+_log = logging.getLogger("app")
 
 
 def fetch_event_from_db(require_sb: Callable, event_id: int) -> dict:
@@ -138,3 +143,88 @@ def fetch_owned_ticket_groups_from_db(require_sb: Callable, event_id: int) -> tu
             "public_notes": None,    # not mirrored to listings_snapshots
         })
     return groups, "snapshot", captured_at
+
+
+def build_zone_resolver(sb, performer_id: int | None, venue_id: int | None):
+    """Return a fn (section, row) -> zone_name | None for this performer+venue.
+
+    Calls match_performer_zone() once per unique (section, row) pair encountered,
+    cached within a single request. Returns a no-op resolver if
+    (performer_id, venue_id) are missing or Supabase is offline. `sb` is the
+    service-role client, injected by the caller."""
+    if sb is None or not performer_id or not venue_id:
+        return lambda section, row: None
+    cache: dict[tuple[str, str], str | None] = {}
+
+    def resolve(section, row):
+        key = (str(section or ""), str(row or ""))
+        if key in cache:
+            return cache[key]
+        try:
+            res = sb.rpc(
+                "match_performer_zone",
+                {
+                    "p_performer_id": performer_id,
+                    "p_venue_id": venue_id,
+                    "p_section": section or "",
+                    "p_row": row or "",
+                },
+            ).execute()
+            cache[key] = res.data if isinstance(res.data, str) else None
+        except Exception:
+            cache[key] = None
+        return cache[key]
+
+    return resolve
+
+
+def fetch_owned_ticket_groups(sb, client, event_id: int,
+                              max_age_seconds: int | None = None) -> tuple[list[dict], str]:
+    """Pull owned-only ticket_groups for an event. Returns (groups, source)
+    where source is 'cache' (≤max_age) or 'live'. `sb` + `client` injected.
+
+    Read is gated on max_age_seconds (storefront ~10s; broker None → row's own
+    90s expires_at); write is always a 90s TTL. Cache key is event_id only
+    (owned=true implied for both call sites)."""
+    if sb is not None:
+        try:
+            cached = sb.rpc("get_cached_ticket_groups", {"p_event_id": event_id}).execute().data
+            if cached:
+                payload_age_ok = True
+                if max_age_seconds is not None:
+                    captured_at_str = (cached or {}).get("captured_at")
+                    if captured_at_str:
+                        try:
+                            captured_at = datetime.fromisoformat(
+                                str(captured_at_str).replace("Z", "+00:00")
+                            )
+                            age = (datetime.now(timezone.utc) - captured_at).total_seconds()
+                            payload_age_ok = age <= max_age_seconds
+                        except (ValueError, TypeError):
+                            payload_age_ok = False
+                    else:
+                        payload_age_ok = False
+                if payload_age_ok:
+                    return (cached or {}).get("ticket_groups", []) or [], "cache"
+        except Exception:
+            # Cache failure must never block the page; fall through to live.
+            pass
+    try:
+        live = client.get_ticket_groups(event_id, owned=True)
+    except RuntimeError as e:
+        _log.warning(f"[ticket_groups] TEvo ticket_groups failed for {event_id}: {e!r}")
+        raise HTTPException(502, "ticket listings fetch failed")
+    groups = live.get("ticket_groups", []) or []
+    if sb is not None:
+        try:
+            sb.rpc("put_cached_ticket_groups", {
+                "p_event_id": event_id,
+                "p_payload": {
+                    "ticket_groups": groups,
+                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "p_ttl_seconds": 90,
+            }).execute()
+        except Exception:
+            pass
+    return groups, "live"
