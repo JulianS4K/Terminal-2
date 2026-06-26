@@ -920,6 +920,11 @@ def test_store_seller_listings_full(monkeypatch):
     assert rows[0]["in_hand_date"] == "2026-02-01"
     assert rows[1]["sg_listing_id"] is None
     assert rows[1]["in_hand_date"] is None
+    # BUGHUNT-1 regression guard: dedup must key on the NON-NULL composite, not
+    # (sg_listing_id, content_hash) — the latter never matches NULL sg_listing_id
+    # rows (NULL <> NULL) and duplicates on every re-pull. The second listing
+    # above has sg_listing_id=None precisely to exercise that case.
+    assert upsert_op[3] == "sg_event_id,content_hash"
 
 
 def test_store_seller_listings_rpc_dict_return(monkeypatch):

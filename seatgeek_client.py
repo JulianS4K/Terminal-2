@@ -587,8 +587,14 @@ class SeatGeekClient:
                 "raw": l,
             })
         try:
+            # Dedup on the NON-NULL key (sg_event_id, content_hash). The old
+            # (sg_listing_id, content_hash) key never matched NULL sg_listing_id
+            # rows (NULL <> NULL) -> unbounded duplicate inserts on re-pull.
+            # content_hash already incorporates sg_listing_id + every defining
+            # attribute, so this dedups by (event, content-version) with no NULL
+            # hole. Requires mig 20260626120000 (BUGHUNT-1) applied first.
             res = self.db.table("seatgeek_seller_listings").upsert(
-                rows, on_conflict="sg_listing_id,content_hash"
+                rows, on_conflict="sg_event_id,content_hash"
             ).execute()
             return {"received": len(listings), "inserted": len(res.data or []),
                     "events_seen": len(events_seen), "events_linked": events_linked}
