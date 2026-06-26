@@ -10,10 +10,18 @@ from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 
-def build_seatgeek_router(get_require_sb: Callable[[], Callable], require_auth: Callable) -> APIRouter:
+def build_seatgeek_router(
+    get_require_sb: Callable[[], Callable],
+    require_auth: Callable,
+    # Lazy SeatGeek broker-data client factory (server's `_get_seatgeek_client`,
+    # returns the client or None). Resolved via getter so the route tests'
+    # `app._get_seatgeek_client` monkeypatch binds. Read-only upstream (RULE 2) —
+    # sync routes GET from SG + write only OUR tables.
+    get_sg_client: Callable[[], Callable] = lambda: (lambda: None),
+) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/seatgeek/event/{event_id}")
@@ -183,6 +191,88 @@ def build_seatgeek_router(get_require_sb: Callable[[], Callable], require_auth: 
             "auto_link_rate": (linked_sg / distinct_sg) if distinct_sg else None,
             "total_orders_persisted": getattr(order_count_q, "count", None) or 0,
             "last_listings_pulled_at": listing_stats[0]["pulled_at"] if listing_stats else None,
+        }
+
+    # --- Link + sync POSTs (broker-data ingest). Read-only against SG (GET
+    # listings/sales), write only OUR seatgeek_* tables. Manual link is required
+    # first — the broker API has no search. ---
+
+    @router.post("/api/seatgeek/event/{event_id}/link")
+    def seatgeek_link_event(event_id: int, sg_event_id: int = Query(..., description="SeatGeek event_id"),
+                            _=Depends(require_auth)):
+        """Manually link a TEvo event to a SG event. Required before sync-listings
+        or sync-sales — broker API has no search, so matching is manual.
+        Free; no SG call (just DB upsert)."""
+        db = get_require_sb()()
+        db.table("seatgeek_event_xref").upsert({
+            "tevo_event_id": event_id,
+            "sg_event_id": sg_event_id,
+            "match_method": "manual",
+            "match_confidence": 1.0,
+        }, on_conflict="tevo_event_id").execute()
+        return {"linked": True, "tevo_event_id": event_id, "sg_event_id": sg_event_id}
+
+    @router.post("/api/seatgeek/event/{event_id}/sync-listings")
+    def seatgeek_sync_listings(event_id: int, v2: bool = False, _=Depends(require_auth)):
+        """Pull /listings (or /v2/listings if v2=true) and persist. v1 = broker
+        inventory only; v2 = ALL secondary marketplace listings."""
+        sg = get_sg_client()()
+        if not sg:
+            raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
+        db = get_require_sb()()
+        xref = (db.table("seatgeek_event_xref").select("sg_event_id")
+                .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+        if not xref:
+            raise HTTPException(404, f"event {event_id} not linked to SG; POST /link first")
+        sg_event_id = int(xref[0]["sg_event_id"])
+        try:
+            body = sg.listings(sg_event_id, v2=v2, tevo_event_id=event_id)
+        except Exception as e:
+            msg = str(e)
+            if "scope denied" in msg:
+                raise HTTPException(403, msg)
+            raise HTTPException(502, f"SeatGeek call failed: {msg}")
+        listings = body.get("listings") or []
+        sg.link_event(event_id, sg_event_id, sg_event_inline=body.get("event"))
+        inserted = sg.store_listings(event_id, sg_event_id, listings,
+                                     endpoint=("v2" if v2 else "v1"))
+        return {
+            "event_id": event_id, "sg_event_id": sg_event_id,
+            "endpoint": "/v2/listings" if v2 else "/listings",
+            "rows_received": len(listings), "rows_inserted": inserted,
+            "cache_hit": body.get("cache_hit"),
+            "refreshed_at_utc": body.get("refreshed_at_utc"),
+            "event_inline": body.get("event"),
+        }
+
+    @router.post("/api/seatgeek/event/{event_id}/sync-sales")
+    def seatgeek_sync_sales(event_id: int, _=Depends(require_auth)):
+        """Pull /sales and persist. Sales are immutable — re-running is safe."""
+        sg = get_sg_client()()
+        if not sg:
+            raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
+        db = get_require_sb()()
+        xref = (db.table("seatgeek_event_xref").select("sg_event_id")
+                .eq("tevo_event_id", event_id).limit(1).execute()).data or []
+        if not xref:
+            raise HTTPException(404, f"event {event_id} not linked to SG; POST /link first")
+        sg_event_id = int(xref[0]["sg_event_id"])
+        try:
+            body = sg.sales(sg_event_id, tevo_event_id=event_id)
+        except Exception as e:
+            msg = str(e)
+            if "scope denied" in msg:
+                raise HTTPException(403, msg)
+            raise HTTPException(502, f"SeatGeek call failed: {msg}")
+        sales = body.get("sales") or []
+        sg.link_event(event_id, sg_event_id, sg_event_inline=body.get("event"))
+        inserted = sg.store_sales(event_id, sg_event_id, sales)
+        return {
+            "event_id": event_id, "sg_event_id": sg_event_id,
+            "rows_received": len(sales), "rows_inserted": inserted,
+            "cache_hit": body.get("cache_hit"),
+            "refreshed_at_utc": body.get("refreshed_at_utc"),
+            "event_inline": body.get("event"),
         }
 
     return router

@@ -2216,91 +2216,17 @@ def _get_seatgeek_client():
 # link/sync POSTs stay in app.py. All read-only require_sb reads.
 from routers.seatgeek import build_seatgeek_router  # noqa: E402
 
-app.include_router(build_seatgeek_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+app.include_router(build_seatgeek_router(
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+    get_sg_client=lambda: _get_seatgeek_client,
+))
 
-
-@app.post("/api/seatgeek/event/{event_id}/link")
-def seatgeek_link_event(event_id: int, sg_event_id: int = Query(..., description="SeatGeek event_id"),
-                        _=Depends(require_auth)):
-    """Manually link a TEvo event to a SG event. Required before sync-listings
-    or sync-sales — broker API has no search, so matching is manual.
-    Free; no SG call (just DB upsert)."""
-    db = require_sb()
-    db.table("seatgeek_event_xref").upsert({
-        "tevo_event_id": event_id,
-        "sg_event_id": sg_event_id,
-        "match_method": "manual",
-        "match_confidence": 1.0,
-    }, on_conflict="tevo_event_id").execute()
-    return {"linked": True, "tevo_event_id": event_id, "sg_event_id": sg_event_id}
-
-
-@app.post("/api/seatgeek/event/{event_id}/sync-listings")
-def seatgeek_sync_listings(event_id: int, v2: bool = False, _=Depends(require_auth)):
-    """Pull /listings (or /v2/listings if v2=true) and persist. v1 = broker
-    inventory only; v2 = ALL secondary marketplace listings."""
-    sg = _get_seatgeek_client()
-    if not sg:
-        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
-    db = require_sb()
-    xref = (db.table("seatgeek_event_xref").select("sg_event_id")
-            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    if not xref:
-        raise HTTPException(404, f"event {event_id} not linked to SG; POST /link first")
-    sg_event_id = int(xref[0]["sg_event_id"])
-    try:
-        body = sg.listings(sg_event_id, v2=v2, tevo_event_id=event_id)
-    except Exception as e:
-        msg = str(e)
-        if "scope denied" in msg:
-            raise HTTPException(403, msg)
-        raise HTTPException(502, f"SeatGeek call failed: {msg}")
-    listings = body.get("listings") or []
-    sg.link_event(event_id, sg_event_id, sg_event_inline=body.get("event"))
-    inserted = sg.store_listings(event_id, sg_event_id, listings,
-                                 endpoint=("v2" if v2 else "v1"))
-    return {
-        "event_id": event_id, "sg_event_id": sg_event_id,
-        "endpoint": "/v2/listings" if v2 else "/listings",
-        "rows_received": len(listings), "rows_inserted": inserted,
-        "cache_hit": body.get("cache_hit"),
-        "refreshed_at_utc": body.get("refreshed_at_utc"),
-        "event_inline": body.get("event"),
-    }
-
-
-@app.post("/api/seatgeek/event/{event_id}/sync-sales")
-def seatgeek_sync_sales(event_id: int, _=Depends(require_auth)):
-    """Pull /sales and persist. Sales are immutable — re-running is safe."""
-    sg = _get_seatgeek_client()
-    if not sg:
-        raise HTTPException(503, "SEATGEEK_API_TOKEN not in Vault.")
-    db = require_sb()
-    xref = (db.table("seatgeek_event_xref").select("sg_event_id")
-            .eq("tevo_event_id", event_id).limit(1).execute()).data or []
-    if not xref:
-        raise HTTPException(404, f"event {event_id} not linked to SG; POST /link first")
-    sg_event_id = int(xref[0]["sg_event_id"])
-    try:
-        body = sg.sales(sg_event_id, tevo_event_id=event_id)
-    except Exception as e:
-        msg = str(e)
-        if "scope denied" in msg:
-            raise HTTPException(403, msg)
-        raise HTTPException(502, f"SeatGeek call failed: {msg}")
-    sales = body.get("sales") or []
-    sg.link_event(event_id, sg_event_id, sg_event_inline=body.get("event"))
-    inserted = sg.store_sales(event_id, sg_event_id, sales)
-    return {
-        "event_id": event_id, "sg_event_id": sg_event_id,
-        "rows_received": len(sales), "rows_inserted": inserted,
-        "cache_hit": body.get("cache_hit"),
-        "refreshed_at_utc": body.get("refreshed_at_utc"),
-        "event_inline": body.get("event"),
-    }
 
 
 # (seatgeek_event_listings + seatgeek_event_sales moved to routers/seatgeek.py — slice 9)
+# (seatgeek link + sync-listings + sync-sales POSTs moved to routers/seatgeek.py
+#  — slice 32; get_sg_client getter resolves the live _get_seatgeek_client.)
 
 
 # ----------------------------------------------------------------------------
