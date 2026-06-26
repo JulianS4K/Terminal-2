@@ -13,12 +13,20 @@ itself injects sb/client/etc.), `get_require_sb` → `app.require_sb`,
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import Any, Callable
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
-from core.helpers import is_bowl_pattern_name, or_ilike_clause
+from core.helpers import (
+    is_bowl_pattern_name,
+    is_speculative_event_name,
+    is_tbd,
+    movers_cache_key,
+    normalize_search_key,
+    or_ilike_clause,
+)
 
 _log = logging.getLogger("app")
 
@@ -36,8 +44,147 @@ def build_store_router(
     get_tour_package_payload: Callable[[], Callable],
     get_multi_tour_payload: Callable[[], Callable],
     get_discover_payload: Callable[[], Callable],
+    # Discovery-route deps (search / movers / home / near). Getters resolve the
+    # live server symbols at request time so the monkeypatch tests bind; the
+    # mutable caches (`_search_cache`, `_movers_cache`, `_MOVERS_CACHE_REFRESHING`)
+    # stay in server.py — getters hand back the live container so in-place
+    # mutation + conftest's per-test reset both keep working.
+    get_storefront_sql_only: Callable[[], bool] = lambda: False,
+    get_storefront_search_sql_only: Callable[[], bool] = lambda: False,
+    get_search_cache_get: Callable[[], Callable] = lambda: (lambda k: None),
+    get_search_cache_put: Callable[[], Callable] = lambda: (lambda k, p: None),
+    get_search_sql_only: Callable[[], Callable] = lambda: (lambda *a: {}),
+    get_search_live: Callable[[], Callable] = lambda: (lambda *a: {}),
+    get_search_players: Callable[[], Callable] = lambda: (lambda *a: []),
+    get_movers_cache: Callable[[], dict] = dict,
+    get_movers_cache_ttl: Callable[[], float] = lambda: 300.0,
+    get_movers_refreshing: Callable[[], set] = set,
+    get_refresh_movers: Callable[[], Callable] = lambda: (lambda *a: None),
+    get_compute_movers: Callable[[], Callable] = lambda: (lambda *a: {}),
+    get_bulk_performer_assets: Callable[[], Callable] = lambda: (lambda *a: {}),
+    get_client: Callable[[], Any] = lambda: None,
+    get_attach_owned_metadata: Callable[[], Callable] = lambda: (lambda *a: []),
 ) -> APIRouter:
     router = APIRouter()
+
+    # NOTE: /api/store/events/near MUST be declared before the
+    # /api/store/events/{event_id} catch-all below — Starlette matches in
+    # definition order, so the literal "near" path has to win before the int
+    # path-param tries (and fails with 422) to coerce "near" to an event_id.
+    @router.get("/api/store/events/near")
+    def store_events_near(
+        lat: float,
+        lon: float,
+        within: float = 50.0,       # miles
+        limit: int = 10,
+        source: str = "hybrid",     # 'hybrid' | 'supabase' | 'tevo'
+    ):
+        """Owned-inventory events sorted by distance from (lat, lon).
+
+        Three modes via `?source=`:
+        1. **hybrid** (default) — TEvo geo query for authoritative venue
+           coverage, intersected with our owned+active set.
+        2. **supabase** — pure local: owned+active set joined to venue_assets
+           coords, Python haversine. Zero TEvo quota; caps at geocoded venues.
+        3. **tevo** — raw TEvo geo, no owned filter. Debug-only.
+
+        Distance display uses our venue_assets coords (TEvo's events response
+        omits venue lat/lon). Events with no coord sort to the end.
+        """
+        within = max(1.0, min(within, 500.0))
+        cap = max(1, min(limit, 50))
+        client = get_client()
+
+        # SQL-only mode: force supabase mode regardless of ?source=. No TEvo
+        # calls on the home page during demo testing.
+        if get_storefront_sql_only():
+            source = "supabase"
+
+        if source == "tevo":
+            # Debug mode: raw TEvo geo, NO owned filter. Not used by the UI.
+            try:
+                tevo_resp = client.list_events(
+                    lat=lat, lon=lon, within=within,
+                    only_with_available_tickets=True,
+                    order_by="events.occurs_at ASC",
+                    per_page=min(cap, 100),
+                )
+            except RuntimeError as e:
+                _log.warning(f"[store_events_near] TEvo geo lookup failed: {e!r}")
+                raise HTTPException(502, "geo lookup failed")
+            evs = tevo_resp.get("events") or []
+            return {
+                "count": len(evs),
+                "events": [
+                    {
+                        "id": ev.get("id"),
+                        "name": ev.get("name"),
+                        "occurs_at_local": ev.get("occurs_at_local"),
+                        "venue_name": (ev.get("venue") or {}).get("name"),
+                        "venue_location": (ev.get("venue") or {}).get("location"),
+                        "distance_miles": None,
+                    }
+                    for ev in evs
+                ],
+                "user_lat": lat, "user_lon": lon, "within_miles": within,
+                "source": "tevo",
+            }
+
+        db = get_require_sb()()
+        attach_owned_metadata = get_attach_owned_metadata()
+
+        if source == "hybrid":
+            # Step 1: TEvo geo query for events near (lat, lon) with available
+            # marketplace tickets. per_page is capped at 100 by TEvo.
+            try:
+                tevo_resp = client.list_events(
+                    lat=lat, lon=lon, within=within,
+                    only_with_available_tickets=True,
+                    order_by="events.occurs_at ASC",
+                    per_page=100,
+                )
+            except RuntimeError as e:
+                # On TEvo failure, fall through to supabase mode rather than
+                # 502'ing the home page.
+                _log.warning(f"near (hybrid): TEvo failed, falling back to supabase: {e}")
+                source = "supabase"
+            else:
+                candidate_ids = [int(e["id"]) for e in (tevo_resp.get("events") or []) if e.get("id")]
+                decorated = attach_owned_metadata(db, candidate_ids, lat, lon)
+                decorated.sort(key=lambda x: (x["distance_miles"] is None, x["distance_miles"] or 1e9))
+                return {
+                    "count": len(decorated[:cap]),
+                    "events": decorated[:cap],
+                    "user_lat": lat, "user_lon": lon, "within_miles": within,
+                    "total_within_radius": len(decorated),
+                    "tevo_candidates": len(candidate_ids),
+                    "source": "hybrid",
+                }
+
+        # source == "supabase" (or hybrid fallback). Pull all owned event ids;
+        # _attach_owned_metadata does its own two-query merge join.
+        rows = (
+            db.table("latest_event_metrics")
+            .select("event_id")
+            .gt("owned_tickets_count", 0)
+            .limit(500)
+            .execute().data
+        ) or []
+        candidate_ids = [int(r["event_id"]) for r in rows if r.get("event_id")]
+        decorated = attach_owned_metadata(db, candidate_ids, lat, lon)
+        # Drop events outside the radius (or missing coords entirely).
+        in_radius = [d for d in decorated
+                     if d["distance_miles"] is not None and d["distance_miles"] <= within]
+        in_radius.sort(key=lambda x: x["distance_miles"])
+        return {
+            "count": len(in_radius[:cap]),
+            "events": in_radius[:cap],
+            "user_lat": lat, "user_lon": lon, "within_miles": within,
+            "total_within_radius": len(in_radius),
+            "supabase_candidates": len(rows),
+            "missing_coords": sum(1 for d in decorated if d["distance_miles"] is None),
+            "source": "supabase",
+        }
 
     @router.get("/api/store/events/{event_id}")
     def store_event_detail(
@@ -250,5 +397,300 @@ def build_store_router(
         within `within_mi` of home in the window (teams surface by AWAY games)."""
         return get_discover_payload()(home_lat, home_lon, within_mi, days, min_shows,
                                       concerts_only, team_side="away")
+
+    # --- Storefront discovery surface — search / movers / home / near. Lifted
+    # from server.py (BR-CODE-1); the in-process caches + the heavy helpers
+    # (`_search_*`, `_attach_owned_metadata`, `_refresh_movers`, `_compute_movers`)
+    # stay in server.py, resolved via getters so the route tests' monkeypatch
+    # (app._search_cache / app._movers_cache / app.client / …) keeps binding. ---
+
+    @router.get("/api/store/search")
+    def store_search(
+        q: str = Query(..., max_length=200, description="Search term; max 200 chars to prevent multi-MB DoS payloads"),
+        limit: int = 8,
+    ):
+        """Live storefront search. Hits TEvo /v9/searches/suggestions in live
+        mode (and cross-joins our SQL for we_own/from_price tagging), or
+        ILIKE-searches our tables when STOREFRONT_SQL_ONLY=true.
+
+        Returns three buckets the dropdown UI renders separately:
+          events:     [ { id, name, venue_name, location, occurs_at, we_own,
+                          from_price, owned_tix } ]
+          performers: [ { id, name, location, venue_name?, league? } ]
+          venues:     [ { id, name, location } ]
+
+        Cached per-q for 60s in process memory so a typist's stream of
+        keystrokes doesn't burn TEvo quota.
+        """
+        q_norm = (q or "").strip()
+        if not q_norm:
+            return {"q": "", "players": [], "events": [], "performers": [], "venues": [],
+                    "source": "empty", "latency_ms": 0}
+
+        # Cap at 50; the upstream cap is 20, so anything past that just trims.
+        lim = max(1, min(int(limit), 50))
+        # Cache key segregates by which path actually ran. Matches the routing
+        # decision below so a STOREFRONT_SEARCH_SQL_ONLY flip doesn't serve stale
+        # cross-mode entries.
+        sql_only = get_storefront_sql_only()
+        search_sql_only = get_storefront_search_sql_only()
+        _search_path = "sql" if (sql_only or search_sql_only) else "live"
+        cache_key = f"{normalize_search_key(q_norm)}|{lim}|{_search_path}"
+        cached = get_search_cache_get()(cache_key)
+        if cached is not None:
+            return {**cached, "q": q_norm, "source": "cache", "latency_ms": 0}
+
+        t0 = time.time()
+        db = get_require_sb()()
+        # Routing: STOREFRONT_SEARCH_SQL_ONLY (default true) takes search to the
+        # SQL path. STOREFRONT_SQL_ONLY=true wins regardless (legacy unified flag).
+        if sql_only or search_sql_only:
+            payload = get_search_sql_only()(db, q_norm, lim)
+        else:
+            payload = get_search_live()(db, q_norm, lim)
+
+        # Sports player layer (mode-agnostic): "messi"/"lebron" → their team's
+        # upcoming events. Independent of the events/performers/venues path so it
+        # works under both SQL and live modes; cached as part of payload below.
+        payload["players"] = get_search_players()(db, q_norm, lim)
+
+        elapsed_ms = int((time.time() - t0) * 1000)
+        payload["q"] = q_norm
+        payload["latency_ms"] = elapsed_ms
+        get_search_cache_put()(cache_key, payload)
+        return payload
+
+    @router.get("/api/store/movers")
+    def store_movers(
+        background_tasks: BackgroundTasks,
+        city: str = "NYC",
+        days: int = 21,
+        limit: int = 8,
+    ):
+        """Homepage "moving fast" strip — owned-inventory events in a target
+        city sorted by 24h ticket-velocity (most negative tickets_delta first).
+
+        Only one city supported today (`city=NYC`). Stale-while-revalidate
+        cached: the bare compute hits ~1s warm but velocity data refreshes only
+        hourly, so a 5-min cache collapses the homescreen response to a dict
+        lookup on every request past the first per (city, days, limit) tuple.
+        Fresh hits return instantly; stale hits return cached AND schedule a
+        background recompute; cold hits compute synchronously.
+        """
+        cap = max(1, min(int(limit), 24))
+        day_cap = max(1, min(int(days), 90))
+        key = movers_cache_key(city, day_cap, cap)
+        now = time.time()
+        movers_cache = get_movers_cache()
+        cached = movers_cache.get(key)
+
+        if cached:
+            age = now - cached[0]
+            if age < get_movers_cache_ttl():
+                # FRESH: serve immediately, no compute.
+                return cached[1]
+            # STALE: serve old payload + schedule a background recompute so the
+            # NEXT request gets fresh data. Guard against duplicate fans for the
+            # same key under concurrent requests.
+            refreshing = get_movers_refreshing()
+            if key not in refreshing:
+                refreshing.add(key)
+                background_tasks.add_task(get_refresh_movers(), city, day_cap, cap, key)
+            return cached[1]
+
+        # COLD: never-seen key. Compute synchronously, cache, return.
+        fresh = get_compute_movers()(get_require_sb()(), city, day_cap, cap)
+        movers_cache[key] = (now, fresh)
+        return fresh
+
+    @router.get("/api/store/home")
+    def store_home(
+        limit: int = 60,
+        city: str = "",
+    ):
+        """Homepage "first paint" endpoint — owned + active future events
+        served entirely from SQL (no TEvo round-trip).
+
+        Joins `latest_event_metrics` (retail_min, owned counts, captured_at)
+        with `events` (metadata), `event_lifecycle` (drop ghost/cancelled), and
+        `performer_metadata` (logos/colors). Response shape mirrors
+        /api/store/events so the client renderer is interchangeable. Velocity
+        signals (selling_fast/demand_rising) live on /api/store/movers; this
+        grid serves premium-first in <50ms.
+
+        `city=NYC` (optional) restricts to NYC-area venues. Empty means national.
+        """
+        db = get_require_sb()()
+        cap = max(1, min(int(limit), 100))
+        city_norm = (city or "").upper().strip()
+
+        # Pull owned-future LEM rows.
+        try:
+            lem_rows = (db.table("latest_event_metrics")
+                          .select("event_id,owned_tickets_count,owned_groups_count,"
+                                  "retail_min,retail_median,retail_p25,retail_p75,"
+                                  "getin_price,captured_at,tickets_count")
+                          .gt("owned_tickets_count", 0)
+                          .limit(1000)
+                          .execute().data) or []
+        except Exception as e:
+            # Conservative fallback so the homepage never breaks on a transient
+            # matview read error.
+            _log.warning(f"[store_home] LEM query failed: {e!r}")
+            return {"count": 0, "events": [], "source": "sql"}
+
+        if not lem_rows:
+            return {"count": 0, "events": [], "limit": cap, "source": "sql"}
+
+        ev_ids = [int(r["event_id"]) for r in lem_rows if r.get("event_id")]
+        lem_by_id = {int(r["event_id"]): r for r in lem_rows if r.get("event_id")}
+
+        # Events (future only). Two-query merge — PostgREST view-to-table FK
+        # inference has been flaky on rebuilds. tbd is derived from the event
+        # name string via is_tbd() (no SQL column).
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+        try:
+            ev_rows = (db.table("events")
+                         .select("id,name,occurs_at_local,venue_id,venue_name,"
+                                 "venue_location,primary_performer_id,"
+                                 "primary_performer_name,performer_ids")
+                         .in_("id", ev_ids)
+                         .gte("occurs_at_local", today_iso)
+                         .limit(1000)
+                         .execute().data) or []
+        except Exception as e:
+            _log.warning(f"[store_home] events query failed: {e!r}")
+            return {"count": 0, "events": [], "source": "sql"}
+
+        events_by_id = {int(e["id"]): e for e in ev_rows if e.get("id")}
+
+        # Drop CANCELLED-name rows (TEvo bakes the marker into the event name).
+        events_by_id = {
+            k: v for k, v in events_by_id.items()
+            if not is_speculative_event_name(v.get("name"))
+        }
+
+        # Active-only via event_lifecycle.
+        if events_by_id:
+            try:
+                lc = (db.table("event_lifecycle")
+                        .select("event_id,is_active")
+                        .in_("event_id", list(events_by_id.keys()))
+                        .execute().data) or []
+                inactive = {int(r["event_id"]) for r in lc if not r.get("is_active")}
+            except Exception:
+                inactive = set()
+            events_by_id = {k: v for k, v in events_by_id.items() if k not in inactive}
+
+        # Optional city filter. NYC-area substring match.
+        if city_norm in ("NYC", "NEW YORK", "NEW YORK CITY"):
+            nyc_substrings = ("new york", "brooklyn", "bronx", "queens",
+                              "manhattan", "flushing")
+            events_by_id = {
+                k: v for k, v in events_by_id.items()
+                if any(s in (v.get("venue_location") or "").lower() for s in nyc_substrings)
+                or ", NY" in (v.get("venue_location") or "")
+            }
+
+        if not events_by_id:
+            return {"count": 0, "events": [], "limit": cap, "source": "sql"}
+
+        # Bulk performer assets for card branding (logo + brand color), home +
+        # away so cards can render matchup branding.
+        perf_ids_set: set[int] = set()
+        for evt in events_by_id.values():
+            pp = evt.get("primary_performer_id")
+            if pp:
+                try: perf_ids_set.add(int(pp))
+                except (TypeError, ValueError): pass
+            for raw_pid in (evt.get("performer_ids") or []):
+                try: perf_ids_set.add(int(raw_pid))
+                except (TypeError, ValueError): pass
+        perf_assets = get_bulk_performer_assets()(db, list(perf_ids_set)) if perf_ids_set else {}
+
+        # Build cards. Schema mirrors /api/store/events for renderer reuse, plus
+        # `from_price` + `owned_tickets_count` + `signal` actually populated.
+        cards: list[dict] = []
+        for eid, ev in events_by_id.items():
+            lem = lem_by_id.get(eid, {})
+            perf_id = ev.get("primary_performer_id")
+            try:
+                primary_pid = int(perf_id) if perf_id else None
+            except (TypeError, ValueError):
+                primary_pid = None
+            assets = perf_assets.get(primary_pid) if primary_pid else None
+            # Away-team assets — first performer in array that's NOT the home
+            # team. Null when array has only the primary (playoff placeholders).
+            away_pid: int | None = None
+            for raw_pid in (ev.get("performer_ids") or []):
+                try:
+                    pid_int = int(raw_pid)
+                except (TypeError, ValueError):
+                    continue
+                if primary_pid is not None and pid_int == primary_pid:
+                    continue
+                away_pid = pid_int
+                break
+            away_assets = perf_assets.get(away_pid) if away_pid else None
+
+            try:
+                rm = float(lem.get("retail_min")) if lem.get("retail_min") is not None else None
+            except (TypeError, ValueError):
+                rm = None
+
+            # Signal classification — premium only (price >= $500). The
+            # selling_fast / demand_rising signals require velocity data and
+            # live on /api/store/movers instead.
+            signal: str | None = "premium" if (rm is not None and rm >= 500.0) else None
+
+            cards.append({
+                "id": eid,
+                "name": ev.get("name"),
+                "occurs_at_local": ev.get("occurs_at_local"),
+                "venue_name": ev.get("venue_name"),
+                "venue_location": ev.get("venue_location"),
+                "primary_performer_name": ev.get("primary_performer_name"),
+                "primary_performer_id": perf_id,
+                "primary_performer_logo": (assets or {}).get("logo_default_url"),
+                "primary_performer_color": (assets or {}).get("color_primary"),
+                "primary_performer_league": (assets or {}).get("espn_league"),
+                "away_performer_id":    away_pid,
+                "away_performer_name":  (away_assets or {}).get("name"),
+                "away_performer_logo":  (away_assets or {}).get("logo_default_url"),
+                "away_performer_color": (away_assets or {}).get("color_primary"),
+                "available_count": lem.get("tickets_count"),
+                "we_own": True,
+                "tbd": is_tbd(ev.get("name")),
+                "from_price": rm,
+                "retail_median": lem.get("retail_median"),
+                "owned_tickets_count": lem.get("owned_tickets_count"),
+                "owned_groups_count": lem.get("owned_groups_count"),
+                "captured_at": lem.get("captured_at"),
+                "tix_d24h": None,
+                "getin_d24h_pct": None,
+                "signal": signal,
+                "rivalry": None,
+                "mlb_series": None,
+                "tournament": None,
+                "weather": None,
+                "holiday": None,
+                "playoff": None,
+            })
+
+        # Curation sort: premium first, then by date asc.
+        def _home_sort_key(c):
+            rank = 0 if c.get("signal") == "premium" else 1
+            return (rank, c.get("occurs_at_local") or "9999")
+
+        cards.sort(key=_home_sort_key)
+        cards = cards[:cap]
+
+        return {
+            "count": len(cards),
+            "events": cards,
+            "limit": cap,
+            "city": city_norm or None,
+            "source": "sql",
+        }
 
     return router
