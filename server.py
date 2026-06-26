@@ -277,6 +277,25 @@ def require_sb():
     return sb
 
 
+# Shared circuit breaker for Supabase reads (production-readiness P1 #4). Opens
+# after consecutive failures so a Supabase outage fast-fails + sheds load instead
+# of cascading; the storefront's safe_read paths fall back to a stale snapshot.
+# Status is surfaced on /healthz. Tunable via env.
+from core.resilience import CircuitBreaker, safe_read as _safe_read  # noqa: E402
+
+_db_breaker = CircuitBreaker(
+    fail_threshold=int(os.environ.get("DB_CIRCUIT_FAIL_THRESHOLD", "5")),
+    reset_timeout=float(os.environ.get("DB_CIRCUIT_RESET_SECONDS", "30")),
+)
+
+
+def safe_sb_read(fn, fallback, *, on_error=None):
+    """Storefront stale-snapshot read: run `fn()` through the shared DB breaker,
+    returning `fallback` (value or thunk) if the breaker is open or the read
+    fails. Keeps a Supabase blip from 500-ing a customer-facing page."""
+    return _safe_read(fn, fallback, breaker=_db_breaker, on_error=on_error)
+
+
 def resolve_tevo_creds():
     """Prefer Supabase settings table, fall back to env vars.
 
@@ -801,6 +820,7 @@ def healthz():
         "evo_client_configured": client is not None,
         "evo_creds_source": CREDS_SOURCE,
         "error_tracking": "sentry" if _OBSERVABILITY.get("sentry") else "off",
+        "db_circuit": _db_breaker.status,
         "tevo_env_resolves": {
             "TEVO_TOKEN_set": bool(os.environ.get("TEVO_TOKEN")),
             "TEVO_API_TOKEN_set": bool(os.environ.get("TEVO_API_TOKEN")),
@@ -816,11 +836,14 @@ def healthz():
             r = sb.table("events").select("id").limit(1).execute()
             out["supabase_smoke"] = "pass"
             out["supabase_smoke_rows"] = len(r.data or [])
+            _db_breaker.record_success()
         except Exception as e:
             out["ok"] = False
             out["supabase_smoke"] = "fail"
             # Truncate so we don't leak full traces over a public endpoint.
             out["supabase_smoke_error"] = str(e)[:300]
+            _db_breaker.record_failure()
+        out["db_circuit"] = _db_breaker.status
     return out
 
 
@@ -4339,6 +4362,7 @@ app.include_router(build_store_router(
     get_bulk_performer_assets=lambda: _bulk_performer_assets,
     get_client=lambda: client,
     get_attach_owned_metadata=lambda: _attach_owned_metadata,
+    get_safe_read=lambda: safe_sb_read,
 ))
 
 

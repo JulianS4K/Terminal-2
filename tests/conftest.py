@@ -20,13 +20,20 @@ import pytest
 
 
 def _clear_app_global_state() -> None:
-    app = sys.modules.get("app")
+    # The module was renamed app.py -> server.py (BR-CODE-1); prefer "server",
+    # keep "app" as a fallback so this stays correct under either name.
+    app = sys.modules.get("server") or sys.modules.get("app")
     if app is None:
         return
     limiter = getattr(app, "_ip_limiter", None)
     hits = getattr(limiter, "_hits", None)
     if hits is not None:
         hits.clear()
+    # Shared DB circuit breaker (production-readiness P1 #4) — reset to CLOSED so
+    # a failure recorded by one test's /healthz call doesn't leak into another.
+    breaker = getattr(app, "_db_breaker", None)
+    if breaker is not None and hasattr(breaker, "record_success"):
+        breaker.record_success()
     # Every process-global mutable cache/debounce singleton in app.py. Without a
     # reset, a value primed by one test module leaks into later modules:
     #   _search_cache / _movers_cache       — serve a stale primed result

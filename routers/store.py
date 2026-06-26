@@ -64,6 +64,10 @@ def build_store_router(
     get_bulk_performer_assets: Callable[[], Callable] = lambda: (lambda *a: {}),
     get_client: Callable[[], Any] = lambda: None,
     get_attach_owned_metadata: Callable[[], Callable] = lambda: (lambda *a: []),
+    # Storefront stale-snapshot read (production-readiness P1 #4): runs a DB read
+    # through the shared circuit breaker so a Supabase blip fast-fails to a
+    # fallback instead of hanging the homepage. Default = plain passthrough.
+    get_safe_read: Callable[[], Callable] = lambda: (lambda fn, fb, on_error=None: fn()),
 ) -> APIRouter:
     router = APIRouter()
 
@@ -524,19 +528,26 @@ def build_store_router(
         cap = max(1, min(int(limit), 100))
         city_norm = (city or "").upper().strip()
 
-        # Pull owned-future LEM rows.
-        try:
-            lem_rows = (db.table("latest_event_metrics")
-                          .select("event_id,owned_tickets_count,owned_groups_count,"
-                                  "retail_min,retail_median,retail_p25,retail_p75,"
-                                  "getin_price,captured_at,tickets_count")
-                          .gt("owned_tickets_count", 0)
-                          .limit(1000)
-                          .execute().data) or []
-        except Exception as e:
+        # Pull owned-future LEM rows through the shared DB circuit breaker
+        # (production-readiness P1 #4): a Supabase blip fast-fails to an empty
+        # grid (sentinel None) instead of hanging the homepage; after repeated
+        # failures the breaker opens and skips the call entirely.
+        def _read_lem():
+            return (db.table("latest_event_metrics")
+                      .select("event_id,owned_tickets_count,owned_groups_count,"
+                              "retail_min,retail_median,retail_p25,retail_p75,"
+                              "getin_price,captured_at,tickets_count")
+                      .gt("owned_tickets_count", 0)
+                      .limit(1000)
+                      .execute().data) or []
+
+        lem_rows = get_safe_read()(
+            _read_lem, None,
+            on_error=lambda e: _log.warning(f"[store_home] LEM query failed: {e!r}"),
+        )
+        if lem_rows is None:
             # Conservative fallback so the homepage never breaks on a transient
-            # matview read error.
-            _log.warning(f"[store_home] LEM query failed: {e!r}")
+            # matview read error (or an open breaker).
             return {"count": 0, "events": [], "source": "sql"}
 
         if not lem_rows:

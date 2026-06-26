@@ -656,6 +656,51 @@ def test_healthz_fail_truncates(client, monkeypatch):
     assert len(body["supabase_smoke_error"]) <= 300
 
 
+def test_healthz_reports_db_circuit_closed_on_pass(client, monkeypatch):
+    monkeypatch.setattr(app_module, "sb", _HealthOkSb())
+    body = client.get("/healthz").json()
+    # A passing smoke records success -> breaker stays closed.
+    assert body["db_circuit"] == "closed"
+
+
+def test_healthz_smoke_failure_feeds_breaker(client, monkeypatch):
+    class _Boom:
+        def table(self, *a, **k):
+            raise RuntimeError("down")
+
+    monkeypatch.setattr(app_module, "sb", _Boom())
+    # Drive the breaker to its threshold via repeated failing health checks.
+    threshold = app_module._db_breaker.fail_threshold
+    last = None
+    for _ in range(threshold):
+        last = client.get("/healthz").json()
+    assert last["db_circuit"] == "open"
+
+
+def test_healthz_db_circuit_present_when_sb_none(client, monkeypatch):
+    monkeypatch.setattr(app_module, "sb", None)
+    body = client.get("/healthz").json()
+    # Field is always present (top-level), even when the smoke is skipped.
+    assert body["db_circuit"] == "closed"
+
+
+# ---- safe_sb_read (storefront stale-snapshot read) ----
+
+def test_safe_sb_read_returns_live_on_success():
+    assert app_module.safe_sb_read(lambda: "live", "stale") == "live"
+
+
+def test_safe_sb_read_falls_back_on_error():
+    seen = []
+
+    def boom():
+        raise RuntimeError("db down")
+
+    out = app_module.safe_sb_read(boom, "stale", on_error=seen.append)
+    assert out == "stale"
+    assert isinstance(seen[0], RuntimeError)
+
+
 # ---- POST /webhooks/render ----
 
 def test_webhook_rejects_bad_signature(client, monkeypatch):
