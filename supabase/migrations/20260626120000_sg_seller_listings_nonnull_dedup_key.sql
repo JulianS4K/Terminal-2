@@ -1,5 +1,7 @@
 -- ============================================================================
 -- Migration 20260626120000 — fix seatgeek_seller_listings NULL-key upsert dup
+-- Already applied to prod · via MCP 2026-06-26 (operator-authorized; verified:
+--   constraint now UNIQUE (sg_event_id, content_hash), 2859 rows intact, 0 dups).
 --
 -- Lane:     storefront (SeatGeek seller ingest)
 -- Touches:  seatgeek_seller_listings (W — drop+recreate dedup unique, dedup rows)
