@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.2.0 (2026-06-26; app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
+> **Doc version:** v2.3.0 (2026-06-26; §9 code-map ties route groups → router modules; v2.2.0: app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -154,6 +154,7 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 - **Public storefront `/api/store/*`** (D1): `events`(+`/{id}`,`/zones`,`/near`), `search`, `movers`, `share`(+CRUD), `reserve` (MOCK — never charges). `/api/public/config` (anon key).
 - **Terminal/broker `/api/broker/*`** (A1+D0, 40+): `event/{id}/{overview,zones,section-metrics,raw-tevo,chart-data,cadences,espn}`, `movers` (v2 `?window_days=&source=&category=`), `performer/{id}/assets`, `news`, `leagues`. Plus `/api/{events,performers,venues,configurations,portfolio,watchlist}`, `/api/axs/event/{id}/{listings,sections,series}`, `/api/collect/run`, `/api/admin/*`.
 - DB platform statement_timeout 120s (overridable); MCP runs service_role (NO timeout cap → bound audit scans).
+- **Code map (BR-CODE-1 decomposition — where each route group lives):** `server.py` (shell + the big broker/store blocks still inline) + dedicated `routers/*`: `shares.py` (`/api/store/share*`), `seatmap.py` (`/api/store/seatmap/*`), `retail_chat.py` (`/api/(store/)retail-chat`), `catalog.py`, `lists.py`, `broker.py`, `seatdata.py`, `axs.py`, `seatgeek.py`, `misc.py`, `site_essentials.py`. Shared store SQL-only/listing helpers → `core/store_events.py` (`fetch_event_from_db`, `fetch_owned_ticket_groups[_from_db]`, `build_zone_resolver`); the `/api/store/*` event/detail block is still in `server.py` pending the `_resolve_event_with_filters` → core move. One-directional import: `core` never imports `server`.
 
 ## 10. Cross-cutting data RULES (durable)
 **RULE 0 — categorize new data.** New table/column/feed/metric/price-source → add to this doc's domain (§2) + assign a §11 bucket, same PR as the schema change.

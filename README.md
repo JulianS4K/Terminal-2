@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.3.0 (2026-06-26; renamed app.py->server.py post-decomp; v2.2.0 2026-06-25: coverage gate + Sentry/LOG_LEVEL observability env in local-run; history in git/CHANGELOG)
+> **Doc version:** v2.4.0 (2026-06-26; +routers/ & core/ module map in repo-layout; v2.3.0: renamed app.py→server.py post-decomp; v2.2.0 2026-06-25: coverage gate + Sentry/LOG_LEVEL observability env in local-run; history in git/CHANGELOG)
 
 ---
 
@@ -78,6 +78,16 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 .
 ├── server.py               FastAPI shell — /api/* routes; mounts routers/ + D2
 │                           (renamed from app.py 2026-06-26; entrypoint uvicorn server:app)
+├── routers/                APIRouter modules include_router'd on server.py
+│                           (BR-CODE-1 decomposition): site_essentials · catalog ·
+│                           lists · broker · seatdata · axs · seatgeek · misc ·
+│                           shares (/api/store/share*) · seatmap (/api/store/seatmap/*)
+│                           · retail_chat (/api/(store/)retail-chat)
+├── core/                   shared runtime imported by server.py + routers/ —
+│                           one-directional (core never imports server): config ·
+│                           auth · helpers · broker_helpers · movers · search ·
+│                           substitutions · store_events (SQL-only store helpers) ·
+│                           observability (logging + opt-in Sentry)
 ├── *_client.py             9 read-only listing-source clients: evo · seatgeek ·
 │                           tickpick · vivid · seatdata · ticketsdata · gotickets ·
 │                           axs · broadway (GET-only by construction, CLAUDE.md §2)
