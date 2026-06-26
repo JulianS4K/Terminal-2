@@ -261,8 +261,10 @@ def _require_human(request: Request, payload: dict | None = None):
 sb = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:  # pragma: no cover - import-time guard; both env vars are always set when the module is imported under any supported config, so the false side is unreachable post-import
     try:
-        from supabase import create_client
-        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        # Bounded per-request timeout (core/db.py) so a Supabase blip fails fast
+        # instead of piling up requests -> dyno OOM (production-readiness P0).
+        from core.db import make_supabase_client
+        sb = make_supabase_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     except ImportError:  # pragma: no cover - import-time dep-missing guard
         _log.warning("WARNING: supabase package not installed. Run: pip install supabase")
     except Exception as e:  # pragma: no cover - import-time init-failure guard
