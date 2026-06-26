@@ -13,7 +13,8 @@ ESPN-league list. requests is the shared module (patched globally by tests).
 """
 from __future__ import annotations
 
-from typing import Callable
+from datetime import datetime, timezone
+from typing import Any, Callable
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,6 +37,9 @@ def build_broker_router(
     get_tour_package_payload: Callable[[], Callable] = lambda: (lambda *a, **k: {}),
     get_multi_tour_payload: Callable[[], Callable] = lambda: (lambda *a, **k: {}),
     get_discover_payload: Callable[[], Callable] = lambda: (lambda *a, **k: {}),
+    # Live TEvo client (read-only GET surface) — resolved at request time so the
+    # `app.client` monkeypatch tests bind. Used by the raw-tevo passthrough.
+    get_client: Callable[[], Any] = lambda: None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -383,5 +387,159 @@ def build_broker_router(
     ):
         """D0 reverse discovery — performers with >= min_shows within `within_mi` of home."""
         return get_discover_payload()(home_lat, home_lon, within_mi, days, min_shows, concerts_only)
+
+    # --- Standalone DB-read broker routes (news / by-league / raw-tevo). No
+    # in-server helper coupling — just require_sb (+ the live TEvo client for the
+    # raw-tevo read-through), resolved via getters so the route tests bind. ---
+
+    @router.get("/api/broker/news")
+    def broker_news(
+        limit: int = 20,
+        league: str | None = None,
+        team_ids: str | None = None,
+        event_id: int | None = None,
+        _=Depends(require_auth),
+    ):
+        """Recent ESPN news. Modes:
+          - no filter         → global feed (home view).
+          - league=NBA        → single league.
+          - team_ids=20,18    → comma-separated espn_team_ids (event level page).
+          - event_id=N        → resolves event_xref → home/away ESPN team_ids and
+                                scopes news to those two teams + their league.
+        """
+        limit = max(1, min(int(limit), 100))
+        db = get_require_sb()()
+
+        resolved_teams: list[str] = []
+        resolved_league: str | None = league
+
+        if event_id is not None and not team_ids:
+            xref = (db.table("event_xref")
+                      .select("espn_event_id, espn_league")
+                      .eq("tevo_event_id", event_id).limit(1).execute().data or [])
+            if xref:
+                resolved_league = xref[0]["espn_league"]
+                snap = (db.table("espn_event_snapshots")
+                          .select("home_team_id, away_team_id")
+                          .eq("espn_event_id", xref[0]["espn_event_id"])
+                          .order("captured_at", desc=True).limit(1).execute().data or [])
+                if snap:
+                    for k in ("home_team_id", "away_team_id"):
+                        v = snap[0].get(k)
+                        if v: resolved_teams.append(str(v))
+        elif team_ids:
+            resolved_teams = [t.strip() for t in team_ids.split(",") if t.strip()]
+
+        q = (db.table("espn_news")
+               .select("headline, description, url, published_at, type, espn_team_id, espn_league")
+               .order("published_at", desc=True).limit(limit))
+        if resolved_league:
+            q = q.eq("espn_league", resolved_league)
+        if resolved_teams:
+            q = q.in_("espn_team_id", resolved_teams)
+        rows = q.execute().data or []
+
+        return {
+            "count": len(rows),
+            "items": rows,
+            "filter": {"league": resolved_league, "team_ids": resolved_teams, "event_id": event_id},
+        }
+
+    @router.get("/api/broker/performers/by-league/{league}")
+    def broker_performers_by_league(league: str, include_inactive: bool = False, _=Depends(require_auth)):
+        """Per-team HOME/ROAD price metrics for ESPN-tracked teams in a league.
+        Backed by the get_performers_by_league SQL RPC (mig 20260508050000).
+
+        Returns: { league, count, performers: [
+            { performer_id, performer_name, home_venue_id, home_venue_name,
+              home: { events, market_med, owned_med, market_tix, owned_tix, first_event, last_event },
+              road: { events, market_med, owned_med, market_tix, owned_tix, first_event, last_event } },
+            ...
+        ] }
+
+        `include_inactive`: passthrough flag. The underlying SQL RPC currently
+        aggregates over ALL events (including ghost playoff brackets where the
+        team was eliminated). NEXT (code) — update get_performers_by_league
+        to JOIN against event_lifecycle and exclude is_active=false rows when
+        include_inactive=false. Until that lands, the response field
+        `_inactive_filter_applied` reports false so the frontend can flag it.
+        """
+        db = get_require_sb()()
+        rows = db.rpc("get_performers_by_league", {"p_league": league}).execute().data or []
+
+        def _delta_pct(cur, prev):
+            if cur is None or prev is None: return None
+            try:
+                c = float(cur); p = float(prev)
+            except (TypeError, ValueError):
+                return None
+            if p == 0: return None
+            return round((c - p) / p * 100, 2)
+
+        performers = [
+            {
+                "performer_id":    r.get("performer_id"),
+                "performer_name":  r.get("performer_name"),
+                "league":          r.get("league"),
+                "home_venue_id":   r.get("home_venue_id"),
+                "home_venue_name": r.get("home_venue_name"),
+                "home": {
+                    "events":          r.get("home_events") or 0,
+                    "market_med":      r.get("home_market_med"),
+                    "owned_med":       r.get("home_owned_med"),
+                    "market_tix":      r.get("home_market_tix") or 0,
+                    "owned_tix":       r.get("home_owned_tix")  or 0,
+                    "first_event":     r.get("home_first_event"),
+                    "last_event":      r.get("home_last_event"),
+                    "prev_market_med": r.get("home_prev_market_med"),
+                    "prev_owned_med":  r.get("home_prev_owned_med"),
+                    "delta_market_pct": _delta_pct(r.get("home_market_med"), r.get("home_prev_market_med")),
+                    "delta_owned_pct":  _delta_pct(r.get("home_owned_med"),  r.get("home_prev_owned_med")),
+                },
+                "road": {
+                    "events":          r.get("road_events") or 0,
+                    "market_med":      r.get("road_market_med"),
+                    "owned_med":       r.get("road_owned_med"),
+                    "market_tix":      r.get("road_market_tix") or 0,
+                    "owned_tix":       r.get("road_owned_tix")  or 0,
+                    "first_event":     r.get("road_first_event"),
+                    "last_event":      r.get("road_last_event"),
+                    "prev_market_med": r.get("road_prev_market_med"),
+                    "prev_owned_med":  r.get("road_prev_owned_med"),
+                    "delta_market_pct": _delta_pct(r.get("road_market_med"), r.get("road_prev_market_med")),
+                    "delta_owned_pct":  _delta_pct(r.get("road_owned_med"),  r.get("road_prev_owned_med")),
+                },
+            }
+            for r in rows
+        ]
+        return {
+            "league": league,
+            "count": len(performers),
+            "performers": performers,
+            "_inactive_filter_applied": False,  # see NEXT in docstring; tracked in KANBAN
+            "_include_inactive_param": include_inactive,
+        }
+
+    @router.get("/api/broker/event/{event_id}/raw-tevo")
+    def broker_event_raw_tevo(event_id: int, force: bool = False, _=Depends(require_auth)):
+        """Tab 3: raw TEvo /v9/ticket_groups payload. Reads cowork's
+        tevo_ticket_groups_cache (90s TTL); fetches fresh if expired or force=1."""
+        db = get_require_sb()()
+        if not force:
+            cached = db.rpc("get_cached_ticket_groups", {"p_event_id": event_id}).execute().data
+            if cached:
+                return {"source": "cache", "groups": (cached or {}).get("ticket_groups", []),
+                        "captured_at": (cached or {}).get("captured_at")}
+        # Cache miss / forced refresh — fetch live
+        try:
+            live = get_client().get_ticket_groups(event_id)
+        except RuntimeError as e:
+            raise HTTPException(502, f"TEvo fetch failed: {e}")
+        payload = {"ticket_groups": live.get("ticket_groups", []), "captured_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            db.rpc("put_cached_ticket_groups", {"p_event_id": event_id, "p_payload": payload, "p_ttl_seconds": 90}).execute()
+        except Exception:
+            pass
+        return {"source": "live", "groups": payload["ticket_groups"], "captured_at": payload["captured_at"]}
 
     return router
