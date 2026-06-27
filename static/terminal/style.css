@@ -1,25 +1,7 @@
-/* D0 Terminal — design tokens + dense Bloomberg/Robinhood layout.
-   Dark only, wide ≥1280, no mobile. */
-
-:root {
-  --bg:        #0a0a0a;
-  --panel:     #141414;
-  --panel-2:   #1a1a1a;
-  --line:      #2a2a2a;
-  --line-2:    #1f1f1f;
-  --text:      #e5e5e5;
-  --muted:     #737373;
-  --dim:       #4a4a4a;
-  --accent:    #fbbf24;
-  --pos:       #4ade80;
-  --neg:       #ef4444;
-  --warn:      #f59e0b;
-  --info:      #60a5fa;
-  --shade:     rgba(251, 191, 36, 0.08);
-
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-}
+/* D0 Terminal — dense Bloomberg/Robinhood layout. Dark only, wide ≥1280, no mobile.
+   Design tokens (the :root color/font vars) now live once in
+   _shared/design-tokens.css, linked before this file in index.html (BR-CODE-4).
+   Byte-identical move — values unchanged. */
 
 * { box-sizing: border-box; }
 
