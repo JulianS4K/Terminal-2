@@ -46,6 +46,8 @@ from typing import Any, Iterator
 
 import requests
 
+from core.http_retry import fetch_with_retry
+
 from supabase import Client
 
 API_BASE = "https://seatdata.io/api"
@@ -209,43 +211,36 @@ class SeatDataClient:
         Handles 429 with exponential backoff respecting Retry-After.
         """
         url = f"{API_BASE}/{path.lstrip('/')}"
-        attempt = 0
-        backoff = 1.0
-        while True:
-            attempt += 1
-            r = self.session.request(method, url, params=params, json=json_body,
-                                     timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                sleep_s = min(60.0, sleep_s + random.random())
-                time.sleep(sleep_s)
-                backoff = min(60.0, backoff * 2)
-                continue
-            # Some v0.x endpoints return gzipped JSON
-            if r.status_code == 200 and expect_gzip:
-                try:
-                    # requests/urllib3 already strips transport-level
-                    # Content-Encoding: gzip, so for that case r.content is
-                    # already plain bytes and calling gzip.decompress on it would
-                    # raise. The only gzip we must handle here is an
-                    # application-level gzipped body (served without that header).
-                    # Sniff the gzip magic bytes (1f 8b) instead of trusting the
-                    # header — correct whether the body arrives compressed or not.
-                    body = gzip.decompress(r.content) if r.content[:2] == b"\x1f\x8b" else r.content
-                    return r.status_code, json.loads(body), dict(r.headers)
-                except Exception as e:
-                    # Don't echo `e` — gzip / json libraries can include
-                    # partial response bytes in their messages. Hardened
-                    # 2026-05-11.
-                    raise SeatDataError(f"failed to decode gzip JSON ({type(e).__name__})")
+        # Shared 429 retry loop (core/http_retry.py, BR-CODE-2). Retry-After →
+        # capped exponential backoff + jitter; sleep + jitter passed as this
+        # module's time.sleep / random.random so the monkeypatch tests bind.
+        r = fetch_with_retry(
+            lambda: self.session.request(method, url, params=params, json=json_body,
+                                         timeout=self.timeout_s),
+            max_retries=max_429_retries, retry_statuses=frozenset({429}),
+            base_backoff=1.0, max_backoff=60.0, sleep=time.sleep, jitter=random.random,
+        )
+        # Some v0.x endpoints return gzipped JSON
+        if r.status_code == 200 and expect_gzip:
             try:
-                return r.status_code, r.json(), dict(r.headers)
-            except ValueError:
-                return r.status_code, {"raw": r.text}, dict(r.headers)
+                # requests/urllib3 already strips transport-level
+                # Content-Encoding: gzip, so for that case r.content is
+                # already plain bytes and calling gzip.decompress on it would
+                # raise. The only gzip we must handle here is an
+                # application-level gzipped body (served without that header).
+                # Sniff the gzip magic bytes (1f 8b) instead of trusting the
+                # header — correct whether the body arrives compressed or not.
+                body = gzip.decompress(r.content) if r.content[:2] == b"\x1f\x8b" else r.content
+                return r.status_code, json.loads(body), dict(r.headers)
+            except Exception as e:
+                # Don't echo `e` — gzip / json libraries can include
+                # partial response bytes in their messages. Hardened
+                # 2026-05-11.
+                raise SeatDataError(f"failed to decode gzip JSON ({type(e).__name__})")
+        try:
+            return r.status_code, r.json(), dict(r.headers)
+        except ValueError:
+            return r.status_code, {"raw": r.text}, dict(r.headers)
 
     # ---------- v1: account / usage / search (free) --------------------
 

@@ -110,6 +110,8 @@ class _FakeResp:
     def __init__(self, status, *, payload=None, content=b"", headers=None,
                  text="", raise_json=False):
         self.status_code = status
+        # Mirror requests.Response.ok — the shared retry loop short-circuits on it.
+        self.ok = status < 400
         self._payload = payload
         self.content = content
         self.headers = headers or {}
