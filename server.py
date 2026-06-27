@@ -2479,71 +2479,16 @@ def store_shares_page():
     return _render_storefront_page("shares.html")
 
 
-def _require_non_prod():
-    """Test-harness gate: 404 in production. Test pages expose debug info
-    (source-mode dropdown, hybrid candidate counts, inventory_source pill)
-    that we don't want anonymous prod users to see. Per #57 A1 review:
-    'Either @require_auth or gate behind a non-prod env check' — taking
-    the non-prod gate so the test pages remain useful in staging without
-    a Bearer-token auth handshake on HTML page loads."""
-    if _is_production():
-        raise HTTPException(404, "not found")
+# The /store/test/* wiring-harness HTML pages (non-prod gated) live in
+# routers/store_test.py (BR-CODE-1 decomp). get_is_production resolves the
+# test-patched server symbol at request time so the route tests' monkeypatch
+# (app._is_production) keeps binding through the factory.
+from routers.store_test import build_store_test_router  # noqa: E402
 
-
-@app.get("/store/test")
-def store_test_index_page(_=Depends(_require_non_prod)):
-    """Multi-page wiring test harness — index. Sidebar navigates to one
-    page per evo-doc workflow (search, performer, venue, event landing)
-    plus storefront-specific share links. Useful for verifying the store
-    works against real data before merging."""
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "index.html"))
-
-
-@app.get("/store/test/search")
-def store_test_search_page(_=Depends(_require_non_prod)):
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "search.html"))
-
-
-@app.get("/store/test/performer")
-def store_test_performer_page(_=Depends(_require_non_prod)):
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "performer.html"))
-
-
-@app.get("/store/test/venue")
-def store_test_venue_page(_=Depends(_require_non_prod)):
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "venue.html"))
-
-
-@app.get("/store/test/event")
-def store_test_event_page(_=Depends(_require_non_prod)):
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "event.html"))
-
-
-@app.get("/store/test/share")
-def store_test_share_page(_=Depends(_require_non_prod)):
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "share.html"))
-
-
-@app.get("/store/test/media_test")
-def store_test_media_test_page(_=Depends(_require_non_prod)):
-    # C1-authored sandbox under 2026-05-13 operator routing. Validates that
-    # primary_performer_logo / primary_performer_color (already in the
-    # /api/store/events payload) actually render through the test harness.
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "media_test.html"))
-
-
-@app.get("/store/test/trip")
-def store_test_trip_page(_=Depends(_require_non_prod)):
-    """Sandbox for the per-performer trip planner (/api/store/performers/{id}/trip-plan).
-    Pick a performer + home + travel budget → optimal multi-city itinerary vs sort-by-date."""
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "trip.html"))
-
-
-@app.get("/store/test/tour")
-def store_test_tour_page(_=Depends(_require_non_prod)):
-    """Sandbox for the retail 'tour with the artist' agent
-    (/api/store/performers/{id}/tour-package). Dual-mode priced multi-city package."""
-    return FileResponse(os.path.join(STATIC_DIR, "store", "test", "tour.html"))
+app.include_router(build_store_test_router(
+    STATIC_DIR,
+    get_is_production=lambda: _is_production(),
+))
 
 
 # ============================================================
