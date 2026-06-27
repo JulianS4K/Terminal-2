@@ -68,6 +68,9 @@ def build_store_router(
     # through the shared circuit breaker so a Supabase blip fast-fails to a
     # fallback instead of hanging the homepage. Default = plain passthrough.
     get_safe_read: Callable[[], Callable] = lambda: (lambda fn, fb, on_error=None: fn()),
+    # TEvo office id — server-side filter for "events MY office has listings on"
+    # (the catalog /api/store/events route). Server-module constant, via getter.
+    get_tevo_office_id: Callable[[], int] = lambda: 0,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -703,5 +706,239 @@ def build_store_router(
             "city": city_norm or None,
             "source": "sql",
         }
+
+    @router.get("/api/store/events")
+    def store_events(
+        q: str | None = None,
+        performer_id: int | None = None,
+        venue_id: int | None = None,
+        limit: int = 60,
+        offset: int = 0,
+        include_inactive: bool = False,
+    ):
+        """Catalog: upcoming events our brokerage office has inventory for.
+
+        Pulled directly from TEvo /v9/events with office_id=TEVO_OFFICE_ID,
+        which is TEvo's native server-side filter for "events MY office has
+        listings on". 100% we_own — there is no "browse market" fallthrough.
+
+        Performer media (logos + brand colors) is bulk-enriched from Supabase
+        performer_metadata. That's the only Supabase touch on this route —
+        the events themselves come from TEvo. Rest of the prior badge
+        enrichments (rivalry / MLB-series / tournament / weather / holiday /
+        playoff) stay nullable for now; they get re-layered after the prod
+        checkpoint.
+
+        Pagination: TEvo caps per_page at 100; this handler pages through
+        enough TEvo pages to fill the requested `limit` (max 500 → up to
+        5 TEvo calls).
+
+        Args mirror the prior shape so the front-end + share-link routes
+        don't need to change. `include_inactive` is kept as a no-op for
+        callsite compatibility (CANCELLED markers are still filtered by
+        name string in case TEvo leaks them through the office filter).
+        """
+        client = get_client()
+        if client is None:
+            # SQL-only demo mode boots without TEvo. MVP catalog requires it.
+            raise HTTPException(503, "TEvo client not configured")
+
+        cap = min(max(limit, 1), 500)
+        # offset → TEvo page index. TEvo paginates 1-based.
+        per_page = min(cap, 100)
+        # Cap offset to prevent absurd values from triggering a 502 on impossible
+        # page lookups (TEvo doesn't paginate beyond what its catalog holds —
+        # office-filtered catalog is ~3-4k events at peak, so 5000 is a safe
+        # upper bound that catches malicious/bug values like ?offset=999999).
+        offset = min(max(offset, 0), 5000)
+        start_page = (offset // per_page) + 1
+        # When offset is NOT a multiple of per_page, we land mid-page and have to
+        # slice the leading rows off the first fetched page. Account for that in
+        # pages_needed so the post-slice list still contains `cap` rows.
+        offset_in_first_page = offset % per_page
+        pages_needed = ((offset_in_first_page + cap) + per_page - 1) // per_page
+
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+
+        raw_events: list[dict] = []
+        try:
+            for p in range(start_page, start_page + pages_needed):
+                # office_id=TEVO_OFFICE_ID filters TEvo to ONLY events our office
+                # has inventory for. Verified 100% we_own match in probe v2.
+                # `office_id` goes through evo_client.list_events's **extra
+                # kwarg so it reaches the request as-is.
+                resp = client.list_events(
+                    q=q or None,
+                    performer_id=performer_id,
+                    venue_id=venue_id,
+                    occurs_at_gte=today_iso,
+                    only_with_available_tickets=True,
+                    order_by="events.occurs_at ASC",
+                    per_page=per_page,
+                    page=p,
+                    **{"office_id": get_tevo_office_id()},
+                )
+                batch = resp.get("events", []) or []
+                if not batch:
+                    break
+                raw_events.extend(batch)
+                # Stop when we have enough rows to fill the requested window AFTER
+                # slicing off the leading offset_in_first_page rows. Using `>= cap`
+                # alone short-circuits the loop before the second page when offset
+                # is non-aligned (e.g. offset=25, cap=60: page-1 fills 60 rows,
+                # break fires, slice yields only 35). Caught by test_pagination_
+                # offset_non_aligned.
+                if len(raw_events) >= offset_in_first_page + cap:
+                    break
+                # Stop early if we've hit the total.
+                total = int(resp.get("total_entries") or 0)
+                if total and len(raw_events) >= total:
+                    break
+        except RuntimeError as e:
+            # Log full upstream error server-side; return a stable string so TEvo's
+            # response text (URLs, partial tokens, internal IDs from the requests
+            # exception) never reaches the public storefront.
+            _log.warning(f"[store_events] TEvo events fetch failed: {e!r}")
+            raise HTTPException(502, "events fetch failed")
+
+        # TEvo bakes CANCELLED markers into the event name string.
+        raw_events = [
+            e for e in raw_events
+            if "CANCELLED" not in (e.get("name") or "").upper()
+        ]
+        # Slice from the offset-in-first-page so callers requesting a non-multiple
+        # offset get the records they asked for (vs records starting at the page
+        # boundary).
+        raw_events = raw_events[offset_in_first_page : offset_in_first_page + cap]
+
+        # ---- Bulk-fetch performer media from Supabase performer_metadata ----
+        # Single SQL roundtrip pulls logo + color for every performer that
+        # appears on the catalog page. The TEvo /v9/events response only
+        # carries performer id + name — logos and ESPN team data live in our
+        # SQL enrichment table (populated by the crawl-venues-and-performers
+        # collector). This is the only Supabase touch on the catalog.
+        perf_ids: set[int] = set()
+        for ev in raw_events:
+            for perf in (ev.get("performances") or []):
+                pid = (perf.get("performer") or {}).get("id")
+                if pid:
+                    # Guard the coercion: a non-numeric performer id must not 500 the
+                    # whole catalog. The per-card loop below already tolerates bad
+                    # ids (try/except → None); mirror that here so the gather step
+                    # can't crash first on the same data.
+                    try:
+                        perf_ids.add(int(pid))
+                    except (TypeError, ValueError):
+                        pass
+        perf_assets: dict[int, dict] = {}
+        if perf_ids:
+            try:
+                db = get_require_sb()()
+                perf_assets = get_bulk_performer_assets()(db, list(perf_ids))
+            except Exception as e:
+                # Don't break the catalog if performer_metadata is unavailable;
+                # cards just render without logos/colors.
+                _log.warning(f"performer_metadata bulk-fetch failed: {e}")
+                perf_assets = {}
+
+        out: list[dict] = []
+        for ev in raw_events:
+            venue = ev.get("venue") or {}
+            # TEvo venue shape: {id, name, slug, location, time_zone,
+            #   city, state, country, ...}. `location` is "City, ST" string
+            #   on most events; fall back to city/state if absent.
+            venue_loc = venue.get("location")
+            if not venue_loc:
+                city = venue.get("city") or ""
+                state = venue.get("state") or ""
+                venue_loc = f"{city}, {state}".strip(", ") or None
+
+            # /v9/events list response uses `performances`, NOT `performers`
+            # (that's the /v9/events/:id show shape). Each performance nests
+            # a `performer: {id, name}` object plus a `primary` boolean.
+            performances = ev.get("performances") or []
+            primary_perf = (
+                next((p for p in performances if p.get("primary")), None)
+                or (performances[0] if performances else {})
+            )
+            performer = (primary_perf or {}).get("performer") or {}
+
+            # owned_by_office is TEvo's native we-own signal — true when our
+            # token's brokerage office has inventory listed for this event.
+            # With office_id filter applied to /v9/events, this is always
+            # true; kept on the response shape for forward-compat.
+            we_own = bool(ev.get("owned_by_office"))
+
+            # Performer media: logo + brand color from Supabase performer_metadata.
+            # Falls back to None on either side if the performer isn't seeded.
+            perf_id = performer.get("id")
+            try:
+                primary_pid = int(perf_id) if perf_id else None
+            except (TypeError, ValueError):
+                primary_pid = None
+            assets = perf_assets.get(primary_pid) if primary_pid else None
+            # Away-team assets — first non-primary performance in the array.
+            # 2026-05-19: "populate all store events with team assets where
+            # available". Sports matchups: TEvo emits both teams as separate
+            # performances. Playoff placeholders may carry only home.
+            away_pid: int | None = None
+            away_name: str | None = None
+            for p in performances:
+                pf = (p or {}).get("performer") or {}
+                pid_raw = pf.get("id")
+                try:
+                    pid_int = int(pid_raw) if pid_raw else None
+                except (TypeError, ValueError):
+                    pid_int = None
+                if pid_int is None or pid_int == primary_pid:
+                    continue
+                away_pid = pid_int
+                away_name = pf.get("name")
+                break
+            away_assets = perf_assets.get(away_pid) if away_pid else None
+
+            out.append({
+                "id": ev.get("id"),
+                "name": ev.get("name"),
+                # occurs_at_local has the real local offset; occurs_at is the
+                # misleading "Z"-suffixed local time. Prefer _local.
+                "occurs_at_local": ev.get("occurs_at_local") or ev.get("occurs_at"),
+                "venue_name": venue.get("name"),
+                "venue_location": venue_loc,
+                "primary_performer_name": performer.get("name"),
+                "primary_performer_id": perf_id,
+                "primary_performer_logo": (assets or {}).get("logo_default_url"),
+                "primary_performer_color": (assets or {}).get("color_primary"),
+                "primary_performer_league": (assets or {}).get("espn_league"),
+                # Away-team assets — populated when matchup data + metadata
+                # both available. FE renders both logos for sports cards.
+                "away_performer_id":    away_pid,
+                "away_performer_name":  away_name,
+                "away_performer_logo":  (away_assets or {}).get("logo_default_url"),
+                "away_performer_color": (away_assets or {}).get("color_primary"),
+                # available_count is deprecated for authoritative pricing but
+                # is fine as a "tickets available" indicator on cards (the
+                # detail page uses /v9/events/:id/stats for exact numbers).
+                "available_count": ev.get("available_count"),
+                "we_own": we_own,
+                "tbd": bool(ev.get("tbd")),
+                "popularity_score": ev.get("popularity_score"),
+                # from_price + owned_tickets_count still need a per-event call
+                # so stay null on the catalog payload; revealed on click-through.
+                "from_price": None,
+                "owned_tickets_count": None,
+                "owned_groups_count": None,
+                "captured_at": None,
+                # Other badge enrichments (rivalry / series / weather / holiday
+                # / playoff) — re-layer in a follow-up after the prod checkpoint.
+                "rivalry": None,
+                "mlb_series": None,
+                "tournament": None,
+                "weather": None,
+                "holiday": None,
+                "playoff": None,
+            })
+
+        return {"count": len(out), "events": out, "limit": cap, "offset": offset}
 
     return router
