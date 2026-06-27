@@ -33,6 +33,8 @@ from typing import Any
 
 import requests
 
+from core.http_retry import fetch_with_retry
+
 # Type-only import: this module's runtime guards (RULE 2) must be importable
 # in environments where the `supabase` package isn't installed (e.g. minimal
 # CI containers running scripts/check_readonly.py and tests/test_readonly_guards.py).
@@ -129,25 +131,19 @@ class SeatGeekClient:
             if v is None:
                 continue
             clean[k] = (1 if v else 0) if isinstance(v, bool) else v
-        attempt = 0
-        backoff = 1.0
-        while True:
-            attempt += 1
-            r = self.session.get(url, params=clean, timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                time.sleep(min(60.0, sleep_s + random.random()))
-                backoff = min(60.0, backoff * 2)
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                body = {"raw_text": r.text}
-            return r.status_code, body
+        # Shared 429 retry loop (core/http_retry.py, BR-CODE-2). Retry-After →
+        # capped exponential backoff + jitter; sleep + jitter passed as this
+        # module's time.sleep / random.random so the monkeypatch tests bind.
+        r = fetch_with_retry(
+            lambda: self.session.get(url, params=clean, timeout=self.timeout_s),
+            max_retries=max_429_retries, retry_statuses=frozenset({429}),
+            base_backoff=1.0, max_backoff=60.0, sleep=time.sleep, jitter=random.random,
+        )
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"raw_text": r.text}
+        return r.status_code, body
 
     @staticmethod
     def _parse_iso(s: str | None):
@@ -376,25 +372,19 @@ class SeatGeekClient:
             if v is None:
                 continue
             clean[k] = (1 if v else 0) if isinstance(v, bool) else v
-        attempt = 0
-        backoff = 1.0
-        while True:
-            attempt += 1
-            r = self.session.get(url, params=clean, timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                time.sleep(min(60.0, sleep_s + random.random()))
-                backoff = min(60.0, backoff * 2)
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                body = {"raw_text": r.text}
-            return r.status_code, body
+        # Shared 429 retry loop (core/http_retry.py, BR-CODE-2). Retry-After →
+        # capped exponential backoff + jitter; sleep + jitter passed as this
+        # module's time.sleep / random.random so the monkeypatch tests bind.
+        r = fetch_with_retry(
+            lambda: self.session.get(url, params=clean, timeout=self.timeout_s),
+            max_retries=max_429_retries, retry_statuses=frozenset({429}),
+            base_backoff=1.0, max_backoff=60.0, sleep=time.sleep, jitter=random.random,
+        )
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"raw_text": r.text}
+        return r.status_code, body
 
     def seller_listings(self, *, event_id: int | None = None,
                         per_page: int = 200,

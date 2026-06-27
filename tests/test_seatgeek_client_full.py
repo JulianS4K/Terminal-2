@@ -18,6 +18,9 @@ import seatgeek_client as sg
 class _FakeResp:
     def __init__(self, status, payload=None, headers=None, raise_json=False, text="body"):
         self.status_code = status
+        # Mirror requests.Response.ok (status < 400) — the shared retry loop
+        # (core/http_retry.py) short-circuits on it like the real client does.
+        self.ok = status < 400
         self._payload = payload if payload is not None else {}
         self.headers = headers or {}
         self.text = text
