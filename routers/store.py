@@ -17,8 +17,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
+from core.auth import HUMAN_COOKIE_NAME, HUMAN_TTL_SECONDS, issue_human_token
 from core.helpers import (
     is_bowl_pattern_name,
     is_speculative_event_name,
@@ -71,6 +73,17 @@ def build_store_router(
     # TEvo office id — server-side filter for "events MY office has listings on"
     # (the catalog /api/store/events route). Server-module constant, via getter.
     get_tevo_office_id: Callable[[], int] = lambda: 0,
+    # Bot-gated store POSTs (verify-human / reserve). Getters resolve the live
+    # server symbols the tests patch (RECAPTCHA_ENABLED, _verify_recaptcha,
+    # _require_human, STOREFRONT_RESERVE_REQUIRES_AUTH, _fetch_owned_ticket_groups
+    # _from_db); require_auth is the live gate (reserve calls it directly). The
+    # cookie helpers (issue_human_token / HUMAN_*) are pure core.auth imports.
+    get_require_auth: Callable[[], Callable] = lambda: (lambda *a, **k: None),
+    get_recaptcha_enabled: Callable[[], bool] = lambda: False,
+    get_verify_recaptcha: Callable[[], Callable] = lambda: (lambda *a: True),
+    get_require_human: Callable[[], Callable] = lambda: (lambda *a, **k: None),
+    get_reserve_requires_auth: Callable[[], bool] = lambda: False,
+    get_fetch_owned_tg_from_db: Callable[[], Callable] = lambda: (lambda *a: ([], "", None)),
 ) -> APIRouter:
     router = APIRouter()
 
@@ -404,6 +417,123 @@ def build_store_router(
         within `within_mi` of home in the window (teams surface by AWAY games)."""
         return get_discover_payload()(home_lat, home_lon, within_mi, days, min_shows,
                                       concerts_only, team_side="away")
+
+    # --- Bot-gated store POSTs (verify-human / reserve). reserve is a MOCK —
+    # it validates owned inventory + returns a confirmation shape but NEVER
+    # calls /v9/orders (no real charge). ---
+
+    @router.post("/api/store/verify-human")
+    def store_verify_human(request: Request, payload: dict = Body(...)):
+        """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
+        session with a v3 token (action 'gate'); on a passing score we set a
+        short-lived signed cookie that the write endpoints accept, so the gate runs
+        once rather than on every action. No-op success when the gate is dormant."""
+        if not get_recaptcha_enabled():
+            return JSONResponse({"ok": True, "enabled": False})
+        token = payload.get("recaptcha_token") or payload.get("token")
+        xff = request.headers.get("x-forwarded-for") or ""
+        ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
+        if not get_verify_recaptcha()(token, "gate", ip):
+            raise HTTPException(403, "verification failed")
+        resp = JSONResponse({"ok": True, "enabled": True})
+        resp.set_cookie(
+            HUMAN_COOKIE_NAME,
+            issue_human_token(),
+            max_age=HUMAN_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=True,
+            path="/",
+        )
+        return resp
+
+    @router.post("/api/store/reserve")
+    def store_reserve(request: Request, payload: dict = Body(...), authorization: str | None = Header(None)):
+        """MVP placeholder: a real checkout is not wired up yet. Validates that
+        the requested ticket_group + quantity matches the live owned inventory in
+        TEvo, then returns a mock confirmation. NEVER calls /v9/orders.
+
+        Auth: gated by STOREFRONT_RESERVE_REQUIRES_AUTH env flag. MVP demo
+        leaves it off so the front-end's "Reserve (mock)" button works without
+        a Supabase session. Sprint 2 (real-purchase path) flips the flag on
+        once the front-end attaches Authorization headers."""
+        if get_reserve_requires_auth():
+            get_require_auth()(authorization)
+        # Bot gate: honeypot (always) + reCAPTCHA human-cookie/token (when enabled).
+        get_require_human()(request, payload)
+        try:
+            event_id = int(payload.get("event_id") or 0)
+            ticket_group_id = int(payload.get("ticket_group_id") or 0)
+            quantity = int(payload.get("quantity") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "event_id, ticket_group_id and quantity must be integers")
+        if not (event_id and ticket_group_id and quantity > 0):
+            raise HTTPException(400, "event_id, ticket_group_id and quantity > 0 required")
+        # Upper-bound the requested quantity before we touch inventory. TEvo
+        # ticket groups in practice cap around 8-12 per seat block; 50 is a
+        # generous ceiling that still bounds the request shape so a malformed
+        # client (quantity=999999) gets rejected fast without consulting the
+        # upstream API or the snapshot table.
+        if quantity > 50:
+            raise HTTPException(400, "quantity exceeds maximum allowed per reservation")
+
+        if get_storefront_sql_only():
+            # SQL-only mode: validate against listings_snapshots' latest capture
+            # for this event. Same validation surface (available + splits) so
+            # the UX is identical, just slightly stale-tolerant.
+            groups, _src, _captured = get_fetch_owned_tg_from_db()(event_id)
+            match = next(
+                (tg for tg in groups if int(tg.get("id") or 0) == ticket_group_id),
+                None,
+            )
+            if not match:
+                raise HTTPException(
+                    404,
+                    "ticket group is no longer available from this seller (snapshot-based)",
+                )
+        else:
+            try:
+                tg_resp = get_client().get_ticket_groups(event_id, owned=True)
+            except RuntimeError as e:
+                _log.warning(f"[store_reserve] TEvo ticket_groups failed for {event_id}: {e!r}")
+                raise HTTPException(502, "ticket listings fetch failed")
+            match = next(
+                (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
+                None,
+            )
+            if not match:
+                raise HTTPException(404, "ticket group is no longer available from this seller")
+
+        # available_quantity is authoritative when present. A sold-out group reports
+        # available_quantity=0 while `quantity` (the original block size) stays
+        # non-zero, so the old `available_quantity or quantity` fallback (0 is falsy)
+        # silently admitted reservations against zero sellable inventory. Only fall
+        # back to `quantity` when available_quantity is genuinely absent (None).
+        _aq = match.get("available_quantity")
+        avail = int(_aq if _aq is not None else (match.get("quantity") or 0))
+        splits = match.get("splits") or []
+        if quantity > avail:
+            raise HTTPException(409, f"requested {quantity} but only {avail} available")
+        if splits and quantity not in splits:
+            raise HTTPException(409, f"this listing only sells in quantities of {splits}")
+
+        unit = float(match.get("retail_price") or 0)
+        return {
+            "ok": True,
+            "purchase_enabled": False,
+            "message": "MVP demo — no charge processed. This is what a real purchase confirmation would look like.",
+            "reservation": {
+                "event_id": event_id,
+                "ticket_group_id": ticket_group_id,
+                "section": match.get("section"),
+                "row": match.get("row"),
+                "quantity": quantity,
+                "unit_price": unit,
+                "subtotal": round(unit * quantity, 2),
+                "format": match.get("format"),
+                "in_hand": match.get("in_hand"),
+            },
+        }
 
     # --- Storefront discovery surface — search / movers / home / near. Lifted
     # from server.py (BR-CODE-1); the in-process caches + the heavy helpers

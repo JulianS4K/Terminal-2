@@ -2461,6 +2461,13 @@ app.include_router(build_store_router(
     get_attach_owned_metadata=lambda: _attach_owned_metadata,
     get_safe_read=lambda: safe_sb_read,
     get_tevo_office_id=lambda: TEVO_OFFICE_ID,
+    # Bot-gated store POSTs (verify-human / reserve).
+    get_require_auth=lambda: require_auth,
+    get_recaptcha_enabled=lambda: RECAPTCHA_ENABLED,
+    get_verify_recaptcha=lambda: _verify_recaptcha,
+    get_require_human=lambda: _require_human,
+    get_reserve_requires_auth=lambda: STOREFRONT_RESERVE_REQUIRES_AUTH,
+    get_fetch_owned_tg_from_db=lambda: _fetch_owned_ticket_groups_from_db,
 ))
 
 
@@ -2477,119 +2484,11 @@ app.include_router(build_seatmap_router(get_sb=lambda: sb))
 # _is_bowl_pattern_name (+ _CONSUMER_ZONE_NAME_RE) -> core/helpers.py (BR-CODE-1); aliased at top.
 
 
-@app.post("/api/store/verify-human")
-def store_verify_human(request: Request, payload: dict = Body(...)):
-    """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
-    session with a v3 token (action 'gate'); on a passing score we set a
-    short-lived signed cookie that the write endpoints accept, so the gate runs
-    once rather than on every action. No-op success when the gate is dormant."""
-    if not RECAPTCHA_ENABLED:
-        return JSONResponse({"ok": True, "enabled": False})
-    token = payload.get("recaptcha_token") or payload.get("token")
-    xff = request.headers.get("x-forwarded-for") or ""
-    ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
-    if not _verify_recaptcha(token, "gate", ip):
-        raise HTTPException(403, "verification failed")
-    resp = JSONResponse({"ok": True, "enabled": True})
-    resp.set_cookie(
-        _HUMAN_COOKIE_NAME,
-        _issue_human_token(),
-        max_age=_HUMAN_TTL_SECONDS,
-        httponly=True,
-        samesite="lax",
-        secure=True,
-        path="/",
-    )
-    return resp
-
-
-@app.post("/api/store/reserve")
-def store_reserve(request: Request, payload: dict = Body(...), authorization: str | None = Header(None)):
-    """MVP placeholder: a real checkout is not wired up yet. Validates that
-    the requested ticket_group + quantity matches the live owned inventory in
-    TEvo, then returns a mock confirmation. NEVER calls /v9/orders.
-
-    Auth: gated by STOREFRONT_RESERVE_REQUIRES_AUTH env flag. MVP demo
-    leaves it off so the front-end's "Reserve (mock)" button works without
-    a Supabase session. Sprint 2 (real-purchase path) flips the flag on
-    once the front-end attaches Authorization headers."""
-    if STOREFRONT_RESERVE_REQUIRES_AUTH:
-        require_auth(authorization)
-    # Bot gate: honeypot (always) + reCAPTCHA human-cookie/token (when enabled).
-    _require_human(request, payload)
-    try:
-        event_id = int(payload.get("event_id") or 0)
-        ticket_group_id = int(payload.get("ticket_group_id") or 0)
-        quantity = int(payload.get("quantity") or 0)
-    except (TypeError, ValueError):
-        raise HTTPException(400, "event_id, ticket_group_id and quantity must be integers")
-    if not (event_id and ticket_group_id and quantity > 0):
-        raise HTTPException(400, "event_id, ticket_group_id and quantity > 0 required")
-    # Upper-bound the requested quantity before we touch inventory. TEvo
-    # ticket groups in practice cap around 8-12 per seat block; 50 is a
-    # generous ceiling that still bounds the request shape so a malformed
-    # client (quantity=999999) gets rejected fast without consulting the
-    # upstream API or the snapshot table.
-    if quantity > 50:
-        raise HTTPException(400, "quantity exceeds maximum allowed per reservation")
-
-    if STOREFRONT_SQL_ONLY:
-        # SQL-only mode: validate against listings_snapshots' latest capture
-        # for this event. Same validation surface (available + splits) so
-        # the UX is identical, just slightly stale-tolerant.
-        groups, _src, _captured = _fetch_owned_ticket_groups_from_db(event_id)
-        match = next(
-            (tg for tg in groups if int(tg.get("id") or 0) == ticket_group_id),
-            None,
-        )
-        if not match:
-            raise HTTPException(
-                404,
-                "ticket group is no longer available from this seller (snapshot-based)",
-            )
-    else:
-        try:
-            tg_resp = client.get_ticket_groups(event_id, owned=True)
-        except RuntimeError as e:
-            _log.warning(f"[store_reserve] TEvo ticket_groups failed for {event_id}: {e!r}")
-            raise HTTPException(502, "ticket listings fetch failed")
-        match = next(
-            (tg for tg in (tg_resp.get("ticket_groups") or []) if int(tg.get("id") or 0) == ticket_group_id),
-            None,
-        )
-        if not match:
-            raise HTTPException(404, "ticket group is no longer available from this seller")
-
-    # available_quantity is authoritative when present. A sold-out group reports
-    # available_quantity=0 while `quantity` (the original block size) stays
-    # non-zero, so the old `available_quantity or quantity` fallback (0 is falsy)
-    # silently admitted reservations against zero sellable inventory. Only fall
-    # back to `quantity` when available_quantity is genuinely absent (None).
-    _aq = match.get("available_quantity")
-    avail = int(_aq if _aq is not None else (match.get("quantity") or 0))
-    splits = match.get("splits") or []
-    if quantity > avail:
-        raise HTTPException(409, f"requested {quantity} but only {avail} available")
-    if splits and quantity not in splits:
-        raise HTTPException(409, f"this listing only sells in quantities of {splits}")
-
-    unit = float(match.get("retail_price") or 0)
-    return {
-        "ok": True,
-        "purchase_enabled": False,
-        "message": "MVP demo — no charge processed. This is what a real purchase confirmation would look like.",
-        "reservation": {
-            "event_id": event_id,
-            "ticket_group_id": ticket_group_id,
-            "section": match.get("section"),
-            "row": match.get("row"),
-            "quantity": quantity,
-            "unit_price": unit,
-            "subtotal": round(unit * quantity, 2),
-            "format": match.get("format"),
-            "in_hand": match.get("in_hand"),
-        },
-    }
+# /api/store/verify-human + /api/store/reserve -> routers/store.py
+# (BR-CODE-1 slice 38; bot-gated POSTs via getters — RECAPTCHA_ENABLED/
+# _verify_recaptcha/_require_human/STOREFRONT_RESERVE_REQUIRES_AUTH/
+# _fetch_owned_ticket_groups_from_db + require_auth. reserve stays a MOCK.)
+# The entire /api/store/* surface now lives in routers/store.py.
 
 
 # ---------- Retail chat (natural-language price/inventory assistant) ----------
