@@ -70,6 +70,12 @@ def build_store_router(
     # through the shared circuit breaker so a Supabase blip fast-fails to a
     # fallback instead of hanging the homepage. Default = plain passthrough.
     get_safe_read: Callable[[], Callable] = lambda: (lambda fn, fb, on_error=None: fn()),
+    # Active-query DB read (production-readiness P1 #4): runs a DB read through
+    # the shared breaker with retry but RE-RAISES on final failure / open
+    # circuit, so an active query (search) can surface an explicit error rather
+    # than a misleading empty result. Default = plain passthrough (re-raises
+    # naturally).
+    get_resilient_read: Callable[[], Callable] = lambda: (lambda fn: fn()),
     # TEvo office id — server-side filter for "events MY office has listings on"
     # (the catalog /api/store/events route). Server-module constant, via getter.
     get_tevo_office_id: Callable[[], int] = lambda: 0,
@@ -620,17 +626,31 @@ def build_store_router(
 
         t0 = time.time()
         db = get_require_sb()()
-        # Routing: STOREFRONT_SEARCH_SQL_ONLY (default true) takes search to the
-        # SQL path. STOREFRONT_SQL_ONLY=true wins regardless (legacy unified flag).
-        if sql_only or search_sql_only:
-            payload = get_search_sql_only()(db, q_norm, lim)
-        else:
-            payload = get_search_live()(db, q_norm, lim)
 
-        # Sports player layer (mode-agnostic): "messi"/"lebron" → their team's
-        # upcoming events. Independent of the events/performers/venues path so it
-        # works under both SQL and live modes; cached as part of payload below.
-        payload["players"] = get_search_players()(db, q_norm, lim)
+        # Search is an ACTIVE query the user is waiting on, so (unlike the
+        # passive homepage strips) a Supabase blip surfaces an explicit 502
+        # rather than a misleading empty result — but it still runs through the
+        # shared DB breaker (production-readiness P1 #4) so repeated failures
+        # shed load + the breaker opens (fast-fail). The whole compute is one
+        # unit so a partial failure doesn't return a half-populated payload.
+        def _run_search():
+            # Routing: STOREFRONT_SEARCH_SQL_ONLY (default true) takes search to
+            # the SQL path. STOREFRONT_SQL_ONLY=true wins regardless (legacy flag).
+            if sql_only or search_sql_only:
+                p = get_search_sql_only()(db, q_norm, lim)
+            else:
+                p = get_search_live()(db, q_norm, lim)
+            # Sports player layer (mode-agnostic): "messi"/"lebron" → their
+            # team's upcoming events. Independent of the events/performers/venues
+            # path so it works under both SQL and live modes.
+            p["players"] = get_search_players()(db, q_norm, lim)
+            return p
+
+        try:
+            payload = get_resilient_read()(_run_search)
+        except Exception as e:  # incl. CircuitOpenError when the breaker is open
+            _log.warning(f"[store_search] query failed: {e!r}")
+            raise HTTPException(502, "search temporarily unavailable")
 
         elapsed_ms = int((time.time() - t0) * 1000)
         payload["q"] = q_norm

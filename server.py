@@ -281,7 +281,7 @@ def require_sb():
 # after consecutive failures so a Supabase outage fast-fails + sheds load instead
 # of cascading; the storefront's safe_read paths fall back to a stale snapshot.
 # Status is surfaced on /healthz. Tunable via env.
-from core.resilience import CircuitBreaker, safe_read as _safe_read  # noqa: E402
+from core.resilience import CircuitBreaker, safe_read as _safe_read, resilient_call as _resilient_call  # noqa: E402
 
 _db_breaker = CircuitBreaker(
     fail_threshold=int(os.environ.get("DB_CIRCUIT_FAIL_THRESHOLD", "5")),
@@ -294,6 +294,15 @@ def safe_sb_read(fn, fallback, *, on_error=None):
     returning `fallback` (value or thunk) if the breaker is open or the read
     fails. Keeps a Supabase blip from 500-ing a customer-facing page."""
     return _safe_read(fn, fallback, breaker=_db_breaker, on_error=on_error)
+
+
+def sb_read_or_raise(fn):
+    """Active-query DB read: run `fn()` through the shared DB breaker with retry,
+    but RE-RAISE on final failure (or CircuitOpenError when the breaker is open).
+    For reads the caller wants to surface as an explicit error (e.g. search 502)
+    rather than silently degrade to empty — while still shedding load via the
+    breaker. Used by /api/store/search."""
+    return _resilient_call(fn, breaker=_db_breaker)
 
 
 def resolve_tevo_creds():
@@ -1987,6 +1996,7 @@ app.include_router(build_store_router(
     get_client=lambda: client,
     get_attach_owned_metadata=lambda: _attach_owned_metadata,
     get_safe_read=lambda: safe_sb_read,
+    get_resilient_read=lambda: sb_read_or_raise,
     get_tevo_office_id=lambda: TEVO_OFFICE_ID,
     # Bot-gated store POSTs (verify-human / reserve).
     get_require_auth=lambda: require_auth,

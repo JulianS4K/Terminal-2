@@ -432,6 +432,24 @@ def test_search_sql_only_path(patched, monkeypatch):
     assert "latency_ms" in body
 
 
+def test_search_db_failure_returns_502(patched, monkeypatch):
+    """Production-readiness P1 #4: search is an ACTIVE query, so a Supabase blip
+    surfaces an explicit 502 (not a misleading empty result) while still running
+    through the shared DB breaker for load-shedding. Contrast the passive
+    homepage strips, which degrade silently to empty."""
+    monkeypatch.setattr(app_module, "STOREFRONT_SEARCH_SQL_ONLY", True)
+    monkeypatch.setattr(app_module, "STOREFRONT_SQL_ONLY", False)
+    monkeypatch.setattr(app_module, "_search_cache", {})
+
+    def _boom(db, q, lim):
+        raise RuntimeError("supabase down")
+    monkeypatch.setattr(app_module, "_search_sql_only", _boom)
+    monkeypatch.setattr(app_module, "_search_players", lambda *a: [])
+    r = patched.client.get("/api/store/search?q=knicks")
+    assert r.status_code == 502
+    assert r.json()["detail"] == "search temporarily unavailable"
+
+
 def test_search_cache_hit(patched, monkeypatch):
     monkeypatch.setattr(app_module, "STOREFRONT_SEARCH_SQL_ONLY", True)
     monkeypatch.setattr(app_module, "STOREFRONT_SQL_ONLY", False)
