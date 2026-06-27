@@ -34,6 +34,7 @@ from typing import Any
 import requests
 
 from core.http_retry import fetch_with_retry
+from core.vault import vault_secret
 
 # Type-only import: this module's runtime guards (RULE 2) must be importable
 # in environments where the `supabase` package isn't installed (e.g. minimal
@@ -80,13 +81,10 @@ class SeatGeekClient:
     ):
         # Token resolution: explicit arg → env → Supabase Vault → error.
         self.db = db
-        self.api_token = api_token or os.environ.get("SEATGEEK_API_TOKEN")
-        if not self.api_token and db is not None:
-            try:
-                res = db.rpc("get_app_secret", {"p_name": "SEATGEEK_API_TOKEN"}).execute()
-                self.api_token = res.data if isinstance(res.data, str) else None
-            except Exception as e:
-                print(f"seatgeek: vault lookup failed: {e}")
+        self.api_token = api_token or os.environ.get("SEATGEEK_API_TOKEN") or vault_secret(
+            db, "SEATGEEK_API_TOKEN",
+            on_error=lambda e: print(f"seatgeek: vault lookup failed: {e}"),
+        )
         if not self.api_token:
             raise SeatGeekError(
                 "SEATGEEK_API_TOKEN not found. Either set the env var, or store "

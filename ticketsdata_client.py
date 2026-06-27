@@ -28,6 +28,8 @@ from typing import Any
 
 import requests
 
+from core.vault import vault_secret
+
 
 # Read-only by design. Mirrors the RULE 2 guard pattern used by the orders/
 # sales clients (evo/seatgeek/tickpick/vivid). TicketsData has no write
@@ -106,16 +108,10 @@ def _validate_platform(platform: str) -> str:
 
 
 def _vault_secret(db: Any, name: str) -> str | None:
-    """Read a secret from Supabase Vault via the get_app_secret RPC (the same
-    bridge seatgeek_client uses). Requires a service-role db client."""
-    if db is None:
-        return None
-    try:
-        res = db.rpc("get_app_secret", {"p_name": name}).execute()
-        return getattr(res, "data", None) or None
-    except Exception as e:  # never surface the value; only the failure
-        print(f"ticketsdata: vault lookup for {name} failed: {e}")
-        return None
+    """Read a secret from Supabase Vault. Thin wrapper over the shared resolver
+    (core/vault.py, BR-CODE-2) preserving this module's log prefix + name."""
+    return vault_secret(db, name,
+                        on_error=lambda e: print(f"ticketsdata: vault lookup for {name} failed: {e}"))
 
 
 class TicketsDataClient:

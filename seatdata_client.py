@@ -47,6 +47,7 @@ from typing import Any, Iterator
 import requests
 
 from core.http_retry import fetch_with_retry
+from core.vault import vault_secret
 
 from supabase import Client
 
@@ -134,16 +135,10 @@ class SeatDataClient:
         # Vault is preferred — keys live in one place, rotation is a single
         # vault.update_secret() call, no Railway redeploy required.
         self.db = db
-        self.api_key = api_key or os.environ.get("SEATDATA_API_KEY")
-        if not self.api_key and db is not None:
-            try:
-                res = db.rpc("get_app_secret", {"p_name": "SEATDATA_API_KEY"}).execute()
-                self.api_key = res.data if isinstance(res.data, str) else (res.data or {}).get("value") or None
-                # supabase-py returns the scalar return value directly for SQL functions
-                if isinstance(res.data, dict) and "get_app_secret" in res.data:
-                    self.api_key = res.data["get_app_secret"]
-            except Exception as e:
-                print(f"seatdata: vault lookup failed: {e}")
+        self.api_key = api_key or os.environ.get("SEATDATA_API_KEY") or vault_secret(
+            db, "SEATDATA_API_KEY",
+            on_error=lambda e: print(f"seatdata: vault lookup failed: {e}"),
+        )
         if not self.api_key:
             raise SeatDataError(
                 "SEATDATA_API_KEY not found. "

@@ -37,6 +37,8 @@ from typing import Any
 
 import requests
 
+from core.vault import vault_secret
+
 
 # Read-only by design — mirrors the RULE 2 guard the other clients use.
 # AXS has write endpoints (orders/holds); this client can issue NONE of them.
@@ -88,16 +90,10 @@ def venue_norm(name: str) -> str:
 
 
 def _vault_secret(db: Any, name: str) -> str | None:
-    """Resolve a secret from Supabase Vault via get_app_secret (service-role db),
-    matching seatgeek_client / ticketsdata_client. Never surfaces the value."""
-    if db is None:
-        return None
-    try:
-        res = db.rpc("get_app_secret", {"p_name": name}).execute()
-        return getattr(res, "data", None) or None
-    except Exception as e:  # only the failure, never the value
-        print(f"axs: vault lookup for {name} failed: {e}")
-        return None
+    """Resolve a secret from Supabase Vault. Thin wrapper over the shared
+    resolver (core/vault.py, BR-CODE-2) preserving this module's log prefix."""
+    return vault_secret(db, name,
+                        on_error=lambda e: print(f"axs: vault lookup for {name} failed: {e}"))
 
 
 # --------------------------------------------------------------------------
