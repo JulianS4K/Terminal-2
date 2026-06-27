@@ -642,8 +642,18 @@ def build_store_router(
                 background_tasks.add_task(get_refresh_movers(), city, day_cap, cap, key)
             return cached[1]
 
-        # COLD: never-seen key. Compute synchronously, cache, return.
-        fresh = get_compute_movers()(get_require_sb()(), city, day_cap, cap)
+        # COLD: never-seen key. Compute synchronously through the shared DB
+        # breaker (production-readiness P1 #4) so a Supabase blip fast-fails to
+        # an empty strip (matching _compute_movers's own empty shape) + feeds
+        # the breaker, instead of 500-ing the homepage. The empty fallback is
+        # NOT cached, so the next request retries once the DB recovers.
+        fresh = get_safe_read()(
+            lambda: get_compute_movers()(get_require_sb()(), city, day_cap, cap),
+            None,
+            on_error=lambda e: _log.warning(f"[store_movers] compute failed: {e!r}"),
+        )
+        if fresh is None:
+            return {"city": city, "days": day_cap, "count": 0, "events": []}
         movers_cache[key] = (now, fresh)
         return fresh
 
