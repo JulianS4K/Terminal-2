@@ -43,6 +43,8 @@ from urllib.parse import urlencode
 
 import requests
 
+from core.http_retry import fetch_with_retry
+
 
 # RULE 2 — READ-ONLY across api.ticketevolution.com.
 # We pull listings, events, performers, venues, configurations, orders.
@@ -167,26 +169,20 @@ class EvoClient:
             "Accept": "application/vnd.ticketevolution.api+json; version=9",
         }
 
-        last_resp = None
-        for attempt in range(self._MAX_RETRIES + 1):
-            r = requests.get(url, headers=headers, timeout=self.timeout)
-            last_resp = r
-            if r.ok:
-                return r.json()
-            if r.status_code not in self._RETRY_STATUSES or attempt == self._MAX_RETRIES:
-                break
-            # Honor Retry-After when TEvo provides it; else exponential.
-            wait: float
-            ra = r.headers.get("Retry-After")
-            if ra:
-                try:
-                    wait = float(ra)
-                except (TypeError, ValueError):
-                    wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
-            else:
-                wait = self._BACKOFF_BASE_SEC * (2 ** attempt)
-            wait = min(wait, self._BACKOFF_CAP_SEC)
-            time.sleep(wait)
+        # Shared 429/5xx retry loop (core/http_retry.py, BR-CODE-2). Honors
+        # Retry-After then capped exponential backoff; returns the final
+        # Response (or None for an empty retry range). sleep is passed as this
+        # module's time.sleep so the existing monkeypatch tests keep binding.
+        last_resp = fetch_with_retry(
+            lambda: requests.get(url, headers=headers, timeout=self.timeout),
+            max_retries=self._MAX_RETRIES,
+            retry_statuses=self._RETRY_STATUSES,
+            base_backoff=self._BACKOFF_BASE_SEC,
+            max_backoff=self._BACKOFF_CAP_SEC,
+            sleep=time.sleep,
+        )
+        if last_resp is not None and last_resp.ok:
+            return last_resp.json()
 
         # Out of retries, or non-retryable status.
         # Security: do NOT include URL or response body in the exception
