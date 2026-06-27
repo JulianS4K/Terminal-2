@@ -70,13 +70,13 @@ class AXSQuotaError(AXSError):
     """402 — plan quota exhausted."""
 
 
-def _assert_readonly_method(method: str) -> None:
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise AXSReadOnlyError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "AXS client is read-only by design (CLAUDE.md §2, RULE 2). "
-            "Pulling event data only — never drive the AXS order/hold flow."
-        )
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+_assert_readonly_method = build_readonly_guard(
+    AXSReadOnlyError, ALLOWED_HTTP_METHODS,
+    "Pulling event data only — never drive the AXS order/hold flow.",
+)
 
 
 def venue_norm(name: str) -> str:

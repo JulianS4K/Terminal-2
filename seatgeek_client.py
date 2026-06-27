@@ -50,22 +50,23 @@ SELLER_DIRECT_BASE = "https://sellerdirect-api.seatgeek.com"
 ALLOWED_HTTP_METHODS = frozenset({"GET"})
 
 
-def _assert_readonly_method(method: str) -> None:
-    """Hard guard: this client must never write back to SeatGeek."""
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise SeatGeekError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "SeatGeek integration is strictly read-only (RULE 2 in SCHEMA.md). "
-            "Pulling data only — never write back to SG."
-        )
-
-
 class SeatGeekError(Exception):
     pass
 
 
 class SeatGeekScopeError(SeatGeekError):
     """Token works but lacks scope for this endpoint (HTTP 401, code 421004)."""
+
+
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+# Declared after SeatGeekError so the factory can reference it. Keeps the
+# module-level _assert_readonly_method + ALLOWED_HTTP_METHODS the audit + tests need.
+_assert_readonly_method = build_readonly_guard(
+    SeatGeekError, ALLOWED_HTTP_METHODS,
+    "Pulling data only — never write back to SG.",
+)
 
 
 class SeatGeekClient:

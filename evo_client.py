@@ -57,14 +57,15 @@ class EvoReadOnlyError(RuntimeError):
     """Raised when a non-GET method is attempted against TEvo."""
 
 
-def _assert_readonly_method(method: str) -> None:
-    """Hard guard: this client must never write back to TEvo."""
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise EvoReadOnlyError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "TEvo integration is strictly read-only (RULE 2 in SCHEMA.md). "
-            "Pulling data only — never write back to api.ticketevolution.com."
-        )
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+# Keeps the module-level _assert_readonly_method + EvoReadOnlyError + the
+# ALLOWED_HTTP_METHODS frozenset literal the static audit + tests require here.
+_assert_readonly_method = build_readonly_guard(
+    EvoReadOnlyError, ALLOWED_HTTP_METHODS,
+    "Pulling data only — never write back to api.ticketevolution.com.",
+)
 
 
 class EvoClient:

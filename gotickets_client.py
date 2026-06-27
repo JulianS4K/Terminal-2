@@ -46,13 +46,13 @@ class GoTicketsReadOnlyError(GoTicketsError):
     """Raised when a non-GET method is attempted against GoTickets."""
 
 
-def _assert_readonly_method(method: str) -> None:
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise GoTicketsReadOnlyError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "GoTickets client is read-only by design (RULE 2 spirit). "
-            "Pulling data only — never write back to sc.gotickets.com."
-        )
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+_assert_readonly_method = build_readonly_guard(
+    GoTicketsReadOnlyError, ALLOWED_HTTP_METHODS,
+    "Pulling data only — never write back to sc.gotickets.com.",
+)
 
 
 class GoTicketsClient:

@@ -89,16 +89,18 @@ CHECKOUT_BASE = "https://checkout.broadway.com"
 ALLOWED_HTTP_METHODS = frozenset({"GET"})
 
 
-def _assert_readonly_method(method: str) -> None:
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise BroadwayError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "Broadway.com integration is strictly read-only (RULE 2)."
-        )
-
-
 class BroadwayError(Exception):
     pass
+
+
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+# Declared after BroadwayError so the factory can reference it.
+_assert_readonly_method = build_readonly_guard(
+    BroadwayError, ALLOWED_HTTP_METHODS,
+    "Broadway.com integration is strictly read-only.",
+)
 
 
 class BroadwayParseError(BroadwayError):
