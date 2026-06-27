@@ -386,6 +386,47 @@ def test_near_lifecycle_and_coords_query_raise(client, monkeypatch):
     assert r.json()["events"][0]["distance_miles"] is None
 
 
+def test_near_hybrid_owned_metadata_read_failure_degrades(client, monkeypatch):
+    """Production-readiness P1 #4: if the owned-metadata merge read raises in
+    hybrid mode (after a successful TEvo geo query), the breaker swallows it and
+    the strip degrades to an empty hybrid result (200) instead of 500-ing."""
+    evs = {1: {"id": 1, "name": "A", "occurs_at_local": "x", "venue_id": 896,
+               "venue_name": "MSG", "venue_location": "NY",
+               "primary_performer_id": 10, "primary_performer_name": "A"}}
+    sb = FakeSupabase(_near_tables([1], evs, coords={896: (40.75, -73.99)}),
+                      raise_tables={"latest_event_metrics"})
+    monkeypatch.setattr(app_module, "sb", sb)
+    monkeypatch.setattr(app_module, "client", FakeEvoClient(events=[{"id": 1}]))
+    r = client.get("/api/store/events/near?lat=40.75&lon=-73.99&source=hybrid")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "hybrid"
+    assert body["count"] == 0
+    assert body["events"] == []
+    assert body["tevo_candidates"] == 1
+
+
+def test_near_supabase_read_failure_degrades(client, monkeypatch):
+    """Production-readiness P1 #4: if the supabase candidate pull raises, the
+    breaker swallows it and the strip degrades to an empty supabase result (200)
+    instead of 500-ing the homepage geo strip."""
+    evs = {1: {"id": 1, "name": "A", "occurs_at_local": "x", "venue_id": 896,
+               "venue_name": "MSG", "venue_location": "NY",
+               "primary_performer_id": 10, "primary_performer_name": "A"}}
+    sb = FakeSupabase(_near_tables([1], evs, coords={896: (40.75, -73.99)}),
+                      raise_tables={"latest_event_metrics"})
+    monkeypatch.setattr(app_module, "sb", sb)
+    monkeypatch.setattr(app_module, "client", FakeEvoClient())
+    r = client.get("/api/store/events/near?lat=40.75&lon=-73.99&source=supabase")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "supabase"
+    assert body["count"] == 0
+    assert body["events"] == []
+    assert body["supabase_candidates"] == 0
+    assert body["missing_coords"] == 0
+
+
 # =====================================================================
 # trip-plan / tour-package / tours/multi / tours/near (thin delegates)
 # =====================================================================

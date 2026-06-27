@@ -170,7 +170,22 @@ def build_store_router(
                 source = "supabase"
             else:
                 candidate_ids = [int(e["id"]) for e in (tevo_resp.get("events") or []) if e.get("id")]
-                decorated = attach_owned_metadata(db, candidate_ids, lat, lon)
+                # Owned-metadata merge read through the shared DB breaker
+                # (production-readiness P1 #4): a Supabase blip fast-fails to an
+                # empty hybrid result instead of 500-ing the homepage geo strip.
+                decorated = get_safe_read()(
+                    lambda: attach_owned_metadata(db, candidate_ids, lat, lon),
+                    None,
+                    on_error=lambda e: _log.warning(f"[store_events_near] hybrid owned-metadata read failed: {e!r}"),
+                )
+                if decorated is None:
+                    return {
+                        "count": 0, "events": [],
+                        "user_lat": lat, "user_lon": lon, "within_miles": within,
+                        "total_within_radius": 0,
+                        "tevo_candidates": len(candidate_ids),
+                        "source": "hybrid",
+                    }
                 decorated.sort(key=lambda x: (x["distance_miles"] is None, x["distance_miles"] or 1e9))
                 return {
                     "count": len(decorated[:cap]),
@@ -182,16 +197,35 @@ def build_store_router(
                 }
 
         # source == "supabase" (or hybrid fallback). Pull all owned event ids;
-        # _attach_owned_metadata does its own two-query merge join.
-        rows = (
-            db.table("latest_event_metrics")
-            .select("event_id")
-            .gt("owned_tickets_count", 0)
-            .limit(500)
-            .execute().data
-        ) or []
-        candidate_ids = [int(r["event_id"]) for r in rows if r.get("event_id")]
-        decorated = attach_owned_metadata(db, candidate_ids, lat, lon)
+        # _attach_owned_metadata does its own two-query merge join. Both the
+        # candidate pull and the merge go through the shared DB breaker
+        # (production-readiness P1 #4): a Supabase blip fast-fails to an empty
+        # strip (sentinel None) + feeds the breaker, never 500-ing the homepage.
+        def _read_supabase_near():
+            rows = (
+                db.table("latest_event_metrics")
+                .select("event_id")
+                .gt("owned_tickets_count", 0)
+                .limit(500)
+                .execute().data
+            ) or []
+            candidate_ids = [int(r["event_id"]) for r in rows if r.get("event_id")]
+            return rows, attach_owned_metadata(db, candidate_ids, lat, lon)
+
+        sb_result = get_safe_read()(
+            _read_supabase_near, None,
+            on_error=lambda e: _log.warning(f"[store_events_near] supabase read failed: {e!r}"),
+        )
+        if sb_result is None:
+            return {
+                "count": 0, "events": [],
+                "user_lat": lat, "user_lon": lon, "within_miles": within,
+                "total_within_radius": 0,
+                "supabase_candidates": 0,
+                "missing_coords": 0,
+                "source": "supabase",
+            }
+        rows, decorated = sb_result
         # Drop events outside the radius (or missing coords entirely).
         in_radius = [d for d in decorated
                      if d["distance_miles"] is not None and d["distance_miles"] <= within]
