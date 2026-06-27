@@ -1556,37 +1556,9 @@ from routers.lists import build_lists_router  # noqa: E402
 app.include_router(build_lists_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
-@app.post("/api/watchlist")
-def watchlist_add(item: dict = Body(...), _=Depends(require_auth)):
-    db = require_sb()
-    kind = item.get("kind")
-    ext_id = item.get("ext_id")
-    label = item.get("label")
-    if kind not in ("performer", "venue"):
-        raise HTTPException(400, "kind must be performer or venue")
-    if not ext_id:
-        raise HTTPException(400, "ext_id required")
-    try:
-        res = db.table("watchlist").insert(
-            {"kind": kind, "ext_id": int(ext_id), "label": label or None}
-        ).execute()
-        return {"ok": True, "item": (res.data or [None])[0]}
-    except Exception as e:
-        msg = str(e)
-        if "duplicate" in msg.lower() or "unique" in msg.lower() or "23505" in msg:
-            return {"ok": False, "error": "already in watchlist"}
-        raise HTTPException(400, msg)
-
-
-@app.delete("/api/watchlist/{item_id}")
-def watchlist_remove(item_id: int, _=Depends(require_auth)):
-    db = require_sb()
-    db.table("watchlist").delete().eq("id", item_id).execute()
-    return {"ok": True}
-
-
-# (/api/runs + /api/snapshots/latest + /api/snapshots/velocity moved to
-# routers/lists.py — see the include_router above, BR-CODE-1 slice 3.)
+# /api/watchlist POST + DELETE -> routers/lists.py (BR-CODE-1 slice 35; joins
+# the watchlist GET there — require_sb + require_auth only). The whole
+# /api/watchlist + /api/runs + /api/snapshots/* surface now lives in lists.py.
 
 
 def _fire_collect(url: str, secret: str) -> None:
