@@ -27,6 +27,8 @@ from typing import Any
 
 import requests
 
+from core.http_retry import fetch_with_retry
+
 
 # RULE 2 — READ-ONLY against brokers.vividseats.com.
 # Vivid Seats orders are part of the orders/sales bucket alongside Evo
@@ -71,18 +73,14 @@ class VividClient:
         for k, v in (params or {}).items():
             if v is not None:
                 clean[k] = v
-        # Retry-After honoring backoff for 429/503; mirrors seatgeek_client._get
-        for attempt in range(5):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < 4 is False there)
-            r = requests.get(url, params=clean, timeout=self.timeout)
-            if r.status_code in (429, 503) and attempt < 4:
-                retry_after = r.headers.get("Retry-After")
-                try:
-                    delay = float(retry_after) if retry_after else (0.5 * (2 ** attempt))
-                except (TypeError, ValueError):
-                    delay = 0.5 * (2 ** attempt)
-                time.sleep(min(delay, 30.0))
-                continue
-            break
+        # Shared 429/503 retry loop (core/http_retry.py, BR-CODE-2). Honors
+        # Retry-After then capped exponential backoff; sleep passed as this
+        # module's time.sleep so the monkeypatch tests keep binding.
+        r = fetch_with_retry(
+            lambda: requests.get(url, params=clean, timeout=self.timeout),
+            max_retries=4, retry_statuses=frozenset({429, 503}),
+            base_backoff=0.5, max_backoff=30.0, sleep=time.sleep,
+        )
         if not r.ok:
             raise VividError(f"HTTP {r.status_code}")
         return r.content
