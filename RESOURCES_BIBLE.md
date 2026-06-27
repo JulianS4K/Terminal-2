@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.4.0 (2026-06-26; §7: production-readiness resilience env — `SUPABASE_TIMEOUT_SECONDS`/`DB_CIRCUIT_*`/`REDIS_URL`/`SESSION_SIGNING_SECRET` + their `core/db`·`core/resilience`·`core/ratelimit` modules); v2.3.1 (2026-06-26; §9: keystone `resolve_event_with_filters` now in core/store_events.py); v2.3.0 (§9 code-map ties route groups → router modules; v2.2.0: app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
+> **Doc version:** v2.5.0 (2026-06-26; §1: BR-CODE-2 shared `*_client.py` layer note — `core/readonly_guard`·`core/http_retry`·`core/vault`); v2.4.0 (2026-06-26; §7: production-readiness resilience env — `SUPABASE_TIMEOUT_SECONDS`/`DB_CIRCUIT_*`/`REDIS_URL`/`SESSION_SIGNING_SECRET` + their `core/db`·`core/resilience`·`core/ratelimit` modules); v2.3.1 (2026-06-26; §9: keystone `resolve_event_with_filters` now in core/store_events.py); v2.3.0 (§9 code-map ties route groups → router modules; v2.2.0: app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -52,6 +52,8 @@ Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_
 | **pg_net** | async HTTP from SQL | A1 | ext `pg_net 0.20.0` + `_cron_invoke_edge_fn` | vault |
 
 Reddit: PAUSED 2026-05-13 (tables `reddit_*` retained, crons dropped). Railway: legacy deploy home, migrating off → Render.
+
+**Shared `*_client.py` layer (BR-CODE-2):** the 9 read-only clients share three `core/` modules instead of hand-rolled copies — `core/readonly_guard.py` (the RULE-2 GET-only guard body; **security-CRIT** — see `PROJECT_BIBLE §2.6`), `core/http_retry.py` (`fetch_with_retry`: 429/5xx Retry-After→capped-exponential-backoff loop; evo/seatgeek/seatdata/tickpick/vivid/gotickets use it; axs fixed-delay + broadway scraper opt out), `core/vault.py` (`vault_secret`: the `get_app_secret` Vault resolver used by seatgeek/seatdata/ticketsdata/axs). Each client still declares its own auth + parse + the per-file RULE-2 tokens.
 
 ---
 

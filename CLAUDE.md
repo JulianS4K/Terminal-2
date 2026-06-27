@@ -2,7 +2,7 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v2.1.0 (2026-06-26; app.py→server.py rename refs §4/§4b; v2.0.0 2026-06-19; history in git/CHANGELOG)
+> **Doc version:** v2.2.0 (2026-06-26; RULE-2 guard body single-sourced in core/readonly_guard.py — per-file tokens still required, BR-CODE-2); v2.1.0 (2026-06-26; app.py→server.py rename refs §4/§4b; v2.0.0 2026-06-19; history in git/CHANGELOG)
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -64,7 +64,7 @@ OK: search / suggestions / events / performers / venues / ticket_groups / listin
 - Account / seller-side configuration changes
 
 **Listing-source lockdown — price changes + force-pulls cannot influence upstream, no bypass *(operator directive 2026-06-01)*:**
-- **EVO and SeatGeek (and every listing source) listing prices cannot be changed.** There is no reprice / set-price / update-listing code path anywhere, and none may be added. Each `*_client.py` is GET-only *by construction* — `ALLOWED_HTTP_METHODS = frozenset({"GET"})` + `_assert_readonly_method()` that **raises** on any non-GET — so a price/inventory mutation is impossible, not merely discouraged. (Lone carve-out: SeatData permits one non-data metadata POST, `/event-request-add`, which writes none of our data and touches no price/inventory.)
+- **EVO and SeatGeek (and every listing source) listing prices cannot be changed.** There is no reprice / set-price / update-listing code path anywhere, and none may be added. Each `*_client.py` is GET-only *by construction* — `ALLOWED_HTTP_METHODS = frozenset({"GET"})` + `_assert_readonly_method()` that **raises** on any non-GET — so a price/inventory mutation is impossible, not merely discouraged. (The guard *body* is single-sourced in `core/readonly_guard.py` since BR-CODE-2, but every client still declares those two tokens in-file — the `check_readonly.py` static audit requires them per-file; **never re-inline-then-weaken or widen the allowlist**.) (Lone carve-out: SeatData permits one non-data metadata POST, `/event-request-add`, which writes none of our data and touches no price/inventory.)
 - **On-demand / "force-pull" refresh paths may READ but must NEVER influence a listing-source API.** The force/sync triggers (`raw-tevo?force=true`, `/api/seatgeek/.../sync-listings`, `/sync-sales`, `/api/seatdata/.../sync-sales`, `/auto-search`, `/api/collect/run`, `/api/admin/collect-*`) pull data **in**; they never push an order, hold, write, or price/inventory change **out** to TEvo / SG / SeatData / TP / Vivid. Refreshing the data is fine; influencing the source is forbidden.
 - **No bypass — enforced mechanically.** `scripts/check_readonly.py` (CI static audit: fails the build on any write to a broker host, or a removed guard token) + `tests/test_readonly_guards.py` (asserts every client raises on POST/PUT/PATCH/DELETE). Weakening, deleting, or routing around either guard is a **security-CRIT** change (RULE-2 is **A1**'s DB/API-security domain as of the 2026-06-17 reorg; B1 owns git/code security) and is forbidden without explicit operator authorization.
 
