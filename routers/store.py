@@ -318,16 +318,23 @@ def build_store_router(
         horizon_iso = (datetime.now(timezone.utc) + timedelta(days=max(1, min(int(days), 120)))).date().isoformat()
         venue_patterns = ("%New York%", "%Brooklyn%", "%Bronx%", "%Queens%",
                           "%Flushing%", "%Elmont%", "%, NY%", "%Newark%", "%East Rutherford%")
-        try:
+        # Customer-facing premium rail — read through the shared DB breaker
+        # (production-readiness P1 #4) so a Supabase blip fast-fails to an empty
+        # rail (sentinel None) + feeds the breaker, rather than 500-ing the page.
+        def _read_concierge():
             q = (db.table("concierge_events")
                    .select("event_id,name,venue_name,venue_location,occurs_at_local,"
                            "from_price,prem_max_price,prem_tickets,primary_performer_name")
                    .gte("occurs_date", today_iso)
                    .lte("occurs_date", horizon_iso))
             q = q.or_(",".join(or_ilike_clause("venue_location", p) for p in venue_patterns))
-            rows = q.order("prem_max_price", desc=True).limit(max(1, min(int(limit), 40))).execute().data or []
-        except Exception as e:
-            _log.warning(f"store_concierge query failed: {e}")
+            return q.order("prem_max_price", desc=True).limit(max(1, min(int(limit), 40))).execute().data or []
+
+        rows = get_safe_read()(
+            _read_concierge, None,
+            on_error=lambda e: _log.warning(f"store_concierge query failed: {e}"),
+        )
+        if rows is None:
             return {"count": 0, "events": []}
         # Map event_id -> id so the card links to /store/event/{id}.
         events = [{**r, "id": r.pop("event_id")} for r in rows]
@@ -693,17 +700,27 @@ def build_store_router(
         # inference has been flaky on rebuilds. tbd is derived from the event
         # name string via is_tbd() (no SQL column).
         today_iso = datetime.now(timezone.utc).date().isoformat()
-        try:
-            ev_rows = (db.table("events")
-                         .select("id,name,occurs_at_local,venue_id,venue_name,"
-                                 "venue_location,primary_performer_id,"
-                                 "primary_performer_name,performer_ids")
-                         .in_("id", ev_ids)
-                         .gte("occurs_at_local", today_iso)
-                         .limit(1000)
-                         .execute().data) or []
-        except Exception as e:
-            _log.warning(f"[store_home] events query failed: {e!r}")
+
+        # Second first-paint read also goes through the shared DB breaker
+        # (production-readiness P1 #4): a Supabase blip on the events query
+        # fast-fails to the conservative empty grid (sentinel None) and feeds
+        # the breaker, so repeated failures open it and shed load instead of
+        # each homepage hit re-hammering a struggling DB.
+        def _read_events():
+            return (db.table("events")
+                      .select("id,name,occurs_at_local,venue_id,venue_name,"
+                              "venue_location,primary_performer_id,"
+                              "primary_performer_name,performer_ids")
+                      .in_("id", ev_ids)
+                      .gte("occurs_at_local", today_iso)
+                      .limit(1000)
+                      .execute().data) or []
+
+        ev_rows = get_safe_read()(
+            _read_events, None,
+            on_error=lambda e: _log.warning(f"[store_home] events query failed: {e!r}"),
+        )
+        if ev_rows is None:
             return {"count": 0, "events": [], "source": "sql"}
 
         events_by_id = {int(e["id"]): e for e in ev_rows if e.get("id")}
