@@ -192,6 +192,7 @@ from core.ingest import (  # noqa: E402
     flatten_order as _ce_flatten_order,
 )
 from core.storefront_html import read_storefront_html as _ce_read_storefront_html  # noqa: E402
+from core.canonical_refresh import fire_canonical_refresh as _ce_fire_canonical_refresh  # noqa: E402
 from core.helpers import venue_tokens as _venue_tokens  # noqa: E402
 from core.helpers import venue_overlap as _venue_overlap  # noqa: E402
 from core.helpers import is_event_seat as _is_event_seat  # noqa: E402
@@ -1349,94 +1350,16 @@ def _build_zone_resolver(performer_id: int | None, venue_id: int | None):
 # _normalize_filters -> core/helpers.py (BR-CODE-1); imported (aliased) at top.
 
 
+# _fire_canonical_refresh body -> core/canonical_refresh.py (BR-CODE-1 core/
+# pass). Thin wrapper injects the live sb + config + _fire_collect so the
+# monkeypatches (app.sb / app.SUPABASE_URL / app.CRON_SECRET / app._fire_collect)
+# + the app.threading.Thread sync-stub + the resolve-injection + direct
+# app._fire_canonical_refresh test calls all keep binding.
 def _fire_canonical_refresh(event_id: int, ev: dict) -> None:
-    """Fire-and-forget kick to the audit lane's collect-listings Edge Function
-    so canonical SQL stays as fresh as the storefront sees.
-
-    Two paths:
-    - **Tracked event** (row exists in `events`): hit
-      `collect-listings?event_id=X&min_age_seconds=10`. The audit-lane
-      function dedupes against recent snapshots, so 100 shoppers in 10s
-      trigger one collector run, not 100.
-    - **Untracked event** (row missing): insert primary performer into
-      `watchlist`, then call `collect-listings?watchlist_id=N`. The
-      sweep populates `events` + `listings_snapshots` + `event_metrics`
-      for that performer's full calendar. From now on the regular cron
-      cadence covers the event automatically.
-
-    Lane note: writes to `watchlist` (audit-lane table) using the same
-    insert pattern as the existing `/api/watchlist` POST endpoint. We're
-    using the existing API surface, not creating a parallel writer — the
-    unique constraint on (kind, ext_id) keeps the table consistent.
-
-    Always non-blocking; runs on a daemon thread. Failures are logged to
-    stdout, never raised back to the page handler.
-    """
-    if not (sb is not None and SUPABASE_URL and CRON_SECRET):
-        return  # Best-effort only; missing config silently no-ops.
-
-    def _go():
-        try:
-            existing = (
-                sb.table("events").select("id").eq("id", event_id).limit(1).execute().data
-            )
-        except Exception as e:
-            _log.warning(f"canonical refresh: events lookup failed for {event_id}: {e}")
-            return
-
-        if existing:
-            url = (
-                f"{SUPABASE_URL}/functions/v1/collect-listings"
-                f"?event_id={event_id}&min_age_seconds=10"
-            )
-            _fire_collect(url, CRON_SECRET)
-            return
-
-        # Auto-track path: this event is brand new to us. Add primary
-        # performer to watchlist so the cron picks it up going forward.
-        performances = ev.get("performances") or []
-        primary = next(
-            ((p.get("performer") or {}) for p in performances if p.get("primary")),
-            ((performances[0].get("performer") or {}) if performances else {}),
-        )
-        pid = primary.get("id")
-        if not pid:
-            _log.info(f"auto-track: event {event_id} has no primary performer; skipping")
-            return
-        pid = int(pid)
-        pname = primary.get("name") or f"performer {pid}"
-
-        watchlist_id: int | None = None
-        try:
-            ins = sb.table("watchlist").insert(
-                {"kind": "performer", "ext_id": pid, "label": pname}
-            ).execute()
-            row = (ins.data or [None])[0]
-            if row:
-                watchlist_id = row.get("id")
-                _log.info(f"auto-track: added performer {pid} ({pname}) to watchlist as id={watchlist_id}")
-        except Exception as e:
-            msg = str(e)
-            if "duplicate" in msg.lower() or "23505" in msg or "unique" in msg.lower():
-                # Already in watchlist — find the existing id so we can scope the kick.
-                try:
-                    found = (
-                        sb.table("watchlist").select("id")
-                        .eq("kind", "performer").eq("ext_id", pid)
-                        .limit(1).execute().data
-                    )
-                    if found:
-                        watchlist_id = found[0]["id"]
-                except Exception as e2:
-                    _log.warning(f"auto-track: lookup after dup failed: {e2}")
-            else:
-                _log.warning(f"auto-track: watchlist insert failed for performer {pid}: {e}")
-
-        if watchlist_id:
-            url = f"{SUPABASE_URL}/functions/v1/collect-listings?watchlist_id={watchlist_id}"
-            _fire_collect(url, CRON_SECRET)
-
-    threading.Thread(target=_go, daemon=True).start()
+    return _ce_fire_canonical_refresh(
+        event_id, ev, sb=sb, supabase_url=SUPABASE_URL,
+        cron_secret=CRON_SECRET, fire_collect=_fire_collect,
+    )
 
 
 # SQL-only store helpers moved to core/store_events.py (BR-CODE-1 core/ pass).
