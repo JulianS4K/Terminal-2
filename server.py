@@ -760,8 +760,10 @@ async def render_deploy_webhook(request: Request, background: BackgroundTasks): 
     return {"ok": True, "received": payload.get("type")}
 
 
-@app.get("/api/public/config")
-def public_config():
+# Route moved to routers/misc.py (BR-CODE-1 decomposition); the payload builder
+# stays here (reads the live config constants the tests patch) + is injected via
+# the get_public_config getter.
+def _public_config_payload():
     """Browser-safe config for the login page. No secrets."""
     return {
         "supabase_url": SUPABASE_URL,
@@ -1395,6 +1397,7 @@ app.include_router(build_misc_router(
     cron_secret=CRON_SECRET,
     supabase_url=SUPABASE_URL,
     sandbox=SANDBOX,
+    get_public_config=lambda: _public_config_payload,
 ))
 
 
