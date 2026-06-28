@@ -81,3 +81,18 @@ def test_module_exposes_real_create_client_default():
     # call it here — just assert the wiring isn't accidentally the fake).
     import supabase
     assert db_module.create_client is supabase.create_client
+
+
+def test_make_supabase_client_real_constructor():
+    """Regression: build a client through the REAL supabase.create_client (no
+    fake injected) so the ClientOptions we pass is actually consumed by
+    create_client -> _init_supabase_auth_client. Catches the import-path bug
+    where ClientOptions came from the deprecated `supabase.lib.client_options`
+    shim (missing `.storage`), which raised AttributeError at construction ->
+    sb=None -> every DB-backed route 500s. supabase clients construct lazily
+    (no network), so this is safe + offline."""
+    client = make_supabase_client("https://abcdefgh.supabase.co", "sb_secret_testkey")
+    assert client is not None
+    # The options object the module builds must carry `storage` (the attribute
+    # create_client reads) — i.e. it's the canonical ClientOptions, not the shim.
+    assert hasattr(db_module.ClientOptions(), "storage")

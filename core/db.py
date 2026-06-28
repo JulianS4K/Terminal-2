@@ -15,8 +15,13 @@ from __future__ import annotations
 import os
 from typing import Callable
 
-from supabase import create_client
-from supabase.lib.client_options import ClientOptions
+# Import ClientOptions from the canonical top-level export, NOT the deprecated
+# `supabase.lib.client_options` shim. On supabase >=2.31 the shim's ClientOptions
+# lacks the `storage` attribute that `create_client` -> `_init_supabase_auth_client`
+# reads, so passing a shim-built options object raises AttributeError at client
+# construction -> sb=None -> every DB-backed route 500s. The top-level export has
+# `storage`. (Regression caught by tests/test_core_db.py::test_make_supabase_client_real_constructor.)
+from supabase import create_client, ClientOptions
 
 # Generous enough for the heaviest movers/admin RPCs (~1s warm, a few seconds
 # cold) yet far below the unbounded-hang failure mode. Override per-env.
