@@ -83,61 +83,21 @@ _STOREFRONT_HTML_CACHE: dict[str, str] = {}
 # (BR-CODE-1 leaf-helper pass). Imported (aliased) below.
 
 
+# Storefront HTML shell rendering + cache moved to core/storefront_html.py
+# (BR-CODE-1 core/ pass). Thin wrappers pass the live deploy identity + cache so
+# the tests (which call app._read_storefront_html / app._render_storefront_page
+# directly and mutate app._STOREFRONT_HTML_CACHE / patch app._STOREFRONT_VERSION)
+# keep binding; signatures unchanged for the storefront-pages router getter.
 def _read_storefront_html(name: str) -> str:
-    """Read a `static/store/<name>` HTML shell, rewrite the store.js +
-    style.css refs to include `?v=<sha>`, swap the hardcoded OG share-card
-    base URL for this deploy's actual host, cache the result for the life
-    of the container. The source files don't change mid-process.
-    """
-    cached = _STOREFRONT_HTML_CACHE.get(name)
-    if cached is not None:
-        return cached
-    path = os.path.join(STATIC_DIR, "store", name)
-    with open(path, "r", encoding="utf-8") as f:
-        html = f.read()
-    v = _STOREFRONT_VERSION
-    base = _STOREFRONT_BASE_URL
-    # Cache-bust asset URLs. Closing-quote specificity prevents accidental
-    # matches inside JS strings or CSS url() refs that might be added later.
-    html = html.replace(
-        '/static/store/store.js"',
-        f'/static/store/store.js?v={v}"',
+    return _ce_read_storefront_html(
+        name, static_dir=STATIC_DIR, version=_STOREFRONT_VERSION,
+        base_url=_STOREFRONT_BASE_URL, cache=_STOREFRONT_HTML_CACHE,
     )
-    html = html.replace(
-        '/static/store/style.css"',
-        f'/static/store/style.css?v={v}"',
-    )
-    # Replace the hardcoded `https://vibepass-storefront-test.onrender.com`
-    # base in OG share-card tags (PR #166) with this deploy's actual host so
-    # iMessage/Slack/WhatsApp/Discord/Twitter previews point at the right
-    # deploy (Render vs Railway vs custom). When base resolves to the same
-    # default this is a no-op string replace.
-    if base != "https://vibepass-storefront-test.onrender.com":
-        html = html.replace(
-            "https://vibepass-storefront-test.onrender.com",
-            base,
-        )
-    _STOREFRONT_HTML_CACHE[name] = html
-    return html
 
 
 def _render_storefront_page(name: str) -> HTMLResponse:
-    """Return an HTMLResponse for a static/store/*.html shell with
-    Cache-Control: no-cache, must-revalidate so browsers always
-    revalidate the HTML on every page load.
-
-    The asset URLs inside the HTML are cache-busted via
-    _read_storefront_html()'s `?v=<sha>` rewrite — those keep their
-    long-cache friendliness. Only the HTML shell itself needs the
-    revalidate header so operators (and returning customers) never
-    get trapped on stale HTML pointing at un-versioned asset URLs
-    after a deploy. See Round 5 of docs/d1-bot-continues-here-rustling
-    -sunrise.md for the bootstrap-trap scenario this prevents.
-
-    Cost: every page load adds one conditional GET (304 Not Modified
-    when unchanged — ~1 KB request, ~50 ms latency, no body transfer).
-    Trivial.
-    """
+    # Builds the response from the SERVER _read_storefront_html wrapper (not
+    # core's read directly) so the app._read_storefront_html monkeypatch binds.
     return HTMLResponse(
         content=_read_storefront_html(name),
         headers={"Cache-Control": "no-cache, must-revalidate"},
@@ -231,6 +191,7 @@ from core.ingest import (  # noqa: E402
     upsert_tevo_event_into_events as _ce_upsert_tevo_event_into_events,
     flatten_order as _ce_flatten_order,
 )
+from core.storefront_html import read_storefront_html as _ce_read_storefront_html  # noqa: E402
 from core.helpers import venue_tokens as _venue_tokens  # noqa: E402
 from core.helpers import venue_overlap as _venue_overlap  # noqa: E402
 from core.helpers import is_event_seat as _is_event_seat  # noqa: E402
