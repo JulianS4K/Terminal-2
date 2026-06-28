@@ -29,6 +29,36 @@ _PARKING_ZONE_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\
 _PARKING_SECTION_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park|prepaid|preferred\s*parking|guest\s*parking|vip\s*lot|vip\s*parking)\b", re.IGNORECASE)
 
 
+def _batch_fallback_zones(db, pairs: list[tuple]) -> dict[tuple, str | None]:
+    """Resolve derive_zone_fallback for many (section, row) pairs in one RPC.
+
+    Returns a {(section, row): zone-or-None} map. Tries the batch RPC
+    (derive_zone_fallback_batch, one round-trip); if it is unavailable (not yet
+    applied) or errors, degrades to the legacy per-pair scalar RPC so the result
+    is identical either way. A per-pair RPC error maps that pair to None
+    (unmapped), matching the old in-loop `except`.
+    """
+    if not pairs:
+        return {}
+    payload = [{"section": section, "row": row} for section, row in pairs]
+    try:
+        rows = db.rpc("derive_zone_fallback_batch", {"p_pairs": payload}).execute().data
+        # On success the RPC returns exactly one row per input pair; an empty
+        # list means the function is absent (Fake/PostgREST shape) → degrade.
+        if isinstance(rows, list) and rows:
+            return {(r.get("section"), r.get("row")): r.get("zone") for r in rows}
+    except Exception:
+        pass
+    out: dict[tuple, str | None] = {}
+    for section, row in pairs:
+        try:
+            res = db.rpc("derive_zone_fallback", {"p_section": section, "p_row": row}).execute().data
+            out[(section, row)] = res if isinstance(res, str) else None
+        except Exception:
+            out[(section, row)] = None
+    return out
+
+
 def build_broker_router(
     get_require_sb: Callable[[], Callable],
     require_auth: Callable,
@@ -903,6 +933,14 @@ def build_broker_router(
             def _curated_match(section: str | None, row: str | None) -> str | None:
                 return None
 
+        # Pre-resolve the system fallback for every non-curated (section, row)
+        # in ONE round-trip (was an N+1: one derive_zone_fallback RPC per
+        # section). _batch_fallback_zones degrades to the legacy per-pair loop
+        # if the batch RPC is unavailable, so behaviour is identical whether or
+        # not the batch migration has been applied.
+        pending = [(section, row) for section, row in secs if not _curated_match(section, row)]
+        fb_map = _batch_fallback_zones(db, pending)
+
         # Resolve each section
         for section, row in secs:
             z_curated = _curated_match(section, row)
@@ -910,12 +948,7 @@ def build_broker_router(
                 section_map[section] = {"zone": z_curated, "source": "curated"}
                 source_mix["curated"] = source_mix.get("curated", 0) + 1
                 continue
-            # Fallback: derive_zone_fallback RPC
-            try:
-                res = db.rpc("derive_zone_fallback", {"p_section": section, "p_row": row}).execute().data
-                zfall = res if isinstance(res, str) else None
-            except Exception:
-                zfall = None
+            zfall = fb_map.get((section, row))
             if zfall:
                 section_map[section] = {"zone": zfall, "source": "fallback"}
                 source_mix["fallback"] = source_mix.get("fallback", 0) + 1
