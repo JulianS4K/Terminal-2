@@ -56,9 +56,9 @@ services:
         value: "true"
       # ---- Storefront-as-landing flag ----
       # false (operator directive 2026-06-15): / serves the VibePass unified
-      # hub (static/home/index.html) as the main screen — the 4-surface
-      # selector (Terminal / Undelivered / Store / Bridge), auth-gated in
-      # home.js. Set "true" to revert to the old behavior where / redirects
+      # hub (static/home/index.html) as the main screen — the 5-surface
+      # selector (Terminal / Undelivered / Orders / Store / Bridge), auth-gated
+      # in home.js. Set "true" to revert to the old behavior where / redirects
       # to /store (customers land directly on the storefront).
       - key: STOREFRONT_AS_LANDING
         value: "false"
