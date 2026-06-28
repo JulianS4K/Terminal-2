@@ -35,7 +35,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio
+          pip install pytest pytest-asyncio pytest-cov
           # Tolerate missing requirements.txt early in repo lifecycle.
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
@@ -45,16 +45,30 @@ jobs:
         # deleted. CLAUDE.md §2: this gate is mandatory, no bypass.
         run: python scripts/check_readonly.py
 
-      - name: Run pytest
+      - name: Run pytest + coverage gate
         env:
           AUTH_DISABLED: "true"
           SUPABASE_URL: "https://example.invalid"
           SUPABASE_SERVICE_ROLE_KEY: "test-key"
+          # Dummy TEvo creds so app.py boots in normal (live) mode under
+          # coverage's startup module scan instead of sys.exit-ing on missing
+          # creds. The lazy TEvo client never makes a real call in tests.
+          TEVO_TOKEN: "test-token"
+          TEVO_SECRET: "test-secret"
           # Repo modules (app.py, broadway_client.py, evo_client.py, etc.) live at
           # repo root, not a package. Pytest's rootdir auto-discovery doesn't add
           # them to sys.path; PYTHONPATH=. is the canonical fix.
           PYTHONPATH: "."
-        run: pytest tests/ -q --maxfail=1
+        # --cov reads the product-code source set from .coveragerc.
+        # --cov-fail-under is a RATCHET: it only moves up. Raise it (never lower)
+        # as coverage climbs toward the 100% product-code target. Drop maxfail so
+        # the coverage report still prints when an assertion fails.
+        # --ignore=tests/frontend: the Playwright browser smoke tests run in
+        # their own job (frontend-smoke) — they need a browser + run in a
+        # separate process (Playwright's sync API event loop conflicts with the
+        # backend suite's anyio.run handler tests). They're omitted from the
+        # coverage surface anyway (.coveragerc omits tests/*).
+        run: pytest tests/ --ignore=tests/frontend -q --cov --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=100
 
       - name: mypy type check (warn-only)
         # Informational until the codebase is mypy-clean. Set
@@ -62,7 +76,7 @@ jobs:
         continue-on-error: true
         run: |
           pip install mypy --quiet
-          mypy app.py evo_client.py \
+          mypy server.py evo_client.py \
             --ignore-missing-imports \
             --no-error-summary \
             --pretty \
@@ -98,3 +112,36 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
         run: npm run build
+
+  frontend-smoke:
+    name: Frontend smoke (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest playwright pytest-playwright
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Install Chromium for Playwright
+        # CI has no pre-provisioned browser, so fetch one here (the dev
+        # container's /opt/pw-browsers path doesn't exist on the runner; the
+        # browser fixture falls back to Playwright's default browser when the
+        # pre-installed build is absent).
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run frontend smoke tests
+        # Boots the real FastAPI app in a background thread (demo mode — no
+        # creds) and drives Chromium over each shipped page. Regression net for
+        # the BR-CODE-4 JS/CSS dedup.
+        env:
+          PYTHONPATH: "."
+        run: pytest tests/frontend -q

@@ -2,7 +2,7 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
+> **Doc version:** v2.2.0 (2026-06-26; RULE-2 guard body single-sourced in core/readonly_guard.py — per-file tokens still required, BR-CODE-2); v2.1.0 (2026-06-26; app.py→server.py rename refs §4/§4b; v2.0.0 2026-06-19; history in git/CHANGELOG)
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -64,7 +64,7 @@ OK: search / suggestions / events / performers / venues / ticket_groups / listin
 - Account / seller-side configuration changes
 
 **Listing-source lockdown — price changes + force-pulls cannot influence upstream, no bypass *(operator directive 2026-06-01)*:**
-- **EVO and SeatGeek (and every listing source) listing prices cannot be changed.** There is no reprice / set-price / update-listing code path anywhere, and none may be added. Each `*_client.py` is GET-only *by construction* — `ALLOWED_HTTP_METHODS = frozenset({"GET"})` + `_assert_readonly_method()` that **raises** on any non-GET — so a price/inventory mutation is impossible, not merely discouraged. (Lone carve-out: SeatData permits one non-data metadata POST, `/event-request-add`, which writes none of our data and touches no price/inventory.)
+- **EVO and SeatGeek (and every listing source) listing prices cannot be changed.** There is no reprice / set-price / update-listing code path anywhere, and none may be added. Each `*_client.py` is GET-only *by construction* — `ALLOWED_HTTP_METHODS = frozenset({"GET"})` + `_assert_readonly_method()` that **raises** on any non-GET — so a price/inventory mutation is impossible, not merely discouraged. (The guard *body* is single-sourced in `core/readonly_guard.py` since BR-CODE-2, but every client still declares those two tokens in-file — the `check_readonly.py` static audit requires them per-file; **never re-inline-then-weaken or widen the allowlist**.) (Lone carve-out: SeatData permits one non-data metadata POST, `/event-request-add`, which writes none of our data and touches no price/inventory.)
 - **On-demand / "force-pull" refresh paths may READ but must NEVER influence a listing-source API.** The force/sync triggers (`raw-tevo?force=true`, `/api/seatgeek/.../sync-listings`, `/sync-sales`, `/api/seatdata/.../sync-sales`, `/auto-search`, `/api/collect/run`, `/api/admin/collect-*`) pull data **in**; they never push an order, hold, write, or price/inventory change **out** to TEvo / SG / SeatData / TP / Vivid. Refreshing the data is fine; influencing the source is forbidden.
 - **No bypass — enforced mechanically.** `scripts/check_readonly.py` (CI static audit: fails the build on any write to a broker host, or a removed guard token) + `tests/test_readonly_guards.py` (asserts every client raises on POST/PUT/PATCH/DELETE). Weakening, deleting, or routing around either guard is a **security-CRIT** change (RULE-2 is **A1**'s DB/API-security domain as of the 2026-06-17 reorg; B1 owns git/code security) and is forbidden without explicit operator authorization.
 
@@ -81,7 +81,7 @@ Lane assignments per `PROJECT_BIBLE.md §2` (4-domain reorg 2026-06-17 — peer 
 
 ### 4. Render workspace — per-service scoped access (2026-05-14, reorg 2026-05-15; testing-unified 2026-05-16)
 
-**Testing-unified architecture (2026-05-16, PR #168)**: During dev/test, all runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold-start drag). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts in `app.py`. `vibepass-terminal-test` remains as the D0 static CDN host; `d2-orders-dashboard` stays alive as an idle placeholder. At beta, each surface migrates back to its own service via dedicated DNS + un-mounting from `app.py`.
+**Testing-unified architecture (2026-05-16, PR #168)**: During dev/test, all runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold-start drag). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts in `server.py`. `vibepass-terminal-test` remains as the D0 static CDN host; `d2-orders-dashboard` stays alive as an idle placeholder. At beta, each surface migrates back to its own service via dedicated DNS + un-mounting from `server.py`.
 
 Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are forbidden without operator approval.
 
@@ -98,7 +98,7 @@ Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are 
 - Coordination expectation: provisioning/deletion of customer-facing services is high-impact; D0 posts a `bot_chat` `flag` event for transparency, but no per-call operator approval required
 
 **D1, D2 — subordinate coding arm under D0 (2026-05-15 reorg):**
-- D1 still authors `static/store/*`, `app.py /api/store/*`, `render.yaml` (storefront IaC)
+- D1 still authors `static/store/*`, `server.py /api/store/*`, `render.yaml` (storefront IaC)
 - D2 still authors `d2_dashboard/*`, order client code, `render-d2-dashboard.yaml`
 - Render MCP **read-only** across all services; writes route through D0 approval + A1 merge
 - Cross-service writes (e.g., D1 touching D2's surface) require D0 sign-off in PR comment

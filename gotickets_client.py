@@ -28,6 +28,8 @@ from typing import Any
 
 import requests
 
+from core.http_retry import fetch_with_retry
+
 
 # RULE 2 — READ-ONLY against sc.gotickets.com.
 # GoTickets sales sit in the same orders/sales bucket as Evo, SG,
@@ -46,13 +48,13 @@ class GoTicketsReadOnlyError(GoTicketsError):
     """Raised when a non-GET method is attempted against GoTickets."""
 
 
-def _assert_readonly_method(method: str) -> None:
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise GoTicketsReadOnlyError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "GoTickets client is read-only by design (RULE 2 spirit). "
-            "Pulling data only — never write back to sc.gotickets.com."
-        )
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+_assert_readonly_method = build_readonly_guard(
+    GoTicketsReadOnlyError, ALLOWED_HTTP_METHODS,
+    "Pulling data only — never write back to sc.gotickets.com.",
+)
 
 
 class GoTicketsClient:
@@ -79,23 +81,18 @@ class GoTicketsClient:
         }
         clean = {k: v for k, v in (params or {}).items() if v is not None}
         # Retry-After honoring backoff for 429/503; mirrors tickpick_client._get.
-        # Network failures (ConnectionError / Timeout) re-raised as GoTicketsError
-        # so callers see one consistent exception class at the module boundary.
-        r = None
-        for attempt in range(5):
-            try:
-                r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
-            except (requests.ConnectionError, requests.Timeout) as e:
-                raise GoTicketsError(f"network error: {type(e).__name__}") from e
-            if r.status_code in (429, 503) and attempt < 4:
-                retry_after = r.headers.get("Retry-After")
-                try:
-                    delay = float(retry_after) if retry_after else (0.5 * (2 ** attempt))
-                except (TypeError, ValueError):
-                    delay = 0.5 * (2 ** attempt)
-                time.sleep(min(delay, 30.0))
-                continue
-            break
+        # Shared 429/503 retry loop (core/http_retry.py, BR-CODE-2). Network
+        # failures (ConnectionError / Timeout) raised inside the thunk propagate
+        # out of fetch_with_retry and are re-raised as GoTicketsError here so
+        # callers see one consistent exception class at the module boundary.
+        try:
+            r = fetch_with_retry(
+                lambda: requests.get(url, headers=headers, params=clean, timeout=self.timeout),
+                max_retries=4, retry_statuses=frozenset({429, 503}),
+                base_backoff=0.5, max_backoff=30.0, sleep=time.sleep,
+            )
+        except (requests.ConnectionError, requests.Timeout) as e:
+            raise GoTicketsError(f"network error: {type(e).__name__}") from e
         if not r.ok:
             raise GoTicketsError(f"HTTP {r.status_code}")
         try:

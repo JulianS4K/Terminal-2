@@ -28,6 +28,8 @@ from typing import Any
 
 import requests
 
+from core.vault import vault_secret
+
 
 # Read-only by design. Mirrors the RULE 2 guard pattern used by the orders/
 # sales clients (evo/seatgeek/tickpick/vivid). TicketsData has no write
@@ -78,13 +80,13 @@ class TicketsDataQuotaError(TicketsDataError):
     """402 — plan quota exhausted."""
 
 
-def _assert_readonly_method(method: str) -> None:
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise TicketsDataReadOnlyError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "TicketsData client is read-only by design (CLAUDE.md §2). "
-            "Pulling data only — never write back to ticketsdata.com."
-        )
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+_assert_readonly_method = build_readonly_guard(
+    TicketsDataReadOnlyError, ALLOWED_HTTP_METHODS,
+    "Pulling data only — never write back to ticketsdata.com.",
+)
 
 
 def _validate_platform(platform: str) -> str:
@@ -106,16 +108,10 @@ def _validate_platform(platform: str) -> str:
 
 
 def _vault_secret(db: Any, name: str) -> str | None:
-    """Read a secret from Supabase Vault via the get_app_secret RPC (the same
-    bridge seatgeek_client uses). Requires a service-role db client."""
-    if db is None:
-        return None
-    try:
-        res = db.rpc("get_app_secret", {"p_name": name}).execute()
-        return getattr(res, "data", None) or None
-    except Exception as e:  # never surface the value; only the failure
-        print(f"ticketsdata: vault lookup for {name} failed: {e}")
-        return None
+    """Read a secret from Supabase Vault. Thin wrapper over the shared resolver
+    (core/vault.py, BR-CODE-2) preserving this module's log prefix + name."""
+    return vault_secret(db, name,
+                        on_error=lambda e: print(f"ticketsdata: vault lookup for {name} failed: {e}"))
 
 
 class TicketsDataClient:
@@ -169,7 +165,7 @@ class TicketsDataClient:
         # (timeout); do NOT retry 400/401/402/404 (deterministic).
         r = None
         delays = [1.5, 3.0]
-        for attempt in range(len(delays) + 1):
+        for attempt in range(len(delays) + 1):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < len(delays) is False there)
             r = requests.get(url, params=clean, timeout=self.timeout)
             if r.status_code in (429, 503, 504) and attempt < len(delays):
                 retry_after = r.headers.get("Retry-After")

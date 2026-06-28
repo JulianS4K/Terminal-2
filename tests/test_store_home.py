@@ -46,7 +46,7 @@ sys.path.insert(0, str(REPO_ROOT))
 fastapi = pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
-import app as app_module  # noqa: E402
+import server as app_module  # noqa: E402
 # The movers engine (section builders + holiday/marquee classifiers + _compute_movers)
 # moved to core/movers.py (BR-CODE-1). app still re-exports _compute_movers /
 # _classify_world_cup / _or_ilike_clause (reachable via app_module), but the section
@@ -1057,43 +1057,40 @@ def test_movers_cache_key_folds_city_case(monkeypatch):
     )
 
 
-def test_movers_cache_failed_compute_doesnt_poison(monkeypatch):
-    """If _compute_movers raises on cold-miss, the exception propagates
-    (no cached payload to fall back to) AND no stale entry is written
-    to the cache. Next call retries cleanly."""
+def test_movers_cache_failed_compute_degrades_gracefully(monkeypatch):
+    """If _compute_movers raises on cold-miss, the route now degrades through
+    the shared DB circuit breaker (production-readiness P1 #4): it returns 200
+    with an empty strip (matching _compute_movers's own empty shape) instead of
+    5xx, AND does NOT poison the cache with the empty fallback. The next call
+    (compute now succeeds) recomputes + caches cleanly."""
     monkeypatch.setattr(app_module, "_movers_cache", {})
     monkeypatch.setattr(app_module, "_MOVERS_CACHE_REFRESHING", set())
     monkeypatch.setattr(app_module, "require_sb", lambda: None)
 
-    counter = {"n": 0}
-    def _flaky_compute(db, city, day_cap, cap):
-        counter["n"] += 1
-        if counter["n"] == 1:
+    state = {"raise": True, "n": 0}
+    def _compute(db, city, day_cap, cap):
+        state["n"] += 1
+        if state["raise"]:
             raise RuntimeError("simulated compute failure")
-        return {"city": city, "days": day_cap, "count": counter["n"], "events": []}
-    monkeypatch.setattr(app_module, "_compute_movers", _flaky_compute)
+        return {"city": city, "days": day_cap, "count": 99, "events": []}
+    monkeypatch.setattr(app_module, "_compute_movers", _compute)
 
     client = TestClient(app_module.app)
 
-    # First call: compute raises — endpoint should 5xx (any server-error
-    # status; FastAPI returns 502 in this configuration, 500 in others —
-    # we don't care which, only that the cache wasn't poisoned).
-    try:
-        r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
-        assert 500 <= r1.status_code < 600, (
-            f"compute failure must surface as 5xx; got {r1.status_code}"
-        )
-    except RuntimeError:
-        pass  # acceptable — TestClient sometimes re-raises sync handler exceptions
-
+    # First call: compute raises (every retry) → breaker swallows → empty strip.
+    r1 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
+    assert r1.status_code == 200
+    assert r1.json() == {"city": "NYC", "days": 21, "count": 0, "events": []}
     assert not app_module._movers_cache, (
-        "failed cold-miss compute must NOT write a poisoned entry into the cache"
+        "graceful-empty fallback must NOT be written into the cache"
     )
 
-    # Second call: succeeds and caches.
+    # Second call: compute now succeeds → recomputes (cache was not poisoned)
+    # and caches the real payload.
+    state["raise"] = False
     r2 = client.get("/api/store/movers?city=NYC&days=21&limit=8")
     assert r2.status_code == 200
-    assert r2.json()["count"] == 2
+    assert r2.json()["count"] == 99
     assert app_module._movers_cache, "successful compute writes to cache"
 
 

@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
+> **Doc version:** v2.5.0 (2026-06-26; repo-layout core/ list += db/resilience/ratelimit/readonly_guard/http_retry/vault — the prod-readiness + BR-CODE-2 shared layers); v2.4.0 (2026-06-26; +routers/ & core/ module map in repo-layout; v2.3.0: renamed app.py→server.py post-decomp; v2.2.0 2026-06-25: coverage gate + Sentry/LOG_LEVEL observability env in local-run; history in git/CHANGELOG)
 
 ---
 
@@ -76,11 +76,27 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 
 ```
 .
-├── app.py                  FastAPI shell — all /api/* routes; mounts D2 router
+├── server.py               FastAPI shell — /api/* routes; mounts routers/ + D2
+│                           (renamed from app.py 2026-06-26; entrypoint uvicorn server:app)
+├── routers/                APIRouter modules include_router'd on server.py
+│                           (BR-CODE-1 decomposition): site_essentials · catalog ·
+│                           lists · broker · seatdata · axs · seatgeek · misc ·
+│                           shares (/api/store/share*) · seatmap (/api/store/seatmap/*)
+│                           · retail_chat (/api/(store/)retail-chat)
+├── core/                   shared runtime imported by server.py + routers/ +
+│                           *_client.py — one-directional (core never imports
+│                           server): config · auth · helpers · broker_helpers ·
+│                           movers · search · substitutions · store_events ·
+│                           observability (logging + opt-in Sentry) · db
+│                           (bounded-timeout Supabase client) · resilience (DB
+│                           circuit breaker + retry) · ratelimit (Redis-or-in-proc) ·
+│                           readonly_guard · http_retry · vault (shared *_client.py
+│                           layer, BR-CODE-2)
 ├── *_client.py             9 read-only listing-source clients: evo · seatgeek ·
 │                           tickpick · vivid · seatdata · ticketsdata · gotickets ·
-│                           axs · broadway (GET-only by construction, CLAUDE.md §2)
-├── d2_dashboard/           D2 orders dashboard + APIRouter (mounted on app.py)
+│                           axs · broadway (GET-only by construction, CLAUDE.md §2;
+│                           share core/readonly_guard · http_retry · vault)
+├── d2_dashboard/           D2 orders dashboard + APIRouter (mounted on server.py)
 ├── d4_bridge/              D4 — Exos/Bridge SPA source + Express server (Vite → static/bridge/)
 ├── trip_planner/           shared tour-itinerary optimizer (D0 + D1 trip-plan routes; see its README)
 ├── broadway_extension/     browser extension — Broadway.com availability capture (see its README)
@@ -97,7 +113,9 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 ├── scripts/                data/ingest tools + check_readonly.py (RULE 2 static audit, CI gate)
 ├── .claude-plugins/        governance plugin: skills/ (executable §8 workflows) ·
 │   terminal2-governance/   commands/ (/new-migration, /rule2-audit) · hooks/ (Pre+PostToolUse)
-├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards)
+├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards);
+│                           100% product-code line+branch coverage, enforced in CI by
+│                           tests.yml --cov-fail-under=100 (.coveragerc scopes the surface)
 ├── docs/                   active references + docs/archive/ (historical)
 ├── design/                 historical wireframes / proposals
 └── <canonical *.md>        the 7 docs in the registry above
@@ -109,14 +127,31 @@ The complete cold-start manual — frontend file map, the `T.api()` data-fetch a
 
 ```powershell
 python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -r requirements.txt
-# Config comes from real environment variables (no .env loader in app.py):
+# Config comes from real environment variables (no .env loader in server.py):
 $env:SUPABASE_URL = "https://<project>.supabase.co"
 $env:SUPABASE_ANON_KEY = "<anon key>"
 $env:SUPABASE_SERVICE_ROLE_KEY = "<service key>"   # + TEVO_API_TOKEN/SECRET etc. as needed
-uvicorn app:app --reload --port 8765
+# Observability (all optional): SENTRY_DSN activates error tracking (unset = off),
+# LOG_LEVEL tunes stdout logging (default INFO). See core/observability.py.
+uvicorn server:app --reload --port 8765
 ```
 
 `http://localhost:8765` → home hub; `/static/terminal/event.html?event=<id>` → D0 broker view.
+
+Run the test suite + coverage gate locally (mirrors the `tests.yml` CI job). The
+dummy creds keep `server.py` from `sys.exit`-ing under coverage's module scan:
+
+```bash
+pip install pytest pytest-cov
+AUTH_DISABLED=true SUPABASE_URL=https://example.invalid SUPABASE_SERVICE_ROLE_KEY=test-key \
+  TEVO_TOKEN=test TEVO_SECRET=test PYTHONPATH=. \
+  pytest tests/ --cov --cov-branch --cov-fail-under=100
+```
+
+The gate is a **ratchet** — it only moves up. Product code (`server.py`, `core/`,
+`routers/`, `d2_dashboard`, the `*_client.py`, `render_webhook.py`) is held at
+100% line + branch coverage; genuinely-unreachable lines carry a justified
+`# pragma: no cover`. Scope + omits live in `.coveragerc`.
 
 ## Conventions — quick pointers (don't restate; link)
 

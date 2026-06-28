@@ -23,6 +23,8 @@ from typing import Any
 
 import requests
 
+from core.http_retry import fetch_with_retry
+
 
 # RULE 2 — READ-ONLY against api.tickpick.com.
 # TickPick orders are part of the orders/sales bucket alongside Evo and
@@ -41,13 +43,13 @@ class TickPickReadOnlyError(TickPickError):
     """Raised when a non-GET method is attempted against TickPick."""
 
 
-def _assert_readonly_method(method: str) -> None:
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise TickPickReadOnlyError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "TickPick client is read-only by design (RULE 2 spirit). "
-            "Pulling data only — never write back to api.tickpick.com."
-        )
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+_assert_readonly_method = build_readonly_guard(
+    TickPickReadOnlyError, ALLOWED_HTTP_METHODS,
+    "Pulling data only — never write back to api.tickpick.com.",
+)
 
 
 class TickPickClient:
@@ -69,18 +71,14 @@ class TickPickClient:
             "Accept": "application/json",
         }
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        # Retry-After honoring backoff for 429/503; mirrors seatgeek_client._get
-        for attempt in range(5):
-            r = requests.get(url, headers=headers, params=clean, timeout=self.timeout)
-            if r.status_code in (429, 503) and attempt < 4:
-                retry_after = r.headers.get("Retry-After")
-                try:
-                    delay = float(retry_after) if retry_after else (0.5 * (2 ** attempt))
-                except (TypeError, ValueError):
-                    delay = 0.5 * (2 ** attempt)
-                time.sleep(min(delay, 30.0))
-                continue
-            break
+        # Shared 429/503 retry loop (core/http_retry.py, BR-CODE-2). Honors
+        # Retry-After then capped exponential backoff; sleep passed as this
+        # module's time.sleep so the monkeypatch tests keep binding.
+        r = fetch_with_retry(
+            lambda: requests.get(url, headers=headers, params=clean, timeout=self.timeout),
+            max_retries=4, retry_statuses=frozenset({429, 503}),
+            base_backoff=0.5, max_backoff=30.0, sleep=time.sleep,
+        )
         if not r.ok:
             raise TickPickError(f"HTTP {r.status_code}")
         try:

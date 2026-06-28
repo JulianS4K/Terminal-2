@@ -97,7 +97,7 @@ def _is_production() -> bool:
 
 AUTH_DISABLED = _AUTH_DISABLED_REQUESTED and not _is_production()
 
-if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
+if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:  # pragma: no cover - import-time prod-guard warning
     import sys as _sys
     print(
         "WARNING: d2_dashboard AUTH_DISABLED=true ignored — production "
@@ -106,7 +106,7 @@ if _AUTH_DISABLED_REQUESTED and not AUTH_DISABLED:
         file=_sys.stderr,
         flush=True,
     )
-elif AUTH_DISABLED:
+elif AUTH_DISABLED:  # pragma: no cover - import-time branch; AUTH_DISABLED is fixed at first import so the not-taken arm is unreachable at test time
     import sys as _sys
     print(
         "d2_dashboard: AUTH_DISABLED=true — /api/d2/* endpoints serve "
@@ -128,7 +128,7 @@ PROD_MISSING_SUPABASE = (
     and bool(os.environ.get("RENDER") or os.environ.get("FLY_APP_NAME"))
     and not (SUPABASE_URL and SUPABASE_ANON_KEY)
 )
-if PROD_MISSING_SUPABASE:
+if PROD_MISSING_SUPABASE:  # pragma: no cover - import-time prod-guard warning
     import sys as _sys
     print(
         "ERROR: d2_dashboard has AUTH_DISABLED=false on a production platform "
@@ -176,7 +176,7 @@ app.add_middleware(
     max_age=600,
 )
 
-if STATIC_DIR.is_dir():
+if STATIC_DIR.is_dir():  # pragma: no cover - import-time branch; STATIC_DIR exists in the repo so the not-taken (no-mount) arm is unreachable at test time
     app.mount("/static/d2", StaticFiles(directory=str(STATIC_DIR)), name="d2_static")
 
 # ---------- Router for unified-shell mount (D0 consolidated frontend) ----------
@@ -764,7 +764,7 @@ def _match_event(target_name: str | None, target_date: str | None, candidates: l
             except (ValueError, TypeError):
                 continue
         score = (shared, -date_delta)
-        if score > (-best_score[0], -best_score[1]):
+        if score > (-best_score[0], -best_score[1]):  # pragma: no cover - false arm unreachable: any floor-passing candidate has shared>=1, and the compared tuple's first element is -best_score[0]<=-1, so score[0]>=1 always wins the comparison
             best = c
             best_score = (shared, date_delta)
     return best

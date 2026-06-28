@@ -1,0 +1,36 @@
+# Coverage config — product-code coverage gate (added 2026-06-25, code-production-readiness).
+#
+# Scope decision (operator-directed): drive the SHIPPED product surface to 100%
+# line coverage and ratchet a CI floor so it can't regress. The measured `source`
+# set below is exactly that surface. Out-of-scope by design: standalone dev/throwaway
+# scripts (trip_planner/test_*.py, scripts/*), the trip_planner feature package
+# (parked — revisit separately), live-network-only tests, and __main__ blocks.
+# `source = .` measures every module under the repo root (this captures the
+# root-level *_client.py + app.py + render_webhook.py, which coverage's `source`
+# would silently drop if listed as bare filenames). `omit` carves the surface
+# back down to product code: out are the test suite, the venv, the parked
+# trip_planner feature package, standalone dev scripts, and the browser extension.
+[run]
+source = .
+omit =
+    tests/*
+    .venv/*
+    trip_planner/*
+    scripts/*
+    broadway_extension/*
+    d4_bridge/*
+    conftest.py
+
+[report]
+# Lines that are unreachable-by-design or pure runtime guards are not counted
+# against the 100% target. Keep this list tight — it is an exclusion of the
+# genuinely-untestable, not an escape hatch for skipped behavior.
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    ^\s*\.\.\.\s*$
+show_missing = True
+skip_covered = True
+precision = 1

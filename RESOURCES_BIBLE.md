@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.0.0 (2026-06-19 dense rewrite; history in git/CHANGELOG)
+> **Doc version:** v2.5.0 (2026-06-26; §1: BR-CODE-2 shared `*_client.py` layer note — `core/readonly_guard`·`core/http_retry`·`core/vault`); v2.4.0 (2026-06-26; §7: production-readiness resilience env — `SUPABASE_TIMEOUT_SECONDS`/`DB_CIRCUIT_*`/`REDIS_URL`/`SESSION_SIGNING_SECRET` + their `core/db`·`core/resilience`·`core/ratelimit` modules); v2.3.1 (2026-06-26; §9: keystone `resolve_event_with_filters` now in core/store_events.py); v2.3.0 (§9 code-map ties route groups → router modules; v2.2.0: app.py renamed server.py; v2.1.0 2026-06-25: added Sentry opt-in error tracking + observability env to §1/§7; history in git/CHANGELOG)
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -34,6 +34,7 @@ Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_
 |---|---|---|---|---|
 | **Supabase** | Postgres + Edge + Vault + Auth | A1 | project `hzrizjeaxlqcxfrtczpq` | anon + service_role (anon exposed via `/api/public/config`) |
 | **Render** | FastAPI + static hosting | D0 (D1 sub) | `srv-d8140bnaqgkc73al4asg` | env-side |
+| **Sentry** (opt-in) | error tracking / exception capture | B1 | `core/observability.py` (`init_sentry`) | `SENTRY_DSN` (env; **inert until set** — no-op + zero behavior change without it) |
 | **TEvo** (TicketEvolution v9) | listings/orders feed | A1 | `evo_client.py` | `TEVO_API_TOKEN`, `TEVO_SECRET` |
 | **SeatGeek** | marketplace + seller data | A1 | `seatgeek_client.py`, `sg_*` tables | `SEATGEEK_API_TOKEN` |
 | **SeatData** | wholesale sales feed | A1 | `seatdata_client.py`, `seatdata_*` | `SEATDATA_API_KEY` |
@@ -51,6 +52,8 @@ Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_
 | **pg_net** | async HTTP from SQL | A1 | ext `pg_net 0.20.0` + `_cron_invoke_edge_fn` | vault |
 
 Reddit: PAUSED 2026-05-13 (tables `reddit_*` retained, crons dropped). Railway: legacy deploy home, migrating off → Render.
+
+**Shared `*_client.py` layer (BR-CODE-2):** the 9 read-only clients share three `core/` modules instead of hand-rolled copies — `core/readonly_guard.py` (the RULE-2 GET-only guard body; **security-CRIT** — see `PROJECT_BIBLE §2.6`), `core/http_retry.py` (`fetch_with_retry`: 429/5xx Retry-After→capped-exponential-backoff loop; evo/seatgeek/seatdata/tickpick/vivid/gotickets use it; axs fixed-delay + broadway scraper opt out), `core/vault.py` (`vault_secret`: the `get_app_secret` Vault resolver used by seatgeek/seatdata/ticketsdata/axs). Each client still declares its own auth + parse + the per-file RULE-2 tokens.
 
 ---
 
@@ -144,13 +147,22 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 ## 7. Vault secrets (names only — never values)
 `CRON_SECRET`, `EDGE_FN_ANON_JWT`, `TEVO_API_TOKEN`, `TEVO_SECRET`, `SEATGEEK_API_TOKEN`, `SEATDATA_API_KEY`, `TICKETSDATA_USERNAME`, `TICKETSDATA_PASSWORD`, `FRED_API_KEY` (free), `STRIPE_*` (D4). Rotation: `CRON_SECRET` 128-char, 3-way sync (vault+Edge+Render); legacy JWTs → `sb_publishable_*`/`sb_secret_*`.
 
+**Observability env (Render env-side, not vault):** `SENTRY_DSN` (unset = error tracking off), `SENTRY_TRACES_SAMPLE_RATE` (default `0.0`), `LOG_LEVEL` (default `INFO`). Wired in `core/observability.py`; the app logs structured stdout always and only sends to Sentry once `SENTRY_DSN` is set.
+
+**Resilience env (Render env-side, not vault; production-readiness P0/P1, 2026-06-26):**
+- `SUPABASE_TIMEOUT_SECONDS` (default `30`, clamped `[1,120]`) — bounds the PostgREST/storage/function per-request timeout so a Supabase blip fails fast instead of piling up → OOM. Wired in **`core/db.py`** (`make_supabase_client`), used by `server.py` to build `sb`.
+- `DB_CIRCUIT_FAIL_THRESHOLD` (default `5`) + `DB_CIRCUIT_RESET_SECONDS` (default `30`) — the shared Supabase **circuit breaker** in **`core/resilience.py`** (`CircuitBreaker` + `resilient_call` + `safe_read`); `server.py._db_breaker` is surfaced on `/healthz` as `db_circuit` and storefront reads go through `safe_sb_read` (stale-snapshot fallback; `store_home` first-paint uses it).
+- `REDIS_URL` (unset = in-process limiter) — when set + reachable, **`core/ratelimit.py`** (`make_rate_limiter`) swaps the in-process `_IPRateLimiter` for a Redis fixed-window backend (multi-instance safe). **Set this + `SESSION_SIGNING_SECRET` before scaling past 1 dyno.**
+- `SESSION_SIGNING_SECRET` (falls back to `CRON_SECRET`, then an ephemeral per-process key) — pins the `vp_human` cookie HMAC key so signed cookies survive across instances (`core/auth.py`).
+
 ## 8. Extensions
 `plpgsql`, `pgcrypto`, `uuid-ossp`, `pg_cron 1.6.4` (`max_running_jobs=32`, `use_background_workers=off`), `pg_net 0.20.0` (async — `pg_sleep` does NOT rate-limit it), `pg_stat_statements`, `pg_trgm`, `unaccent`, `supabase_vault`. Absent (enable via migration if needed): postgis, vector, http(sync), pgmq, pg_partman.
 
-## 9. HTTP API surface (`app.py`; full: `grep '@app\.\(get\|post\|delete\)' app.py`)
+## 9. HTTP API surface (`server.py` + `routers/*`; full: `grep '@app\.\(get\|post\|delete\)' server.py routers/*.py`) — renamed from app.py 2026-06-26 (entrypoint `uvicorn server:app`)
 - **Public storefront `/api/store/*`** (D1): `events`(+`/{id}`,`/zones`,`/near`), `search`, `movers`, `share`(+CRUD), `reserve` (MOCK — never charges). `/api/public/config` (anon key).
 - **Terminal/broker `/api/broker/*`** (A1+D0, 40+): `event/{id}/{overview,zones,section-metrics,raw-tevo,chart-data,cadences,espn}`, `movers` (v2 `?window_days=&source=&category=`), `performer/{id}/assets`, `news`, `leagues`. Plus `/api/{events,performers,venues,configurations,portfolio,watchlist}`, `/api/axs/event/{id}/{listings,sections,series}`, `/api/collect/run`, `/api/admin/*`.
 - DB platform statement_timeout 120s (overridable); MCP runs service_role (NO timeout cap → bound audit scans).
+- **Code map (BR-CODE-1 decomposition — where each route group lives):** `server.py` (shell + the big broker/store blocks still inline) + dedicated `routers/*`: `shares.py` (`/api/store/share*`), `seatmap.py` (`/api/store/seatmap/*`), `retail_chat.py` (`/api/(store/)retail-chat`), `store.py` (`/api/store/events/{id}` (+`/zones`)), `catalog.py`, `lists.py`, `broker.py`, `seatdata.py`, `axs.py`, `seatgeek.py`, `misc.py`, `site_essentials.py`. Shared store SQL-only/listing helpers → `core/store_events.py` (`fetch_event_from_db`, `fetch_owned_ticket_groups[_from_db]`, `build_zone_resolver`); `resolve_event_with_filters` (the event-detail composer) is now in `core/store_events.py` too (patchable collaborators injected); the `/api/store/*` event-detail **routes** are still in `server.py`, now unblocked to lift into a router. One-directional import: `core` never imports `server`.
 
 ## 10. Cross-cutting data RULES (durable)
 **RULE 0 — categorize new data.** New table/column/feed/metric/price-source → add to this doc's domain (§2) + assign a §11 bucket, same PR as the schema change.

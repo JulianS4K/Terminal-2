@@ -15,6 +15,10 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Home</title>
+  <!-- Shared design tokens (BR-CODE-4): the :root color/font vars live once in
+       _shared/design-tokens.css (same file home/undelivered link). Loaded before
+       style.css so its var() refs resolve. -->
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
   <link rel="stylesheet" href="style.css?v=20260620c" />
 </head>
 <body data-page="home">

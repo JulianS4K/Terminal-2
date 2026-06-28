@@ -33,6 +33,9 @@ from typing import Any
 
 import requests
 
+from core.http_retry import fetch_with_retry
+from core.vault import vault_secret
+
 # Type-only import: this module's runtime guards (RULE 2) must be importable
 # in environments where the `supabase` package isn't installed (e.g. minimal
 # CI containers running scripts/check_readonly.py and tests/test_readonly_guards.py).
@@ -50,22 +53,23 @@ SELLER_DIRECT_BASE = "https://sellerdirect-api.seatgeek.com"
 ALLOWED_HTTP_METHODS = frozenset({"GET"})
 
 
-def _assert_readonly_method(method: str) -> None:
-    """Hard guard: this client must never write back to SeatGeek."""
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise SeatGeekError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "SeatGeek integration is strictly read-only (RULE 2 in SCHEMA.md). "
-            "Pulling data only — never write back to SG."
-        )
-
-
 class SeatGeekError(Exception):
     pass
 
 
 class SeatGeekScopeError(SeatGeekError):
     """Token works but lacks scope for this endpoint (HTTP 401, code 421004)."""
+
+
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+# Declared after SeatGeekError so the factory can reference it. Keeps the
+# module-level _assert_readonly_method + ALLOWED_HTTP_METHODS the audit + tests need.
+_assert_readonly_method = build_readonly_guard(
+    SeatGeekError, ALLOWED_HTTP_METHODS,
+    "Pulling data only — never write back to SG.",
+)
 
 
 class SeatGeekClient:
@@ -77,13 +81,10 @@ class SeatGeekClient:
     ):
         # Token resolution: explicit arg → env → Supabase Vault → error.
         self.db = db
-        self.api_token = api_token or os.environ.get("SEATGEEK_API_TOKEN")
-        if not self.api_token and db is not None:
-            try:
-                res = db.rpc("get_app_secret", {"p_name": "SEATGEEK_API_TOKEN"}).execute()
-                self.api_token = res.data if isinstance(res.data, str) else None
-            except Exception as e:
-                print(f"seatgeek: vault lookup failed: {e}")
+        self.api_token = api_token or os.environ.get("SEATGEEK_API_TOKEN") or vault_secret(
+            db, "SEATGEEK_API_TOKEN",
+            on_error=lambda e: print(f"seatgeek: vault lookup failed: {e}"),
+        )
         if not self.api_token:
             raise SeatGeekError(
                 "SEATGEEK_API_TOKEN not found. Either set the env var, or store "
@@ -128,25 +129,19 @@ class SeatGeekClient:
             if v is None:
                 continue
             clean[k] = (1 if v else 0) if isinstance(v, bool) else v
-        attempt = 0
-        backoff = 1.0
-        while True:
-            attempt += 1
-            r = self.session.get(url, params=clean, timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                time.sleep(min(60.0, sleep_s + random.random()))
-                backoff = min(60.0, backoff * 2)
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                body = {"raw_text": r.text}
-            return r.status_code, body
+        # Shared 429 retry loop (core/http_retry.py, BR-CODE-2). Retry-After →
+        # capped exponential backoff + jitter; sleep + jitter passed as this
+        # module's time.sleep / random.random so the monkeypatch tests bind.
+        r = fetch_with_retry(
+            lambda: self.session.get(url, params=clean, timeout=self.timeout_s),
+            max_retries=max_429_retries, retry_statuses=frozenset({429}),
+            base_backoff=1.0, max_backoff=60.0, sleep=time.sleep, jitter=random.random,
+        )
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"raw_text": r.text}
+        return r.status_code, body
 
     @staticmethod
     def _parse_iso(s: str | None):
@@ -375,25 +370,19 @@ class SeatGeekClient:
             if v is None:
                 continue
             clean[k] = (1 if v else 0) if isinstance(v, bool) else v
-        attempt = 0
-        backoff = 1.0
-        while True:
-            attempt += 1
-            r = self.session.get(url, params=clean, timeout=self.timeout_s)
-            if r.status_code == 429 and attempt <= max_429_retries:
-                ra = r.headers.get("Retry-After")
-                try:
-                    sleep_s = float(ra) if ra else backoff
-                except ValueError:
-                    sleep_s = backoff
-                time.sleep(min(60.0, sleep_s + random.random()))
-                backoff = min(60.0, backoff * 2)
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                body = {"raw_text": r.text}
-            return r.status_code, body
+        # Shared 429 retry loop (core/http_retry.py, BR-CODE-2). Retry-After →
+        # capped exponential backoff + jitter; sleep + jitter passed as this
+        # module's time.sleep / random.random so the monkeypatch tests bind.
+        r = fetch_with_retry(
+            lambda: self.session.get(url, params=clean, timeout=self.timeout_s),
+            max_retries=max_429_retries, retry_statuses=frozenset({429}),
+            base_backoff=1.0, max_backoff=60.0, sleep=time.sleep, jitter=random.random,
+        )
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"raw_text": r.text}
+        return r.status_code, body
 
     def seller_listings(self, *, event_id: int | None = None,
                         per_page: int = 200,
@@ -436,8 +425,13 @@ class SeatGeekClient:
             for l in listings:
                 yield l
             meta = body.get("meta") or {}
+            prev_cursor = cursor
             cursor = meta.get("next_cursor") or meta.get("next_page_cursor") or meta.get("page_cursor")
-            if not cursor:
+            # Stop if the cursor didn't advance. Some APIs echo the *current*
+            # page_cursor back in meta; without this guard the third fallback
+            # would re-request the same page each iteration (re-yielding dupes,
+            # never advancing) until max_pages.
+            if not cursor or cursor == prev_cursor:
                 break
 
     def seller_orders(self, status_filter: str, *, page: int = 1) -> dict:
@@ -582,8 +576,14 @@ class SeatGeekClient:
                 "raw": l,
             })
         try:
+            # Dedup on the NON-NULL key (sg_event_id, content_hash). The old
+            # (sg_listing_id, content_hash) key never matched NULL sg_listing_id
+            # rows (NULL <> NULL) -> unbounded duplicate inserts on re-pull.
+            # content_hash already incorporates sg_listing_id + every defining
+            # attribute, so this dedups by (event, content-version) with no NULL
+            # hole. Requires mig 20260626120000 (BUGHUNT-1) applied first.
             res = self.db.table("seatgeek_seller_listings").upsert(
-                rows, on_conflict="sg_listing_id,content_hash"
+                rows, on_conflict="sg_event_id,content_hash"
             ).execute()
             return {"received": len(listings), "inserted": len(res.data or []),
                     "events_seen": len(events_seen), "events_linked": events_linked}

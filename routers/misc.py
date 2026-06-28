@@ -19,8 +19,16 @@ def build_misc_router(
     cron_secret: str | None,
     supabase_url: str | None,
     sandbox: bool,
+    get_public_config: Callable[[], Callable] = lambda: (lambda: {}),
 ) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/public/config")
+    def public_config():
+        """Browser-safe config for the login page. No secrets. The payload
+        builder lives in server.py (reads the live config constants the tests
+        patch); resolved here at request time via the getter."""
+        return get_public_config()()
 
     @router.get("/api/config")
     def config_info(user=Depends(require_auth)):

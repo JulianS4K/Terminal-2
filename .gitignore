@@ -51,3 +51,5 @@ supabase/.temp/
 .understand-anything/.trash-*/
 .understand-anything/fingerprints.json
 .understand-anything/chart-data.json
+.coverage
+htmlcov/

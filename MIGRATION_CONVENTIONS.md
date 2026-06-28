@@ -1,6 +1,6 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v2.0.0 (2026-06-19; history in git/CHANGELOG)
+> **Doc version:** v2.1.0 (2026-06-26; +§11.3 rollback runbook for prod-readiness P1 #7; v2.0.0 2026-06-19; history in git/CHANGELOG)
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
@@ -87,7 +87,7 @@ If the audit lane is unavailable and a production write is genuinely urgent (dat
 | **xref + macro** *(audit lane)* | `mystifying-lederberg-ea407b` | `event_xref` (W), `espn_event_date_lookup`, `espn_teams_canonical`, `performer_espn_team_xref`, `espn_scoreboard_pending`, `match_events_to_espn_tick()`, `v_event_xref_collisions`, `macro_indicators`, `macro_series_config`, `fred_pending`, all FRED + ESPN scoreboard ingestion |
 | **canonical** | `audit-datasets-schemas-auoc3` | `canonical_external_ids`, `seatgeek_event_xref`, all drift triggers, `v_event_overlay_summary`, `audit_cross_source_health()`, SG candidate normalization, `v_event_sales_combined`, event/performer view wireframe SQL |
 | **broadway** | `broadway-scraper-eChQ6` | `broadway_client.py`, scraper tests, `requirements.txt` Broadway entries (no DB writes currently — when they start, Broadway-prefixed xref tables only) |
-| **storefront** | `eloquent-chatterjee-aaedf0` | `app.py`, `static/store/*`, `share_links` table + endpoints |
+| **storefront** | `eloquent-chatterjee-aaedf0` | `server.py` (ex-app.py), `static/store/*`, `share_links` table + endpoints |
 
 ### Read-only access (everyone)
 
@@ -380,6 +380,50 @@ When a migration is **idempotent** (`CREATE OR REPLACE`, `… IF NOT EXISTS`, `D
 
 ### 11.2 Branch + PR naming
 Branch `claude/<lane-short>-<purpose-slug>` (lowercase lane: `a1/b1/c1/d0/…`). PR title `<type>(<lane>): <short imperative>` (Conventional Commits `feat/fix/chore/docs/perf/refactor`) — **enforced by the `pr-title-lint` workflow**; squash-merge keeps `…(#<pr>)` in the subject.
+
+### 11.3 Rollback runbook (production-readiness P1 #7)
+
+When an applied migration is bad, recover via the **least-destructive path that
+works** — try them in order. Audit lane (A1) executes; others escalate.
+
+**Decide first (≤60s):** read the migration header (`Lane` / `Touches`). Is the
+damage *structural* (a constraint/index/function/view is wrong, data intact) or
+*data* (rows deleted/corrupted)? Structural → forward-fix (Path A). Data loss →
+restore (Path C).
+
+- **Path A — forward reverse-migration (default; structural changes).** Write a
+  NEW migration that undoes the change (the `§11` rule: never `git revert` an
+  applied migration — the DB doesn't read git). For DDL this is usually exact:
+  a bad `ADD CONSTRAINT` → `DROP CONSTRAINT IF EXISTS`; a bad `CREATE OR REPLACE
+  FUNCTION` → re-apply the prior body (pull it from the previous migration or
+  `pg_get_functiondef`). Idempotent + reversible → may apply-before-PR (§11.1).
+  *Worked example — reverting mig `20260626120000` (BUGHUNT-1):*
+  ```sql
+  ALTER TABLE public.seatgeek_seller_listings DROP CONSTRAINT IF EXISTS seatgeek_seller_listings_dedup;
+  ALTER TABLE public.seatgeek_seller_listings ADD CONSTRAINT seatgeek_seller_listings_dedup UNIQUE (sg_listing_id, content_hash);
+  ```
+  (and revert the `on_conflict` in `seatgeek_client.py`). Structural-only, so no
+  data path needed.
+
+- **Path B — restore one object from migration history.** If a function/view was
+  clobbered, its prior definition is in the earlier migration file — re-apply
+  that file's `CREATE OR REPLACE` block as a new migration. No data touched.
+
+- **Path C — Supabase Point-In-Time Restore (data loss only; LAST resort).**
+  Reverses *everything* to a timestamp, not just the bad migration — coordinate
+  first (`bot_chat` `flag`, every lane) because concurrent good writes are lost
+  too. Process: Supabase Dashboard → Database → Backups → PITR → pick a
+  timestamp **just before** the bad apply. **Pre-flight:** note the current LSN /
+  time so you can roll forward; export any rows written after the restore point
+  that you need to re-apply. PITR retention is plan-dependent — confirm the
+  window covers the incident before relying on it.
+
+**Always, after any rollback:** re-run the migration's own verification queries
+(ship-a-migration step 7) on the **same sample IDs** to prove the DB is back to
+the intended shape, then `bot_chat_log` a `change_log` of what was reverted + why.
+
+**Dry-run expectation:** a reverse-migration should be sample-tested on a Supabase
+branch the same way a forward one is — a rollback is still a prod mutation.
 
 ---
 

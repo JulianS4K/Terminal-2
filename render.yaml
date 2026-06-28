@@ -36,7 +36,7 @@ services:
     autoDeploy: true        # every push to main redeploys (post-consolidation: A1 row 81 directive)
 
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
 
     healthCheckPath: /healthz
     # /healthz returns {"ok": true, ...} fast (<50ms warm, ~1s cold) and

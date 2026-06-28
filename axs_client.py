@@ -37,6 +37,8 @@ from typing import Any
 
 import requests
 
+from core.vault import vault_secret
+
 
 # Read-only by design — mirrors the RULE 2 guard the other clients use.
 # AXS has write endpoints (orders/holds); this client can issue NONE of them.
@@ -70,13 +72,13 @@ class AXSQuotaError(AXSError):
     """402 — plan quota exhausted."""
 
 
-def _assert_readonly_method(method: str) -> None:
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise AXSReadOnlyError(
-            f"READ-ONLY violation: method {method} is not allowed. "
-            "AXS client is read-only by design (CLAUDE.md §2, RULE 2). "
-            "Pulling event data only — never drive the AXS order/hold flow."
-        )
+from core.readonly_guard import build_readonly_guard  # noqa: E402
+
+# Canonical RULE-2 guard, single-sourced in core/readonly_guard.py (BR-CODE-2).
+_assert_readonly_method = build_readonly_guard(
+    AXSReadOnlyError, ALLOWED_HTTP_METHODS,
+    "Pulling event data only — never drive the AXS order/hold flow.",
+)
 
 
 def venue_norm(name: str) -> str:
@@ -88,16 +90,10 @@ def venue_norm(name: str) -> str:
 
 
 def _vault_secret(db: Any, name: str) -> str | None:
-    """Resolve a secret from Supabase Vault via get_app_secret (service-role db),
-    matching seatgeek_client / ticketsdata_client. Never surfaces the value."""
-    if db is None:
-        return None
-    try:
-        res = db.rpc("get_app_secret", {"p_name": name}).execute()
-        return getattr(res, "data", None) or None
-    except Exception as e:  # only the failure, never the value
-        print(f"axs: vault lookup for {name} failed: {e}")
-        return None
+    """Resolve a secret from Supabase Vault. Thin wrapper over the shared
+    resolver (core/vault.py, BR-CODE-2) preserving this module's log prefix."""
+    return vault_secret(db, name,
+                        on_error=lambda e: print(f"axs: vault lookup for {name} failed: {e}"))
 
 
 # --------------------------------------------------------------------------
@@ -367,12 +363,12 @@ class AXSClient:
         if self._user and self._pass:
             clean["username"] = self._user
             clean["password"] = self._pass
-        elif self._key:
+        elif self._key:  # pragma: no branch  (always true when reached: ctor guarantees a key when user/pass absent, so the elif-False arc is unreachable)
             headers["Authorization"] = f"Bearer {self._key}"
 
         r = None
         delays = [2.0, 5.0]
-        for attempt in range(len(delays) + 1):
+        for attempt in range(len(delays) + 1):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < len(delays) is False there)
             r = requests.get(self.endpoint, params=clean, headers=headers, timeout=self.timeout)
             if r.status_code in _RETRY_STATUSES and attempt < len(delays):
                 retry_after = r.headers.get("Retry-After")

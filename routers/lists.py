@@ -7,16 +7,14 @@ Factory takes `get_require_sb` (a getter returning the live require_sb
 callable) + `require_auth`, both still owned by app.py — so handlers resolve
 the current require_sb at request time and the monkeypatch tests
 (tests/test_watchlist_runs_snapshots.py patches app.require_sb) keep working.
-Behavior identical to the prior inline app.py routes.
-
-Note: the /api/watchlist POST + DELETE (mutating) routes stay in app.py for
-now; only the GET reads move here.
+Behavior identical to the prior inline app.py routes. The /api/watchlist POST +
+DELETE (mutating) routes joined here in slice 35 — require_sb + require_auth only.
 """
 from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 
 def build_lists_router(get_require_sb: Callable[[], Callable], require_auth: Callable) -> APIRouter:
@@ -62,5 +60,34 @@ def build_lists_router(get_require_sb: Callable[[], Callable], require_auth: Cal
         db = get_require_sb()()
         data = db.table("event_velocity").select("*").order("occurs_at_local").execute().data or []
         return {"items": data}
+
+    # --- watchlist mutations (POST add / DELETE remove). require_sb + require_auth. ---
+
+    @router.post("/api/watchlist")
+    def watchlist_add(item: dict = Body(...), _=Depends(require_auth)):
+        db = get_require_sb()()
+        kind = item.get("kind")
+        ext_id = item.get("ext_id")
+        label = item.get("label")
+        if kind not in ("performer", "venue"):
+            raise HTTPException(400, "kind must be performer or venue")
+        if not ext_id:
+            raise HTTPException(400, "ext_id required")
+        try:
+            res = db.table("watchlist").insert(
+                {"kind": kind, "ext_id": int(ext_id), "label": label or None}
+            ).execute()
+            return {"ok": True, "item": (res.data or [None])[0]}
+        except Exception as e:
+            msg = str(e)
+            if "duplicate" in msg.lower() or "unique" in msg.lower() or "23505" in msg:
+                return {"ok": False, "error": "already in watchlist"}
+            raise HTTPException(400, msg)
+
+    @router.delete("/api/watchlist/{item_id}")
+    def watchlist_remove(item_id: int, _=Depends(require_auth)):
+        db = get_require_sb()()
+        db.table("watchlist").delete().eq("id", item_id).execute()
+        return {"ok": True}
 
     return router

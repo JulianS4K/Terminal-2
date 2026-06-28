@@ -14,7 +14,7 @@ os.environ.setdefault("AUTH_DISABLED", "true")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 pytest.importorskip("fastapi")
 tc = pytest.importorskip("fastapi.testclient")
-import app as app_module  # noqa: E402
+import server as app_module  # noqa: E402
 TestClient = tc.TestClient
 
 
