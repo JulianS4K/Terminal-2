@@ -306,6 +306,89 @@ def test_section_zones_fallback_and_unmapped(client, monkeypatch):
     assert body["source_mix"]["unmapped"] == 3
 
 
+def test_section_zones_all_curated_skips_fallback(client, monkeypatch):
+    # Every (section, row) resolves to a curated zone -> the fallback set is
+    # empty and _batch_fallback_zones short-circuits without any RPC. (The probe
+    # row carries a curated section so no (None, None) pair leaks into pending.)
+    rules = [{"section_pattern": "104", "match_type": "exact", "row_pattern": None, "priority": 10}]
+    perfzones = [{"id": 1, "zone": "ZoneA", "performer_zone_section_rules": rules}]
+    listings = [{"captured_at": "2026-05-10T12:00:00Z", "section": "104", "row": "1"}]
+    fake = FakeSupabase(
+        table_data={
+            "events": [{"primary_performer_id": 16303, "venue_id": 42}],
+            "listings_snapshots": listings,
+            "performer_zones": perfzones,
+        },
+    )
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/event/1/section-zones").json()
+    assert body["map"]["104"] == {"zone": "ZoneA", "source": "curated"}
+    # No fallback pairs -> neither the batch nor the scalar RPC was called.
+    called = [name for name, _ in fake.rpc_calls]
+    assert "derive_zone_fallback_batch" not in called
+    assert "derive_zone_fallback" not in called
+
+
+def test_section_zones_uses_batch_rpc_when_available(client, monkeypatch):
+    # When derive_zone_fallback_batch returns rows, the handler uses them in ONE
+    # call and never falls back to the per-section scalar RPC (no N+1).
+    listings = [
+        {"captured_at": "2026-05-10T12:00:00Z"},
+        {"section": "NOPE", "row": "1"},   # batch -> "BatchZone" (fallback)
+        {"section": "RAW9", "row": "9"},   # batch -> None (unmapped)
+    ]
+    batch_rows = [
+        {"section": "NOPE", "row": "1", "zone": "BatchZone"},
+        {"section": "RAW9", "row": "9", "zone": None},
+    ]
+    fake = FakeSupabase(
+        table_data={
+            "events": [{"primary_performer_id": None, "venue_id": None}],
+            "listings_snapshots": listings,
+        },
+        rpc_data={"derive_zone_fallback_batch": batch_rows},
+    )
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/event/1/section-zones").json()
+    m = body["map"]
+    assert m["NOPE"] == {"zone": "BatchZone", "source": "fallback"}
+    assert m["RAW9"] == {"zone": None, "source": "unmapped"}
+    # The batch RPC was used; the scalar per-section RPC was never called.
+    called = [name for name, _ in fake.rpc_calls]
+    assert "derive_zone_fallback_batch" in called
+    assert "derive_zone_fallback" not in called
+
+
+def test_section_zones_batch_rpc_error_degrades_to_scalar(client, monkeypatch):
+    # If the batch RPC raises (e.g. function not yet applied), the handler
+    # transparently degrades to the legacy per-section scalar loop.
+    class _BatchRaisesDB(FakeSupabase):
+        def __init__(self):
+            super().__init__(table_data={
+                "events": [{"primary_performer_id": None, "venue_id": None}],
+                "listings_snapshots": [
+                    {"captured_at": "2026-05-10T12:00:00Z"},
+                    {"section": "GoodSec", "row": "1"},
+                ],
+            })
+
+        def rpc(self, name, params=None):
+            self.rpc_calls.append((name, params or {}))
+            if name == "derive_zone_fallback_batch":
+                raise RuntimeError("function does not exist")
+            if name == "derive_zone_fallback":
+                return _FakeQuery("ScalarZone")
+            return _FakeQuery([])
+
+    fake = _BatchRaisesDB()
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/event/1/section-zones").json()
+    assert body["map"]["GoodSec"] == {"zone": "ScalarZone", "source": "fallback"}
+    called = [name for name, _ in fake.rpc_calls]
+    assert "derive_zone_fallback_batch" in called  # attempted first
+    assert "derive_zone_fallback" in called        # then degraded
+
+
 # ===========================================================================
 # /api/broker/event/{id}/zones
 # ===========================================================================
