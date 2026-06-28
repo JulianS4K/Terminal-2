@@ -29,8 +29,12 @@ def build_pages_router(
 
     @router.get("/")
     def root_landing():
-        """Unified frontend homescreen (D0, operator directive 2026-05-15 bot_chat #157).
-        3 cards: Terminal (broker) / Undelivered (CS+fulfillment) / Store (public).
+        """Unified frontend homescreen / hub (D0, operator directive 2026-05-15 bot_chat #157).
+        5 cards: Terminal (broker) / Undelivered (CS+fulfillment) / Orders (D2) /
+        Store (public) / Bridge (D4). Served at / as the Render landing (the
+        vibepass-storefront-test web service runs uvicorn server:app with
+        STOREFRONT_AS_LANDING=false; the static CDN's static/index.html redirects
+        / → /home/ to the same hub).
         get_storefront_as_landing()=true keeps the old customer-only redirect to /store.
         Liveness moved to /healthz (always was the real Render check path).
         """

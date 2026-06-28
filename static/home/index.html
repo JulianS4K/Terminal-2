@@ -3,7 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1200, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <!-- frame-ancestors is intentionally NOT in this meta CSP: browsers ignore
+       frame-ancestors delivered via <meta> (it only works as an HTTP header),
+       and it emitted a console warning. The server's _SecurityHeadersMiddleware
+       sets it authoritatively (CSP `frame-ancestors 'none'` + `X-Frame-Options:
+       DENY`) on every response, so framing is still blocked. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>VibePass</title>
@@ -14,7 +19,7 @@
 
   <header class="topbar">
     <span class="brand">VIBEPASS</span>
-    <span class="brand-sub">4-surface frontend · always-on entry</span>
+    <span class="brand-sub">5-surface frontend · always-on entry</span>
     <span id="auth-ctrl"></span>
   </header>
 

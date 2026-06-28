@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.5.0 (2026-06-26; repo-layout core/ list += db/resilience/ratelimit/readonly_guard/http_retry/vault — the prod-readiness + BR-CODE-2 shared layers); v2.4.0 (2026-06-26; +routers/ & core/ module map in repo-layout; v2.3.0: renamed app.py→server.py post-decomp; v2.2.0 2026-06-25: coverage gate + Sentry/LOG_LEVEL observability env in local-run; history in git/CHANGELOG)
+> **Doc version:** v2.6.0 (2026-06-28; repo-layout: route decomposition 100% (+routers store/pages/store_test/admin/storefront_pages), core/ helper pass (+discovery/trip_payloads/ingest/storefront_html/canonical_refresh), tests/frontend Playwright net, and the 5-surface hub as the Render landing); v2.5.0 (2026-06-26; repo-layout core/ list += db/resilience/ratelimit/readonly_guard/http_retry/vault — the prod-readiness + BR-CODE-2 shared layers); v2.4.0 (2026-06-26; +routers/ & core/ module map in repo-layout; v2.3.0: renamed app.py→server.py post-decomp; v2.2.0 2026-06-25: coverage gate + Sentry/LOG_LEVEL observability env in local-run; history in git/CHANGELOG)
 
 ---
 
@@ -79,19 +79,26 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 ├── server.py               FastAPI shell — /api/* routes; mounts routers/ + D2
 │                           (renamed from app.py 2026-06-26; entrypoint uvicorn server:app)
 ├── routers/                APIRouter modules include_router'd on server.py
-│                           (BR-CODE-1 decomposition): site_essentials · catalog ·
-│                           lists · broker · seatdata · axs · seatgeek · misc ·
-│                           shares (/api/store/share*) · seatmap (/api/store/seatmap/*)
-│                           · retail_chat (/api/(store/)retail-chat)
+│                           (BR-CODE-1 decomposition — route surface now 100% in
+│                           routers/; server.py holds only /healthz + /webhooks/render):
+│                           site_essentials · catalog · lists · broker · seatdata ·
+│                           axs · seatgeek · misc (+ /api/public/config) · shares ·
+│                           seatmap · retail_chat · store (/api/store/*) · pages
+│                           (/, /home, /terminal[/*], /bridge[/*], /version.json) ·
+│                           store_test (/store/test/*) · admin (/api/collect, /api/admin/*) ·
+│                           storefront_pages (/store, /store/event, /store/{discover,tour},
+│                           legal, /s/{id})
 ├── core/                   shared runtime imported by server.py + routers/ +
 │                           *_client.py — one-directional (core never imports
 │                           server): config · auth · helpers · broker_helpers ·
-│                           movers · search · substitutions · store_events ·
-│                           observability (logging + opt-in Sentry) · db
-│                           (bounded-timeout Supabase client) · resilience (DB
+│                           movers · search (incl. live/player/cache) · substitutions ·
+│                           store_events · observability (logging + opt-in Sentry) ·
+│                           db (bounded-timeout Supabase client) · resilience (DB
 │                           circuit breaker + retry) · ratelimit (Redis-or-in-proc) ·
 │                           readonly_guard · http_retry · vault (shared *_client.py
-│                           layer, BR-CODE-2)
+│                           layer, BR-CODE-2) · discovery · trip_payloads · ingest ·
+│                           storefront_html · canonical_refresh (BR-CODE-1 core/
+│                           helper pass — bodies injected back via thin server wrappers)
 ├── *_client.py             9 read-only listing-source clients: evo · seatgeek ·
 │                           tickpick · vivid · seatdata · ticketsdata · gotickets ·
 │                           axs · broadway (GET-only by construction, CLAUDE.md §2;
@@ -103,7 +110,9 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 ├── static/
 │   ├── terminal/           D0 — broker terminal (build manual: docs/d0_terminal_build.md)
 │   ├── store/              D1 — consumer retail storefront (store/test/ = non-prod sandbox)
-│   ├── home/ undelivered/  D0 hub · D2 undelivered surface
+│   ├── home/ undelivered/  D0 hub (the 5-surface VibePass landing served at / —
+│   │                       Terminal/Undelivered/Orders/Store/Bridge; the Render
+│   │                       landing when STOREFRONT_AS_LANDING=false) · D2 undelivered
 │   ├── bridge/             D4 — Exos Bridge SPA build artifact (committed)
 │   └── _shared/            cross-surface utilities
 ├── supabase/
@@ -111,6 +120,10 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 │   └── functions/          edge functions
 ├── bin/                    CI checks (sync-check.sh, check-docs.sh, graph-drift.mjs)
 ├── scripts/                data/ingest tools + check_readonly.py (RULE 2 static audit, CI gate)
+├── tests/                  pytest suite (100% line+branch product-code gate) +
+│                           tests/frontend/ = Playwright browser net (smoke +
+│                           behavioral; own `frontend-smoke` CI job, isolated via
+│                           pytest.importorskip so the main pytest run skips it)
 ├── .claude-plugins/        governance plugin: skills/ (executable §8 workflows) ·
 │   terminal2-governance/   commands/ (/new-migration, /rule2-audit) · hooks/ (Pre+PostToolUse)
 ├── tests/                  pytest suite (incl. test_readonly_guards.py — RULE 2 runtime guards);
