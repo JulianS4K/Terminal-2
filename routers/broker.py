@@ -20,6 +20,7 @@ from typing import Any, Callable
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 
+from core.concurrency import run_parallel
 from core.helpers import clean_section, delta, listings_cadence_seconds
 from core.substitutions import find_row_substitutions, find_section_substitutions
 
@@ -755,42 +756,49 @@ def build_broker_router(
         Returns latest + prior values so the UI can render delta arrows."""
         db = get_require_sb()()
 
-        # Event header (use cowork's RPC for the rich payload)
-        detail = db.rpc("get_broker_event_detail", {"p_event_id": event_id}).execute().data or []
+        # These four reads are mutually independent — fan them out concurrently
+        # (was four sequential round-trips). Queries are unchanged; results are
+        # identical to the sequential path.
+        #   1) Event header (cowork's RPC for the rich payload)
+        #   2) Latest two event_metrics for delta computation. Pull every column
+        #      we collect — frontend slices it into Distribution / Volume /
+        #      Wholesale / Market Structure / Owned panels.
+        #   3/4) Zone breakdown — owned + market split via cowork's RPC
+        detail, em_rows, zones_owned, zones_market = run_parallel([
+            lambda: db.rpc("get_broker_event_detail", {"p_event_id": event_id}).execute().data or [],
+            lambda: (
+                db.table("event_metrics")
+                .select(
+                    "captured_at,"
+                    # Inventory
+                    "tickets_count,groups_count,sections_count,median_group_size,"
+                    "ancillary_groups,ancillary_tickets,"
+                    # Retail price distribution
+                    "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
+                    # Wholesale price distribution
+                    "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
+                    # Market structure / quality
+                    # NOTE: bid_ask_proxy was dropped in mig 20260428000001 (always 0 — TEvo
+                    # API doesn't expose true wholesale to this token). Don't re-add to the
+                    # select or the query 500s.
+                    "getin_price,top5_concentration,"
+                    "price_dispersion,tail_premium,"
+                    # Owned (S4K)
+                    "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
+                    # Splits inventory metrics (mig 20260508230000)
+                    "splits_min_q,splits_listings_with_singles,splits_listings_with_pairs,"
+                    "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split,"
+                    "splits_pct_pairs,splits_pct_singles"
+                )
+                .eq("event_id", event_id)
+                .order("captured_at", desc=True)
+                .limit(2)
+                .execute()
+            ).data or [],
+            lambda: db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": True}).execute().data or [],
+            lambda: db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": False}).execute().data or [],
+        ])
         head = detail[0] if detail else None
-
-        # Latest two event_metrics for delta computation. Pull every column we
-        # collect — frontend slices it into Distribution / Volume / Wholesale /
-        # Market Structure / Owned panels.
-        em_rows = (
-            db.table("event_metrics")
-            .select(
-                "captured_at,"
-                # Inventory
-                "tickets_count,groups_count,sections_count,median_group_size,"
-                "ancillary_groups,ancillary_tickets,"
-                # Retail price distribution
-                "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
-                # Wholesale price distribution
-                "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
-                # Market structure / quality
-                # NOTE: bid_ask_proxy was dropped in mig 20260428000001 (always 0 — TEvo
-                # API doesn't expose true wholesale to this token). Don't re-add to the
-                # select or the query 500s.
-                "getin_price,top5_concentration,"
-                "price_dispersion,tail_premium,"
-                # Owned (S4K)
-                "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
-                # Splits inventory metrics (mig 20260508230000)
-                "splits_min_q,splits_listings_with_singles,splits_listings_with_pairs,"
-                "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split,"
-                "splits_pct_pairs,splits_pct_singles"
-            )
-            .eq("event_id", event_id)
-            .order("captured_at", desc=True)
-            .limit(2)
-            .execute()
-        ).data or []
         curr = em_rows[0] if len(em_rows) >= 1 else {}
         prev = em_rows[1] if len(em_rows) >= 2 else {}
 
@@ -814,9 +822,7 @@ def build_broker_router(
         ]
         metrics = {k: {"v": curr.get(k), "delta": delta(curr.get(k), prev.get(k))} for k in metric_keys}
 
-        # Zone breakdown — owned + market split via cowork's RPC
-        zones_owned = db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": True}).execute().data or []
-        zones_market = db.rpc("get_event_zones_rollup", {"p_event_id": event_id, "p_owned_only": False}).execute().data or []
+        # (zones_owned / zones_market were fetched above in the parallel fan-out)
 
         cadence = listings_cadence_seconds(head.get("occurs_at_local") if head else None)
         last_pull = curr.get("captured_at")
@@ -1164,28 +1170,50 @@ def build_broker_router(
             since_iso = (datetime.now(timezone.utc) - timedelta(hours=range_hours)).isoformat()
         days = (range_hours // 24) if range_hours else 9999  # back-compat for any consumer reading `days`
 
-        # 1) Full event_metrics distribution as time series — chart workbench
-        # toggles any subset on/off. SELECT every column we collect.
-        em = (
-            db.table("event_metrics")
-            .select(
-                "captured_at,"
-                "tickets_count,groups_count,sections_count,median_group_size,"
-                "ancillary_groups,ancillary_tickets,"
-                "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
-                "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
-                "getin_price,top5_concentration,price_dispersion,tail_premium,"
-                "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
-                "nonowned_median_retail,"   # NEW: median of non-S4K listings ("MARKET NOT US")
-                "splits_min_q,splits_pct_pairs,splits_pct_singles,"
-                "splits_listings_with_singles,splits_listings_with_pairs,"
-                "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split"
-            )
-            .eq("event_id", event_id)
-            .gte("captured_at", since_iso)
-            .order("captured_at")
-            .execute()
-        ).data or []
+        # These three reads are mutually independent — fan them out concurrently
+        # (was three sequential round-trips). Queries are unchanged.
+        #   1) Full event_metrics distribution as time series — chart workbench
+        #      toggles any subset on/off. SELECT every column we collect.
+        #   - AXS box-office series (median section price + listing count). Empty
+        #     until AXS snapshots are AQ-linked to this tevo_event_id; the RPC may
+        #     be absent → swallow inside the thunk so it degrades to [].
+        #   2) event_xref row for ESPN team resolution.
+        def _fetch_axs() -> list:
+            try:
+                return (
+                    db.rpc("get_axs_event_price_series",
+                           {"p_event_id": event_id, "p_since": since_iso}).execute()
+                ).data or []
+            except Exception:
+                return []
+
+        em, axs_rows, xref = run_parallel([
+            lambda: (
+                db.table("event_metrics")
+                .select(
+                    "captured_at,"
+                    "tickets_count,groups_count,sections_count,median_group_size,"
+                    "ancillary_groups,ancillary_tickets,"
+                    "retail_min,retail_p25,retail_median,retail_mean,retail_p75,retail_p90,retail_max,retail_sum,"
+                    "wholesale_min,wholesale_median,wholesale_mean,wholesale_max,"
+                    "getin_price,top5_concentration,price_dispersion,tail_premium,"
+                    "owned_groups_count,owned_tickets_count,owned_share,owned_median_retail,"
+                    "nonowned_median_retail,"   # NEW: median of non-S4K listings ("MARKET NOT US")
+                    "splits_min_q,splits_pct_pairs,splits_pct_singles,"
+                    "splits_listings_with_singles,splits_listings_with_pairs,"
+                    "splits_listings_with_3,splits_listings_with_4plus,splits_listings_no_split"
+                )
+                .eq("event_id", event_id)
+                .gte("captured_at", since_iso)
+                .order("captured_at")
+                .execute()
+            ).data or [],
+            _fetch_axs,
+            lambda: (
+                db.table("event_xref").select("espn_event_id,espn_slug,espn_league")
+                .eq("tevo_event_id", event_id).limit(1).execute()
+            ).data or [],
+        ])
 
         def _series(col: str) -> list:
             return [{"t": r["captured_at"], "v": r.get(col)} for r in em]
@@ -1197,26 +1225,11 @@ def build_broker_router(
         counts_owned    = _series("owned_tickets_count")
         counts_market   = _series("tickets_count")
 
-        # AXS box-office series (median section price + listing count over time).
-        # Sourced from axs_event_snapshots via RPC; empty until AXS snapshots are
-        # AQ-linked to this tevo_event_id and ingested. Overlaid on both the
-        # median-price and the listing-count charts alongside TEvo/market.
-        try:
-            axs_rows = (
-                db.rpc("get_axs_event_price_series",
-                       {"p_event_id": event_id, "p_since": since_iso}).execute()
-            ).data or []
-        except Exception:
-            axs_rows = []
         prices_axs = [{"t": r["captured_at"], "v": r.get("median_price")} for r in axs_rows]
         counts_axs = [{"t": r["captured_at"], "v": r.get("listings_count")} for r in axs_rows]
 
         # 2) Resolve home + away ESPN team ids from event_xref → espn_event_snapshots
         home_team_id = away_team_id = home_slug = away_slug = home_league = None
-        xref = (
-            db.table("event_xref").select("espn_event_id,espn_slug,espn_league")
-            .eq("tevo_event_id", event_id).limit(1).execute()
-        ).data or []
         if xref:
             x = xref[0]
             home_league = x["espn_league"]
@@ -1246,8 +1259,10 @@ def build_broker_router(
             ).data or []
             return rows
 
-        home_standings_rows = _team_standings(home_team_id)
-        away_standings_rows = _team_standings(away_team_id)
+        home_standings_rows, away_standings_rows = run_parallel([
+            lambda: _team_standings(home_team_id),
+            lambda: _team_standings(away_team_id),
+        ])
 
         def _stand_series(rows: list, field: str) -> list:
             """Pluck one ESPN standings field into a t,v time-series."""
@@ -1349,8 +1364,10 @@ def build_broker_router(
                     break
             return out
 
-        last5_home = _last5(home_team_id)
-        last5_away = _last5(away_team_id)
+        last5_home, last5_away = run_parallel([
+            lambda: _last5(home_team_id),
+            lambda: _last5(away_team_id),
+        ])
 
         # ----- News velocity per team (rows per hour bucket) -----
         def _news_series(team_id: str | None) -> list:
@@ -1371,8 +1388,10 @@ def build_broker_router(
                 buckets[ts[:13]] += 1   # YYYY-MM-DDTHH
             return [{"t": k + ":00:00+00:00", "v": v} for k, v in sorted(buckets.items())]
 
-        home_news = _news_series(home_team_id)
-        away_news = _news_series(away_team_id)
+        home_news, away_news = run_parallel([
+            lambda: _news_series(home_team_id),
+            lambda: _news_series(away_team_id),
+        ])
 
         # ----- Active-injury count over time (per team) -----
         # For each injury status change, we don't easily know "is this player still
@@ -1400,8 +1419,10 @@ def build_broker_router(
                 out.append({"t": r["captured_at"], "v": active_injured})
             return out
 
-        home_injury_load = _injury_load_series(home_team_id)
-        away_injury_load = _injury_load_series(away_team_id)
+        home_injury_load, away_injury_load = run_parallel([
+            lambda: _injury_load_series(home_team_id),
+            lambda: _injury_load_series(away_team_id),
+        ])
 
         # ----- Composite team_index with window-content-derived weights -----
         # Weight each signal by how much CONTENT (snapshots) it generated during
