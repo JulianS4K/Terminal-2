@@ -1602,8 +1602,11 @@
   // glyph == the hit-target, and it is re-placed on ready/setSize/setScale.
   function injMarkerTip(a) {
     const team = espnTeamName(a.espn_team_id);
-    return `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'}${team ? ' · ' + team : ''}): ` +
-           `${a.prev_status || '—'} → ${a.new_status || '—'}`;
+    const who = `${a.athlete_name || a.athlete_id || '?'} (${a.position || '?'}${team ? ' · ' + team : ''})`;
+    // prev_status present = a real status transition; absent = a fresh onset.
+    return a.prev_status
+      ? `${who}: ${a.prev_status} → ${a.new_status || '—'}`
+      : `${who}: ${a.new_status || '—'}`;
   }
   function gsMarkerTip(s) {
     return `Game state: ${s.prev_status || '—'} → ${s.new_status || '—'}${s.state ? ' (' + s.state + ')' : ''}`;
@@ -1636,10 +1639,24 @@
       el.textContent = glyph;
       overlay.appendChild(el);
     };
-    // De-noise: skip first-seen "transitions" (prev_status == null) — those are
-    // just players already injured when the window opened, not status-change
-    // events, and they pile into an indistinct cluster at the window's left edge.
-    (ann.injuries || []).forEach(a => { if (a.prev_status != null) place(a.at, 'em-inj', '+', injMarkerTip(a)); });
+    // Injury markers: show real status transitions (prev_status present) AND
+    // genuine in-window onsets (a first-seen injury that begins AFTER the window
+    // opened). The earlier build skipped ALL prev_status==null rows to avoid the
+    // left-edge baseline pile-up — but content-hash re-baselining means a fresh
+    // onset (Judge→IL, Fried→15-Day-IL) almost always arrives with prev_status
+    // null, so that skip hid essentially every injury. We instead suppress only
+    // the pre-existing cluster: a first-seen marker must sit a grace period past
+    // range.start. (Backend mig 20260629220000 widens the LAG to all-history so
+    // "first-seen" means a true onset; this grace is the fallback for the
+    // pre-widen payload so neither deploy order regresses.)
+    const _winStartMs = (ext.range && ext.range.start) ? new Date(ext.range.start).getTime() : null;
+    const _ONSET_GRACE_MS = 6 * 3600 * 1000; // 6h past window open ⇒ not a left-edge baseline
+    (ann.injuries || []).forEach(a => {
+      const atMs = a.at ? new Date(a.at).getTime() : null;
+      const isTransition = a.prev_status != null;
+      const isOnsetInWindow = atMs != null && _winStartMs != null && (atMs - _winStartMs) > _ONSET_GRACE_MS;
+      if (isTransition || isOnsetInWindow) place(a.at, 'em-inj', '+', injMarkerTip(a));
+    });
     (ann.game_state || []).forEach(s => place(s.at, 'em-gs', '◆', gsMarkerTip(s)));
   }
 
