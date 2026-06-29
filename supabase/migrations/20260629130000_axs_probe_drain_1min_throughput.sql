@@ -1,0 +1,39 @@
+-- Migration 20260629130000 · lane:A1 (DB + ingest/cron — AXS native pipeline) · writes:cron job 'axs-probe-drain' (jobid 402) schedule */5 -> * (every minute) · reads:none · pre:20260610060000 (live axs_probe_step) · auth:operator-approved 2026-06-29 (julian@s4kent.com — "resume tracking on all axs events for all venues that provide axs source data")
+--
+-- WHY ------------------------------------------------------------------------
+-- "Resume tracking on all AXS events" is a THROUGHPUT problem, not a gate to flip.
+-- The AXS snapshotter public.axs_probe_step() (run by cron 'axs-probe-drain',
+-- jobid 402) selects events purely on axs_events.active=true + a 12h refresh
+-- window; it has NO venue allowlist, NO in_axs_list gate, NO tier filter. Every
+-- future event at every AXS-providing venue is already active=true. But the probe
+-- fires exactly ONE event per tick (LIMIT 1) and self-paces to one in-flight
+-- request, so at */5 the ceiling is ~288 fires/day (~72-104 actual). Against ~182
+-- active future-dated events (286 active total) each wanting 2 pulls/day at the
+-- 12h cadence (~364/day), the rotation starves: only ~73 distinct events get
+-- snapshotted per 24h, 178 active events are >12h overdue, and the oldest active
+-- event was last pulled ~18.7 days ago.
+--
+-- FIX ------------------------------------------------------------------------
+-- Tighten the cron from every-5-min to every-minute. The probe's one-in-flight
+-- serial gate (it returns 'in_flight' and fires nothing while a prior request is
+-- unclassified) means it CANNOT over-fire the single-threaded TicketsData AXS
+-- worker (~40-60s/pull) — a 1-min tick simply matches the worker's latency and
+-- removes the ~4 idle minutes wasted each */5 cycle. ~5x throughput (up to
+-- ~1440/day ceiling, realistically ~700-1000/day), enough to keep all ~182 active
+-- future events fresh within the 12h window. No function/flag/predicate change;
+-- skip-past + LA-Kings exclusions (mig 20260610010000) stay intact (future-only).
+-- Deliberately NOT batching fires-per-tick: the AXS worker is single-threaded, so
+-- concurrent fires would risk 502/503 with no real gain — frequency, not fan-out.
+--
+-- SAFETY ---------------------------------------------------------------------
+-- Quota-safe: AXS rides the shared TicketsData pool (~241.5k credits remaining,
+-- ~480-day runway; zero 429/402 history). Even maxed, AXS burn stays far under the
+-- ~250k/mo plan and the 180k internal monthly cap. The serial in-flight gate caps
+-- real concurrency at 1, so no rate-limit/burst risk. axs_probe_step itself returns
+-- immediately each tick (pg_net async), so a 1-min cron cannot overlap-run.
+-- Reversible: re-point the schedule back to '*/5 * * * *'.
+--
+-- ROLLBACK -------------------------------------------------------------------
+--   SELECT cron.schedule('axs-probe-drain', '*/5 * * * *', $$select public.axs_probe_step();$$);
+
+SELECT cron.schedule('axs-probe-drain', '* * * * *', $$select public.axs_probe_step();$$);
