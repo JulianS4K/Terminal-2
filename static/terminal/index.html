@@ -19,7 +19,7 @@
        _shared/design-tokens.css (same file home/undelivered link). Loaded before
        style.css so its var() refs resolve. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260620c" />
+  <link rel="stylesheet" href="style.css?v=20260629a" />
 </head>
 <body data-page="home">
 
@@ -29,6 +29,36 @@
   </header>
 
   <main class="wrap home">
+    <section id="news-ticker">
+      <div class="panel-title row">
+        <span>NEWS WIRE — LIVE SPORTS HEADLINES</span>
+        <span class="muted small" id="newsTickerMeta"></span>
+      </div>
+      <div class="ctrl-row news-filters">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SOURCE</span>
+          <button class="ctrl-btn is-active" data-news-src="all">All</button>
+          <button class="ctrl-btn"           data-news-src="ESPN">ESPN</button>
+          <button class="ctrl-btn"           data-news-src="Reddit">Reddit</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">WINDOW</span>
+          <button class="ctrl-btn"           data-news-win="24">24h</button>
+          <button class="ctrl-btn is-active" data-news-win="48">48h</button>
+          <button class="ctrl-btn"           data-news-win="168">7d</button>
+        </div>
+        <div class="ctrl-group news-league-group">
+          <span class="ctrl-lbl">LEAGUE</span>
+          <span id="newsLeagueChips" class="news-league-chips"><button class="ctrl-btn is-active" data-news-league="ALL">All</button></span>
+        </div>
+        <div class="ctrl-group">
+          <input id="newsSearch" class="ctrl-input" type="search" placeholder="filter headlines…" autocomplete="off" aria-label="Filter news headlines" />
+        </div>
+      </div>
+      <div id="newsTickerReel" class="news-reel"><div class="empty">loading…</div></div>
+      <div id="newsTickerList" class="news-list"></div>
+    </section>
+
     <section id="watchlist-panel">
       <div class="panel-title row">
         <span>MY WATCHLIST — TRACKED EVENTS</span>
@@ -108,5 +138,6 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260623a"></script>
   <script src="home.js?v=20260620"></script>
+  <script src="news-ticker.js?v=20260629a"></script>
 </body>
 </html>

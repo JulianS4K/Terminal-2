@@ -1,0 +1,264 @@
+// D0 Terminal — Home page NEWS WIRE ticker.
+//
+// Renders a live, filterable sports-news ticker above the watchlist. Reads the
+// SECURITY DEFINER RPC get_terminal_news_ticker (mig 20260629120000) — the only
+// path the authenticated terminal client has to espn_news, whose RLS is
+// admin_only (USING(false) for authenticated/anon). The RPC unions:
+//   * ESPN   — espn_news, ~80 articles/24h across 7 leagues (LIVE).
+//   * Reddit — v_reddit_important_recent (DORMANT: reddit crons paused, mig
+//              20260513002000 — contributes 0 rows until A1 re-enables them; the
+//              source toggle + chips light up automatically when data returns).
+//
+// Server params: window hours (re-query). Client-side (instant): source toggle,
+// league chips (faceted with live counts), free-text search. Auto-refreshes
+// every 3 min while the tab is visible.
+//
+// Degrades honestly: if the RPC isn't applied to prod yet the panel shows
+// "news wire not enabled yet" instead of crashing (same pattern as home.js's
+// watchlist 42883 guard).
+
+(function () {
+  'use strict';
+
+  const WINDOW_DEFAULT = 48;       // hours
+  const FETCH_LIMIT    = 150;      // rows pulled per query (newest-first)
+  const REEL_MAX       = 30;       // headlines in the scrolling marquee
+  const LIST_MAX       = 8;        // rows in the readable list
+  const REFRESH_MS     = 180000;   // 3 min auto-refresh
+
+  const state = {
+    items:       [],
+    source:      'all',            // 'all' | 'ESPN' | 'Reddit'
+    windowHours: WINDOW_DEFAULT,   // 24 | 48 | 168
+    league:      'ALL',
+    search:      '',
+    loading:     false,
+  };
+
+  // ---------- helpers ----------
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+    }[c]));
+  }
+
+  function relTime(iso) {
+    if (!iso) return '';
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!Number.isFinite(ms)) return '';
+    const m = Math.floor(ms / 60000);
+    if (m < 1)  return 'now';
+    if (m < 60) return m + 'm';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + 'h';
+    return Math.floor(h / 24) + 'd';
+  }
+
+  // Reddit rows can land with no resolved league → bucket as GEN.
+  const leagueOf = it => (it && it.league) ? it.league : 'GEN';
+
+  function el(id) { return document.getElementById(id); }
+
+  // ---------- fetch ----------
+  async function fetchNews() {
+    const reel = el('newsTickerReel');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (reel) reel.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    if (state.loading) return;
+    state.loading = true;
+    try {
+      const res = await Auth.client.rpc('get_terminal_news_ticker', {
+        p_window_hours: state.windowHours,
+        p_sources:      null,   // pull all sources; source toggle filters client-side
+        p_leagues:      null,
+        p_search:       null,   // search filters client-side for instant typing
+        p_limit:        FETCH_LIMIT,
+      });
+      if (res.error) {
+        // RPC not applied to prod yet → honest empty state, no crash.
+        if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+          if (reel) reel.innerHTML = '<div class="empty">news wire not enabled yet — RPC pending apply</div>';
+          el('newsTickerList').innerHTML = '';
+          setMeta('');
+          return;
+        }
+        console.error('[news] rpc', res.error);
+        if (reel) reel.innerHTML = '<div class="empty">failed to load news</div>';
+        return;
+      }
+      state.items = Array.isArray(res.data) ? res.data : [];
+      renderAll();
+    } catch (e) {
+      console.error('[news] fetch', e);
+      if (reel) reel.innerHTML = '<div class="empty">failed to load news</div>';
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  // ---------- filtering ----------
+  // Base = items narrowed by source + search but NOT league, so league chips
+  // can show accurate faceted counts (standard facet behaviour).
+  function baseItems() {
+    let arr = state.items;
+    if (state.source !== 'all') arr = arr.filter(x => x.source === state.source);
+    const q = state.search.trim().toLowerCase();
+    if (q) {
+      arr = arr.filter(x =>
+        (x.headline || '').toLowerCase().includes(q) ||
+        (x.summary  || '').toLowerCase().includes(q) ||
+        (x.team     || '').toLowerCase().includes(q) ||
+        (x.league   || '').toLowerCase().includes(q));
+    }
+    return arr;
+  }
+
+  function visibleItems(base) {
+    if (state.league === 'ALL') return base;
+    return base.filter(x => leagueOf(x) === state.league);
+  }
+
+  // ---------- render ----------
+  function setMeta(txt) { const m = el('newsTickerMeta'); if (m) m.textContent = txt; }
+
+  function renderAll() {
+    const base = baseItems();
+    renderLeagueChips(base);
+    const vis = visibleItems(base);
+    renderReel(vis);
+    renderList(vis);
+
+    const latest = vis.length ? relTime(vis[0].published_at) : '';
+    const srcLbl = state.source === 'all' ? 'all sources' : state.source;
+    setMeta(vis.length
+      ? `${vis.length} items · ${srcLbl} · last ${state.windowHours}h${latest ? ' · updated ' + latest + ' ago' : ''}`
+      : `no items · ${srcLbl} · last ${state.windowHours}h`);
+  }
+
+  function renderLeagueChips(base) {
+    const wrap = el('newsLeagueChips');
+    if (!wrap) return;
+    const counts = new Map();
+    base.forEach(it => { const l = leagueOf(it); counts.set(l, (counts.get(l) || 0) + 1); });
+    const leagues = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+
+    // Keep the active league selectable even if it dropped to 0 under a new filter.
+    if (state.league !== 'ALL' && !counts.has(state.league)) leagues.push([state.league, 0]);
+
+    let html = `<button class="ctrl-btn${state.league === 'ALL' ? ' is-active' : ''}" data-news-league="ALL">All ${base.length}</button>`;
+    leagues.forEach(([lg, n]) => {
+      html += `<button class="ctrl-btn${state.league === lg ? ' is-active' : ''}" data-news-league="${esc(lg)}">${esc(lg)} ${n}</button>`;
+    });
+    wrap.innerHTML = html;
+  }
+
+  function badge(it) {
+    const lg = leagueOf(it);
+    return `<span class="news-badge">${esc(lg)}</span>`;
+  }
+
+  function renderReel(items) {
+    const reel = el('newsTickerReel');
+    if (!reel) return;
+    if (!items.length) {
+      reel.innerHTML = '<div class="empty">no headlines for this filter</div>';
+      return;
+    }
+    const slice = items.slice(0, REEL_MAX);
+    const itemHtml = slice.map(it => {
+      const href = it.url ? esc(it.url) : '#';
+      return `<a class="news-reel-item" href="${href}" target="_blank" rel="noopener noreferrer">`
+           + badge(it)
+           + `<span class="news-reel-head">${esc(it.headline || '')}</span>`
+           + `<span class="news-reel-dot">•</span></a>`;
+    }).join('');
+    // Two copies → seamless -50% marquee loop. Pace by item count (min 24s).
+    const dur = Math.max(24, slice.length * 3.4);
+    reel.innerHTML = `<div class="news-reel-track" style="animation-duration:${dur}s">${itemHtml}${itemHtml}</div>`;
+  }
+
+  function renderList(items) {
+    const list = el('newsTickerList');
+    if (!list) return;
+    if (!items.length) { list.innerHTML = ''; return; }
+    const rows = items.slice(0, LIST_MAX).map(it => {
+      const href = it.url ? esc(it.url) : '#';
+      return `<div class="news-row">`
+           + `<span class="news-time">${esc(relTime(it.published_at))}</span>`
+           + badge(it)
+           + `<span class="news-head"><a href="${href}" target="_blank" rel="noopener noreferrer">${esc(it.headline || '')}</a></span>`
+           + `<span class="news-src">${esc(it.source || '')}</span>`
+           + `</div>`;
+    }).join('');
+    list.innerHTML = rows;
+  }
+
+  // ---------- controls ----------
+  let _searchTimer = null;
+
+  function setActive(group, btn) {
+    group.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('is-active'));
+    btn.classList.add('is-active');
+  }
+
+  function wireControls() {
+    document.querySelectorAll('[data-news-src]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.source = btn.getAttribute('data-news-src');
+        setActive(btn.parentElement, btn);
+        renderAll();              // client-side, no re-fetch
+      });
+    });
+
+    document.querySelectorAll('[data-news-win]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.windowHours = parseInt(btn.getAttribute('data-news-win'), 10) || WINDOW_DEFAULT;
+        setActive(btn.parentElement, btn);
+        fetchNews();              // window is a server param → re-query
+      });
+    });
+
+    // League chips are re-rendered each pass → delegate from the container.
+    const chips = el('newsLeagueChips');
+    if (chips) {
+      chips.addEventListener('click', e => {
+        const btn = e.target.closest('[data-news-league]');
+        if (!btn) return;
+        state.league = btn.getAttribute('data-news-league');
+        renderAll();
+      });
+    }
+
+    const search = el('newsSearch');
+    if (search) {
+      search.addEventListener('input', () => {
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => {
+          state.search = search.value || '';
+          state.league = 'ALL';   // reset league so a search isn't hidden by a stale chip
+          renderAll();
+        }, 180);
+      });
+    }
+  }
+
+  // ---------- init ----------
+  async function init() {
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
+    wireControls();
+    fetchNews();
+    setInterval(() => {
+      if (document.visibilityState === 'visible') fetchNews();
+    }, REFRESH_MS);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
