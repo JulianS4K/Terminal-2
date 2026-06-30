@@ -42,6 +42,7 @@
     renderWeb(d.web || []);
     renderTimeline(d.timeline || []);
     renderChecks(d.checks || []);
+    renderCrons(d.crons || []);
     const foot = document.getElementById('hz-foot');
     if (foot) {
       foot.textContent =
@@ -104,6 +105,35 @@
       html += `</div>`;
     });
     el.innerHTML = html;
+  }
+
+  // All scheduled cron jobs (active + inactive) with 24h run health.
+  // Sort failing/warn first; idle (active, no runs) and off (inactive) sink to the bottom.
+  function renderCrons(crons) {
+    const el = document.getElementById('hz-crons');
+    if (!el) return;
+    const sum = document.getElementById('hz-crons-sum');
+    if (!crons.length) {
+      if (sum) sum.textContent = '';
+      el.innerHTML = '<div class="muted small">no cron data</div>';
+      return;
+    }
+    if (sum) {
+      const c = { ok: 0, warn: 0, fail: 0, idle: 0, off: 0 };
+      crons.forEach(j => { c[j.cron_status] = (c[j.cron_status] || 0) + 1; });
+      sum.textContent = `· ${crons.length} jobs — ${c.ok} ok · ${c.warn} warn · ` +
+        `${c.fail} fail · ${c.idle} idle · ${c.off} off`;
+    }
+    const rank = { fail: 0, warn: 1, idle: 2, ok: 3, off: 4 };
+    const sorted = crons.slice().sort((a, b) =>
+      (rank[a.cron_status] - rank[b.cron_status]) || a.jobname.localeCompare(b.jobname));
+    el.innerHTML = sorted.map(j => card(
+      j.jobname,
+      j.cron_status,
+      j.schedule + (j.latest_error ? ' · ⚠ ' + String(j.latest_error).slice(0, 160) : ''),
+      !j.active ? 'inactive'
+        : (j.pct_ok != null ? `${j.pct_ok}% ok · ${j.runs_24h} runs/24h` : 'no runs in 24h')
+    )).join('');
   }
 
   function card(name, status, detail, up) {

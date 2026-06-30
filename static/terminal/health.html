@@ -25,7 +25,7 @@
     .hz-overall.fail { background:#240d0d; border-color:#8a2222; }
     .hz-dot { width:14px; height:14px; border-radius:50%; flex:none; }
     .hz-dot.ok{background:#35c46a;} .hz-dot.warn{background:#e0b13a;} .hz-dot.fail,.hz-dot.down{background:#e05151;}
-    .hz-dot.up{background:#35c46a;}
+    .hz-dot.up{background:#35c46a;} .hz-dot.off{background:#555;} .hz-dot.idle{background:#3a6ea5;}
     .hz-big { font-size:20px; font-weight:700; letter-spacing:.04em; }
     .hz-metrics { display:flex; gap:26px; margin-left:auto; flex-wrap:wrap; }
     .hz-metric .v { font-size:22px; font-weight:700; }
@@ -40,6 +40,8 @@
     .hz-pill.ok{background:#10331c;color:#5fdc8d;} .hz-pill.up{background:#10331c;color:#5fdc8d;}
     .hz-pill.warn{background:#332a0c;color:#e8c55a;}
     .hz-pill.fail,.hz-pill.down{background:#331212;color:#f08080;}
+    .hz-pill.off{background:#1c1c1c;color:#888;} .hz-pill.idle{background:#10233a;color:#6fb0e8;}
+    .hz-cron-sum { color:#9a9a9a; font-size:12px; font-weight:400; text-transform:none; letter-spacing:0; }
     .hz-class { font-size:11px; color:#777; text-transform:uppercase; letter-spacing:.08em; margin:18px 0 6px; }
     .hz-timeline { display:flex; gap:2px; align-items:flex-end; height:34px; margin:6px 0 24px; }
     .hz-tick { flex:1 1 0; min-width:2px; height:100%; border-radius:1px; background:#1a1a1a; }
@@ -70,6 +72,9 @@
 
     <div id="hz-checks"></div>
 
+    <div class="hz-class">CRON JOBS · 24H <span id="hz-crons-sum" class="hz-cron-sum"></span></div>
+    <div id="hz-crons" class="hz-grid"></div>
+
     <div id="hz-foot" class="hz-foot"></div>
   </main>
 
@@ -78,6 +83,6 @@
   <script src="auth.js?v=20260617"></script>
   <script src="app.js?v=20260617"></script>
   <script src="nav.js?v=20260623a"></script>
-  <script src="health.js?v=20260617"></script>
+  <script src="health.js?v=20260630"></script>
 </body>
 </html>
