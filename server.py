@@ -16,6 +16,7 @@ Optional:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -1581,6 +1582,87 @@ try:
     logging.getLogger(__name__).info("d2_dashboard router mounted at unified shell (%d routes)", len(d2_router.routes))
 except Exception as _d2_import_err:  # pragma: no cover — d2 module optional in dev
     logging.getLogger(__name__).warning("d2_dashboard router NOT mounted: %s", _d2_import_err)
+
+
+# ============================================================
+# Scheduler watchdog — durable self-heal for pg_cron wedges
+# ============================================================
+# With cron.use_background_workers=off, ONE cron job that runs unbounded holds an
+# open transaction that blocks cron_should_fire()/the launcher -> the WHOLE pg_cron
+# scheduler freezes (observed 3× on 2026-07-01, ~13h degraded). A pg_cron watchdog
+# would freeze with everything; a Claude-session cron dies on reconnect. This
+# always-on FastAPI service is the one place that survives a DB-side scheduler
+# freeze, so the durable watchdog lives here.
+#
+# Every ~60s it calls scheduler_watchdog_kill_stale_backends() (SECURITY DEFINER,
+# service_role-only). That RPC is the single source of truth for "is the scheduler
+# wedged": it reads max(start_time) FROM cron.job_run_details and returns
+# {wedged:false} when fresh, else terminates the long-running client backend(s)
+# holding the launcher and records the kill to health_check_history
+# (check_class='scheduler') so it surfaces on the health dashboard. The loop is
+# fully wrapped so it never dies, and no-ops cleanly if sb is unconfigured (dev).
+#
+# Note: with multiple web workers each runs a loop; the RPC is idempotent + self-
+# guarding (only kills backends active > p_min_active_seconds), so redundant pokes
+# are safe.
+
+_SCHED_WATCHDOG_INTERVAL_S = float(os.environ.get("SCHED_WATCHDOG_INTERVAL_SECONDS", "60"))
+_SCHED_WATCHDOG_STALE_MIN = int(os.environ.get("SCHED_WATCHDOG_STALE_MINUTES", "6"))
+_SCHED_WATCHDOG_MIN_ACTIVE_S = int(os.environ.get("SCHED_WATCHDOG_MIN_ACTIVE_SECONDS", "300"))
+_sched_watchdog_last: dict = {"at": None, "wedged": None, "killed": None,
+                              "last_cron_run": None, "error": None}
+
+
+async def _scheduler_watchdog_tick():
+    """One watchdog poke: call the kill RPC (which self-guards on cron freshness)
+    and record the outcome. Runs the blocking sync client call off the event loop."""
+    def _call():
+        return require_sb().rpc(
+            "scheduler_watchdog_kill_stale_backends",
+            {"p_stale_minutes": _SCHED_WATCHDOG_STALE_MIN,
+             "p_min_active_seconds": _SCHED_WATCHDOG_MIN_ACTIVE_S},
+        ).execute()
+
+    resp = await asyncio.to_thread(_call)
+    data = getattr(resp, "data", None) or {}
+    _sched_watchdog_last.update(
+        at=datetime.now(timezone.utc).isoformat(),
+        wedged=data.get("wedged"), killed=data.get("killed"),
+        last_cron_run=data.get("last_cron_run"), error=None)
+    killed = data.get("killed") or 0
+    if data.get("wedged") and killed:
+        _log.warning("scheduler_watchdog: cleared wedge — killed %s backend(s); last_cron_run=%s",
+                     killed, data.get("last_cron_run"))
+    return data
+
+
+async def _scheduler_watchdog_loop():
+    if sb is None:
+        _log.info("scheduler_watchdog: sb unconfigured — watchdog disabled")
+        return
+    _log.info("scheduler_watchdog: started (every %ss, stale>%smin)",
+              _SCHED_WATCHDOG_INTERVAL_S, _SCHED_WATCHDOG_STALE_MIN)
+    while True:
+        try:
+            await _scheduler_watchdog_tick()
+        except Exception as e:  # never let the loop die on a transient DB blip
+            _sched_watchdog_last.update(
+                at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("scheduler_watchdog: tick failed: %s", e)
+        await asyncio.sleep(_SCHED_WATCHDOG_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_scheduler_watchdog():  # pragma: no cover - startup hook; loop covered via _scheduler_watchdog_tick
+    # Fire-and-forget; the loop owns its own error handling and never raises out.
+    asyncio.create_task(_scheduler_watchdog_loop())
+
+
+@app.get("/api/admin/scheduler-watchdog/status")
+def scheduler_watchdog_status(_=Depends(require_auth)):
+    """Last watchdog tick outcome (auth-gated): current scheduler wedge state,
+    last cron run seen, and whether a backend was terminated."""
+    return _sched_watchdog_last
 
 
 # ---------- Site essentials (SEO + browser-tab UX) ----------
