@@ -75,6 +75,7 @@ The `/new-migration` command scaffolds the FILE; this skill is the whole lifecyc
 - You're joining two sources on a raw numeric/text event ID (→ 0 rows; go via `aq_event_map`).
 - A new cron has no `cron_should_fire` gate, or pushes peak concurrency over the `RESOURCES_BIBLE §5` cron budget.
 - An unconditional `max()` / wide-window `DISTINCT ON` over a firehose inside an event-page RPC (timeout).
+- A cron function loops over per-event heavy work with **no loop-level wall-clock budget** (`v_start := clock_timestamp()` + `EXIT WHEN clock_timestamp()-v_start > interval 'Ns'`). A per-iteration `SET LOCAL statement_timeout` is a **no-op** and does NOT bound it — with `use_background_workers=off` an unbounded loop wedges the whole scheduler (`PROJECT_BIBLE §3`).
 
 ## Verification
 Reason about — do not blindly re-run — that all are true before declaring done:

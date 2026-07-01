@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -778,3 +779,113 @@ def test_public_config_checkout_disabled_path(client, monkeypatch):
     body = client.get("/api/public/config").json()
     assert body["checkout_domain"] is None
     assert body["purchase_enabled"] is False
+
+
+# ====================================================================
+# Scheduler watchdog (durable pg_cron-wedge self-heal)
+# ====================================================================
+
+class _WatchdogSb:
+    """Minimal fake service-role client: .rpc(name, params).execute() -> resp.data."""
+    def __init__(self, data):
+        self._data = data
+        self.calls = []
+
+    def rpc(self, name, params):
+        self.calls.append((name, params))
+        outer = self
+
+        class _Q:
+            def execute(self_inner):
+                return SimpleNamespace(data=outer._data)
+        return _Q()
+
+
+def test_watchdog_tick_fresh_scheduler_is_noop(monkeypatch):
+    import anyio
+    fake = _WatchdogSb({"wedged": False, "killed": 0, "last_cron_run": "2026-07-01T00:00:00+00:00"})
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    out = anyio.run(app_module._scheduler_watchdog_tick)
+    assert out["wedged"] is False
+    assert fake.calls[0][0] == "scheduler_watchdog_kill_stale_backends"
+    assert app_module._sched_watchdog_last["wedged"] is False
+    assert app_module._sched_watchdog_last["error"] is None
+
+
+def test_watchdog_tick_kills_stale_backend_and_records(monkeypatch):
+    import anyio
+    fake = _WatchdogSb({"wedged": True, "killed": 2, "last_cron_run": "2026-07-01T00:00:00+00:00",
+                        "terminated": [{"pid": 111}, {"pid": 222}]})
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    out = anyio.run(app_module._scheduler_watchdog_tick)
+    assert out["killed"] == 2
+    assert app_module._sched_watchdog_last["killed"] == 2
+    assert app_module._sched_watchdog_last["wedged"] is True
+
+
+def test_watchdog_tick_tolerates_empty_response(monkeypatch):
+    import anyio
+    fake = _WatchdogSb(None)  # resp.data is None -> `or {}` fallback
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    out = anyio.run(app_module._scheduler_watchdog_tick)
+    assert out == {}
+
+
+def test_watchdog_loop_noop_when_sb_unconfigured(monkeypatch):
+    import anyio
+    monkeypatch.setattr(app_module, "sb", None)
+    # returns immediately (no tick, no sleep) — must not raise
+    anyio.run(app_module._scheduler_watchdog_loop)
+
+
+def test_watchdog_loop_ticks_then_sleeps(monkeypatch):
+    import anyio
+    monkeypatch.setattr(app_module, "sb", object())
+    ticks = {"n": 0}
+
+    async def _fake_tick():
+        ticks["n"] += 1
+        return {"wedged": False}
+
+    class _Stop(Exception):
+        pass
+
+    async def _fake_sleep(_s):
+        raise _Stop()
+
+    monkeypatch.setattr(app_module, "_scheduler_watchdog_tick", _fake_tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _fake_sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._scheduler_watchdog_loop)
+    assert ticks["n"] == 1
+
+
+def test_watchdog_loop_survives_tick_error(monkeypatch):
+    import anyio
+    monkeypatch.setattr(app_module, "sb", object())
+
+    async def _boom_tick():
+        raise RuntimeError("db blip")
+
+    class _Stop(Exception):
+        pass
+
+    async def _fake_sleep(_s):
+        raise _Stop()
+
+    monkeypatch.setattr(app_module, "_scheduler_watchdog_tick", _boom_tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _fake_sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._scheduler_watchdog_loop)
+    assert app_module._sched_watchdog_last["error"] == "db blip"
+
+
+def test_watchdog_status_route_returns_last_tick(client):
+    app_module._sched_watchdog_last.update(
+        at="2026-07-01T18:00:00+00:00", wedged=False, killed=0,
+        last_cron_run="2026-07-01T18:00:00+00:00", error=None)
+    r = client.get("/api/admin/scheduler-watchdog/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["wedged"] is False
+    assert body["killed"] == 0
