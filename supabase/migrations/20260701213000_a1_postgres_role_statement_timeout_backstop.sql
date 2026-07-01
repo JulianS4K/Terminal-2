@@ -1,0 +1,30 @@
+-- ============================================================================
+-- Migration 20260701213000 — postgres-role statement_timeout backstop (systemic wedge fix)
+--
+-- Lane:     A1
+-- Touches:  ALTER ROLE postgres SET statement_timeout (role-level default).
+-- Pre-reqs: none.
+--
+-- WHY (the real scheduler-wedge root cause, found 2026-07-01):
+--   pg_cron runs EVERY job as the `postgres` role, and `postgres` had NO statement_timeout default
+--   -> cron jobs ran with statement_timeout=0 (UNBOUNDED). That is why a single hung job ran 70 min
+--   and froze the scheduler, and why the per-job `SET statement_timeout='90s'; SELECT ...` prefix
+--   never actually capped anything: a SET inside a pg_cron multi-statement command is a no-op on the
+--   following statement (same class as SET LOCAL). Only a ROLE/DB-level default is armed at statement
+--   start, so it is the one cap that actually works for cron.
+--
+--   Set a 900s (15 min) role backstop on postgres. Every cron job statement is now hard-capped at
+--   15 min (worst-case wedge 15 min, not 70+). 900s chosen from the observed legit max over 7 days
+--   (refresh_movers_agg ~806s, event_snapshot_evening 462s; everything else < 300s) so no legit job is
+--   clipped. MCP / PostgREST (anon 3s, authenticated 8s) / app connections are UNAFFECTED — they set
+--   their own statement_timeout per session and override this default. Takes effect for new cron
+--   backends immediately.
+--
+-- This SUPERSEDES the per-cron SET-statement_timeout-prefix pattern (migs 20260630290000/300000),
+-- which is now known to be a no-op under pg_cron. Those prefixes are harmless but not a real cap.
+--
+-- Idempotent: ALTER ROLE ... SET is last-write-wins. Re-apply is a no-op.
+-- Already applied to prod · via MCP 2026-07-01
+-- ============================================================================
+
+ALTER ROLE postgres SET statement_timeout = '900s';
