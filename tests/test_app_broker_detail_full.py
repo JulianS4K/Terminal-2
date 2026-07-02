@@ -788,10 +788,12 @@ def test_chart_data_full_espn_path(client, monkeypatch):
         {"published_at": "2026-05-10T12:30:00Z"},
         {"published_at": ""},  # empty ts -> bucket "" branch
     ]
+    # injury-load now derives from the single (both-team) injuries read, split by
+    # espn_team_id in Python — so these rows carry espn_team_id "18" (home).
     inj_load = [
-        {"captured_at": "2026-05-10T12:00:00Z", "athlete_id": "a1", "status": "Out"},
-        {"captured_at": "2026-05-10T13:00:00Z", "athlete_id": "a1", "status": "Active"},
-        {"captured_at": "2026-05-10T13:30:00Z", "athlete_id": None, "status": "Out"},  # no aid -> skipped
+        {"captured_at": "2026-05-10T12:00:00Z", "athlete_id": "a1", "status": "Out", "espn_team_id": "18"},
+        {"captured_at": "2026-05-10T13:00:00Z", "athlete_id": "a1", "status": "Active", "espn_team_id": "18"},
+        {"captured_at": "2026-05-10T13:30:00Z", "athlete_id": None, "status": "Out", "espn_team_id": "18"},  # no aid -> skipped
     ]
     zm = [
         {"captured_at": "2026-05-10T12:00:00Z", "zone": "Lower", "zone_source": "curated",
