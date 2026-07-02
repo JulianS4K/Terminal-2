@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260702230000 — NEWS WIRE: add ESPN injury updates as a source
+-- Migration 20260702230040 — NEWS WIRE: add ESPN injury updates as a source
 --
 -- Lane:     D0 (author) → A1 (apply)   [D0 has no prod-DB apply authority]
 -- Touches:  get_terminal_news_ticker (W, CREATE OR REPLACE)

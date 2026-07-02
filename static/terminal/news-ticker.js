@@ -2,7 +2,7 @@
 //
 // Renders a live, filterable sports-news ticker above the watchlist. Reads the
 // SECURITY DEFINER RPC get_terminal_news_ticker (mig 20260629120000, repointed
-// 20260702210000, +injuries 20260702230000) — the only path the authenticated
+// 20260702210000, +injuries 20260702230040) — the only path the authenticated
 // terminal client has to espn_news / espn_injuries_snapshots, whose RLS is
 // admin_only (USING(false) for authenticated/anon). The RPC unions:
 //   * ESPN     — espn_news, ~80 articles/24h across 7 leagues (LIVE).
