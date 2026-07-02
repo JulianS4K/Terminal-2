@@ -426,10 +426,31 @@ def build_store_router(
     ):
         """D1 store: retail 'follow the tour' agent. Budget-first; shares the
         optimizer with the D0 route via `trip_planner`."""
-        return get_tour_package_payload()(performer_id, home_lat, home_lon, qty, budget_km,
-                                          home_name, days, budget_usd, side, clear_at,
-                                          away_margin, section_like, prefer_owned,
-                                          max_events=max_events, start_date=start, end_date=end)
+        try:
+            return get_tour_package_payload()(performer_id, home_lat, home_lon, qty, budget_km,
+                                              home_name, days, budget_usd, side, clear_at,
+                                              away_margin, section_like, prefer_owned,
+                                              max_events=max_events, start_date=start, end_date=end)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # Consumer-facing endpoint — never surface a raw 500. Log the full traceback
+            # (Render captures stdout) so a real failure is diagnosable, and return a clean
+            # "couldn't build" payload the FE already knows how to render (stops_available=0
+            # + unavailable flag → "try again" message), so a transient never breaks the page.
+            import traceback as _tb
+            print(f"[store_tour_package] performer={performer_id} qty={qty} side={side} "
+                  f"budget_usd={budget_usd} failed: {exc!r}")
+            _tb.print_exc()
+            return JSONResponse(content={
+                "mode": "concert",
+                "qty_per_show": max(1, min(int(qty), 50)),
+                "stops_available": 0,
+                "package": {"legs": [], "count": 0, "cities": 0, "travel_km": 0,
+                            "fan_total": 0, "fan_total_bundled": 0},
+                "all_stops": [],
+                "unavailable": True,
+            })
 
     @router.get("/api/store/tours/multi")
     def store_multi_tour(

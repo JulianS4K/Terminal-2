@@ -3063,9 +3063,11 @@
         });
       }
       if (!d.stops_available || !pk.count) {
-        $("ftStatus").textContent = isTeam
-          ? `No ${away ? "away" : "home"} games in range — try the other side.`
-          : "No routable tour right now — try a wider budget.";
+        $("ftStatus").textContent = d.unavailable
+          ? "We couldn't build your tour right now — please try again in a moment."
+          : (isTeam
+            ? `No ${away ? "away" : "home"} games in range — try the other side.`
+            : "No routable tour right now — try a wider budget.");
         $("ftResult").hidden = true;
         return;
       }
