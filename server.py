@@ -351,22 +351,28 @@ def ensure_tevo_client():
 SANDBOX = os.environ.get("TEVO_SANDBOX", "false").lower() == "true"
 TOKEN, SECRET, CREDS_SOURCE = resolve_tevo_creds()
 if not TOKEN or not SECRET:  # pragma: no cover - import-time missing-creds boot path
-    # In SQL-only demo mode the storefront never calls TEvo — the EvoClient
-    # is never invoked. Boot in degraded mode (no TEvo client) so the
-    # storefront still serves from listings_snapshots. Any non-storefront
-    # route that needs the live client (broker terminal, /api/admin/*) will
-    # crash on the missing global, which is the right failure mode.
+    # Boot in degraded mode (no live EvoClient) rather than crashing the whole
+    # service. A missing/unreadable credential must NEVER take down the terminal +
+    # storefront + every deploy with it: a `settings`-table 403 (stale
+    # service-role key or an RLS lockdown) or a dropped TEVO_* env once hard-crashed
+    # this service on boot (sys.exit → "Exited with status 1"), freezing prod on a
+    # weeks-old build while every new deploy failed. Store routes serve from
+    # listings_snapshots; routes that need the live client lazy-init via
+    # ensure_tevo_client() and 502 individually until creds are restored.
+    client = None
     if STOREFRONT_SQL_ONLY:
         _log.info(
             "TEvo creds missing — running in STOREFRONT_SQL_ONLY mode without a live "
             "EvoClient. /api/store/* routes will serve from listings_snapshots only."
         )
-        client = None
     else:
-        sys.exit(
-            "No TEvo credentials found. Insert into Supabase `settings` table "
-            "(tevo_token, tevo_secret) or set TEVO_TOKEN + TEVO_SECRET env vars. "
-            "Or set STOREFRONT_SQL_ONLY=true to boot in demo mode without TEvo."
+        _log.error(
+            "No TEvo credentials found (settings read failed + TEVO_* env unset) and "
+            "STOREFRONT_SQL_ONLY is not set. Booting DEGRADED without a live EvoClient: "
+            "storefront serves from listings_snapshots; broker / live-TEvo routes will "
+            "502 until creds are restored. Fix: set TEVO_TOKEN+TEVO_SECRET (or "
+            "TEVO_API_TOKEN+TEVO_API_SECRET) env vars, refresh SUPABASE_SERVICE_ROLE_KEY "
+            "so the settings read succeeds, or set STOREFRONT_SQL_ONLY=true."
         )
 else:
     _log.info(f"TEvo creds loaded from: {CREDS_SOURCE}")
