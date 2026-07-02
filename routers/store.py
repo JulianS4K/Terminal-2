@@ -17,11 +17,12 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from core.auth import HUMAN_COOKIE_NAME, HUMAN_TTL_SECONDS, issue_human_token
 from core.helpers import (
+    client_ip_from_xff,
     is_bowl_pattern_name,
     is_speculative_event_name,
     is_tbd,
@@ -29,6 +30,7 @@ from core.helpers import (
     normalize_search_key,
     or_ilike_clause,
 )
+from routers.models import ReserveRequest, VerifyHumanRequest
 
 _log = logging.getLogger("app")
 
@@ -470,16 +472,18 @@ def build_store_router(
     # calls /v9/orders (no real charge). ---
 
     @router.post("/api/store/verify-human")
-    def store_verify_human(request: Request, payload: dict = Body(...)):
+    def store_verify_human(request: Request, body: VerifyHumanRequest):
         """First-interaction bot gate (reCAPTCHA v3). store.js calls this once per
         session with a v3 token (action 'gate'); on a passing score we set a
         short-lived signed cookie that the write endpoints accept, so the gate runs
         once rather than on every action. No-op success when the gate is dormant."""
         if not get_recaptcha_enabled():
             return JSONResponse({"ok": True, "enabled": False})
-        token = payload.get("recaptcha_token") or payload.get("token")
-        xff = request.headers.get("x-forwarded-for") or ""
-        ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
+        token = body.recaptcha_token or body.token
+        ip = client_ip_from_xff(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        )
         if not get_verify_recaptcha()(token, "gate", ip):
             raise HTTPException(403, "verification failed")
         resp = JSONResponse({"ok": True, "enabled": True})
@@ -495,10 +499,16 @@ def build_store_router(
         return resp
 
     @router.post("/api/store/reserve")
-    def store_reserve(request: Request, payload: dict = Body(...), authorization: str | None = Header(None)):
+    def store_reserve(request: Request, body: ReserveRequest, authorization: str | None = Header(None)):
         """MVP placeholder: a real checkout is not wired up yet. Validates that
         the requested ticket_group + quantity matches the live owned inventory in
         TEvo, then returns a mock confirmation. NEVER calls /v9/orders.
+
+        Body shape + bounds are enforced declaratively by ReserveRequest
+        (event_id/ticket_group_id/quantity all > 0, quantity ≤ 50). A malformed
+        client (non-integer, missing, or quantity=999999) is rejected at parse
+        time with a 422 before any inventory/TEvo call — this is the old
+        imperative int/cap guards made declarative.
 
         Auth: gated by STOREFRONT_RESERVE_REQUIRES_AUTH env flag. MVP demo
         leaves it off so the front-end's "Reserve (mock)" button works without
@@ -507,22 +517,11 @@ def build_store_router(
         if get_reserve_requires_auth():
             get_require_auth()(authorization)
         # Bot gate: honeypot (always) + reCAPTCHA human-cookie/token (when enabled).
-        get_require_human()(request, payload)
-        try:
-            event_id = int(payload.get("event_id") or 0)
-            ticket_group_id = int(payload.get("ticket_group_id") or 0)
-            quantity = int(payload.get("quantity") or 0)
-        except (TypeError, ValueError):
-            raise HTTPException(400, "event_id, ticket_group_id and quantity must be integers")
-        if not (event_id and ticket_group_id and quantity > 0):
-            raise HTTPException(400, "event_id, ticket_group_id and quantity > 0 required")
-        # Upper-bound the requested quantity before we touch inventory. TEvo
-        # ticket groups in practice cap around 8-12 per seat block; 50 is a
-        # generous ceiling that still bounds the request shape so a malformed
-        # client (quantity=999999) gets rejected fast without consulting the
-        # upstream API or the snapshot table.
-        if quantity > 50:
-            raise HTTPException(400, "quantity exceeds maximum allowed per reservation")
+        # `_require_human` reads `hp` + `recaptcha_token`, both carried on the model.
+        get_require_human()(request, body.model_dump())
+        event_id = body.event_id
+        ticket_group_id = body.ticket_group_id
+        quantity = body.quantity
 
         if get_storefront_sql_only():
             # SQL-only mode: validate against listings_snapshots' latest capture

@@ -230,30 +230,32 @@ _GROUP = {
 }
 
 
-def test_reserve_non_integer_inputs_400(client):
-    """event_id that can't int-convert → 400 (lines 6056-6057)."""
+def test_reserve_non_integer_inputs_422(client):
+    """event_id that can't int-convert → 422 (declarative ReserveRequest
+    validation, replacing the old imperative 400 int-parse guard)."""
     r = client.post("/api/store/reserve", json={
         "event_id": "not-a-number", "ticket_group_id": 1, "quantity": 1,
     })
-    assert r.status_code == 400
-    assert "integers" in r.json()["detail"]
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "event_id" for e in r.json()["detail"])
 
 
-def test_reserve_missing_required_400(client):
-    """quantity == 0 fails the (event_id and tg and qty>0) gate (line 6059)."""
+def test_reserve_missing_required_422(client):
+    """quantity == 0 fails the ReserveRequest gt=0 bound → 422 field error."""
     r = client.post("/api/store/reserve", json={
         "event_id": 5, "ticket_group_id": 1, "quantity": 0,
     })
-    assert r.status_code == 400
-    assert "required" in r.json()["detail"]
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "quantity" for e in r.json()["detail"])
 
 
-def test_reserve_over_cap_400(client):
+def test_reserve_over_cap_422(client):
+    """quantity above the declarative le=50 cap → 422 before any inventory call."""
     r = client.post("/api/store/reserve", json={
         "event_id": 5, "ticket_group_id": 1, "quantity": 999999,
     })
-    assert r.status_code == 400
-    assert "maximum" in r.json()["detail"].lower()
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "quantity" for e in r.json()["detail"])
 
 
 def test_reserve_success(client, monkeypatch):
@@ -574,25 +576,28 @@ def test_retail_proxy_malformed_json_passthrough(monkeypatch):
 # Share links — create / resolve / revoke / list
 # ============================================================
 
-def test_share_create_bad_event_id_400(as_user):
+def test_share_create_bad_event_id_422(as_user):
+    """Non-integer event_id → 422 field error (ShareCreateRequest validation)."""
     c = as_user("user-A")
     r = c.post("/api/store/share", json={"event_id": "abc"})
-    assert r.status_code == 400
-    assert "integer" in r.json()["detail"]
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "event_id" for e in r.json()["detail"])
 
 
-def test_share_create_missing_event_id_400(as_user):
+def test_share_create_missing_event_id_422(as_user):
+    """event_id == 0 fails the declarative gt=0 bound → 422."""
     c = as_user("user-A")
     r = c.post("/api/store/share", json={"event_id": 0})
-    assert r.status_code == 400
-    assert "required" in r.json()["detail"]
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "event_id" for e in r.json()["detail"])
 
 
-def test_share_create_note_too_long_400(as_user):
+def test_share_create_note_too_long_422(as_user):
+    """note over the declarative max_length=500 → 422."""
     c = as_user("user-A")
     r = c.post("/api/store/share", json={"event_id": 5, "note": "x" * 501})
-    assert r.status_code == 400
-    assert "too long" in r.json()["detail"]
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "note" for e in r.json()["detail"])
 
 
 def test_share_create_with_filters_and_note(as_user):
@@ -635,18 +640,20 @@ def test_share_create_expiry_capped_by_event(as_user):
     assert c.fakedb.tables["share_links"][0]["expires_at"].startswith("2026-06-27")
 
 
-def test_share_create_expiry_days_not_integer_400(as_user):
+def test_share_create_expiry_days_not_integer_422(as_user):
+    """Non-integer expires_in_days → 422 field error."""
     c = as_user("user-A")
     r = c.post("/api/store/share", json={"event_id": 5, "expires_in_days": "lots"})
-    assert r.status_code == 400
-    assert "must be an integer" in r.json()["detail"]
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "expires_in_days" for e in r.json()["detail"])
 
 
-def test_share_create_expiry_days_out_of_range_400(as_user):
+def test_share_create_expiry_days_out_of_range_422(as_user):
+    """expires_in_days above the declarative le=365 bound → 422."""
     c = as_user("user-A")
     r = c.post("/api/store/share", json={"event_id": 5, "expires_in_days": 9999})
-    assert r.status_code == 400
-    assert "between 1 and 365" in r.json()["detail"]
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "expires_in_days" for e in r.json()["detail"])
 
 
 def test_share_create_event_lookup_exception_swallowed(as_user, monkeypatch):

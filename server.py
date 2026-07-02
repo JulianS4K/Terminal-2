@@ -175,6 +175,7 @@ from core.search import (  # noqa: E402
 from core.helpers import clean_opt_url as _clean_opt_url  # noqa: E402
 from core.helpers import tevo_runtime_to_http as _tevo_runtime_to_http  # noqa: E402
 from core.helpers import normalize_filters as _normalize_filters  # noqa: E402
+from core.helpers import client_ip_from_xff as _client_ip_from_xff  # noqa: E402
 from core.helpers import ticket_group_to_listing as _ticket_group_to_listing  # noqa: E402
 from core.helpers import parse_iso_or_none as _parse_iso_or_none  # noqa: E402
 from core.helpers import to_int_or_none as _to_int_or_none  # noqa: E402
@@ -233,8 +234,10 @@ def _require_human(request: Request, payload: dict | None = None):
     if _valid_human_token(request.cookies.get(_HUMAN_COOKIE_NAME)):
         return
     token = (payload or {}).get("recaptcha_token")
-    xff = request.headers.get("x-forwarded-for") or ""
-    ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else None))
+    ip = _client_ip_from_xff(
+        request.headers.get("x-forwarded-for"),
+        request.client.host if request.client else None,
+    )
     if _verify_recaptcha(token, "submit", ip):
         return
     raise HTTPException(403, "bot verification required — refresh the page and try again")
@@ -573,8 +576,10 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         # by our own edge proxy and is the only one a client can't forge. The
         # leftmost entry is client-supplied — keying on it let a single client
         # rotate fake IPs and bypass every per-IP bucket (audit 2026-06-10).
-        xff = request.headers.get("x-forwarded-for") or ""
-        ip = (xff.split(",")[-1].strip() if xff else (request.client.host if request.client else "unknown")) or "unknown"
+        ip = _client_ip_from_xff(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else "unknown",
+        ) or "unknown"
         n, w = self._bucket(path)
         # Key is ip + bucket-prefix, NOT the full path. Using the raw path lets
         # a bot cycle resource IDs (e.g. /api/store/events/1, /2, …) to get a
@@ -1544,15 +1549,28 @@ app.include_router(build_storefront_pages_router(
 _SHARE_FILTER_KEYS = ("zones", "section", "min_price", "max_price", "min_qty")
 
 
+# FastAPI dependency providers (coding-recommendation #2): the native seam for
+# the shares router's Supabase client + event resolver. Tests inject fakes via
+# `app.dependency_overrides[get_sb_dep]` / `[get_resolve_event_dep]` instead of
+# monkeypatching module globals — so the tests no longer shape the wiring.
+def get_sb_dep():
+    """Dependency: the live Supabase service client for a request."""
+    return require_sb()
+
+
+def get_resolve_event_dep():
+    """Dependency: the event-detail resolver (itself injects sb/client/etc.)."""
+    return _resolve_event_with_filters
+
+
 # _share_to_dict -> core/helpers.py (BR-CODE-1); aliased at top.
 # /api/store/share* JSON routes -> routers/shares.py (BR-CODE-1 decomposition
-# slice). Getters resolve the live app symbols at request time so the test
-# monkeypatches (app.require_sb / app._resolve_event_with_filters) still bind.
+# slice), now on FastAPI Depends (see providers above).
 from routers.shares import build_shares_router  # noqa: E402
 app.include_router(build_shares_router(
-    get_require_sb=lambda: require_sb,
+    sb_dep=get_sb_dep,
     require_auth=require_auth,
-    get_resolve_event=lambda: _resolve_event_with_filters,
+    resolve_event_dep=get_resolve_event_dep,
 ))
 
 
