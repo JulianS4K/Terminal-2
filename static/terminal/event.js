@@ -277,25 +277,186 @@
         '</section>';
     }
 
-    pane.innerHTML = priceSection +
-      '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
+    // WC tabbed layout — each source gets its own tab, lazy-loaded on first open
+    // (uPlot/Tevomaps need a visible host to size correctly, so we defer until the
+    // tab is shown). The shared TEvo tab bar (#eventTabs) stays hidden in SG mode.
+    const wcTabs = [
+      ['overview',    'Overview'],
+      ['markets',     'Markets'],
+      ['sg-listings', 'SG Listings'],
+      ['sg-sales',    'SG Sales'],
+      ['seatdata',    'SeatData Comps'],
+      ['espn',        'ESPN'],
+      ['seatmap',     'Seat Map'],
+    ];
+    const wcTabBar = '<div id="wcTabs" class="event-tabs" role="tablist">' +
+      wcTabs.map(([id, lbl], i) =>
+        `<button class="event-tab${i === 0 ? ' active' : ''}" data-wctab="${id}" role="tab" aria-selected="${i === 0}">${lbl}</button>`).join('') +
+      '</div>';
+    const wcPane = (id, active, inner) =>
+      `<div class="tab-pane${active ? ' active' : ''}" data-wcpane="${id}"${active ? '' : ' hidden'}>${inner}</div>`;
+
+    pane.innerHTML = wcTabBar +
+      wcPane('overview', true, priceSection) +
+      wcPane('markets', false,
+        '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
         '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
         '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
-        'GameTime needs discovery; EVO isn\'t available for SeatGeek-native events (the seat map below is a borrowed venue reference).</div></section>' +
-      '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
-        '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>' +
-      '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
-        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>' +
-      '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
-        '<span class="muted small" id="sgMapMeta">loading…</span></div>' +
-        '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">loading…</div></div>' +
-        '<div class="muted small" id="sgMapNote" style="margin-top:6px"></div></section>';
+        'GameTime needs discovery; EVO isn\'t available for SeatGeek-native events.</div></section>') +
+      wcPane('sg-listings', false,
+        '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
+        '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>') +
+      wcPane('sg-sales', false,
+        '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
+        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>') +
+      wcPane('seatdata', false,
+        '<section id="sg-seatdata-comps"><div class="panel-title row"><span>SEATDATA COMPS — realized sold-ticket curve (full history)</span>' +
+        '<span class="muted small" id="sgSdMeta">loading…</span></div>' +
+        '<div id="sgSdNote" class="muted small" style="margin-bottom:6px"></div>' +
+        '<div id="sgSdHost" class="wc-chart"></div><div id="sgSdBody"><div class="empty">loading…</div></div></section>') +
+      wcPane('espn', false,
+        '<section id="wc-espn"><div class="panel-title row"><span>ESPN — match score &amp; status</span>' +
+        '<span class="muted small" id="wcEspnMeta">open to load</span></div><div id="wcEspnBody"><div class="empty">Open this tab to load ESPN data.</div></div>' +
+        '<div class="muted small" style="margin-top:6px">Linked to the ESPN FIFA World Cup feed by schedule (best-effort; firms up as the bracket sets).</div></section>') +
+      wcPane('seatmap', false,
+        '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
+        '<span class="muted small" id="sgMapMeta">open to load</span></div>' +
+        '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">Open this tab to load the seat map.</div></div>' +
+        '<div class="muted small" id="sgMapNote" style="margin-top:6px"></div></section>');
 
+    // Overview is active immediately; Markets pre-loads (cheap, high-value); the
+    // rest lazy-load on first tab open.
     if (rows.length) renderWcChart('wcChartHost', rows);
     loadWcMarkets(sgId).catch(e => console.error('[wc markets]', e));
-    loadSgListingsInline(sgId).catch(e => console.error('[sg listings]', e));
-    loadSgSalesInline(sgId).catch(e => console.error('[sg sales]', e));
-    loadWcSeatmapDonor(sgId).catch(e => console.error('[wc seatmap]', e));
+    const wcLoaders = {
+      'markets':     () => loadWcMarkets(sgId),
+      'sg-listings': () => loadSgListingsInline(sgId),
+      'sg-sales':    () => loadSgSalesInline(sgId),
+      'seatdata':    () => loadWcSeatdataComps(sgId),
+      'espn':        () => loadWcEspn(sgId),
+      'seatmap':     () => loadWcSeatmapDonor(sgId),
+    };
+    const wcLoaded = { 'markets': true };
+    const wcBar = document.getElementById('wcTabs');
+    if (wcBar) wcBar.addEventListener('click', (e) => {
+      const btn = e.target.closest('.event-tab');
+      if (!btn) return;
+      const id = btn.dataset.wctab;
+      pane.querySelectorAll('#wcTabs .event-tab').forEach(b => {
+        const on = b.dataset.wctab === id;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      pane.querySelectorAll('[data-wcpane]').forEach(p => { p.hidden = p.dataset.wcpane !== id; });
+      if (!wcLoaded[id] && wcLoaders[id]) {
+        wcLoaded[id] = true;
+        wcLoaders[id]().catch(err => console.error('[wc tab ' + id + ']', err));
+      }
+    });
+  }
+
+  // ESPN match score/status for a WC match (get_wc_espn — schedule-bridged to the
+  // FIFA World Cup feed). Rendered in the SG-mode ESPN tab.
+  async function loadWcEspn(sgId) {
+    const Auth = window.TerminalAuth;
+    const meta = document.getElementById('wcEspnMeta');
+    const body = document.getElementById('wcEspnBody');
+    if (!body) return;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">Sign in with @s4kent.com to view ESPN data.</div>';
+      if (meta) meta.textContent = 'no auth';
+      return;
+    }
+    const res = await Auth.client.rpc('get_wc_espn', { p_sg_event_id: sgId });
+    const d = res.data || null;
+    const games = (d && d.games) || [];
+    if (res.error || !d || !d.has_data || !games.length) {
+      body.innerHTML = `<div class="empty">${escapeHtml((d && d.note) || 'No ESPN World Cup games found for this match date yet.')}</div>`;
+      if (meta) meta.textContent = res.error ? 'error' : 'no games';
+      return;
+    }
+    if (meta) meta.textContent = `${games.length} WC game${games.length > 1 ? 's' : ''} · ${escapeHtml(String(d.match_date || ''))}`;
+    const rowHtml = (g) => {
+      const hs = g.home_score == null ? '–' : g.home_score;
+      const as = g.away_score == null ? '–' : g.away_score;
+      const stateLbl = g.state === 'in' ? 'LIVE' : (g.state === 'post' ? 'FINAL' : 'SCHED');
+      return '<tr>' +
+        `<td>${escapeHtml(T.fmtDate(g.kickoff))}</td>` +
+        `<td>${escapeHtml(String(g.home_team || '?'))}</td>` +
+        `<td class="num"><b>${hs}–${as}</b></td>` +
+        `<td>${escapeHtml(String(g.away_team || '?'))}</td>` +
+        `<td><span class="badge${g.state === 'in' ? ' live' : ''}">${stateLbl}</span> ` +
+          `<span class="muted small">${escapeHtml(g.status_short || '')}</span></td></tr>`;
+    };
+    body.innerHTML =
+      (d.game_count > 1
+        ? '<div class="muted small" style="margin-bottom:6px">Multiple World Cup games on this date — showing the full matchday ' +
+          '(our knockout kickoff times are placeholders, so we don\'t pin a single game).</div>'
+        : '') +
+      '<table class="wc-daily"><thead><tr><th>Kickoff</th><th>Home</th><th class="num">Score</th><th>Away</th><th>Status</th></tr></thead>' +
+      `<tbody>${games.map(rowHtml).join('')}</tbody></table>`;
+  }
+
+  // SeatData realized sold-ticket comps — the FULL history curve (uncapped), via
+  // get_wc_seatdata_comps. SeatData is tevo_event_id-keyed and TEvo lists only the
+  // one WC match we own (Match 72), so this shows that match's own curve where it
+  // has data, otherwise falls back to Match 72 flagged as the WC pricing benchmark.
+  async function loadWcSeatdataComps(sgId) {
+    const Auth = window.TerminalAuth;
+    const meta = document.getElementById('sgSdMeta');
+    const note = document.getElementById('sgSdNote');
+    const host = document.getElementById('sgSdHost');
+    const body = document.getElementById('sgSdBody');
+    if (!body) return;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">Sign in with @s4kent.com to view SeatData comps.</div>';
+      if (meta) meta.textContent = 'no auth';
+      return;
+    }
+    const res = await Auth.client.rpc('get_wc_seatdata_comps', { p_sg_event_id: sgId });
+    const d = res.data || null;
+    if (res.error || !d || !d.has_data) {
+      body.innerHTML = '<div class="empty">No SeatData sold-ticket comps for the World Cup yet.' +
+        '<div class="muted small">SeatData keys on TEvo events; TEvo lists only the one match we own.</div></div>';
+      if (meta) meta.textContent = res.error ? 'error' : 'no comps';
+      return;
+    }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const s = d.summary || {};
+    if (note) {
+      note.innerHTML = d.is_benchmark
+        ? `<b>Benchmark</b> — this match has no realized sales yet; showing Match ${escapeHtml(String(d.benchmark_match || ''))} ` +
+          '(the only World Cup match with SeatData sales) as the tournament pricing benchmark.'
+        : 'Realized SeatData sales for this match — full history, uncapped.';
+    }
+    if (meta) meta.textContent = `${T.fmtNum(s.sales || 0)} sales · ${s.sections || 0} sections · ${s.first_sale || '?'} → ${s.last_sale || '?'}`;
+    const kpis = [['GET-IN', money(s.min)], ['MEDIAN', money(s.median)], ['P90', money(s.p90)], ['MAX', money(s.max)], ['TICKETS', T.fmtNum(s.tickets || 0)]];
+    body.innerHTML = '<section id="sd-kpi-grid" style="margin-bottom:8px">' +
+      kpis.map(([l, v]) => `<div class="kpi-cell"><span class="kpi-lbl">${l}</span><span class="kpi-val">${v}</span></div>`).join('') +
+      '</section>';
+    renderSdCompChart('sgSdHost', d.daily || []);
+  }
+
+  // Daily median/get-in sold-ticket curve for the SeatData comps section.
+  function renderSdCompChart(hostId, daily) {
+    const host = document.getElementById(hostId);
+    if (!host || typeof uPlot === 'undefined' || !daily || daily.length < 2) { if (host) host.innerHTML = ''; return; }
+    const asc = daily.slice().sort((a, b) => (a.d < b.d ? -1 : 1));
+    const xs = asc.map(r => Math.floor(new Date(r.d + 'T00:00:00Z').getTime() / 1000));
+    const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
+    const data = [xs, col('min'), col('median'), col('p90')];
+    const width = () => Math.max(160, host.clientWidth || 800);
+    const opts = {
+      width: width(), height: 240, scales: { x: { time: true } },
+      series: [{}, { label: 'Get-in', stroke: '#5ab0ff', width: 2 },
+        { label: 'Median', stroke: '#46d39a', width: 2 }, { label: 'P90', stroke: '#e0a23c', width: 1 }],
+    };
+    host.innerHTML = '';
+    const u = new uPlot(opts, data, host);
+    if (!host._sdResize) {
+      host._sdResize = true;
+      window.addEventListener('resize', () => u.setSize({ width: width(), height: 240 }));
+    }
   }
 
   // Borrowed venue seat map for SeatGeek-native (World Cup) events. These have no
