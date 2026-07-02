@@ -187,8 +187,9 @@
            + `<span class="news-reel-dot">•</span></a>`;
     }).join('');
     // Two copies → seamless -50% marquee loop. Pace by item count. Slower =
-    // larger duration; ~2× the original (24s/3.4s-per-item) for an easier read.
-    const dur = Math.max(48, slice.length * 6.8);
+    // larger duration; ~4× the original (24s/3.4s-per-item) for an easier read
+    // (halved the speed again per operator request 2026-07-02).
+    const dur = Math.max(96, slice.length * 13.6);
     reel.innerHTML = `<div class="news-reel-track" style="animation-duration:${dur}s">${itemHtml}${itemHtml}</div>`;
   }
 
