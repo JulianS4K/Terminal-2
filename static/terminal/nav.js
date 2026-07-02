@@ -30,6 +30,10 @@
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    // Sales — realized-sales analytics per league + per team (home/away split,
+    // owned-vs-market, price distribution, top sections). Backed by
+    // /api/d0/sales/* over the d0_sales_fact snapshot. See docs/d0-sales-reports.md.
+    { id: 'sales',     label: 'SALES',     href: 'sales.html' },
     // Retail chat — natural-language price/inventory lookups over the book
     // (full market on the terminal; owned-EVO-only on the storefront). Talks
     // to /api/retail-chat → the `chat` edge fn. Wired 2026-06-19.

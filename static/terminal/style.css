@@ -2337,3 +2337,31 @@ body[data-page="login"] {
 .subs-orderbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; }
 .subs-order-msg { flex-basis: 100%; min-height: 14px; }
 .subs-or { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; margin: 14px 0 2px; }
+
+/* ---------- Sales page (sales.html / sales.js) ---------- */
+.sales section { margin-bottom: 18px; }
+.sales .pos { color: var(--pos); }
+.sales .neg { color: var(--neg); }
+.sales-tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+.sales-tbl th {
+  text-align: left; font-size: 9px; letter-spacing: .5px; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line);
+}
+.sales-tbl td { padding: 5px 8px; border-bottom: 1px solid var(--line); color: var(--text); }
+.sales-tbl td.r, .sales-tbl th.r { text-align: right; font-variant-numeric: tabular-nums; }
+.sales-tbl td.muted { color: var(--muted); }
+.sales-tbl.compact td, .sales-tbl.compact th { padding: 3px 8px; }
+.sales-tbl tr:last-child td { border-bottom: none; }
+.sales-tbl .lg-row, .sales-tbl .perf-link { cursor: pointer; }
+.sales-tbl .lg-row:hover, .sales-tbl .perf-link:hover { background: var(--panel-2); }
+.sales-tbl .lg-row.active { background: var(--panel-2); }
+.sales-tbl .lg-row.active .lg-name { color: var(--accent); font-weight: 700; }
+.sales-tbl .lg-name { font-weight: 600; }
+.sales .perf-input {
+  width: 120px; padding: 3px 8px; font-family: var(--mono); font-size: 12px;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
+}
+.sales .role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.sales .role-block { border: 1px solid var(--line); border-radius: 4px; padding: 8px; background: var(--panel); }
+.sales .role-block .panel-title.small { margin: 0 0 6px; }
+.sales .panel-title.small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 12px 0 6px; }

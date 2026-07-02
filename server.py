@@ -923,6 +923,14 @@ from routers.lists import build_lists_router  # noqa: E402
 app.include_router(build_lists_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
+# routers/d0_sales.py — D0 league/performer sales-report reads over the
+# d0_sales_fact snapshot + report views (docs/d0-sales-reports.md). Read-only,
+# service-role require_sb (the fact table is RLS-locked). Same getter pattern.
+from routers.d0_sales import build_d0_sales_router  # noqa: E402
+
+app.include_router(build_d0_sales_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+
+
 # /api/watchlist POST + DELETE -> routers/lists.py (BR-CODE-1 slice 35; joins
 # the watchlist GET there — require_sb + require_auth only). The whole
 # /api/watchlist + /api/runs + /api/snapshots/* surface now lives in lists.py.
