@@ -23,8 +23,13 @@
 // Routes (via ?scope= query param):
 //   ?scope=roster       -> per-team injuries only      [10-min cron]
 //   ?scope=gameday      -> event scores+odds for events occurring within ±24h [10-min cron]
-//   ?scope=team_daily   -> team standings + news       [daily cron]
+//   ?scope=team_daily   -> team standings + per-team news (~200 ESPN calls) [daily cron]
+//   ?scope=news         -> LIGHTWEIGHT league-level news only (~7 calls)  [5-min cron]
 //   ?scope=all (default) -> everything (same as v3 behavior)
+//
+// v7 (2026-07-02): added ?scope=news — league-level news pull (one /news call
+//   per distinct league slug) so the D0 NEWS WIRE can refresh every 5 min
+//   without the per-team fan-out (which would rate-limit ESPN at that cadence).
 //
 // All scopes write into:
 //   espn_team_snapshots, espn_injuries_snapshots, espn_news, espn_event_snapshots
@@ -53,7 +58,7 @@ const EVENT_LOOKAHEAD_DAYS = 60;
 const GAMEDAY_WINDOW_HOURS = 24;     // ±this many hours around now()
 const ESPN_HOST = "site.api.espn.com";
 
-type Scope = "all" | "roster" | "gameday" | "team_daily";
+type Scope = "all" | "roster" | "gameday" | "team_daily" | "news";
 
 // SHA-256 over canonicalized fields → content_hash. Truncated to 16 hex chars
 // for compact storage (collision space is still 2^64). Used by the change-only
@@ -284,6 +289,58 @@ async function collectNews(db: any, state: CollectorState) {
   }
 }
 
+// scope=news — LIGHTWEIGHT league-level news for the 5-min NEWS WIRE cadence.
+// One /news request per DISTINCT league slug (~7 requests) instead of the ~200
+// per-team calls in collectNews(), so it is sustainable on a */5 cron without
+// rate-limiting ESPN. Articles are league-scoped (espn_team_id = null); the
+// NEWS WIRE groups by league, so no per-team association is needed. Uses the
+// same change-only upsert (onConflict espn_article_id, ignoreDuplicates) as
+// collectNews — the first writer of an article id wins, so this never clobbers
+// a team association written by the daily per-team pull.
+async function collectLeagueNews(db: any, state: CollectorState) {
+  const { data: pei } = await db.from("performer_external_ids")
+    .select("league,meta")
+    .eq("source", "espn")
+    .limit(TEAM_LIMIT_PER_RUN);
+  const slugLeague: Record<string, string> = {};
+  for (const r of (pei ?? []) as any[]) {
+    const slug = r.meta?.espn_slug;
+    if (slug && !slugLeague[slug]) slugLeague[slug] = r.league;
+  }
+  state.log.push(`league-news: ${Object.keys(slugLeague).length} distinct leagues`);
+  for (const [slug, league] of Object.entries(slugLeague)) {
+    let articles: any[] = [];
+    try {
+      const j = await get(`/apis/site/v2/sports/${slug}/news`, { limit: "20" });
+      articles = j.articles ?? [];
+    } catch (e) {
+      state.errors++;
+      state.log.push(`league-news ${slug} FAIL: ${(e as Error).message}`);
+      continue;
+    }
+    for (const a of articles) {
+      if (!a.id) continue;
+      const row = {
+        espn_article_id: String(a.id),
+        espn_team_id: null,
+        espn_league: league,
+        headline: a.headline ?? null,
+        description: a.description ?? null,
+        published_at: a.published ? new Date(a.published).toISOString() : null,
+        url: a.links?.web?.href ?? null,
+        image_url: a.images?.[0]?.url ?? null,
+        type: a.type ?? null,
+      };
+      const { error } = await db.from("espn_news")
+        .upsert(row, { onConflict: "espn_article_id", ignoreDuplicates: true });
+      if (error) state.errors++;
+      else state.news_inserted++;
+    }
+    state.log.push(`league-news ${slug} (${league}): ${articles.length} articles`);
+    await sleep(120);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-event game snapshot — for events in event_xref happening within the lookahead window
 // ---------------------------------------------------------------------------
@@ -436,8 +493,8 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const scope = (url.searchParams.get("scope") ?? "all") as Scope;
-  if (!["all", "roster", "gameday", "team_daily"].includes(scope)) {
-    return new Response(JSON.stringify({ error: `unknown scope: ${scope}`, valid: ["all", "roster", "gameday", "team_daily"] }), { status: 400 });
+  if (!["all", "roster", "gameday", "team_daily", "news"].includes(scope)) {
+    return new Response(JSON.stringify({ error: `unknown scope: ${scope}`, valid: ["all", "roster", "gameday", "team_daily", "news"] }), { status: 400 });
   }
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -473,6 +530,10 @@ Deno.serve(async (req) => {
       // Daily cadence: standings + news. Skip injuries (handled by roster scope).
       await collectTeams(db, state, { standings: true, injuries: false });
       await collectNews(db, state);
+    } else if (scope === "news") {
+      // 5-min cadence: lightweight league-level news only (~7 requests). Keeps
+      // the NEWS WIRE fresh without the ~200 per-team calls of the daily scope.
+      await collectLeagueNews(db, state);
     }
   } catch (e) {
     state.errors++;
