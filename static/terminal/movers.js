@@ -255,6 +255,7 @@
         <th class="num">VD/SH</th>
         <th class="num">Cur $</th>
         <th class="num">Δ%</th>
+        <th class="num" title="Market tickets available (cur_tix)">Mkt</th>
         <th class="num">Own</th>
         <th class="num">Score</th>
       </tr></thead><tbody></tbody>`;
@@ -279,6 +280,7 @@
         <td class="num">${$spread(r.vd_vs_sh_spread)}</td>
         <td class="num">${$p(r.cur_price)}</td>
         <td class="num">${$dpct(r.price_delta_pct)}</td>
+        <td class="num">${r.cur_tix != null ? T.fmtNum(+r.cur_tix) : '—'}</td>
         <td class="num ${ownedTix > 0 ? 'ours' : ''}">${T.fmtNum(ownedTix)}</td>
         <td class="num muted small">${r.signal_score != null ? (+r.signal_score).toFixed(2) : '—'}</td>`;
       tb.appendChild(tr);

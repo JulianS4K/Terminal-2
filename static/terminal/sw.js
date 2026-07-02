@@ -10,10 +10,10 @@
 //     fast-iterating app.) Successful responses refresh the cache.
 // Bump CACHE to invalidate the offline shell on the next visit.
 
-const CACHE = 's4k-terminal-v1';
+const CACHE = 's4k-terminal-v2';
 const SHELL = [
   '/', '/index.html', '/style.css',
-  '/app.js', '/auth.js', '/nav.js', '/home.js', '/event.js', '/movers.js',
+  '/pwa.js', '/app.js', '/auth.js', '/nav.js', '/home.js', '/event.js', '/movers.js',
   '/orders.js', '/discovery.js', '/venue.js', '/performer.js', '/login.js',
   '/lib/uplot.iife.min.js', '/lib/uplot.min.css', '/lib/supabase.js',
   '/favicon.svg', '/manifest.json',
