@@ -13,6 +13,7 @@ sales / listings feeds:
   - seatdata.io                       (SeatData market analytics)
   - ticketsdata.com                   (TicketsData cross-platform feed)
   - www.broadway.com / checkout.broadway.com  (Broadway.com availability)
+  - rest.bandsintown.com              (Bands in Town artist tour dates)
 
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
@@ -54,6 +55,7 @@ FORBIDDEN_HOSTS = (
     "ticketsdata.com",
     "www.broadway.com",
     "checkout.broadway.com",
+    "rest.bandsintown.com",
     # AXS has order/hold endpoints that must never be touched. All sanctioned
     # AXS traffic proxies through ticketsdata.com (covered above); a direct
     # call to axs.com is forbidden outright. Bare "axs.com" substring-matches
@@ -78,6 +80,7 @@ CLIENT_FILES = {
     "ticketsdata_client.py": frozenset({"GET"}),
     "broadway_client.py": frozenset({"GET"}),
     "axs_client.py": frozenset({"GET"}),
+    "bandsintown_client.py": frozenset({"GET"}),
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
