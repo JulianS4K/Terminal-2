@@ -80,6 +80,18 @@ main.wrap {
    no-op for non-grid/flex items, so this is safe everywhere. */
 main.wrap section { min-width: 0; }
 
+/* Sales page: leagues | away-leaderboard | performer as responsive columns with
+   a full-width health strip on top. It has no bespoke layout of its own, so it
+   used to lean on the 12-col grid's blowout (min-width:auto) to size the columns
+   — which the guard above removed, collapsing them to ~1/12 tracks so the three
+   columns overlapped. Give it explicit auto-fit tracks (min 300px, overlap-proof
+   and responsive: 3-up on desktop, wrapping down to 1-up on mobile). */
+.wrap.sales {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-items: start;
+}
+.wrap.sales > #sales-health { grid-column: 1 / -1; }
+
 /* ---------- Hero band ---------- */
 
 #hero {
