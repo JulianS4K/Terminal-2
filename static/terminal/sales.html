@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Sales</title>
+  <link rel="stylesheet" href="style.css?v=20260702a" />
+</head>
+<body data-page="sales">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap sales">
+
+    <!-- Refresh health strip -->
+    <section id="sales-health" class="muted small" style="margin-bottom:8px">
+      <span id="healthStrip">checking refresh health…</span>
+    </section>
+
+    <!-- League dashboard -->
+    <section id="sales-leagues">
+      <div class="panel-title row">
+        <span>LEAGUE SALES</span>
+        <span class="muted small" id="leaguesNote">realized sales · d0_sales_fact snapshot</span>
+      </div>
+      <div id="leaguesBody"><div class="empty">loading…</div></div>
+      <div class="muted small" style="margin-top:6px">
+        League totals come straight from <code>d0_league_summary</code> — do not sum the
+        per-team figures below (each sale is counted once home + once away).
+      </div>
+    </section>
+
+    <!-- Visiting-team leaderboard for the selected league -->
+    <section id="sales-visitors">
+      <div class="panel-title row">
+        <span>AWAY-TEAM LEADERBOARD — <span id="visLeague">—</span></span>
+        <span class="muted small" id="visNote">pick a league above</span>
+      </div>
+      <div id="visitorsBody"><div class="empty">select a league</div></div>
+    </section>
+
+    <!-- Performer sales report -->
+    <section id="sales-performer">
+      <div class="panel-title row">
+        <span>PERFORMER SALES</span>
+        <form id="perfForm" class="ctrl-group" style="margin:0" autocomplete="off">
+          <input id="perfInput" type="number" inputmode="numeric" min="1"
+                 placeholder="performer_id" class="perf-input" aria-label="performer id" />
+          <button type="submit" class="ctrl-btn">Load</button>
+        </form>
+      </div>
+      <div id="performerBody"><div class="empty">enter a performer_id, or click a team above · e.g. 72393 (Inter Miami)</div></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260702a"></script>
+  <script src="sales.js?v=20260702a"></script>
+</body>
+</html>
