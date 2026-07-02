@@ -33,6 +33,11 @@ body {
   /* iOS dynamic viewport: avoids the Safari toolbar shrinking/growing 100vh
      and leaving a background gap. dvh falls back to vh where unsupported. */
   min-height: 100dvh;
+  /* Safety net against horizontal page scroll on mobile. `clip` (not hidden)
+     so it doesn't create a scroll container that breaks the sticky topbar.
+     Root causes are fixed at the source (e.g. .head-row below); this guarantees
+     a stray wide element can never sideways-scroll the whole page. */
+  overflow-x: clip;
 }
 a { color: inherit; }
 /* Brand-tint the checked/active state of native form controls. */
@@ -914,9 +919,19 @@ input, select, textarea { accent-color: var(--accent); }
 /* ----- Event head row + share button ----- */
 .head-row {
   display: flex;
+  flex-wrap: wrap;            /* let head-actions drop below the title on narrow screens */
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+}
+/* The title/meta block is a flex item; its default min-width:auto refused to
+   shrink below its content's min-content width, blowing the event header ~2x
+   past the viewport (413px horizontal overflow on iPhone, UX audit 2026-06-17).
+   min-width:0 lets it shrink + wrap; overflow-wrap breaks any long token. */
+.head-row > div:first-child {
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .head-actions {
   flex-shrink: 0;
@@ -1536,6 +1551,18 @@ a.perf-chip:hover {
     font-size: 11px;
     letter-spacing: 1px;
   }
+
+  /* Touch targets ≥44px (Apple HIG). Reserve/share buttons (35px), listing
+     tabs (40px) and filter chips (24px) were too small to hit reliably on a
+     phone. UX audit 2026-06-17. Inline-flex centers the label in the taller box. */
+  .btn,
+  .listing-tab,
+  .chip-group .filter-chip {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 /* ============================================================================
@@ -1549,7 +1576,13 @@ a.perf-chip:hover {
 .wrap { max-width: var(--maxw); }
 
 /* ----- Topbar nav + concierge CTA ----- */
-.topbar { padding: 16px 28px; }
+/* Keep the safe-area insets (this rule comes after the base .topbar and would
+   otherwise clobber them, dropping content under the notch in standalone PWA). */
+.topbar {
+  padding:
+    calc(16px + env(safe-area-inset-top)) calc(28px + env(safe-area-inset-right))
+    16px calc(28px + env(safe-area-inset-left));
+}
 .brand { letter-spacing: 0.4px; }
 .topnav {
   display: flex;
