@@ -249,25 +249,26 @@ export interface RegistryEntry {
   pendingTransferId: string | null;
 }
 
-/** Every ticket for an event, for the offline check-in registry (staff RLS). */
+/** Every ticket for an event, for the offline check-in registry (staff RLS).
+ *  One SECURITY DEFINER call (exos_event_checkin_roster, migration
+ *  20260702240000) that authorizes the whole roster with a single org-role
+ *  check and returns id + owner name + barcode_secret in one round-trip —
+ *  replacing the prior three-read fan-out (tickets + per-row secrets view +
+ *  profiles), which re-evaluated a SECURITY DEFINER gate PER ROW and got
+ *  progressively slower on large events. Door roles only (owner/manager/
+ *  scanner or admin), same gate as the barcode-secret view. */
 export async function listEventTicketsForRegistry(eventId: string): Promise<RegistryEntry[]> {
-  const { data, error } = await supabase
-    .from('exos_tickets')
-    .select('id, status, owner_id, tier_name, promoter_id, pending_transfer_id')
-    .eq('event_id', eventId);
+  const { data, error } = await supabase.rpc('exos_event_checkin_roster', {
+    p_event_id: eventId,
+  });
   if (error) throw error;
-  const rows = data ?? [];
-  // barcode_secret is no longer on the base-table read grant (migration
-  // 20260702123000) — the offline HMAC check pulls it from the gated view.
-  const secrets = await fetchBarcodeSecrets(rows.map((r: any) => r.id));
-  const names = await fetchProfileNames(rows.map((r: any) => r.owner_id));
-  return rows.map((r: any) => ({
-    id: r.id,
+  return (data ?? []).map((r: any) => ({
+    id: r.ticket_id,
     status: r.status,
     ownerId: r.owner_id ?? '',
-    name: names.get(r.owner_id) || 'Anonymous',
+    name: r.owner_name || 'Anonymous',
     tier: r.tier_name || 'Standard',
-    barcodeSecret: secrets.get(r.id) || '',
+    barcodeSecret: r.barcode_secret || '',
     promoterId: r.promoter_id || '',
     pendingTransferId: r.pending_transfer_id ?? null,
   }));
