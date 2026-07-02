@@ -1,0 +1,72 @@
+name: supabase (migrations-from-zero + RLS)
+
+# Testing-recommendations #1 + #2. Two gaps this closes:
+#
+#   #1 migrations-from-zero — CI never applied the migration set from an empty
+#      DB, so ordering breaks + timestamp collisions could only surface in prod.
+#      `supabase db start` (below) runs every file in supabase/migrations in
+#      order against a fresh Postgres and fails on the first error.
+#
+#   #2 RLS as first-class security tests — the D0/D4 boundary is row-level
+#      security and was untested. tests/rls asserts who can read what against
+#      the freshly-migrated stack (incl. the barcode_secret least-privilege
+#      finding).
+#
+# Kept in its OWN workflow (not tests.yml) so a Docker/CLI hiccup or a
+# pre-existing migration-ordering issue is isolated from the core pytest gate.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
+      - "tests/rls/**"
+      - ".github/workflows/supabase-rls.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
+      - "tests/rls/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supabase:
+    name: migrations-from-zero + RLS
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase (applies ALL migrations from zero)
+        # `supabase db start` boots Postgres and runs every file in
+        # supabase/migrations in filename order from an empty database. A single
+        # failing/ordering-broken/duplicate-timestamp migration fails this step —
+        # that IS the migrations-from-zero gate (#1). Only the DB is needed for
+        # the RLS suite, so we skip the full API/studio stack for speed.
+        run: supabase db start
+
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest "psycopg[binary]"
+
+      - name: RLS policy tests (#2)
+        env:
+          # Local supabase Postgres — `postgres` is the BYPASSRLS superuser used
+          # for seeding; the tests SET LOCAL ROLE to anon/authenticated per case.
+          RLS_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+          PYTHONPATH: "."
+        run: pytest tests/rls -q
