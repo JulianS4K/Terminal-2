@@ -17,6 +17,9 @@ the shared module singleton (tests stub `app.requests.post`).
 from __future__ import annotations
 
 import logging
+import os
+import threading
+from datetime import datetime, timezone
 from typing import Callable
 
 import requests
@@ -31,6 +34,64 @@ _CONCIERGE_OFFLINE_REPLY = (
     "Our concierge is taking a short break right now. In the meantime you can browse "
     "everything we hold from the home page, or reach us directly and we'll find your seats."
 )
+
+
+# ---------- Cost guard (cheap, in-process) ----------
+#
+# A zero-infra backstop on top of the edge function's per-IP/minute limit. It
+# refuses BEFORE any LLM/TEvo spend, so a runaway client can't run up a bill.
+# This is distinct from STOREFRONT_CONCIERGE_ENABLED: that server config flag is
+# the storefront-only soft kill (returns a friendly canned reply, HTTP 200); the
+# guard below is a HARD kill + daily cost ceiling that also covers the terminal.
+# Tunables (all env, hot-set without code):
+#   RETAIL_CHAT_ENABLED      "false" → kill switch: both endpoints 503 instantly.
+#   RETAIL_CHAT_DAILY_MAX    global LLM-bound requests/UTC-day across surfaces
+#                            (0 = unlimited). Default 1000.
+#   RETAIL_CHAT_IP_DAILY_MAX per-IP requests/UTC-day on the PUBLIC store
+#                            (0 = unlimited). Default 40.
+# Cheap-to-test: set the caps low (e.g. =20) while testing so you cannot burn
+# cost, then raise them — or flip RETAIL_CHAT_ENABLED=false to spend nothing.
+#
+# Caveat: counters are per-process and reset on restart/redeploy; this is a
+# cost CEILING, not exact metering. The durable per-IP/min limit lives in the
+# edge function (check_chat_rate_limit). Promote to a DB counter later if a
+# multi-instance, restart-proof quota is needed.
+_RETAIL_CHAT_ENABLED = os.environ.get("RETAIL_CHAT_ENABLED", "true").lower() != "false"
+try:
+    _RETAIL_CHAT_DAILY_MAX = int(os.environ.get("RETAIL_CHAT_DAILY_MAX", "1000"))
+except ValueError:
+    _RETAIL_CHAT_DAILY_MAX = 1000
+try:
+    _RETAIL_CHAT_IP_DAILY_MAX = int(os.environ.get("RETAIL_CHAT_IP_DAILY_MAX", "40"))
+except ValueError:
+    _RETAIL_CHAT_IP_DAILY_MAX = 40
+
+_retail_chat_lock = threading.Lock()
+_retail_chat_usage: dict = {"day": None, "total": 0, "by_ip": {}}
+
+
+def _retail_chat_budget_check(ip: str, public: bool) -> None:
+    """Raise 503/429 when over the cheap in-process cost budget, BEFORE we
+    forward to the (paid) edge function. Counts a request only once it passes —
+    malformed/over-budget calls never consume the LLM. `public` (the storefront)
+    also bears the per-IP daily cap; the email-gated terminal does not."""
+    if not _RETAIL_CHAT_ENABLED:
+        raise HTTPException(503, "chat is temporarily disabled")
+    today = datetime.now(timezone.utc).date().isoformat()
+    with _retail_chat_lock:
+        if _retail_chat_usage["day"] != today:
+            _retail_chat_usage["day"] = today
+            _retail_chat_usage["total"] = 0
+            _retail_chat_usage["by_ip"] = {}
+        if _RETAIL_CHAT_DAILY_MAX and _retail_chat_usage["total"] >= _RETAIL_CHAT_DAILY_MAX:
+            raise HTTPException(429, "the assistant has hit today's usage cap — please try again tomorrow")
+        if public and _RETAIL_CHAT_IP_DAILY_MAX:
+            used = _retail_chat_usage["by_ip"].get(ip, 0)
+            if used >= _RETAIL_CHAT_IP_DAILY_MAX:
+                raise HTTPException(429, "you've reached today's message limit — please try again tomorrow")
+        _retail_chat_usage["total"] += 1
+        if public:
+            _retail_chat_usage["by_ip"][ip] = _retail_chat_usage["by_ip"].get(ip, 0) + 1
 
 
 def _client_ip(request: Request) -> str:
@@ -116,7 +177,9 @@ def build_retail_chat_router(require_auth: Callable, get_concierge_enabled: Call
     def retail_chat_terminal(request: Request, payload: dict = Body(...), _=Depends(require_auth)):
         """Operator-facing retail chat (email-gated). scope=all → full market."""
         history = _sanitize_chat_history(payload)
-        return _proxy_retail_chat(history, "all", _client_ip(request))
+        ip = _client_ip(request)
+        _retail_chat_budget_check(ip, public=False)
+        return _proxy_retail_chat(history, "all", ip)
 
     @router.post("/api/store/retail-chat")
     def retail_chat_store(request: Request, payload: dict = Body(...)):
@@ -129,6 +192,8 @@ def build_retail_chat_router(require_auth: Callable, get_concierge_enabled: Call
         if not get_concierge_enabled():
             return JSONResponse({"reply": _CONCIERGE_OFFLINE_REPLY}, status_code=200)
         history = _sanitize_chat_history(payload)
-        return _proxy_retail_chat(history, "owned", _client_ip(request))
+        ip = _client_ip(request)
+        _retail_chat_budget_check(ip, public=True)
+        return _proxy_retail_chat(history, "owned", ip)
 
     return router
