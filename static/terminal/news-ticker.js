@@ -2,14 +2,17 @@
 //
 // Renders a live, filterable sports-news ticker above the watchlist. Reads the
 // SECURITY DEFINER RPC get_terminal_news_ticker (mig 20260629120000, repointed
-// 20260702210000) — the only path the authenticated terminal client has to
-// espn_news, whose RLS is admin_only (USING(false) for authenticated/anon). The
-// RPC unions:
-//   * ESPN   — espn_news, ~80 articles/24h across 7 leagues (LIVE).
-//   * Reddit — v_reddit_news_ticker (LIVE: flair:"News" pipeline, mig
-//              20260626120000 — title-only, 48h, deduped first-post-shows). Each
-//              Reddit row carries `team` = 'r/<sub>' so the UI shows which sub
-//              the story came from.
+// 20260702210000, +injuries 20260702230040) — the only path the authenticated
+// terminal client has to espn_news / espn_injuries_snapshots, whose RLS is
+// admin_only (USING(false) for authenticated/anon). The RPC unions:
+//   * ESPN     — espn_news, ~80 articles/24h across 7 leagues (LIVE).
+//   * Injuries — espn_injuries_snapshots (LIVE: change-only injury updates from
+//                espn-collect's roster scope). item_type='injury'; the UI tags
+//                these with an INJ marker and shows the affected team.
+//   * Reddit   — v_reddit_news_ticker (LIVE: flair:"News" pipeline, mig
+//                20260626120000 — title-only, 48h, deduped first-post-shows).
+//                Each Reddit row carries `team` = 'r/<sub>' so the UI shows which
+//                sub the story came from.
 //
 // Server params: window hours (re-query). Client-side (instant): source toggle,
 // league chips (faceted with live counts), free-text search. Auto-refreshes
@@ -30,7 +33,7 @@
 
   const state = {
     items:       [],
-    source:      'all',            // 'all' | 'ESPN' | 'Reddit'
+    source:      'all',            // 'all' | 'ESPN' | 'Injuries' | 'Reddit'
     windowHours: WINDOW_DEFAULT,   // 24 | 48 | 168
     league:      'ALL',
     search:      '',
@@ -61,9 +64,18 @@
   const leagueOf = it => (it && it.league) ? it.league : 'GEN';
 
   // Source label: for Reddit rows show the originating sub ('r/<sub>', carried
-  // in `team`) so the user sees which subreddit the story came from; otherwise
-  // the plain source name.
-  const srcLabel = it => (it && it.source === 'Reddit' && it.team) ? it.team : ((it && it.source) || '');
+  // in `team`); for injury rows show the affected team; otherwise the plain
+  // source name.
+  const srcLabel = it => {
+    if (!it) return '';
+    if (it.source === 'Reddit' && it.team) return it.team;
+    if (it.source === 'Injuries') return it.team || 'Injuries';
+    return it.source || '';
+  };
+
+  // A story carried under a team byline (Reddit sub or injured player's team)
+  // gets a secondary source line in the reel.
+  const hasSub = it => !!(it && it.team && (it.source === 'Reddit' || it.source === 'Injuries'));
 
   function el(id) { return document.getElementById(id); }
 
@@ -165,7 +177,9 @@
 
   function badge(it) {
     const lg = leagueOf(it);
-    return `<span class="news-badge">${esc(lg)}</span>`;
+    const inj = (it && it.item_type === 'injury')
+      ? '<span class="news-badge news-badge-inj">INJ</span>' : '';
+    return `<span class="news-badge">${esc(lg)}</span>` + inj;
   }
 
   function renderReel(items) {
@@ -178,7 +192,7 @@
     const slice = items.slice(0, REEL_MAX);
     const itemHtml = slice.map(it => {
       const href = safeHref(it.url);
-      const sub = (it.source === 'Reddit' && it.team)
+      const sub = hasSub(it)
         ? `<span class="news-src">${esc(it.team)}</span>` : '';
       return `<a class="news-reel-item" href="${href}" target="_blank" rel="noopener noreferrer">`
            + badge(it)
