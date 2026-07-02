@@ -84,13 +84,24 @@ main.wrap section { min-width: 0; }
    a full-width health strip on top. It has no bespoke layout of its own, so it
    used to lean on the 12-col grid's blowout (min-width:auto) to size the columns
    — which the guard above removed, collapsing them to ~1/12 tracks so the three
-   columns overlapped. Give it explicit auto-fit tracks (min 300px, overlap-proof
-   and responsive: 3-up on desktop, wrapping down to 1-up on mobile). */
+   columns overlapped. Give it explicit auto-fit tracks + contained scroll:
+   - min track 560px so the dense tables (the LEAGUE board is 7 numeric columns,
+     ~600px min-content) get enough room: 3-up only on wide screens, 2-up on a
+     laptop, 1-up on mobile. `min(100%, 560px)` keeps the track from forcing
+     horizontal page scroll below 560px.
+   - each panel body is its OWN horizontal-scroll box, so a table wider than its
+     track scrolls INSIDE the panel instead of overflowing into (and painting
+     over) the neighbouring column. This is what #753 missed: it widened the
+     tracks but never contained the table overflow, so on narrower viewports the
+     over-wide LEAGUE table still bled across the leaderboard. */
 .wrap.sales {
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
   align-items: start;
 }
 .wrap.sales > #sales-health { grid-column: 1 / -1; }
+.wrap.sales #leaguesBody,
+.wrap.sales #visitorsBody,
+.wrap.sales #performerBody { overflow-x: auto; }
 
 /* ---------- Hero band ---------- */
 
