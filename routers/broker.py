@@ -1913,6 +1913,22 @@ def build_broker_router(
             .in_("id", event_ids)
             .execute()
         ).data or []
+        # Operator-ignored events (state='ignored', e.g. pseudo-events like The
+        # Wizard of Oz at Sphere) never surface on terminal portfolio views.
+        # Client-side filter: PostgREST .neq() would also drop NULL-state rows.
+        ev_meta = [e for e in ev_meta if (e.get("state") or "") != "ignored"]
+        event_ids = [e["id"] for e in ev_meta]
+        if not event_ids:
+            return {
+                "filter": {"performer_id": performer_id, "venue_id": venue_id, "watchlist_only": watchlist_only},
+                "events": [],
+                "aggregate": {
+                    "events_count": 0, "tickets_total": 0, "owned_tickets_total": 0,
+                    "owned_share_weighted": None, "retail_value_total": 0,
+                    "owned_retail_value_total": 0, "retail_median_avg_weighted": None,
+                    "events_with_owned": 0,
+                },
+            }
 
         # 2b) For performer-filtered queries, look up the performer's home venue(s)
         # AND classification so we can tag is_home for sports only.
