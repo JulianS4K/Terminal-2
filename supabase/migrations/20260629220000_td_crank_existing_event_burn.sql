@@ -1,4 +1,14 @@
--- Migration 20260629220000 · lane:A1 (DB + cron — TicketsData burn config) · writes (DDL):td_daily_budget_ok(),td_monthly_budget_ok(),td_budget_ok(); on run:td_poll_policy,cron_policy,crons td_tier_enqueue_{sh,vd,gt,tm}/td_pull_drain/td_normalize_drain · reads:ticketsdata_credit_usage · pre:20260627* · auth:operator-approved 2026-06-29 (julian@s4kent.com — burn ~240k prepaid TicketsData credits by July 9, keep 20% reserve; "hit the existing events more often")
+-- Migration 20260629220000 · lane:A1 (DB + cron — TicketsData burn config) · writes (DDL):td_budget_ok() [48k reserve floor]; on run:td_poll_policy,cron_policy,crons td_tier_enqueue_{sh,vd,gt,tm}/td_pull_drain/td_normalize_drain · reads:ticketsdata_credit_usage · pre:20260627* · auth:operator-approved 2026-06-29 (julian@s4kent.com — burn ~240k prepaid TicketsData credits by July 9, keep 20% reserve; "hit the existing events more often")
+--
+-- NOTE (git⇄prod reconciliation): the original 2026-06-29 apply also redefined
+-- td_daily_budget_ok (< 50000) and td_monthly_budget_ok (< 600000). Those were
+-- SUPERSEDED days later by the merged 20260630 series (a1_td_caps_8k_daily_real,
+-- a1_td_seatgeek_burn_until_0709, a1_td_budget_cycle_aligned → date-gated 40k/8k
+-- daily · cycle-aware monthly). Carrying the 50k/600k redefs here would be dead
+-- code (immediately overridden in replay), so they are intentionally pruned. The
+-- statements below (48k reserve floor in td_budget_ok, poll intervals, enqueue/
+-- drain cadence) remain the SOLE repo source for the still-live prod state —
+-- verified against cron.job / td_poll_policy / cron_policy on 2026-07-02.
 --
 -- WHY: ~240k prepaid TicketsData credits expire July 9 (use-it-or-lose-it). At the prior
 -- cadence (hot=12h refresh, enqueue twice-hourly, drain 5/min, daily cap 6k) burn was ~295/day.
@@ -6,8 +16,8 @@
 -- holding back 20% via a pool floor. No new scope/sources — frequency only.
 --
 -- WHAT:
--- 1. Raise the internal caps (daily 6k→50k, monthly 180k→600k) so cadence — not the cap —
---    governs. Reserve is enforced by the floor below, not the calendar caps.
+-- 1. (Cap raise — see NOTE above; pruned as superseded. Reserve is enforced by the
+--    floor below, not the calendar caps, so the floor is the durable mechanism.)
 -- 2. RESERVE FLOOR in td_budget_ok(): stop ALL TD polling once the upstream pool
 --    (ticketsdata_credit_usage.quota_remaining, latest) drops to ≤ 48,000 (~20% of ~240k).
 --    Every TD enqueue/pull/discover gates on td_budget_ok, so this is the hard 20% hold-back.
@@ -22,14 +32,8 @@
 -- pool separately (~230/day, single-threaded scraper — cannot absorb a large share).
 -- SAFETY: ~15/min sustained to ticketsdata.com is within the prepaid plan's implied rate.
 -- Fully reversible (restore intervals/caps/schedules; drop the floor clause).
--- ROLLBACK: caps→6k/180k; td_budget_ok→daily AND monthly (no floor); poll_policy→prior
+-- ROLLBACK: td_budget_ok→drop floor clause; poll_policy→prior
 -- (720/888/1440/4320/10080); cron_policy enqueue→15m; enqueue crons→twice-hourly; drains→5/50.
-
-CREATE OR REPLACE FUNCTION public.td_daily_budget_ok() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp'
-AS $$ SELECT public.td_credits_today() < 50000; $$;
-
-CREATE OR REPLACE FUNCTION public.td_monthly_budget_ok() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp'
-AS $$ SELECT public.td_credits_this_month() < 600000; $$;
 
 CREATE OR REPLACE FUNCTION public.td_budget_ok() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp'
 AS $$
