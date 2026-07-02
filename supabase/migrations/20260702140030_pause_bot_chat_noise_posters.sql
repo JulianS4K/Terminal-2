@@ -1,5 +1,8 @@
 -- ============================================================================
--- Migration 20260702140000 — pause the two bot_chat noise-poster crons
+-- Migration 20260702140030 — pause the two bot_chat noise-poster crons
+--   (prefix bumped +30s off 20260702140000 to clear the timestamp collision with
+--    20260702140000_a1_security_close_d0_view_leak_and_fn_lockdown.sql per
+--    MIGRATION_CONVENTIONS.md rule #2)
 --
 -- Lane:     A1 (cron topology) · operator-authorized (julian@s4kent.com, 2026-07-02:
 --           "pause only bot chat noise and anything claude bot related")
@@ -34,6 +37,7 @@
 --
 -- ## Already applied to prod
 -- Applied via mcp apply_migration on 2026-07-02 under the operator directive above.
+-- Idempotent: the cron.alter_job toggles and the guarded notes-append re-run as no-ops.
 -- ============================================================================
 
 DO $$
@@ -55,6 +59,9 @@ END $$;
 
 UPDATE public.cron_policy
    SET enabled = false,
-       notes   = notes || ' [PAUSED 2026-07-02 mig 20260702140000: bot_chat noise poster, operator-authorized]',
+       notes   = CASE WHEN notes LIKE '%PAUSED 2026-07-02 mig%'
+                      THEN notes
+                      ELSE notes || ' [PAUSED 2026-07-02 mig 20260702140030: bot_chat noise poster, operator-authorized]'
+                  END,
        updated_at = now()
  WHERE jobname IN ('compute_movers_index_post_snapshot','sg_broker_429_health_check_15min');
