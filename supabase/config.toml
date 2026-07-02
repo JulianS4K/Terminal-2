@@ -20,9 +20,10 @@ max_rows = 1000
 [db]
 port = 54322
 shadow_port = 54320
-# Match the prod major version so migration-from-zero validation reflects the
-# server the migrations actually run against.
-major_version = 16
+# Postgres 15 — a major the CLI ships a local image for (it has no 16 image).
+# The migrations-from-zero gate validates ordering + SQL, not a prod-exact
+# server version, so 15 is a safe, widely-supported choice.
+major_version = 15
 
 [db.pooler]
 enabled = false
@@ -31,9 +32,6 @@ enabled = false
 enabled = false
 
 [studio]
-enabled = false
-
-[inbucket]
 enabled = false
 
 [storage]
