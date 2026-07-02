@@ -691,6 +691,22 @@ def test_portfolio_venue_filter(client, monkeypatch):
     assert body["events"][0]["is_home"] is None
 
 
+def test_portfolio_all_events_ignored_empty_aggregate(client, monkeypatch):
+    # Every resolved event is operator-ignored (state='ignored', e.g. the
+    # Sphere Wizard of Oz pseudo-events) -> early empty-aggregate return.
+    fake = FakeSupabase(table_data={
+        "events": [{"id": 100, "name": "The Wizard of Oz at Sphere", "occurs_at_local": None,
+                    "venue_id": 1, "venue_name": "Sphere", "venue_location": "Las Vegas, NV",
+                    "state": "ignored", "primary_performer_id": 123021,
+                    "primary_performer_name": "The Wizard of Oz"}],
+    })
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/portfolio?venue_id=1").json()
+    assert body["events"] == []
+    assert body["aggregate"]["events_count"] == 0
+    assert body["filter"]["venue_id"] == 1
+
+
 def test_portfolio_watchlist_only_excludes_inactive(client, monkeypatch):
     # watch_sources resolves ids; lifecycle marks event inactive -> excluded.
     fake = FakeSupabase(table_data={

@@ -59,7 +59,7 @@ def search_sql_only(db, q_norm: str, limit: int) -> dict:
     try:
         ev_rows = (db.table("events")
                      .select("id,name,occurs_at_local,venue_name,venue_location,"
-                             "primary_performer_id,primary_performer_name")
+                             "primary_performer_id,primary_performer_name,state")
                      .gte("occurs_at_local", today_iso)
                      .or_(",".join([
                          _or_ilike_clause("name", pattern),
@@ -77,7 +77,11 @@ def search_sql_only(db, q_norm: str, limit: int) -> dict:
     # Tag with we_own + from_price via latest_event_metrics. Drop speculative
     # names (CANCELLED / (If Necessary) / (Date TBD)) — consumer storefront
     # should not surface playoff "may not happen" inventory.
-    ev_rows = [e for e in ev_rows if not _is_speculative_event_name(e.get("name"))]
+    # Drop speculative names AND operator-ignored events (state='ignored', e.g.
+    # pseudo-events). Client-side: PostgREST .neq() would also drop NULL states.
+    ev_rows = [e for e in ev_rows
+               if not _is_speculative_event_name(e.get("name"))
+               and (e.get("state") or "") != "ignored"]
     if ev_rows:
         ev_ids = [int(e["id"]) for e in ev_rows if e.get("id")]
         metrics: dict[int, dict] = {}
