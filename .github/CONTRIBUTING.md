@@ -42,9 +42,24 @@ Note: PRs that touch backend code (`app.py`, `supabase/*`, `*_client.py`) requir
 
 ## Code style
 
-- Python: follow existing patterns in `app.py`; no formal `black`/`ruff` enforcement currently
+- Python: follow existing patterns in `server.py`; no formal `black`/`ruff` enforcement currently
 - SQL: lowercase keywords are fine; column names match the table they read from (see `PROJECT_BIBLE.md §3` landmines)
 - TypeScript (edge functions): match the style of `supabase/functions/_shared/cron-auth.ts`
+
+### Code reference conventions (stable references)
+
+Comments that cite *where* something lives are only useful if the citation
+survives a refactor. Cite things that are stable, never things that move:
+
+- **Do** reference migration IDs (`mig 20260520130000`), PR numbers (`PR #114`),
+  audit dates (`audit 2026-05-16`), test names, and function/symbol names
+  (`the safe_q re.sub above`). These survive file moves and line shifts.
+- **Don't** reference line numbers (`line ~4467`) or the names of files that no
+  longer exist (e.g. the pre-decomposition `app.py` monolith). They rot the
+  instant code moves — and this repo has already decomposed `app.py` into
+  `server.py` + `routers/*`, so any `app.py:NNNN` comment is now a dead pointer.
+- When you touch a comment carrying a stale line/file reference, fix it to a
+  stable anchor rather than updating the number.
 
 ## Commit messages
 

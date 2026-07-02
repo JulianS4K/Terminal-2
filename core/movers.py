@@ -586,8 +586,8 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
             # First match wins per event — v_event_holidays can emit
             # multiple rows when a date hits multiple holidays. The view
             # already orders by match_specificity DESC server-side. This
-            # view is exact-date only (see line 5856 landmine note), so
-            # all matches from here are day-of → weekend=False.
+            # view is exact-date only (v_event_holidays; see PROJECT_BIBLE §3
+            # landmines), so all matches from here are day-of → weekend=False.
             for r in hrows:
                 eid = r.get("tevo_event_id")
                 if eid is None:
@@ -603,7 +603,7 @@ def _compute_movers(db, city: str, day_cap: int, cap: int) -> dict:
                        .in_("tevo_event_id", candidate_ids)
                        .execute().data) or []
             # v_rivalry_events emits duplicate rows when both teams in a
-            # matchup are competitors (app.py:1198 bible landmine).
+            # matchup are competitors (PROJECT_BIBLE §3 rivalry-dedupe landmine).
             # Dedupe Python-side; first row wins.
             for r in rrows:
                 eid = r.get("tevo_event_id")

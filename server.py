@@ -1073,7 +1073,7 @@ app.include_router(build_axs_router(get_require_sb=lambda: require_sb, require_a
 # expected in env var CRON_SECRET on Railway. Hardened 2026-05-11:
 # fail-closed if unset (was: defaulted to a known placeholder string),
 # constant-time compare to avoid timing-leak.
-# CRON_SECRET is declared once at module top (line ~216) — no re-declaration.
+# CRON_SECRET is declared once at module top — no re-declaration.
 
 
 # _require_cron_or_auth -> core/auth.py (BR-CODE-1 config/auth seam). Imported
