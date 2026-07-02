@@ -279,38 +279,12 @@ External repos the operator dropped in for triage. **EVAL only** — not adopted
 ### DOING (code) — _none yet_
 _(if I'm in the middle of something, it goes here so design knows what files I'm touching)_
 
-### DONE (D1, 2026-05-18 / 2026-05-19) — Storefront movers rebuilt + dep sweep
+### DONE (2026-05) — archived
 
-Two-day arc that landed 8 PRs touching the `/store` home rail and the dependabot backlog.
-
-**Movers system — iteratively reshaped over 3 PRs:**
-- PR #273 (`677988a`) — Multi-label system: dropped `premium` (price-only), added `selling_fast` / `demand_rising` / `trending` / `deal`. Top-1% strip + 10-card rest grid sampled proportionally. SG sales / SG listings deltas wired in via 3 new Supabase queries (xref + sales 48h + listings now/prior).
-- PR #274 (`66e6e98`) — Round-robin + grading curve. Operator reported strip was all `deal`. Pure proportional sampling collapsed to whichever label dominated; cycling `selling_fast → demand_rising → trending → deal` plus a 40% cap on >80%-dominant labels gave a forced mix.
-- PR #275 (`bec2295`) — **Structural fix**: collapsed strip + rest into **4 independent themed sliders** (`moving_fast` / `price_drops` / `climbing` / `specials`), patterned on SeatGeek's homepage `buzzfeed-horizontal-list`. Each section has its own filter + sort + cap=10, so deals can't crowd selling-fast. Specials rail merges holiday-window matches (`v_event_holidays`) + rivalry games (`v_rivalry_events`), gated to `owned > 100`. Label-bucket system + `_movers_compute_labels` / `_round_robin_pop_by_label` retired.
-
-**Response-shape break**: `/api/store/movers` now returns `moving_fast` + `price_drops` + `climbing` + `specials` arrays. Old `events` + `rest` keys gone. Only consumer was `static/store/store.js` which was rewritten in the same PR.
-
-**Search default flipped (PR #272, `88c47a4`)**: `STOREFRONT_SEARCH_SQL_ONLY=true` is now the boot default — `/api/store/search` serves from SQL; live TEvo stays available as env-flip fallback. Event-detail page still hits TEvo directly. Owned-only client filter shipped in PR #271.
-
-**Dependabot consolidation** (5 patch + 2 major bumps merged):
-- Patches: `defusedxml` (#256), `scorecard-action` 2.4.0→2.4.3 (#254), `requests` (#257).
-- Majors landed: `actions/checkout` 4→6 (#253), `dependency-review-action` 4→5 (#255), `fastapi` 0.115→0.136 (#258, pulls starlette 0.52→1.0). PR #245 ignore policy honored for the 5 deferred majors still listed in B1-NEXT-51.
-
-**Other shipped today**:
-- PR #261 — D3 broadway live-network test scaffolding (additive; needs admin-PC validation flagged in PR body).
-
-Verification:
-- [x] `pytest tests/test_store_home.py` — 35/35 pass post-reshape
-- [x] All 7 PRs CI green pre-merge
-- [ ] Post-deploy `curl /api/store/movers?city=NYC&days=90` confirms new shape (queued — `vibepass-storefront-test` autoDeploy on main)
-
-### DONE (code) — Overnight: audit + XSS fix + 3-surface preview switcher
-
-- **Audit of design's 2026-05-08 submission** committed at `docs/audit-2026-05-09.md`. Wall preserved, Python clean, backend healthy (21 crons, 0 failures last hour). 1 blocking finding: DOM-XSS in `shop.html` chatbot.
-- **XSS fixed**: `sendChat()` + `openChat(prefill)` rewritten with `textContent` + `appendChild` via `_appendChatTurn()` helper. Inline deeplink onclick moved to `data-deeplink` + `addEventListener`.
-- **3-surface preview launched** at `/preview/*` per Julian's overnight ask. 4 new app.py routes (landing, terminal, shop, ops). Sticky switcher header on every skeleton with active-route highlight. Landing page card grid links to GitHub specs.
-- **No protected files touched** beyond app.py route additions + AGENTS LOG + KANBAN. Migrations / SCHEMA / clients untouched.
-- **Pushed**: pending commit hash.
+Completed 2026-05 epochs (D1 storefront-movers rebuild + dep sweep; the
+overnight audit + XSS fix + 3-surface preview switcher) moved to
+[`docs/archive/2026-07-02-kanban-done-2026-05.md`](docs/archive/2026-07-02-kanban-done-2026-05.md)
+to keep this board scannable. Nothing open remains in them.
 
 ---
 
@@ -603,7 +577,8 @@ Defense-in-depth follow-ups identified during the Phase-2 monitoring sweep. Each
 - **[B1-NEXT-7] [SEC-HIGH] ✅ CLOSED** (B1 verified 2026-05-26 via Phase-2 anon-permissive-policy sweep — **0** anon-readable tables have `rowsecurity=false`; these 3 have since had RLS enabled, no fix migration needed). Original: RLS gap on `cron_pause_state_20260514`, `sg_event_priority_state`, `sg_priority_policy`.
 - **[B1-NEXT-8] [SEC-MED]** §6 retrofit on `_health_check_pg_net_errors()` (A1's, added by PR #115). File PR comment to A1 per cross-lane patch protocol. Read-only diagnostic but defense-in-depth retrofit warranted.
 - **[B1-NEXT-9] [SEC-MED]** §6 retrofit on `get_broker_event_page(integer, integer)` (A1's, added by PR #115). Body is already gated by `auth.jwt()->>'email'`; §6 guard is belt-and-suspenders. File PR comment to A1.
-- **[B1-NEXT-10] [SEC-LOW]** Migration slot collision audit — `20260515300000` (3 files), `20260515320000` (2 files) collide. MIGRATION_CONVENTIONS.md §3 bump-by-30-or-50 rule not followed. Not security-class but flags discipline drift; recommend filenames be renamed to next free slots in a future cleanup PR.
+- **[B1-NEXT-10] [SEC-LOW]** Migration slot collision audit — `20260515300000` (3 files), `20260515320000` (2 files) collide. MIGRATION_CONVENTIONS.md §3 bump-by-30-or-50 rule not followed. Not security-class but flags discipline drift; recommend filenames be renamed to next free slots in a future cleanup PR. **Partial (2026-07-02):** `.github/workflows/migration-collision-check.yml` now blocks *new* colliding prefixes (diff-scoped; the 36 existing dupes are baselined, not renamed). Renaming the historical dupes is still open here.
+- **[B1-NEXT-22] [chore]** Group the 9 root-level `*_client.py` into a `clients/` package to finish the `core/`/`routers/` extraction shape. **NOT afternoon-cleanup — do it as its own tested PR:** (1) ~324 references across `server.py`, `d2_dashboard/main.py`, and `scripts/*` use bare top-level imports (`from evo_client import …`) — all must move to `clients.evo_client` (or a package shim); (2) **security-CRIT dependency:** `scripts/check_readonly.py:304` does `ROOT.glob("*_client.py")` as an opt-OUT discovery that forces every client to be GET-guarded — moving the files makes that glob match nothing at root, silently disabling the readonly-guard audit's discovery (RULE-2). The glob must be updated to recurse into `clients/` **in the same PR**, with `tests/test_readonly_guards.py` proving coverage didn't drop. Until both land, leave the clients at root.
 
 ### B1-NEXT — git + render monitoring expansion (filed 2026-05-15 by B1 charter §git+render)
 

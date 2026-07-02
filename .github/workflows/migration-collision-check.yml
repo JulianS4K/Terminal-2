@@ -1,0 +1,77 @@
+name: migration-collision-check
+
+# Enforces MIGRATION_CONVENTIONS.md rule #2 ("no timestamp collision; bump
+# +30/+50, never +1") mechanically. That rule has been convention-only, and
+# the tree already carries 36 duplicate 14-digit prefixes across 674 migrations
+# — proof the manual checklist doesn't hold. Supabase applies migrations
+# lexicographically by full filename, so a colliding prefix resolves ties
+# alphabetically by name — accidental ordering that silently mis-sequences two
+# migrations with a real dependency.
+#
+# This gate is DIFF-SCOPED: it fails only when a PR *adds* a migration whose
+# 14-digit prefix collides with any other migration in the tree (existing or
+# another file added in the same PR). The 36 pre-existing collisions are
+# baselined — they never involve an added file, so they don't trip the check.
+# New work is held to the convention going forward.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect colliding new migration prefixes
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Migrations ADDED by this PR (status=A), migrations dir only.
+          mapfile -t ADDED < <(git diff --diff-filter=A --name-only \
+            "$BASE_SHA" "$HEAD_SHA" -- 'supabase/migrations/*.sql' || true)
+
+          if [[ ${#ADDED[@]} -eq 0 ]]; then
+            echo "✅ No new migrations in this PR."
+            exit 0
+          fi
+
+          echo "New migrations:"
+          printf '  %s\n' "${ADDED[@]}"
+
+          # All migration basenames in the resulting (head) tree.
+          mapfile -t ALL < <(ls supabase/migrations/*.sql 2>/dev/null \
+            | xargs -n1 basename)
+
+          VIOLATION=0
+          for path in "${ADDED[@]}"; do
+            base="$(basename "$path")"
+            prefix="${base:0:14}"
+            # Only 14-digit timestamp prefixes are subject to the ordering rule.
+            [[ "$prefix" =~ ^[0-9]{14}$ ]] || continue
+            for other in "${ALL[@]}"; do
+              [[ "$other" == "$base" ]] && continue
+              if [[ "${other:0:14}" == "$prefix" ]]; then
+                echo "❌ $base collides with existing $other (prefix $prefix)."
+                VIOLATION=1
+              fi
+            done
+          done
+
+          if [[ $VIOLATION -eq 1 ]]; then
+            echo ""
+            echo "Timestamp-prefix collision. Per MIGRATION_CONVENTIONS.md rule #2,"
+            echo "bump the new migration's prefix by +30 to +50 seconds so it sorts"
+            echo "unambiguously after the migration it depends on."
+            exit 1
+          fi
+
+          echo "✅ No new prefix collisions."
