@@ -17,7 +17,6 @@ import { listEventTickets, voidTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
-import { canEditEvents } from '../lib/orgs';
 import { useToast } from '../context/ToastContext';
 import SalesChart from '../components/SalesChart';
 import ScanReport from '../components/ScanReport';
@@ -85,10 +84,14 @@ export default function OrganizerEventReport() {
       </div>
     );
   }
-  // Gate: org staff (owner/manager/finance/content) or admin. Scanners
-  // can't see financials. Falls back to legacy organizerId check for
-  // pre-migration events.
-  const allowedByRole = isAdmin || canEditEvents(activeRole) || activeRole === 'finance';
+  // Gate: only owner / manager / finance (or admin) see financials. NOTE:
+  // canEditEvents() returns true for the 'content' role too, which wrongly
+  // exposed the report to content staff — gate explicitly on the finance-capable
+  // roles. (Column-scoping buyer_email/price_paid out of scanner/content at the
+  // RLS layer is a tracked follow-up on the barcode-secret least-privilege
+  // pattern from mig 20260702123000.) Falls back to legacy organizerId.
+  const allowedByRole =
+    isAdmin || activeRole === 'owner' || activeRole === 'manager' || activeRole === 'finance';
   const allowedByLegacy = event?.organizerId === user.uid;
   if (event && !allowedByRole && !allowedByLegacy) {
     return (

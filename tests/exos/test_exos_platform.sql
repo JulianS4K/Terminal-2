@@ -42,7 +42,12 @@ BEGIN
   PERFORM public.exos_join_waitlist('aaaaaaaa-0000-0000-0000-0000000000e1','b@x.com');
   SELECT count(*) INTO n FROM public.exos_waitlist WHERE event_id='aaaaaaaa-0000-0000-0000-0000000000e1';
   ASSERT n = 2, 'dedupe → 2 rows';
-  ASSERT public.exos_leave_waitlist((SELECT id FROM public.exos_waitlist WHERE email='b@x.com'),'b@x.com'), 'leave';
+  -- Leave now requires the caller's JWT identity (mig 20260702144607): a client
+  -- p_email alone no longer authorizes. Simulate the signed-in session whose
+  -- verified email matches the anon-created row.
+  PERFORM set_config('app.jwt','{"email":"b@x.com"}',false);
+  ASSERT public.exos_leave_waitlist((SELECT id FROM public.exos_waitlist WHERE email='b@x.com'),NULL), 'leave';
+  PERFORM set_config('app.jwt','',false);
   RAISE NOTICE 'A1 waitlist join/dedupe/leave OK';
 END $$;
 SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
@@ -205,8 +210,15 @@ BEGIN
   r := public.exos_check_in_ticket(tid1::uuid,'manual','manual',NULL,'aaaaaaaa-0000-0000-0000-0000000000e9');
   ASSERT r->>'reason'='doors-not-open', 'pre-doors check-in must be blocked, got '||coalesce(r->>'reason','null');
 
-  -- Enable server-side test mode → gate lifted.
-  UPDATE public.exos_events SET checkin_test_mode=true WHERE id='aaaaaaaa-0000-0000-0000-0000000000e9';
+  -- Bare boolean alone must NOT lift the gate (mig 20260702144537 requires an
+  -- unexpired checkin_test_until — closes the "left on forever" footgun).
+  UPDATE public.exos_events SET checkin_test_mode=true, checkin_test_until=NULL
+    WHERE id='aaaaaaaa-0000-0000-0000-0000000000e9';
+  r := public.exos_check_in_ticket(tid1::uuid,'manual','manual',NULL,'aaaaaaaa-0000-0000-0000-0000000000e9');
+  ASSERT r->>'reason'='doors-not-open', 'bare test-mode boolean must NOT lift the gate, got '||coalesce(r->>'reason','null');
+
+  -- Open a bounded test window via the RPC (owner-gated) → gate lifted.
+  PERFORM public.exos_set_checkin_test_window('aaaaaaaa-0000-0000-0000-0000000000e9', 3);
 
   -- (b) Valid signed barcode via camera → admitted.
   bkt := floor(extract(epoch FROM now())*1000/30000)::bigint;
@@ -252,6 +264,76 @@ BEGIN
   ASSERT sec<>'secret-old', 'barcode_secret rotated on claim';
   ASSERT st='active' AND ptid IS NULL, 'ticket active + transfer lock cleared';
   RAISE NOTICE 'A10 transfer reassigns buyer_id (secret leak closed) OK (audit fix)';
+END $$;
+
+-- A11. Test-mode window auto-expires (real-event hardening 2026-07-02).
+INSERT INTO public.exos_tickets(id,event_id,org_id,owner_id,buyer_id,status,barcode_secret) VALUES
+  ('aaaaaaaa-0000-0000-0000-0000000000f4','aaaaaaaa-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','secret-f4');
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+SELECT set_config('app.jwt','{"email":"owner@s4kent.com"}',false);
+DO $$
+DECLARE r jsonb;
+BEGIN
+  -- A lapsed window (checkin_test_until in the past) must re-block, even with
+  -- checkin_test_mode still true.
+  UPDATE public.exos_events SET checkin_test_mode=true, checkin_test_until=now()-interval '1 minute'
+    WHERE id='aaaaaaaa-0000-0000-0000-0000000000e9';
+  r := public.exos_check_in_ticket('aaaaaaaa-0000-0000-0000-0000000000f4','manual','manual',NULL,'aaaaaaaa-0000-0000-0000-0000000000e9');
+  ASSERT r->>'reason'='doors-not-open', 'expired test window must re-block the gate, got '||coalesce(r->>'reason','null');
+
+  -- Clearing via the RPC (p_hours<=0) drops the flag + window.
+  PERFORM public.exos_set_checkin_test_window('aaaaaaaa-0000-0000-0000-0000000000e9', 0);
+  ASSERT (SELECT NOT checkin_test_mode AND checkin_test_until IS NULL
+            FROM public.exos_events WHERE id='aaaaaaaa-0000-0000-0000-0000000000e9'),
+         'clearing the window resets both fields';
+  RAISE NOTICE 'A11 test-mode window auto-expiry OK (audit fix)';
+END $$;
+
+-- A12. Waitlist IDOR closed (mig 20260702144607): client email can't tamper/
+-- cancel another user's row. Uses published event e9 + the auth.users from A10.
+DO $$
+DECLARE alice_row uuid; nm text; st text; raised boolean := false;
+BEGIN
+  PERFORM set_config('app.uid','33333333-3333-3333-3333-333333333333',false);
+  PERFORM set_config('app.jwt','{"email":"alice@x.com"}',false);
+  SELECT waitlist_id INTO alice_row FROM public.exos_join_waitlist(
+    'aaaaaaaa-0000-0000-0000-0000000000e9','ignored@x.com',NULL,'Alice',2,NULL);
+  ASSERT (SELECT user_id FROM public.exos_waitlist WHERE id=alice_row)='33333333-3333-3333-3333-333333333333',
+         'authed join binds row to the JWT user';
+
+  -- Anon caller who knows Alice's email must NOT be able to touch her row.
+  PERFORM set_config('app.uid','',false);
+  PERFORM set_config('app.jwt','{}',false);
+  BEGIN
+    PERFORM public.exos_join_waitlist('aaaaaaaa-0000-0000-0000-0000000000e9','alice@x.com',NULL,'HACKED',9,NULL);
+  EXCEPTION WHEN others THEN raised := true;
+  END;
+  ASSERT raised, 'anon join on a registered email must be refused';
+  SELECT name INTO nm FROM public.exos_waitlist WHERE id=alice_row;
+  ASSERT nm='Alice', 'victim row must be untouched, got '||coalesce(nm,'null');
+
+  -- A different authenticated user supplying Alice's email only affects THEIR own row.
+  PERFORM set_config('app.uid','44444444-4444-4444-4444-444444444444',false);
+  PERFORM set_config('app.jwt','{"email":"bob@x.com"}',false);
+  PERFORM public.exos_join_waitlist('aaaaaaaa-0000-0000-0000-0000000000e9','alice@x.com',NULL,'Bob',1,NULL);
+  ASSERT (SELECT count(*) FROM public.exos_waitlist WHERE event_id='aaaaaaaa-0000-0000-0000-0000000000e9' AND email='bob@x.com')=1,
+         'attacker join creates only their own row';
+  ASSERT (SELECT user_id FROM public.exos_waitlist WHERE id=alice_row)='33333333-3333-3333-3333-333333333333',
+         'attacker cannot rebind the victim row';
+
+  -- Anon leave with a client-supplied email must NOT cancel Alice's row.
+  PERFORM set_config('app.uid','',false);
+  PERFORM set_config('app.jwt','{}',false);
+  PERFORM public.exos_leave_waitlist(alice_row,'alice@x.com');
+  SELECT status INTO st FROM public.exos_waitlist WHERE id=alice_row;
+  ASSERT st='waiting', 'client-email leave must not cancel the victim row, got '||st;
+
+  -- Alice herself can leave (JWT identity).
+  PERFORM set_config('app.uid','33333333-3333-3333-3333-333333333333',false);
+  PERFORM set_config('app.jwt','{"email":"alice@x.com"}',false);
+  PERFORM public.exos_leave_waitlist(alice_row,NULL);
+  ASSERT (SELECT status FROM public.exos_waitlist WHERE id=alice_row)='cancelled', 'owner can cancel their own row';
+  RAISE NOTICE 'A12 waitlist IDOR closed OK (audit fix)';
 END $$;
 
 SELECT '*** PART A (individual functions) PASSED ***' AS result;
