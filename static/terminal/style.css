@@ -1542,6 +1542,12 @@ body[data-page="login"] {
   font-family: var(--mono);
   flex-wrap: wrap;
 }
+/* `display: flex` above overrides the plain `hidden` attribute, so JS that sets
+   `eventTabs.hidden = true` (SG / World Cup mode hides the shared TEvo-source tab
+   bar and shows its own WC tab bar) had no visual effect — the shared bar stayed
+   visible and its TEvo-keyed tabs read as "broken" for SG-native events. Mirror
+   the `.tab-pane[hidden]` override so `hidden` actually hides the bar. */
+.event-tabs[hidden] { display: none; }
 .event-tabs-sep {
   color: var(--dim);
   font-family: var(--mono);
