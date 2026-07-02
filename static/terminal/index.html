@@ -19,7 +19,7 @@
        _shared/design-tokens.css (same file home/undelivered link). Loaded before
        style.css so its var() refs resolve. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260629a" />
+  <link rel="stylesheet" href="style.css?v=20260702" />
 </head>
 <body data-page="home">
 
@@ -134,6 +134,7 @@
 
   <script src="lib/supabase.js"></script>
   <script src="lib/render.js"></script>
+  <script src="pwa.js?v=20260702"></script>
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>

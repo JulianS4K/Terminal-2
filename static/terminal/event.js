@@ -301,7 +301,9 @@
     const xs = asc.map(r => Math.floor(new Date(r.snapshot_date + 'T00:00:00Z').getTime() / 1000));
     const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
     const data = [xs, col('allin_min'), col('allin_median'), col('allin_p90')];
-    const width = () => Math.max(320, host.clientWidth || 800);
+    // Floor stays below the narrowest phone pane so the canvas never exceeds its
+    // container (see paneSize note) — a 320 floor overflowed a ~284px SE pane.
+    const width = () => Math.max(160, host.clientWidth || 800);
     const opts = {
       width: width(), height: 240,
       scales: { x: { time: true } },
@@ -1165,6 +1167,17 @@
       { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
       { key: 'prices_axs',      label: 'AXS box office', color: '#38bdf8', width: 1.75, dash: null, data: chart.prices_axs || [] },
     ];
+    // TP / TM / TM-resale price medians — the medians live in _tdFamily[*].med
+    // (the same family that already feeds the Overall-median consensus below) but
+    // were only ever plotted as listing-COUNTS on the inventory pane, never as
+    // price lines here. Omit-empty: a source with no median in the latest snapshot
+    // adds nothing (so this is a no-op until A1's snapshot rollup populates them).
+    if (_tdFamily) {
+      const famMed = (k) => (_tdFamily[k] && _tdFamily[k].med) || [];
+      if (famMed('tp').length)  specs.push({ key: 'td_tp_med',  label: 'TickPick',     color: '#eab308', width: 1.25, dash: null, data: famMed('tp') });
+      if (famMed('tm').length)  specs.push({ key: 'td_tm_med',  label: 'Ticketmaster', color: '#818cf8', width: 1.25, dash: null, data: famMed('tm') });
+      if (famMed('tmr').length) specs.push({ key: 'td_tmr_med', label: 'TM resale',    color: '#e879f9', width: 1.25, dash: null, data: famMed('tmr') });
+    }
     const { xs } = buildSeriesData(specs);
 
     // "Overall median" — quantity-weighted, carry-forward consensus across all
@@ -1194,6 +1207,11 @@
     const { w, h } = paneSize(host);
     const opts = {
       width: w, height: h,
+      // The app renders its own per-series legends (#chartPriceLegend) + a custom
+      // hover tooltip, so uPlot's built-in legend is redundant. Left on, uPlot's
+      // CSS `.uplot{width:min-content}` sized .uplot to the legend's ~1743px and
+      // the pane's overflow:hidden just clipped it — dead, oversized DOM. Off it goes.
+      legend: { show: false },
       cursor: { drag: { x: true, y: false } },
       scales: {
         x: { time: true, range: xRange ? (() => xRange) : undefined },
@@ -1418,9 +1436,9 @@
       if (famCnt('tp').length) specs.push(
         { key: 'td-tp-cnt',  label: 'TP listings',  color: '#eab308', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tp') });
       if (famCnt('tm').length) specs.push(
-        { key: 'td-tm-cnt',  label: 'TM listings',  color: '#38bdf8', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tm') });
+        { key: 'td-tm-cnt',  label: 'TM listings',  color: '#818cf8', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tm') });
       if (famCnt('tmr').length) specs.push(
-        { key: 'td-tmr-cnt', label: 'TMr listings', color: '#fb7185', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tmr') });
+        { key: 'td-tmr-cnt', label: 'TMr listings', color: '#e879f9', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tmr') });
     }
     const { xs } = buildSeriesData(specs);
     // Stack the two market-sales bar series (SeatData on top of SG): SeatData's
@@ -1452,6 +1470,7 @@
 
     const opts = {
       width: w, height: h,
+      legend: { show: false },   // app uses custom legends + tooltip (see price chart note)
       cursor: { drag: { x: true, y: false } },
       scales: {
         x:  { time: true, range: xRange ? (() => xRange) : undefined },
@@ -1502,7 +1521,12 @@
 
   function paneSize(host) {
     const rect = host.getBoundingClientRect();
-    const w = Math.max(400, rect.width || host.clientWidth || 1200);
+    // Floor is only a guard against a 0-width measurement during layout — it must
+    // stay BELOW the narrowest real container (a ~320px phone pane is ~284px after
+    // padding). A high floor (was 400) forced the canvas wider than the pane, and
+    // since .chart-pane is overflow:hidden the right edge — the LATEST, most
+    // important data — got clipped off-screen on mobile. Use the measured width.
+    const w = Math.max(160, rect.width || host.clientWidth || 1200);
     // Subtract a small budget for the host's own padding; uPlot wants exact px.
     const h = Math.max(40, Math.floor(rect.height || host.clientHeight || 120));
     return { w, h };
@@ -1730,6 +1754,9 @@
     { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
     { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
     { src: 'AXS',  color: '#38bdf8', keys: ['prices_axs', 'counts_axs'] },
+    { src: 'TP',   color: '#eab308', keys: ['td_tp_med', 'td-tp-cnt'] },
+    { src: 'TM',   color: '#818cf8', keys: ['td_tm_med', 'td-tm-cnt'] },
+    { src: 'TMr',  color: '#e879f9', keys: ['td_tmr_med', 'td-tmr-cnt'] },
   ];
 
   // Which series keys currently carry real data (scanning both build caches).
@@ -3406,8 +3433,18 @@
       } else if (tabId === 'td-markets' && !_tabState.loaded['td-markets']) {
         await loadTdMarketsFull(eventId);
       } else if (tabId === 'alerts') {
-        // Re-render every activation (cheap; reflects track/alert toggles).
+        // Re-render the tracking/recent/watchlist sections every activation
+        // (cheap; reflects track/alert toggles).
         await loadAlertsTab(eventId);
+        // Mount the custom alert-rule UI ONCE (alerts.js). This used to sit in an
+        // unreachable second branch below a catch-all `tabId === 'alerts'`, so it
+        // never ran — the rule UI was dead. Folded in here (2026-06-19).
+        if (!_tabState.loaded['alerts']) {
+          _tabState.loaded['alerts'] = true;
+          const label = document.getElementById('evTitle')?.textContent || '';
+          window.TerminalAlerts?.mount('event', eventId, label,
+            document.querySelector('#paneAlerts .alerts-root'));
+        }
       } else if (tabId === 'seatmap' && !_tabState.loaded['seatmap']) {
         await loadSeatmap(eventId);
       } else if (tabId === 'our-orders' && !_tabState.loaded['our-orders']) {
@@ -3421,10 +3458,6 @@
           loadCrossBrokerFull(eventId),
         ]);
         updateOurOrdersTabCount();
-      } else if (tabId === 'alerts' && !_tabState.loaded['alerts']) {
-        _tabState.loaded['alerts'] = true;
-        const label = document.getElementById('evTitle')?.textContent || '';
-        window.TerminalAlerts?.mount('event', eventId, label, document.querySelector('#paneAlerts .alerts-root'));
       }
     });
   }
@@ -3450,7 +3483,6 @@
       'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
-      'alerts':       'paneAlerts',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -4002,9 +4034,15 @@
       return;
     }
     const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client) {
-      if (meta) meta.textContent = 'no auth (Path C unavailable on localhost)';
+    // Require a real SESSION, not just the client object — the client always
+    // exists (built from the publishable key), so checking only `Auth.client`
+    // let a session-less load fall through to the `events` read, which RLS
+    // returns empty → the confusing "event lookup failed / no event row" state.
+    // Gate on the token like the rest of the page so it degrades cleanly.
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (meta) meta.textContent = 'no auth — sign in to view the seat map';
       if (host) host.innerHTML = '<div class="empty">Seat map needs an @s4kent.com session.</div>';
+      if (listBody) listBody.innerHTML = '';
       return;
     }
 
@@ -5008,21 +5046,22 @@
     const body = document.getElementById('sgSellerOrdersFullBody');
     const meta = document.getElementById('sgSellerOrdersFullMeta');
     const countChip = document.getElementById('tabCountSgSellerOrders');
+    const section = document.getElementById('sg-seller-orders-full');
     if (!body) return;
-    if (!d || d.hidden) {
-      const reason = d && d.reason === 'no_sg_bridge' ? 'no SG bridge for this event' : 'hidden';
-      body.innerHTML = `<div class="empty">${escapeHtml(reason)}</div>`;
+    const rows = (d && d.rows) || [];
+    // This SellerDirect feed is OBSOLETE (stale) — collapse the whole panel when
+    // it has nothing current rather than parking a dead/empty box on the page,
+    // matching the broker-sales hide-when-empty convention. Only show it if it
+    // genuinely still carries rows.
+    if (!d || d.hidden || !rows.length) {
+      if (section) section.style.display = 'none';
       if (meta) meta.textContent = '0 rows';
       if (countChip) countChip.textContent = '0';
       return;
     }
-    const rows = d.rows || [];
+    if (section) section.style.display = '';
     if (meta) meta.textContent = `${rows.length} rows · ${ms.toFixed(0)}ms · sg_event_id ${d.sg_event_id}`;
     if (countChip) countChip.textContent = String(rows.length);
-    if (!rows.length) {
-      body.innerHTML = '<div class="empty">no SG SellerDirect orders for this event</div>';
-      return;
-    }
     const host = document.createElement('div');
     host.className = 'full-list-host';
     const tbl = document.createElement('table');
@@ -5442,6 +5481,15 @@
       ['cost_median',            'COST MED', '$'],
       ['retail_p25',             'P25', '$'],
       ['retail_p75',             'P75', '$'],
+      ['retail_p90',             'P90', '$'],
+      ['wholesale_median',       'WHOLESALE', '$'],
+      // Distribution-shape ratios (units from migration 20260425000001 + the
+      // collect-listings collector): dispersion = p75/p25, tail = p90/median —
+      // both ratios → "1.50×"; top5_concentration = numeric(5,4) fraction 0–1 of
+      // tickets in the top-5 sections → a percentage.
+      ['price_dispersion',       'DISPERSION', '×'],
+      ['tail_premium',           'TAIL PREM',  '×'],
+      ['top5_concentration',     'TOP5 CONC',  '%'],
     ];
     function latestNonNullField(col) {
       for (let i = rows.length - 1; i >= 0; i--) {
@@ -5452,10 +5500,18 @@
       }
       return null;
     }
+    // Format by prefix: '$' money (rounded), '×' ratio (2dp, e.g. 1.50×),
+    // '%' fraction→percent (e.g. 0.62→62%), else a plain rounded integer.
+    function fmtSnapVal(val, prefix) {
+      if (prefix === '$') return '$' + T.fmtNum(Math.round(val));
+      if (prefix === '×') return val.toFixed(2) + '×';
+      if (prefix === '%') return Math.round(val * 100) + '%';
+      return T.fmtNum(Math.round(val));
+    }
     const cells = fields.map(([col, label, prefix]) => {
       const found = latestNonNullField(col);
       const valHtml = found
-        ? `<span class="last-snap-val">${prefix === '$' ? '$' : ''}${T.fmtNum(Math.round(found.val))}</span>`
+        ? `<span class="last-snap-val">${fmtSnapVal(found.val, prefix)}</span>`
         : `<span class="last-snap-val dim">—</span>`;
       return `<div class="last-snap-cell"><span class="last-snap-lbl">${label}</span>${valHtml}</div>`;
     }).join('');
