@@ -419,6 +419,22 @@ export async function checkInTicket(
   return (data ?? { ok: false, reason: 'not-found' }) as CheckInResult;
 }
 
+/** Open (or clear) a BOUNDED check-in test window that lifts the doors gate for
+ *  early scanner testing. Owner/manager only (enforced server-side). Pass
+ *  hours <= 0 to clear. Auto-expires — cannot be left on indefinitely
+ *  (mig 20260702144537). Returns the expiry, or null when cleared. */
+export async function setCheckinTestWindow(
+  eventId: string,
+  hours = 3,
+): Promise<string | null> {
+  const { data, error } = await supabase.rpc('exos_set_checkin_test_window', {
+    p_event_id: eventId,
+    p_hours: hours,
+  });
+  if (error) throw error;
+  return (data ?? null) as string | null;
+}
+
 /** Append a scan-rejection audit row (direct INSERT, staff RLS). Best-effort
  *  at the call site, same as the Firestore writeScanReject. */
 export async function recordScanReject(input: {

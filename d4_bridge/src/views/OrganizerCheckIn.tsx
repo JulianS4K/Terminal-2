@@ -7,6 +7,7 @@ import {
   checkInTicket,
   recordScanReject,
   countEventCheckins,
+  setCheckinTestWindow,
   type ScanTicket,
 } from '../lib/tickets';
 import { Ticket, Event } from '../types';
@@ -92,6 +93,10 @@ export default function OrganizerCheckIn() {
   // HMAC verifier so the operator knows whether the issue was a stale
   // barcode (screenshot from earlier) or a forged one.
   const [invalidReason, setInvalidReason] = useState<string>('');
+  // Set when a check-in is refused because doors aren't open yet — surfaces an
+  // owner/manager "enable test scanning" control (RPC is server-gated).
+  const [doorsBlocked, setDoorsBlocked] = useState(false);
+  const [enablingTest, setEnablingTest] = useState(false);
   const [foundTicket, setFoundTicket] = useState<Ticket | null>(null);
   const [buyerName, setBuyerName] = useState<string>('');
   const [scanning, setScanning] = useState(false);
@@ -487,6 +492,7 @@ export default function OrganizerCheckIn() {
     setStatus('searching');
     setFoundTicket(null);
     setInvalidReason('');
+    setDoorsBlocked(false);
 
     // Extract the ticket doc id from the QR payload regardless of format
     // (legacy 3-segment, signed 4-segment, or bare id). HMAC verification
@@ -631,9 +637,10 @@ export default function OrganizerCheckIn() {
               result.reason === 'barcode-expired'
                 ? 'This code expired. Ask the attendee to refresh their ticket and rescan.'
                 : result.reason === 'doors-not-open'
-                ? 'Doors are not open yet for this event. Check-in opens at the event’s doors time. (Enable test mode on the event to scan early.)'
+                ? 'Doors are not open yet for this event. Check-in opens at the event’s doors time.'
                 : "Signature didn't match this ticket (server check) — it may have been transferred since the offline registry was synced. Re-sync and retry.",
             );
+            if (result.reason === 'doors-not-open') setDoorsBlocked(true);
             setBuyerName(offlineTicket.name);
             setRecentScans((prev) =>
               [{ id: docId.slice(0, 8), name: offlineTicket.name, time: new Date(), status: 'DENIED' }, ...prev].slice(0, 5),
@@ -826,8 +833,9 @@ export default function OrganizerCheckIn() {
     if (result.reason === 'doors-not-open') {
       setStatus('invalid-barcode');
       setInvalidReason(
-        'Doors are not open yet for this event. Check-in opens at the event’s doors time. (Enable test mode on the event to scan early.)',
+        'Doors are not open yet for this event. Check-in opens at the event’s doors time.',
       );
+      setDoorsBlocked(true);
       pushScan('DENIED');
       return;
     }
@@ -860,6 +868,26 @@ export default function OrganizerCheckIn() {
     // not-found or any unexpected reason.
     setStatus('not-found');
     void writeScanReject('not-found', src, { ticketIdAttempted: scanTicket.id });
+  };
+
+  // Owner/manager: open a bounded test-scanning window so the doors gate is
+  // lifted for early scanner testing. Auto-expires (no left-on-forever). The RPC
+  // rejects non-owner/manager callers, so it's safe to offer here.
+  const enableTestWindow = async () => {
+    if (!eventId) return;
+    setEnablingTest(true);
+    try {
+      await setCheckinTestWindow(eventId, 3);
+      setDoorsBlocked(false);
+      setStatus('idle');
+      setInvalidReason('');
+      toast({ kind: 'success', message: 'Test scanning enabled for 3 hours. Remember it lifts the doors gate.' });
+    } catch (err) {
+      console.error('enable test window failed', err);
+      toast({ kind: 'error', message: 'Could not enable test scanning — owner/manager only.' });
+    } finally {
+      setEnablingTest(false);
+    }
   };
 
   if (!event) return null;
@@ -1071,9 +1099,20 @@ export default function OrganizerCheckIn() {
               <p className="text-amber-700 font-bold uppercase tracking-widest text-[10px] mb-4">
                 {invalidReason || 'Signature did not match — possible screenshot or stale code.'}
               </p>
-              <p className="text-amber-600 text-[11px] font-medium mb-2">
-                Ask the attendee to open their ticket and rescan the live QR.
-              </p>
+              {doorsBlocked ? (
+                <button
+                  type="button"
+                  onClick={enableTestWindow}
+                  disabled={enablingTest}
+                  className="mt-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50"
+                >
+                  {enablingTest ? 'Enabling…' : 'Enable test scanning (3h)'}
+                </button>
+              ) : (
+                <p className="text-amber-600 text-[11px] font-medium mb-2">
+                  Ask the attendee to open their ticket and rescan the live QR.
+                </p>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

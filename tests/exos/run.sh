@@ -20,4 +20,11 @@ for m in 20260702120000_exos_checkin_harden_doors_gate \
          20260702122000_exos_voucher_singleuse_and_limit_atomic; do
   $PSQL -f "$MIG/${m}.sql"
 done
+# 2026-07-02 real-event hardening (test-mode auto-expiry + waitlist IDOR). The
+# reconcile-cron migration (144637) is cron.schedule-only (needs pg_cron), so it
+# is intentionally NOT run in this data-layer harness.
+for m in 20260702144537_exos_checkin_test_window_autoexpiry \
+         20260702144607_exos_waitlist_idor_fix; do
+  $PSQL -f "$MIG/${m}.sql"
+done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"
