@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260702140000 — exclude EVO-owned events from the SG "WE'RE NOT IN" chart
+-- Migration 20260702140030 — exclude EVO-owned events from the SG "WE'RE NOT IN" chart
 --
 -- Lane:     D0 (terminal home panel) · level:2
 -- Touches:  sg_market_chart (W, via rebuild), rebuild_sg_market_chart() (W, redefined),
