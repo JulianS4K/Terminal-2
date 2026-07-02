@@ -72,6 +72,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
               .update({ payment_intent: session.payment_intent })
               .eq("session_id", session.id);
           }
+          // Ledger: record the settled payment as a first-class row (best-effort
+          // — the mint already succeeded and is the critical path; a ledger hiccup
+          // must not 500 the webhook into a Stripe retry loop).
+          try {
+            const pi = typeof session.payment_intent === "string"
+              ? session.payment_intent
+              : session.payment_intent?.id ?? null;
+            await sb.rpc("exos_record_payment", {
+              p_session_id: session.id,
+              p_payment_intent: pi,
+              p_amount_cents: session.amount_total ?? 0,
+              p_status: "succeeded",
+              p_currency: session.currency ?? "usd",
+              p_provider_event_id: event.id,
+            });
+          } catch (e) {
+            console.error("stripe-webhook: record_payment failed (non-fatal)", e);
+          }
         }
         break;
       }
@@ -108,6 +126,42 @@ Deno.serve(async (req: Request): Promise<Response> => {
               // 500 -> Stripe retries; exos_refund_checkout is idempotent.
               console.error(`stripe-webhook: refund handling failed for ${sess.session_id}`, error);
               return new Response("refund handling error", { status: 500 });
+            }
+            // Ledger: record the refund(s) on this charge (best-effort). Each
+            // Refund upserts by refund_id, and record_refund reconciles the
+            // session status (partially_refunded / refunded) from the sum.
+            try {
+              const allowed = new Set(["pending", "succeeded", "failed", "canceled"]);
+              const refunds = charge.refunds?.data ?? [];
+              if (refunds.length > 0) {
+                for (const rf of refunds) {
+                  await sb.rpc("exos_record_refund", {
+                    p_session_id: sess.session_id,
+                    p_refund_id: rf.id,
+                    p_amount_cents: rf.amount ?? 0,
+                    p_status: allowed.has(rf.status ?? "") ? rf.status : "pending",
+                    p_payment_intent: pi,
+                    p_reason: rf.reason ?? "stripe refund",
+                    p_currency: rf.currency ?? charge.currency ?? "usd",
+                    p_provider_event_id: event.id,
+                  });
+                }
+              } else {
+                // No expanded refund list on the payload — record the cumulative
+                // refunded amount once.
+                await sb.rpc("exos_record_refund", {
+                  p_session_id: sess.session_id,
+                  p_refund_id: null,
+                  p_amount_cents: charge.amount_refunded ?? 0,
+                  p_status: "succeeded",
+                  p_payment_intent: pi,
+                  p_reason: "stripe refund",
+                  p_currency: charge.currency ?? "usd",
+                  p_provider_event_id: event.id,
+                });
+              }
+            } catch (e) {
+              console.error("stripe-webhook: record_refund failed (non-fatal)", e);
             }
           }
         }

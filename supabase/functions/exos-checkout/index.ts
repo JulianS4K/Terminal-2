@@ -83,9 +83,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     overridePrice = v.override_price != null ? Number(v.override_price) : null;
   }
 
-  if (!bypassCapacity && tier.capacity > 0 && tier.sold + quantity > tier.capacity) {
-    return json({ error: "not enough tickets in this tier" }, 409);
-  }
+  // Availability is enforced by a cart HOLD created just before the Stripe
+  // session (exos_create_hold — atomically reserves against tier capacity AND
+  // any shared quota for a TTL, so two buyers can't both pay for the last seat).
+  // A bypass voucher skips the reservation (allowed to exceed caps). See below.
 
   // Per-person buy limit (maxPerOrder + cumulative maxPerAccount). Same check as
   // the comp path; counts tickets this buyer already holds, so a SECOND purchase
@@ -209,6 +210,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ error: "nothing to charge — use the free claim path" }, 400);
   }
 
+  // Reserve inventory with a cart hold BEFORE creating the Stripe session, so a
+  // buyer who is about to pay actually holds the seats (closes the read-then-
+  // charge oversell). Bypass vouchers skip it — they may exceed caps, honored at
+  // fulfillment. Held for 30 min; released here on failure, consumed at mint,
+  // else swept by the exos_expire_holds cron.
+  let holdId: string | null = null;
+  if (!bypassCapacity) {
+    const { data: hid, error: holdErr } = await sbUser.rpc("exos_create_hold", {
+      p_event_id: event_id, p_tier_id: tier_id, p_quantity: quantity,
+    });
+    if (holdErr) {
+      return json({ error: holdErr.message || "not enough tickets available" }, 409);
+    }
+    holdId = hid as string;
+  }
+
   const stripe = new Stripe(stripeKey, { httpClient: Stripe.createFetchHttpClient(), apiVersion: "2024-06-20" });
 
   let session: Stripe.Checkout.Session;
@@ -227,6 +244,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     });
   } catch (e) {
     console.error("exos-checkout: stripe session create failed", e);
+    await releaseHold(sb, holdId);
     return json({ error: "could not create checkout session" }, 502);
   }
 
@@ -241,11 +259,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
   });
   if (insErr) {
     console.error("exos-checkout: ledger insert failed", insErr);
+    await releaseHold(sb, holdId);
     return json({ error: "could not record session" }, 500);
+  }
+
+  // Link the hold to the now-existing session so fulfillment consumes it (and it
+  // stops counting against availability once the sale lands). Insert-then-link
+  // ordering matters: exos_cart_holds.checkout_session_id FKs the session row.
+  if (holdId) {
+    const { error: linkErr } = await sb.from("exos_cart_holds")
+      .update({ checkout_session_id: session.id }).eq("id", holdId);
+    if (linkErr) console.error("exos-checkout: hold link failed (non-fatal)", linkErr);
   }
 
   return json({ url: session.url, session_id: session.id });
 });
+
+// Best-effort release of a reservation when checkout can't complete (Stripe
+// error, ledger insert failure). Never throws — a stuck hold self-expires via
+// the exos_expire_holds cron regardless.
+async function releaseHold(sb: ReturnType<typeof createClient>, holdId: string | null): Promise<void> {
+  if (!holdId) return;
+  try {
+    await sb.from("exos_cart_holds")
+      .update({ status: "released", released_at: new Date().toISOString() })
+      .eq("id", holdId).eq("status", "active");
+  } catch (e) {
+    console.error("exos-checkout: hold release failed (non-fatal)", e);
+  }
+}
 
 // Mirrors public.exos_tax_cents: inclusive extracts the embedded tax from the
 // gross; exclusive computes the tax to add on top of the net.
