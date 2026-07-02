@@ -1,4 +1,4 @@
--- Migration 20260622150000 · level:2 · lane:D0
+-- Migration 20260622150030 · level:2 · lane:D0
 -- writes: build_venue_section_map() [fn — adds manual-row protection],
 --         set_event_section_manual_map() [fn], clear_event_section_manual_map() [fn]
 -- reads:  events, seatmap_manifest, venue_section_map
