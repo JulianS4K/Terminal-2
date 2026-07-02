@@ -1,0 +1,154 @@
+name: seam-review
+
+# Mechanized cross-lane seam review (PROJECT_BIBLE §2.6).
+#
+# §2.6 lists the shared seams where one lane's change can break another lane's
+# surface. The old rule was "C1 reviews any change touching these" — but C1 was
+# an arbiter honored in the breach. This job replaces the person with a check:
+# when a PR touches a §2.6 seam path, it auto-comments a consumer-impact
+# checklist naming the cross-lane consumers to verify before merge.
+#
+# NON-BLOCKING by design: it only posts/updates a PR comment, never fails the
+# build. The single source of truth for the seam->consumer map is
+# PROJECT_BIBLE §2.6 — keep the arrays below in sync (a seam added there should
+# gain an entry here).
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  seam-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed files
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          # Diff from the MERGE BASE, not the base tip: this is the PR's own
+          # changes only, so files that landed on main after this branch was cut
+          # don't get swept in (that would false-flag seams the PR never touched).
+          MB="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || echo "$BASE_SHA")"
+          git diff --name-only "$MB" "$HEAD_SHA" > /tmp/changed.txt
+          echo "Changed files:"; cat /tmp/changed.txt
+
+      - name: Build seam consumer-impact checklist
+        id: build
+        run: |
+          set -euo pipefail
+          CHANGED=/tmp/changed.txt
+
+          # Parallel arrays — index-aligned. Regexes contain '|' (ERE
+          # alternation), so we CANNOT pack them into a delimited string; keep
+          # name / regex / consumers in separate arrays.
+          #
+          # Path seams (matched against changed file PATHS).
+          PATH_NAME=(
+            "Venue/seat map"
+            "API surface (server.py + routers/*)"
+            "trip_planner/ (one engine, two routes)"
+            "Design tokens (static/_shared/design-tokens.css)"
+            "Shared FE assets (static/_shared, static/shared)"
+            "Retail-chat widget + edge fn"
+            "RULE-2 readonly lockdown"
+          )
+          PATH_RE=(
+            '^(lib/tevomaps|static/terminal/(venue|event)\.js|static/store/store\.js)'
+            '^(server\.py|routers/)'
+            '^trip_planner/'
+            '^static/_shared/design-tokens\.css'
+            '^static/(_shared|shared)/'
+            '^(static/shared/retail-chat-widget\.js|supabase/functions/chat/|static/terminal/retail-chat\.|static/store/chat\.html)'
+            '^(core/readonly_guard\.py|scripts/check_readonly\.py|tests/test_readonly_guards\.py|[a-z0-9_]+_client\.py)'
+          )
+          PATH_CONSUMERS=(
+            "D0 terminal map + D1 store.js must both still render (tail-remap landmine, §3)"
+            "D0 /api/broker/* · D1 /api/store/* · A1 /api/public/* — route blocks are lane-owned; shared helpers + /api/public/config ripple to both FE lanes"
+            "D0 /api/broker/.../trip-plan + D1 /api/store/.../trip-plan — regression-test BOTH"
+            "token change ripples to every surface: D0 · D1 · D2 · D4"
+            "cross-surface assets shared by D0 · D1 · D2 · D4"
+            "one widget + one edge fn, two surfaces — D0 terminal retail-chat + D1 store chat must both keep working"
+            "weakening = security-CRIT. Every *_client.py + CI depend on this; per-file guard tokens must stay declared (§2.6)"
+          )
+
+          # DB-object seams (matched by grepping the changed *.sql migration bodies,
+          # since these are DB objects, not file paths).
+          SQL_NAME=(
+            "AQ mapper (aq_event_map)"
+            "Order data (unified_orders / cross_source_orders)"
+            "*_public wholesale-filtered RPCs"
+          )
+          SQL_RE=(
+            'aq_event_map'
+            'unified_orders|cross_source_orders'
+            'create[ ]+(or[ ]+replace[ ]+)?function[ ]+[a-z0-9_.]*_public'
+          )
+          SQL_CONSUMERS=(
+            "EVERY lane resolving cross-source IDs — never join raw source IDs (§0)"
+            "D0 orders.js tiles + D2 dashboard — a view/schema change must serve both; keys on tevo_event_id (§0)"
+            "D1 store (its only read path) — never expose broker_*/wholesale fields; the whitelist IS the contract"
+          )
+
+          HITS=""
+
+          for i in "${!PATH_NAME[@]}"; do
+            if grep -qE "${PATH_RE[$i]}" "$CHANGED"; then
+              HITS="${HITS}- [ ] **${PATH_NAME[$i]}** → ${PATH_CONSUMERS[$i]}"$'\n'
+            fi
+          done
+
+          CHANGED_SQL=$(grep -E '^supabase/migrations/.*\.sql$' "$CHANGED" || true)
+          if [[ -n "$CHANGED_SQL" ]]; then
+            for i in "${!SQL_NAME[@]}"; do
+              if echo "$CHANGED_SQL" | xargs -r grep -lEi "${SQL_RE[$i]}" >/dev/null 2>&1; then
+                HITS="${HITS}- [ ] **${SQL_NAME[$i]}** → ${SQL_CONSUMERS[$i]}"$'\n'
+              fi
+            done
+          fi
+
+          {
+            echo "<!-- seam-review-bot -->"
+            if [[ -z "$HITS" ]]; then
+              echo "### 🔗 Cross-lane seam review (PROJECT_BIBLE §2.6)"
+              echo ""
+              echo "✅ No §2.6 shared-seam paths touched by this PR — no cross-lane consumer checklist needed."
+            else
+              echo "### 🔗 Cross-lane seam review (PROJECT_BIBLE §2.6)"
+              echo ""
+              echo "This PR touches shared seam(s) where one lane's change can break another lane's surface. **Confirm each named consumer still works before merge** (non-blocking — this is a checklist, not a gate):"
+              echo ""
+              printf '%s' "$HITS"
+              echo ""
+              echo "Coordinate with the consumer lane(s) per §2.6. If a box does not apply, say why in a reply. Full seam→consumer map: \`PROJECT_BIBLE.md §2.6\`."
+            fi
+          } > /tmp/seam-comment.md
+
+          echo "----- comment body -----"; cat /tmp/seam-comment.md
+
+      - name: Upsert PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/seam-comment.md', 'utf8');
+            const marker = '<!-- seam-review-bot -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

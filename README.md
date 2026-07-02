@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.6.0 (2026-06-28; repo-layout: route decomposition 100% (+routers store/pages/store_test/admin/storefront_pages), core/ helper pass (+discovery/trip_payloads/ingest/storefront_html/canonical_refresh), tests/frontend Playwright net, and the 5-surface hub as the Render landing); v2.5.0 (2026-06-26; repo-layout core/ list += db/resilience/ratelimit/readonly_guard/http_retry/vault — the prod-readiness + BR-CODE-2 shared layers); v2.4.0 (2026-06-26; +routers/ & core/ module map in repo-layout; v2.3.0: renamed app.py→server.py post-decomp; v2.2.0 2026-06-25: coverage gate + Sentry/LOG_LEVEL observability env in local-run; history in git/CHANGELOG)
+> **Doc version:** v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ---
 
