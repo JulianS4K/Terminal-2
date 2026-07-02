@@ -21,15 +21,18 @@
 --
 --   This pipeline instead uses Reddit's SEARCH RSS endpoint with a server-side
 --   flair filter:
---     old.reddit.com/r/<sub>/search.rss?q=flair_name:"News"&restrict_sr=on&sort=new
+--     old.reddit.com/r/<sub>/search.rss?q=flair:"News"&restrict_sr=on&sort=new
 --   The flair filter is applied by Reddit, so every Atom entry returned is
 --   already a news-flaired post — we never need the (absent) flair field on the
 --   entry. Stays on the UA-friendly RSS path the repo already proved works.
 --
---   ⚠ VERIFICATION GATE (A1, on preview branch before merge): confirm the
---   search.rss + flair_name query returns 200 + Atom entries for a sample sub
---   (e.g. r/nba). If Reddit blocks/empties it, fall back to keyword filtering
---   via the existing match_news_keywords() over a plain feed — see Red flags.
+--   ✓ VERIFIED LIVE 2026-07-02 (pg_net from prod): search.rss?q=flair:"News"
+--   returns 200 + real news entries on r/nba (Charania trade/injury headlines).
+--   The original flair_name: operator returned 200 + 0 entries — that was a bug,
+--   fixed below. Broad keyword search (q=trade) also works if flair filtering is
+--   ever unavailable; match_news_keywords() over a plain feed remains the fallback.
+--   Rate limit: old.reddit throttles hard (~2 rapid reqs then 429) — the 30-min
+--   staggered cadence + p_limit gating is deliberate, do not tighten.
 --
 -- DESIGN to spec:
 --   * Title only        — store title + clickable link; NO body/selftext.
@@ -72,10 +75,17 @@ CREATE TRIGGER reddit_news_flairs_updated_at
 
 -- Seed: general league subs that are SPORTS (Broadway/Concerts excluded — no
 -- reliable News flair). Enabled. Team subs added disabled below.
+-- EXCLUDED (verified 2026-07-02, live probe): subs with no working News flair —
+--   nbadiscussion  (curated discussion sub, no News flair → 0 entries),
+--   F1Technical    (technical Q&A sub, no News flair),
+--   formuladank    (meme sub — Shitpost/Meme flairs only),
+--   mlbthebigshow  (MLB The Show *video game* sub, not baseball news).
+-- A blanket flair:"News" pull on these returns nothing, so they are not seeded.
 INSERT INTO reddit_news_flairs (subreddit, league, flair_query, enabled, notes)
 SELECT gs.subreddit, gs.league, 'News', true, 'general league sub'
 FROM general_subreddits gs
 WHERE gs.league NOT IN ('Broadway', 'Concerts')
+  AND gs.subreddit NOT IN ('nbadiscussion', 'F1Technical', 'formuladank', 'mlbthebigshow')
 ON CONFLICT (subreddit) DO NOTHING;
 
 -- Team subs: seeded DISABLED. Operator flips enabled=true to widen coverage.
@@ -107,7 +117,7 @@ CREATE INDEX IF NOT EXISTS reddit_news_league_idx ON reddit_news(league, created
 
 COMMENT ON TABLE reddit_news IS
   'Flair-filtered Reddit sports news for the news ticker. Title-only; populated '
-  'from search.rss?q=flair_name:"News". 24h retention (reddit_news_sweep). Dedupe '
+  'from search.rss?q=flair:"News". 24h retention (reddit_news_sweep). Dedupe '
   'happens at read time in v_reddit_news_ticker. Separate from the dormant '
   'reddit_posts (append-only sentiment) by design — different shape + retention.';
 
@@ -157,11 +167,16 @@ BEGIN
     LIMIT p_limit
   LOOP
     -- Server-side flair filter: every returned entry is already news-flaired.
-    -- restrict_sr=on keeps it within the sub; sort=new + t=day for freshness.
+    -- restrict_sr=on keeps it within the sub; sort=new for freshness. The sweep
+    -- (24h) + view window handle retention, so no &t= time-clamp on the query.
+    -- NOTE: the search operator is `flair:` — NOT `flair_name:`. Verified live
+    -- 2026-07-02: flair_name:"News" returns 200 + 0 entries on r/nba, while
+    -- flair:"News" returns the real news posts. Using the wrong token here ships
+    -- an EMPTY ticker. Do not "restore" flair_name:.
     v_url := 'https://old.reddit.com/r/' || r.subreddit
-          || '/search.rss?q=flair_name%3A%22'
+          || '/search.rss?q=flair%3A%22'
           || replace(r.flair_query, ' ', '%20')
-          || '%22&restrict_sr=on&sort=new&limit=25&t=day';
+          || '%22&restrict_sr=on&sort=new&limit=25';
 
     SELECT net.http_get(
       url := v_url,
