@@ -293,12 +293,7 @@
     return d + 'd ago';
   }
 
-  function esc(s) {
-    if (s === null || s === undefined) return '';
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
-  }
+  const esc = window.TermRender.escapeHtml;
 
   // Escape a value for use inside an attribute-equals CSS selector.
   function cssEsc(s) {

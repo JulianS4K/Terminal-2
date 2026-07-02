@@ -28,8 +28,13 @@
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,  // process #access_token=... from OAuth redirect
-      flowType: 'implicit',
+      detectSessionInUrl: true,  // exchange the ?code=... from the OAuth redirect
+      // PKCE (not implicit): the token is delivered via a one-time auth code
+      // exchanged over the back channel, so it never lands in the URL fragment
+      // where history sync / extensions / referrers can leak it. The code
+      // verifier is held in localStorage on this origin across the redirect;
+      // detectSessionInUrl performs the exchange on client init.
+      flowType: 'pkce',
     },
   });
 
