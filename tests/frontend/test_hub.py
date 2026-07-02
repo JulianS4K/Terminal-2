@@ -1,9 +1,10 @@
 """Hub (unified landing) behavioral tests — the Render landing page.
 
-`/` (and `/home/`) serve the VibePass hub (static/home/index.html): the 5-surface
+`/` (and `/home/`) serve the VibePass hub (static/home/index.html): the 3-surface
 selector that is the Render landing for the storefront-test web service
 (STOREFRONT_AS_LANDING=false). These assert the hub actually renders its surface
 cards with the right routes + wires auth — not just that it loads without a crash.
+(Orders + Undelivered were folded into the Terminal — no longer hub surfaces.)
 """
 from __future__ import annotations
 
@@ -11,11 +12,9 @@ import pytest
 
 pytest.importorskip("playwright")
 
-# (card heading, expected href). The 5 surfaces the hub links to.
+# (card heading, expected href). The 3 surfaces the hub links to.
 EXPECTED_CARDS = {
     "Terminal": "/terminal",
-    "Undelivered": "/undelivered",
-    "Orders": "https://d2-orders-dashboard.onrender.com",
     "Store": "/store",
     "Bridge": "/bridge/",
 }
@@ -27,7 +26,7 @@ _DEFECT = ("is not defined", "is not a function", "syntaxerror", "referenceerror
 
 @pytest.mark.parametrize("path", ["/", "/home/"])
 def test_hub_renders_surface_cards(live_server, browser, path):
-    """Both / and /home/ serve the hub with all 5 surface cards + correct hrefs."""
+    """Both / and /home/ serve the hub with all 3 surface cards + correct hrefs."""
     ctx = browser.new_context()
     page = ctx.new_page()
     pageerrors, console_errors = [], []
@@ -55,7 +54,7 @@ def test_hub_renders_surface_cards(live_server, browser, path):
 
 
 def test_hub_subtitle_and_auth_control(live_server, browser):
-    """Header copy reflects the 5 surfaces + the auth control is wired (auth.js
+    """Header copy reflects the 3 surfaces + the auth control is wired (auth.js
     populates #auth-ctrl)."""
     ctx = browser.new_context()
     page = ctx.new_page()
@@ -64,7 +63,7 @@ def test_hub_subtitle_and_auth_control(live_server, browser):
     page.wait_for_timeout(600)
 
     subtitle = page.locator(".brand-sub").inner_text()
-    assert subtitle.startswith("5-surface"), f"stale surface count in subtitle: {subtitle!r}"
+    assert subtitle.startswith("3-surface"), f"stale surface count in subtitle: {subtitle!r}"
     # auth.js renders a control into #auth-ctrl (sign-in or session state).
     assert page.locator("#auth-ctrl").inner_text().strip() != "", "auth control not wired"
 
