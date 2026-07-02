@@ -1,4 +1,4 @@
--- Migration 20260629220000 · lane:A1 (DB + cron — TicketsData burn config) · writes (DDL):td_budget_ok() [48k reserve floor]; on run:td_poll_policy,cron_policy,crons td_tier_enqueue_{sh,vd,gt,tm}/td_pull_drain/td_normalize_drain · reads:ticketsdata_credit_usage · pre:20260627* · auth:operator-approved 2026-06-29 (julian@s4kent.com — burn ~240k prepaid TicketsData credits by July 9, keep 20% reserve; "hit the existing events more often")
+-- Migration 20260629220030 · lane:A1 (DB + cron — TicketsData burn config) · writes (DDL):td_budget_ok() [48k reserve floor]; on run:td_poll_policy,cron_policy,crons td_tier_enqueue_{sh,vd,gt,tm}/td_pull_drain/td_normalize_drain · reads:ticketsdata_credit_usage · pre:20260627* · auth:operator-approved 2026-06-29 (julian@s4kent.com — burn ~240k prepaid TicketsData credits by July 9, keep 20% reserve; "hit the existing events more often")
 --
 -- NOTE (git⇄prod reconciliation): the original 2026-06-29 apply also redefined
 -- td_daily_budget_ok (< 50000) and td_monthly_budget_ok (< 600000). Those were

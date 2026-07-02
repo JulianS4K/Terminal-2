@@ -1,4 +1,4 @@
--- Migration 20260629210000 · lane:A1 (DB — AXS probe) · writes (DDL):axs_probe_step() [add failure backoff] · reads:axs_probe,axs_events,net._http_response · pre:20260629130000 (every-minute probe) · auth:operator-approved 2026-06-29 (julian@s4kent.com — "backoff throttle, but recheck next hour or run")
+-- Migration 20260629210030 · lane:A1 (DB — AXS probe) · writes (DDL):axs_probe_step() [add failure backoff] · reads:axs_probe,axs_events,net._http_response · pre:20260629130000 (every-minute probe) · auth:operator-approved 2026-06-29 (julian@s4kent.com — "backoff throttle, but recheck next hour or run")
 --
 -- WHY: axs_probe_step re-fires an axs_ok event whenever last_pulled_at is stale, but a
 -- fire that fails to capture (non_json / timeout / page_never_loaded / worker_unavailable
