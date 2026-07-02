@@ -81,7 +81,47 @@ export function mapTransfer(row: any): Transfer {
   };
 }
 
-const TICKET_WITH_EVENT = '*, event:exos_events(*)';
+// Explicit ticket column list (everything mapTicket needs) EXCEPT barcode_secret.
+// The secret was scoped out of the base-table read grant in migration
+// 20260702123000 (finance/content org roles must not read it), so `select('*')`
+// on exos_tickets now fails for `authenticated`. Reads that need the secret
+// (owner wallet, scanner) fetch it separately from the gated
+// exos_ticket_barcode_secrets view via fetchBarcodeSecrets().
+const TICKET_COLS =
+  'id, event_id, org_id, tier_id, tier_name, buyer_id, owner_id, buyer_email, ' +
+  'status, price_paid, order_ref, channel_source, promoter_id, ' +
+  'pending_transfer_id, transfer_id, voided_at, voided_by, voided_reason, ' +
+  'check_in_at, last_reissue_at, created_at, updated_at';
+
+const TICKET_WITH_EVENT = `${TICKET_COLS}, event:exos_events(*)`;
+
+// --- Barcode-secret lookup (gated view — owner/buyer + owner/manager/scanner) --
+
+/** Fetch barcode secrets for the given ticket ids from the RLS-gated view.
+ *  Returns only the ids the caller is authorized to read (see migration
+ *  20260702123000); unauthorized ids are simply absent from the map. */
+async function fetchBarcodeSecrets(ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (unique.length === 0) return out;
+  const { data } = await supabase
+    .from('exos_ticket_barcode_secrets')
+    .select('ticket_id, barcode_secret')
+    .in('ticket_id', unique);
+  for (const r of data ?? []) if (r.barcode_secret) out.set(r.ticket_id, r.barcode_secret);
+  return out;
+}
+
+/** Attach barcode_secret (from the gated view) onto raw ticket rows so the
+ *  existing mapTicket(row.barcode_secret) path keeps working for the reads that
+ *  legitimately render/verify a barcode. Rows are `any` because a non-literal
+ *  `select(TICKET_COLS)` isn't statically typed by supabase-js (same reason the
+ *  file maps everything through mapTicket(row: any)). */
+async function withBarcodeSecrets(rows: any[]): Promise<any[]> {
+  if (rows.length === 0) return rows;
+  const secrets = await fetchBarcodeSecrets(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, barcode_secret: secrets.get(r.id) }));
+}
 
 // --- Profile name lookups (no FK from tickets→profiles, so do it in two
 //     steps rather than a PostgREST embed) ------------------------------------
@@ -110,7 +150,7 @@ export async function listMyTickets(): Promise<(Ticket & { event?: Event })[]> {
     .eq('owner_id', uid)
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return (data ?? []).map(mapTicketWithEvent);
+  return (await withBarcodeSecrets(data ?? [])).map(mapTicketWithEvent);
 }
 
 /** A single ticket (owner/buyer/staff per RLS) with its event joined. */
@@ -121,7 +161,9 @@ export async function getTicket(ticketId: string): Promise<(Ticket & { event?: E
     .eq('id', ticketId)
     .maybeSingle();
   if (error) throw error;
-  return data ? mapTicketWithEvent(data) : null;
+  if (!data) return null;
+  const [row] = await withBarcodeSecrets([data]);
+  return mapTicketWithEvent(row);
 }
 
 /** The current user's tickets for one event (the TicketDetail carousel). */
@@ -130,11 +172,12 @@ export async function listMyTicketsForEvent(eventId: string): Promise<Ticket[]> 
   if (!uid) return [];
   const { data, error } = await supabase
     .from('exos_tickets')
-    .select('*')
+    .select(TICKET_COLS)
     .eq('owner_id', uid)
     .eq('event_id', eventId);
   if (error) throw error;
-  return (data ?? []).map(mapTicket);
+  // TicketDetail renders the rotating barcode, so this read needs the secret.
+  return (await withBarcodeSecrets(data ?? [])).map(mapTicket);
 }
 
 // --- Transfer reads --------------------------------------------------------
@@ -184,13 +227,15 @@ export type ScanTicket = Ticket & { ownerName: string };
 export async function getTicketForScan(ticketId: string): Promise<ScanTicket | null> {
   const { data, error } = await supabase
     .from('exos_tickets')
-    .select('*')
+    .select(TICKET_COLS)
     .eq('id', ticketId)
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  const names = await fetchProfileNames([data.owner_id]);
-  return { ...mapTicket(data), ownerName: names.get(data.owner_id) || 'Anonymous attendee' };
+  // Scanner needs the secret for HMAC verification — fetch it from the view.
+  const [row] = await withBarcodeSecrets([data]);
+  const names = await fetchProfileNames([row.owner_id]);
+  return { ...mapTicket(row), ownerName: names.get(row.owner_id) || 'Anonymous attendee' };
 }
 
 export interface RegistryEntry {
@@ -208,10 +253,13 @@ export interface RegistryEntry {
 export async function listEventTicketsForRegistry(eventId: string): Promise<RegistryEntry[]> {
   const { data, error } = await supabase
     .from('exos_tickets')
-    .select('id, status, owner_id, tier_name, barcode_secret, promoter_id, pending_transfer_id')
+    .select('id, status, owner_id, tier_name, promoter_id, pending_transfer_id')
     .eq('event_id', eventId);
   if (error) throw error;
   const rows = data ?? [];
+  // barcode_secret is no longer on the base-table read grant (migration
+  // 20260702123000) — the offline HMAC check pulls it from the gated view.
+  const secrets = await fetchBarcodeSecrets(rows.map((r: any) => r.id));
   const names = await fetchProfileNames(rows.map((r: any) => r.owner_id));
   return rows.map((r: any) => ({
     id: r.id,
@@ -219,7 +267,7 @@ export async function listEventTicketsForRegistry(eventId: string): Promise<Regi
     ownerId: r.owner_id ?? '',
     name: names.get(r.owner_id) || 'Anonymous',
     tier: r.tier_name || 'Standard',
-    barcodeSecret: r.barcode_secret || '',
+    barcodeSecret: secrets.get(r.id) || '',
     promoterId: r.promoter_id || '',
     pendingTransferId: r.pending_transfer_id ?? null,
   }));
@@ -229,7 +277,7 @@ export async function listEventTicketsForRegistry(eventId: string): Promise<Regi
 export async function listEventTickets(eventId: string): Promise<Ticket[]> {
   const { data, error } = await supabase
     .from('exos_tickets')
-    .select('*')
+    .select(TICKET_COLS)
     .eq('event_id', eventId)
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -252,7 +300,7 @@ export async function listMyOrgTickets(limit = 1000): Promise<Ticket[]> {
   if (orgIds.length === 0) return [];
   const { data, error } = await supabase
     .from('exos_tickets')
-    .select('*')
+    .select(TICKET_COLS)
     .in('org_id', orgIds)
     .limit(limit);
   if (error) throw error;
@@ -264,7 +312,7 @@ export async function listMyOrgTickets(limit = 1000): Promise<Ticket[]> {
 export async function listAllTickets(limit = 500): Promise<Ticket[]> {
   const { data, error } = await supabase
     .from('exos_tickets')
-    .select('*')
+    .select(TICKET_COLS)
     .limit(limit);
   if (error) throw error;
   return (data ?? []).map(mapTicket);
