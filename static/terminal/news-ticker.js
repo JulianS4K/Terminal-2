@@ -34,7 +34,7 @@
   // keeps every source represented for the client-side source filter.
   const FETCH_LIMIT    = 300;      // rows pulled per query (newest-first; RPC cap)
   const REEL_MAX       = 30;       // headlines in the scrolling marquee
-  const LIST_MAX       = 8;        // rows in the readable list
+  const LIST_MAX       = 25;       // rows in the readable list
   const REFRESH_MS     = 180000;   // 3 min auto-refresh
 
   const state = {
