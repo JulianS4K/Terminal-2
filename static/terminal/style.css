@@ -2079,11 +2079,21 @@ body[data-page="login"] {
   padding: 0 4px; margin-right: 6px;
   flex: none;
 }
-/* Injury updates: a red-tinted INJ tag so they stand out in the wire. */
+/* Per-type tags so scores / injuries / standings read at a glance in the wire. */
 .news-badge-inj {
   color: #f87171;
   border-color: rgba(248, 113, 113, .45);
   background: rgba(248, 113, 113, .10);
+}
+.news-badge-score {
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, .45);
+  background: rgba(96, 165, 250, .10);
+}
+.news-badge-standing {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, .40);
+  background: rgba(74, 222, 128, .10);
 }
 
 /* ---------- TD listings table (TD Markets tab) ---------- */

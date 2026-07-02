@@ -5,14 +5,16 @@
 // 20260702210000, +injuries 20260702230040) — the only path the authenticated
 // terminal client has to espn_news / espn_injuries_snapshots, whose RLS is
 // admin_only (USING(false) for authenticated/anon). The RPC unions:
-//   * ESPN     — espn_news, ~80 articles/24h across 7 leagues (LIVE).
-//   * Injuries — espn_injuries_snapshots (LIVE: change-only injury updates from
-//                espn-collect's roster scope). item_type='injury'; the UI tags
-//                these with an INJ marker and shows the affected team.
-//   * Reddit   — v_reddit_news_ticker (LIVE: flair:"News" pipeline, mig
-//                20260626120000 — title-only, 48h, deduped first-post-shows).
-//                Each Reddit row carries `team` = 'r/<sub>' so the UI shows which
-//                sub the story came from.
+//   * ESPN      — espn_news, ~80 articles/24h across 7 leagues (LIVE).
+//   * Injuries  — espn_injuries_snapshots (LIVE: change-only injury updates from
+//                 espn-collect's roster scope). item_type='injury'; INJ tag.
+//   * Scores    — espn_event_snapshots (LIVE: latest per game, live + final;
+//                 gameday scope). item_type='score'; SCORE tag.
+//   * Standings — espn_team_snapshots (LIVE: latest per team; team_daily scope,
+//                 ~daily). item_type='standing'; W-L tag.
+//   * Reddit    — v_reddit_news_ticker (LIVE: flair:"News" pipeline, mig
+//                 20260626120000 — title-only, 48h, deduped first-post-shows).
+//                 Each Reddit row carries `team` = 'r/<sub>' for attribution.
 //
 // Server params: window hours (re-query). Client-side (instant): source toggle,
 // league chips (faceted with live counts), free-text search. Auto-refreshes
@@ -26,14 +28,18 @@
   'use strict';
 
   const WINDOW_DEFAULT = 48;       // hours
-  const FETCH_LIMIT    = 150;      // rows pulled per query (newest-first)
+  // Pull the RPC max. Sources refresh at very different cadences — Standings
+  // update once daily (~05:00) so they sit well below the freshest news; a small
+  // fetch would drop them entirely and leave the Standings toggle empty. 300
+  // keeps every source represented for the client-side source filter.
+  const FETCH_LIMIT    = 300;      // rows pulled per query (newest-first; RPC cap)
   const REEL_MAX       = 30;       // headlines in the scrolling marquee
   const LIST_MAX       = 8;        // rows in the readable list
   const REFRESH_MS     = 180000;   // 3 min auto-refresh
 
   const state = {
     items:       [],
-    source:      'all',            // 'all' | 'ESPN' | 'Injuries' | 'Reddit'
+    source:      'all',            // 'all' | 'ESPN' | 'Injuries' | 'Scores' | 'Standings' | 'Reddit'
     windowHours: WINDOW_DEFAULT,   // 24 | 48 | 168
     league:      'ALL',
     search:      '',
@@ -175,11 +181,18 @@
     wrap.innerHTML = html;
   }
 
+  // Per-item-type tag so a score / injury / standing is distinguishable at a
+  // glance when sources are mixed under "All".
+  const TYPE_TAG = {
+    injury:   ['INJ', 'news-badge-inj'],
+    score:    ['SCORE', 'news-badge-score'],
+    standing: ['W-L', 'news-badge-standing'],
+  };
   function badge(it) {
     const lg = leagueOf(it);
-    const inj = (it && it.item_type === 'injury')
-      ? '<span class="news-badge news-badge-inj">INJ</span>' : '';
-    return `<span class="news-badge">${esc(lg)}</span>` + inj;
+    const tag = it && TYPE_TAG[it.item_type];
+    const extra = tag ? `<span class="news-badge ${tag[1]}">${tag[0]}</span>` : '';
+    return `<span class="news-badge">${esc(lg)}</span>` + extra;
   }
 
   function renderReel(items) {
