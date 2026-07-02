@@ -1537,6 +1537,13 @@ from routers.storefront_pages import build_storefront_pages_router  # noqa: E402
 app.include_router(build_storefront_pages_router(
     STATIC_DIR,
     get_render_storefront_page=lambda: _render_storefront_page,
+    # SSR crawler-meta injection on /store/event/{id}: read the raw shell +
+    # resolve the event server-side for link-unfurl bots (core.seo). Getters
+    # resolve the live app symbols at request time so the test monkeypatches
+    # (app._read_storefront_html / app._resolve_event_with_filters) bind.
+    get_read_storefront_html=lambda: _read_storefront_html,
+    get_resolve_event=lambda: _resolve_event_with_filters,
+    base_url=_STOREFRONT_BASE_URL,
 ))
 
 

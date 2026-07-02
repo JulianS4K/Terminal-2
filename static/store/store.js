@@ -2478,6 +2478,24 @@
           </div>
         </div>
 
+        <div class="social-share" role="group" aria-label="Share to social">
+          <button type="button" class="social-btn" id="shareNative" hidden>
+            <span aria-hidden="true">📲</span> Share…
+          </button>
+          <a class="social-btn" id="shareFb" target="_blank" rel="noopener noreferrer">
+            <span aria-hidden="true">📘</span> Facebook
+          </a>
+          <a class="social-btn" id="shareX" target="_blank" rel="noopener noreferrer">
+            <span aria-hidden="true">✖️</span> X
+          </a>
+          <a class="social-btn" id="shareWa" target="_blank" rel="noopener noreferrer">
+            <span aria-hidden="true">💬</span> WhatsApp
+          </a>
+        </div>
+        <p class="muted" style="font-size:11px;margin:8px 0 0" id="shareNativeHint" hidden>
+          Tap <strong>Share…</strong> to post to Instagram Stories, TikTok, Messages and more.
+        </p>
+
         <div class="share-actions">
           <a href="/store/shares" class="btn ghost" style="text-decoration:none">Manage links</a>
           <span style="flex:1"></span>
@@ -2488,6 +2506,43 @@
       const useRevToggle = $("#useRevocable", mb);
       const copyBtn = $("#shareCopy", mb);
       const urlInput = $("#shareUrl", mb);
+
+      // ---- Social share targets ----
+      // The stateless URL is the canonical, crawler-unfurlable event link
+      // (server injects per-event OG/Twitter/JSON-LD for bots — see
+      // routers/storefront_pages store_event_page + core.seo). Facebook / X /
+      // WhatsApp take URL-intent links; Instagram Stories + TikTok have no
+      // web-share URL, so they're reached through the native share sheet
+      // (navigator.share) on mobile.
+      const evTitle = ($("#evName")?.textContent || "Tickets on VibePass").trim();
+      const shareText = `${evTitle} — tickets on VibePass`;
+      function wireSocial(url) {
+        const u = encodeURIComponent(url);
+        const t = encodeURIComponent(shareText);
+        const fb = $("#shareFb", mb);
+        const x = $("#shareX", mb);
+        const wa = $("#shareWa", mb);
+        if (fb) fb.href = `https://www.facebook.com/sharer/sharer.php?u=${u}`;
+        if (x) x.href = `https://twitter.com/intent/tweet?url=${u}&text=${t}`;
+        if (wa) wa.href = `https://wa.me/?text=${encodeURIComponent(`${shareText} ${url}`)}`;
+      }
+      wireSocial(statelessUrl);
+      // Native share sheet — only meaningful where the platform provides one
+      // (mobile / some desktops). This is the Instagram-Stories / TikTok path.
+      const nativeBtn = $("#shareNative", mb);
+      if (nativeBtn && typeof navigator !== "undefined" && navigator.share) {
+        nativeBtn.hidden = false;
+        const hint = $("#shareNativeHint", mb);
+        if (hint) hint.hidden = false;
+        nativeBtn.addEventListener("click", async () => {
+          const url = useRevToggle.checked && urlInput.value ? urlInput.value : statelessUrl;
+          try {
+            await navigator.share({ title: evTitle, text: shareText, url });
+          } catch {
+            /* user dismissed the sheet — no-op */
+          }
+        });
+      }
 
       function refreshButton() {
         const useRev = useRevToggle.checked;
@@ -2500,6 +2555,7 @@
           urlInput.value = statelessUrl;
           urlInput.placeholder = "";
           copyBtn.textContent = "Copy link";
+          wireSocial(statelessUrl);
         }
       }
       useRevToggle.addEventListener("change", refreshButton);
@@ -2538,6 +2594,7 @@
           });
           const url = `${location.origin}${created.url}`;
           urlInput.value = url;
+          wireSocial(url);
           await copyToClipboard(url);
           // Surface the expiry the server actually chose (may be capped at
           // event_start + 1h even if user picked 7 days). DOM-built so the
