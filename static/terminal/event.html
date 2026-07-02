@@ -16,7 +16,11 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Event</title>
   <link rel="stylesheet" href="lib/uplot.min.css" />
-  <link rel="stylesheet" href="style.css?v=20260702wc" />
+  <!-- design-tokens.css defines --bg/--text/--panel/etc.; must load BEFORE
+       style.css so its var() refs resolve (same as index.html). Without it the
+       event page renders on a white background. -->
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260702wc2" />
 </head>
 <body data-page="event">
 
