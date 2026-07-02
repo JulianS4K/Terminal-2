@@ -53,11 +53,20 @@ def main(argv: list[str]) -> int:
     else:
         print("no duplicate migration versions found.")
 
-    # Re-sequence to unique 14-digit synthetic versions, order preserved.
-    base = datetime(2020, 1, 1, 0, 0, 0)
+    # Re-sequence to unique 14-digit synthetic versions, order preserved. Base
+    # in the migrations' real era (2026-01-01) — NOT an early year: the CLI
+    # treats sufficiently-early versions specially and would skip them.
+    base = datetime(2026, 1, 1, 0, 0, 0)
     renamed = 0
     for i, p in enumerate(files):
         rest = p.name.split("_", 1)[1] if "_" in p.name else p.name
+        # The CLI SKIPS any migration named `<version>_init.sql` ("replace
+        # 'init' with a different file name to apply this migration"). Our
+        # first migration is literally `_init.sql` and CREATES core tables
+        # (watchlist, events, …) that later migrations insert into — skipping
+        # it breaks the whole from-zero apply. Rename the reserved name.
+        if rest == "init.sql":
+            rest = "initial_schema.sql"
         new_version = (base + timedelta(seconds=i)).strftime("%Y%m%d%H%M%S")
         new_name = f"{new_version}_{rest}"
         if new_name != p.name:
