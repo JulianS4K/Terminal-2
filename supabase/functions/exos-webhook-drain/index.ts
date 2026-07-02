@@ -126,7 +126,10 @@ async function urlIsBlocked(rawUrl: string): Promise<string | null> {
   let u: URL;
   try { u = new URL(rawUrl); } catch { return "invalid url"; }
   if (u.protocol !== "https:") return "non-https";
-  const host = u.hostname;
+  // WHATWG URL keeps the brackets on an IPv6 literal hostname (e.g. "[::1]").
+  // Strip them so the literal check below and isPrivateIp() see a bare address —
+  // otherwise "[::1]" !== "::1" and every IPv6 literal slipped through the guard.
+  const host = u.hostname.replace(/^\[|\]$/g, "");
   if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return "internal host";
 
   // If the host is a literal IP, check it directly; else resolve BOTH A and AAAA
@@ -153,10 +156,22 @@ async function resolveAll(host: string): Promise<string[]> {
 }
 
 function isPrivateIp(ip: string): boolean {
-  // IPv6 loopback / unique-local / link-local.
+  // IPv6 loopback / unique-local / link-local / IPv4-mapped.
   if (ip.includes(":")) {
-    const l = ip.toLowerCase();
-    return l === "::1" || l.startsWith("fc") || l.startsWith("fd") || l.startsWith("fe80") || l === "::";
+    const l = ip.replace(/^\[|\]$/g, "").toLowerCase();
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d, or the hex-compressed ::ffff:HHHH:HHHH
+    // form the URL parser normalizes to) can point at a private/metadata IPv4 —
+    // extract the embedded v4 and check it as IPv4.
+    const dotted = l.match(/:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (dotted) return isPrivateIp(dotted[1]);
+    const hex = l.match(/::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hex) {
+      const hi = parseInt(hex[1], 16), lo = parseInt(hex[2], 16);
+      return isPrivateIp(`${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`);
+    }
+    // fe80::/10 link-local spans fe80–febf; fc00::/7 ULA is fc/fd.
+    return l === "::1" || l === "::" || l.startsWith("fc") || l.startsWith("fd") ||
+      /^fe[89ab]/.test(l);
   }
   const p = ip.split(".").map(Number);
   if (p.length !== 4 || p.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true; // malformed → block

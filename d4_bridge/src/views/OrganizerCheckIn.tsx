@@ -505,13 +505,15 @@ export default function OrganizerCheckIn() {
     if (offlineRegistry[docId]) {
       const offlineTicket = offlineRegistry[docId];
 
-      // Detect manual entry. If door staff typed a bare doc id (no
-      // 'T-' prefix, no ':' separator), we skip the HMAC verifier
-      // entirely — there's no signature to check, and the docId
-      // hitting the offline registry is itself the verification
-      // (the registry was downloaded under organizer-only rule
-      // gating). Audit log records verification:'manual'.
+      // Detect manual entry. If door staff TYPED a bare doc id (no
+      // 'T-' prefix, no ':' separator, and not via the camera), we skip
+      // the HMAC verifier — there's no signature to check, and the docId
+      // hitting the offline registry is itself the verification (the
+      // registry was downloaded under organizer-only rule gating). A
+      // CAMERA scan is never treated as bare manual entry: a scanned bare
+      // UUID is a forgery downgrade and must fail the signature check.
       const isBareManualEntry =
+        !scanning &&
         typeof probeValue === 'string' &&
         !probeValue.startsWith('T-') &&
         !probeValue.includes(':');
@@ -527,7 +529,7 @@ export default function OrganizerCheckIn() {
       // error to the operator instead of silently admitting a screenshot.
       if (offlineTicket.barcodeSecret && !isBareManualEntry) {
         const verify = await verifyBarcode(probeValue, offlineTicket.barcodeSecret);
-        if (!verify.ok && !verify.legacy) {
+        if (!verify.ok) {
           setStatus('invalid-barcode');
           const reasonText: Record<string, string> = {
             'malformed': 'Could not read this code.',
@@ -536,6 +538,8 @@ export default function OrganizerCheckIn() {
               'This code expired. Ask the attendee to refresh their ticket.',
             'signature-mismatch':
               "Signature didn't match this ticket. The ticket may have been transferred since the offline registry was synced — re-sync to refresh.",
+            'legacy-no-secret':
+              'This is an old-format ticket. Ask the attendee to open the app and refresh their ticket, then rescan.',
           };
           setInvalidReason(reasonText[verify.reason || ''] || 'Code rejected.');
           setRecentScans((prev) =>
@@ -619,13 +623,15 @@ export default function OrganizerCheckIn() {
             probeValue,
             eventId,
           );
-          // Honor a server-side barcode rejection (e.g. the secret rotated via a
-          // transfer since this registry was synced) — do NOT admit locally.
-          if (!result.ok && (result.reason === 'barcode-rejected' || result.reason === 'barcode-expired')) {
+          // Honor a server-side rejection (barcode secret rotated via a transfer,
+          // or doors not open yet) — do NOT admit locally.
+          if (!result.ok && (result.reason === 'barcode-rejected' || result.reason === 'barcode-expired' || result.reason === 'doors-not-open')) {
             setStatus('invalid-barcode');
             setInvalidReason(
               result.reason === 'barcode-expired'
                 ? 'This code expired. Ask the attendee to refresh their ticket and rescan.'
+                : result.reason === 'doors-not-open'
+                ? 'Doors are not open yet for this event. Check-in opens at the event’s doors time. (Enable test mode on the event to scan early.)'
                 : "Signature didn't match this ticket (server check) — it may have been transferred since the offline registry was synced. Re-sync and retry.",
             );
             setBuyerName(offlineTicket.name);
@@ -718,9 +724,12 @@ export default function OrganizerCheckIn() {
         return;
       }
 
-      // Bare manual id entry has no signature to verify — the staff RLS read
-      // is itself the gate, so we skip HMAC and process it as 'manual'.
+      // Bare TYPED id entry has no signature to verify — the staff RLS read
+      // is itself the gate, so we skip HMAC and process it as 'manual'. A
+      // camera scan (scanning) is never bare-manual: a scanned bare UUID is a
+      // forgery downgrade and must go through (and fail) the signature check.
       const isBareManualEntry =
+        !scanning &&
         typeof probeValue === 'string' &&
         !probeValue.startsWith('T-') &&
         !probeValue.includes(':');
@@ -729,10 +738,11 @@ export default function OrganizerCheckIn() {
         return;
       }
 
-      // HMAC verification path for actual barcode payloads. Legacy
-      // 3-segment shapes are tolerated as `legacy:true`.
+      // HMAC verification path for actual barcode payloads. Legacy 3-segment
+      // shapes are REJECTED (verifyBarcode returns ok:false for them) — an
+      // unsigned code is forgeable from a screenshot.
       const verify = await verifyBarcode(probeValue, scanTicket.barcodeSecret || '');
-      if (!verify.ok && !verify.legacy) {
+      if (!verify.ok) {
         setStatus('invalid-barcode');
         const reasonText: Record<string, string> = {
           'malformed': 'Could not read this code.',
@@ -741,6 +751,8 @@ export default function OrganizerCheckIn() {
             'This code expired. Ask the attendee to refresh their ticket and try again.',
           'signature-mismatch':
             "Signature doesn't match this ticket. Possible screenshot or tampered code.",
+          'legacy-no-secret':
+            'This is an old-format ticket. Ask the attendee to open the app and refresh their ticket, then rescan.',
         };
         setInvalidReason(reasonText[verify.reason || ''] || 'Code rejected.');
         setFoundTicket(scanTicket);
@@ -759,7 +771,7 @@ export default function OrganizerCheckIn() {
         return;
       }
 
-      await processTicket(scanTicket, verify.legacy ? 'legacy' : 'verified', probeValue);
+      await processTicket(scanTicket, 'verified', probeValue);
     } catch (error) {
       console.error(error);
       setStatus('not-found');
@@ -808,6 +820,15 @@ export default function OrganizerCheckIn() {
         src,
         { ticketIdAttempted: scanTicket.id, reasonDetail: result.reason },
       );
+      return;
+    }
+
+    if (result.reason === 'doors-not-open') {
+      setStatus('invalid-barcode');
+      setInvalidReason(
+        'Doors are not open yet for this event. Check-in opens at the event’s doors time. (Enable test mode on the event to scan early.)',
+      );
+      pushScan('DENIED');
       return;
     }
 

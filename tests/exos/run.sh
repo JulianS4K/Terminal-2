@@ -13,4 +13,11 @@ for m in 180000_exos_waitlist 190000_exos_addons 200000_exos_public_api_webhooks
          210000_exos_vouchers 220000_exos_waitlist_autoassign 230000_exos_tax 240000_exos_invoicing 250000_exos_voucher_bypass_fulfill; do
   $PSQL -f "$MIG/20260616${m}.sql"
 done
+# 2026-07-02 security-hardening migrations (audit fixes: check-in downgrade +
+# doors gate, transfer secret leak, atomic voucher single-use + purchase limit).
+for m in 20260702120000_exos_checkin_harden_doors_gate \
+         20260702121000_exos_transfer_secret_leak_fix \
+         20260702122000_exos_voucher_singleuse_and_limit_atomic; do
+  $PSQL -f "$MIG/${m}.sql"
+done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"
