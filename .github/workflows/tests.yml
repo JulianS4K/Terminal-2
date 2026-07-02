@@ -82,12 +82,26 @@ jobs:
       # (server.py=66 errs, core/ ~20 errs remain → still warn-only below).
       # Ends the prior "green-by-definition" state for the audited surface.
       - name: mypy type check (blocking — clean modules)
+        # Ratchet expanded to most of core/ (coding-recommendation #5: strict on
+        # core/ first — it's small + security-critical). Includes the rate
+        # limiter, circuit breaker, and vault. The 8 modules still carrying type
+        # errors (search/movers/discovery/db/store_events/ingest/auth/
+        # trip_payloads) stay in the warn-only pass below until cleaned; move
+        # each here as it reaches zero errors. Never move a file OUT of here.
         env:
           MYPY_STRICT_PATHS: >-
             core/config.py
             core/http_retry.py
             core/readonly_guard.py
             core/__init__.py
+            core/broker_helpers.py
+            core/canonical_refresh.py
+            core/helpers.py
+            core/observability.py
+            core/ratelimit.py
+            core/resilience.py
+            core/substitutions.py
+            core/vault.py
             routers/__init__.py
         run: |
           mypy $MYPY_STRICT_PATHS --ignore-missing-imports --pretty
@@ -99,6 +113,8 @@ jobs:
         continue-on-error: true
         run: |
           mypy server.py evo_client.py \
+            core/search.py core/movers.py core/discovery.py core/db.py \
+            core/store_events.py core/ingest.py core/auth.py core/trip_payloads.py \
             --ignore-missing-imports \
             --no-error-summary \
             --pretty \
