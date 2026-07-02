@@ -389,6 +389,11 @@
   // >= 2 days of sales in trailing 7d. The dual-source ownership gate (mig
   // 20260702140030) keeps events where SG is turned off under a sales deal but
   // we still sell via EVO from wrongly charting as "we're not in".
+  //
+  // Each row also surfaces the open cross-source market depth we're NOT in:
+  // EVO inv (evo_tickets · evo_getin, via latest_event_metrics) + SH inv
+  // (sh_listings · sh_median, via the daily TicketsData snapshot) — both
+  // returned by get_sg_market_chart.
   // Each row carries prev_rank / peak_rank / days_on_chart for movement.
   // Two tabs: "Top 50" (rank 1-50) and "The Rest" (rank 51+, capped server-side).
 
@@ -474,6 +479,8 @@
         <th class="num" title="Blended 7-day MA daily sales: SeatGeek + SeatData (treats unknown SeatData qty as 1)">Vol/day</th>
         <th class="num" title="Volume-weighted blended 7-day MA median price across SeatGeek + SeatData">Med px</th>
         <th class="num" title="Blended 7-day MA daily gross: SeatGeek + SeatData sold comps">GMV/day</th>
+        <th class="num" title="EVO/TEvo market inventory — tickets available · get-in price. We hold ZERO owned here (that's the point); this is the open market we're not in.">EVO inv</th>
+        <th class="num" title="StubHub inventory — active listings · median price (via TicketsData daily snapshot)">SH inv</th>
         <th class="num" title="Chart score = percentile(volume) + percentile(median), 0–2. Blended percentiles when SeatData present, else SeatGeek-only.">Score</th>
         <th class="num" title="Best rank achieved · days on chart">Peak·On</th>
       </tr></thead>
@@ -502,6 +509,17 @@
         ? `blended ${(r.blended_score == null ? '—' : (+r.blended_score).toFixed(2))} · SG-only ${(r.chart_score == null ? '—' : (+r.chart_score).toFixed(2))}`
         : `SG-only ${(r.chart_score == null ? '—' : (+r.chart_score).toFixed(2))} (no SeatData)`;
       const peakOn = `${r.peak_rank ?? '—'}·${r.days_on_chart ?? '—'}`;
+      // Cross-source market depth — the open inventory on markets we're NOT in.
+      // EVO/StubHub come from get_sg_market_chart (evo_* via latest_event_metrics,
+      // sh_* via the daily TD snapshot). "count · $price".
+      const evoCell = (r.evo_tickets == null && r.evo_getin == null) ? '—'
+        : `${r.evo_tickets == null ? '?' : T.fmtNum(Math.round(+r.evo_tickets))} · ${money(r.evo_getin)}`;
+      const evoTip  = `EVO/TEvo market (we own 0): `
+        + `${r.evo_tickets == null ? 'no data' : T.fmtNum(Math.round(+r.evo_tickets)) + ' tix'}`
+        + ` · get-in ${money(r.evo_getin)} · median ${money(r.evo_median)}`;
+      const shCell  = (r.sh_listings == null && r.sh_median == null) ? '—'
+        : `${r.sh_listings == null ? '?' : T.fmtNum(Math.round(+r.sh_listings))} · ${money(r.sh_median)}`;
+      const shTip   = `StubHub: ${r.sh_listings == null ? 'no data' : T.fmtNum(Math.round(+r.sh_listings)) + ' listings'} · median ${money(r.sh_median)}`;
 
       tr.innerHTML = `
         <td class="num chart-rank">${r.rank}</td>
@@ -512,6 +530,8 @@
         <td class="num" title="${volTip}">${r.ma7_volume_blended == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume_blended))}</td>
         <td class="num" title="${medTip}">${money(r.ma7_median_blended)}</td>
         <td class="num" title="${grossTip}">${money(r.ma7_gross_blended)}</td>
+        <td class="num" title="${evoTip}">${evoCell}</td>
+        <td class="num" title="${shTip}">${shCell}</td>
         <td class="num" title="${scoreTip}"><strong>${score}</strong>${hasSd ? '' : '<sup title="SeatGeek-only basis">sg</sup>'}</td>
         <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
       tb.appendChild(tr);
