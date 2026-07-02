@@ -3892,28 +3892,60 @@
     return { num, suf, fam: fam.join(' ') };
   }
 
-  // Build the per-venue manifest index (cached). Returns { byNumSuf, byNum, cache } or null.
+  // Build the per-venue manifest index (cached). Returns { byNumSuf, byNum, named, cache } or null.
+  // Source of the section keys is the TEvo CDN manifest; if that client-side fetch fails or
+  // yields no sections (transient network / CORS / parse), we fall back to the SAME keys synced
+  // server-side in seatmap_manifest.section_keys. Without this fallback a flaky CDN fetch leaves
+  // _seatmapRemap null → _seatmapTicketGroups colors by the raw broker section (which matches no
+  // SVG polygon) → the whole map renders grey even though the library drew the venue outline.
   async function _seatmapBuildSectionRemap(venueId, configurationId) {
+    let keys = null;
     try {
       const resp = await fetch(`${SEATMAP_MAPS_DOMAIN}/${venueId}/${configurationId}/manifest.json`);
-      if (!resp.ok) return null;
-      const manifest = await resp.json();
-      const sections = (manifest && manifest.sections) || {};
-      const byNumSuf = new Map(), byNum = new Map(), named = [];
-      Object.keys(sections).forEach(k => {
-        const p = _smParse(k);
-        if (p.num == null) {                   // numberless keys (GA / Pit / Lawn / Stage / SRO)
-          const nm = _smNorm(k);
-          named.push({ key: k, norm: nm, toks: nm.split(' ').filter(Boolean) });
-          return;
-        }
-        const rec = { key: k, fam: p.fam, suf: p.suf };
-        const ek = p.num + '|' + p.suf;
-        (byNumSuf.get(ek) || byNumSuf.set(ek, []).get(ek)).push(rec);
-        (byNum.get(p.num)  || byNum.set(p.num, []).get(p.num)).push(rec);
-      });
-      return { byNumSuf, byNum, named, cache: new Map() };
+      if (resp.ok) {
+        const manifest = await resp.json();
+        const sections = manifest && manifest.sections;
+        if (sections) keys = Object.keys(sections);
+      }
+    } catch (_) { /* fall through to the server-synced manifest */ }
+    if (!keys || !keys.length) keys = await _seatmapManifestKeysFromDb(venueId, configurationId);
+    if (!keys || !keys.length) return null;
+    return _seatmapIndexFromKeys(keys);
+  }
+
+  // Server-synced manifest section keys (seatmap_manifest.section_keys, populated by the
+  // seatmap-manifest-sync cron). Real-case, identical to the CDN manifest's Object.keys —
+  // the fallback when the client-side CDN fetch above can't be reached.
+  async function _seatmapManifestKeysFromDb(venueId, configurationId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return null;
+    try {
+      const r = await Auth.client.from('seatmap_manifest')
+        .select('section_keys')
+        .eq('venue_id', venueId)
+        .eq('configuration_id', configurationId)
+        .maybeSingle();
+      if (r.error || !r.data || !Array.isArray(r.data.section_keys)) return null;
+      return r.data.section_keys;
     } catch (_) { return null; }
+  }
+
+  // Build the matcher index from a list of real-case manifest section keys.
+  function _seatmapIndexFromKeys(keys) {
+    const byNumSuf = new Map(), byNum = new Map(), named = [];
+    keys.forEach(k => {
+      const p = _smParse(k);
+      if (p.num == null) {                   // numberless keys (GA / Pit / Lawn / Stage / SRO)
+        const nm = _smNorm(k);
+        named.push({ key: k, norm: nm, toks: nm.split(' ').filter(Boolean) });
+        return;
+      }
+      const rec = { key: k, fam: p.fam, suf: p.suf };
+      const ek = p.num + '|' + p.suf;
+      (byNumSuf.get(ek) || byNumSuf.set(ek, []).get(ek)).push(rec);
+      (byNum.get(p.num)  || byNum.set(p.num, []).get(p.num)).push(rec);
+    });
+    return { byNumSuf, byNum, named, cache: new Map() };
   }
 
   // T3 family align → T4 bowl-default (prefer non-premium). Returns a key or null (don't guess).
