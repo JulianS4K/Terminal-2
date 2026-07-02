@@ -24,6 +24,9 @@
 --   * url = coalesce(external link, reddit permalink) → clicks go to the article
 --     when there is one, else the reddit thread
 --   * item_type 'reddit' → 'reddit_news'
+--   * CROSS-SOURCE dedup: a Reddit row whose external link matches an ESPN
+--     article's URL (normalized) is dropped — ESPN wins. So the same story
+--     posted to Reddit and covered by ESPN shows once (the ESPN row).
 --
 -- Read-only by construction: pure SELECT over RLS-locked read surfaces. REVOKE
 --   PUBLIC + GRANT to the same read roles as v1.
@@ -90,6 +93,21 @@ AS $function$
     FROM public.v_reddit_news_ticker r
     WHERE r.created_utc > now() - ((SELECT win_hours FROM params) || ' hours')::interval
       AND (p_sources IS NULL OR 'Reddit' = ANY (p_sources))
+      -- Cross-source dedup: drop a Reddit row whose EXTERNAL article link points
+      -- at the same story ESPN already carries (ESPN is the authoritative
+      -- source, so it wins). Match on a normalized URL (strip scheme / www /
+      -- query / fragment / trailing slash). Reddit rows with no external link
+      -- (link_url NULL → url is the reddit permalink) can never collide, so they
+      -- are kept. Scoped to the same window as the espn CTE.
+      AND (
+        r.link_url IS NULL OR r.link_url = '' OR NOT EXISTS (
+          SELECT 1 FROM public.espn_news e
+          WHERE e.url IS NOT NULL
+            AND e.published_at > now() - ((SELECT win_hours FROM params) || ' hours')::interval
+            AND rtrim(lower(regexp_replace(regexp_replace(e.url,    '[#?].*$', ''), '^https?://(www\.)?', '')), '/')
+              = rtrim(lower(regexp_replace(regexp_replace(r.link_url,'[#?].*$', ''), '^https?://(www\.)?', '')), '/')
+        )
+      )
   ),
   unioned AS (
     SELECT * FROM espn
