@@ -68,10 +68,11 @@ jobs:
         # separate process (Playwright's sync API event loop conflicts with the
         # backend suite's anyio.run handler tests). They're omitted from the
         # coverage surface anyway (.coveragerc omits tests/*).
-        # --ignore=tests/rls: the RLS security suite needs a live migrated
-        # Postgres (the supabase-rls workflow's `supabase start` stack) and is
-        # not part of this DB-less job's coverage surface.
-        run: pytest tests/ --ignore=tests/frontend --ignore=tests/rls -q --cov --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=100
+        # --ignore=tests/rls: needs a live migrated Postgres (supabase-rls
+        # workflow). --ignore=tests/deploy_smoke: drives the DEPLOYED preview
+        # (post-deploy workflow), not the in-process app. Neither is part of
+        # this DB-less job's coverage surface.
+        run: pytest tests/ --ignore=tests/frontend --ignore=tests/rls --ignore=tests/deploy_smoke -q --cov --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=100
 
       - name: install mypy
         run: pip install mypy types-requests --quiet

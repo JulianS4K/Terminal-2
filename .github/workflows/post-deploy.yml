@@ -86,6 +86,24 @@ jobs:
           [ "$fail" -eq 0 ] || exit 1
           echo "✅ key endpoints OK"
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Five-flow Playwright smoke vs the deployed preview (#5)
+        # Drives the REAL deployed composition (storefront search→event, share
+        # resolve, terminal login gate, bridge, scanner) and fails on a console
+        # error or a failed JS/CSS asset — the stale-JS / cache-bust bug class
+        # the in-process suite can't see. Gated by DEPLOY_SMOKE_BASE_URL.
+        env:
+          DEPLOY_SMOKE_BASE_URL: ${{ env.BASE_URL }}
+          PYTHONPATH: "."
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest playwright
+          python -m playwright install --with-deps chromium
+          pytest tests/deploy_smoke -q
+
       - name: Open GitHub issue on failure
         if: failure()
         env:
