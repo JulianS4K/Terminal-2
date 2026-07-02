@@ -98,7 +98,7 @@
           - "static/version.json"
 
 # Shared FE assets that ripple across every surface — touching these is a
-# cross-lane change by definition (coordinate via C1, BOT_HIERARCHY §5.5b).
+# cross-lane change by definition (the seam-review job flags it; PROJECT_BIBLE §2.6).
 "area:shared-fe":
   - changed-files:
       - any-glob-to-any-file:

@@ -4,7 +4,7 @@ Loaded automatically by Claude Code on every session in this repo. Applies to **
 
 **Current priorities live at the top of `KANBAN.md`, period.** This file and the bibles hold slow-moving invariants; fast-moving focus (what's active/paused/next) is KANBAN's job — never encode priority or lane status into a versioned governance doc (it is guaranteed to go stale).
 
-> **Doc version:** v2.3.0 (2026-07-02) — §4 Render access restated under the 3-principal model (`PROJECT_BIBLE §2.1`); D0 "workspace-wide Render parity" retired; added the priority-lives-in-KANBAN rule up top; actor hierarchy dissolved (A1/B1/C1/D0–D4 now flat lane identifiers, not ranks — `PROJECT_BIBLE §2`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.4.0 (2026-07-02) — tier-2 lane consolidation (KANBAN C1-OPS-3): C1 folded into B1 (docs = Auditor work), D2 folded into D0 (both broker); six lanes now (substrate A1·B1 + products D0·D1·D3·D4). · v2.3.0 (2026-07-02) — §4 Render access restated under the 3-principal model (`PROJECT_BIBLE §2.1`); D0 "workspace-wide Render parity" retired; added the priority-lives-in-KANBAN rule up top; actor hierarchy dissolved (A1/B1/C1/D0–D4 now flat lane identifiers, not ranks — `PROJECT_BIBLE §2`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -74,12 +74,12 @@ OK: search / suggestions / events / performers / venues / ticket_groups / listin
 
 Each bot has operational latitude on UI files and JS wiring routed to them. Build, iterate, refactor without per-step approval.
 
-Lane assignments per `PROJECT_BIBLE.md §2` (4-domain reorg 2026-06-17 — peer domains, not a chain):
-- **A1** — data plane (DB + full ingest pipeline + DB security + crons)
-- **B1** — git + code (git/code security, drift, freshness, compartmentalization, tests)
-- **C1** — docs + coordination (`bot_chat`, the main bible set, promotions)
-- **D0–D4** — distinct frontend surfaces (D0 terminal · D1 store · D2 dashboard · D3 broadway · D4 Exos/Bridge), each owning its Render service + UX/speed testing
-- Operator may explicitly route work to a bot outside its default lane (this is the override path)
+Lane assignments per `PROJECT_BIBLE.md §2` (six lanes: a two-area substrate + four products; peer surfaces, not a chain):
+- **A1** — data plane (DB + full ingest pipeline + cross-source xref + DB security + crons)
+- **B1** — build + guards + governance (git/code security, CI + guards, drift, freshness, tests, **and the docs surface** — bibles + registry + `bot_chat` + seam register, absorbed from C1 2026-07-02; this is the Auditor principal's home)
+- **D0–D4 products** — distinct surfaces, each owning its Render service + UX/speed testing (D0 terminal + orders-dashboard · D1 store · D3 broadway · D4 Exos/Bridge)
+- **Retired as lanes 2026-07-02** (KANBAN C1-OPS-3): C1→B1 (docs governance = Auditor work); D2→D0 (both broker-facing). `c1`/`d2` remain only as historical branch/KANBAN/`bot_chat`-tier tokens.
+- Operator may explicitly route work to a session outside its default lane (this is the override path)
 
 ### 4. Render workspace — per-service scoped access (2026-05-14, reorg 2026-05-15; testing-unified 2026-05-16)
 

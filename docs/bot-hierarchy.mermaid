@@ -2,34 +2,37 @@
 %%
 %% Reframed 2026-07-02. The command hierarchy this file used to draw
 %% (A1→B1→C1, "data-collection lanes under C1", "D3 sub of D2", "supervisor",
-%% "sole prod pusher") was DISSOLVED. A1/B1/C1/D0–D4 are **lane identifiers** —
-%% names for regions of the ownership map (which surface), NOT actors, ranks, or
-%% a chain of command. No lane reports to, sits under, or manages another.
+%% "sole prod pusher") was DISSOLVED. The codes are **lane identifiers** — names
+%% for regions of the ownership map (which surface), NOT actors, ranks, or a
+%% chain of command. No lane reports to, sits under, or manages another.
 %% Permission is per-ACTION via the three principals (Applier/Auditor/Builder),
 %% never per-label — see PROJECT_BIBLE.md §2.1. Ownership → §2.3/§2.5/§2.6.
+%%
+%% Tier-2 consolidation 2026-07-02 (KANBAN C1-OPS-3): C1 folded into B1 (docs
+%% governance IS Auditor work), D2 folded into D0 (both broker-facing). Six
+%% lanes now: substrate A1·B1 + products D0·D1·D3·D4. (c1/d2 survive only as
+%% historical branch/KANBAN/bot_chat-tier tokens.)
 %%
 %% Filename kept only for link stability (KANBAN + LANE_DISCIPLINE template
 %% point here); the content is a flat map, not an org chart.
 %% ====================================================================
 
 graph LR
-    subgraph BACKPLANE["Cross-cutting lanes — own the shared backplane every frontend depends on"]
-        A1["A1 · data plane<br/>DB · migrations · crons · ingest pipeline · AQ mapper · DB security"]
-        B1["B1 · git + code<br/>git/code security · CI + guards · drift · tests"]
-        C1["C1 · docs + coordination<br/>bot_chat · main bible set + registry · seam register"]
+    subgraph SUBSTRATE["Platform substrate — the shared foundation every product sits on (2 areas)"]
+        A1["A1 · data + framework<br/>DB · migrations · crons · ingest · AQ mapper · server.py/routers/core · DB security"]
+        B1["B1 · build + guards + governance<br/>git/code security · CI + guards · tests · docs (bibles + registry) · bot_chat  —  [Auditor surface]"]
     end
 
-    subgraph SURFACES["Frontend-surface lanes — each owns one surface + its Render service"]
-        D0["D0 · terminal<br/>static/terminal/* · /api/broker/*"]
+    subgraph PRODUCTS["Products — each owns one surface + its Render service"]
+        D0["D0 · terminal + orders dashboard<br/>static/terminal/* · /api/broker/* · d2_dashboard/*"]
         D1["D1 · store<br/>static/store/* · /api/store/*"]
-        D2["D2 · orders dashboard<br/>d2_dashboard/*"]
         D3["D3 · broadway<br/>broadway_*"]
         D4["D4 · Exos/Bridge<br/>d4_bridge/* · exos_* schema"]
     end
 
-    %% The only edges are DEPENDENCY (data/APIs flow up from the backplane),
+    %% The only edges are DEPENDENCY (data/APIs flow up from the substrate),
     %% not authority. No lane commands another.
-    SURFACES -. "consume backplane data + APIs" .-> BACKPLANE
+    PRODUCTS -. "consume substrate data + APIs" .-> SUBSTRATE
 
     classDef laneClass fill:#e7f5ff,stroke:#339af0,color:#000,stroke-width:2px
-    class A1,B1,C1,D0,D1,D2,D3,D4 laneClass
+    class A1,B1,D0,D1,D3,D4 laneClass
