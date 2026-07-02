@@ -43,6 +43,14 @@
     }[c]));
   }
 
+  // Feed-derived URLs are untrusted: escaping alone does not stop a
+  // `javascript:`/`data:` scheme from becoming click-to-execute in an href.
+  // Allow only http(s); anything else collapses to a dead '#'.
+  function safeHref(u) {
+    if (!u) return '#';
+    return /^https?:\/\//i.test(String(u).trim()) ? esc(u) : '#';
+  }
+
   function relTime(iso) {
     if (!iso) return '';
     const ms = Date.now() - new Date(iso).getTime();
@@ -170,7 +178,7 @@
     }
     const slice = items.slice(0, REEL_MAX);
     const itemHtml = slice.map(it => {
-      const href = it.url ? esc(it.url) : '#';
+      const href = safeHref(it.url);
       return `<a class="news-reel-item" href="${href}" target="_blank" rel="noopener noreferrer">`
            + badge(it)
            + `<span class="news-reel-head">${esc(it.headline || '')}</span>`
@@ -186,7 +194,7 @@
     if (!list) return;
     if (!items.length) { list.innerHTML = ''; return; }
     const rows = items.slice(0, LIST_MAX).map(it => {
-      const href = it.url ? esc(it.url) : '#';
+      const href = safeHref(it.url);
       return `<div class="news-row">`
            + `<span class="news-time">${esc(relTime(it.published_at))}</span>`
            + badge(it)
