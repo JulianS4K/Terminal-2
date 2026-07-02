@@ -281,16 +281,73 @@
       '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
         '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
         '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
-        'GameTime needs discovery; seat map / EVO aren\'t available for SeatGeek-native events.</div></section>' +
+        'GameTime needs discovery; EVO isn\'t available for SeatGeek-native events (the seat map below is a borrowed venue reference).</div></section>' +
       '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
         '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>' +
       '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
-        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>';
+        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>' +
+      '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
+        '<span class="muted small" id="sgMapMeta">loading…</span></div>' +
+        '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">loading…</div></div>' +
+        '<div class="muted small" id="sgMapNote" style="margin-top:6px"></div></section>';
 
     if (rows.length) renderWcChart('wcChartHost', rows);
     loadWcMarkets(sgId).catch(e => console.error('[wc markets]', e));
     loadSgListingsInline(sgId).catch(e => console.error('[sg listings]', e));
     loadSgSalesInline(sgId).catch(e => console.error('[sg sales]', e));
+    loadWcSeatmapDonor(sgId).catch(e => console.error('[wc seatmap]', e));
+  }
+
+  // Borrowed venue seat map for SeatGeek-native (World Cup) events. These have no
+  // TEvo event id, so no venue_id/configuration_id of their own — get_wc_seatmap_donor
+  // resolves the match's venue to a DONOR (venue_id, configuration_id) from another
+  // event at the SAME venue whose config already has a rendered map. The map is
+  // venue-accurate; the donor config may be a football layout (soccer sections differ).
+  async function loadWcSeatmapDonor(sgId) {
+    const Auth = window.TerminalAuth;
+    const host = document.getElementById('sgSeatmapHost');
+    const meta = document.getElementById('sgMapMeta');
+    const note = document.getElementById('sgMapNote');
+    if (!host) return;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      host.innerHTML = '<div class="empty">Sign in with @s4kent.com to view the seat map.</div>';
+      if (meta) meta.textContent = 'no auth';
+      return;
+    }
+    const res = await Auth.client.rpc('get_wc_seatmap_donor', { p_sg_event_id: sgId });
+    const row = (res.data && res.data[0]) || null;
+    if (res.error || !row) {
+      host.innerHTML = '<div class="empty">No venue seat map available for this match.' +
+        '<div class="muted small">Venue isn\'t mapped to a TEvo venue with a rendered map (e.g. non-US stadiums).</div></div>';
+      if (meta) meta.textContent = res.error ? 'error' : 'no donor';
+      return;
+    }
+    if (!window.Tevomaps || !window.Tevomaps.SeatmapFactory) {
+      host.innerHTML = '<div class="empty">seatmap library not loaded</div>';
+      if (meta) meta.textContent = 'no lib';
+      return;
+    }
+    if (meta) meta.textContent = `venue ${row.venue_id} · config ${row.configuration_id}`;
+    host.innerHTML = '';
+    try {
+      const factory = new window.Tevomaps.SeatmapFactory({
+        venueId: String(row.venue_id),
+        configurationId: String(row.configuration_id),
+        showLegend: false,
+        showControls: true,
+        mouseControlEnabled: true,
+      });
+      await factory.build('sgSeatmapHost');
+    } catch (e) {
+      host.innerHTML = `<div class="empty">Seat map failed to render: ${escapeHtml(String((e && e.message) || e))}</div>`;
+      if (meta) meta.textContent = 'render error';
+      return;
+    }
+    if (note) {
+      note.textContent = `Borrowed venue map: ${row.venue_name || ('venue ' + row.venue_id)}` +
+        (row.configuration_name ? ` — “${row.configuration_name}” layout` : '') +
+        ` (${row.donor_events_count} prior events at this config). Soccer sections may differ from this layout.`;
+    }
   }
 
   // Real uPlot price chart for the WC page (get-in / median / p90 daily series).
