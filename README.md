@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ---
 
@@ -51,7 +51,7 @@ Mirrors `CLAUDE.md §6` (loaded every session) — repeated here because this is
 1. **Do NOT create new root or governance `.md` files.** Add the fact to its owner above. A genuinely new top-level doc is an operator decision — ask first.
 2. **One fact, one home — never duplicate; link** (`see <DOC> §<n>`). Duplicated facts are how docs drift out of sync.
 3. **Ephemeral work never becomes a new doc.** Audits, checkpoints, session logs, handoffs, status snapshots → `bot_chat` (durable) or `KANBAN.md` (open work). Only if a durable dated artifact is genuinely needed: `docs/archive/YYYY-MM-DD-<topic>.md`.
-4. **The gate is real (server-side; `--no-verify` can't skip).** `docs-registry-check` (`bin/check-docs.sh`) fails any PR adding a root `*.md` not in this registry, or a dated/working-note file in `docs/` outside `docs/archive/`. *(Keeping the bible current when you add a catalogued resource is a judgment prompt — self-check #12 + the PR checklist — not a CI gate; a gate can't tell "needs a doc" from "doesn't.")*
+4. **The gates are real (server-side; `--no-verify` can't skip).** `docs-registry-check` (`bin/check-docs.sh`) fails any PR adding a root `*.md` not in this registry, or a dated/working-note file in `docs/` outside `docs/archive/`. `md-table-check` (`scripts/check_md_tables.py`) fails any PR whose canonical-doc markdown tables are malformed (a body row whose column count ≠ its header — the mashed-row / stray-`|` failure the registry gate can't see). *(Keeping the bible current when you add a catalogued resource is a judgment prompt — self-check #12 + the PR checklist — not a CI gate; a gate can't tell "needs a doc" from "doesn't.")*
 5. **One `**Doc version:**` line per doc; no per-section tags.** Each canonical doc carries a single `**Doc version:**` line under its title (the CI gate fails any registry doc except `CHANGELOG.md` missing it). Bump it on material change. **Do not** add per-heading `(vX · BOT · date)` tags — git blame is the audit trail; inline tags are filler for a bot reader. (Removed 2026-06-19.)
 
 ---
