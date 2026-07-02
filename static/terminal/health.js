@@ -158,10 +158,7 @@
 
   function prettyName(n) { return String(n || '').replace(/_/g, ' '); }
   function pct(v) { return (v === null || v === undefined) ? '—' : (+v).toFixed(2) + '%'; }
-  function esc(s) {
-    if (s === null || s === undefined) return '';
-    return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-  }
+  const esc = window.TermRender.escapeHtml;
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

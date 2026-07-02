@@ -320,12 +320,7 @@
     return `<span class="badge muted" title="${esc(src || '')}">${esc(label)}</span>`;
   }
 
-  function esc(s) {
-    if (s === null || s === undefined) return '';
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
-  }
+  const esc = window.TermRender.escapeHtml;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

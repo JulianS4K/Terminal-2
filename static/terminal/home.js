@@ -741,12 +741,7 @@
     if (el) el.textContent = txt;
   }
 
-  function escapeHtml(s) {
-    if (s === null || s === undefined) return '';
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
-  }
+  const escapeHtml = window.TermRender.escapeHtml;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

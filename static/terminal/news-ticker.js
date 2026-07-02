@@ -36,20 +36,12 @@
   };
 
   // ---------- helpers ----------
-  function esc(s) {
-    if (s === null || s === undefined) return '';
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
-    }[c]));
-  }
+  const esc = window.TermRender.escapeHtml;
 
   // Feed-derived URLs are untrusted: escaping alone does not stop a
   // `javascript:`/`data:` scheme from becoming click-to-execute in an href.
   // Allow only http(s); anything else collapses to a dead '#'.
-  function safeHref(u) {
-    if (!u) return '#';
-    return /^https?:\/\//i.test(String(u).trim()) ? esc(u) : '#';
-  }
+  const safeHref = window.TermRender.safeHref;
 
   function relTime(iso) {
     if (!iso) return '';
