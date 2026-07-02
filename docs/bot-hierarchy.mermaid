@@ -1,68 +1,35 @@
-%% bot-hierarchy.mermaid — Terminal-2 bot command structure
+%% bot-hierarchy.mermaid — Terminal-2 LANE MAP (there is no hierarchy)
 %%
-%% Refreshed 2026-05-13. See BOT_HIERARCHY.md for the canonical chart;
-%% this file is the visual companion (kept current with the same data).
+%% Reframed 2026-07-02. The command hierarchy this file used to draw
+%% (A1→B1→C1, "data-collection lanes under C1", "D3 sub of D2", "supervisor",
+%% "sole prod pusher") was DISSOLVED. A1/B1/C1/D0–D4 are **lane identifiers** —
+%% names for regions of the ownership map (which surface), NOT actors, ranks, or
+%% a chain of command. No lane reports to, sits under, or manages another.
+%% Permission is per-ACTION via the three principals (Applier/Auditor/Builder),
+%% never per-label — see PROJECT_BIBLE.md §2.1. Ownership → §2.3/§2.5/§2.6.
 %%
-%% ====================================================================
-%% Current lane roster (bot_chat rows 50-58, 2026-05-12)
-%% ====================================================================
-%%
-%%   A1 - Audit / Push (Admin)              admin           prod pusher
-%%   B1 - Security Manager                  security        CRIT-only prod
-%%   C1 - Canonical (Data + Chat super)     supervisor      preview only
-%%   D0 - Terminal FE (RO reference)        data-collection
-%%   D1 - Consumer Retail + Render owner    data-collection
-%%   D2 - Order Clients (orders, no list.)  data-collection
-%%   D3 - Broadway Scraper (sub of D2)      data-collection
-%%   D4 - Ticketing infra (AR codes)        UNASSIGNED
-%%
-%% Two hard rules surface from this hierarchy:
-%%   1) Only A1 pushes prod DB / merges to main. B1 for CRIT security only.
-%%   2) Render workspace is D1-exclusive. D0/D2/D3/D4 may NOT push to Render.
-%%
-%% Sidecar canonical: D2 will NOT add parallel tevo_event_id write paths.
-%% C1 owns *_resolved sidecars. Operator decision 2026-05-12, bot_chat #64.
+%% Filename kept only for link stability (KANBAN + LANE_DISCIPLINE template
+%% point here); the content is a flat map, not an org chart.
 %% ====================================================================
 
-graph TD
-    subgraph CONTROL[Command & Control]
-        A1[A1<br/>Audit / Push - Admin<br/>sole prod pusher]
-        B1[B1<br/>Security Manager<br/>CRIT-only prod push]
-        C1[C1<br/>Canonical / Data + Chat<br/>supervisor - preview only]
-        A1 --> B1
-        B1 --> C1
+graph LR
+    subgraph BACKPLANE["Cross-cutting lanes — own the shared backplane every frontend depends on"]
+        A1["A1 · data plane<br/>DB · migrations · crons · ingest pipeline · AQ mapper · DB security"]
+        B1["B1 · git + code<br/>git/code security · CI + guards · drift · tests"]
+        C1["C1 · docs + coordination<br/>bot_chat · main bible set + registry · seam register"]
     end
 
-    subgraph DATA[Data-Collection Lanes - under C1]
-        D0[D0<br/>Terminal FE<br/>RO reference + prediction]
-        D1[D1<br/>Consumer Retail<br/>SOLE Render owner]
-        D2[D2<br/>Order Clients<br/>orders only - no listings]
-        D3[D3<br/>Broadway Scraper<br/>sub of D2]
-        D4[D4<br/>Our Ticketing Infra<br/>UNASSIGNED]
-        D2 --> D3
+    subgraph SURFACES["Frontend-surface lanes — each owns one surface + its Render service"]
+        D0["D0 · terminal<br/>static/terminal/* · /api/broker/*"]
+        D1["D1 · store<br/>static/store/* · /api/store/*"]
+        D2["D2 · orders dashboard<br/>d2_dashboard/*"]
+        D3["D3 · broadway<br/>broadway_*"]
+        D4["D4 · Exos/Bridge<br/>d4_bridge/* · exos_* schema"]
     end
 
-    C1 --> D0
-    C1 --> D1
-    C1 --> D2
-    C1 --> D4
+    %% The only edges are DEPENDENCY (data/APIs flow up from the backplane),
+    %% not authority. No lane commands another.
+    SURFACES -. "consume backplane data + APIs" .-> BACKPLANE
 
-    A1 -.->|reviews + pushes<br/>all prod changes| C1
-    A1 -.->|reviews + pushes| B1
-
-    D1 -.->|Render workspace<br/>EXCLUSIVE| D1RNDR((Render))
-    D2 -.->|writes raw orders;<br/>C1 resolves to<br/>*_resolved sidecar| C1
-
-    classDef adminClass     fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:3px
-    classDef securityClass  fill:#4c6ef5,stroke:#364fc7,color:#fff,stroke-width:3px
-    classDef supervClass    fill:#51cf66,stroke:#2f9e44,color:#fff,stroke-width:3px
-    classDef dataClass      fill:#74c0fc,stroke:#339af0,color:#000,stroke-width:2px
-    classDef unassignedCl   fill:#dee2e6,stroke:#868e96,color:#000,stroke-width:1px,stroke-dasharray: 5 5
-    classDef extClass       fill:#fff3bf,stroke:#fab005,color:#000,stroke-width:2px
-
-    class A1 adminClass
-    class B1 securityClass
-    class C1 supervClass
-    class D0,D1,D2,D3 dataClass
-    class D4 unassignedCl
-    class D1RNDR extClass
+    classDef laneClass fill:#e7f5ff,stroke:#339af0,color:#000,stroke-width:2px
+    class A1,B1,C1,D0,D1,D2,D3,D4 laneClass

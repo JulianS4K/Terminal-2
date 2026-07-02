@@ -36,17 +36,19 @@
 
 ### Lane shorthand
 
-| Code | Lane | Primary write surface |
+Lane codes are **identifiers for regions of the ownership map** (which surface), not ranks or a chain of command — no lane sits "under" another (hierarchy dissolved 2026-07-02, `PROJECT_BIBLE §2`). Permission is per-action (`§2.1`).
+
+| Code | Lane (surface region) | Primary write surface |
 |---|---|---|
-| `A1` | Admin / push-to-main | `supabase/migrations/*`, governance docs, cross-cutting |
-| `B1` | Security manager | `*_security_*.sql`, security docs, this ledger |
-| `C1` | Canonical / drift monitor | governance audit docs |
-| `D0` | Terminal FE (consolidated frontend lead) | `static/terminal/*`, terminal-side `server.py` routes |
-| `D1` | Storefront (under D0) | `static/store/*`, `/api/store/*` |
-| `D2` | Orders dashboard (under D0) | `d2_dashboard/*` |
-| `D3` | Broadway scraper (under D2) | scraper code |
-| `D4` | Ticketing infra | unassigned |
-| `E1` | External markets (Kalshi etc.) | future stub |
+| `A1` | Data plane | `supabase/migrations/*`, ingest pipeline, governance docs, cross-cutting |
+| `B1` | Git + code | `*_security_*.sql`, CI/guards, security docs, this ledger |
+| `C1` | Docs + coordination | main bible set + registry, `bot_chat`, seam register |
+| `D0` | Terminal FE | `static/terminal/*`, `/api/broker/*` |
+| `D1` | Storefront FE | `static/store/*`, `/api/store/*` |
+| `D2` | Orders dashboard | `d2_dashboard/*` |
+| `D3` | Broadway FE | `broadway_*` |
+| `D4` | Exos/Bridge | `d4_bridge/*`, `exos_*` schema |
+| `E1` | *(folded 2026-06-17 → A1)* | — |
 | `Op` | Operator-only | settings, lockdown-gated applies |
 
 ### 🔴 URGENT — Bottleneck remediation (filed 2026-06-19, operator-directed research sweep)

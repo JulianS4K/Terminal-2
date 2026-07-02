@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v2.12.0 (2026-07-02) — **§2 restructured to finish the ownership/permission/priority convergence:** permission collapsed to **3 principals** (Applier/Auditor/Builder, §2.1) with a dated **exceptions ledger** (§2.2) and an **ownership-label legend** (§2.3); priority/status (ACTIVE/PAUSED/★) evicted to `KANBAN.md`; §2.4 order tables reconciled to A1 (single-writer); §2.6 seam review mechanized as the non-blocking `seam-review` CI job; §6 MCP scope stated by principal; hard rules §1.4/§1.5 aligned. Ownership (§2.5 code map + §2.6 seam register) unchanged. Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.12.0 (2026-07-02) — **§2 restructured to finish the ownership/permission/priority convergence:** permission collapsed to **3 principals** (Applier/Auditor/Builder, §2.1) with a dated **exceptions ledger** (§2.2) and an **ownership-label legend** (§2.3); priority/status (ACTIVE/PAUSED/★) evicted to `KANBAN.md`; §2.4 order tables reconciled to A1 (single-writer); §2.6 seam review mechanized as the non-blocking `seam-review` CI job; §6 MCP scope stated by principal; hard rules §1.4/§1.5 aligned. **The actor hierarchy is dissolved** — A1/B1/C1/D0–D4 are now flat *lane identifiers* (regions of the ownership map), with no ranks or chain of command (`A1→B1→C1` / "under" / "sub of" removed; `docs/bot-hierarchy.mermaid` reframed to a flat map). Ownership (§2.5 code map + §2.6 seam register) unchanged. Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 **Read FIRST every session — but this doc is large; do NOT linear-read it.** Priority read = **§0** (the AQ hub — the #1 fact most sessions miss) + **§1** (hard rules). Then determine your lane (§2) and **jump to the one section your task needs**:
 
@@ -103,15 +103,15 @@ A fresh session has no built-in identity. Derive both from the task:
 
 If the task prompt or your branch prefix (`claude/<lane>-…`) already names a lane, that's your ownership starting point — still run steps 2–3. **CI enforces this after the fact:** path/branch labeler → `area:`/`level:` labels · `surface-boundary-check` flags out-of-lane paths · the §2.5 **no-orphan invariant** (every path resolves to exactly one owner). When unsure, ask via `bot_chat` `question` or the operator.
 
-**Four peer domains — coordination is lateral (via `bot_chat`), not a command chain.** No lane reports to another; `main` is jointly maintained (§2.1 Builder push rule).
+**There is no hierarchy — the labels are lane identifiers, nothing more.** A1/B1/C1/D0–D4 name *regions of the ownership map* (which surface), not actors, ranks, or teams. No lane reports to, sits "under", or is a manager/lead/arbiter of another — the old command chain (`A1→B1→C1`, "data lanes under C1", "D3 sub of D2") was **dissolved 2026-07-02**; only the naming convention survives, as a flat index into the surface map. Coordination is lateral (via `bot_chat`); `main` is jointly maintained (§2.1 Builder push rule); permission is per-action (§2.1), never per-label. Flat map: `docs/bot-hierarchy.mermaid`.
 
 ```
-OWNERSHIP MAP (labels, not workers — any session works in any lane; §2.1 sets permission):
-  CROSS-CUTTING (no surface; serve every lane):
-    A1  data plane   — DB · full ingest pipeline · crons · DB security (RLS/SECDEF/RULE-2)
-    B1  git + code   — git/code security · drift · freshness · compartmentalization · tests
-    C1  docs + coord — bot_chat · main bible set · doc consolidation · shared-resource register
-  FRONTEND SURFACES (distinct per surface · own Render service + UX/speed testing):
+LANE MAP (identifiers for regions of the ownership map — flat, no ranks; §2.1 sets permission):
+  BACKPLANE lanes (own the shared surfaces every frontend depends on):
+    A1  data plane   — DB · migrations · crons · full ingest pipeline · AQ mapper · DB security (RLS/SECDEF/RULE-2)
+    B1  git + code   — git/code security · CI + guards · drift · freshness · compartmentalization · tests
+    C1  docs + coord — bot_chat · main bible set + registry · doc consolidation · shared-resource register
+  FRONTEND-SURFACE lanes (each owns one surface + its Render service + UX/speed testing):
     D0 terminal   D1 store   D2 orders-dashboard   D3 broadway   D4 Exos/Bridge (full app)
 ```
 
@@ -143,7 +143,7 @@ A surface map, **not** a roster of workers. Any session may work in any lane —
 |---|---|
 | **A1** | Data plane — Supabase tables/migrations/crons; the **AQ mapper** + cross-source xref; the 9 read-only `*_client.py` + edge functions + **order ingestion** + `server.py` data routes; DB-layer security (RLS/SECDEF/RULE-2); data-freshness + 429/cron monitoring + alerting |
 | **B1** | Git + code — git history; git/code security (secret leaks, insecure patterns — *not* DB RLS/SECDEF); drift prevention; code freshness; module compartmentalization; test-suite + CI-gate health |
-| **C1** | Docs + coordination — `bot_chat`; the **main bible set** + closed registry + structure; promotion arbiter; the shared cross-lane resource register (§2.6). *(Docs-governance is audit work → a C1 session acts as **Auditor**, §2.1.)* |
+| **C1** | Docs + coordination — `bot_chat`; the **main bible set** + closed registry + structure; doc consolidation/promotion into the main set; the shared cross-lane resource register (§2.6). *(Docs-governance is audit work → a C1 session acts as **Auditor**, §2.1.)* |
 | **D0** | Terminal FE — `static/terminal/*` + `/api/broker/*`; UX + speed testing; owns its Render service |
 | **D1** | Storefront FE — `static/store/*`, `/api/store/*`; owns `vibepass-storefront-test` |
 | **D2** | Orders dashboard — `d2_dashboard/*`; owns `d2-orders-dashboard` |
