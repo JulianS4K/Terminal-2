@@ -1245,10 +1245,22 @@ def build_broker_router(
                 away_team_id = snap[0].get("away_team_id")
                 home_slug = away_slug = x["espn_slug"]
 
-        def _team_standings(team_id: str | None) -> list:
+        # ----- ESPN + zone reads: ONE concurrent wave -----
+        # Once the team ids are known these are all independent, so fan them out
+        # together (previously several sequential steps). Consolidations vs the
+        # prior code:
+        #   (a) espn_injuries_snapshots is read ONCE for both teams and reused for
+        #       the overlay AND both per-team injury-load series (was 3 reads).
+        #   (b) zone_metrics joins the wave instead of trailing it.
+        # last5 stays per-team: its LIMIT 25 is a per-team cap, so folding both
+        # teams into one capped query could drop games before the dedupe.
+        team_ids = [t for t in (home_team_id, away_team_id) if t]
+        _have_teams = bool(team_ids) and bool(home_league)
+
+        def _fetch_standings(team_id: str | None) -> list:
             if not team_id or not home_league:
                 return []
-            rows = (
+            return (
                 db.table("espn_team_snapshots")
                 .select("captured_at,win_pct,wins,losses,games_back,playoff_seed,conference_rank,division_rank,record_summary,streak")
                 .eq("espn_team_id", team_id)
@@ -1257,11 +1269,92 @@ def build_broker_router(
                 .order("captured_at")
                 .execute()
             ).data or []
-            return rows
 
-        home_standings_rows, away_standings_rows = run_parallel([
-            lambda: _team_standings(home_team_id),
-            lambda: _team_standings(away_team_id),
+        def _fetch_injuries() -> list:
+            # ONE read for both teams. Superset select feeds the overlay
+            # (athlete_name/injury_type/short_comment/is_baseline) AND the
+            # per-team injury-load state machine (athlete_id/status).
+            # CRITICAL: filter by espn_league — espn_team_id is league-scoped
+            # ("18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 …);
+            # without it we'd pull 229 rows when only 12 are real.
+            if not _have_teams:
+                return []
+            return (
+                db.table("espn_injuries_snapshots")
+                .select("captured_at,athlete_name,athlete_id,status,injury_type,short_comment,espn_team_id,is_baseline")
+                .in_("espn_team_id", team_ids)
+                .eq("espn_league", home_league)
+                .gte("captured_at", since_iso)
+                .order("captured_at")
+                .execute()
+            ).data or []
+
+        def _fetch_roster() -> list:
+            if not _have_teams:
+                return []
+            return (
+                db.table("espn_athlete_team_history")
+                .select("detected_at,transaction_type,prior_team_id,espn_team_id,espn_athlete_id,notes")
+                .in_("transaction_type", ["traded", "released"])
+                .eq("espn_league", home_league)   # league-scope; team_id+league together is the unique team
+                .gte("detected_at", since_iso)
+                .or_(",".join(filter(None, [
+                    f"espn_team_id.eq.{home_team_id}" if home_team_id else None,
+                    f"espn_team_id.eq.{away_team_id}" if away_team_id else None,
+                    f"prior_team_id.eq.{home_team_id}" if home_team_id else None,
+                    f"prior_team_id.eq.{away_team_id}" if away_team_id else None,
+                ])) or "espn_team_id.eq.NULL")
+                .order("detected_at")
+                .execute()
+            ).data or []
+
+        def _fetch_last5(team_id: str | None) -> list:
+            if not team_id or not home_league:
+                return []
+            return (
+                db.table("espn_event_snapshots")
+                .select("captured_at,espn_event_id,home_team_id,away_team_id,home_score,away_score,state")
+                .or_(f"home_team_id.eq.{team_id},away_team_id.eq.{team_id}")
+                .eq("espn_league", home_league)   # league-scope: id "20" exists in NBA + MLB + NFL etc.
+                .eq("state", "post")
+                .order("captured_at", desc=True).limit(25)
+                .execute()
+            ).data or []
+
+        def _fetch_news(team_id: str | None) -> list:
+            if not team_id:
+                return []
+            return (
+                db.table("espn_news")
+                .select("published_at")
+                .eq("espn_team_id", team_id).eq("espn_league", home_league or "")
+                .gte("published_at", since_iso)
+                .order("published_at")
+                .execute()
+            ).data or []
+
+        def _fetch_zone_metrics() -> list:
+            return (
+                db.table("zone_metrics")
+                .select("captured_at, zone, zone_source, retail_median, tickets_count, owned_tickets_count, owned_median_retail")
+                .eq("event_id", event_id)
+                .gte("captured_at", since_iso)
+                .order("captured_at")
+                .execute()
+            ).data or []
+
+        (home_standings_rows, away_standings_rows, inj_rows, rm_rows,
+         last5_home_rows, last5_away_rows, home_news_rows, away_news_rows,
+         zm_rows) = run_parallel([
+            lambda: _fetch_standings(home_team_id),
+            lambda: _fetch_standings(away_team_id),
+            _fetch_injuries,
+            _fetch_roster,
+            lambda: _fetch_last5(home_team_id),
+            lambda: _fetch_last5(away_team_id),
+            lambda: _fetch_news(home_team_id),
+            lambda: _fetch_news(away_team_id),
+            _fetch_zone_metrics,
         ])
 
         def _stand_series(rows: list, field: str) -> list:
@@ -1280,72 +1373,30 @@ def build_broker_router(
                            "seed": r.get("playoff_seed"), "rec": r.get("record_summary")}
                           for r in away_standings_rows]
 
-        # 3) Injury rows. Originally filtered is_baseline=false ("real status flips
-        # only") but espn-collect's is_baseline detection only works for MLB+NHL —
-        # NBA/NFL/MLS/WNBA/WC always come back with is_baseline=true, so the strict
-        # filter hid 100% of their injury data. Relaxed to include baseline rows
-        # too. Front-end tags each marker with `is_change` so the user can tell
-        # status flips apart from initial-baseline injuries (copilot lane: fix
-        # the upstream is_baseline detection in espn-collect).
-        # CRITICAL: filter by espn_league too — espn_team_id is league-scoped
-        # (id "18" = NBA Knicks AND MLB Pirates AND NFL Saints AND NHL #18 AND WNBA #18).
-        # Without the league filter we'd pull 229 rows when only 12 are real.
-        inj_rows = (
-            db.table("espn_injuries_snapshots")
-            .select("captured_at,athlete_name,status,injury_type,short_comment,espn_team_id,is_baseline")
-            .in_("espn_team_id", [t for t in (home_team_id, away_team_id) if t])
-            .eq("espn_league", home_league or "")
-            .gte("captured_at", since_iso)
-            .order("captured_at")
-            .execute()
-        ).data or [] if (home_team_id or away_team_id) and home_league else []
+        # 3) Injury overlay — all rows (both teams), tagged home/away. is_baseline
+        # detection only works for MLB+NHL (NBA/NFL/MLS/WNBA/WC always report
+        # is_baseline=true), so baseline rows are included and the UI tags each
+        # marker with is_change (true = real status flip; false = baseline row).
         injuries = [{"t": r["captured_at"], "athlete": r.get("athlete_name"),
                      "status": r.get("status"), "team": "home" if r.get("espn_team_id") == home_team_id else "away",
                      "comment": r.get("short_comment"),
-                     "is_change": (r.get("is_baseline") is False)}  # true = real status flip; false = baseline row
+                     "is_change": (r.get("is_baseline") is False)}
                     for r in inj_rows]
 
         # 4) Roster moves (trades + releases)
-        rm_rows: list = []
-        if (home_team_id or away_team_id) and home_league:
-            rm_rows = (
-                db.table("espn_athlete_team_history")
-                .select("detected_at,transaction_type,prior_team_id,espn_team_id,espn_athlete_id,notes")
-                .in_("transaction_type", ["traded", "released"])
-                .eq("espn_league", home_league)   # league-scope; team_id+league together is the unique team
-                .gte("detected_at", since_iso)
-                .or_(",".join(filter(None, [
-                    f"espn_team_id.eq.{home_team_id}" if home_team_id else None,
-                    f"espn_team_id.eq.{away_team_id}" if away_team_id else None,
-                    f"prior_team_id.eq.{home_team_id}" if home_team_id else None,
-                    f"prior_team_id.eq.{away_team_id}" if away_team_id else None,
-                ])) or "espn_team_id.eq.NULL")
-                .order("detected_at")
-                .execute()
-            ).data or []
         roster_moves = [{"t": r["detected_at"], "type": r["transaction_type"],
                          "athlete_id": r.get("espn_athlete_id"),
                          "from_team": r.get("prior_team_id"), "to_team": r.get("espn_team_id"),
                          "notes": r.get("notes")} for r in rm_rows]
 
-        # 5) Last-5 record per team
-        def _last5(team_id: str | None) -> list:
-            if not team_id or not home_league:
+        # 5) Last-5 record per team. Rows are already team-scoped by the fetch;
+        # dedupe by espn_event_id (the collector re-snapshots each finished game
+        # many times, so a raw take-5 would repeat one game), keeping the latest
+        # snapshot per event, and cap at 5. Mirrors the /performer/{id}/espn
+        # fallback dedupe.
+        def _last5_from(rows: list, team_id: str | None) -> list:
+            if not team_id:
                 return []
-            rows = (
-                db.table("espn_event_snapshots")
-                .select("captured_at,espn_event_id,home_team_id,away_team_id,home_score,away_score,state")
-                .or_(f"home_team_id.eq.{team_id},away_team_id.eq.{team_id}")
-                .eq("espn_league", home_league)   # league-scope: id "20" exists in NBA + MLB + NFL etc.
-                .eq("state", "post")
-                .order("captured_at", desc=True).limit(25)
-                .execute()
-            ).data or []
-            # Dedupe by espn_event_id before taking 5 — the collector re-snapshots
-            # each finished game many times, so a raw .limit(5) on snapshot rows
-            # would repeat one game up to 5×. Rows are captured_at-desc, so the
-            # first row per event is its latest snapshot. Mirrors the dedupe in the
-            # /performer/{id}/espn fallback above.
             out = []
             seen_ev = set()
             for r in rows:
@@ -1364,65 +1415,46 @@ def build_broker_router(
                     break
             return out
 
-        last5_home, last5_away = run_parallel([
-            lambda: _last5(home_team_id),
-            lambda: _last5(away_team_id),
-        ])
+        last5_home = _last5_from(last5_home_rows, home_team_id)
+        last5_away = _last5_from(last5_away_rows, away_team_id)
 
         # ----- News velocity per team (rows per hour bucket) -----
-        def _news_series(team_id: str | None) -> list:
-            if not team_id: return []
-            nrows = (
-                db.table("espn_news")
-                .select("published_at")
-                .eq("espn_team_id", team_id).eq("espn_league", home_league or "")
-                .gte("published_at", since_iso)
-                .order("published_at")
-                .execute()
-            ).data or []
-            # Bucket to UTC hours for a clean stairstep series
+        def _news_from(rows: list, team_id: str | None) -> list:
+            if not team_id:
+                return []
             from collections import Counter
             buckets: Counter = Counter()
-            for r in nrows:
+            for r in rows:
                 ts = r.get("published_at") or ""
                 buckets[ts[:13]] += 1   # YYYY-MM-DDTHH
             return [{"t": k + ":00:00+00:00", "v": v} for k, v in sorted(buckets.items())]
 
-        home_news, away_news = run_parallel([
-            lambda: _news_series(home_team_id),
-            lambda: _news_series(away_team_id),
-        ])
+        home_news = _news_from(home_news_rows, home_team_id)
+        away_news = _news_from(away_news_rows, away_team_id)
 
         # ----- Active-injury count over time (per team) -----
-        # For each injury status change, we don't easily know "is this player still
-        # injured at time T" without a reverse pass. Approximation: count distinct
-        # athlete_ids whose latest status change before T was not 'Active'. Cheap
-        # forward-fill in Python — these tables are small.
-        def _injury_load_series(team_id: str | None) -> list:
-            if not team_id: return []
-            rows = (
-                db.table("espn_injuries_snapshots")
-                .select("captured_at,athlete_id,status")
-                .eq("espn_team_id", team_id).eq("espn_league", home_league or "")
-                .gte("captured_at", since_iso)
-                .order("captured_at")
-                .execute()
-            ).data or []
-            # State: athlete_id -> latest status. Each row mutates state, emit count.
+        # Split the single injuries read by team, then forward-fill: athlete_id ->
+        # latest status, emit the count of non-active athletes at each change. We
+        # can't know "still injured at time T" without a reverse pass; this cheap
+        # approximation is fine since the tables are small.
+        def _injury_load_from(team_id: str | None) -> list:
+            if not team_id:
+                return []
             state: dict[str, str] = {}
             out = []
-            for r in rows:
+            for r in inj_rows:
+                if r.get("espn_team_id") != team_id:
+                    continue
                 aid = r.get("athlete_id"); st = (r.get("status") or "").lower()
-                if not aid: continue
+                if not aid:
+                    continue
                 state[aid] = st
                 active_injured = sum(1 for s in state.values() if s and s != "active")
                 out.append({"t": r["captured_at"], "v": active_injured})
             return out
 
-        home_injury_load, away_injury_load = run_parallel([
-            lambda: _injury_load_series(home_team_id),
-            lambda: _injury_load_series(away_team_id),
-        ])
+        home_injury_load = _injury_load_from(home_team_id)
+        away_injury_load = _injury_load_from(away_team_id)
 
         # ----- Composite team_index with window-content-derived weights -----
         # Weight each signal by how much CONTENT (snapshots) it generated during
@@ -1477,15 +1509,7 @@ def build_broker_router(
         # ----- Per-zone time series (curated > fallback > unmapped, single source) -----
         # User spec: only render ONE zone classification, prefer curated. Returns one
         # series per zone with retail_median + tickets_count time points so the
-        # chart workbench can plot any subset.
-        zm_rows = (
-            db.table("zone_metrics")
-            .select("captured_at, zone, zone_source, retail_median, tickets_count, owned_tickets_count, owned_median_retail")
-            .eq("event_id", event_id)
-            .gte("captured_at", since_iso)
-            .order("captured_at")
-            .execute()
-        ).data or []
+        # chart workbench can plot any subset. (zm_rows fetched in the wave above.)
         zm_sources = {r.get("zone_source") for r in zm_rows}
         if "curated" in zm_sources:   zm_chosen = "curated"
         elif "fallback" in zm_sources: zm_chosen = "fallback"
