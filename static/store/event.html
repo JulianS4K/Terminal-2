@@ -13,9 +13,13 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://www.google.com https://*.supabase.co https://maps.ticketevolution.com; frame-src https://www.google.com; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <!-- Title + description are overridden per-event by store.js once the
-       /api/store/events/:id payload lands. These defaults are what crawlers
-       that don't run JS see, and what shows briefly before JS settles. -->
+  <!-- For link-unfurl / SEO crawlers (no JS), routers/storefront_pages'
+       store_event_page replaces everything between the SSR_META_START and
+       SSR_META_END markers with per-event Open Graph / Twitter / JSON-LD tags
+       (core.seo.inject_event_meta) so shared links render the real event
+       name/venue/date/price. Human page loads keep these generic defaults,
+       which store.js overrides per-event once the payload resolves. -->
+  <!-- SSR_META_START -->
   <title>VibePass — event tickets</title>
   <meta name="description" content="Direct-inventory tickets for this event on VibePass. Transparent pricing, no daisy chains." />
 
@@ -37,6 +41,7 @@
        filter variants don't fragment into duplicate-content pages. store.js
        rewrites href to location.origin + location.pathname once it mounts. -->
   <link rel="canonical" href="" />
+  <!-- SSR_META_END -->
   <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>

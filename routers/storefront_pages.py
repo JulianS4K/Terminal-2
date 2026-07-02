@@ -16,14 +16,19 @@ from __future__ import annotations
 import os
 from typing import Callable
 
-from fastapi import APIRouter
-from fastapi.responses import Response
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, Response
+
+from core.seo import inject_event_meta, is_link_crawler
 
 
 def build_storefront_pages_router(
     static_dir: str,
     *,
     get_render_storefront_page: Callable[[], Callable],
+    get_read_storefront_html: Callable[[], Callable],
+    get_resolve_event: Callable[[], Callable],
+    base_url: str,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -57,8 +62,20 @@ def build_storefront_pages_router(
         )
 
     @router.api_route("/store/event/{event_id}", methods=["GET", "HEAD"])
-    def store_event_page(event_id: int):  # noqa: ARG001 — id read by JS from URL
-        return get_render_storefront_page()("event.html")
+    def store_event_page(event_id: int, request: Request):
+        """Serve the event-page shell. For link-unfurl / SEO crawlers (no JS),
+        inject per-event Open Graph / Twitter / JSON-LD metadata server-side so
+        shared links render a real preview. Humans get the fast static shell and
+        store.js fills the per-event tags client-side once the payload resolves.
+        The crawler fetch is fully defensive (any failure falls back to the
+        unchanged shell) — see core.seo.inject_event_meta."""
+        shell = get_read_storefront_html()("event.html")
+        if is_link_crawler(request.headers.get("user-agent")):
+            shell = inject_event_meta(shell, event_id, base_url, get_resolve_event())
+        return HTMLResponse(
+            content=shell,
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     @router.api_route("/store/discover", methods=["GET", "HEAD"])
     def store_discover_page():
