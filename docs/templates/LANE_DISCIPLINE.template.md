@@ -1,5 +1,7 @@
 # LANE_DISCIPLINE.md — TEMPLATE for multi-bot projects
 
+> ⚠️ **DEPRECATED MODEL (2026-07-02).** This template encodes a *hierarchy* — "supervisor", "subordinate lanes", "sole pusher", an `A1→B1→C1` chain, a companion `BOT_HIERARCHY.md`. The source project (Terminal-2) **dissolved that model**: lanes are now flat **identifiers for regions of an ownership map** (a two-area platform substrate + N products), permission is **per-action** via three principals (Applier/Auditor/Builder), and `main` is pushed **per-task after green CI** (no sole pusher). The canonical model is **`PROJECT_BIBLE.md §2`** — prefer it. This file is retained only as a historical scaffold; do **not** copy its supervisor/subordinate hierarchy into a new project.
+
 > **How to use:** Copy this file to `LANE_DISCIPLINE.md` at your repo root. Replace every `<<…>>` placeholder. Delete any lane (`A1`, `B1`, etc.) you don't need; rename them to match your project's structure. The companion `BOT_HIERARCHY.md` template is the quick-reference matrix; this doc holds the per-lane operating detail.
 >
 > **Origin:** This template is generalized from the Terminal-2 multi-bot ticketing project (2026-05-13 lockdown). The core ideas: explicit per-lane write surfaces, single-writer-per-table rule, security/governance separation, and an explicit cross-cutting "deploy infrastructure" ownership section.

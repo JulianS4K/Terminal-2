@@ -1,7 +1,7 @@
 # D4 — The Bridge: Lane Charter & System Architecture
 
 **Status:** ACTIVATING — supersedes the "UNASSIGNED / future · AR codes, custom ticketing" placeholder in `PROJECT_BIBLE.md §2` + `README.md`. (Governance-doc status flips are A1-owned — see §8.)
-**Lane:** D4 · `bot_level = data-collection` · reports to C1 (hierarchy), subordinate-coding posture under D0 for any shared frontend surface.
+**Lane:** D4 · `bot_level = data-collection` · a **product lane** (`PROJECT_BIBLE §2.3`) — flat, no hierarchy: it does not "report to" or sit "under" any lane (the command chain was dissolved 2026-07-02). Coordinate on shared frontend seams via the §2.6 seam register like any other product.
 **Author:** D4 · **Date:** 2026-05-20
 **Source thesis:** *The Bridge — Strategic Opportunity Report* (Julian, Mar 2026, **Confidential**). Held externally (operator's `Downloads`); **not committed to this repo** — it carries BD/financial detail (prospect lists, projections, partner terms) that does not belong in source control. This charter reproduces only the **technical/product architecture** needed to scope the engineering lane.
 **Reconciles with:** `CLAUDE.md` (lockdown invariants), `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md §2`, `PROJECT_BIBLE.md`.

@@ -1,6 +1,6 @@
 # Data Architecture — Terminal-2
 
-**For other bots, subordinates, and humans new to this codebase.** Read this before touching the data layer. Updated 2026-05-14 after the universal AQ matcher session.
+**For any session and humans new to this codebase.** Read this before touching the data layer. Updated 2026-05-14 after the universal AQ matcher session.
 
 ---
 
