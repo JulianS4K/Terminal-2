@@ -27,6 +27,10 @@ Thumbs.db
 dist/
 build/
 
+# Node deps (root ESLint tooling + d4_bridge). package-lock.json IS committed
+# for reproducible CI installs; the installed tree is not.
+node_modules/
+
 # Supabase local
 supabase/.temp/
 

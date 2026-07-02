@@ -1,0 +1,13 @@
+{
+  "name": "terminal-2-frontend-lint",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Root ESLint tooling for the static/ frontend surfaces (coding-recommendation #4: ban raw innerHTML outside the shared S4K lib). App code is not bundled here — d4_bridge keeps its own package.json.",
+  "scripts": {
+    "lint:libs": "eslint static/lib",
+    "lint:all": "eslint static d2_dashboard/static"
+  },
+  "devDependencies": {
+    "eslint": "^9.15.0"
+  }
+}
