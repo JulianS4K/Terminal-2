@@ -1,13 +1,15 @@
 // D0 Terminal — Home page NEWS WIRE ticker.
 //
 // Renders a live, filterable sports-news ticker above the watchlist. Reads the
-// SECURITY DEFINER RPC get_terminal_news_ticker (mig 20260629120000) — the only
-// path the authenticated terminal client has to espn_news, whose RLS is
-// admin_only (USING(false) for authenticated/anon). The RPC unions:
+// SECURITY DEFINER RPC get_terminal_news_ticker (mig 20260629120000, repointed
+// 20260702210000) — the only path the authenticated terminal client has to
+// espn_news, whose RLS is admin_only (USING(false) for authenticated/anon). The
+// RPC unions:
 //   * ESPN   — espn_news, ~80 articles/24h across 7 leagues (LIVE).
-//   * Reddit — v_reddit_important_recent (DORMANT: reddit crons paused, mig
-//              20260513002000 — contributes 0 rows until A1 re-enables them; the
-//              source toggle + chips light up automatically when data returns).
+//   * Reddit — v_reddit_news_ticker (LIVE: flair:"News" pipeline, mig
+//              20260626120000 — title-only, 48h, deduped first-post-shows). Each
+//              Reddit row carries `team` = 'r/<sub>' so the UI shows which sub
+//              the story came from.
 //
 // Server params: window hours (re-query). Client-side (instant): source toggle,
 // league chips (faceted with live counts), free-text search. Auto-refreshes
@@ -57,6 +59,11 @@
 
   // Reddit rows can land with no resolved league → bucket as GEN.
   const leagueOf = it => (it && it.league) ? it.league : 'GEN';
+
+  // Source label: for Reddit rows show the originating sub ('r/<sub>', carried
+  // in `team`) so the user sees which subreddit the story came from; otherwise
+  // the plain source name.
+  const srcLabel = it => (it && it.source === 'Reddit' && it.team) ? it.team : ((it && it.source) || '');
 
   function el(id) { return document.getElementById(id); }
 
@@ -171,9 +178,12 @@
     const slice = items.slice(0, REEL_MAX);
     const itemHtml = slice.map(it => {
       const href = safeHref(it.url);
+      const sub = (it.source === 'Reddit' && it.team)
+        ? `<span class="news-src">${esc(it.team)}</span>` : '';
       return `<a class="news-reel-item" href="${href}" target="_blank" rel="noopener noreferrer">`
            + badge(it)
            + `<span class="news-reel-head">${esc(it.headline || '')}</span>`
+           + sub
            + `<span class="news-reel-dot">•</span></a>`;
     }).join('');
     // Two copies → seamless -50% marquee loop. Pace by item count (min 24s).
@@ -191,7 +201,7 @@
            + `<span class="news-time">${esc(relTime(it.published_at))}</span>`
            + badge(it)
            + `<span class="news-head"><a href="${href}" target="_blank" rel="noopener noreferrer">${esc(it.headline || '')}</a></span>`
-           + `<span class="news-src">${esc(it.source || '')}</span>`
+           + `<span class="news-src">${esc(srcLabel(it))}</span>`
            + `</div>`;
     }).join('');
     list.innerHTML = rows;
