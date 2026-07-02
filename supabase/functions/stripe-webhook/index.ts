@@ -53,7 +53,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
-        if (session.payment_status === "paid" || session.status === "complete") {
+        // Only fulfill once payment has actually settled. `status==='complete'`
+        // also fires for delayed/async methods (ACH/SEPA/etc.) while
+        // payment_status is still 'unpaid'/'processing' — gating on it would
+        // mint tickets before the money arrives, and an async_payment_failed
+        // later can't unwind them. Gate strictly on a settled payment_status.
+        if (session.payment_status === "paid" || session.payment_status === "no_payment_required") {
           const { error } = await sb.rpc("exos_fulfill_checkout", { p_session_id: session.id });
           if (error) {
             // 500 -> Stripe retries. exos_fulfill_checkout is idempotent, so a

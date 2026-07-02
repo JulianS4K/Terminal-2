@@ -51,11 +51,16 @@ $$;
 CREATE TABLE public.exos_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id uuid NOT NULL, name text, slug text, status text NOT NULL DEFAULT 'draft',
-  starts_at timestamptz, currency text DEFAULT 'usd',
+  starts_at timestamptz, doors_at timestamptz, currency text DEFAULT 'usd',
   total_tickets integer NOT NULL DEFAULT 0, tickets_sold integer NOT NULL DEFAULT 0,
+  purchase_limits jsonb,
   occurs_at_local text, venue_name text, venue_location text,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- exos_is_admin() stub (prod: phase-1 SECDEF role check). Tests never grant
+-- platform-admin, so a constant false is the faithful default.
+CREATE OR REPLACE FUNCTION public.exos_is_admin() RETURNS boolean
+  LANGUAGE sql STABLE AS $$ SELECT false $$;
 CREATE TABLE public.exos_ticket_tiers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id uuid NOT NULL, name text, description text, price numeric NOT NULL DEFAULT 0,
@@ -69,13 +74,20 @@ CREATE TABLE public.exos_tickets (
   buyer_id uuid, owner_id uuid, buyer_email text, status text NOT NULL DEFAULT 'active',
   barcode_secret text, price_paid numeric NOT NULL DEFAULT 0, order_ref text,
   channel_source text NOT NULL DEFAULT 'vibepass', check_in_at timestamptz,
+  pending_transfer_id uuid, transfer_id uuid, last_reissue_at timestamptz,
   voided_at timestamptz, voided_reason text,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE public.exos_transfers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  ticket_id uuid NOT NULL, org_id uuid NOT NULL, sender_id uuid,
+  receiver_email text, status text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE public.exos_event_checkins (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id uuid NOT NULL, ticket_id uuid NOT NULL, org_id uuid NOT NULL,
-  scanned_by uuid, source text, verification text,
+  scanned_by uuid, scanned_by_email text, source text, verification text,
   scanned_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE public.exos_checkout_sessions (

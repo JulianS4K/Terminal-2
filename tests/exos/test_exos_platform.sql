@@ -163,6 +163,97 @@ BEGIN
   RAISE NOTICE 'A7 voucher bypass mints on sold-out tier OK (audit fix)';
 END $$;
 
+-- A8. Voucher single-use is atomic across concurrent sessions (audit 2026-07-02).
+-- One single-use voucher shared by two paid sessions → exactly ONE fulfills.
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold) VALUES
+  ('aaaaaaaa-0000-0000-0000-0000000000d3','aaaaaaaa-0000-0000-0000-0000000000e1','GA8',100,50,0);
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE vcode text; vid uuid; ids1 uuid[]; ids2 uuid[]; st1 text; st2 text; uc int;
+BEGIN
+  vcode := public.exos_issue_voucher('aaaaaaaa-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-0000000000d3',NULL,true,NULL,1,NULL,'single-use');
+  SELECT id INTO vid FROM public.exos_vouchers WHERE code=vcode;
+  INSERT INTO public.exos_checkout_sessions(session_id,event_id,tier_id,org_id,buyer_uid,buyer_email,quantity,amount_cents,status,voucher_id) VALUES
+    ('A-vu1','aaaaaaaa-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-0000000000d3','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','vu@x.com',1,10000,'pending',vid),
+    ('A-vu2','aaaaaaaa-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-0000000000d3','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','vu@x.com',1,10000,'pending',vid);
+  ids1 := public.exos_fulfill_checkout('A-vu1');
+  ids2 := public.exos_fulfill_checkout('A-vu2');   -- voucher now exhausted
+  SELECT status INTO st1 FROM public.exos_checkout_sessions WHERE session_id='A-vu1';
+  SELECT status INTO st2 FROM public.exos_checkout_sessions WHERE session_id='A-vu2';
+  SELECT used_count INTO uc FROM public.exos_vouchers WHERE id=vid;
+  ASSERT array_length(ids1,1)=1 AND st1='fulfilled', 'first redemption mints, got '||st1;
+  ASSERT coalesce(array_length(ids2,1),0)=0 AND st2='failed', 'second redemption of single-use voucher must fail, got '||st2;
+  ASSERT uc=1, 'voucher used_count stays 1 (not double-consumed), got '||uc;
+  RAISE NOTICE 'A8 voucher single-use atomic across sessions OK (audit fix)';
+END $$;
+
+-- A9. Check-in hardening + doors gate (audit 2026-07-02).
+INSERT INTO public.exos_events(id,org_id,name,status,starts_at,doors_at,total_tickets)
+  VALUES ('aaaaaaaa-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','Doors Test',
+          'published', now()+interval '3 hours', now()+interval '2 hours', 100);
+INSERT INTO public.exos_tickets(id,event_id,org_id,owner_id,buyer_id,status,barcode_secret) VALUES
+  ('aaaaaaaa-0000-0000-0000-0000000000f1','aaaaaaaa-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','secret-f1'),
+  ('aaaaaaaa-0000-0000-0000-0000000000f2','aaaaaaaa-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','secret-f2');
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);  -- org owner = door staff
+SELECT set_config('app.jwt','{"email":"owner@x.com"}',false);
+DO $$
+DECLARE r jsonb; bkt bigint; sig text; oid text := '22222222-2222-2222-2222-222222222222';
+        tid1 text := 'aaaaaaaa-0000-0000-0000-0000000000f1';
+        tid2 text := 'aaaaaaaa-0000-0000-0000-0000000000f2';
+BEGIN
+  -- (a) Before doors, test mode off → rejected.
+  r := public.exos_check_in_ticket(tid1::uuid,'manual','manual',NULL,'aaaaaaaa-0000-0000-0000-0000000000e9');
+  ASSERT r->>'reason'='doors-not-open', 'pre-doors check-in must be blocked, got '||coalesce(r->>'reason','null');
+
+  -- Enable server-side test mode → gate lifted.
+  UPDATE public.exos_events SET checkin_test_mode=true WHERE id='aaaaaaaa-0000-0000-0000-0000000000e9';
+
+  -- (b) Valid signed barcode via camera → admitted.
+  bkt := floor(extract(epoch FROM now())*1000/30000)::bigint;
+  sig := rtrim(translate(encode(extensions.hmac(tid1||':'||oid||':'||bkt::text,'secret-f1','sha256'),'base64'),'+/','-_'),'=');
+  r := public.exos_check_in_ticket(tid1::uuid,'camera','verified','T-'||tid1||':'||oid||':'||bkt::text||':'||sig,'aaaaaaaa-0000-0000-0000-0000000000e9');
+  ASSERT (r->>'ok')::boolean, 'valid signed barcode must be admitted, got '||coalesce(r->>'reason','null');
+
+  -- (c) Legacy 3-segment payload via camera → rejected (downgrade closed).
+  r := public.exos_check_in_ticket(tid2::uuid,'camera','legacy','T-'||tid2||':'||oid||':'||bkt::text,'aaaaaaaa-0000-0000-0000-0000000000e9');
+  ASSERT r->>'reason'='barcode-rejected', 'legacy 3-seg barcode must be rejected, got '||coalesce(r->>'reason','null');
+  ASSERT (SELECT status FROM public.exos_tickets WHERE id=tid2::uuid)='active', 'rejected legacy scan must NOT flip the ticket';
+
+  -- (d) Camera scan with no signed payload (bare UUID) → rejected.
+  r := public.exos_check_in_ticket(tid2::uuid,'camera','manual',NULL,'aaaaaaaa-0000-0000-0000-0000000000e9');
+  ASSERT r->>'reason'='barcode-rejected', 'bare camera scan must be rejected, got '||coalesce(r->>'reason','null');
+
+  -- (e) Manual typed entry (authorized staff, no payload) → admitted.
+  r := public.exos_check_in_ticket(tid2::uuid,'manual','manual',NULL,'aaaaaaaa-0000-0000-0000-0000000000e9');
+  ASSERT (r->>'ok')::boolean, 'manual staff override must be admitted, got '||coalesce(r->>'reason','null');
+  RAISE NOTICE 'A9 check-in doors gate + barcode hardening OK (audit fix)';
+END $$;
+
+-- A10. Transfer no longer leaks the rotated barcode_secret to the old buyer
+-- (audit 2026-07-02): claim reassigns buyer_id to the claimer.
+INSERT INTO auth.users(id,email,email_confirmed_at) VALUES
+  ('33333333-3333-3333-3333-333333333333','alice@x.com',now()),
+  ('44444444-4444-4444-4444-444444444444','bob@x.com',now())
+  ON CONFLICT (id) DO NOTHING;
+INSERT INTO public.exos_tickets(id,event_id,org_id,owner_id,buyer_id,status,barcode_secret,pending_transfer_id) VALUES
+  ('aaaaaaaa-0000-0000-0000-0000000000f3','aaaaaaaa-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','33333333-3333-3333-3333-333333333333','33333333-3333-3333-3333-333333333333','active','secret-old','aaaaaaaa-0000-0000-0000-0000000000c1');
+INSERT INTO public.exos_transfers(id,ticket_id,org_id,sender_id,receiver_email,status) VALUES
+  ('aaaaaaaa-0000-0000-0000-0000000000c1','aaaaaaaa-0000-0000-0000-0000000000f3','aaaaaaaa-0000-0000-0000-000000000001','33333333-3333-3333-3333-333333333333','bob@x.com','pending');
+SELECT set_config('app.uid','44444444-4444-4444-4444-444444444444',false);  -- Bob claims
+SELECT set_config('app.jwt','{"email":"bob@x.com"}',false);
+DO $$
+DECLARE o uuid; b uuid; sec text; st text; ptid uuid;
+BEGIN
+  PERFORM public.exos_claim_transfer('aaaaaaaa-0000-0000-0000-0000000000c1');
+  SELECT owner_id,buyer_id,barcode_secret,status,pending_transfer_id
+    INTO o,b,sec,st,ptid FROM public.exos_tickets WHERE id='aaaaaaaa-0000-0000-0000-0000000000f3';
+  ASSERT o='44444444-4444-4444-4444-444444444444', 'owner reassigned to claimer';
+  ASSERT b='44444444-4444-4444-4444-444444444444', 'buyer_id reassigned to claimer (old buyer loses RLS read)';
+  ASSERT sec<>'secret-old', 'barcode_secret rotated on claim';
+  ASSERT st='active' AND ptid IS NULL, 'ticket active + transfer lock cleared';
+  RAISE NOTICE 'A10 transfer reassigns buyer_id (secret leak closed) OK (audit fix)';
+END $$;
+
 SELECT '*** PART A (individual functions) PASSED ***' AS result;
 
 -- ============================================================================
@@ -245,7 +336,10 @@ BEGIN
   INSERT INTO public.exos_checkout_sessions(session_id,event_id,tier_id,org_id,buyer_uid,buyer_email,quantity,amount_cents,tax_cents,status,voucher_id)
   VALUES ('B-s2','bbbbbbbb-0000-0000-0000-0000000000e1','bbbbbbbb-0000-0000-0000-0000000000d1',
           'bbbbbbbb-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','buyer2@x.com',1,12000,2000,'pending',vid);
-  UPDATE public.exos_checkout_sessions SET status='fulfilled' WHERE session_id='B-s2';
+  -- Consume now happens INSIDE exos_fulfill_checkout (mig 20260702122000 moved
+  -- it off the AFTER trigger and dropped that trigger), so drive the real
+  -- fulfillment path rather than manually flipping status.
+  PERFORM public.exos_fulfill_checkout('B-s2');
   SELECT status INTO st FROM public.exos_waitlist WHERE email='buyer2@x.com';
   ASSERT st='converted', 'waitlist converted on redeem, got '||st;
   ASSERT (SELECT used_count FROM public.exos_vouchers WHERE id=vid)=1, 'voucher consumed';

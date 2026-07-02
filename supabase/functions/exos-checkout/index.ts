@@ -151,6 +151,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
       for (const [id, qty] of wanted) {
         const a = byId.get(id);
         if (!a || a.visibility !== "public") return json({ error: "add-on not available" }, 409);
+        // Hard upper bound mirroring the exos_order_addons CHECK (quantity BETWEEN
+        // 1 AND 50). Without this, an add-on with no max_per_order and unlimited
+        // capacity (both defaults) accepts any quantity here, the buyer pays, then
+        // fulfillment's INSERT violates the CHECK and rolls back — charged, no
+        // tickets, infinite webhook retry. Reject over-cap before charging.
+        if (qty > 50) {
+          return json({ error: `add-on "${a.name}" limited to 50 per order` }, 409);
+        }
         if (a.max_per_order && qty > a.max_per_order) {
           return json({ error: `add-on "${a.name}" limited to ${a.max_per_order} per order` }, 409);
         }

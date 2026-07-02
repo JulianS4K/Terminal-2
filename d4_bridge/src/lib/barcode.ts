@@ -21,10 +21,12 @@
 //      either the bucket is out of window (more than one bucket old)
 //      or the HMAC mismatches.
 //
-//   4. Backwards compat: if the barcode is in the legacy 3-segment
-//      shape (no HMAC), verifyBarcode returns `legacy: true`. The
-//      caller decides whether to accept legacy or refuse — we accept
-//      during the rollout so existing tickets keep working.
+//   4. Legacy 3-segment barcodes (no HMAC) are REJECTED (ok:false,
+//      legacy:true). They were tolerated during rollout, but a payload
+//      with no signature is forgeable from a screenshot of the public
+//      ticket id — a check-in downgrade. Holders of a legacy ticket must
+//      refresh it in the app to get a signed barcode. The server RPC
+//      rejects them too, so client and server agree.
 //
 // What this still doesn't give us:
 //   * True server-side validation. The verification runs in the
@@ -174,13 +176,16 @@ export async function verifyBarcode(
     return { ok: false, reason: 'malformed', legacy: false };
   }
   const parts = payload.slice(2).split(':');
-  // 3 segments = legacy ("T-{ticketId}:{ownerId}:{timestamp}"), tolerated
-  // during rollout. 4 segments = signed ("...:{hmac}").
+  // 3 segments = legacy ("T-{ticketId}:{ownerId}:{timestamp}"), which carries NO
+  // HMAC and is trivially forgeable from a screenshot (the ticket id is public).
+  // It is NO LONGER accepted — ok:false. The `legacy` flag is kept only so the
+  // UI can show a "refresh your ticket" message. 4 segments = signed. The server
+  // RPC (exos_check_in_ticket) rejects legacy payloads too, so this mirrors it.
   if (parts.length === 3) {
     const [ticketId, ownerId, bucketStr] = parts;
     const bucket = parseInt(bucketStr, 10);
     return {
-      ok: true,
+      ok: false,
       reason: 'legacy-no-secret',
       legacy: true,
       ticketId,
