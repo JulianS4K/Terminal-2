@@ -286,6 +286,10 @@
         '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>' +
       '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
         '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>' +
+      '<section id="sg-seatdata-comps"><div class="panel-title row"><span>SEATDATA COMPS — realized sold-ticket curve (full history)</span>' +
+        '<span class="muted small" id="sgSdMeta">loading…</span></div>' +
+        '<div id="sgSdNote" class="muted small" style="margin-bottom:6px"></div>' +
+        '<div id="sgSdHost" class="wc-chart"></div><div id="sgSdBody"><div class="empty">loading…</div></div></section>' +
       '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
         '<span class="muted small" id="sgMapMeta">loading…</span></div>' +
         '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">loading…</div></div>' +
@@ -295,7 +299,70 @@
     loadWcMarkets(sgId).catch(e => console.error('[wc markets]', e));
     loadSgListingsInline(sgId).catch(e => console.error('[sg listings]', e));
     loadSgSalesInline(sgId).catch(e => console.error('[sg sales]', e));
+    loadWcSeatdataComps(sgId).catch(e => console.error('[wc seatdata comps]', e));
     loadWcSeatmapDonor(sgId).catch(e => console.error('[wc seatmap]', e));
+  }
+
+  // SeatData realized sold-ticket comps — the FULL history curve (uncapped), via
+  // get_wc_seatdata_comps. SeatData is tevo_event_id-keyed and TEvo lists only the
+  // one WC match we own (Match 72), so this shows that match's own curve where it
+  // has data, otherwise falls back to Match 72 flagged as the WC pricing benchmark.
+  async function loadWcSeatdataComps(sgId) {
+    const Auth = window.TerminalAuth;
+    const meta = document.getElementById('sgSdMeta');
+    const note = document.getElementById('sgSdNote');
+    const host = document.getElementById('sgSdHost');
+    const body = document.getElementById('sgSdBody');
+    if (!body) return;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">Sign in with @s4kent.com to view SeatData comps.</div>';
+      if (meta) meta.textContent = 'no auth';
+      return;
+    }
+    const res = await Auth.client.rpc('get_wc_seatdata_comps', { p_sg_event_id: sgId });
+    const d = res.data || null;
+    if (res.error || !d || !d.has_data) {
+      body.innerHTML = '<div class="empty">No SeatData sold-ticket comps for the World Cup yet.' +
+        '<div class="muted small">SeatData keys on TEvo events; TEvo lists only the one match we own.</div></div>';
+      if (meta) meta.textContent = res.error ? 'error' : 'no comps';
+      return;
+    }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const s = d.summary || {};
+    if (note) {
+      note.innerHTML = d.is_benchmark
+        ? `<b>Benchmark</b> — this match has no realized sales yet; showing Match ${escapeHtml(String(d.benchmark_match || ''))} ` +
+          '(the only World Cup match with SeatData sales) as the tournament pricing benchmark.'
+        : 'Realized SeatData sales for this match — full history, uncapped.';
+    }
+    if (meta) meta.textContent = `${T.fmtNum(s.sales || 0)} sales · ${s.sections || 0} sections · ${s.first_sale || '?'} → ${s.last_sale || '?'}`;
+    const kpis = [['GET-IN', money(s.min)], ['MEDIAN', money(s.median)], ['P90', money(s.p90)], ['MAX', money(s.max)], ['TICKETS', T.fmtNum(s.tickets || 0)]];
+    body.innerHTML = '<section id="sd-kpi-grid" style="margin-bottom:8px">' +
+      kpis.map(([l, v]) => `<div class="kpi-cell"><span class="kpi-lbl">${l}</span><span class="kpi-val">${v}</span></div>`).join('') +
+      '</section>';
+    renderSdCompChart('sgSdHost', d.daily || []);
+  }
+
+  // Daily median/get-in sold-ticket curve for the SeatData comps section.
+  function renderSdCompChart(hostId, daily) {
+    const host = document.getElementById(hostId);
+    if (!host || typeof uPlot === 'undefined' || !daily || daily.length < 2) { if (host) host.innerHTML = ''; return; }
+    const asc = daily.slice().sort((a, b) => (a.d < b.d ? -1 : 1));
+    const xs = asc.map(r => Math.floor(new Date(r.d + 'T00:00:00Z').getTime() / 1000));
+    const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
+    const data = [xs, col('min'), col('median'), col('p90')];
+    const width = () => Math.max(160, host.clientWidth || 800);
+    const opts = {
+      width: width(), height: 240, scales: { x: { time: true } },
+      series: [{}, { label: 'Get-in', stroke: '#5ab0ff', width: 2 },
+        { label: 'Median', stroke: '#46d39a', width: 2 }, { label: 'P90', stroke: '#e0a23c', width: 1 }],
+    };
+    host.innerHTML = '';
+    const u = new uPlot(opts, data, host);
+    if (!host._sdResize) {
+      host._sdResize = true;
+      window.addEventListener('resize', () => u.setSize({ width: width(), height: 240 }));
+    }
   }
 
   // Borrowed venue seat map for SeatGeek-native (World Cup) events. These have no
