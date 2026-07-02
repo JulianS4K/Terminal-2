@@ -295,6 +295,34 @@ def test_broadway_allowlist_constant_is_get_only():
     assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
 
 
+# ---------- bandsintown_client ----------
+
+def test_bandsintown_assert_readonly_raises_on_post():
+    from bandsintown_client import _assert_readonly_method, BandsInTownReadOnlyError
+    with pytest.raises(BandsInTownReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+    assert "RULE 2" in str(exc.value)
+
+
+def test_bandsintown_assert_readonly_raises_on_put_patch_delete():
+    from bandsintown_client import _assert_readonly_method, BandsInTownReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
+        with pytest.raises(BandsInTownReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_bandsintown_assert_readonly_allows_get():
+    from bandsintown_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_bandsintown_allowlist_constant_is_get_only():
+    from bandsintown_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
 # ---------- audit script catches synthetic violations ----------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

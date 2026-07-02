@@ -1069,6 +1069,28 @@ from routers.axs import build_axs_router  # noqa: E402
 app.include_router(build_axs_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
+# Bands in Town artist tour-tracking read route (#693). Read-only GET client +
+# Instagram share-card generator wired into a broker endpoint. Auth:
+# BANDSINTOWN_APP_ID resolved via BandsInTownClient's chain (arg → env → Vault);
+# the route returns 503 if it is missing from both env and vault.
+
+def _get_bandsintown_client():
+    """Lazy import + instantiation. Returns None if BANDSINTOWN_APP_ID not found anywhere."""
+    from bandsintown_client import BandsInTownClient, BandsInTownError
+    try:
+        return BandsInTownClient(db=require_sb())
+    except BandsInTownError:
+        return None
+
+
+from routers.bandsintown import build_bandsintown_router  # noqa: E402
+
+app.include_router(build_bandsintown_router(
+    get_bandsintown_client=lambda: _get_bandsintown_client(),
+    require_auth=require_auth,
+))
+
+
 # (seatdata link + auto-search + sync-sales POSTs moved to routers/seatdata.py
 #  — slice 33; require_cron_or_auth passed in for the cron-driven sync routes.)
 
