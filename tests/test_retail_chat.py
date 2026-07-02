@@ -229,3 +229,21 @@ def test_global_daily_cap(capture_post, monkeypatch):
     ]
     assert codes == [200, 200, 429]
     assert len(capture_post) == 2
+
+
+def test_cap_env_parse_fallbacks_on_reload(monkeypatch):
+    """Re-import routers.retail_chat with non-integer cap envs so the two
+    `except ValueError` fallback branches execute and the caps land on their
+    defaults (1000 / 40). The reload is reverted in a finally so the live module
+    state (read by the running server.app routes) is restored for downstream
+    tests. Mirrors the import-time reload pattern in tests/test_core_misc_full.py."""
+    import importlib
+    monkeypatch.setenv("RETAIL_CHAT_DAILY_MAX", "not-a-number")    # → except → 1000
+    monkeypatch.setenv("RETAIL_CHAT_IP_DAILY_MAX", "also-not-int")  # → except → 40
+    try:
+        reloaded = importlib.reload(retail_chat_mod)
+        assert reloaded._RETAIL_CHAT_DAILY_MAX == 1000
+        assert reloaded._RETAIL_CHAT_IP_DAILY_MAX == 40
+    finally:
+        # Restore the original env-derived module state for downstream tests.
+        importlib.reload(retail_chat_mod)
