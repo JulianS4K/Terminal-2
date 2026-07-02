@@ -59,6 +59,66 @@ def test_redis_limiter_new_window_resets_count():
     assert lim.check("k", 1, 10.0) is True
 
 
+class _BrokenRedis(_FakeRedis):
+    """Fake whose data ops raise — simulates Redis dying *after* boot ping."""
+
+    def incr(self, k):
+        raise ConnectionError("redis went away")
+
+
+# --- RedisRateLimiter runtime resilience (Redis dies after startup) ----------
+
+def test_redis_limiter_fails_open_on_runtime_error_without_fallback():
+    lim = RedisRateLimiter(_BrokenRedis(), now=lambda: 1000.0)
+    # incr raises -> must not propagate; fail open so the app stays up.
+    assert lim.check("k", 1, 60.0) is True
+    assert lim.check("k", 1, 60.0) is True
+
+
+def test_redis_limiter_degrades_to_fallback_on_runtime_error():
+    calls = []
+
+    class _Fallback:
+        def check(self, key, n, w):
+            calls.append((key, n, w))
+            return False  # fallback enforces the cap
+
+    logs = []
+    lim = RedisRateLimiter(
+        _BrokenRedis(), now=lambda: 1000.0, fallback=_Fallback(), log=logs.append,
+    )
+    assert lim.check("ip|/x", 5, 60.0) is False       # delegated to fallback
+    assert calls == [("ip|/x", 5, 60.0)]
+    # Degrade logged exactly once (throttled), even across repeated failures.
+    assert lim.check("ip|/x", 5, 60.0) is False
+    assert sum("degrading" in m for m in logs) == 1
+
+
+def test_redis_limiter_logs_recovery_after_degrade():
+    class _Flaky:
+        """Raises on the first incr, then behaves."""
+        def __init__(self):
+            self.n = 0
+            self.store = {}
+        def incr(self, k):
+            self.n += 1
+            if self.n == 1:
+                raise ConnectionError("blip")
+            self.store[k] = self.store.get(k, 0) + 1
+            return self.store[k]
+        def expire(self, k, ttl):
+            pass
+
+    logs = []
+    lim = RedisRateLimiter(
+        _Flaky(), now=lambda: 1000.0, fallback=_InProc(), log=logs.append,
+    )
+    assert lim.check("k", 5, 60.0) is True            # degrade (fallback allows)
+    assert lim.check("k", 5, 60.0) is True            # Redis back -> recover
+    assert sum("degrading" in m for m in logs) == 1
+    assert sum("recovered" in m for m in logs) == 1
+
+
 # --- make_rate_limiter -------------------------------------------------------
 
 class _InProc:
@@ -88,6 +148,9 @@ def test_selector_uses_redis_when_url_and_reachable():
     )
     assert isinstance(lim, RedisRateLimiter)
     assert any("Redis backend" in m for m in logs)
+    # Selector must wire an in-process fallback so a post-boot Redis outage
+    # degrades instead of raising on the request path.
+    assert isinstance(lim._fallback, _InProc)
 
 
 def test_selector_falls_back_when_redis_unreachable():

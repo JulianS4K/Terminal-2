@@ -361,6 +361,18 @@ def test_rate_limit_middleware_returns_429(client, monkeypatch):
     assert r.headers["Retry-After"] == "60"
 
 
+def test_rate_limit_middleware_fails_open_when_limiter_raises(client, monkeypatch):
+    # A limiter fault (e.g. Redis died mid-request in a way the backend didn't
+    # absorb) must NOT 500 the request — the middleware catches and fails open.
+    def _boom(*a, **k):
+        raise RuntimeError("limiter exploded")
+
+    monkeypatch.setattr(app_module._ip_limiter, "check", _boom)
+    r = client.get("/api/public/config")
+    assert r.status_code != 500  # request survives the limiter outage
+    assert r.status_code != 429  # and is not spuriously rate-limited
+
+
 def test_rate_limit_middleware_skips_healthz_and_root(client, monkeypatch):
     # / and /healthz are exempt (return before consulting the limiter).
     monkeypatch.setattr(
