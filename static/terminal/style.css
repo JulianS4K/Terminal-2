@@ -29,6 +29,13 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 12px;
+  /* Hard-wire the header/nav to always show on every terminal page: pin it to
+     the top so it stays in view on scroll, and above content via z-index. Paired
+     with the min-width:0 blowout guard below (so a wide page can't scroll the
+     bar off-screen horizontally either). */
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 .topbar .status { margin-left: auto; }
 .topbar .brand { color: var(--accent); font-weight: 600; letter-spacing: 0.5px; }
@@ -63,6 +70,15 @@ main.wrap {
   grid-template-columns: repeat(12, 1fr);
   gap: 12px;
 }
+
+/* Global horizontal-overflow guard (all terminal pages). Every page uses
+   main.wrap.<page> as a grid/flex container whose section items default to
+   min-width:auto — so a section with wide content (long news headlines, wide
+   tables/charts) blows out its track and widens the whole page, which scrolls
+   the header/nav off-screen. Capping every wrap section to min-width:0 keeps
+   the page within the viewport so the sticky header stays put. min-width:0 is a
+   no-op for non-grid/flex items, so this is safe everywhere. */
+main.wrap section { min-width: 0; }
 
 /* ---------- Hero band ---------- */
 
