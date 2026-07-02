@@ -1,6 +1,6 @@
 # RESOURCES_BIBLE.md — resource catalog
 
-> **Doc version:** v2.13.0 (2026-07-02; §5: SG state — sales path re-lit, listings dark with EVO+TD-SH chart substitutes (mig 20260702004500), classifier back on + 5/tick (20260702011500); Sphere Wizard pseudo-event fully excluded + collected data deleted (migs 20260702012000–20260702033000, 134500, 143500); cron deadman checks (mig 20260701235000); espn_athletes change-only + prev_* revert (20260702000500)) · v2.10.0 (2026-07-01; §5: per-source freshness SLA monitor — `record_source_freshness()` on the 5-min health cadence, `source_freshness` checks on the D0 health page, mig `20260701221500`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.14.0 (2026-07-02; accuracy sweep — §0 live counts refreshed (217/203/5/562/178·138) + §5 cron header + §6 edge-fn count 29→31 (added `axs-to-tevo-search-bridge`, `exos-reconcile-checkouts`); fixed `latest_event_metrics` refresh 5min→10min + §3 now 5 matviews (`mv_event_price_vol`); marked `compute_movers_index_post_snapshot` PAUSED; dropped dissolved-hierarchy "sub" wording) · v2.13.0 (2026-07-02; §5: SG state — sales path re-lit, listings dark with EVO+TD-SH chart substitutes (mig 20260702004500), classifier back on + 5/tick (20260702011500); Sphere Wizard pseudo-event fully excluded + collected data deleted (migs 20260702012000–20260702033000, 134500, 143500); cron deadman checks (mig 20260701235000); espn_athletes change-only + prev_* revert (20260702000500)) · v2.10.0 (2026-07-01; §5: per-source freshness SLA monitor — `record_source_freshness()` on the 5-min health cadence, `source_freshness` checks on the D0 health page, mig `20260701221500`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 What exists: services, DB inventory, secrets (names only), taxonomy + data RULES. Companion: ownership → `PROJECT_BIBLE §2`; cross-source ID architecture → `PROJECT_BIBLE §5`; per-session rules + column landmines → `PROJECT_BIBLE §3`; migration mechanics → `MIGRATION_CONVENTIONS`.
 
@@ -13,16 +13,16 @@ WHERE n.nspname='public' AND prokind='f';                        -- functions
 SELECT jobname,schedule,active FROM cron.job;                    -- crons
 ```
 
-## 0. Live counts (snapshot 2026-06-19; verify via queries above)
+## 0. Live counts (snapshot 2026-07-02; verify via queries above)
 
 | Object | Count |
 |---|---|
-| base tables | 212 |
-| views | 178 |
-| matviews | 4 |
-| functions | 536 |
-| crons | 164 (151 active) |
-| edge functions | 29 (`supabase/functions/`, excl. `_shared`) |
+| base tables | 217 |
+| views | 203 |
+| matviews | 5 |
+| functions | 562 |
+| crons | 178 (138 active) |
+| edge functions | 31 (`supabase/functions/`, excl. `_shared`) |
 
 Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_sg_*`, `*_pending`, `*_snapshots`.
 
@@ -33,7 +33,7 @@ Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_
 | Service | Purpose | Owner | Where | Secret (name only) |
 |---|---|---|---|---|
 | **Supabase** | Postgres + Edge + Vault + Auth | A1 | project `hzrizjeaxlqcxfrtczpq` | anon + service_role (anon exposed via `/api/public/config`) |
-| **Render** | FastAPI + static hosting | D0 (D1 sub) | `srv-d8140bnaqgkc73al4asg` | env-side |
+| **Render** | FastAPI + static hosting | D0 (store surface D1) | `srv-d8140bnaqgkc73al4asg` | env-side |
 | **Sentry** (opt-in) | error tracking / exception capture | B1 | `core/observability.py` (`init_sentry`) | `SENTRY_DSN` (env; **inert until set** — no-op + zero behavior change without it) |
 | **TEvo** (TicketEvolution v9) | listings/orders feed | A1 | `evo_client.py` | `TEVO_API_TOKEN`, `TEVO_SECRET` |
 | **SeatGeek** | marketplace + seller data | A1 | `seatgeek_client.py`, `sg_*` tables | `SEATGEEK_API_TOKEN` |
@@ -119,8 +119,8 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 
 ---
 
-## 3. Matviews (4)
-`latest_event_metrics` (5min refresh; per-event latest; feeds `/api/store/events`; anon-exposed by design), `v_dashboard_writes_24h` (24h write velocity; high refresh cost — flagged), `mv_sg_blindspot_movers`, `mv_tevo_blindspot_movers` (10min refresh).
+## 3. Matviews (5)
+`latest_event_metrics` (10min refresh — cron `latest_event_metrics_refresh_5min` runs `2-59/10`; per-event latest; feeds `/api/store/events`; anon-exposed by design), `v_dashboard_writes_24h` (24h write velocity; high refresh cost — flagged), `mv_sg_blindspot_movers`, `mv_tevo_blindspot_movers` (10min refresh), `mv_event_price_vol` (event price-volatility, feeds alerts-engine-v2).
 
 ## 4. Views (178; patterns)
 - Canonical: `v_canonical_{event,performer,venue}`, `v_canonical_coverage[_v2]`/`_drift`, `sg_canonical_match_view`, `cross_source_{coverage,event_audit}`.
@@ -131,8 +131,8 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 - AXS: `v_axs_{listings,seat_groups,events_classified,venues_mapped,venues_unmapped}`.
 - TD credit accounting (mig 20260630160000): `v_td_credit_usage_by_platform` (daily per platform), `v_td_credit_usage_mtd` (MTD+today), `v_td_credit_cost_per_call` (true per-call cost via quota deltas, partitioned by counter-group `{SH}`/`{VD,GT,TM}`/`{AXS}`; AXS now in-ledger).
 
-## 5. Crons — catalog + scheduling policy (177 total / 156 active; full list = `cron.job`)
-**Categories:** listings pollers (`evo_listings_poll_2min`, `sg_listings_poll_owned_1min`, `sg_sales_poll_5min`, `collect-listings-*`), orders (`evo_orders_*`, `sg_seller_*`, `vivid_orders_*`; tickpick OFF), matchers (`cross_source_match_tick_30min`, `auto_match_sg_canonical_v3_hourly`, `match_events_to_espn_10min`, `backfill-order-tevo-from-aq-hourly :40`, `*-search-bridge`), TD (`td_pull_drain` 1m, `td_normalize_drain` 2m, `td_match_drain`/`sg-match-map-tick`, `td_enqueue_peak_{sh,vd,gt,tm,tp,sg}` staggered — **`td_tier_enqueue_*` RETIRED 2026-06-30, see §5.1**), ESPN/weather/wiki/venue crawl, snapshots (`event_snapshot_{morning,midday,evening}`, `compute_movers_index_post_snapshot`), sweeps (`sweep-old-*` retention, `sweep_*_pending`), AXS (`axs-probe-drain`), Exos (`exos-mail-drain-2min`), macro (`fred_*`). **High DB-time (flagged):** `master-cascade-2min` (OFF), `zone-backfill-isolated-10min`, `dashboard_writes_24h_refresh`.
+## 5. Crons — catalog + scheduling policy (178 total / 138 active as of 2026-07-02; count moves constantly — `SELECT count(*) FROM cron.job` for live)
+**Categories:** listings pollers (`evo_listings_poll_2min`, `sg_listings_poll_owned_1min`, `sg_sales_poll_5min`, `collect-listings-*`), orders (`evo_orders_*`, `sg_seller_*`, `vivid_orders_*`; tickpick OFF), matchers (`cross_source_match_tick_30min`, `auto_match_sg_canonical_v3_hourly`, `match_events_to_espn_10min`, `backfill-order-tevo-from-aq-hourly :40`, `*-search-bridge`), TD (`td_pull_drain` 1m, `td_normalize_drain` 2m, `td_match_drain`/`sg-match-map-tick`, `td_enqueue_peak_{sh,vd,gt,tm,tp,sg}` staggered — **`td_tier_enqueue_*` RETIRED 2026-06-30, see §5.1**), ESPN/weather/wiki/venue crawl, snapshots (`event_snapshot_{morning,midday,evening}`, `compute_movers_index_post_snapshot` — **PAUSED 2026-07-02**), sweeps (`sweep-old-*` retention, `sweep_*_pending`), AXS (`axs-probe-drain`), Exos (`exos-mail-drain-2min`), macro (`fred_*`). **High DB-time (flagged):** `master-cascade-2min` (OFF), `zone-backfill-isolated-10min`, `dashboard_writes_24h_refresh`.
 
 **Constraints:** `cron.max_running_jobs=32` (not raisable), `use_background_workers=off` (each job = a backend vs `max_connections=60`); a >2-min job holds a slot. **Keep peak concurrent ≤20** (leave ~12 for future lanes). "job startup timeout" in `pg_cron.log` = budget blown.
 
@@ -157,9 +157,9 @@ Primary ticketer NOT resale. axs.com hosts primary+dead pages → `/fetch?platfo
 - **Mapping chain (grow SH coverage):** EVO→SG (FREE: `sg_canonical_auto_match`/`sg_to_tevo_search_bridge`) → TD `/match` (`sg-match-map-tick`, **SeatGeek-anchored**) fills `sh_event_id` → seed → poll. `sh_event_id` is writable ONLY by `/match`.
 - **Temporary (auto-reverts 7/9):** TD-SeatGeek surplus burn (`integration_policy.td_seatgeek_emergency_override=true` + `td_enqueue_peak_sg` enrolling ~1,948 events) — `td_sg_burn_teardown` cron re-arms the kill-switch + deactivates SG xref on/after 7/9.
 
-## 6. Edge functions (29; `supabase/functions/`)
-**Data pipeline (A1):** `collect`, `collect-listings`, `espn`, `espn-collect`, `espn-rosters`, `crawl-espn-team-assets`, `crawl-venues-and-performers`, `backfill-event-configurations`, `wiki-collect`, `seatdata-poll`, `seatmap-manifest-sync`, `match-sg-performers-to-tevo`, `tevo-perf-find`, `tevo-blindspot-discovery`, `aq-to-tevo-search-bridge`, `sg-to-tevo-search-bridge`, `sg-seller-webhook`, `bulk-add-watchlist`, `seed-home-venues`, `why-noaa-weather-alerts`, `chat`, `alert-mail-drain`.
-**Exos (D4):** `exos-api`, `exos-checkout`, `exos-connect-onboard`, `exos-distribute`, `exos-mail-drain`, `exos-webhook-drain`, `stripe-webhook`.
+## 6. Edge functions (31; `supabase/functions/`)
+**Data pipeline (A1):** `collect`, `collect-listings`, `espn`, `espn-collect`, `espn-rosters`, `crawl-espn-team-assets`, `crawl-venues-and-performers`, `backfill-event-configurations`, `wiki-collect`, `seatdata-poll`, `seatmap-manifest-sync`, `match-sg-performers-to-tevo`, `tevo-perf-find`, `tevo-blindspot-discovery`, `aq-to-tevo-search-bridge`, `sg-to-tevo-search-bridge`, `axs-to-tevo-search-bridge`, `sg-seller-webhook`, `bulk-add-watchlist`, `seed-home-venues`, `why-noaa-weather-alerts`, `chat`, `alert-mail-drain`.
+**Exos (D4):** `exos-api`, `exos-checkout`, `exos-connect-onboard`, `exos-distribute`, `exos-mail-drain`, `exos-webhook-drain`, `exos-reconcile-checkouts`, `stripe-webhook`.
 **Auth landmine (`PROJECT_BIBLE §1` rule 7):** platform `verify_jwt=true` accepts the public anon JWT → data-mutating / paid-API fns MUST add body-level `requireCronSecret()` from `_shared/cron-auth.ts`.
 
 ## 7. Vault secrets (names only — never values)
