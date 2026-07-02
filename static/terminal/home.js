@@ -384,7 +384,11 @@
   //               + percent_rank(7d-MA sales median)        (0..2)
   //
   // High on EITHER axis charts; high on BOTH tops it. Eligibility:
-  // owned_count_last_7d = 0, future event, >= 2 days of sales in trailing 7d.
+  // ZERO owned inventory on BOTH sides — SeatGeek (owned_count_last_7d = 0)
+  // AND EVO/TEvo (latest event_metrics.owned_tickets_count = 0); future event;
+  // >= 2 days of sales in trailing 7d. The dual-source ownership gate (mig
+  // 20260702140000) keeps events where SG is turned off under a sales deal but
+  // we still sell via EVO from wrongly charting as "we're not in".
   // Each row carries prev_rank / peak_rank / days_on_chart for movement.
   // Two tabs: "Top 50" (rank 1-50) and "The Rest" (rank 51+, capped server-side).
 
