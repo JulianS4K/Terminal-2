@@ -36,6 +36,7 @@ fastapi = pytest.importorskip("fastapi")
 starlette_testclient = pytest.importorskip("fastapi.testclient")
 
 import server as app_module  # noqa: E402
+import routers.retail_chat as retail_chat_mod  # noqa: E402
 
 TestClient = starlette_testclient.TestClient
 client = TestClient(app_module.app)
@@ -64,6 +65,18 @@ def capture_post(monkeypatch):
     # tests exercise the live forwarding/validation path, so enable it here.
     monkeypatch.setattr(app_module, "STOREFRONT_CONCIERGE_ENABLED", True)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def reset_budget(monkeypatch):
+    """Isolate the in-process cost-guard counters between tests + restore the
+    default (high) caps so unrelated tests aren't throttled. The guard state
+    lives in routers.retail_chat (the decomposition slice that owns the routes)."""
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_ENABLED", True)
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_DAILY_MAX", 1000)
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_IP_DAILY_MAX", 40)
+    retail_chat_mod._retail_chat_usage.update({"day": None, "total": 0, "by_ip": {}})
+    yield
 
 
 # ---------- scope is server-set ----------
@@ -164,3 +177,73 @@ def test_store_concierge_disabled_returns_canned_reply_without_upstream(monkeypa
     assert r.status_code == 200
     assert r.json()["reply"] == app_module._CONCIERGE_OFFLINE_REPLY
     assert calls == []  # edge function never called
+
+
+# ---------- cost guard (in-process kill switch + daily cap; re-applied #585) ----------
+#
+# These exercise the HARD guard in routers.retail_chat (distinct from the
+# storefront-only STOREFRONT_CONCIERGE_ENABLED soft kill above): a global
+# RETAIL_CHAT_ENABLED kill switch that 503s BOTH endpoints, plus global and
+# per-IP daily caps that refuse before any paid edge-function spend.
+
+def test_kill_switch_spends_nothing(monkeypatch, capture_post):
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_ENABLED", False)
+    r = client.post("/api/store/retail-chat", json={"message": "hi"})
+    assert r.status_code == 503
+    assert capture_post == []  # never forwarded → no LLM cost
+
+
+def test_kill_switch_covers_terminal_too(monkeypatch, capture_post):
+    """Unlike the storefront-only concierge flag, the hard kill switch also
+    disables the email-gated terminal route."""
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_ENABLED", False)
+    r = client.post("/api/retail-chat", json={"message": "hi"})
+    assert r.status_code == 503
+    assert capture_post == []
+
+
+def test_store_per_ip_daily_cap(capture_post, monkeypatch):
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_IP_DAILY_MAX", 2)
+    h = {"x-forwarded-for": "198.51.100.5"}
+    assert client.post("/api/store/retail-chat", json={"message": "a"}, headers=h).status_code == 200
+    assert client.post("/api/store/retail-chat", json={"message": "b"}, headers=h).status_code == 200
+    assert client.post("/api/store/retail-chat", json={"message": "c"}, headers=h).status_code == 429
+    assert len(capture_post) == 2  # the capped 3rd never reached the LLM
+
+
+def test_terminal_exempt_from_per_ip_cap(capture_post, monkeypatch):
+    """The email-gated terminal isn't subject to the public per-IP cap."""
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_IP_DAILY_MAX", 1)
+    h = {"x-forwarded-for": "198.51.100.9"}
+    assert client.post("/api/retail-chat", json={"message": "a"}, headers=h).status_code == 200
+    assert client.post("/api/retail-chat", json={"message": "b"}, headers=h).status_code == 200
+    assert len(capture_post) == 2
+
+
+def test_global_daily_cap(capture_post, monkeypatch):
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_DAILY_MAX", 2)
+    codes = [
+        client.post("/api/store/retail-chat", json={"message": "x"},
+                    headers={"x-forwarded-for": f"203.0.113.{i}"}).status_code
+        for i in range(1, 4)
+    ]
+    assert codes == [200, 200, 429]
+    assert len(capture_post) == 2
+
+
+def test_cap_env_parse_fallbacks_on_reload(monkeypatch):
+    """Re-import routers.retail_chat with non-integer cap envs so the two
+    `except ValueError` fallback branches execute and the caps land on their
+    defaults (1000 / 40). The reload is reverted in a finally so the live module
+    state (read by the running server.app routes) is restored for downstream
+    tests. Mirrors the import-time reload pattern in tests/test_core_misc_full.py."""
+    import importlib
+    monkeypatch.setenv("RETAIL_CHAT_DAILY_MAX", "not-a-number")    # → except → 1000
+    monkeypatch.setenv("RETAIL_CHAT_IP_DAILY_MAX", "also-not-int")  # → except → 40
+    try:
+        reloaded = importlib.reload(retail_chat_mod)
+        assert reloaded._RETAIL_CHAT_DAILY_MAX == 1000
+        assert reloaded._RETAIL_CHAT_IP_DAILY_MAX == 40
+    finally:
+        # Restore the original env-derived module state for downstream tests.
+        importlib.reload(retail_chat_mod)
