@@ -1,0 +1,25 @@
+# .github/permission-exceptions.yml
+#
+# The ONE machine-readable home for permission deviations from the three
+# principals in PROJECT_BIBLE §2.1 (Applier / Auditor / Builder). Any grant of a
+# principal power beyond the defaults MUST be an entry here — never prose
+# elsewhere. This is the ledger §2.2 describes.
+#
+# The `permission-exceptions` CI job (scripts/check_permission_exceptions.py)
+# FAILS the build when an entry is malformed or its `review_by` date has passed.
+# So an exception cannot silently become permanent: it is renewed — deliberately,
+# by re-approving and bumping `review_by` — or it turns the build red and is
+# removed. A review date only means something if a machine reads it.
+#
+# Empty is the healthy default. To grant an exception, add an entry with ALL of:
+#   id:         short kebab-case identifier (unique)
+#   grants:     Applier | Auditor | Builder   (the principal power granted beyond default)
+#   to:         who / what surface the grant applies to
+#   rationale:  why this deviation exists
+#   granted:    YYYY-MM-DD   (when granted)
+#   review_by:  YYYY-MM-DD   (CI fails once this date passes — renew or delete)
+#
+# An exception that maps cleanly onto a §2.1 principal is NOT an exception —
+# fold it into the principal instead of adding a row here.
+
+exceptions: []
