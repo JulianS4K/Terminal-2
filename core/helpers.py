@@ -197,6 +197,23 @@ def csv_list(v: str | None) -> list[str]:
     return [s.strip() for s in (v or "").split(",") if s.strip()]
 
 
+def client_ip_from_xff(xff: str | None, fallback: str | None = None) -> str | None:
+    """Client IP from an ``X-Forwarded-For`` header value.
+
+    Returns the RIGHTMOST comma-separated hop — the entry appended by our own
+    edge proxy, the only one a client can't forge. Keying on the leftmost,
+    client-supplied entry let a single client rotate fake IPs past every per-IP
+    bucket (audit 2026-06-10). Falls back to ``fallback`` when the header is
+    empty/absent. Never raises on arbitrary header text.
+
+    Single source for the parse that previously lived inline at both the
+    reCAPTCHA gate and the rate-limit middleware in server.py.
+    """
+    if xff:
+        return xff.split(",")[-1].strip()
+    return fallback
+
+
 def normalize_filters(raw: dict | None) -> dict:
     """Coerce a free-form filter dict (URL params or share_links.filters JSON)
     into the canonical shape the resolver expects. Drops empty values."""

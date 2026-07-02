@@ -210,27 +210,27 @@ def test_we_own_always_true_with_office_filter(client, monkeypatch):
 # ---------- /api/store/reserve cap ----------
 
 def test_reserve_rejects_quantity_over_cap(client):
-    """quantity > 50 is rejected at the input-validation gate before any
-    inventory lookup. A malformed/malicious client requesting 999999 must
-    short-circuit with 400; we never want to hit TEvo or the snapshot
-    table with that shape."""
+    """quantity > 50 is rejected at the ReserveRequest validation gate before
+    any inventory lookup. A malformed/malicious client requesting 999999 must
+    short-circuit with 422 (declarative le=50 bound); we never want to hit TEvo
+    or the snapshot table with that shape."""
     r = client.post("/api/store/reserve", json={
         "event_id": 3346000,
         "ticket_group_id": 12345,
         "quantity": 999999,
     })
-    assert r.status_code == 400, r.text
-    assert "maximum" in r.json()["detail"].lower()
+    assert r.status_code == 422, r.text
+    assert any(e["loc"][-1] == "quantity" for e in r.json()["detail"])
 
 
 def test_reserve_rejects_quantity_just_over_cap(client):
-    """Boundary: quantity == 51 (one over the cap of 50) is rejected."""
+    """Boundary: quantity == 51 (one over the cap of 50) is rejected (422)."""
     r = client.post("/api/store/reserve", json={
         "event_id": 3346000,
         "ticket_group_id": 12345,
         "quantity": 51,
     })
-    assert r.status_code == 400
+    assert r.status_code == 422
 
 
 def test_reserve_accepts_quantity_at_cap(client, monkeypatch):
@@ -387,14 +387,20 @@ def test_reserve_blocked_without_human_when_gate_enabled(client, monkeypatch):
 
 def test_reserve_passes_gate_with_valid_token(client, monkeypatch):
     """A passing reCAPTCHA token clears the gate (stubbed — no network). Proven
-    by reaching the downstream quantity-cap check (400), not a 403."""
+    by reaching the downstream inventory lookup (404 no-match) with a VALID body,
+    not a 403. (The body must be valid or ReserveRequest 422s before the gate.)"""
     monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
     monkeypatch.setattr(app_module, "_verify_recaptcha", lambda *a, **k: True)
+
+    class _EmptyTG:
+        def get_ticket_groups(self, *_a, **_k):
+            return {"ticket_groups": []}
+    monkeypatch.setattr(app_module, "client", _EmptyTG())
     r = client.post("/api/store/reserve", json={
-        "event_id": 123, "ticket_group_id": 456, "quantity": 9999,
+        "event_id": 123, "ticket_group_id": 456, "quantity": 2,
         "recaptcha_token": "tok",
     })
-    assert r.status_code == 400  # cap check, i.e. the gate let it through
+    assert r.status_code == 404  # gate + validation passed; no matching inventory
 
 
 def test_verify_human_sets_cookie_when_token_valid(client, monkeypatch):

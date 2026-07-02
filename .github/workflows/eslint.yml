@@ -1,0 +1,53 @@
+name: eslint (frontend innerHTML ban)
+
+# Coding-recommendation #4 enforcement: ban raw innerHTML/outerHTML/
+# insertAdjacentHTML sinks outside the shared S4K lib (see eslint.config.js).
+#
+# Ratchet, like the mypy foothold in tests.yml:
+#   * BLOCKING over static/lib/** — the clean shared-lib surface, XSS-safe by
+#     construction. A new raw-HTML sink there fails CI.
+#   * ADVISORY over the rest of static/** — ~31 legacy sites remain; the count
+#     is surfaced (never silently zero) but doesn't block. Migrate a surface
+#     onto S4K, then move its glob into the blocking step.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "static/**"
+      - "d2_dashboard/static/**"
+      - "eslint.config.js"
+      - "package.json"
+      - ".github/workflows/eslint.yml"
+  push:
+    branches: [main]
+    paths:
+      - "static/**"
+      - "d2_dashboard/static/**"
+      - "eslint.config.js"
+
+permissions:
+  contents: read
+
+jobs:
+  eslint:
+    name: innerHTML ban
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Install eslint
+        run: npm install --no-audit --no-fund
+
+      - name: Lint shared libs (BLOCKING — must stay XSS-clean)
+        run: npm run lint:libs
+
+      - name: Lint all static surfaces (ADVISORY — legacy migration surface)
+        continue-on-error: true
+        run: |
+          npm run lint:all || true
+          echo "advisory eslint pass complete — migrate flagged sites onto S4K, then promote their glob to the blocking step"

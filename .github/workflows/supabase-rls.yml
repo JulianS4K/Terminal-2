@@ -1,0 +1,122 @@
+name: supabase (migrations-from-zero + RLS)
+
+# Testing-recommendations #1 (migrations-from-zero) + #2 (RLS as first-class
+# security tests). Two jobs with deliberately different gating:
+#
+#   rls-security      — BLOCKING. Validates the row/column-level security policies
+#                       against Postgres. Uses the self-contained SQL harness
+#                       (tests/exos), which builds the exact exos_tickets secret-
+#                       visibility model + applies the least-privilege migration,
+#                       so it runs GREEN today without depending on the full
+#                       historical migration set. Covers the barcode_secret
+#                       finding (finance/content cannot read the secret; owner/
+#                       buyer/scanner can).
+#
+#   migrations-from-zero — INFORMATIONAL (continue-on-error). Applies the whole
+#                       committed set from an empty DB via `supabase db start`
+#                       (after an ephemeral version de-dup). This is the gate the
+#                       recommendation asked for; it has already surfaced real
+#                       drift — a missing `settings` table (fixed via a
+#                       reconciling migration), ~37 duplicate version prefixes,
+#                       the CLI's `_init.sql` skip, and genuine schema conflicts
+#                       between duplicate-timestamp migrations (e.g. two
+#                       incompatible `zone_rules` definitions). Those last ones
+#                       are MCP-era history that only A1 can reconcile against
+#                       real prod state, so this job REPORTS them (job log +
+#                       ::warning::) without blocking. Flip continue-on-error off
+#                       once A1 has reconciled the committed set end-to-end.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
+      - "tests/rls/**"
+      - "tests/exos/**"
+      - "scripts/ci_dedupe_migrations.py"
+      - ".github/workflows/supabase-rls.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
+      - "tests/rls/**"
+      - "tests/exos/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rls-security:
+    name: RLS security (barcode_secret least-privilege)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: RLS assertions (self-contained SQL harness)
+        # The SQL file creates the anon/authenticated/service_role roles + auth
+        # shim, builds the real exos_tickets shape, applies the migration under
+        # test, then SET ROLEs to `authenticated` and asserts secret visibility
+        # per org role. ON_ERROR_STOP=on makes any failed assertion fail the job.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -f tests/exos/test_barcode_secret_rls.sql
+
+  migrations-from-zero:
+    name: migrations-from-zero (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Ephemerally de-duplicate migration versions
+        # ~37 committed migrations share version prefixes (batches authored with
+        # the same YYYYMMDDHHMMSS, applied to prod via MCP which tolerates it).
+        # The CLI runner enforces schema_migrations.version as a PK. This re-
+        # sequences filenames to unique 14-digit versions IN THIS CHECKOUT ONLY
+        # (committed files untouched, order preserved) and prints every resolved
+        # duplicate as a ::warning:: for A1. See the script header.
+        run: python scripts/ci_dedupe_migrations.py supabase/migrations
+
+      - name: supabase db start — apply ALL migrations from zero (report-only)
+        # INFORMATIONAL until A1 reconciles the historical set: the committed
+        # migrations carry MCP-era content conflicts (duplicate incompatible
+        # table definitions, etc.) that only surface from-zero and need a
+        # canonical-schema decision. The job log shows exactly how far the apply
+        # gets + the first blocker each run — the A1 reconciliation to-do.
+        continue-on-error: true
+        run: supabase db start
+
+      - name: RLS suite vs the full stack (report-only)
+        # Runs the parametrized Python RLS suite (tests/rls) against the full
+        # migrated stack when the from-zero apply above succeeds. Report-only
+        # for now (depends on the historical apply being clean).
+        continue-on-error: true
+        env:
+          RLS_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+          PYTHONPATH: "."
+        run: |
+          pip install pytest "psycopg[binary]"
+          pytest tests/rls -q

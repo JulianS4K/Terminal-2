@@ -187,10 +187,10 @@ class EvoClient:
         # Out of retries, or non-retryable status.
         # Security: do NOT include URL or response body in the exception
         # message — both bubble through `f"...: {e}"` patterns to HTTP
-        # responses (e.g., app.py:5218). URL contains user-supplied query
-        # params (recon vector); body can leak TEvo internal data or
-        # intermediate-proxy info. Pattern matches seatgeek_client.py:495
-        # (B1 SEC-MED SW-1, security chat 2026-05-10).
+        # responses (the storefront TEvo-error sites). URL contains
+        # user-supplied query params (recon vector); body can leak TEvo internal
+        # data or intermediate-proxy info. Pattern matches SeatGeekClient's
+        # request-error scrub (B1 SEC-MED SW-1, security chat 2026-05-10).
         # Log full detail server-side; only generic status reaches caller.
         #
         # Truthiness note: `requests.Response.__bool__` returns `self.ok`

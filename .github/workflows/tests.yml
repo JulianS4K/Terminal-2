@@ -35,7 +35,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio pytest-cov
+          pip install pytest pytest-asyncio pytest-cov hypothesis
           # Tolerate missing requirements.txt early in repo lifecycle.
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
@@ -68,7 +68,11 @@ jobs:
         # separate process (Playwright's sync API event loop conflicts with the
         # backend suite's anyio.run handler tests). They're omitted from the
         # coverage surface anyway (.coveragerc omits tests/*).
-        run: pytest tests/ --ignore=tests/frontend -q --cov --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=100
+        # --ignore=tests/rls: needs a live migrated Postgres (supabase-rls
+        # workflow). --ignore=tests/deploy_smoke: drives the DEPLOYED preview
+        # (post-deploy workflow), not the in-process app. Neither is part of
+        # this DB-less job's coverage surface.
+        run: pytest tests/ --ignore=tests/frontend --ignore=tests/rls --ignore=tests/deploy_smoke -q --cov --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=100
 
       - name: install mypy
         run: pip install mypy types-requests --quiet
@@ -79,12 +83,26 @@ jobs:
       # (server.py=66 errs, core/ ~20 errs remain → still warn-only below).
       # Ends the prior "green-by-definition" state for the audited surface.
       - name: mypy type check (blocking — clean modules)
+        # Ratchet expanded to most of core/ (coding-recommendation #5: strict on
+        # core/ first — it's small + security-critical). Includes the rate
+        # limiter, circuit breaker, and vault. The 8 modules still carrying type
+        # errors (search/movers/discovery/db/store_events/ingest/auth/
+        # trip_payloads) stay in the warn-only pass below until cleaned; move
+        # each here as it reaches zero errors. Never move a file OUT of here.
         env:
           MYPY_STRICT_PATHS: >-
             core/config.py
             core/http_retry.py
             core/readonly_guard.py
             core/__init__.py
+            core/broker_helpers.py
+            core/canonical_refresh.py
+            core/helpers.py
+            core/observability.py
+            core/ratelimit.py
+            core/resilience.py
+            core/substitutions.py
+            core/vault.py
             routers/__init__.py
         run: |
           mypy $MYPY_STRICT_PATHS --ignore-missing-imports --pretty
@@ -96,6 +114,8 @@ jobs:
         continue-on-error: true
         run: |
           mypy server.py evo_client.py \
+            core/search.py core/movers.py core/discovery.py core/db.py \
+            core/store_events.py core/ingest.py core/auth.py core/trip_payloads.py \
             --ignore-missing-imports \
             --no-error-summary \
             --pretty \

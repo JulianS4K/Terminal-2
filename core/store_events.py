@@ -284,7 +284,8 @@ def resolve_event_with_filters(
             # Log full upstream error server-side; return a stable generic
             # string so TEvo's response text + upstream status codes never
             # reach the public detail page. Mirrors the /api/store/events
-            # 502 scrub at line ~4194. Status is normalized: a 400/404 from
+            # 502 scrub (routers/store.py store_events). Status is normalized:
+            # a 400/404 from
             # TEvo means the event doesn't exist → 404 (not a 502 gateway
             # error, which previously made cycling-id scans + dead share
             # links look like outages); 5xx/timeout → 502, 429/503 → 503.

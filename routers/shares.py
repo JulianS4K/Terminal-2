@@ -5,14 +5,17 @@ routes lifted verbatim out of app.py behind unchanged paths. Behavior,
 validation, ownership enforcement (audit S1/S2/S4), and the event-end expiry
 cap are identical to the prior inline handlers.
 
-Dependencies stay owned by app.py and are resolved at request time via getters
-so the test monkeypatches keep working:
-  - `get_require_sb()` -> the live `require_sb` callable (tests patch
-    `app.require_sb`).
-  - `get_resolve_event()` -> the live `_resolve_event_with_filters` (tests patch
-    `app._resolve_event_with_filters`).
-`require_auth` is passed straight through. The pure filter/serialization
-helpers come from core.helpers directly (no test patches them).
+Dependency injection uses FastAPI `Depends` (coding-recommendation #2) rather
+than lambda-getter module-global monkeypatch seams:
+  - `sb_dep` -> a dependency returning the live Supabase client. Tests inject a
+    fake via `app.dependency_overrides[server.get_sb_dep]` — the native seam,
+    so the test no longer shapes the production wiring by patching a global.
+  - `resolve_event_dep` -> a dependency returning `_resolve_event_with_filters`.
+`require_auth` is passed straight through (already a FastAPI dependency). The
+pure filter/serialization helpers come from core.helpers directly.
+
+Request bodies are Pydantic models (coding-recommendation #1) — validation,
+422 field errors, declarative bounds, and OpenAPI for free.
 
 The HTML page route `/s/{share_id}` stays in app.py — it serves the storefront
 shell, not JSON.
@@ -24,42 +27,37 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from core.helpers import normalize_filters, share_to_dict
+from routers.models import ShareCreateRequest
 
 _log = logging.getLogger("app")
 
 
 def build_shares_router(
-    get_require_sb: Callable[[], Callable],
+    sb_dep: Callable,
     require_auth: Callable,
-    get_resolve_event: Callable[[], Callable],
+    resolve_event_dep: Callable,
 ) -> APIRouter:
     router = APIRouter()
 
     @router.post("/api/store/share")
-    def store_share_create(payload: dict = Body(...), user=Depends(require_auth)):
+    def store_share_create(
+        body: ShareCreateRequest,
+        user=Depends(require_auth),
+        db=Depends(sb_dep),
+    ):
         """Create a revocable share link for one event with saved filters.
 
-        Body:
-          event_id: int (required)
-          filters: { zones, section, min_price, max_price, min_qty } (optional)
-          note: str (optional, ≤ 500 chars)
-          expires_in_days: int (optional, 1-365; null = never expires)
+        Body shape + bounds are enforced declaratively by ShareCreateRequest
+        (event_id > 0, note ≤ 500 chars, expires_in_days 0..365). A bad body
+        returns 422 with field-level errors before any Supabase call.
 
         Auth: require_auth (Supabase JWT + allowed-domain email).
         """
-        # Validate before touching Supabase so 4xx errors surface the real reason
-        # instead of "Supabase not configured" when both are wrong.
-        try:
-            event_id = int(payload.get("event_id") or 0)
-        except (TypeError, ValueError):
-            raise HTTPException(400, "event_id must be an integer")
-        if not event_id:
-            raise HTTPException(400, "event_id is required")
-
-        filters = normalize_filters(payload.get("filters") or {})
+        event_id = body.event_id
+        filters = normalize_filters(body.filters or {})
         # Persist arrays only if non-empty + numeric values only if set, so the
         # JSON stays compact and equivalent to the URL form.
         persisted: dict = {}
@@ -69,12 +67,7 @@ def build_shares_router(
         if filters["max_price"] is not None: persisted["max_price"] = filters["max_price"]
         if filters["min_qty"]   is not None: persisted["min_qty"]   = filters["min_qty"]
 
-        note = (payload.get("note") or "").strip() or None
-        if note and len(note) > 500:
-            raise HTTPException(400, "note too long (max 500 chars)")
-
-        # All validation passed — now we need Supabase to persist.
-        db = get_require_sb()()
+        note = (body.note or "").strip() or None
 
         # Compute the auto-expiry ceiling: event_start + 1h. Past this point the
         # share is effectively useless (event has started + small buffer for
@@ -100,15 +93,11 @@ def build_shares_router(
             event_end_ceiling = None  # No event row found — fall back to user-only.
 
         expires_at: str | None = None
-        raw_days = payload.get("expires_in_days")
+        # 0 / None == "no explicit pick, use the event-end cap" (the model bounds
+        # a real pick to 1..365 declaratively, so no imperative range check here).
+        days = body.expires_in_days or 0
         user_pick: datetime | None = None
-        if raw_days not in (None, "", 0):
-            try:
-                days = int(raw_days)
-            except (TypeError, ValueError):
-                raise HTTPException(400, "expires_in_days must be an integer")
-            if not (1 <= days <= 365):
-                raise HTTPException(400, "expires_in_days must be between 1 and 365")
+        if days:
             user_pick = datetime.now(timezone.utc) + timedelta(days=days)
 
         # Pick the tighter of (user choice, event-end ceiling). When the event
@@ -155,10 +144,9 @@ def build_shares_router(
         return share_to_dict(saved)
 
     @router.get("/api/store/share/{share_id}")
-    def store_share_resolve(share_id: str):
+    def store_share_resolve(share_id: str, db=Depends(sb_dep), resolve_event=Depends(resolve_event_dep)):
         """Public endpoint: resolves a share link to its filtered event payload.
         Bumps view_count on every successful read. 410 if revoked or expired."""
-        db = get_require_sb()()
         res = (
             db.table("share_links")
             .select("id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at")
@@ -181,7 +169,7 @@ def build_shares_router(
             except ValueError:
                 pass  # Bad timestamp shouldn't 500 the recipient
 
-        detail = get_resolve_event()(int(row["event_id"]), row.get("filters") or {})
+        detail = resolve_event(int(row["event_id"]), row.get("filters") or {})
 
         # View tracking — best-effort; a tracking failure shouldn't break the page.
         try:
@@ -195,11 +183,10 @@ def build_shares_router(
         }
 
     @router.delete("/api/store/share/{share_id}")
-    def store_share_revoke(share_id: str, user=Depends(require_auth)):
+    def store_share_revoke(share_id: str, user=Depends(require_auth), db=Depends(sb_dep)):
         """Soft-delete: stamps revoked_at. The row stays so view history survives.
         Idempotent. Ownership filtered by created_by (audit S1); AUTH_DISABLED
         (dev) -> require_auth None -> skip the ownership filter."""
-        db = get_require_sb()()
         q = (
             db.table("share_links")
             .update({"revoked_at": datetime.now(timezone.utc).isoformat()})
@@ -220,10 +207,10 @@ def build_shares_router(
         include_inactive: bool = False,
         limit: int = 50,
         user=Depends(require_auth),
+        db=Depends(sb_dep),
     ):
         """List share links, newest first. Filter by event_id when present.
         Ownership filtered by created_by (audit S2); AUTH_DISABLED (dev) skips."""
-        db = get_require_sb()()
         q = db.table("share_links").select(
             "id,event_id,filters,note,created_at,expires_at,revoked_at,view_count,last_viewed_at"
         ).order("created_at", desc=True).limit(min(max(limit, 1), 200))

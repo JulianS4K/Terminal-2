@@ -125,14 +125,18 @@ class _FakeDB:
 
 
 @pytest.fixture
-def as_user(monkeypatch):
+def as_user():
     """Returns a helper that wires a FakeDB + overrides require_auth to a
-    given user id, yielding a TestClient. Cleans up the override after."""
+    given user id, yielding a TestClient. Cleans up the overrides after.
+
+    Both the Supabase client and the auth identity are injected via
+    `app.dependency_overrides` — the native FastAPI seam (coding-recommendation
+    #2). The DB fake is bound to `get_sb_dep`, not a monkeypatched global."""
     created = {"client": None}
 
     def _make(user_id, share_rows=None, event_rows=None):
         db = _FakeDB(share_rows=share_rows, event_rows=event_rows)
-        monkeypatch.setattr(app_module, "require_sb", lambda: db)
+        app_module.app.dependency_overrides[app_module.get_sb_dep] = lambda: db
         app_module.app.dependency_overrides[app_module.require_auth] = (
             (lambda: {"id": user_id}) if user_id is not None else (lambda: None)
         )
@@ -143,6 +147,7 @@ def as_user(monkeypatch):
 
     yield _make
     app_module.app.dependency_overrides.pop(app_module.require_auth, None)
+    app_module.app.dependency_overrides.pop(app_module.get_sb_dep, None)
 
 
 # ---------- create ----------

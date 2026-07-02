@@ -51,10 +51,11 @@ def search_sql_only(db, q_norm: str, limit: int) -> dict:
 
     # Events: search by event name, venue name, venue location, primary
     # performer name. Limit to future + active so we don't surface ghosts.
-    # Uses _or_ilike_clause for defense-in-depth: today the pattern has
-    # been sanitized at line ~4467 so the legacy raw f-string would work,
-    # but if that sanitization ever loosens this site would re-introduce
-    # the PostgREST or-clause-separator bug that broke /api/store/movers.
+    # Uses _or_ilike_clause for defense-in-depth: `pattern` was already
+    # sanitized above (the `safe_q` re.sub + `_escape_ilike` step) so the
+    # legacy raw f-string would work, but if that sanitization ever loosens
+    # this site would re-introduce the PostgREST or-clause-separator bug that
+    # broke /api/store/movers.
     try:
         ev_rows = (db.table("events")
                      .select("id,name,occurs_at_local,venue_name,venue_location,"

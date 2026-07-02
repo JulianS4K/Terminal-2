@@ -1,0 +1,52 @@
+# Supabase local-stack config — used by `supabase start` in CI (the
+# migrations-from-zero + RLS gate, .github/workflows/supabase-rls.yml).
+#
+# Testing-recommendations #1/#2: `supabase start` applies every migration in
+# supabase/migrations from an empty database in filename order and fails on the
+# first error (catches ordering breaks + timestamp collisions), then the RLS
+# pytest suite (tests/rls) asserts the row/column policies against the live
+# stack. This is deliberately minimal — auth email/SMS providers, storage image
+# transforms, etc. are off because the gate only needs Postgres + the migrated
+# schema + PostgREST role plumbing (anon / authenticated / service_role).
+project_id = "terminal-2"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+# Postgres 15 — a major the CLI ships a local image for (it has no 16 image).
+# The migrations-from-zero gate validates ordering + SQL, not a prod-exact
+# server version, so 15 is a safe, widely-supported choice.
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[storage]
+enabled = false
+
+[auth]
+enabled = true
+# Local-only signing secret; overridden by the ephemeral CI stack. Never a prod
+# secret — the RLS tests set the verified-claims GUC directly (see tests/rls).
+site_url = "http://127.0.0.1:3000"
+jwt_expiry = 3600
+enable_signup = true
+
+[analytics]
+enabled = false
+
+[edge_runtime]
+enabled = false
