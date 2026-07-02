@@ -583,7 +583,16 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
             (pfx for pfx, _, _ in self._BUCKETS if path.startswith(pfx)),
             "*",
         )
-        if not _ip_limiter.check(f"{ip}|{bucket_key}", n, w):
+        # The limiter is contractually non-raising (Redis backend degrades to
+        # in-process / fail-open internally), but a rate-limit failure must
+        # NEVER become an app outage — so wrap defensively and fail open on any
+        # unexpected limiter error rather than 500 the request.
+        try:
+            allowed = _ip_limiter.check(f"{ip}|{bucket_key}", n, w)
+        except Exception as e:  # noqa: BLE001 - a limiter fault must not take down the request path
+            _log.warning("rate limiter check errored (%r); failing open", e)
+            allowed = True
+        if not allowed:
             return JSONResponse(
                 {"error": "rate limited", "retry_after_seconds": int(w)},
                 status_code=429,

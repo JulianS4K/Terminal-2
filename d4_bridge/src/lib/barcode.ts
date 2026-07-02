@@ -8,35 +8,43 @@
 //
 // What we do now:
 //
-//   1. Each ticket carries a per-ticket secret (`barcodeSecret`).
-//      Buyers can read their own secret (rule already allows it via
-//      ownerId/buyerId match); organizers can read it for verification.
+//   1. Each ticket carries a per-ticket secret (`barcodeSecret`). Read
+//      access is scoped by Postgres RLS, NOT the app: the ticket's own
+//      owner/buyer (to render their pass) and owner/manager/scanner org
+//      staff (to verify at the door) may read it — finance/content may
+//      NOT. It is served through the gated `exos_ticket_barcode_secrets`
+//      view rather than the base table, so a broad ticket read can't leak
+//      it (migration 20260702123000).
 //
 //   2. The barcode is `T-{ticketId}:{ownerId}:{bucket}:{hmac}` where
 //      `bucket = floor(now / 30_000)` and `hmac = HMAC-SHA256(secret,
 //      "ticketId:ownerId:bucket")`, base64url-encoded.
 //
-//   3. OrganizerCheckIn parses the barcode, reads the ticket doc,
-//      recomputes the HMAC against the stored secret, and refuses if
-//      either the bucket is out of window (more than one bucket old)
-//      or the HMAC mismatches.
+//   3. OrganizerCheckIn parses the barcode, reads the ticket, recomputes
+//      the HMAC against the stored secret, and refuses if either the
+//      bucket is out of window (more than one bucket old) or the HMAC
+//      mismatches. The check-in RPC re-runs the SAME HMAC/owner/bucket
+//      check server-side (migration 20260702120000), so the browser check
+//      is a fast-fail UX layer, not the security boundary.
 //
-//   4. Legacy 3-segment barcodes (no HMAC) are REJECTED (ok:false,
-//      legacy:true). They were tolerated during rollout, but a payload
-//      with no signature is forgeable from a screenshot of the public
-//      ticket id — a check-in downgrade. Holders of a legacy ticket must
-//      refresh it in the app to get a signed barcode. The server RPC
-//      rejects them too, so client and server agree.
+//   4. Legacy 3-segment barcodes (no HMAC) and bare ticket UUIDs are
+//      REJECTED on the camera path (ok:false, legacy:true). A payload with
+//      no signature is forgeable from a screenshot of the public ticket id
+//      — a check-in downgrade. Holders of a legacy ticket must refresh it
+//      in the app to get a signed barcode. The server RPC rejects them too
+//      (migration 20260702120000), so client and server agree.
 //
 // What this still doesn't give us:
-//   * True server-side validation. The verification runs in the
-//     organizer's browser, so a hostile organizer who modifies the
-//     check-in code could mark anyone in. Real defense against that
-//     requires Cloud Functions; out of scope.
-//   * Replay across stations. Two organizers scanning the same
-//     barcode in the same 30-second bucket will both pass HMAC; the
-//     second one is then refused by the rule (status==='used') from
-//     a different station — but the audit log will show two attempts.
+//   * Full defense against a malicious organizer. The camera scan is now
+//     server-verified, but a door operator can still force a MANUAL
+//     override. That path is an explicit, audited check-in (source +
+//     verification are recorded in exos_event_checkins), not a silent
+//     bypass — but it does trust the operator.
+//   * Replay across stations. Two organizers scanning the same barcode in
+//     the same 30-second bucket both pass HMAC; the atomic status flip in
+//     the check-in RPC (UPDATE ... WHERE status='active') then lets only
+//     the first win — the second loses the race and is refused, with both
+//     attempts visible in the audit log.
 
 const BUCKET_MS = 30_000;
 // Accept barcodes from the current bucket or up to N buckets in either
@@ -50,8 +58,9 @@ const BUCKET_MS = 30_000;
 //
 // Tolerance of 2 gives ~60–90s of accepted skew either side, which is
 // comfortably above realistic NTP drift but well under "screenshot
-// from earlier today" replay. The Firestore rule's `existing.status
-// != 'used'` is the second line of defence against true replay.
+// from earlier today" replay. The check-in RPC's atomic status flip
+// (UPDATE ... WHERE status='active') is the second line of defence
+// against true replay.
 const BUCKET_TOLERANCE = 2;
 
 /** Current 30-second time bucket. */
