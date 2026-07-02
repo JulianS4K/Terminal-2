@@ -1693,9 +1693,27 @@ body[data-page="login"] {
 .full-list-tbl .pill.market { color: var(--muted); }
 .full-list-tbl .pill.broker { color: var(--accent); border-color: var(--accent); }
 .full-list-tbl .pill.unmapped { color: var(--warn); border-color: var(--warn); }
+.full-list-tbl .pill.manual { color: var(--accent); border-color: var(--accent); }
 .full-list-tbl tr.unmapped-row td { background: rgba(245, 158, 11, 0.07); }
 .sm-unmapped-note { font-size: 11px; color: var(--warn); padding: 4px 2px 6px; }
 .full-list-host { max-height: 70vh; overflow-y: auto; }
+
+/* Seat-map unmapped-section tracker (live) + inline manual-map control */
+.seatmap-unmapped { margin: 6px 0 10px; }
+.seatmap-unmapped:empty { display: none; }
+.sm-track-hd { font-size: 11px; font-weight: 600; color: var(--warn); padding: 6px 2px 3px; text-transform: uppercase; letter-spacing: .3px; }
+.sm-track-hd.manual { color: var(--accent); }
+.sm-track-note { font-size: 11px; color: var(--muted); padding: 0 2px 4px; }
+.sm-track-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sm-track-tbl td { padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.sm-track-tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.sm-track-sec { font-weight: 600; }
+.sm-track-arrow { color: var(--accent); font-size: 11px; }
+.sm-track-ctrl { text-align: right; white-space: nowrap; }
+.sm-track-ctrl button { font-size: 11px; padding: 2px 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 4px; cursor: pointer; }
+.sm-track-ctrl button:hover { border-color: var(--accent); }
+.sm-map-pick { font-size: 11px; max-width: 240px; margin-right: 4px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 2px; }
+.sm-track-err { font-size: 11px; color: var(--neg); border: 1px solid var(--neg); border-radius: 4px; padding: 4px 8px; margin-bottom: 6px; }
 
 .sales-window-ctrl {
   display: inline-flex; align-items: center; gap: 8px;
