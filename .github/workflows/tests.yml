@@ -70,12 +70,31 @@ jobs:
         # coverage surface anyway (.coveragerc omits tests/*).
         run: pytest tests/ --ignore=tests/frontend -q --cov --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=100
 
+      - name: install mypy
+        run: pip install mypy types-requests --quiet
+
+      # ── Ratchet foothold (BLOCKING) ──────────────────────────────────────
+      # These modules are mypy-clean today and must stay that way. A new type
+      # error here fails CI. Grow MYPY_STRICT_PATHS as more modules are cleaned
+      # (server.py=66 errs, core/ ~20 errs remain → still warn-only below).
+      # Ends the prior "green-by-definition" state for the audited surface.
+      - name: mypy type check (blocking — clean modules)
+        env:
+          MYPY_STRICT_PATHS: >-
+            core/config.py
+            core/http_retry.py
+            core/readonly_guard.py
+            core/__init__.py
+            routers/__init__.py
+        run: |
+          mypy $MYPY_STRICT_PATHS --ignore-missing-imports --pretty
+          echo "mypy strict foothold clean"
+
+      # Broad informational pass over the not-yet-clean surface. Move files
+      # from here into MYPY_STRICT_PATHS above as they reach zero errors.
       - name: mypy type check (warn-only)
-        # Informational until the codebase is mypy-clean. Set
-        # continue-on-error: false once all type errors are resolved.
         continue-on-error: true
         run: |
-          pip install mypy --quiet
           mypy server.py evo_client.py \
             --ignore-missing-imports \
             --no-error-summary \

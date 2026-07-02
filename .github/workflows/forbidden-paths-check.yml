@@ -26,10 +26,10 @@ jobs:
       # github-actions[bot] → release/labeler/scorecard outputs).
       OWNERS: "JulianS4K dependabot[bot] github-actions[bot]"
       FORBIDDEN_PATHS: |
-        ^app\.py$
-        ^evo_client\.py$
-        ^seatgeek_client\.py$
-        ^seatdata_client\.py$
+        ^server\.py$
+        ^core/
+        ^routers/
+        ^[^/]*_client\.py$
         ^requirements\.txt$
         ^Procfile$
         ^supabase/

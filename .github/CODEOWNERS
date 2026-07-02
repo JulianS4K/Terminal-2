@@ -12,11 +12,16 @@
 # Default: everything requires owner review
 *                                           @JulianS4K
 
-# Backend code — explicit (so GitHub UI shows the rule clearly)
-/app.py                                     @JulianS4K
-/evo_client.py                              @JulianS4K
-/seatgeek_client.py                         @JulianS4K
-/seatdata_client.py                         @JulianS4K
+# Backend code — explicit (so GitHub UI shows the rule clearly).
+# server.py is the FastAPI entrypoint (renamed from app.py, 2026-06-26);
+# core/ + routers/ are the post-extraction package layout.
+/server.py                                  @JulianS4K
+/core/                                      @JulianS4K
+/routers/                                   @JulianS4K
+# All upstream API clients (evo, seatgeek, seatdata, tickpick, vivid,
+# gotickets, ticketsdata, broadway, axs). Globbed so a new root-level
+# *_client.py is owner-gated on creation and this rule can't drift per-client.
+/*_client.py                                @JulianS4K
 /requirements.txt                           @JulianS4K
 /Procfile                                   @JulianS4K
 
