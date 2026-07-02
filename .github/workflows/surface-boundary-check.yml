@@ -42,11 +42,13 @@ jobs:
           set -euo pipefail
           CHANGED=/tmp/changed.txt
 
-          # Exclusive surface paths (one owning D-lane each) — BOT_HIERARCHY §5.5.
+          # Exclusive surface paths (one owning product-lane each) —
+          # PROJECT_BIBLE §2.3/§2.5. D2 (orders dashboard) folded into D0
+          # 2026-07-02 (both broker-facing), so d2_dashboard/ is a D0 surface —
+          # editing it alongside static/terminal/ is NOT a cross-surface touch.
           declare -A SURFACE=(
-            ["D0 terminal"]='^static/terminal/'
+            ["D0 terminal + dashboard"]='^(static/terminal/|d2_dashboard/)'
             ["D1 store"]='^(static/store/|static/home/)'
-            ["D2 dashboard"]='^d2_dashboard/'
             ["D4 bridge"]='^(d4_bridge/|static/bridge/)'
             ["D3 broadway"]='^(broadway_client\.py|broadway_extension/)'
           )
