@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v2.12.0 (2026-07-02) — **§2 restructured to finish the ownership/permission/priority convergence:** permission collapsed to **3 principals** (Applier/Auditor/Builder, §2.1) with a dated **exceptions ledger** (§2.2) and an **ownership-label legend** (§2.3); priority/status (ACTIVE/PAUSED/★) evicted to `KANBAN.md`; §2.4 order tables reconciled to A1 (single-writer); §2.6 seam review mechanized as the non-blocking `seam-review` CI job; §6 MCP scope stated by principal; hard rules §1.4/§1.5 aligned. **The actor hierarchy is dissolved** — A1/B1/C1/D0–D4 are now flat *lane identifiers* (regions of the ownership map), with no ranks or chain of command (`A1→B1→C1` / "under" / "sub of" removed; `docs/bot-hierarchy.mermaid` reframed to a flat map). Ownership (§2.5 code map + §2.6 seam register) unchanged. Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.12.0 (2026-07-02) — **§2 restructured to finish the ownership/permission/priority convergence:** permission collapsed to **3 principals** (Applier/Auditor/Builder, §2.1) with a dated **exceptions ledger** (§2.2) and an **ownership-label legend** (§2.3); priority/status (ACTIVE/PAUSED/★) evicted to `KANBAN.md`; §2.4 order tables reconciled to A1 (single-writer); §2.6 seam review mechanized as the non-blocking `seam-review` CI job; §6 MCP scope stated by principal; hard rules §1.4/§1.5 aligned. **The actor hierarchy is dissolved** — A1/B1/C1/D0–D4 are now flat *lane identifiers* (regions of the ownership map), with no ranks or chain of command (`A1→B1→C1` / "under" / "sub of" removed; `docs/bot-hierarchy.mermaid` reframed to a flat map). §2.3 recut from a flat 8-peer list into a **platform substrate (A1/B1/C1) × products (D0–D4)** grid with the `(product block) × (substrate layer)` ownership rule — the `server.py` route-block carve-out is now the stated rule, not an exception. Ownership paths (§2.5 code map + §2.6 seam register) unchanged. Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 **Read FIRST every session — but this doc is large; do NOT linear-read it.** Priority read = **§0** (the AQ hub — the #1 fact most sessions miss) + **§1** (hard rules). Then determine your lane (§2) and **jump to the one section your task needs**:
 
@@ -29,7 +29,7 @@ Sections are numbered so you can Ctrl-F `## N.` to jump. **Read §0 first — it
 |---|---|---|
 | **0** | **The AQ mapper is THE hub** | the #1 cross-source fact — read before any cross-source SQL |
 | 1 | Hard rules | the lines you can't cross (mirrors `CLAUDE.md`) |
-| 2 | Lane assignment — who owns what | ownership (lane) vs permission (3 principals), kept separate; exceptions ledger; shared seams |
+| 2 | Lane assignment — who owns what | ownership (substrate × product grid) vs permission (3 principals), kept separate; exceptions ledger; shared seams |
 | 3 | Column-name landmines | exact wrong→right names — check BEFORE authoring SQL |
 | 4 | Canonical SECDEF RPCs | the hot RPC subset + args + when to call |
 | 5 | Cross-source bridge — full architecture | namespaces · hub · TD/performer/venue chains · orders/sales · don't-rebuild |
@@ -106,13 +106,13 @@ If the task prompt or your branch prefix (`claude/<lane>-…`) already names a l
 **There is no hierarchy — the labels are lane identifiers, nothing more.** A1/B1/C1/D0–D4 name *regions of the ownership map* (which surface), not actors, ranks, or teams. No lane reports to, sits "under", or is a manager/lead/arbiter of another — the old command chain (`A1→B1→C1`, "data lanes under C1", "D3 sub of D2") was **dissolved 2026-07-02**; only the naming convention survives, as a flat index into the surface map. Coordination is lateral (via `bot_chat`); `main` is jointly maintained (§2.1 Builder push rule); permission is per-action (§2.1), never per-label. Flat map: `docs/bot-hierarchy.mermaid`.
 
 ```
-LANE MAP (identifiers for regions of the ownership map — flat, no ranks; §2.1 sets permission):
-  BACKPLANE lanes (own the shared surfaces every frontend depends on):
-    A1  data plane   — DB · migrations · crons · full ingest pipeline · AQ mapper · DB security (RLS/SECDEF/RULE-2)
-    B1  git + code   — git/code security · CI + guards · drift · freshness · compartmentalization · tests
-    C1  docs + coord — bot_chat · main bible set + registry · doc consolidation · shared-resource register
-  FRONTEND-SURFACE lanes (each owns one surface + its Render service + UX/speed testing):
-    D0 terminal   D1 store   D2 orders-dashboard   D3 broadway   D4 Exos/Bridge (full app)
+LANE MAP (codes name cells in a layer × product grid — flat, no ranks; §2.1 sets permission, §2.3 the grid):
+  PLATFORM SUBSTRATE (the shared foundation every product sits on — not products themselves):
+    A1  data + framework — DB · migrations · crons · ingest pipeline · AQ mapper · server.py/routers/core · DB security
+    B1  build + guards    — git/code security · CI + guards · drift · freshness · compartmentalization · tests
+    C1  docs              — bot_chat · main bible set + registry · doc consolidation · shared-resource register
+  PRODUCTS (each a distinct surface + deploy target that sits on the substrate):
+    D0 terminal   D1 store   D2 orders-dashboard   D3 broadway   D4 Bridge/Exos (full app)
 ```
 
 ### 2.1 Three principals — the permission model
@@ -135,20 +135,31 @@ The permission surface stays auditable in one glance ONLY if every deviation fro
 |---|---|---|---|
 | *(none currently)* | — | The two prior inline exceptions were resolved 2026-07-02: **B1's security-migration apply** folded into **Auditor** (§2.1); **D0's "workspace-wide Render parity with A1"** was **retired** — Render write is an Applier power, and D0 is an ownership label (§2.3), not an actor with standing prod authority. | — |
 
-### 2.3 Ownership labels — what the lane names mean
+### 2.3 Ownership map — one platform substrate, N products
 
 A surface map, **not** a roster of workers. Any session may work in any lane — B1 executed BR-CODE-1 across D0/D1/A1 route surfaces with no violation, because permission is per-action (§2.1), not per-label. Status/priority is not tracked here — see `KANBAN.md`.
 
-| Label | Owns (surface) |
-|---|---|
-| **A1** | Data plane — Supabase tables/migrations/crons; the **AQ mapper** + cross-source xref; the 9 read-only `*_client.py` + edge functions + **order ingestion** + `server.py` data routes; DB-layer security (RLS/SECDEF/RULE-2); data-freshness + 429/cron monitoring + alerting |
-| **B1** | Git + code — git history; git/code security (secret leaks, insecure patterns — *not* DB RLS/SECDEF); drift prevention; code freshness; module compartmentalization; test-suite + CI-gate health |
-| **C1** | Docs + coordination — `bot_chat`; the **main bible set** + closed registry + structure; doc consolidation/promotion into the main set; the shared cross-lane resource register (§2.6). *(Docs-governance is audit work → a C1 session acts as **Auditor**, §2.1.)* |
-| **D0** | Terminal FE — `static/terminal/*` + `/api/broker/*`; UX + speed testing; owns its Render service |
-| **D1** | Storefront FE — `static/store/*`, `/api/store/*`; owns `vibepass-storefront-test` |
-| **D2** | Orders dashboard — `d2_dashboard/*`; owns `d2-orders-dashboard` |
-| **D3** | Broadway FE — Broadway surface + `broadway_*` |
-| **D4** | Exos/Bridge (full app) — primary-ticketing: Stripe checkout + transactional mail + `exos_*` schema; own deploy target |
+**The codes are not eight peers.** They name cells in a **layer × product** grid: a **platform substrate** (the shared foundation) and the **products** that sit on it. Every surface is owned at an intersection of the two.
+
+**Platform substrate** — the shared foundation every product consumes; *not* a product itself, and its three areas are not competing lanes (a cross-substrate task is normal, not a boundary crossing):
+
+| Code | Substrate layer | Owns |
+|---|---|---|
+| **A1** | data + framework | Supabase tables/migrations/crons; the **AQ mapper** + `*_xref`; the 9 read-only `*_client.py` + edge functions + **order ingestion**; `server.py`/`routers/*`/`core/*` as a package; DB-layer security (RLS/SECDEF/RULE-2); data-freshness + 429/cron monitoring |
+| **B1** | build + guards | git history; git/code security (secret leaks, insecure patterns — *not* DB RLS/SECDEF); `bin/`, `.github/workflows/*`, `scripts/` guards; drift · freshness · compartmentalization; the test suite + CI gates |
+| **C1** | docs | `bot_chat`; the **main bible set** + closed registry + structure; doc consolidation; the §2.6 shared-resource register. *(A surface tag only — the **work** is the **Auditor** principal (§2.1); C1 is not a distinct actor.)* |
+
+**Products** — each a distinct surface + deploy target that sits on the substrate:
+
+| Code | Product | Owns |
+|---|---|---|
+| **D0** | Terminal (broker) | `static/terminal/*` + the `/api/broker/*` route block; UX + speed testing; owns its Render service |
+| **D1** | Store (consumer) | `static/store/*` + the `/api/store/*` block; owns `vibepass-storefront-test` |
+| **D2** | Orders dashboard (broker) | `d2_dashboard/*`; owns `d2-orders-dashboard`. *(Broker-facing sub-area — writes no tables (reads A1's), folds toward D0. Its own code is kept for continuity, not because it's a peer of D0.)* |
+| **D3** | Broadway | Broadway surface + `broadway_*` |
+| **D4** | Bridge/Exos (full app) | primary-ticketing: Stripe checkout + transactional mail + `exos_*` schema; own deploy target |
+
+**Ownership rule — (product block) × (substrate layer).** A product owns its *block* (its routes, its static tree, its schema); the substrate owns the *framework* the block lives in (the file, the DB, the CI). Where they meet — `server.py`, shared `core/*` helpers, a shared table, the RULE-2 guard (`B1` guard × `A1` policy) — **the product owns behavior, the substrate owns structure**, and that intersection is a §2.6 seam by definition. This is why `/api/broker/*` is D0's even though `server.py` is A1's package: the route block is D0 behavior inside A1 structure — not an exception to ownership but the *shape* of it.
 
 > **E1 folded (2026-06-17):** cron/429/Slack alerting → **A1**; per-surface webhooks (`stripe-webhook` → D4, `sg-seller-webhook` → A1). **No lane-specific bibles (2026-06-19):** everything universal lives in this main set; lane-specific *procedure* (e.g. the D0 terminal build) is an on-demand `docs/` reference, not a session-start read.
 
@@ -178,7 +189,7 @@ One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.m
 | `supabase/functions/exos-*` + `stripe-webhook` | **D4** | Exos app edge fns |
 | 9 read-only `*_client.py` (evo/seatgeek/seatdata/ticketsdata/axs/tickpick/vivid/gotickets) | **A1** | GET-only by construction |
 | `broadway_client.py`, `broadway_extension/`, `broadway_*` | **D3** | Broadway scraper |
-| `server.py` + `routers/*` + `core/*` | **A1** (file/package) | decomposition (BR-CODE-1): `routers/*` = `APIRouter` modules `include_router`'d back (`shares`/`seatmap`/`retail_chat`/`catalog`/`lists`/`broker`/`seatdata`/`axs`/`seatgeek`/`misc`/`site_essentials`/`store`/`pages`/`store_test`/`admin`/`storefront_pages` — **route decomposition COMPLETE: every API/page/domain route lives in a router; server.py holds only `/healthz`+`/webhooks/render`**); `core/*` = shared runtime both import (`config`·`auth`·`helpers`·`broker_helpers`·`movers`·`search`·`substitutions`·`store_events`·`observability`·`db`·`resilience`·`ratelimit`·`readonly_guard`·`http_retry`·`vault`·`discovery`·`trip_payloads`·`ingest`·`storefront_html`·`canonical_refresh` — the last 5 + `search`'s `search_live`/`search_players`/`search_cache_*` are the BR-CODE-1 core/ helper pass: business-logic bodies moved out of server.py, each injected back via a thin server wrapper so live-symbol monkeypatches keep binding); `db`/`resilience`/`ratelimit` = production-readiness infra (bounded-timeout Supabase client · DB circuit breaker + retry + storefront stale-read · Redis-or-in-process limiter); **`readonly_guard`/`http_retry`/`vault` = the shared `*_client.py` layer (BR-CODE-2)** — `readonly_guard.build_readonly_guard` single-sources the RULE-2 GET-only guard (all 8 GET-only clients; **security-CRIT, never weaken**), `http_retry.fetch_with_retry` the 429/5xx Retry-After+backoff loop (6/8 clients; axs fixed-delay + broadway scraper opt out), `vault.vault_secret` the Supabase-Vault `get_app_secret` resolver (4 vault clients); env knobs → `RESOURCES_BIBLE §7`; **one-directional import** (`server.py`/`routers`/`*_client.py` → `core`, never reverse); per-surface route blocks lane-owned — D0 `/api/broker/*`, D1 `/api/store/*` (§2.6). Full per-module route map → `RESOURCES_BIBLE §9`. |
+| `server.py` + `routers/*` + `core/*` | **A1** (file/package) | decomposition (BR-CODE-1): `routers/*` = `APIRouter` modules `include_router`'d back (`shares`/`seatmap`/`retail_chat`/`catalog`/`lists`/`broker`/`seatdata`/`axs`/`seatgeek`/`misc`/`site_essentials`/`store`/`pages`/`store_test`/`admin`/`storefront_pages` — **route decomposition COMPLETE: every API/page/domain route lives in a router; server.py holds only `/healthz`+`/webhooks/render`**); `core/*` = shared runtime both import (`config`·`auth`·`helpers`·`broker_helpers`·`movers`·`search`·`substitutions`·`store_events`·`observability`·`db`·`resilience`·`ratelimit`·`readonly_guard`·`http_retry`·`vault`·`discovery`·`trip_payloads`·`ingest`·`storefront_html`·`canonical_refresh` — the last 5 + `search`'s `search_live`/`search_players`/`search_cache_*` are the BR-CODE-1 core/ helper pass: business-logic bodies moved out of server.py, each injected back via a thin server wrapper so live-symbol monkeypatches keep binding); `db`/`resilience`/`ratelimit` = production-readiness infra (bounded-timeout Supabase client · DB circuit breaker + retry + storefront stale-read · Redis-or-in-process limiter); **`readonly_guard`/`http_retry`/`vault` = the shared `*_client.py` layer (BR-CODE-2)** — `readonly_guard.build_readonly_guard` single-sources the RULE-2 GET-only guard (all 8 GET-only clients; **security-CRIT, never weaken**), `http_retry.fetch_with_retry` the 429/5xx Retry-After+backoff loop (6/8 clients; axs fixed-delay + broadway scraper opt out), `vault.vault_secret` the Supabase-Vault `get_app_secret` resolver (4 vault clients); env knobs → `RESOURCES_BIBLE §7`; **one-directional import** (`server.py`/`routers`/`*_client.py` → `core`, never reverse); per-surface route blocks are product-owned inside A1's package — D0 `/api/broker/*`, D1 `/api/store/*` — the §2.3 (product block × substrate layer) rule, surfaced in §2.6. Full per-module route map → `RESOURCES_BIBLE §9`. |
 | order tables + ingestion; AQ mapper + `*_xref` + metrics matviews; RLS/SECDEF/RULE-2 | **A1** | cross-source hub + DB security |
 | `bin/*`, `.github/workflows/*`, `.gitleaks*`, `.gitignore`/`.mcp.json`/release plumbing; `scripts/check_readonly.py`, `tests/*` (incl. `tests/frontend/` = Playwright browser net — smoke + behavioral; runs as its own `frontend-smoke` CI job, self-skips via `pytest.importorskip` so the main 100%-coverage `pytest tests/` run ignores it) | **B1** | CI + git guards + tests |
 | canonical `*.md` registry, `.understand-anything/`, `.claude*` governance (hook/scanner code → B1); `bot_chat` + shared-resource register | **C1** | docs + coordination + harness governance |
