@@ -201,8 +201,10 @@
     }
     T.setStatus('Loading SeatGeek event…');
     // Every tab is TEvo-source-specific — hide the nav and non-overview panes.
+    // NB: `.event-tabs { display:flex }` overrides the `hidden` attribute, so set
+    // display directly too (the SG page shows its own WC tab bar instead).
     const tabs = document.getElementById('eventTabs');
-    if (tabs) tabs.hidden = true;
+    if (tabs) { tabs.hidden = true; tabs.style.display = 'none'; }
     document.querySelectorAll('.tab-pane').forEach(p => { if (p.id !== 'paneOverview') p.hidden = true; });
 
     const res = (Auth && Auth.client)
