@@ -1,6 +1,6 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v2.2.0 (2026-06-30; §14: +9 landmark rows for the TD sourcing redesign `20260630160000`–`250000`); v2.1.0 (2026-06-26; +§11.3 rollback runbook for prod-readiness P1 #7; v2.0.0 2026-06-19; history in git/CHANGELOG)
+> **Doc version:** v2.2.0 (2026-06-30; §14: +9 landmark rows for the TD sourcing redesign `20260630160000`–`250000`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 

@@ -2,7 +2,9 @@
 
 Loaded automatically by Claude Code on every session in this repo. Applies to **all** bots regardless of lane.
 
-> **Doc version:** v2.2.0 (2026-06-26; RULE-2 guard body single-sourced in core/readonly_guard.py — per-file tokens still required, BR-CODE-2); v2.1.0 (2026-06-26; app.py→server.py rename refs §4/§4b; v2.0.0 2026-06-19; history in git/CHANGELOG)
+**Current priorities live at the top of `KANBAN.md`, period.** This file and the bibles hold slow-moving invariants; fast-moving focus (what's active/paused/next) is KANBAN's job — never encode priority or lane status into a versioned governance doc (it is guaranteed to go stale).
+
+> **Doc version:** v2.3.0 (2026-07-02) — §4 Render access restated under the 3-principal model (`PROJECT_BIBLE §2.1`); D0 "workspace-wide Render parity" retired; added the priority-lives-in-KANBAN rule up top. Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -22,7 +24,7 @@ The bible has:
 
 This file (CLAUDE.md) remains the canonical source for security rules + lockdown invariants. The bible is the operational handbook bots read once per session.
 
-Per-lane detail — per-bot scope, push-restrictions matrix, and Render service scope — all live in `PROJECT_BIBLE.md §2` (which absorbed `BOT_HIERARCHY.md` on 2026-06-19, itself having absorbed `LANE_DISCIPLINE.md`). The per-bot self-contracts were retired into §2 (2026-06-19); only `docs/b1_operating_constraints.md` remains, kept for its security severity matrix (referenced by `.github/SECURITY.md` + the secret-scan workflow).
+Ownership (which lane owns a surface) and permission (the three principals — Applier/Auditor/Builder) both live in `PROJECT_BIBLE.md §2` (which absorbed `BOT_HIERARCHY.md` on 2026-06-19, itself having absorbed `LANE_DISCIPLINE.md`). §2 keeps the two separate: ownership is a surface map, permission is per-action (restructured 2026-07-02 — the former per-bot permission grid was the drift generator). The per-bot self-contracts were retired into §2 (2026-06-19); only `docs/b1_operating_constraints.md` remains, kept for its security severity matrix (referenced by `.github/SECURITY.md` + the secret-scan workflow).
 
 ## Global operator rules (2026-05-13 lockdown)
 
@@ -83,34 +85,16 @@ Lane assignments per `PROJECT_BIBLE.md §2` (4-domain reorg 2026-06-17 — peer 
 
 **Testing-unified architecture (2026-05-16, PR #168)**: During dev/test, all runtime traffic flows through `vibepass-storefront-test` (starter plan, no cold-start drag). It hosts D0 terminal + D1 storefront + D2 dashboard via `app.include_router` mounts in `server.py`. `vibepass-terminal-test` remains as the D0 static CDN host; `d2-orders-dashboard` stays alive as an idle placeholder. At beta, each surface migrates back to its own service via dedicated DNS + un-mounting from `server.py`.
 
-Render MCP tools (`mcp__render__*`) are gated per-bot. Cross-service writes are forbidden without operator approval.
+Render MCP tools (`mcp__render__*`) follow the **three-principal permission model** (`PROJECT_BIBLE.md §2.1`), not a per-bot grid. The former per-bot Render matrix — including D0's "workspace-wide parity with A1" (2026-05-16) — was **retired 2026-07-02**: surface *ownership* (which lane owns a service's files/IaC, `PROJECT_BIBLE §2.7`) is separate from *write authority*.
 
-**A1 (Admin) — workspace-wide access:**
-- All `mcp__render__*` tools on any service
-- Workspace-level operations: `create_web_service`, `create_postgres`, `create_static_site`, `create_cron_job`, `select_workspace`
-- Provisioning, deletion, ownership changes
+**Render reads are open to every session** (`list_*`/logs/metrics — monitoring is universal, no per-call ask).
 
-**D0 — workspace-wide access (2026-05-16, operator directive — "full Render permissions"):**
-- **Parity with A1 on Render**: all `mcp__render__*` tools on any service in the workspace, plus workspace-level operations (`create_*`, `select_workspace`, deletion, ownership changes)
-- Standing write authority on all three frontend services (`vibepass-terminal-test`, `vibepass-storefront-test`, `d2-orders-dashboard`) + any future services D0 provisions
-- D0 is sign-off authority on D1/D2 subordinate PRs touching their respective surfaces
-- No restrictions — full Render parity with A1
-- Coordination expectation: provisioning/deletion of customer-facing services is high-impact; D0 posts a `bot_chat` `flag` event for transparency, but no per-call operator approval required
+**Render writes are an Applier action** (`PROJECT_BIBLE §2.1`): deploys, service config, provisioning/deletion, workspace-level operations (`create_web_service`, `create_postgres`, `create_static_site`, `create_cron_job`, `select_workspace`), ownership changes. Today only A1 sessions act as Applier on Render. A session that owns a Render service's *surface* (D0/D1/D2 per §2.7) authors its `render*.yaml` IaC as a **Builder**, but the runtime write is applied through the Applier principal — not standing per-bot authority. Any standing deviation is a dated row in `PROJECT_BIBLE §2.2`.
 
-**D1, D2 — subordinate coding arm under D0 (2026-05-15 reorg):**
-- D1 still authors `static/store/*`, `server.py /api/store/*`, `render.yaml` (storefront IaC)
-- D2 still authors `d2_dashboard/*`, order client code, `render-d2-dashboard.yaml`
-- Render MCP **read-only** across all services; writes route through D0 approval + A1 merge
-- Cross-service writes (e.g., D1 touching D2's surface) require D0 sign-off in PR comment
-
-**All other bots (B1, C1, D3, D4):**
-- Read-only across all services (monitoring is universal)
-- All writes require explicit operator approval
-
-**Standing rules across all bots:**
-- Read ops always OK (no per-call ask)
-- Service Tokens are the preferred mechanism for enforcement when feasible (Render's Member-role token can't perform writes by API constraint, providing hard isolation beyond policy). Until tokens are scoped per-bot, the scoping is policy-level and audited via Render's audit log.
-- Cross-service writes (D1 touching D2's service or vice versa) = lane violation, surfaces as `flag` in `bot_chat` per existing cross-lane rules
+**Standing rules:**
+- Read ops always OK (no per-call ask).
+- Service Tokens are the preferred enforcement mechanism when feasible (Render's Member-role token can't perform writes by API constraint — hard isolation beyond policy). Until tokens are scoped, the scoping is policy-level and audited via Render's audit log.
+- A write to a service whose surface another lane owns is a cross-lane action — surface a `flag` in `bot_chat` per the cross-lane rules.
 
 ### 5. Skill conventions (SKILL.md structure + discoverability)
 

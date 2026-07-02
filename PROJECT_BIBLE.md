@@ -1,6 +1,6 @@
 # PROJECT_BIBLE.md — operating playbook for all bots
 
-> **Doc version:** v2.11.0 (2026-07-01; §3 landmine CORRECTED: a `SET statement_timeout` prefix in a pg_cron command is a NO-OP (not just `SET LOCAL`); the only working cron cap is a role default — `ALTER ROLE postgres SET statement_timeout='900s'` (mig 20260701213000); durable FastAPI watchdog NOT confirmed running) · v2.10.0 (2026-07-01; §3 landmine: cron loops need a loop-level wall-clock budget — `SET LOCAL statement_timeout` inside a running function is a no-op; unbounded per-event loops wedge the whole scheduler under `use_background_workers=off`; scheduler-watchdog RPC + FastAPI loop are the backstop) · v2.9.0 (2026-06-28; §2 B1 line: `tests/frontend/` Playwright net + `frontend-smoke` CI job; the 5-surface VibePass hub is the Render landing at `/`, STOREFRONT_AS_LANDING=false) · v2.8.0 (2026-06-28; §2.5: BR-CODE-1 route decomposition COMPLETE (+routers `store`/`pages`/`store_test`/`admin`/`storefront_pages` — server.py now holds only `/healthz`+`/webhooks/render`) + core/ helper pass (+`discovery`·`trip_payloads`·`ingest`·`storefront_html`·`canonical_refresh`; `search` gained live/player/cache helpers); frontend Playwright smoke+behavioral net under `tests/frontend/`) · v2.7.0 (2026-06-26; §2.5 + §2.6: BR-CODE-2 shared client layer `core/readonly_guard`·`core/http_retry`·`core/vault`; RULE-2 guard body now single-sourced) · v2.6.0 (2026-06-26; §2.5 code map adds the production-readiness infra modules `core/db`·`core/resilience`·`core/ratelimit`) · v2.5.0 (2026-06-26; §2 decomposition row names the live routers/* + core/* modules, links the per-module route map to RESOURCES_BIBLE §9) · v2.4.0 (2026-06-26; app.py renamed → server.py post-decomp, all file/lane refs updated; entrypoint `uvicorn server:app`) · v2.3.0 (2026-06-19; history in git/CHANGELOG) — §4/§0: `sg_attempt_event_xref_v3` exact-date guard documented (same-date-first + off-date-series reject, PR #613 / mig 20260619200000) — was read as a naive "±24h, nearest wins" matcher
+> **Doc version:** v2.12.0 (2026-07-02) — **§2 restructured to finish the ownership/permission/priority convergence:** permission collapsed to **3 principals** (Applier/Auditor/Builder, §2.1) with a dated **exceptions ledger** (§2.2) and an **ownership-label legend** (§2.3); priority/status (ACTIVE/PAUSED/★) evicted to `KANBAN.md`; §2.4 order tables reconciled to A1 (single-writer); §2.6 seam review mechanized as the non-blocking `seam-review` CI job; §6 MCP scope stated by principal; hard rules §1.4/§1.5 aligned. Ownership (§2.5 code map + §2.6 seam register) unchanged. Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 **Read FIRST every session — but this doc is large; do NOT linear-read it.** Priority read = **§0** (the AQ hub — the #1 fact most sessions miss) + **§1** (hard rules). Then determine your lane (§2) and **jump to the one section your task needs**:
 
@@ -29,11 +29,11 @@ Sections are numbered so you can Ctrl-F `## N.` to jump. **Read §0 first — it
 |---|---|---|
 | **0** | **The AQ mapper is THE hub** | the #1 cross-source fact — read before any cross-source SQL |
 | 1 | Hard rules | the lines you can't cross (mirrors `CLAUDE.md`) |
-| 2 | Lane assignment — who owns what | derive your lane from the work + its blast radius; push authority; shared seams |
+| 2 | Lane assignment — who owns what | ownership (lane) vs permission (3 principals), kept separate; exceptions ledger; shared seams |
 | 3 | Column-name landmines | exact wrong→right names — check BEFORE authoring SQL |
 | 4 | Canonical SECDEF RPCs | the hot RPC subset + args + when to call |
 | 5 | Cross-source bridge — full architecture | namespaces · hub · TD/performer/venue chains · orders/sales · don't-rebuild |
-| 6 | MCP tools by lane | per-lane tool scope; 6a color-commentary layer; 6b terminal-link rule |
+| 6 | MCP tool scope | scope by principal (§2.1); 6a color-commentary layer; 6b terminal-link rule |
 | 7 | SQL macros | copy-paste patterns (bot_chat, dedupe, gates, pg_net, TEvo search) |
 | 8 | Workflow recipes | step-by-steps (author a migration, wire a panel, spawn a cron…) |
 | 9 | Recent landmark migrations | → `MIGRATION_CONVENTIONS.md §14` (don't re-ship work) |
@@ -75,8 +75,8 @@ Deeper: §3 column traps · §4 RPC args · §5 (full cross-source architecture 
 1. **SQL data is read-only by default.** Any `INSERT`/`UPDATE`/`DELETE`/DDL on prod requires explicit operator permission per call. Standing exceptions: `bot_chat` writes via `bot_chat_log()`, Supabase branch creation (copy-on-write fork, no prod mutation), authoring migration files (apply gated separately).
 2. **Upstream third-party APIs are READ-ONLY.** TEvo, SeatGeek, SeatData, TickPick, Vivid — GET endpoints only. No order POSTs, holds, webhook config changes without explicit operator authorization.
 3. **HTML / JS in your assigned lane is free reign** — no per-step approval.
-4. **Render workspace is per-service scoped** (§2 ownership matrix) — **except D0, which has workspace-wide parity with A1 (2026-05-16)**. Cross-service writes by any other lane = lane violation.
-5. **Push to `main` is per-task** — A1 + B1 jointly maintain `main`; the delegated bot pushes its own work after green CI (reorg 2026-06-17, supersedes "A1 sole pusher"). **Prod-DB apply stays centralized on A1** (D-tier has zero mutation authority). See §2.3.
+4. **Render writes are an Applier action** (§2.1) — reads are open to every session; a write to any service requires the Applier principal (today A1 sessions). Surface *ownership* (§2.7) ≠ standing write authority; the former "D0 workspace-wide parity" was retired 2026-07-02.
+5. **Push to `main` is per-task** — A1 + B1 jointly maintain `main`; the delegated **Builder** (§2.1) pushes its own work after green CI (reorg 2026-06-17, supersedes "A1 sole pusher"). **Prod-DB mutation is an Applier action** (D-tier has zero mutation authority — file a migration → an Applier applies). See §2.1.
 6. **Cross-lane file edits require coordination** via `bot_chat` `question` or PR comment to the lane owner.
 7. **Edge function auth: platform `verify_jwt=true` is NOT sufficient.** It accepts ANY valid Supabase JWT — including the publishable anon JWT exposed at `/api/public/config`. Edge functions that mutate data or burn paid upstream APIs MUST add body-level `requireCronSecret(req)` from `supabase/functions/_shared/cron-auth.ts`. Pattern verified across 12 existing functions; 3 exceptions caught in B1 audit PR #172 (2026-05-16) and patched in PR #174.
 8. **Check `KANBAN.md §🟢 OPEN WORK` before claiming new work.** It is the single-source-of-truth for what's currently actionable across all lanes — severity-sorted, with the smallest fix for each finding. **Fixing bot DELETES its row from that section in the same PR as the fix** (row's absence IS the closure signal; archive sections below preserve the historical detail). Populate as you go — anyone can add a row; B1 maintains for security findings, each lane for its own. Broadcast: bot_chat 311 (2026-05-17).
@@ -89,65 +89,68 @@ When in doubt → ask via `AskUserQuestion` or post a `bot_chat` question.
 
 ## 2. Lane assignment — who owns what
 
-> **This section is the single source of truth for ownership** (absorbed `BOT_HIERARCHY.md` 2026-06-19 — that file was retired into this bible). It answers "which lane/project owns this tool, table, route, or service." Immutable security invariants → `CLAUDE.md`. Migration mechanics → `MIGRATION_CONVENTIONS.md`. The resource catalog → `RESOURCES_BIBLE.md`.
+> **This section is the single source of truth for ownership** (absorbed `BOT_HIERARCHY.md` 2026-06-19). It answers "which lane owns this tool, table, route, or service" and "what does this action require." Immutable security invariants → `CLAUDE.md`. Migration mechanics → `MIGRATION_CONVENTIONS.md`. The resource catalog → `RESOURCES_BIBLE.md`. **Current priorities are NOT here — they live at the top of `KANBAN.md`** (fast-moving focus; this doc holds slow-moving invariants).
 
-### Determining your lane — you don't *start* as one; the work assigns it
-A fresh session has no built-in lane identity. Derive it from the task, in two steps:
-1. **What you're working on** → the path/surface you touch. Its owner in the **§2.5 code map** is your lane for this task (e.g. `supabase/migrations/*`→A1, `static/terminal/*`→D0, `static/store/*`→D1).
-2. **What it affects (blast radius)** → if that path is a **shared seam in §2.6** (or its output feeds another lane's surface), your change is **cross-lane** → coordinate with the affected consumers (C1 reviews) before it hardens.
+**Two orthogonal things, deliberately kept separate** (they used to be conflated in one table — that was the drift generator):
+- **Ownership = *which surface*.** Who authors a given file/table/route/service. The lane labels (A1/B1/C1/D0–D4) are an ownership map (§2.3 legend · §2.4 tables · §2.5 code map · §2.6 seams), **not** a roster of actors. Any session can work in any lane.
+- **Permission = *which capability*.** What an action is allowed to do. This collapses to **three principals** (§2.1). Permission attaches to the *action*, not the session: one session is a **Builder** editing a surface and an **Applier** for the single step that applies its migration to prod.
 
-If the task prompt or your branch prefix (`claude/<lane>-…`) already names a lane, that's your starting point — still run step 2 for blast radius. **CI enforces this after the fact:** path/branch labeler → `area:`/`level:` labels · `surface-boundary-check` flags out-of-lane paths · the §2.5 **no-orphan invariant** (every path resolves to exactly one owner). When unsure, ask via `bot_chat` `question` or the operator.
+### Determining your lane + principal — both derived, neither pre-assigned
+A fresh session has no built-in identity. Derive both from the task:
+1. **Lane (ownership)** — the path/surface you touch → its owner in the **§2.5 code map** (e.g. `supabase/migrations/*`→A1, `static/terminal/*`→D0, `static/store/*`→D1).
+2. **Principal (permission)** — the *action* you take → **§2.1**. Editing a surface you own = **Builder**. Applying to prod DB / Vault / Render / cron = **Applier**. Guard / security-migration / docs-governance work = **Auditor**.
+3. **Blast radius** — if that path is a **shared seam in §2.6** (or its output feeds another lane's surface), your change is **cross-lane** → the §2.6 `seam-review` CI checklist fires; coordinate with the named consumers before it hardens.
 
-**Four peer domains — coordination is lateral (via `bot_chat`), not a command chain.** No bot reports to another.
+If the task prompt or your branch prefix (`claude/<lane>-…`) already names a lane, that's your ownership starting point — still run steps 2–3. **CI enforces this after the fact:** path/branch labeler → `area:`/`level:` labels · `surface-boundary-check` flags out-of-lane paths · the §2.5 **no-orphan invariant** (every path resolves to exactly one owner). When unsure, ask via `bot_chat` `question` or the operator.
+
+**Four peer domains — coordination is lateral (via `bot_chat`), not a command chain.** No lane reports to another; `main` is jointly maintained (§2.1 Builder push rule).
 
 ```
-CROSS-CUTTING (no surface; serve every lane):
-  A1  data plane   — DB · full ingest pipeline · crons · DB security (RLS/SECDEF/RULE-2)
-  B1  git + code   — git/code security · drift · freshness · compartmentalization · tests
-  C1  docs + coord — bot_chat · main bible set · doc consolidation · shared-resource register
-
-FRONTEND SURFACES (distinct per surface · own Render + UX/speed testing):
-  D0 ★ terminal   D1 store   D2 orders-dashboard   D3 broadway   D4 Exos/Bridge (full app)
-
-A1 + B1 maintain `main` (push per-task, not by tier).   ★ D0 PRIORITY; D1–D4 paused until D0 ships.
+OWNERSHIP MAP (labels, not workers — any session works in any lane; §2.1 sets permission):
+  CROSS-CUTTING (no surface; serve every lane):
+    A1  data plane   — DB · full ingest pipeline · crons · DB security (RLS/SECDEF/RULE-2)
+    B1  git + code   — git/code security · drift · freshness · compartmentalization · tests
+    C1  docs + coord — bot_chat · main bible set · doc consolidation · shared-resource register
+  FRONTEND SURFACES (distinct per surface · own Render service + UX/speed testing):
+    D0 terminal   D1 store   D2 orders-dashboard   D3 broadway   D4 Exos/Bridge (full app)
 ```
 
-### 2.1 Lane roster
+### 2.1 Three principals — the permission model
 
-| Lane | Domain | Mandate | Status |
+Permission attaches to the **action**, not the session. A session picks up whichever principal each step requires; **most work is Builder**. This table is the whole permission surface — **zero inline exceptions**. Any deviation is a dated row in §2.2, so privilege creep is visible instead of ambient.
+
+| Principal | Powers (what the action may do) | Who acts as it |
+|---|---|---|
+| **Applier** | Mutate prod: apply migrations to prod DB · `execute_sql` INSERT/UPDATE/DELETE/DDL · cron `schedule`/`unschedule` · Vault `rotate`/`set` · Render **writes** on any service · data-mutating edge-fn deploys | the session applying a reviewed change to prod — **today only A1 sessions** |
+| **Auditor** | Guard + ledger authority: CI workflows + `bin/`/`scripts/` guard code · RULE-2 readonly guards · `cron-auth.ts` · **DB-security migrations (author + apply)** · the canonical doc registry + `bot_chat` + the §2.6 shared-resource register · security patches across **any** lane's files | a session doing security / guard / docs-governance work — today A1 (DB-security) + B1 (git/code security) + the former C1 registry duty |
+| **Builder** | Author-only, per-task: edit any surface it **owns** in §2.5 (html/js/css/routes/migration *files*) · open a PR · push its own work to `main` after green CI. **No prod mutation** — a DB change is a migration *file* handed to an Applier | every session building on a surface — all D-tier + daily A1/B1 coding |
+
+**Reads are always open** — SQL `SELECT`/`information_schema`/`pg_*`, Render + Supabase `list_*`/`get_*`, logs — no principal required. Standing Builder actions that need no ask: `bot_chat` writes (`bot_chat_log`), Supabase branch creation (copy-on-write fork), authoring migration files. `main` is jointly maintained by A1 + B1 but pushed **per-task by the delegated Builder after green CI** — not tier-gated (supersedes "A1 sole pusher", reorg 2026-06-17).
+
+### 2.2 Permission exceptions — each needs a review date
+
+The permission surface stays auditable in one glance ONLY if every deviation from §2.1 is a row here with a grantee and a review date. **Add a row when you grant an exception; delete it when it lapses.** An exception that maps cleanly onto a §2.1 principal is not an exception — fold it in instead.
+
+| Exception | Granted to | Rationale | Review by |
 |---|---|---|---|
-| **A1** | Data plane | Supabase tables/migrations/crons; the **AQ mapper** + cross-source xref; the 9 read-only `*_client.py` + edge functions + **order ingestion** + `server.py` data routes; **DB-layer security** (RLS, SECDEF, RULE-2 lockdown); data freshness + 429/cron monitoring + alerting. | **ACTIVE** |
-| **B1** | Git + code | Git history; **git/code security** (secret leaks, insecure patterns — *not* DB RLS/SECDEF); drift prevention; code freshness; module compartmentalization; test-suite + CI-gate health. | **ACTIVE** |
-| **C1** | Docs + coord | `bot_chat`; the **main bible set** + closed registry + structure; **promotion arbiter** (lane-bible → main set); the **shared cross-lane resource register** (§2.6). | **ACTIVE** |
-| **D0** ★ | Terminal FE | Broker terminal (`static/terminal/*` + `/api/broker/*`); UX + speed testing; owns its Render service; **workspace-wide Render parity with A1**. Gating lane for D1–D4 reactivation. | **ACTIVE — PRIORITY** |
-| **D1** | Storefront FE | Consumer storefront (`static/store/*`, `/api/store/*`); owns `vibepass-storefront-test`. | **PAUSED** |
-| **D2** | Orders dashboard | `d2_dashboard/*`; owns `d2-orders-dashboard`. | **PAUSED** |
-| **D3** | Broadway FE | Broadway surface + `broadway_*`. | **PAUSED** |
-| **D4** | Exos/Bridge — full app | Primary-ticketing app: Stripe checkout + transactional mail + `exos_*` schema; own deploy target. | **PAUSED** |
+| *(none currently)* | — | The two prior inline exceptions were resolved 2026-07-02: **B1's security-migration apply** folded into **Auditor** (§2.1); **D0's "workspace-wide Render parity with A1"** was **retired** — Render write is an Applier power, and D0 is an ownership label (§2.3), not an actor with standing prod authority. | — |
 
-> **E1 folded (2026-06-17):** cron/429/Slack alerting → **A1**; per-surface webhooks (`stripe-webhook` → D4, `sg-seller-webhook` → A1). **No lane-specific bibles (2026-06-19):** bots don't pre-know their lane, so everything universal lives in this main set; lane-specific *procedure* (e.g. the D0 terminal build) is an on-demand `docs/` reference, not a session-start read.
+### 2.3 Ownership labels — what the lane names mean
 
-### 2.2 Per-lane writes / never-writes
+A surface map, **not** a roster of workers. Any session may work in any lane — B1 executed BR-CODE-1 across D0/D1/A1 route surfaces with no violation, because permission is per-action (§2.1), not per-label. Status/priority is not tracked here — see `KANBAN.md`.
 
-- **A1** — writes: all migrations (incl. RLS/SECDEF + `*_security_*.sql`); ingest + order tables; `supabase/functions/*` (data pipeline); the 9 `*_client.py`; `server.py` data routes; `requirements.txt`/`Procfile`; `MIGRATION_CONVENTIONS.md`. Reads: everything.
-- **B1** — writes: `KANBAN.md` security backlog; `docs/security-runbook-*.md`; `supabase/functions/_shared/cron-auth.ts`; CI workflows + `bin/`/`scripts/` guard code; cross-cutting security patches (PR comment to the file's owner). No prod tables.
-- **C1** — writes: the main bible set + registry; `bot_chat` checkpoints/drift flags. Never applies prod DB (author files only).
-- **D0** — writes: `static/terminal/*` (html/js/css); `docs/d0-*.md`, wireframes; `/api/broker/*` routes (coordinate with A1). **Never writes:** any DB table directly; any cron schedule (author migration, A1 applies); data-mutating edge functions; paused-lane files.
-- **D1–D4 (PAUSED)** — scope preserved in §2.8.
+| Label | Owns (surface) |
+|---|---|
+| **A1** | Data plane — Supabase tables/migrations/crons; the **AQ mapper** + cross-source xref; the 9 read-only `*_client.py` + edge functions + **order ingestion** + `server.py` data routes; DB-layer security (RLS/SECDEF/RULE-2); data-freshness + 429/cron monitoring + alerting |
+| **B1** | Git + code — git history; git/code security (secret leaks, insecure patterns — *not* DB RLS/SECDEF); drift prevention; code freshness; module compartmentalization; test-suite + CI-gate health |
+| **C1** | Docs + coordination — `bot_chat`; the **main bible set** + closed registry + structure; promotion arbiter; the shared cross-lane resource register (§2.6). *(Docs-governance is audit work → a C1 session acts as **Auditor**, §2.1.)* |
+| **D0** | Terminal FE — `static/terminal/*` + `/api/broker/*`; UX + speed testing; owns its Render service |
+| **D1** | Storefront FE — `static/store/*`, `/api/store/*`; owns `vibepass-storefront-test` |
+| **D2** | Orders dashboard — `d2_dashboard/*`; owns `d2-orders-dashboard` |
+| **D3** | Broadway FE — Broadway surface + `broadway_*` |
+| **D4** | Exos/Bridge (full app) — primary-ticketing: Stripe checkout + transactional mail + `exos_*` schema; own deploy target |
 
-### 2.3 Push authority
-
-**Push to `main` is per-task/per-agent, not bot-tier-gated** — the delegated bot pushes its own work after green CI; A1 + B1 are joint maintainers. **Prod-DB apply stays centralized on A1** (git push ≠ DB apply).
-
-| | Prod DB | `main` | Render | Edge fns | Vault |
-|---|---|---|---|---|---|
-| **A1** | ✅ via MCP | ✅ maintainer | ✅ workspace-wide | ✅ deploy | ✅ rotate/set |
-| **B1** | ✅ DB-security migs | ✅ maintainer | ❌ | ✅ sec only | ✅ |
-| **C1** | ❌ author only | ✅ docs | ❌ | ❌ | ❌ |
-| **D0** | ❌ author only (A1 applies) | ✅ own surface | ✅ **parity with A1** | ❌ | ❌ |
-| **D1–D4** | ❌ (PAUSED) | ✅ own surface when active | own service when active | ❌ | ❌ |
-
-**D-tier has ZERO Supabase mutation authority** — including emergency apply. A DB change is filed as a migration file + `bot_chat` to A1, who applies it. DB security = A1; git/code security = B1.
+> **E1 folded (2026-06-17):** cron/429/Slack alerting → **A1**; per-surface webhooks (`stripe-webhook` → D4, `sg-seller-webhook` → A1). **No lane-specific bibles (2026-06-19):** everything universal lives in this main set; lane-specific *procedure* (e.g. the D0 terminal build) is an on-demand `docs/` reference, not a session-start read.
 
 ### 2.4 Single-writer table ownership
 
@@ -155,13 +158,13 @@ One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.m
 
 | Lane | Tables they write |
 |---|---|
-| **A1** | `event_xref`, `*_xref`, `event_listing_snapshot_daily`, sweep fns, `latest_event_metrics` matview, FRED macro, ESPN tables, `event_movers_index(_history)`, `discovery_gap_alerts`, **order/ingest tables**, **`pg_policies`/RLS** |
+| **A1** | `event_xref`, `*_xref`, `event_listing_snapshot_daily`, sweep fns, `latest_event_metrics` matview, FRED macro, ESPN tables, `event_movers_index(_history)`, `discovery_gap_alerts`, **the order + ingest tables** (`evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots` — order *ingestion* is A1's data plane, §2.3), **`pg_policies`/RLS** |
 | **B1** | *(no prod tables)* — git history, CI/guard code, `cron-auth.ts`, test suite |
 | **C1** | `bot_chat`, the main bible set + registry, `*_canonical`, `*_resolved` sidecars, `seatgeek_event_xref` |
 | **D0** | `static/terminal/*` (read-only from DB) |
-| **D1** | `share_links` (PAUSED) |
-| **D2** | `evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots` (PAUSED) |
-| **D3** | `broadway_*` (PAUSED) |
+| **D1** | `share_links` |
+| **D2** | *(no prod tables)* — the orders dashboard **reads** A1's order tables (single-writer = A1) |
+| **D3** | `broadway_*` |
 
 ### 2.5 Code lane-assignment map (full-tree)
 
@@ -187,9 +190,9 @@ One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.m
 | `requirements.txt`, `Procfile`, data `*.csv` seeds | **A1** (shape) | lanes add their own deps |
 | `design/`, `docs/archive/` | — | historical / non-canonical |
 
-### 2.6 Shared cross-lane resources — C1-coordinated
+### 2.6 Shared cross-lane resources — seam register (CI-mechanized)
 
-The seams where one lane's change can break another's surface. **C1 reviews any change touching these for cross-consumer impact.**
+The seams where one lane's change can break another's surface. **A PR touching any path below trips the `seam-review` CI job (`.github/workflows/seam-review-check.yml`), which auto-comments a consumer-impact checklist naming the cross-lane consumers to verify** — the mechanized form of the seam review (it replaced the unstaffed "C1 reviews every seam" rule 2026-07-02: the arbiter was honored in the breach, so the check is now a job, not a person). Coordinate with the named consumers before merging; the job is non-blocking (visibility + nudge, not a hard gate).
 
 | Shared resource | Writer | Cross-lane consumers | Rule |
 |---|---|---|---|
@@ -198,7 +201,7 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 | **`trip_planner/`** | shared (D0+D1) | `/api/broker/.../trip-plan` (D0) + `/api/store/.../trip-plan` (D1) | one engine, two routes; regression-test both |
 | **Order data** — `unified_orders`/`cross_source_orders` | A1 (ingest+view) | D0 `orders.js` tiles + D2 dashboard | a view/schema change must serve both; keys on `tevo_event_id` (unmapped = invisible, §0) |
 | **`*_public` RPCs** — wholesale-filtered read boundary | A1 | D1 store (only path) | D1 may never read `broker_*`/wholesale fields; the whitelist is the contract |
-| **`static/_shared/design-tokens.css`** | shared (FE) | D0 · D1 · D2 · D4 | token change ripples to every surface — coordinate via C1 |
+| **`static/_shared/design-tokens.css`** | shared (FE) | D0 · D1 · D2 · D4 | token change ripples to every surface — the `seam-review` job flags it; coordinate with all four |
 | **Retail-chat** — `static/shared/retail-chat-widget.js` + `supabase/functions/chat` (#583) | A1 (edge fn + widget) | D0 `static/terminal/retail-chat.*` + D1 `static/store/chat.html` | one widget + one edge fn, two surfaces — a contract change must keep both working |
 | **RULE-2 lockdown** — `check_readonly.py`/`test_readonly_guards.py`; guard body single-sourced in `core/readonly_guard.py` (BR-CODE-2) | B1 (guard) · A1 (policy) | every `*_client.py` + CI | weakening = security-CRIT. Each client still declares its own `ALLOWED_HTTP_METHODS`+`frozenset({"GET"})`+`_assert_readonly_method` tokens (the static audit requires them in-file); only the assertion *body* is shared. Never re-inline or widen. |
 | **AQ mapper** — `aq_event_map` | A1 | **every lane** resolving cross-source IDs | the #1 fact (§0); never join raw source IDs |
@@ -208,20 +211,22 @@ The seams where one lane's change can break another's surface. **C1 reviews any 
 | Service | Service ID | Owner | Sub-implementer | Source | IaC |
 |---|---|---|---|---|---|
 | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
-| `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 (PAUSED) | `server.py`, `static/store/*` | `render.yaml` |
-| `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D2 (PAUSED) | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
+| `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 | `server.py`, `static/store/*` | `render.yaml` |
+| `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D2 | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
 
-**Testing-unified (2026-05-16, PR #168):** all runtime traffic flows through `vibepass-storefront-test` (starter, no cold starts) — it mounts D0 terminal + D1 storefront + D2 dashboard via `app.include_router`. `vibepass-terminal-test` is the D0 static CDN; `d2-orders-dashboard` is an idle placeholder. Both live services auto-deploy from `main` after green CI. **Render access:** A1 + D0 workspace-wide; all others read-only (writes need operator approval). Full deploy chain → `docs/d0_terminal_build.md`.
+*Owner* = which lane owns the service **surface**; a *write* to any of them is an **Applier** action (§2.1), today performed by A1 sessions (the former "D0 workspace-wide Render parity" was retired 2026-07-02 — surface ownership ≠ standing prod write authority).
 
-### 2.8 Cross-cutting lane rules + paused-lane scope
+**Testing-unified (2026-05-16, PR #168):** all runtime traffic flows through `vibepass-storefront-test` (starter, no cold starts) — it mounts D0 terminal + D1 storefront + D2 dashboard via `app.include_router`. `vibepass-terminal-test` is the D0 static CDN; `d2-orders-dashboard` is an idle placeholder. Both live services auto-deploy from `main` after green CI. **Render access:** reads open to all; **writes = Applier (§2.1)**. Full deploy chain → `docs/d0_terminal_build.md`.
+
+### 2.8 Cross-cutting lane rules + D-tier scope
 
 1. **Shared files** (`server.py`, `requirements.txt`, `MIGRATION_CONVENTIONS.md`, `KANBAN.md`) — propose via PR comment to the owner before editing.
 2. **Single-writer per table** (§2.4 + `MIGRATION_CONVENTIONS.md §4`).
-3. **Security cross-cutting exception** — B1 may patch any file for a security CRIT/HIGH, surfaced via PR comment to the affected lane.
+3. **Security cross-cutting** — an **Auditor** (§2.1) may patch any lane's file for a security CRIT/HIGH, surfaced via PR comment to the affected lane. This is a principal power, not a per-lane exception — no §2.2 row needed.
 4. **Out-of-lane writes** require a PR comment to the lane owner; if offline, `flag` in `bot_chat`. **Never silently write across lanes** — even cache files/logs count.
 5. **SECURITY DEFINER convention** — every new SECDEF fn ships in one migration with `REVOKE EXECUTE … FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE … TO service_role` + a `current_user NOT IN ('service_role','postgres','supabase_admin')` guard at body start.
 
-**Paused-lane scope (D1–D4)** is this §2 + `docs/d4_bridge_charter.md` (D4 full charter); the old per-lane self-contracts are archived (`docs/archive/d{0,1,4}_operating_constraints.md`) — reactivation reads §2.5/§2.6, not those snapshots. D-tier writes only their own surface; never DB tables (file a migration → A1 applies). **D4/Exos** is primary-market ticketing on its own `exos_*` schema, served at `/bridge/`, linking to canonical events **by value** via `bridge_event_xref` — never writes D0 tables.
+**D-tier scope (D1–D4)** is this §2 + `docs/d4_bridge_charter.md` (D4 full charter); the old per-lane self-contracts are archived (`docs/archive/d{0,1,4}_operating_constraints.md`) — a D-tier session reads §2.3/§2.5/§2.6 for its surface, not those snapshots. As **Builders** (§2.1) D-tier writes only its own surface; never DB tables directly (file a migration *file* → an **Applier** applies it). **D4/Exos** is primary-market ticketing on its own `exos_*` schema, served at `/bridge/`, linking to canonical events **by value** via `bridge_event_xref` — never writes D0 tables.
 
 ---
 
@@ -351,18 +356,18 @@ For the full RPC list + arg detail + composition relationships → the migration
 
 ---
 
-## 6. MCP tools by lane
+## 6. MCP tool scope — by principal, not by lane
 
-| MCP family | A1 | B1 | C1 | D0 | D1 | D2 | D3/D4/E1 |
-|---|---|---|---|---|---|---|---|
-| Supabase `execute_sql` (read) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Supabase mutation/migration | ✓ | CRIT only | drift-monitor only | ✗ | ✗ | ✗ | ✗ |
-| Supabase `create_branch` (copy-on-write) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Render: read (list/logs/metrics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Render: write (scope per cell) | all | ✗ | ✗ | workspace-wide (2026-05-16) | storefront | dashboard | ✗ |
-| Slack | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| scheduled-tasks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| GitHub (`gh` via Bash) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+MCP scope follows the **§2.1 principals**, not a per-lane grid (the grid *was* the permission fiction §2 now collapses — retired 2026-07-02).
+
+| MCP family | Scope |
+|---|---|
+| Supabase `execute_sql` (read), `list_*`/`get_*`; Render read (list/logs/metrics); Supabase `create_branch` (copy-on-write); Slack; scheduled-tasks; GitHub | **open to every session** — reads + branch forks need no principal |
+| Supabase mutation / `apply_migration`; cron `schedule`/`unschedule`; Vault; Render **write**; data-mutating edge-fn deploy | **Applier** (§2.1) — today A1 sessions |
+| DB-security migrations; CI/`bin/`/`scripts/` guard code; RULE-2 guards; `cron-auth.ts` | **Auditor** (§2.1) |
+| Surface edits (html/js/css/routes), migration *files*, PRs, per-task `main` push after green CI | **Builder** (§2.1) |
+
+Any standing deviation is a dated row in **§2.2** — not a per-lane cell.
 
 ### 6a. Read-only attach → layer general-data for color commentary
 On a view-only attach (Terminal Analyst, `docs/d0_terminal_analyst_skill.md`), don't stop at market SQL — also pull context for the "why" (read-only, grounded in a query): ESPN (`v_event_full_sports`, `v_espn_injuries_current`, `v_team_recent_results`), weather (`v_event_weather`, `v_event_active_weather_alerts`), social/wiki (`v_event_reddit`, `v_performer_reddit_pulse`); one-call rollup `v_event_why_context`. Augments never replaces numbers; quote exact values; flag staleness (layer is thin); never present context as a pricing decision (human-in-loop). Inventory: `RESOURCES_BIBLE`.
