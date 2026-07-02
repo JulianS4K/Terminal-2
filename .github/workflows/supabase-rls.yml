@@ -50,6 +50,18 @@ jobs:
         with:
           version: latest
 
+      - name: Ephemerally de-duplicate migration versions
+        # The committed set has ~37 duplicate version prefixes (batches authored
+        # with the same YYYYMMDDHHMMSS, applied to prod via MCP which tolerates
+        # it). The CLI runner enforces schema_migrations.version as a PK and dies
+        # on the first duplicate. This re-sequences filenames to unique 14-digit
+        # versions IN THIS CHECKOUT ONLY (committed files untouched, apply order
+        # preserved) so `supabase db start` can validate every migration's SQL +
+        # the schema it builds. Every resolved duplicate is printed as a
+        # ::warning:: for A1 to reconcile in the committed set — surfaced, not
+        # masked. See the script header for the full rationale.
+        run: python scripts/ci_dedupe_migrations.py supabase/migrations
+
       - name: Start Supabase (applies ALL migrations from zero)
         # `supabase db start` boots Postgres and runs every file in
         # supabase/migrations in filename order from an empty database. A single
