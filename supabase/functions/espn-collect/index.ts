@@ -1,4 +1,10 @@
-// Supabase Edge Function: espn-collect (v6 — verify_jwt=false fix)
+// Supabase Edge Function: espn-collect (v8 — stable injury dedup key)
+//
+// v8 (2026-07-02): injury dedup keys on STABLE identity (team_id + slugified
+// athlete name) instead of the churning ESPN athlete id — the Layer-2 ingest
+// fix deferred by mig 20260520220000 (Arias flood). See the long note in
+// collectTeams() at the injury loop. Pairs with mig 20260702230500
+// (espn_injuries_sweep: one-time churn cleanup + daily retention).
 //
 // v6 (2026-05-08): Fixed silent 16-hour outage. Function was deployed with
 // verify_jwt=true so Supabase's edge gateway demanded an Authorization
@@ -183,25 +189,36 @@ async function collectTeams(db: any, state: CollectorState, opts: { standings: b
     if (!opts.injuries) continue;
     // Emit per-team injuries from league-wide payload (change-only per injury record)
     //
-    // BUG-FIX 2026-05-09: ESPN's /sports/{slug}/injuries response uses inj.id
-    // as the ESPN INJURY RECORD id, which is NOT stable across observations
-    // for NBA/NFL/MLS/WNBA/World Cup (only MLB+NHL keep it stable). Using
-    // inj.id meant `where athlete_id = p_athlete_id` in upsert_espn_injury
-    // never found a prior row, so every observation was "first" and got
-    // is_baseline=true — making `WHERE is_baseline=false` filters return 0
-    // for those leagues.
+    // DEDUP KEY = STABLE IDENTITY (team_id + slugified athlete name), NOT the
+    // ESPN athlete id.
     //
-    // Fix: synthesize a stable per-athlete key from team_id + slugified
-    // displayName when athlete.id isn't populated. team_id is always present;
-    // displayName is too. This produces a deterministic dedup key across runs.
+    // v8 (2026-07-02) — the Layer-2 ingest fix deferred by mig 20260520220000
+    // (Gabriel Arias flood). ESPN's /sports/{slug}/injuries mints a FRESH
+    // PROVISIONAL athlete id per poll whenever it lacks a real one, and this is
+    // NOT confined to negative ids or to specific leagues as previously believed:
+    // verified live 2026-07-02, "Jared Jones" (MLB) churned -207375→-207361→…
+    // (negative) and "Satou Sabally" (WNBA) churned 43901→43891→43887 (positive)
+    // across consecutive polls. Keying on inj.athlete.id therefore made
+    // `where athlete_id = p_athlete_id` in upsert_espn_injury miss the prior row
+    // every run → the SAME injury re-inserted as is_baseline=true each 10-min
+    // roster pass (~353 rows/48h for ~200 real injuries; 82% of the table is
+    // churn dupes). It also poisoned the content_hash (athlete_id is a hashed
+    // field), defeating change detection.
+    //
+    // Fix: athlete_name is stable across polls (Arias: 277 rows, 1 name), so key
+    // on (team_id, slugified name) whenever a name is present — this is what
+    // every downstream consumer already assumes (broker.py + the chart RPCs
+    // coalesce(athlete_name, athlete_id) and partition on it, migs 20260520220000
+    // / 20260629220000). Fall back to the ESPN id only when there is NO name.
+    // The raw ESPN id is preserved in meta.espn_athlete_id_raw for traceability.
     const teamInj = (ld.injuries?.injuries ?? []).find((x: any) => String(x.id) === String(t.espn_team_id));
     for (const inj of teamInj?.injuries ?? []) {
       const athleteIdRaw = inj.athlete?.id;
       const displayName = inj.athlete?.displayName ?? "";
-      const dedupKey = athleteIdRaw
-        ? String(athleteIdRaw)
-        : (displayName
-            ? `${t.espn_team_id}:${displayName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\-]/g, "")}`
+      const nameSlug = displayName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\-]/g, "");
+      const dedupKey = nameSlug
+        ? `${t.espn_team_id}:${nameSlug}`
+        : (athleteIdRaw ? String(athleteIdRaw)
             : (inj.id ? `legacy:${String(inj.id)}` : null));
       if (!dedupKey) continue;
       const row = {
@@ -217,7 +234,8 @@ async function collectTeams(db: any, state: CollectorState, opts: { standings: b
       const hash = await sha256short(injFields(row));
       const { data: ret, error } = await db.rpc("upsert_espn_injury", {
         p_team_id: t.espn_team_id, p_athlete_id: dedupKey, p_hash: hash,
-        p_payload: { ...row, espn_league: t.espn_league },
+        p_payload: { ...row, espn_league: t.espn_league,
+                     meta: { espn_athlete_id_raw: athleteIdRaw != null ? String(athleteIdRaw) : null } },
       });
       if (error) { state.errors++; }
       else if (ret?.[0]?.action === "inserted") state.injuries_inserted++;
