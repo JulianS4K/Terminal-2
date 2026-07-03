@@ -720,6 +720,9 @@
       loadAxsChartSeries(eventId).catch(e => console.error('[axs-series]', e));
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
+      // Prediction markets (Kalshi/Polymarket) — fire-and-forget; hides itself
+      // when the event has no matched markets or the pipeline isn't applied yet.
+      loadPredictionMarkets(eventId).catch(e => console.error('[prediction-markets]', e));
     } catch (e) {
       handleRpcError(e);
     }
@@ -2052,7 +2055,7 @@
         hint: hasEspn ? (_showEspn ? 'ESPN markers ON — click to hide' : 'ESPN markers HIDDEN — click to show')
                       : 'no ESPN markers for this event' },
       { label: 'Weather', live: false, hint: 'reserved — NWS alert windows (pending)' },
-      { label: 'Macro',   live: false, hint: 'reserved — UMCSENT background band (pending)' },
+      { label: 'Macro',   live: false, hint: 'reserved — TSA throughput / UMCSENT band (data live via /api/broker/macro; band pending)' },
       { label: 'Signals', live: false, hint: 'reserved — movers / gap markers (pending)' },
     ];
     el.innerHTML = '<span class="overlay-legend-lbl">overlays</span>' + slots.map(s => {
@@ -2589,6 +2592,73 @@
     });
     wrap.appendChild(ul);
     body.appendChild(wrap);
+  }
+
+  // ---------- Prediction markets (Kalshi + Polymarket) ----------
+  //
+  // Read from /api/broker/event/{id}/prediction-markets (SECDEF RPC
+  // get_event_prediction_markets). Two buckets:
+  //   game_markets: this game's moneyline (matched by team + date) — implied
+  //                 win probability per side.
+  //   futures:      season/champion odds on the teams playing this event.
+  // Prices are 0..1 (implied probability). The panel hides itself when there is
+  // nothing matched (or the pipeline migration isn't applied yet).
+  async function loadPredictionMarkets(eventId) {
+    let d;
+    try { d = await T.api(`/api/broker/event/${eventId}/prediction-markets`); }
+    catch (_) { return; }
+    renderPredictionMarkets(d);
+  }
+
+  function pmPct(x) {
+    const n = Number(x);
+    if (!isFinite(n)) return '—';
+    return (n * 100).toFixed(0) + '%';
+  }
+
+  function pmSourceBadge(src) {
+    const s = (src || '').toLowerCase();
+    const label = s === 'kalshi' ? 'Kalshi' : s === 'polymarket' ? 'Polymarket' : escapeHtml(src || '?');
+    return `<span class="pm-src pm-src-${escapeHtml(s)}">${label}</span>`;
+  }
+
+  function pmRow(m, kind) {
+    // label: for game markets the side (subtitle); for futures the team + question.
+    const side = escapeHtml(m.subtitle || m.team_name || m.question || '');
+    const q = kind === 'futures' && m.question ? `<span class="pm-q muted small">${escapeHtml(m.question)}</span>` : '';
+    const px = pmPct(m.yes_price != null ? m.yes_price : m.last_price);
+    const vol = (m.volume != null && isFinite(Number(m.volume)))
+      ? `<span class="pm-vol muted small">vol ${Math.round(Number(m.volume)).toLocaleString()}</span>` : '';
+    const href = m.url ? ` href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer"` : '';
+    return `<li class="pm-item"><a class="pm-link"${href}>` +
+           `<span class="pm-side">${side}</span>${q}` +
+           `<span class="pm-right"><span class="pm-prob">${px}</span>${vol}${pmSourceBadge(m.source)}</span>` +
+           `</a></li>`;
+  }
+
+  function renderPredictionMarkets(d) {
+    const section = document.getElementById('prediction-markets');
+    const body = document.getElementById('pmBody');
+    const subtitle = document.getElementById('pmSubtitle');
+    if (!body || !section) return;
+    const games = (d && Array.isArray(d.game_markets)) ? d.game_markets : [];
+    const futures = (d && Array.isArray(d.futures)) ? d.futures : [];
+    if (!games.length && !futures.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    if (subtitle) {
+      const srcs = Array.from(new Set([...games, ...futures].map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+      subtitle.textContent = 'implied probability · ' + srcs.join(' + ');
+    }
+    let html = '';
+    if (games.length) {
+      html += '<div class="pm-sublabel">THIS GAME — MONEYLINE</div>';
+      html += '<ul class="pm-list">' + games.map(m => pmRow(m, 'game')).join('') + '</ul>';
+    }
+    if (futures.length) {
+      html += '<div class="pm-sublabel">FUTURES — TEAMS IN THIS EVENT</div>';
+      html += '<ul class="pm-list">' + futures.map(m => pmRow(m, 'futures')).join('') + '</ul>';
+    }
+    body.innerHTML = html;
   }
 
   // ---------- Weather (localized via get_event_weather_localized) ----------
