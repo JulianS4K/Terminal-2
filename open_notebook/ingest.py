@@ -23,8 +23,11 @@ class IngestError(RuntimeError):
 # Extraction
 # ---------------------------------------------------------------------------
 
-def extract_text(asset: dict) -> tuple[str, str | None]:
-    """Return (full_text, derived_title). Raises IngestError on failure."""
+def extract_text(asset: dict, db=None) -> tuple[str, str | None]:
+    """Return (full_text, derived_title). Raises IngestError on failure.
+
+    `db` is only needed for the `performer` kind (SQL digest); text/url/pdf
+    ignore it."""
     kind = (asset.get("kind") or "").lower()
     if kind == "text":
         return (asset.get("text") or "").strip(), asset.get("title")
@@ -32,9 +35,26 @@ def extract_text(asset: dict) -> tuple[str, str | None]:
         return _extract_url(asset["url"])
     if kind == "pdf":
         return _extract_pdf(asset), asset.get("title")
+    if kind == "performer":
+        return _extract_performer(asset, db)
     if kind in EXTRACT_UNSUPPORTED:
         raise IngestError(f"extraction for '{kind}' sources is not supported yet")
     raise IngestError(f"unknown source kind: {kind!r}")
+
+
+def _extract_performer(asset: dict, db) -> tuple[str, str | None]:
+    from . import performers  # noqa: PLC0415 — avoid import cost unless used
+
+    if db is None:
+        raise IngestError("performer source requires a db client")
+    pid = asset.get("performer_id")
+    if pid is None:
+        raise IngestError("performer source requires performer_id")
+    name, text = performers.build_performer_digest(db, int(pid),
+                                                   performer_name=asset.get("performer_name"))
+    if not text:
+        raise IngestError("no data available for this performer")
+    return text, name
 
 
 def _extract_url(url: str) -> tuple[str, str | None]:
@@ -131,7 +151,7 @@ def ingest_source(db, source_id: str, *, embed: bool = True,
         repo.update_job(db, job_id, {"status": "processing"})
     repo.update_source(db, source_id, {"status": "processing", "error": None})
     try:
-        full_text, derived_title = extract_text(src.get("asset") or {})
+        full_text, derived_title = extract_text(src.get("asset") or {}, db)
         patch: dict[str, Any] = {"full_text": full_text, "status": "done"}
         if derived_title and not src.get("title"):
             patch["title"] = derived_title

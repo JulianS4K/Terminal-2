@@ -91,6 +91,34 @@
     } catch (e) { setStatus(e.message, 'err'); }
   }
 
+  async function createPerformerNotebook() {
+    // Yankees-first: default the prompt to New York Yankees; any performer name works.
+    const name = prompt('Performer name (SQL digest → notebook):', 'New York Yankees');
+    if (!name || !name.trim()) return;
+    try {
+      setStatus('resolving performer + building digest…', 'ok');
+      const res = await apiFetch('/api/notebook/performers/notebook', { method: 'POST', body: { name: name.trim() } });
+      await loadNotebooks();
+      selectNotebook(res.notebook.id);
+      // the digest ingests in the background — reflect status once done
+      pollPerformerSource(res.source.id);
+    } catch (e) { setStatus(e.message, 'err'); }
+  }
+
+  async function pollPerformerSource(id, tries) {
+    tries = tries || 0;
+    if (tries > 40) return;
+    try {
+      const s = await apiFetch(`/api/notebook/sources/${id}/status`);
+      if (s.status === 'done' || s.status === 'error') {
+        setStatus(s.status === 'done' ? 'performer digest ready' : ('digest failed: ' + (s.error || '')), s.status === 'done' ? 'ok' : 'err');
+        if (state.current) activateTab('sources');
+        return;
+      }
+    } catch (_) {}
+    setTimeout(() => pollPerformerSource(id, tries + 1), 2500);
+  }
+
   // ============================================================ TABS
   function activateTab(tab) {
     document.querySelectorAll('.nb-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -584,6 +612,7 @@
   // ============================================================ INIT
   function wire() {
     el('nbNew').addEventListener('click', createNotebook);
+    el('nbPerformer').addEventListener('click', createPerformerNotebook);
     el('nbTransforms').addEventListener('click', renderTransforms);
     el('nbSettings').addEventListener('click', renderSettings);
     document.querySelectorAll('.nb-tab').forEach(b => b.addEventListener('click', () => {

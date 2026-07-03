@@ -21,6 +21,7 @@ from open_notebook import config as onb_config
 from open_notebook import ask as onb_ask
 from open_notebook import chat as onb_chat
 from open_notebook import ingest as onb_ingest
+from open_notebook import performers as onb_performers
 from open_notebook import podcasts as onb_podcasts
 from open_notebook import repository as repo
 from open_notebook import search as onb_search
@@ -369,6 +370,37 @@ def build_open_notebook_router(
         background.add_task(_run_podcast, episode["id"], job["id"])
         return {"episode": episode, "job_id": job["id"]}
 
+    # ---- performer SQL sources -------------------------------------------
+    @router.post("/api/notebook/performers/resolve")
+    def onb_resolve_performer(body: dict = Body(...), _=Depends(require_auth)):
+        _enabled()
+        p = onb_performers.resolve_performer(
+            _db(), performer_id=body.get("performer_id"), name=body.get("name"))
+        if not p:
+            raise HTTPException(404, "performer not found")
+        return p
+
+    @router.post("/api/notebook/performers/notebook")
+    def onb_create_performer_notebook(background: BackgroundTasks,
+                                      body: dict = Body(...), _=Depends(require_auth)):
+        """Resolve a performer (by id or name), create a notebook for them, add a
+        performer SQL-digest source, and kick off ingest. One call = ready to
+        Ask/Chat/Podcast on that performer. Yankees: {"name": "New York Yankees"}."""
+        _enabled()
+        db = _db()
+        p = onb_performers.resolve_performer(
+            db, performer_id=body.get("performer_id"), name=body.get("name"))
+        if not p:
+            raise HTTPException(404, "performer not found")
+        nb = repo.create_notebook(db, name=p.get("name") or f"Performer {p['id']}",
+                                  description="Auto-generated performer notebook (SQL digest)")
+        asset = {"kind": "performer", "performer_id": p["id"], "performer_name": p.get("name")}
+        src = repo.create_source(db, title=p.get("name"), asset=asset, status="queued")
+        repo.link_source(db, nb["id"], src["id"])
+        job = repo.create_job(db, kind="ingest", ref_id=src["id"])
+        background.add_task(_run_ingest, src["id"], job["id"])
+        return {"notebook": nb, "source": src, "performer": p, "job_id": job["id"]}
+
     # ---- jobs ------------------------------------------------------------
     @router.get("/api/notebook/jobs/{job_id}")
     def onb_get_job(job_id: str, _=Depends(require_auth)):
@@ -419,7 +451,12 @@ def _build_asset(body: dict) -> dict:
         if not data:
             raise HTTPException(400, "base64 data required for a pdf source")
         return {"kind": "pdf", "data": data, "title": body.get("title") or body.get("filename")}
-    raise HTTPException(400, "kind must be one of: text, url, pdf")
+    if kind == "performer":
+        pid = body.get("performer_id")
+        if pid is None:
+            raise HTTPException(400, "performer_id required for a performer source")
+        return {"kind": "performer", "performer_id": pid, "performer_name": body.get("performer_name")}
+    raise HTTPException(400, "kind must be one of: text, url, pdf, performer")
 
 
 def _one_or_404(res, msg: str) -> dict:

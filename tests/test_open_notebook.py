@@ -38,6 +38,7 @@ from open_notebook import ask as onb_ask  # noqa: E402
 from open_notebook import chat as onb_chat  # noqa: E402
 from open_notebook import config as onb_config  # noqa: E402
 from open_notebook import ingest as onb_ingest  # noqa: E402
+from open_notebook import performers as onb_performers  # noqa: E402
 from open_notebook import podcasts as onb_podcasts  # noqa: E402
 from open_notebook import prompts as onb_prompts  # noqa: E402
 from open_notebook import providers as onb_providers  # noqa: E402
@@ -100,6 +101,12 @@ class _Query:
     def in_(self, col, vals):
         self._filters.append(("in", col, list(vals))); return self
 
+    def ilike(self, col, pattern):
+        self._filters.append(("ilike", col, pattern.strip("%").lower())); return self
+
+    def contains(self, col, vals):
+        self._filters.append(("contains", col, list(vals))); return self
+
     def order(self, col, desc=False):
         self._order = (col, desc); return self
 
@@ -112,6 +119,14 @@ class _Query:
                 return False
             if op == "in" and row.get(col) not in val:
                 return False
+            if op == "ilike":
+                v = row.get(col)
+                if v is None or val not in str(v).lower():
+                    return False
+            if op == "contains":
+                v = row.get(col) or []
+                if not all(x in v for x in val):
+                    return False
         return True
 
     def execute(self):
@@ -946,6 +961,126 @@ def test_run_podcast_background_failure(client, monkeypatch):
     # background task swallows the error; the request still returns 200
     r = client.post(f"/api/notebook/notebooks/{nid}/podcasts", json={"content": "material"})
     assert r.status_code == 200
+
+
+# ============================================================ performer SQL sources
+@pytest.fixture
+def perf_db():
+    db = FakeSB()
+    db.store["entity_performer_map"] = [{
+        "tevo_performer_id": 100, "tevo_performer_name": "New York Yankees",
+        "genre": None, "top_category_name": "Sports", "what_event_type": "sports",
+        "espn_team_id": "nyy", "espn_league": "MLB",
+    }]
+    db.store["performer_metadata"] = [{"performer_id": 300, "name": "Metadata Only Band"}]
+    db.store["events"] = [
+        {"id": 1, "name": "Yankees vs Sox", "occurs_at_local": "2099-09-01T19:00:00-04:00",
+         "venue_name": "Yankee Stadium", "venue_location": "Bronx", "primary_performer_id": 100,
+         "primary_performer_name": "New York Yankees", "state": "active", "performer_ids": [100, 200]},
+        {"id": 2, "name": "Old game", "occurs_at_local": "2000-01-01T19:00:00-04:00",
+         "primary_performer_id": 100, "state": "past", "performer_ids": [100]},
+        {"id": 3, "name": "Ignored", "occurs_at_local": "2099-09-02T19:00:00-04:00",
+         "primary_performer_id": 100, "state": "ignored", "performer_ids": [100]},
+        {"id": 4, "name": "Via array only", "occurs_at_local": "2099-10-01T19:00:00-04:00",
+         "primary_performer_id": 999, "state": "active", "performer_ids": [100]},
+    ]
+    db.store["latest_event_metrics"] = [
+        {"event_id": 1, "getin_price": 50, "retail_median": 120, "retail_min": 40,
+         "retail_p90": 300, "tickets_count": 500, "owned_share": 0.1, "price_dispersion": 0.3},
+    ]
+    db.store["d0_perf_home_away"] = [{"performer_id": 100, "home_rev": 1000, "away_rev": 500}]
+    db.store["d0_perf_price_stats"] = [{"performer_id": 100, "median": 120, "mean": 130}]
+    db._rpc["get_event_movers_v2"] = [{"event_id": 1, "price_delta_pct": 5.2, "tix_delta": -10}]
+    db._rpc["get_performer_prediction_markets"] = {"futures": [
+        {"title": "Win World Series", "source": "kalshi", "last_price": 0.2}]}
+    return db
+
+
+def test_resolve_performer(perf_db):
+    assert onb_performers.resolve_performer(perf_db, name="New York Yankees")["id"] == 100
+    assert onb_performers.resolve_performer(perf_db, performer_id=100)["name"] == "New York Yankees"
+    # id not in map → falls back to events
+    assert onb_performers.resolve_performer(perf_db, performer_id=999)["id"] == 999
+    # id not found anywhere → {id, name None}
+    r = onb_performers.resolve_performer(perf_db, performer_id=555)
+    assert r["id"] == 555 and r["name"] is None
+    # name only in performer_metadata (not map)
+    assert onb_performers.resolve_performer(perf_db, name="Metadata Only")["id"] == 300
+    # name not found anywhere
+    assert onb_performers.resolve_performer(perf_db, name="Nonexistent Act") is None
+    # no args
+    assert onb_performers.resolve_performer(perf_db) is None
+
+
+def test_build_performer_digest(perf_db):
+    name, text = onb_performers.build_performer_digest(perf_db, 100)
+    assert name == "New York Yankees"
+    assert "Upcoming events (2)" in text          # past + ignored excluded, array-only included
+    assert "Yankee Stadium" in text
+    assert "get-in $50" in text and "7d +5.2%" in text
+    assert "Realized-sales snapshot" in text
+    assert "Futures" in text and "World Series" in text
+
+
+def test_build_performer_digest_sparse():
+    db = FakeSB()  # no data for this performer
+    name, text = onb_performers.build_performer_digest(db, 42, performer_name="Nobody")
+    assert name == "Nobody"
+    assert "No upcoming events" in text
+
+
+def test_digest_realized_sales_partial():
+    # home/away present, price-stats absent
+    db1 = FakeSB()
+    db1.store["d0_perf_home_away"] = [{"performer_id": 7, "home_rev": 10}]
+    _, t1 = onb_performers.build_performer_digest(db1, 7, performer_name="A")
+    assert "Home/away" in t1 and "Price stats" not in t1
+    # price-stats present, home/away absent
+    db2 = FakeSB()
+    db2.store["d0_perf_price_stats"] = [{"performer_id": 8, "median": 5}]
+    _, t2 = onb_performers.build_performer_digest(db2, 8, performer_name="B")
+    assert "Price stats" in t2 and "Home/away" not in t2
+
+
+def test_performer_helpers():
+    assert onb_performers._fmt_price(50) == "$50"
+    assert onb_performers._fmt_price("bad") == "n/a"
+    assert onb_performers._safe(lambda: 1 / 0, "fallback") == "fallback"
+    assert onb_performers._now_iso()
+
+
+def test_extract_performer(perf_db, monkeypatch):
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_performer({"performer_id": 100}, None)  # no db
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_performer({}, perf_db)  # no performer_id
+    text, title = onb_ingest._extract_performer({"performer_id": 100}, perf_db)
+    assert title == "New York Yankees" and text
+    # empty digest → IngestError
+    monkeypatch.setattr(onb_performers, "build_performer_digest", lambda *a, **k: ("N", ""))
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_performer({"performer_id": 100}, perf_db)
+
+
+def test_performer_routes(monkeypatch, perf_db, stub_providers):
+    monkeypatch.setattr(app_module, "require_sb", lambda: perf_db)
+    c = TestClient(app_module.app)
+    # resolve
+    assert c.post("/api/notebook/performers/resolve", json={"name": "New York Yankees"}).json()["id"] == 100
+    assert c.post("/api/notebook/performers/resolve", json={"name": "Nope Act"}).status_code == 404
+    # one-call performer notebook — background ingest builds the digest
+    r = c.post("/api/notebook/performers/notebook", json={"name": "New York Yankees"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["performer"]["id"] == 100
+    sid = body["source"]["id"]
+    assert c.get(f"/api/notebook/sources/{sid}/status").json()["status"] == "done"
+    assert c.post("/api/notebook/performers/notebook", json={"name": "Nope"}).status_code == 404
+    # direct performer source on an existing notebook (asset builder branch)
+    nid = body["notebook"]["id"]
+    assert c.post(f"/api/notebook/notebooks/{nid}/sources", json={"kind": "performer"}).status_code == 400
+    assert c.post(f"/api/notebook/notebooks/{nid}/sources",
+                  json={"kind": "performer", "performer_id": 100}).status_code == 200
 
 
 def test_prompts_helpers():

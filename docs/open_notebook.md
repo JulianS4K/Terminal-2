@@ -30,6 +30,21 @@ context; and generate multi-speaker **podcasts** (outline → transcript → TTS
 - **Frontend** — the **NOTEBOOK** tab in the terminal
   (`static/terminal/notebook.{html,js}`, wired into `nav.js`), plain HTML/JS.
 
+## Per-performer SQL sources
+A **performer** source kind (`open_notebook/performers.py`) assembles a
+non-sensitive digest for one performer from the ticket data plane — identity
+(`entity_performer_map`), upcoming events (`events`), price snapshots
+(`latest_event_metrics`), 7-day movement (`get_event_movers_v2`), realized-sales
+color (`d0_perf_*`), and optional futures (`get_performer_prediction_markets`).
+It reads a **fixed set of safe sources only** — secrets (`settings`/vault),
+barcodes (`exos_*`), and PII (`leads`, buyer data) are never touched. One call —
+`POST /api/notebook/performers/notebook {"name": "New York Yankees"}` (or
+`{"performer_id": N}`) — resolves the performer, creates a notebook, ingests the
+digest, and it's ready for Ask/Chat/Podcast. The terminal's **+ Performer** button
+does this (defaults to New York Yankees). Landmines respected:
+`events.occurs_at_local` is TEXT (string compare for "upcoming"); `d0_*` views are
+pre-deduped so the raw sales firehose is never read.
+
 ## Config / env
 - `ONB_ENABLED` (default `true`) — feature flag; `false` makes `/api/notebook/*` 404.
 - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` — optional; enable the AI features.
