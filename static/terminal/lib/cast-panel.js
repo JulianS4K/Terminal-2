@@ -41,12 +41,16 @@
     const parts = (data && data.participants) || [];
     const today = new Date().toISOString().slice(0, 10);
     const measured = parts.filter((p) => p.measured && p.avg_getin != null).map((p) => p.avg_getin);
-    const scaleMax = Math.max(160, ...(measured.length ? measured : [0])) * 1.1;
+    // Data-driven scale so bars fill regardless of price magnitude (Broadway
+    // ~$130 vs a ballgame ~$22) — the max measured value anchors the top.
+    const scaleMax = (measured.length ? Math.max(...measured) : 1) * 1.15;
     const isCurrent = (p) => (!p.window_start || p.window_start <= today) && (!p.window_end || p.window_end >= today);
     const rows = parts.map((p) => {
       const cur = isCurrent(p);
+      // A source can pass a preformatted `sub` (ESPN: "OUT · SP · back Jul 17");
+      // Broadway falls back to the run-window wording.
       const dateStr = p.window_end ? ('final ' + p.window_end) : (p.window_start ? ('from ' + p.window_start) : '');
-      const sub = [dateStr, p.role].filter(Boolean).join(' · ');
+      const sub = p.sub || [dateStr, p.role].filter(Boolean).join(' · ');
       let bar, val;
       if (p.measured && p.avg_getin != null) {
         const pct = Math.max(2, Math.min(100, p.avg_getin / scaleMax * 100));
