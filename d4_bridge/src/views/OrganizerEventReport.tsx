@@ -23,6 +23,7 @@ import ScanReport from '../components/ScanReport';
 import WaitlistPanel from '../components/WaitlistPanel';
 import AnnouncementsPanel from '../components/AnnouncementsPanel';
 import TierPricingPanel from '../components/TierPricingPanel';
+import ReschedulePanel from '../components/ReschedulePanel';
 import { formatCurrency } from '../lib/utils';
 
 interface TierStat {
@@ -260,6 +261,12 @@ export default function OrganizerEventReport() {
           <h2 className="text-sm font-bold text-slate-700 mb-3 mt-2">Door scans</h2>
           <ScanReport eventId={eventId!} totalSold={totalSold} />
         </div>
+
+        {/* Reschedule — postpone/move the event + notify holders (owner/manager). */}
+        <ReschedulePanel
+          event={event}
+          canManage={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+        />
 
         {/* Scheduled pricing — time-based price steps per tier (owner/manager). */}
         <TierPricingPanel

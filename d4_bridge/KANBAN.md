@@ -232,6 +232,15 @@ indie-cap + secondary-market positioning.
 
 ## Done
 
+- **Reschedule events (seller → buyer).** First-class postpone/move
+  action, distinct from a silent EditEvent field change: updates the
+  event timing, logs old→new (`exos_event_reschedules`, staff + holder
+  RLS), and emails every non-voided holder the new date (server-rendered
+  in the event tz; new `event-rescheduled` mail template). Via the
+  `exos_reschedule_event()` SECDEF RPC (owner/manager; mig
+  `20260703124000`). `ReschedulePanel` on OrganizerEventReport
+  (tz-aware inputs + history); `RescheduleNotice` on TicketDetail shows
+  holders "was X → now Y". Tickets stay valid.
 - **Scheduled / dynamic tier pricing (seller).** `price_schedule` jsonb
   on `exos_ticket_tiers` (mig `20260703122000`) — ordered
   `{startsAt, price}` time steps; effective price computed at read time
