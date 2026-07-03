@@ -191,9 +191,10 @@ END $$;
 --     16:00 UTC = ~11-12 ET). Process every 5 min on the 2-59 offset (pg_net is
 --     async, response lands within seconds). Sweep daily.
 -- ----------------------------------------------------------------------------
-SELECT cron.schedule('tsa_queue_daily',    '0 16 * * *',   $$ SELECT public.tsa_queue(); $$);
-SELECT cron.schedule('tsa_process_5min',   '2-59/5 * * * *', $$ SELECT public.tsa_process(); $$);
-SELECT cron.schedule('tsa_sweep_daily',    '30 16 * * *',  $$ SELECT public.tsa_sweep(); $$);
+-- Minute marks avoid the saturated :00/:02/:05/:07 clusters (MIGRATION_CONVENTIONS).
+SELECT cron.schedule('tsa_queue_daily',    '13 16 * * *',    $$ SELECT public.tsa_queue(); $$);
+SELECT cron.schedule('tsa_process_5min',   '3-59/5 * * * *', $$ SELECT public.tsa_process(); $$);
+SELECT cron.schedule('tsa_sweep_daily',    '43 16 * * *',    $$ SELECT public.tsa_sweep(); $$);
 
 -- ----------------------------------------------------------------------------
 -- (7) Trigger the initial pull on apply (fills ~6 months immediately).

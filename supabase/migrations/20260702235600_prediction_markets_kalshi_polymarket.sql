@@ -623,10 +623,11 @@ COMMENT ON VIEW v_prediction_markets_health IS
 -- (12) Crons. Queue every 30 min (prices move but not tick-by-tick; budget-kind);
 --      process every 5 min (2-59 offset); match every 15 min; sweep daily.
 -- ----------------------------------------------------------------------------
-SELECT cron.schedule('pm_queue_30min',   '*/30 * * * *',   $$ SELECT public.pm_queue(); $$);
-SELECT cron.schedule('pm_process_5min',  '2-59/5 * * * *', $$ SELECT public.pm_process(); $$);
-SELECT cron.schedule('pm_match_15min',   '7-59/15 * * * *',$$ SELECT public.pm_match(); $$);
-SELECT cron.schedule('pm_sweep_daily',   '15 17 * * *',    $$ SELECT public.pm_sweep(); $$);
+-- Minute marks avoid the saturated :00/:02/:05/:07 clusters (MIGRATION_CONVENTIONS).
+SELECT cron.schedule('pm_queue_30min',   '11,41 * * * *',  $$ SELECT public.pm_queue(); $$);
+SELECT cron.schedule('pm_process_5min',  '3-59/5 * * * *', $$ SELECT public.pm_process(); $$);
+SELECT cron.schedule('pm_match_15min',   '8-59/15 * * * *',$$ SELECT public.pm_match(); $$);
+SELECT cron.schedule('pm_sweep_daily',   '18 17 * * *',    $$ SELECT public.pm_sweep(); $$);
 
 -- ----------------------------------------------------------------------------
 -- (13) Kick off the first pull on apply.
