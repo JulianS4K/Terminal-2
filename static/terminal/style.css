@@ -768,7 +768,7 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 
 .entity-index-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
 .entity-index-col {
