@@ -421,6 +421,7 @@
       setHTML('askOut', `
         <div class="nb-card"><div class="t">Answer</div>
           <div class="bd" style="white-space:pre-wrap;color:var(--text);font-size:13px;margin-top:6px">${esc(r.answer || '')}</div></div>
+        <div class="nb-note">Retrieval: ${esc(r.mode || 'text')}${r.mode === 'text' ? ' (full-text — set OPENAI_API_KEY for vector search)' : ''}</div>
         ${r.queries && r.queries.length ? `<div class="nb-note">Sub-queries: ${r.queries.map(esc).join(' · ')}</div>` : ''}
         ${passages ? `<div class="nb-card"><div class="t">Retrieved passages</div>${passages}</div>` : ''}`);
     } catch (e) { setHTML('askOut', `<div class="nb-hint">${esc(e.message)}</div>`); }

@@ -207,7 +207,14 @@ def ingest_source(db, source_id: str, *, embed: bool = True,
         repo.update_source(db, source_id, patch)
 
         if embed:
-            _embed_source(db, source_id, full_text)
+            # Best-effort: without an embeddings provider (OpenAI) the source is
+            # still fully usable — the text is saved and text-searchable, and Chat
+            # (Anthropic, context-stuffing) works. Only vector search / Ask need
+            # embeddings, so a missing key must not fail the whole ingest.
+            try:
+                _embed_source(db, source_id, full_text)
+            except providers.ProviderError:
+                pass
         if run_transformations:
             _apply_default_transformations(db, source_id, full_text)
 
