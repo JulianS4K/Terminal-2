@@ -13,15 +13,8 @@ import { Event } from '../types';
 import { updateTier } from '../lib/events';
 import { effectiveTierPrice, normalizeSchedule, type PriceStep } from '../lib/pricing';
 import { formatCurrency } from '../lib/utils';
+import { utcToZonedWallClock, zonedWallClockToUtc, getBrowserTimezone } from '../lib/datetime';
 import { useToast } from '../context/ToastContext';
-
-// ISO → <input type="datetime-local"> value (viewer-local, naive).
-function toInputValue(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 export default function TierPricingPanel({
   event,
@@ -32,6 +25,9 @@ export default function TierPricingPanel({
 }) {
   const { toast } = useToast();
   const tiers = useMemo(() => event.ticketTiers ?? [], [event.ticketTiers]);
+  // Steps are entered + shown in the EVENT's timezone (what the organizer means
+  // by "7pm"), not the browser's — matching the CreateEvent/EditEvent pickers.
+  const tz = event.timezone || getBrowserTimezone();
 
   // Local, per-tier working copy of the schedule (seeded from the loaded event).
   const [schedules, setSchedules] = useState<Record<string, PriceStep[]>>(() => {
@@ -80,7 +76,8 @@ export default function TierPricingPanel({
       <p className="text-xs text-slate-400 mb-5">
         Ramp a tier's price over time — early-bird, then regular, then last-minute. Each step is
         "on/after this date, the price becomes this." Buyers see the current price and a "price
-        rises on&nbsp;…" nudge on the event page.
+        rises on&nbsp;…" nudge on the event page. Times are in the event's timezone
+        (<span className="font-bold text-slate-500">{tz}</span>).
       </p>
 
       <div className="space-y-5">
@@ -115,10 +112,11 @@ export default function TierPricingPanel({
                     <div key={i} className="flex items-center gap-2">
                       <input
                         type="datetime-local"
-                        value={toInputValue(step.startsAt)}
+                        value={utcToZonedWallClock(new Date(step.startsAt), tz)}
                         onChange={(e) => {
                           const v = e.target.value;
-                          const iso = v ? new Date(v).toISOString() : step.startsAt;
+                          // Interpret the wall-clock in the event's timezone.
+                          const iso = v ? zonedWallClockToUtc(v, tz)?.toISOString() ?? step.startsAt : step.startsAt;
                           const nextSteps = steps.slice();
                           nextSteps[i] = { ...step, startsAt: iso };
                           setSteps(tier.id, nextSteps);

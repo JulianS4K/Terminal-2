@@ -67,3 +67,13 @@ export async function sendAnnouncement(input: {
     recipientCount: Number(row?.recipient_count) || 0,
   };
 }
+
+/**
+ * Org owner/manager (or admin): retract an announcement — removes it from the
+ * in-app thread on holders' tickets. Already-sent emails are not recalled.
+ * Gated by the staff DELETE RLS policy (mig 20260703123000).
+ */
+export async function deleteAnnouncement(id: string): Promise<void> {
+  const { error } = await supabase.from('exos_event_announcements').delete().eq('id', id);
+  if (error) throw error;
+}

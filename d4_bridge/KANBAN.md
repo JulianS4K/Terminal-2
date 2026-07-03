@@ -239,12 +239,16 @@ indie-cap + secondary-market positioning.
   `exos_public_tiers` view (+ anon column grant). `TierPricingPanel`
   editor on OrganizerEventReport (owner/manager); EventDetails shows the
   live effective price + a "price rises to $X on <date>" urgency nudge.
-  Own primary inventory — not a RULE-2 upstream reprice.
+  Own primary inventory — not a RULE-2 upstream reprice. Flesh-out:
+  editor is event-timezone-aware (zonedWallClockToUtc); storefront
+  strikes the opening price when a step marks it down; Home cards show
+  the effective "from" price. **Follow-up:** sold-%-based steps +
+  server-side charge enforcement (with exos-checkout).
 - **Buyer saved events (wishlist).** `exos_event_saves` table (private
   per-user, RLS `user_id = auth.uid()`, no counter → plain RLS-gated
-  writes). Heart toggle on EventDetails (`SaveEventButton`), a "Saved
-  Events" section in My Tickets that un-hearts in place. Migration
-  `20260703120000` (D4 authors; A1 applies).
+  writes). Heart toggle on EventDetails + Home discovery cards
+  (`SaveEventButton`), a "Saved Events" section in My Tickets that
+  un-hearts in place. Migration `20260703120000` (D4 authors; A1 applies).
 - **Organizer → attendee announcements (two-sided).** Owner/manager
   broadcast a free-text update to non-voided ticket holders; buyers get
   it as an email (via the existing `exos_mail` queue, new
@@ -254,7 +258,9 @@ indie-cap + secondary-market positioning.
   SECDEF RPC (recipients server-derived, body tag-escaped — no open
   relay). Composer on OrganizerEventReport (`AnnouncementsPanel`);
   read-only thread on TicketDetail (`OrganizerUpdates`). Migration
-  `20260703121000`.
+  `20260703121000`. Flesh-out: owner/manager can **retract** an
+  announcement (staff DELETE RLS, mig `20260703123000`) — pulls it from
+  holders' in-app threads (sent emails aren't recalled).
 - Live deployment to Firebase Hosting at
   `gen-lang-client-0961373515.web.app`.
 - Tsconfig truncation fix (commit 6532147).

@@ -687,7 +687,18 @@ export default function EventDetails() {
                          
                          <div className="flex justify-between items-center w-full mb-1">
                             <p className="font-black text-white text-lg uppercase tracking-tighter italic">{tier.name}</p>
-                            <p className="font-black text-brand-primary text-lg tracking-tighter italic">{formatCurrency(effectiveTierPrice(tier.price, tier.priceSchedule), event.currency)}</p>
+                            {(() => {
+                              const eff = effectiveTierPrice(tier.price, tier.priceSchedule);
+                              const markedDown = eff < tier.price;
+                              return (
+                                <p className="font-black text-brand-primary text-lg tracking-tighter italic">
+                                  {markedDown && (
+                                    <span className="text-white/30 line-through mr-2 text-sm">{formatCurrency(tier.price, event.currency)}</span>
+                                  )}
+                                  {formatCurrency(eff, event.currency)}
+                                </p>
+                              );
+                            })()}
                          </div>
                          
                          <p className="text-[10px] text-white/50 font-medium mb-4 uppercase tracking-tighter">{tier.description}</p>

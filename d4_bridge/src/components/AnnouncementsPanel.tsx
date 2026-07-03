@@ -8,12 +8,13 @@
 // enforces owner/manager server-side regardless.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Megaphone, Send } from 'lucide-react';
+import { Megaphone, Send, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '../context/ToastContext';
 import {
   listEventAnnouncements,
   sendAnnouncement,
+  deleteAnnouncement,
   type Announcement,
 } from '../lib/announcements';
 
@@ -33,6 +34,7 @@ export default function AnnouncementsPanel({
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const [retractingId, setRetractingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +79,22 @@ export default function AnnouncementsPanel({
       toast({ kind: 'error', message: err?.message || 'Could not send the update.' });
     } finally {
       setSending(false);
+    }
+  };
+
+  const retract = async (a: Announcement) => {
+    if (!window.confirm('Retract this update? It disappears from holders’ tickets. Emails already sent are not recalled.'))
+      return;
+    setRetractingId(a.id);
+    try {
+      await deleteAnnouncement(a.id);
+      setItems((prev) => prev.filter((x) => x.id !== a.id));
+      toast({ kind: 'success', message: 'Update retracted.' });
+    } catch (err: any) {
+      console.error('retract announcement failed:', err);
+      toast({ kind: 'error', message: err?.message || 'Could not retract the update.' });
+    } finally {
+      setRetractingId(null);
     }
   };
 
@@ -138,9 +156,22 @@ export default function AnnouncementsPanel({
             <li key={a.id} className="border border-slate-100 rounded-xl p-4">
               <div className="flex items-start justify-between gap-4">
                 <p className="text-sm font-bold text-slate-800">{a.subject}</p>
-                <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest whitespace-nowrap">
-                  {format(a.createdAt, 'MMM d, p')}
-                </span>
+                <div className="flex items-center gap-3 whitespace-nowrap">
+                  <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                    {format(a.createdAt, 'MMM d, p')}
+                  </span>
+                  {canSend && (
+                    <button
+                      type="button"
+                      aria-label="Retract update"
+                      disabled={retractingId === a.id}
+                      onClick={() => retract(a)}
+                      className="p-1 text-slate-300 hover:text-rose-600 transition-colors disabled:opacity-40"
+                    >
+                      <Trash2 size={14} aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
               </div>
               <p className="text-sm text-slate-600 mt-1 whitespace-pre-wrap">{a.body}</p>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">
