@@ -645,6 +645,25 @@ def test_ingest_source_missing_and_error(fake, monkeypatch, stub_providers):
     assert repo.get_job(fake, job["id"])["status"] == "error"
 
 
+def test_ingest_source_skip_flags_and_raise_without_job(fake, monkeypatch):
+    # embed=False + run_transformations=False → both skip branches
+    src = repo.create_source(fake, title=None, asset={"kind": "text", "text": "hi body"}, status="queued")
+    out = onb_ingest.ingest_source(fake, src["id"], embed=False, run_transformations=False)
+    assert out["status"] == "done"
+    assert not fake.store.get("onb_source_embeddings")
+    # error path with NO job_id (covers the `if job_id` false branch in except)
+    bad = repo.create_source(fake, title=None, asset={"kind": "video"}, status="queued")
+    with pytest.raises(Exception):
+        onb_ingest.ingest_source(fake, bad["id"])
+    assert repo.get_source(fake, bad["id"])["status"] == "error"
+
+
+def test_decompose_question_already_present(fake, monkeypatch):
+    monkeypatch.setattr(onb_providers, "chat", lambda *a, **k: '["myq"]')
+    # question already in the decomposed list → append branch skipped
+    assert onb_ask._decompose("myq") == ["myq"]
+
+
 def test_ingest_default_transform_error_paths(fake, monkeypatch):
     src = repo.create_source(fake, title=None, asset={"kind": "text", "text": "hello body"}, status="queued")
     monkeypatch.setattr(onb_providers, "embed_texts", lambda texts, **k: [[0.0] * 1536 for _ in texts])

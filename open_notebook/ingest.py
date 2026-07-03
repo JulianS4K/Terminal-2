@@ -99,7 +99,7 @@ def chunk_text(text: str, *, size: int | None = None, overlap: int | None = None
     chunks: list[str] = []
     start = 0
     n = len(text)
-    while start < n:
+    while start < n:  # pragma: no branch - always exits via the `end >= n` break below
         end = min(start + size, n)
         # try to break on a paragraph/sentence boundary within the window
         if end < n:
