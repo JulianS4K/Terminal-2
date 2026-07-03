@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Performer</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260702f" />
+  <link rel="stylesheet" href="style.css?v=20260703a" />
   <style>
     .trip-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
     .trip-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted, #9aa); text-transform: uppercase; letter-spacing: .04em; }
@@ -136,12 +136,12 @@
         </div>
       </section>
 
-      <!-- Kalshi/Polymarket prediction markets attributed to this performer (its
-           game moneylines + season/champion futures) + the national TSA
-           travel-demand macro. Populated by loadPerformerPredictionMarkets. -->
+      <!-- Kalshi/Polymarket prediction markets attributed to this performer's team:
+           its upcoming-game moneylines (this panel). Season/champion futures live
+           on the Futures tab. Populated by loadPerformerPredictionMarkets. -->
       <section id="perf-prediction-markets" hidden>
         <div class="panel-title row">
-          <span>PREDICTION MARKETS · TRAVEL DEMAND</span>
+          <span>PREDICTION MARKETS</span>
           <span class="muted small" id="perfPmSubtitle"></span>
         </div>
         <div id="perfPmBody"></div>
@@ -282,6 +282,6 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260623a"></script>
   <script src="alerts.js?v=20260608"></script>
-  <script src="performer.js?v=20260703pm3"></script>
+  <script src="performer.js?v=20260703pm4"></script>
 </body>
 </html>
