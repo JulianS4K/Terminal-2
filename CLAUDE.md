@@ -4,7 +4,7 @@ Loaded automatically by Claude Code on every session in this repo. Applies to **
 
 **Current priorities live at the top of `KANBAN.md`, period.** This file and the bibles hold slow-moving invariants; fast-moving focus (what's active/paused/next) is KANBAN's job — never encode priority or lane status into a versioned governance doc (it is guaranteed to go stale).
 
-> **Doc version:** v2.4.0 (2026-07-02) — tier-2 lane consolidation (KANBAN C1-OPS-3): C1 folded into B1 (docs = Auditor work), D2 folded into D0 (both broker); six lanes now (substrate A1·B1 + products D0·D1·D3·D4). · v2.3.0 (2026-07-02) — §4 Render access restated under the 3-principal model (`PROJECT_BIBLE §2.1`); D0 "workspace-wide Render parity" retired; added the priority-lives-in-KANBAN rule up top; actor hierarchy dissolved (A1/B1/C1/D0–D4 now flat lane identifiers, not ranks — `PROJECT_BIBLE §2`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.5.0 (2026-07-03) — A1-as-gatekeeper language retired: prod-DB apply + Render writes are Applier actions run **per-task by any session under operator direction**, not centralized on A1 (the A1/B1/D0 codes are naming conventions for surface ownership, not a chain of command — the hierarchy stays dissolved). Push protocol + §2.1 Applier/Builder rows updated. · v2.4.0 (2026-07-02) — tier-2 lane consolidation (KANBAN C1-OPS-3): C1 folded into B1 (docs = Auditor work), D2 folded into D0 (both broker); six lanes now (substrate A1·B1 + products D0·D1·D3·D4). · v2.3.0 (2026-07-02) — §4 Render access restated under the 3-principal model (`PROJECT_BIBLE §2.1`); D0 "workspace-wide Render parity" retired; added the priority-lives-in-KANBAN rule up top; actor hierarchy dissolved (A1/B1/C1/D0–D4 now flat lane identifiers, not ranks — `PROJECT_BIBLE §2`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -130,8 +130,8 @@ If your work needs to touch another lane's surface:
 
 ## Push protocol *(reorg 2026-06-17)*
 
-- **Push to `main` is per-task/per-agent, not bot-tier-gated.** A1 + B1 jointly maintain `main`; each task is pushed by the bot it's delegated to, after green CI. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `PROJECT_BIBLE.md §2.3`.)
-- **Prod-DB apply stays centralized on A1** — D-tier has zero Supabase mutation authority; a DB change is filed as a migration + `bot_chat` to A1, who applies it. (Git push ≠ DB apply; only the latter is centralized.)
+- **Push to `main` is per-task/per-agent, not bot-tier-gated.** Each task is pushed by the session it's delegated to, after green CI. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `PROJECT_BIBLE.md §2.3`.)
+- **Prod-DB apply is operator/session-run, not lane-gated** — the A1/B1/D0 codes are naming conventions for *surface ownership*, not a chain of command (the actor hierarchy is dissolved, `PROJECT_BIBLE §2`). Any session may apply its own reviewed migration to prod under operator direction; there is no A1 gatekeeper. Author the migration file, get it reviewed + CI-green, then apply. (Git push ≠ DB apply — both are per-task, neither centralized on a lane.)
 - Open a PR per task; CI must be green before merge.
 
 ## When in doubt
