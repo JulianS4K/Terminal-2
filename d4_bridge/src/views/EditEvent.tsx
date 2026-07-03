@@ -18,6 +18,8 @@ import { motion } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
+import { normalizeArtistLinks } from '../lib/artistLinks';
+import ArtistLinksEditor from '../components/ArtistLinksEditor';
 import AddonsEditor from '../components/AddonsEditor';
 import VouchersEditor from '../components/VouchersEditor';
 import TaxRulesEditor from '../components/TaxRulesEditor';
@@ -467,6 +469,10 @@ export default function EditEvent() {
         venueAddress: ed.address as any,
         primaryPerformerName: ed.performers?.[0],
         performerNames: ed.performers,
+        // Always send the array (never undefined) so clearing every link
+        // persists as `[]` — updateEvent skips undefined fields, which would
+        // otherwise leave stale links in place on removal.
+        artistLinks: normalizeArtistLinks(ed.artistLinks || []) ?? [],
         category: ed.category,
         genres: ed.genres,
         subgenres: ed.subgenres,
@@ -738,6 +744,18 @@ export default function EditEvent() {
                 <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest leading-relaxed ml-1">
                   Order matters — first name is treated as the headliner in emails and the event page.
                 </p>
+              </div>
+
+              {/* Artist links — optional Spotify / Apple Music / Bandsintown /
+                  social destinations per performer, rendered next to each
+                  artist on the public event page. */}
+              <div className="space-y-2 col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Artist links (optional)</label>
+                <ArtistLinksEditor
+                  performers={eventData.performers || []}
+                  value={eventData.artistLinks || []}
+                  onChange={(artistLinks) => setEventData({ ...eventData, artistLinks })}
+                />
               </div>
            </div>
 

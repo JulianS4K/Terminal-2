@@ -5,6 +5,8 @@ import { getPublicEvent, getEventForEdit } from '../lib/events';
 import { mintTickets, claimFreeTickets } from '../lib/tickets';
 import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
+import ArtistLinks from '../components/ArtistLinks';
+import { linksForArtist } from '../lib/artistLinks';
 import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
 import { Calendar, MapPin, Ticket, ShieldCheck, Share2, ArrowLeft, CheckCircle2, Copy, Send, Instagram, Minus, Plus, Tag } from 'lucide-react';
@@ -570,18 +572,24 @@ export default function EventDetails() {
               {event.performers && event.performers.length > 0 ? (
                 <div className="p-8 bg-[#111111] sm:col-span-2">
                   <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-3">Performers</p>
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-                    <p className="font-black text-3xl uppercase tracking-tighter italic text-white">
-                      {event.performers[0]}
-                    </p>
-                    {event.performers.slice(1).map((name) => (
-                      <p
-                        key={name}
-                        className="font-black text-lg uppercase tracking-tighter italic text-white/60"
-                      >
-                        {name}
-                      </p>
-                    ))}
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-3">
+                    {event.performers.map((name, i) => {
+                      const links = linksForArtist(name, event.artistLinks);
+                      return (
+                        <span key={name} className="inline-flex items-center gap-2">
+                          <span
+                            className={
+                              i === 0
+                                ? 'font-black text-3xl uppercase tracking-tighter italic text-white'
+                                : 'font-black text-lg uppercase tracking-tighter italic text-white/60'
+                            }
+                          >
+                            {name}
+                          </span>
+                          {links ? <ArtistLinks artist={links} /> : null}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
