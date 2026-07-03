@@ -155,6 +155,7 @@
     overview:   'paneOverview',
     upcoming:   'paneUpcoming',
     blindspots: 'paneBlindspots',
+    futures:    'panePerfFutures',
     espn:       'paneEspn',
     alerts:     'panePerfAlerts',
   };
@@ -786,7 +787,6 @@
     const section = document.getElementById('perf-prediction-markets');
     const body = document.getElementById('perfPmBody');
     const subtitle = document.getElementById('perfPmSubtitle');
-    if (!section || !body) return;
     const markets = (d && Array.isArray(d.markets)) ? d.markets : [];
     // A market is a real "upcoming game" only if it's tagged game AND its date is
     // near-term. Some Polymarket season markets (win totals, division) carry a
@@ -800,11 +800,16 @@
     };
     const games = markets.filter(isUpcomingGame);
     const futures = markets.filter(m => !isUpcomingGame(m));
+    // Futures now live on their own Futures tab (relocated from both this overview
+    // panel and the individual event page). Render them there; this panel keeps
+    // only upcoming-game moneylines + the TSA macro.
+    renderPerformerFutures(futures);
+    if (!section || !body) return;
     const tsaHtml = ppmTsaBlock(tsa && tsa.points);
-    if (!games.length && !futures.length && !tsaHtml) { section.hidden = true; return; }
+    if (!games.length && !tsaHtml) { section.hidden = true; return; }
     section.hidden = false;
     if (subtitle) {
-      const srcs = Array.from(new Set(markets.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+      const srcs = Array.from(new Set(games.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
       subtitle.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : 'national travel-demand macro';
     }
     let html = '';
@@ -812,12 +817,26 @@
       html += '<div class="pm-sublabel">UPCOMING GAMES — MONEYLINE</div>';
       html += '<ul class="pm-list">' + games.map(ppmRow).join('') + '</ul>';
     }
-    if (futures.length) {
-      html += '<div class="pm-sublabel">FUTURES</div>';
-      html += '<ul class="pm-list">' + futures.map(ppmRow).join('') + '</ul>';
-    }
     html += tsaHtml;
     body.innerHTML = html;
+  }
+
+  // Futures tab — season/championship odds on this performer's team. Fed the
+  // non-game bucket from the same prediction-markets pull as the overview panel.
+  function renderPerformerFutures(futures) {
+    const body = document.getElementById('perfFuturesBody');
+    const meta = document.getElementById('perfFuturesMeta');
+    const tabCount = document.getElementById('tabCountFutures');
+    if (tabCount) tabCount.textContent = futures.length ? String(futures.length) : '';
+    if (!body) return;
+    if (!futures.length) {
+      body.innerHTML = '<div class="empty">no season / championship futures for this performer</div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    const srcs = Array.from(new Set(futures.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+    if (meta) meta.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : '';
+    body.innerHTML = '<ul class="pm-list">' + futures.map(ppmRow).join('') + '</ul>';
   }
 
   // ---------- ESPN Context (lazy-loaded tab) ----------

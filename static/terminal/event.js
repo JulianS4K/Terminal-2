@@ -2685,25 +2685,23 @@
     const subtitle = document.getElementById('pmSubtitle');
     if (!body || !section) return;
     const games = (d && Array.isArray(d.game_markets)) ? d.game_markets : [];
-    const futures = (d && Array.isArray(d.futures)) ? d.futures : [];
+    // FUTURES — TEAMS IN THIS EVENT lives on the performer page's Futures tab now
+    // (relocated so season/championship odds are attributed to the team, not each
+    // individual event). This event panel shows only this game's moneyline + TSA.
     const tsaHtml = pmTsaBlock(tsa && tsa.points);
-    if (!games.length && !futures.length && !tsaHtml) { section.style.display = 'none'; return; }
+    if (!games.length && !tsaHtml) { section.style.display = 'none'; return; }
     // 'block' not '' — the section is default-hidden by a CSS rule
     // (#prediction-markets { display:none }); clearing the inline style would
     // revert to that rule and keep it hidden. ESPN/weather have no such rule.
     section.style.display = 'block';
     if (subtitle) {
-      const srcs = Array.from(new Set([...games, ...futures].map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+      const srcs = Array.from(new Set(games.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
       subtitle.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : 'national travel-demand macro';
     }
     let html = '';
     if (games.length) {
       html += '<div class="pm-sublabel">THIS GAME — MONEYLINE</div>';
       html += '<ul class="pm-list">' + games.map(m => pmRow(m, 'game')).join('') + '</ul>';
-    }
-    if (futures.length) {
-      html += '<div class="pm-sublabel">FUTURES — TEAMS IN THIS EVENT</div>';
-      html += '<ul class="pm-list">' + futures.map(m => pmRow(m, 'futures')).join('') + '</ul>';
     }
     html += tsaHtml;
     body.innerHTML = html;

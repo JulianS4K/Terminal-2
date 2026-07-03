@@ -117,6 +117,7 @@
       <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
       <button class="event-tab" data-tab="upcoming"   role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountUpcoming"></span></button>
       <button class="event-tab" data-tab="blindspots" role="tab" aria-selected="false">Blind Spots <span class="tab-count" id="tabCountBlindspots"></span></button>
+      <button class="event-tab" data-tab="futures"    role="tab" aria-selected="false">Futures <span class="tab-count" id="tabCountFutures"></span></button>
       <button class="event-tab" data-tab="espn"       role="tab" aria-selected="false">ESPN Context</button>
       <button class="event-tab" data-tab="alerts"     role="tab" aria-selected="false">🔔 Alerts</button>
     </nav>
@@ -239,6 +240,23 @@
       </section>
     </div>
 
+    <!-- Futures pane — season/championship odds on this performer (team). Relocated
+         here from the individual event page's "FUTURES — TEAMS IN THIS EVENT" block.
+         Populated by renderPerformerFutures off the same prediction-markets pull. -->
+    <div class="tab-pane" id="panePerfFutures" role="tabpanel" hidden>
+      <section id="perf-futures">
+        <div class="panel-title row">
+          <span>FUTURES — SEASON &amp; CHAMPIONSHIP ODDS</span>
+          <span class="muted small" id="perfFuturesMeta"></span>
+        </div>
+        <div class="muted small" style="margin-bottom: 8px;">
+          Kalshi / Polymarket season and championship markets attributed to this performer's team.
+          Prices are implied probability.
+        </div>
+        <div id="perfFuturesBody"><div class="empty">no futures markets for this performer</div></div>
+      </section>
+    </div>
+
     <!-- ESPN Context pane (lazy-loaded on tab click) -->
     <div class="tab-pane" id="paneEspn" role="tabpanel" hidden>
       <section id="perf-context">
@@ -264,6 +282,6 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260623a"></script>
   <script src="alerts.js?v=20260608"></script>
-  <script src="performer.js?v=20260703pm2"></script>
+  <script src="performer.js?v=20260703pm3"></script>
 </body>
 </html>
