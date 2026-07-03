@@ -135,3 +135,44 @@ def test_broadway_cast_error_degrades(client, monkeypatch):
     body = client.get("/api/broker/event/5/broadway-cast").json()
     assert body["event_id"] == 5 and body["applicable"] is False
     assert "does not exist" in body["error"]
+
+
+# ---------- /api/broker/performer/{id}/broadway-cast (show-as-performer) ----------
+
+def test_performer_broadway_cast_applicable(client, monkeypatch):
+    fake = FakeSupabase(table_data={
+        "broadway_show_ref": [{"show_slug": "oh-mary", "title": "Oh, Mary!"}],
+        "broadway_cast_run": [
+            {"performer_name": "Maya Rudolph", "role": "Mary Todd Lincoln", "engagement_seq": 1,
+             "run_start": "2026-04-28", "run_end": "2026-07-05", "is_final_confirmed": True,
+             "confidence": 0.95, "source_name": "Broadway.com"},
+        ],
+        "v_broadway_performer_getin": [
+            {"performer_name": "Maya Rudolph", "engagement_seq": 1, "show_slug": "oh-mary",
+             "avg_getin": 133.26, "median_getin": 133.0, "min_getin": 133.0, "max_getin": 136.3,
+             "closing_night_getin": None, "perfs_priced": 1, "snapshot_rows": 38},
+        ],
+    })
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/performer/103169/broadway-cast").json()
+    assert body["applicable"] is True
+    assert body["subject"] == {"slug": "oh-mary", "title": "Oh, Mary!"}
+    assert body["participants"][0]["name"] == "Maya Rudolph"
+    assert body["participants"][0]["measured"] is True
+
+
+def test_performer_broadway_cast_not_a_broadway_performer(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"broadway_show_ref": []}))
+    body = client.get("/api/broker/performer/5/broadway-cast").json()
+    assert body["applicable"] is False and body["participants"] == []
+
+
+def test_performer_broadway_cast_error_degrades(client, monkeypatch):
+    class _Boom(FakeSupabase):
+        def table(self, name):
+            raise RuntimeError("relation broadway_show_ref does not exist")
+
+    _use_db(monkeypatch, _Boom())
+    body = client.get("/api/broker/performer/9/broadway-cast").json()
+    assert body["performer_id"] == 9 and body["applicable"] is False
+    assert "does not exist" in body["error"]

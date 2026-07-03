@@ -118,6 +118,8 @@
     // Prediction markets (Kalshi/Polymarket) for this team; fire-and-forget,
     // hides itself when there's nothing to show.
     loadPerformerPredictionMarkets(performerId).catch(e => console.error('perf-pm', e));
+    // Broadway cast get-in — reveals the Cast tab only for a show-as-performer.
+    loadPerfCast(performerId).catch(e => console.error('perf-cast', e));
 
     Promise.all([
       T.api(`/api/broker/performer/${performerId}/assets`).catch(e => ({ __err: e })),
@@ -164,10 +166,32 @@
     overview:   'paneOverview',
     upcoming:   'paneUpcoming',
     blindspots: 'paneBlindspots',
+    cast:       'panePerfCast',
     futures:    'panePerfFutures',
     espn:       'paneEspn',
     alerts:     'panePerfAlerts',
   };
+
+  // Broadway "who's playing the lead" — reveals the Cast tab ONLY for a
+  // show-as-performer (broadway_show_ref.tevo_performer_id). Fire-and-forget;
+  // hidden for teams. Shares window.CastPanel with the event page.
+  async function loadPerfCast(performerId) {
+    let data;
+    try { data = await T.api(`/api/broker/performer/${performerId}/broadway-cast`); }
+    catch (_) { return; }
+    const parts = (data && data.participants) || [];
+    if (!data || !data.applicable || !parts.length) return;  // not a Broadway show
+    const btn = document.getElementById('perfCastTab');
+    if (btn) { btn.hidden = false; btn.style.removeProperty('display'); }
+    const cnt = document.getElementById('tabCountPerfCast');
+    if (cnt) cnt.textContent = String(parts.length);
+    const priced = parts.filter(p => p.measured).length;
+    const meta = document.getElementById('perfCastMeta');
+    if (meta) meta.textContent = `${parts.length} leads · ${priced} priced`;
+    const ttl = document.getElementById('perfCastTitle');
+    if (ttl && data.subject) ttl.textContent = `CAST — get-in by lead · ${data.subject.title}`;
+    window.CastPanel.render(document.getElementById('perfCastBody'), data);
+  }
 
   function activateTab(tabId) {
     document.querySelectorAll('#perfTabs .event-tab').forEach(b => {

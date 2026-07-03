@@ -117,6 +117,7 @@
       <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
       <button class="event-tab" data-tab="upcoming"   role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountUpcoming"></span></button>
       <button class="event-tab" data-tab="blindspots" role="tab" aria-selected="false">Blind Spots <span class="tab-count" id="tabCountBlindspots"></span></button>
+      <button class="event-tab" data-tab="cast" role="tab" aria-selected="false" id="perfCastTab" hidden style="display:none">Cast <span class="tab-count" id="tabCountPerfCast"></span></button>
       <button class="event-tab" data-tab="futures"    role="tab" aria-selected="false">Futures <span class="tab-count" id="tabCountFutures"></span></button>
       <button class="event-tab" data-tab="espn"       role="tab" aria-selected="false">ESPN Context</button>
       <button class="event-tab" data-tab="alerts"     role="tab" aria-selected="false">🔔 Alerts</button>
@@ -240,6 +241,18 @@
       </section>
     </div>
 
+    <!-- Cast pane — Broadway "who's playing the lead" + get-in by lead. Revealed
+         only for a Broadway show-as-performer (see loadPerfCast in performer.js). -->
+    <div class="tab-pane" id="panePerfCast" role="tabpanel" hidden>
+      <section id="perf-cast-getin">
+        <div class="panel-title row">
+          <span id="perfCastTitle">CAST — get-in price by lead</span>
+          <span class="muted small" id="perfCastMeta"></span>
+        </div>
+        <div id="perfCastBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
     <!-- Futures pane — season/championship odds on this performer (team). Relocated
          here from the individual event page's "FUTURES — TEAMS IN THIS EVENT" block.
          Populated by renderPerformerFutures off the same prediction-markets pull. -->
@@ -282,6 +295,7 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260623a"></script>
   <script src="alerts.js?v=20260608"></script>
-  <script src="performer.js?v=20260703pm4"></script>
+  <script src="lib/cast-panel.js?v=20260703"></script>
+  <script src="performer.js?v=20260703pm5"></script>
 </body>
 </html>

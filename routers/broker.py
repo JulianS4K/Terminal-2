@@ -60,6 +60,35 @@ def _batch_fallback_zones(db, pairs: list[tuple]) -> dict[tuple, str | None]:
     return out
 
 
+def _broadway_participants(db, slug: str) -> list:
+    """Full lead roster for a Broadway show (broadway_cast_run) merged with priced
+    aggregates (v_broadway_performer_getin): uncovered leads come back
+    measured=false ('awaiting coverage'). Shared by the event- and
+    performer-scoped Broadway cast routes so both feed the same panel/renderer."""
+    runs = (db.table("broadway_cast_run")
+              .select("performer_name,role,engagement_seq,run_start,run_end,"
+                      "is_final_confirmed,confidence,source_name")
+              .eq("show_slug", slug).order("run_end").execute().data or [])
+    priced = (db.table("v_broadway_performer_getin")
+                .select("*").eq("show_slug", slug).execute().data or [])
+    pmap = {(p.get("performer_name"), p.get("engagement_seq")): p for p in priced}
+    out = []
+    for r in runs:
+        p = pmap.get((r.get("performer_name"), r.get("engagement_seq"))) or {}
+        out.append({
+            "name": r.get("performer_name"), "role": r.get("role"),
+            "window_start": r.get("run_start"), "window_end": r.get("run_end"),
+            "is_final_confirmed": r.get("is_final_confirmed"),
+            "confidence": r.get("confidence"), "source": r.get("source_name"),
+            "measured": bool(p),
+            "avg_getin": p.get("avg_getin"), "median_getin": p.get("median_getin"),
+            "min_getin": p.get("min_getin"), "max_getin": p.get("max_getin"),
+            "closing_getin": p.get("closing_night_getin"),
+            "perfs_priced": p.get("perfs_priced"), "snapshot_rows": p.get("snapshot_rows"),
+        })
+    return out
+
+
 def build_broker_router(
     get_require_sb: Callable[[], Callable],
     require_auth: Callable,
@@ -99,7 +128,14 @@ def build_broker_router(
                          "logo_default_url, logo_dark_url, logo_scoreboard_url, logo_4k_primary_url, logo_secondary_url, "
                          "espn_team_url, espn_roster_url, espn_schedule_url, espn_fetched_at")
                  .eq("performer_id", performer_id).limit(1).execute().data or [])
-        return row[0] if row else {"performer_id": performer_id, "logo_default_url": None}
+        if row:
+            return row[0]
+        # Non-ESPN performer (e.g. a Broadway show): no metadata row. Fall back to
+        # the performer's name from its events so the hero still renders a title.
+        ev = (db.table("events").select("primary_performer_name")
+                .eq("primary_performer_id", performer_id).limit(1).execute().data or [])
+        nm = ev[0].get("primary_performer_name") if ev else None
+        return {"performer_id": performer_id, "name": nm, "logo_default_url": None}
 
     @router.get("/api/broker/event/{event_id}/espn")
     def broker_event_espn(event_id: int, _=Depends(require_auth)):
@@ -202,34 +238,31 @@ def build_broker_router(
                 break
             if not slug:
                 return empty
-            runs = (db.table("broadway_cast_run")
-                      .select("performer_name,role,engagement_seq,run_start,run_end,"
-                              "is_final_confirmed,confidence,source_name")
-                      .eq("show_slug", slug).order("run_end").execute().data or [])
-            priced = (db.table("v_broadway_performer_getin")
-                        .select("*").eq("show_slug", slug).execute().data or [])
-            pmap = {(p.get("performer_name"), p.get("engagement_seq")): p for p in priced}
-            participants = []
-            for r in runs:
-                p = pmap.get((r.get("performer_name"), r.get("engagement_seq"))) or {}
-                participants.append({
-                    "name": r.get("performer_name"),
-                    "role": r.get("role"),
-                    "window_start": r.get("run_start"),
-                    "window_end": r.get("run_end"),
-                    "is_final_confirmed": r.get("is_final_confirmed"),
-                    "confidence": r.get("confidence"),
-                    "source": r.get("source_name"),
-                    "measured": bool(p),
-                    "avg_getin": p.get("avg_getin"),
-                    "median_getin": p.get("median_getin"),
-                    "min_getin": p.get("min_getin"),
-                    "max_getin": p.get("max_getin"),
-                    "closing_getin": p.get("closing_night_getin"),
-                    "perfs_priced": p.get("perfs_priced"),
-                    "snapshot_rows": p.get("snapshot_rows"),
-                })
+            participants = _broadway_participants(db, slug)
             return {"event_id": event_id, "applicable": bool(participants),
+                    "kind": "broadway", "metric": "get_in_usd",
+                    "subject": {"slug": slug, "title": title},
+                    "participants": participants}
+        except Exception as e:
+            return {**empty, "error": str(e)}
+
+    @router.get("/api/broker/performer/{performer_id}/broadway-cast")
+    def broker_performer_broadway_cast(performer_id: int, _=Depends(require_auth)):
+        """Broadway cast get-in for a SHOW-as-performer (resolved via
+        broadway_show_ref.tevo_performer_id). Same generic participant contract as
+        the event route, so the performer page reuses the same Cast panel.
+        applicable=false for a non-Broadway performer / unapplied pipeline."""
+        db = get_require_sb()()
+        empty = {"performer_id": performer_id, "applicable": False, "kind": "broadway",
+                 "metric": "get_in_usd", "subject": None, "participants": []}
+        try:
+            ref = (db.table("broadway_show_ref").select("show_slug,title")
+                     .eq("tevo_performer_id", performer_id).limit(1).execute().data or [])
+            if not ref:
+                return empty
+            slug, title = ref[0]["show_slug"], ref[0].get("title")
+            participants = _broadway_participants(db, slug)
+            return {"performer_id": performer_id, "applicable": bool(participants),
                     "kind": "broadway", "metric": "get_in_usd",
                     "subject": {"slug": slug, "title": title},
                     "participants": participants}
