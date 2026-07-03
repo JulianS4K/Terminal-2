@@ -1337,6 +1337,9 @@ def test_extract_performer(perf_db, monkeypatch):
 
 def test_performer_routes(monkeypatch, perf_db, stub_providers):
     monkeypatch.setattr(app_module, "require_sb", lambda: perf_db)
+    # deterministically exercise the Wikipedia-disabled path (the flag is read at
+    # config import, so env import-order can't be relied on across the full suite)
+    monkeypatch.setattr(onb_config, "ONB_WIKI_SOURCES", False)
     c = TestClient(app_module.app)
     # resolve
     assert c.post("/api/notebook/performers/resolve", json={"name": "New York Yankees"}).json()["id"] == 100
