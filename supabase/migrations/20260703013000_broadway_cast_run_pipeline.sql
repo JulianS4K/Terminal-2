@@ -1,4 +1,4 @@
--- Migration 20260703013000 · level:standard · lane:broadway (D3) · pre:20260703011000
+-- Migration 20260703013000 · level:standard · lane:broadway (D3) · writes:broadway_show_ref,broadway_cast_run · reads:events,event_listing_snapshot_daily · pre:20260703011000
 --
 -- Broadway CAST-RUN overlay — the "who is playing the lead on a given night"
 -- dimension that Broadway is missing (sports has espn_injuries_snapshots,

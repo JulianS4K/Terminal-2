@@ -1,4 +1,4 @@
--- Migration 20260703013500 · level:standard · lane:broadway (D3) · pre:20260703013000
+-- Migration 20260703013500 · level:standard · lane:broadway (D3) · writes:broadway_show_ref,broadway_cast_run · reads: · pre:20260703013000
 --
 -- Seed for the cast-run overlay (20260703013000_broadway_cast_run_pipeline).
 --
