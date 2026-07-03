@@ -2604,53 +2604,10 @@
   // Prices are 0..1 (implied probability). The panel hides itself when there is
   // nothing matched (or the pipeline migration isn't applied yet).
   async function loadPredictionMarkets(eventId) {
-    // Prediction markets for this event + the national TSA travel-demand macro
-    // (both feed the one panel above the ESPN block). Independent; either can be
-    // empty without hiding the other.
-    const [d, tsa] = await Promise.all([
-      T.api(`/api/broker/event/${eventId}/prediction-markets`).catch(() => null),
-      T.api('/api/broker/macro/TSA_THROUGHPUT?limit=120').catch(() => null),
-    ]);
-    renderPredictionMarkets(d, tsa);
-  }
-
-  // Shared macro helpers (also used verbatim on the performer page).
-  function pmFmtM(n) {
-    n = Number(n);
-    if (!isFinite(n)) return '—';
-    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'k';
-    return String(Math.round(n));
-  }
-
-  function pmSpark(vals) {
-    const bars = '▁▂▃▄▅▆▇█';
-    const xs = vals.filter(v => isFinite(v));
-    if (xs.length < 2) return '';
-    const mn = Math.min(...xs), mx = Math.max(...xs), rng = (mx - mn) || 1;
-    return xs.map(v => bars[Math.min(7, Math.max(0, Math.round((v - mn) / rng * 7)))]).join('');
-  }
-
-  function pmTsaBlock(points) {
-    const pts = (Array.isArray(points) ? points : []).filter(p => p && p.value != null);
-    if (pts.length < 2) return '';
-    // Freshness guard: the TSA pull can be paused; don't show a frozen number.
-    // Hide once the latest observation is >10 days stale.
-    const latestDay = String(pts[pts.length - 1].observation_date || '').slice(0, 10);
-    const ageDays = latestDay ? (Date.now() - new Date(latestDay + 'T00:00:00Z').getTime()) / 86400000 : 999;
-    if (!(ageDays <= 10)) return '';
-    const vals = pts.map(p => Number(p.value));
-    const latest = vals[vals.length - 1];
-    const prior = vals[Math.max(0, vals.length - 1 - 28)];  // ~4 weeks back
-    const pct = prior ? ((latest - prior) / prior * 100) : 0;
-    const cls = pct >= 0 ? 'pm-up' : 'pm-down';
-    const arrow = pct >= 0 ? '▲' : '▼';
-    const day = escapeHtml(String(pts[pts.length - 1].observation_date || '').slice(0, 10));
-    return '<div class="pm-sublabel">NATIONAL TRAVEL DEMAND — TSA</div>' +
-      `<div class="pm-tsa"><span class="pm-tsa-val">${pmFmtM(latest)}</span>` +
-      `<span class="pm-tsa-lbl muted small">passengers/day (${day})</span>` +
-      `<span class="pm-tsa-spark">${escapeHtml(pmSpark(vals.slice(-28)))}</span>` +
-      `<span class="pm-tsa-delta ${cls}">${arrow} ${Math.abs(pct).toFixed(1)}% vs 4wk</span></div>`;
+    // This game's moneyline prediction markets (Kalshi/Polymarket). Feeds the
+    // panel above the ESPN block; hides itself when nothing is matched.
+    const d = await T.api(`/api/broker/event/${eventId}/prediction-markets`).catch(() => null);
+    renderPredictionMarkets(d);
   }
 
   function pmPct(x) {
@@ -2679,33 +2636,27 @@
            `</a></li>`;
   }
 
-  function renderPredictionMarkets(d, tsa) {
+  function renderPredictionMarkets(d) {
     const section = document.getElementById('prediction-markets');
     const body = document.getElementById('pmBody');
     const subtitle = document.getElementById('pmSubtitle');
     if (!body || !section) return;
     const games = (d && Array.isArray(d.game_markets)) ? d.game_markets : [];
-    const futures = (d && Array.isArray(d.futures)) ? d.futures : [];
-    const tsaHtml = pmTsaBlock(tsa && tsa.points);
-    if (!games.length && !futures.length && !tsaHtml) { section.style.display = 'none'; return; }
+    // FUTURES — TEAMS IN THIS EVENT lives on the performer page's Futures tab now
+    // (relocated so season/championship odds are attributed to the team, not each
+    // individual event). This event panel shows only this game's moneyline.
+    if (!games.length) { section.style.display = 'none'; return; }
     // 'block' not '' — the section is default-hidden by a CSS rule
     // (#prediction-markets { display:none }); clearing the inline style would
     // revert to that rule and keep it hidden. ESPN/weather have no such rule.
     section.style.display = 'block';
     if (subtitle) {
-      const srcs = Array.from(new Set([...games, ...futures].map(m => (m.source || '').toLowerCase()).filter(Boolean)));
-      subtitle.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : 'national travel-demand macro';
+      const srcs = Array.from(new Set(games.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+      subtitle.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : '';
     }
     let html = '';
-    if (games.length) {
-      html += '<div class="pm-sublabel">THIS GAME — MONEYLINE</div>';
-      html += '<ul class="pm-list">' + games.map(m => pmRow(m, 'game')).join('') + '</ul>';
-    }
-    if (futures.length) {
-      html += '<div class="pm-sublabel">FUTURES — TEAMS IN THIS EVENT</div>';
-      html += '<ul class="pm-list">' + futures.map(m => pmRow(m, 'futures')).join('') + '</ul>';
-    }
-    html += tsaHtml;
+    html += '<div class="pm-sublabel">THIS GAME — MONEYLINE</div>';
+    html += '<ul class="pm-list">' + games.map(m => pmRow(m, 'game')).join('') + '</ul>';
     body.innerHTML = html;
   }
 
