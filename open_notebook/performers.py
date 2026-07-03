@@ -225,3 +225,68 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
         lines.append("")
 
     return name, "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
+# Wikipedia enrichment — auto-attach article + season pages on performer select
+# ---------------------------------------------------------------------------
+
+def performer_wikipedia_urls(db, performer_id: int, name: str, *, max_seasons: int = 2) -> list[str]:
+    """Wikipedia URLs to auto-attach for a performer: the main article, plus (for
+    a sports team) the recent "<year> <team> season" pages. Scoped to major
+    sports (espn_league present) and Broadway (category names theatre/musical) —
+    other categories return [] so we don't attach a wrong-match article."""
+    from . import wikipedia  # noqa: PLC0415 — avoid import cost unless used
+
+    name = (name or "").strip()
+    if not name:
+        return []
+    info = _safe(lambda: _rows(db.table("entity_performer_map")
+                               .select("espn_league,top_category_name,what_event_type,genre")
+                               .eq("tevo_performer_id", performer_id).limit(1).execute()), [])
+    row = info[0] if info else {}
+    league = row.get("espn_league")
+    blob = " ".join(str(row.get(k) or "") for k in
+                    ("top_category_name", "what_event_type", "genre")).lower()
+    is_broadway = ("broadway" in blob or "theat" in blob or "musical" in blob)
+    if not (league or is_broadway):
+        return []
+
+    urls: list[str] = []
+    # Broadway names ("Hamilton") are ambiguous — disambiguate to the show first.
+    if is_broadway:
+        main = wikipedia.resolve_article_url(f"{name} (musical)") or wikipedia.resolve_article_url(name)
+    else:
+        main = wikipedia.resolve_article_url(name)
+    if main:
+        urls.append(main)
+
+    if league:  # sports team → attach the recent season pages too
+        now_year = _dt.datetime.now(_dt.timezone.utc).year
+        for u in wikipedia.resolve_season_urls(name, [now_year, now_year - 1], max_urls=max_seasons):
+            if u not in urls:
+                urls.append(u)
+    return urls
+
+
+def add_wikipedia_sources(db, notebook_id: str, performer_id: int, name: str) -> list[str]:
+    """Resolve + ingest a performer's Wikipedia sources onto an existing notebook.
+    Best-effort: any failure is swallowed so enrichment never breaks notebook
+    creation. Returns the created source ids."""
+    from . import ingest as _ingest, repository as _repo  # noqa: PLC0415
+
+    try:
+        urls = performer_wikipedia_urls(db, performer_id, name)
+    except Exception:
+        return []
+    added: list[str] = []
+    for url in urls:
+        try:
+            src = _repo.create_source(db, title=None, asset={"kind": "url", "url": url}, status="queued")
+            _repo.link_source(db, notebook_id, src["id"])
+            job = _repo.create_job(db, kind="ingest", ref_id=src["id"])
+            _ingest.ingest_source(db, src["id"], job_id=job["id"])
+            added.append(src["id"])
+        except Exception:
+            continue
+    return added

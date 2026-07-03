@@ -399,6 +399,10 @@ def build_open_notebook_router(
         repo.link_source(db, nb["id"], src["id"])
         job = repo.create_job(db, kind="ingest", ref_id=src["id"])
         background.add_task(_run_ingest, src["id"], job["id"])
+        # Enrich with Wikipedia (performer article + recent season pages for
+        # sports) so the notebook has narrative beyond the SQL digest.
+        if onb_config.ONB_WIKI_SOURCES:
+            background.add_task(_add_wikipedia_sources, nb["id"], p["id"], p.get("name"))
         return {"notebook": nb, "source": src, "performer": p, "job_id": job["id"]}
 
     # ---- jobs ------------------------------------------------------------
@@ -422,6 +426,9 @@ def build_open_notebook_router(
             onb_podcasts.generate_episode(get_require_sb()(), episode_id, job_id=job_id)
         except Exception:
             pass  # status already recorded on the episode + job rows
+
+    def _add_wikipedia_sources(notebook_id: str, performer_id: int, name: str | None):
+        onb_performers.add_wikipedia_sources(get_require_sb()(), notebook_id, performer_id, name or "")
 
     return router
 

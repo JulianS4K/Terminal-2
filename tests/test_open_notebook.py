@@ -27,6 +27,7 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")
 os.environ.setdefault("OPENAI_API_KEY", "sk-openai-test")
+os.environ.setdefault("ONB_WIKI_SOURCES", "false")  # no network in tests unless opted in
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -46,6 +47,7 @@ from open_notebook import providers as onb_providers  # noqa: E402
 from open_notebook import repository as repo  # noqa: E402
 from open_notebook import search as onb_search  # noqa: E402
 from open_notebook import transformations as onb_transforms  # noqa: E402
+from open_notebook import wikipedia as onb_wikipedia  # noqa: E402
 from open_notebook.providers import ProviderError  # noqa: E402
 
 
@@ -1352,6 +1354,168 @@ def test_performer_routes(monkeypatch, perf_db, stub_providers):
     assert c.post(f"/api/notebook/notebooks/{nid}/sources", json={"kind": "performer"}).status_code == 400
     assert c.post(f"/api/notebook/notebooks/{nid}/sources",
                   json={"kind": "performer", "performer_id": 100}).status_code == 200
+
+
+# ============================================================ wikipedia enrich
+def test_wikipedia_resolve_article_url(monkeypatch):
+    # empty name → None (no API call)
+    assert onb_wikipedia.resolve_article_url("  ") is None
+    # opensearch success → first url
+    monkeypatch.setattr(onb_wikipedia, "_api",
+                        lambda p: ["NYY", ["New York Yankees"], [""],
+                                   ["https://en.wikipedia.org/wiki/New_York_Yankees"]])
+    assert onb_wikipedia.resolve_article_url("Yankees").endswith("New_York_Yankees")
+    # opensearch returns no urls → None
+    monkeypatch.setattr(onb_wikipedia, "_api", lambda p: ["x", [], [], []])
+    assert onb_wikipedia.resolve_article_url("x") is None
+    # malformed (not a 4-tuple) → None
+    monkeypatch.setattr(onb_wikipedia, "_api", lambda p: {"weird": 1})
+    assert onb_wikipedia.resolve_article_url("x") is None
+    # API raises → None
+    def _boom(_p):
+        raise RuntimeError("net")
+    monkeypatch.setattr(onb_wikipedia, "_api", _boom)
+    assert onb_wikipedia.resolve_article_url("x") is None
+
+
+def test_wikipedia_api_real_body(monkeypatch):
+    """Exercise the real _api body (requests.get + raise_for_status + json)."""
+    import requests
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            captured["raised"] = True
+        def json(self):
+            return ["ok"]
+    monkeypatch.setattr(requests, "get", lambda url, **k: (captured.update(url=url, kw=k), _Resp())[1])
+    assert onb_wikipedia._api({"action": "opensearch", "search": "x"}) == ["ok"]
+    assert captured["url"] == onb_wikipedia.WIKI_API
+    assert captured["kw"]["params"]["format"] == "json"
+
+
+def test_wikipedia_resolve_season_urls(monkeypatch):
+    def _season_hits(titles):
+        return {"query": {"search": [{"title": t} for t in titles]}}
+
+    # year-keyed responses: 2026 has a matching season page, 2025 a different one
+    responses = {
+        2026: _season_hits(["Alexander Hamilton", "2026 New York Yankees season"]),  # 1st skipped (no 'season')
+        2025: _season_hits(["2025 New York Yankees season"]),
+    }
+    def _api(p):
+        y = int(str(p["srsearch"]).split()[0])
+        return responses[y]
+    monkeypatch.setattr(onb_wikipedia, "_api", _api)
+    urls = onb_wikipedia.resolve_season_urls("New York Yankees", [2026, 2025], max_urls=2)
+    assert len(urls) == 2 and all("season" in u for u in urls)
+
+    # max_urls cap short-circuits the 2nd year (covers the len>=max break)
+    urls1 = onb_wikipedia.resolve_season_urls("New York Yankees", [2026, 2025], max_urls=1)
+    assert len(urls1) == 1
+
+    # dedup: both years resolve to the same title → one url
+    monkeypatch.setattr(onb_wikipedia, "_api",
+                        lambda p: _season_hits(["2026 New York Yankees season"]))
+    assert len(onb_wikipedia.resolve_season_urls("New York Yankees", [2026, 2025], max_urls=2)) == 1
+
+    # API error on a year → continue (no urls); non-dict payload → no hits
+    monkeypatch.setattr(onb_wikipedia, "_api",
+                        lambda p: (_ for _ in ()).throw(RuntimeError("net")))
+    assert onb_wikipedia.resolve_season_urls("X", [2026], max_urls=2) == []
+    monkeypatch.setattr(onb_wikipedia, "_api", lambda p: ["not", "a", "dict"])
+    assert onb_wikipedia.resolve_season_urls("X", [2026], max_urls=2) == []
+
+    # empty name → token empty → 'not token' branch still matches a 'season' title
+    monkeypatch.setattr(onb_wikipedia, "_api", lambda p: _season_hits(["Some season page"]))
+    assert onb_wikipedia.resolve_season_urls("", [2026], max_urls=1) == [
+        "https://en.wikipedia.org/wiki/Some_season_page"]
+
+
+def test_performer_wikipedia_urls(perf_db, monkeypatch):
+    monkeypatch.setattr(onb_wikipedia, "resolve_article_url",
+                        lambda n: f"https://en.wikipedia.org/wiki/{n.replace(' ', '_')}")
+    monkeypatch.setattr(onb_wikipedia, "resolve_season_urls",
+                        lambda n, years, **k: ["https://en.wikipedia.org/wiki/2026_New_York_Yankees_season"])
+    # no name → []
+    assert onb_performers.performer_wikipedia_urls(perf_db, 100, "") == []
+    # sports (espn_league=MLB) → main article + season page
+    urls = onb_performers.performer_wikipedia_urls(perf_db, 100, "New York Yankees")
+    assert any("New_York_Yankees" in u and "season" not in u for u in urls)
+    assert any("season" in u for u in urls)
+    # sports with no main article resolvable → season page only (covers `if main` False)
+    monkeypatch.setattr(onb_wikipedia, "resolve_article_url", lambda n: None)
+    only_season = onb_performers.performer_wikipedia_urls(perf_db, 100, "New York Yankees")
+    assert only_season and all("season" in u for u in only_season)
+    # a season url that duplicates the main article is deduped (covers `u not in urls` False)
+    dup = "https://en.wikipedia.org/wiki/New_York_Yankees"
+    monkeypatch.setattr(onb_wikipedia, "resolve_article_url", lambda n: dup)
+    monkeypatch.setattr(onb_wikipedia, "resolve_season_urls", lambda n, years, **k: [dup])
+    assert onb_performers.performer_wikipedia_urls(perf_db, 100, "New York Yankees") == [dup]
+
+
+def test_performer_wikipedia_urls_broadway_and_other(monkeypatch):
+    db = FakeSB()
+    db.store["entity_performer_map"] = [
+        {"tevo_performer_id": 200, "tevo_performer_name": "Hamilton",
+         "espn_league": None, "top_category_name": "Theater", "what_event_type": "theater", "genre": None},
+        {"tevo_performer_id": 300, "tevo_performer_name": "Some Band",
+         "espn_league": None, "top_category_name": "Concerts", "what_event_type": "concert", "genre": "Rock"},
+    ]
+    # Broadway → disambiguated "(musical)" article, no season pages
+    seen = []
+    def _resolve(n):
+        seen.append(n)
+        return "https://en.wikipedia.org/wiki/Hamilton_(musical)" if "(musical)" in n else None
+    monkeypatch.setattr(onb_wikipedia, "resolve_article_url", _resolve)
+    urls = onb_performers.performer_wikipedia_urls(db, 200, "Hamilton")
+    assert urls == ["https://en.wikipedia.org/wiki/Hamilton_(musical)"]
+    assert any("(musical)" in s for s in seen)
+    # non-sports / non-broadway → nothing attached
+    assert onb_performers.performer_wikipedia_urls(db, 300, "Some Band") == []
+
+
+def test_add_wikipedia_sources(fake, monkeypatch):
+    nb = repo.create_notebook(fake, name="nb")
+    # two urls, ingest stubbed (no network)
+    monkeypatch.setattr(onb_performers, "performer_wikipedia_urls",
+                        lambda db, pid, name: ["https://en.wikipedia.org/wiki/A",
+                                               "https://en.wikipedia.org/wiki/B"])
+    ingested = []
+    monkeypatch.setattr(onb_ingest, "ingest_source",
+                        lambda db, sid, **k: ingested.append(sid))
+    added = onb_performers.add_wikipedia_sources(fake, nb["id"], 100, "New York Yankees")
+    assert len(added) == 2 and len(ingested) == 2
+    assert len(repo.list_sources(fake, notebook_id=nb["id"])) == 2
+
+    # resolution raises → returns [] (best-effort)
+    monkeypatch.setattr(onb_performers, "performer_wikipedia_urls",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("net")))
+    assert onb_performers.add_wikipedia_sources(fake, nb["id"], 100, "X") == []
+
+    # one url fails to ingest → the other still succeeds (covers inner except)
+    monkeypatch.setattr(onb_performers, "performer_wikipedia_urls",
+                        lambda db, pid, name: ["https://en.wikipedia.org/wiki/C",
+                                               "https://en.wikipedia.org/wiki/D"])
+    calls = {"n": 0}
+    def _flaky(db, sid, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("fetch failed")
+    monkeypatch.setattr(onb_ingest, "ingest_source", _flaky)
+    assert len(onb_performers.add_wikipedia_sources(fake, nb["id"], 100, "X")) == 1
+
+
+def test_performer_notebook_triggers_wikipedia(monkeypatch, perf_db, stub_providers):
+    monkeypatch.setattr(app_module, "require_sb", lambda: perf_db)
+    monkeypatch.setattr(onb_config, "ONB_WIKI_SOURCES", True)
+    seen = {}
+    monkeypatch.setattr(onb_performers, "add_wikipedia_sources",
+                        lambda db, nid, pid, name: seen.update(nid=nid, pid=pid, name=name))
+    c = TestClient(app_module.app)
+    r = c.post("/api/notebook/performers/notebook", json={"name": "New York Yankees"})
+    assert r.status_code == 200
+    assert seen["pid"] == 100 and seen["name"] == "New York Yankees"
 
 
 def test_prompts_helpers():
