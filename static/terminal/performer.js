@@ -788,8 +788,18 @@
     const subtitle = document.getElementById('perfPmSubtitle');
     if (!section || !body) return;
     const markets = (d && Array.isArray(d.markets)) ? d.markets : [];
-    const games = markets.filter(m => m.market_type === 'game');
-    const futures = markets.filter(m => m.market_type !== 'game');
+    // A market is a real "upcoming game" only if it's tagged game AND its date is
+    // near-term. Some Polymarket season markets (win totals, division) carry a
+    // gameStartTime that mislabels them market_type='game' with a season-far/past
+    // date — those belong under Futures, not "Upcoming games".
+    const nowMs = Date.now();
+    const isUpcomingGame = (m) => {
+      if (m.market_type !== 'game' || !m.event_date) return false;
+      const t = new Date(m.event_date + 'T00:00:00Z').getTime();
+      return isFinite(t) && (t - nowMs) > -2 * 864e5 && (t - nowMs) < 10 * 864e5;
+    };
+    const games = markets.filter(isUpcomingGame);
+    const futures = markets.filter(m => !isUpcomingGame(m));
     const tsaHtml = ppmTsaBlock(tsa && tsa.points);
     if (!games.length && !futures.length && !tsaHtml) { section.hidden = true; return; }
     section.hidden = false;

@@ -2688,7 +2688,10 @@
     const futures = (d && Array.isArray(d.futures)) ? d.futures : [];
     const tsaHtml = pmTsaBlock(tsa && tsa.points);
     if (!games.length && !futures.length && !tsaHtml) { section.style.display = 'none'; return; }
-    section.style.display = '';
+    // 'block' not '' — the section is default-hidden by a CSS rule
+    // (#prediction-markets { display:none }); clearing the inline style would
+    // revert to that rule and keep it hidden. ESPN/weather have no such rule.
+    section.style.display = 'block';
     if (subtitle) {
       const srcs = Array.from(new Set([...games, ...futures].map(m => (m.source || '').toLowerCase()).filter(Boolean)));
       subtitle.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : 'national travel-demand macro';
