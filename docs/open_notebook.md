@@ -22,7 +22,11 @@ context; and generate multi-speaker **podcasts** (outline → transcript → TTS
   `onb_text_search`.
 - **Providers** — Anthropic for chat / transformations / RAG synthesis; OpenAI for
   embeddings / TTS / STT. Key-gated and lazily imported (`open_notebook/providers.py`);
-  absent keys degrade gracefully.
+  absent keys degrade gracefully. **Claude has no embeddings endpoint**, so with only
+  `ANTHROPIC_API_KEY` the subsystem still works end-to-end: ingest saves + text-indexes
+  sources (embedding is best-effort), **Ask** falls back to Postgres full-text retrieval
+  (Claude still writes the answer), and **Chat** uses context-stuffing. OpenAI adds vector
+  search, TTS podcasts, and audio transcription on top.
 - **Backend** — `open_notebook/` package (config, providers, repository, ingest,
   transformations, search, ask, chat, podcasts, prompts), fronted by
   `routers/open_notebook.py` (`/api/notebook/*`) mounted in `server.py`. Ingest and

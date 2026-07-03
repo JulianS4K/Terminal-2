@@ -441,7 +441,11 @@ def test_search_and_ask_provider_errors(client, monkeypatch):
     def _boom(*a, **k):
         raise ProviderError("no key")
     monkeypatch.setattr(onb_providers, "embed_text", _boom)
+    # vector search still needs embeddings → 503
     assert client.post("/api/notebook/search", json={"query": "x", "kind": "vector"}).status_code == 503
+    # ask only 503s when CHAT (Anthropic) is unavailable — missing embeddings falls
+    # back to text search, not an error.
+    monkeypatch.setattr(onb_providers, "chat", _boom)
     assert client.post("/api/notebook/search/ask", json={"question": "q"}).status_code == 503
 
 
@@ -755,6 +759,19 @@ def test_decompose_question_already_present(fake, monkeypatch):
     assert onb_ask._decompose("myq") == ["myq"]
 
 
+def test_ingest_embeddings_best_effort(fake, monkeypatch):
+    # a missing embeddings provider must NOT fail the source — text still saved,
+    # status stays "done" (vector search just won't include it).
+    src = repo.create_source(fake, title=None, asset={"kind": "text", "text": "hello body"}, status="queued")
+
+    def _boom(texts, **k):
+        raise ProviderError("no openai key")
+    monkeypatch.setattr(onb_providers, "embed_texts", _boom)
+    out = onb_ingest.ingest_source(fake, src["id"])
+    assert out["status"] == "done"
+    assert not fake.store.get("onb_source_embeddings")
+
+
 def test_ingest_default_transform_error_paths(fake, monkeypatch):
     src = repo.create_source(fake, title=None, asset={"kind": "text", "text": "hello body"}, status="queued")
     monkeypatch.setattr(onb_providers, "embed_texts", lambda texts, **k: [[0.0] * 1536 for _ in texts])
@@ -796,6 +813,21 @@ def test_ask_with_passages(fake, monkeypatch):
     ]
     out = onb_ask.ask(fake, question="why", notebook_id="nb")
     assert out["answer"] and out["passages"]
+
+
+def test_ask_text_fallback(fake, monkeypatch):
+    # no embeddings provider → Ask falls back to Postgres full-text search, Claude answers
+    monkeypatch.setattr(onb_providers, "chat", smart_chat)
+
+    def _boom(*a, **k):
+        raise ProviderError("no openai key")
+    monkeypatch.setattr(onb_providers, "embed_text", _boom)
+    fake._rpc["onb_text_search"] = [
+        {"result_kind": "source", "row_id": "s1", "source_id": "s1", "content": "alpha", "rank": 0.5}]
+    out = onb_ask.ask(fake, question="why", notebook_id="nb")
+    assert out["mode"] == "text"
+    assert out["answer"] and out["passages"]
+    assert out["passages"][0]["score"] == 0.5
 
 
 def test_parse_json_array_bad():
