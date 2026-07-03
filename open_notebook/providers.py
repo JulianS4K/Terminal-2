@@ -36,6 +36,48 @@ def _anthropic_client():
     return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
+def _edge_chat(
+    messages: list[dict],
+    *,
+    system: str | None,
+    model: str | None,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    """Fallback chat path — proxy a Claude Messages call through the platform's
+    `notebook-llm` Supabase edge function, which holds the SHARED Anthropic key.
+    Used when no per-service ANTHROPIC_API_KEY is set but Supabase is configured
+    (mirrors routers/retail_chat.py). Non-streaming; returns the full text."""
+    import requests  # noqa: PLC0415 — lazy import by design
+
+    url = f"{config.SUPABASE_URL.rstrip('/')}/functions/v1/notebook-llm"
+    headers = {
+        "Authorization": f"Bearer {config.SUPABASE_SERVICE_ROLE_KEY}",
+        "apikey": config.SUPABASE_ANON_KEY or config.SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+    }
+    payload: dict = {
+        "messages": messages,
+        "model": model or config.ONB_EDGE_CHAT_MODEL,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if system:
+        payload["system"] = system
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=60)
+    except Exception as e:
+        raise ProviderError(f"notebook-llm edge call failed: {e}") from e
+    try:
+        body = r.json()
+    except Exception as e:
+        raise ProviderError(f"notebook-llm returned a malformed response: {e}") from e
+    if r.status_code >= 400:
+        detail = body.get("error") if isinstance(body, dict) else body
+        raise ProviderError(f"notebook-llm error {r.status_code}: {detail}")
+    return (body.get("text") or "") if isinstance(body, dict) else ""
+
+
 def chat(
     messages: list[dict],
     *,
@@ -45,6 +87,11 @@ def chat(
     temperature: float = 0.4,
 ) -> str:
     """Non-streaming completion. messages = [{"role": "user"|"assistant", "content": str}]."""
+    # No per-service key but Supabase is configured → use the shared platform key
+    # via the notebook-llm edge function.
+    if not config.ANTHROPIC_API_KEY and config.edge_chat_available():
+        return _edge_chat(messages, system=system, model=model,
+                          max_tokens=max_tokens, temperature=temperature)
     client = _anthropic_client()
     kwargs = {
         "model": model or config.ONB_CHAT_MODEL,
@@ -73,6 +120,14 @@ def chat_stream(
 ) -> Iterator[str]:
     """Streaming completion — yields text deltas. Raises ProviderError before the
     first yield if the provider is unavailable."""
+    # No per-service key but Supabase is configured → the edge function has no
+    # streaming API, so emit the full completion as a single chunk. The SSE
+    # endpoint still works on the shared-key path (just not token-by-token).
+    if not config.ANTHROPIC_API_KEY and config.edge_chat_available():
+        def _edge_gen() -> Iterator[str]:
+            yield _edge_chat(messages, system=system, model=model,
+                            max_tokens=max_tokens, temperature=temperature)
+        return _edge_gen()
     client = _anthropic_client()
     kwargs = {
         "model": model or config.ONB_CHAT_MODEL,
