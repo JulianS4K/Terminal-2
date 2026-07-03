@@ -753,6 +753,10 @@
   function ppmTsaBlock(points) {
     const pts = (Array.isArray(points) ? points : []).filter(p => p && p.value != null);
     if (pts.length < 2) return '';
+    // Freshness guard: TSA polling can be paused — hide once >10 days stale.
+    const latestDay = String(pts[pts.length - 1].observation_date || '').slice(0, 10);
+    const ageDays = latestDay ? (Date.now() - new Date(latestDay + 'T00:00:00Z').getTime()) / 86400000 : 999;
+    if (!(ageDays <= 10)) return '';
     const vals = pts.map(p => Number(p.value));
     const latest = vals[vals.length - 1];
     const prior = vals[Math.max(0, vals.length - 1 - 28)];
