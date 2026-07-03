@@ -1,6 +1,6 @@
 # KANBAN.md — Terminal-2 shared work board
 
-> **Doc version:** v1.69.0 (2026-07-02) — latest: added A1-OPS-28 (engines-without-ignition + doc-drift audit sweep parked for later analysis); v1.68.0 — added A1-OPS-27 (Bands in Town tour-tracking client shipped PR #693; unwired backlog + `core/instagram_share.py` removal candidate). Board is append-only; full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md). Convention → [`README.md`](README.md) *Doc-writing rules*.
+> **Doc version:** v1.70.0 (2026-07-03) — added the UNMERGED BRANCH INVENTORY section: a full 2026-07-03 sweep of all 60 remote branches (ahead-of-main + last commit) for triage/reconcile. · v1.69.0 (2026-07-02) — latest: added A1-OPS-28 (engines-without-ignition + doc-drift audit sweep parked for later analysis); v1.68.0 — added A1-OPS-27 (Bands in Town tour-tracking client shipped PR #693; unwired backlog + `core/instagram_share.py` removal candidate). Board is append-only; full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md). Convention → [`README.md`](README.md) *Doc-writing rules*.
 
 > **One source of truth for what's next, who's on it, and what just shipped.**
 >
@@ -19,6 +19,76 @@
 
 - **★ Focus:** D0 terminal (the priority surface). D1–D4 are lower-priority right now, *not* "paused" as a permission state — any session may still build on them (permission is per-action, `PROJECT_BIBLE §2.1`); this is a focus call, not a lockout.
 - Severity-sorted actionable work for every lane is in 🟢 OPEN WORK. Update this banner when the focus shifts.
+
+---
+
+## 🌿 UNMERGED BRANCH INVENTORY (2026-07-03 sweep)
+
+All 60 remote branches, `ahead`-of-`main` + last commit. **Triage:** low-ahead + recent → merge-or-close soon; **500+ ahead (long-diverged, mostly June)** → reconcile-or-archive (either main moved past them or they never landed); ⭐ = overlaps active pricing / TicketsData / injury / cast-pool work. Infra branches (`release-please*`, `gh-pages`) are automation — leave.
+
+| Branch | Ahead | Last | Subject / note |
+|---|---|---|---|
+| `claude/inventory-pricing-analysis-8gtzfc` | 2 | 07-03 | cast_price_ref migration + this A1-doc sweep — **this session, PR #784** |
+| ⭐ `claude/espn-injury-updates-news-wire-vk7ear` | 2 | 07-03 | ESPN injury + news-wire build **and** the A1-gatekeeper doc retirement (dup of PR #784's doc fix) |
+| ⭐ `claude/us-open-events-td-poll-0nwtgp` | 4 | 07-03 | td/sg: capture `sg_url` in `td_sg_discover_drain` — active TicketsData work |
+| `claude/code-breakdown-e9blb4` | 4 | 07-03 | docs: de-drift `d0_terminal_build.md` (app.py→server.py) |
+| `claude/d4-html-improvements-i9m4ye` | 2 | 07-03 | d4: per-artist social + streaming links |
+| `claude/standard-git-licenses-20f2es` | 1 | 07-03 | license files (proprietary root + MIT carve-out) |
+| `claude/html-visual-charts-fp404m` | 1 | 07-03 | D0 terminal: unified per-source chart color ramp |
+| `release-please--branches--main` | 1 | 07-03 | chore(main): release 1.0.0 — **infra** |
+| `release-please--branches--main--release-notes` | 1 | 07-03 | release notes — **infra** |
+| `claude/c1-checkpoint-2026-07-01` | 59 | 07-01 | c1 daily checkpoint |
+| `claude/project-code-review-crycl5` | 48 | 06-25 | consolidate read-only client HTTP transport + dead-code sweep |
+| `claude/funny-cannon-jvx3j7` | 53 | 06-22 | fix(d0): drop duplicate 🔔 Alerts tab |
+| `claude/sleepy-hypatia-vl9vmj` | 26 | 06-20 | feat(store): lowest-price anchor |
+| `claude/practical-turing-1p7i9u` | 26 | 06-20 | feat(d0): alerts feed panel on home hub |
+| `claude/c1-checkpoint-2026-06-20` | 24 | 06-20 | c1 daily checkpoint |
+| `claude/affectionate-curie-khk4lm` | 22 | 06-20 | D0: unmapped-section tracker + manual venue-map |
+| `claude/exciting-rubin-0pzd1k` | 18 | 06-20 | feat(d4): category + date browse filters |
+| `claude/store-tour-guard` | 2 | 06-20 | fix(store): tour-package graceful degrade |
+| `gh-pages` | 1 | 06-15 | static hub preview — **infra** |
+| `claude/pwa-friendly-pages-ojccwm` | 828 | 06-19 | feat(d0): surface `cur_tix` in v2 movers table |
+| `claude/code-update-maintenance-plan-t6xzgt` | 817 | 06-19 | feat(governance): lane agents as scoped subagents |
+| `claude/retail-chat-cost-guards` | 816 | 06-19 | retail-chat cost guard (kill switch + caps) |
+| `claude/c1-daily-checkpoint-terminal-2-4defa7` | 816 | 06-19 | c1 checkpoint |
+| `claude/vibrant-ptolemy-7kmg2j` | 815 | 06-17 | fix(skills): ship-a-migration link |
+| `claude/hourly-auto-checks-y0wsdb` | 815 | 06-17 | hourly §5 aging-sweep auto-checks (A1-OPS-26) |
+| `claude/d0-home-page-updates-xk8car` | 815 | 06-17 | D0 home: watchlist + Top-50 exclusions |
+| ⭐ `claude/sports-player-search-9nnrcz` | 811 | 06-17 | unify performers + players — overlaps cast-pool/Trends |
+| `claude/practical-albattani-5am7e7` | 810 | 06-17 | health monitor cron + uptime dashboard |
+| `claude/sweet-archimedes-7k9o57` | 809 | 06-16 | fix(security): gitleaksignore self-reference |
+| `claude/eager-volta-vkvm5r` | 809 | 06-16 | terminal: exclude EVO-owned from SG chart |
+| `claude/c1-checkpoint-2026-06-16` | 809 | 06-17 | c1 checkpoint |
+| `claude/vigilant-hamilton-53kqtm` | 808 | 06-16 | ci: exos migrations on real Postgres |
+| `claude/fix-d4-vite8-manualchunks` | 808 | 06-16 | fix(d4): Vite 8 manualChunks |
+| `claude/elegant-curie-qx2s5k` | 808 | 06-17 | D4 exos parity build backlog |
+| ⭐ `claude/exciting-noether-2zq7st` | 796 | 06-16 | fix(td): `td_match_apply` ambiguous id; re-enable cron |
+| `claude/lucid-mccarthy-6pglsf` | 781 | 06-11 | fix(d4): secure standalone-server |
+| `claude/c1-checkpoint-2026-06-08` | 771 | 06-10 | c1 checkpoint (merge main) |
+| `claude/c1-checkpoint-2026-06-10` | 770 | 06-10 | c1 checkpoint |
+| `claude/epic-turing-w89nn4` | 730 | 06-09 | Render blueprint for open-notebook |
+| ⭐ `claude/store-follow-tour` | 724 | 06-09 | store: away vs home games split — overlaps cast_price_ref away-median |
+| `feat/render-deploy-webhook-bridge` | 721 | 06-08 | feat(d0/ops): Render deploy-webhook → Actions bridge |
+| `claude/store-tour-agent` | 709 | 06-08 | tour-agent: auto-select tickets by budget/qty |
+| `claude/funny-ride-wx3m1b` | 699 | 06-08 | kanban: D0-FANTASY-1 caveats |
+| `claude/kind-gates-zgLmb` | 646 | 06-06 | d0/home: self-correcting reveal-pull |
+| `claude/beautiful-albattani-P0JXz` | 634 | 06-04 | d0/event: alert mail own queue |
+| `claude/nyc-budget-chatbot-test-aDGum` | 631 | 06-04 | fix(d0): dedupe `v_canonical_performer` |
+| `claude/bold-ride-XLP9H` | 629 | 06-05 | notifications: daily watchlist email |
+| `claude/d0-aq-tevo-bridge` | 603 | 06-02 | resources-bible edge-fn reconcile |
+| `claude/compassionate-hopper-aFNWL` | 603 | 06-01 | sec: pin search_path on `aq_league_consistent` |
+| ⭐ `claude/great-albattani-pezXQ` | 602 | 06-01 | SG listings poller — soonest-event-first |
+| ⭐ `claude/hopeful-gauss-SQ8iF` | 600 | 06-01 | fix SG bridge candidate-selection starvation |
+| ⭐ `claude/resume-d0-chat-itUGb` | 547 | 05-27 | **TicketsData ingestion foundation** — snapshots + xref + credits |
+| `claude/d4-comprehensive-testing-wPECJ` | 547 | 05-26 | d4: Stripe checkout (dormant) + capacity |
+| `claude/d0-deploy-2026-05-27` | 546 | 05-27 | audit: CRON_SECRET / seatdata guard fixes |
+| ⭐ `claude/optimistic-brahmagupta-DKiSl` | 542 | 05-27 | drop dead `td_enqueue_peak` overload |
+| `claude/nice-fermi-UOpKo` | 542 | 05-27 | SeatDataClient vault creds |
+| `claude/featured-section-events-pV5kM` | 542 | 05-26 | featured rail: playoff + soonest fallback |
+| ⭐ `a1/ticketsdata-integration` | 542 | 05-27 | **activate GT + peak crons + retention** — the TD tracking work |
+| ⭐ `a1/optimize-zone-section-metrics` | 540 | 05-26 | dedupe zone lookups in section_metrics — pricing tables |
+
+**Recommended triage:** (1) the four **07-03 branches** (`espn-injury…`, `us-open…td-poll`, `code-breakdown`, `d4-html`) are current — review/merge or close. (2) `espn-injury…` duplicates PR #784's doc fix — reconcile so they don't both land. (3) The **500+ ahead cluster** is the real debt: dozens of June branches that never merged — a dedicated reconcile-or-archive pass is needed (several, e.g. `resume-d0-chat` + `a1/ticketsdata-integration`, are TicketsData foundations that predate any fresh build).
 
 ---
 
