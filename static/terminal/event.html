@@ -84,6 +84,7 @@
       <button class="event-tab" data-tab="seatdata-sales" role="tab" aria-selected="false">SeatData Sales <span class="tab-count" id="tabCountSeatdataSales"></span></button>
       <button class="event-tab" data-tab="axs-sections" role="tab" aria-selected="false">AXS Box Office <span class="tab-count" id="tabCountAxsSections"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
+      <button class="event-tab" data-tab="cast" role="tab" aria-selected="false" id="tabBtnCast" hidden style="display:none">Cast <span class="tab-count" id="tabCountCast"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
@@ -419,6 +420,19 @@
           <span class="muted small" id="tdMarketsSnapshotMeta">tap tab to load</span>
         </div>
         <div id="tdMarketsSnapshotBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <!-- Cast tab — Broadway "who's playing the lead" + get-in price by performer.
+         Revealed only for tracked Broadway events (see loadCastTab in event.js).
+         Generic participant-getin renderer so ESPN players can feed it later. -->
+    <div class="tab-pane" id="paneCast" role="tabpanel" hidden>
+      <section id="cast-getin">
+        <div class="panel-title row">
+          <span id="castTitle">CAST — get-in price by lead</span>
+          <span class="muted small" id="castMeta"></span>
+        </div>
+        <div id="castBody"><div class="empty">loading…</div></div>
       </section>
     </div>
 
