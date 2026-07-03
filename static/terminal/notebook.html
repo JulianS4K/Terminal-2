@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https: data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Notebook</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260703a" />
+  <style>
+    body[data-page="notebook"] { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+    main.nb { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:260px 1fr; gap:0; }
+    .nb-side { border-right:1px solid var(--line,#2a2a2a); display:flex; flex-direction:column; min-height:0; }
+    .nb-side-head { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--line,#2a2a2a); }
+    .nb-side-head h2 { margin:0; font-size:11px; letter-spacing:.08em; color:var(--muted,#737373); text-transform:uppercase; }
+    .nb-nblist { overflow:auto; flex:1 1 auto; }
+    .nb-nb { padding:9px 12px; border-bottom:1px solid var(--line,#1c1c1c); cursor:pointer; }
+    .nb-nb:hover { background:var(--panel,#141414); }
+    .nb-nb.active { background:var(--panel,#141414); border-left:2px solid var(--accent,#fbbf24); }
+    .nb-nb .nm { color:var(--text,#e5e5e5); font-size:13px; font-weight:600; }
+    .nb-nb .ds { color:var(--muted,#737373); font-size:11px; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .nb-main { min-height:0; display:flex; flex-direction:column; }
+    .nb-main-head { padding:10px 16px; border-bottom:1px solid var(--line,#2a2a2a); display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .nb-main-head h1 { margin:0; font-size:16px; color:var(--text,#e5e5e5); }
+    .nb-tabs { display:flex; gap:2px; padding:0 12px; border-bottom:1px solid var(--line,#2a2a2a); }
+    .nb-tab { padding:8px 12px; font-size:12px; color:var(--muted,#737373); cursor:pointer; border-bottom:2px solid transparent; background:none; border-top:0; border-left:0; border-right:0; font-family:inherit; }
+    .nb-tab.active { color:var(--accent,#fbbf24); border-bottom-color:var(--accent,#fbbf24); }
+    .nb-panel { flex:1 1 auto; min-height:0; overflow:auto; padding:16px; display:none; }
+    .nb-panel.active { display:block; }
+    .nb-card { border:1px solid var(--line,#2a2a2a); border-radius:6px; padding:12px; margin-bottom:10px; background:var(--panel,#141414); }
+    .nb-card .t { color:var(--text,#e5e5e5); font-size:13px; font-weight:600; }
+    .nb-card .m { color:var(--muted,#737373); font-size:11px; margin-top:3px; }
+    .nb-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .nb-row.between { justify-content:space-between; }
+    input.nb-in, textarea.nb-in, select.nb-in { width:100%; background:var(--bg,#0a0a0a); border:1px solid var(--line,#2a2a2a); color:var(--text,#e5e5e5); border-radius:5px; padding:7px 9px; font-family:inherit; font-size:13px; }
+    textarea.nb-in { min-height:70px; resize:vertical; }
+    button.nb-btn { background:var(--accent,#fbbf24); color:#0a0a0a; border:0; border-radius:5px; padding:7px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
+    button.nb-btn.ghost { background:transparent; color:var(--muted,#a3a3a3); border:1px solid var(--line,#2a2a2a); }
+    button.nb-btn.danger { background:transparent; color:#f87171; border:1px solid #7f1d1d; }
+    button.nb-btn:disabled { opacity:.5; cursor:default; }
+    .nb-badge { display:inline-block; font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid var(--line,#2a2a2a); color:var(--muted,#a3a3a3); }
+    .nb-badge.done { color:#34d399; border-color:#065f46; }
+    .nb-badge.error { color:#f87171; border-color:#7f1d1d; }
+    .nb-badge.processing, .nb-badge.queued { color:#fbbf24; border-color:#78350f; }
+    .nb-empty { color:var(--muted,#737373); font-size:12px; padding:20px 4px; text-align:center; }
+    .nb-form { display:flex; flex-direction:column; gap:8px; }
+    .nb-msg { margin-bottom:12px; }
+    .nb-msg .who { font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted,#737373); margin-bottom:3px; }
+    .nb-msg .bd { white-space:pre-wrap; color:var(--text,#e5e5e5); font-size:13px; line-height:1.5; }
+    .nb-msg.user .bd { color:var(--accent,#fbbf24); }
+    .nb-chatlog { flex:1 1 auto; min-height:0; overflow:auto; }
+    .nb-chatform { display:flex; gap:8px; padding-top:10px; border-top:1px solid var(--line,#2a2a2a); }
+    .nb-passage { border-left:2px solid var(--line,#2a2a2a); padding:4px 10px; margin:6px 0; color:var(--muted,#a3a3a3); font-size:12px; }
+    .nb-note { color:var(--muted,#737373); font-size:11px; margin-top:6px; }
+    .nb-hint { color:#fbbf24; font-size:12px; }
+    a.nb-link { color:var(--accent,#fbbf24); text-decoration:none; }
+    .nb-split { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media (max-width:820px){ main.nb{grid-template-columns:1fr} .nb-side{display:none} .nb-split{grid-template-columns:1fr} }
+  </style>
+</head>
+<body data-page="notebook">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="nb">
+    <aside class="nb-side">
+      <div class="nb-side-head">
+        <h2>Notebooks</h2>
+        <button class="nb-btn ghost" id="nbNew" title="New notebook">+ New</button>
+      </div>
+      <div class="nb-nblist" id="nbList"><div class="nb-empty">Loading…</div></div>
+      <div class="nb-side-head" style="border-top:1px solid var(--line,#2a2a2a); border-bottom:0;">
+        <button class="nb-btn ghost" id="nbTransforms" title="Manage transformations">Transformations</button>
+        <button class="nb-btn ghost" id="nbSettings" title="Provider status">Settings</button>
+      </div>
+    </aside>
+
+    <section class="nb-main">
+      <div class="nb-main-head">
+        <h1 id="nbTitle">Select or create a notebook</h1>
+        <span id="nbDesc" class="nb-note"></span>
+      </div>
+      <div class="nb-tabs" id="nbTabs" hidden>
+        <button class="nb-tab active" data-tab="sources">Sources</button>
+        <button class="nb-tab" data-tab="notes">Notes</button>
+        <button class="nb-tab" data-tab="ask">Ask</button>
+        <button class="nb-tab" data-tab="chat">Chat</button>
+        <button class="nb-tab" data-tab="podcasts">Podcasts</button>
+      </div>
+
+      <div class="nb-panel active" data-panel="sources" id="panelSources"></div>
+      <div class="nb-panel" data-panel="notes" id="panelNotes"></div>
+      <div class="nb-panel" data-panel="ask" id="panelAsk"></div>
+      <div class="nb-panel" data-panel="chat" id="panelChat" style="display:none; flex-direction:column;"></div>
+      <div class="nb-panel" data-panel="podcasts" id="panelPodcasts"></div>
+      <div class="nb-panel" data-panel="transformations" id="panelTransforms"></div>
+      <div class="nb-panel" data-panel="settings" id="panelSettings"></div>
+    </section>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260619"></script>
+  <script src="nav.js?v=20260703a"></script>
+  <script src="notebook.js?v=20260703a"></script>
+</body>
+</html>
