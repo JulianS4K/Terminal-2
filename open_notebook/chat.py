@@ -62,10 +62,13 @@ def stream_reply(db, *, session_id: str, notebook_id: str, user_message: str) ->
     system = prompts.chat_system_with_context(context)
     messages = _history(db, session_id)
 
+    # Obtain the provider stream eagerly so a missing-key/unavailable ProviderError
+    # surfaces here (→ 503 before streaming starts) rather than mid-SSE.
+    stream = providers.chat_stream(messages, system=system, max_tokens=2048)
     collected: list[str] = []
 
     def _gen() -> Iterator[str]:
-        for delta in providers.chat_stream(messages, system=system, max_tokens=2048):
+        for delta in stream:
             collected.append(delta)
             yield delta
         repo.add_chat_message(db, session_id=session_id, role="assistant",

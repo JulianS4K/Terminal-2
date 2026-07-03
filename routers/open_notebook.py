@@ -223,7 +223,7 @@ def build_open_notebook_router(
 
     # ---- search / ask ----------------------------------------------------
     @router.post("/api/notebook/search")
-    def onb_search(body: dict = Body(...), _=Depends(require_auth)):
+    def onb_search_route(body: dict = Body(...), _=Depends(require_auth)):
         _enabled()
         query = (body.get("query") or "").strip()
         if not query:

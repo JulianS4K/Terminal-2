@@ -14,7 +14,10 @@ defusedxml>=0.7.1,<1.0
 # pypdf extracts text from uploaded PDF sources. Both imported lazily so the
 # broker pipeline still loads if a host omits them.
 openai>=1.60.0,<2.0
-pypdf>=5.1.0,<6.0
+# pypdf floor raised to the 6.x line: the 5.x range carries a batch of moderate
+# resource-exhaustion advisories (RAM/infinite-loop on crafted PDFs) that
+# dependency-review blocks; all are patched in 6.x.
+pypdf>=6.14.2,<7.0
 # tzdata — fallback IANA tzdata for systems without OS-level timezone files
 # (Windows dev, slim Docker images). Needed by d2_dashboard's metrics endpoint
 # for the "today" window which anchors on America/New_York. Tiny (~330 KB).
