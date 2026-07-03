@@ -1095,6 +1095,7 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .wrap.event #zones              { grid-column: 1 / -1; }
 .wrap.event #sales-tape         { grid-column: 1 / -1; }
 .wrap.event #espn               { grid-column: 1 / -1; }
+.wrap.event #prediction-markets { grid-column: 1 / -1; }
 .wrap.event #weather            { grid-column: 1 / -1; }
 .wrap.event #all-orders         { grid-column: 1 / -1; }
 .wrap.event #alerts             { grid-column: 1 / 7; }
@@ -1378,6 +1379,42 @@ tr.wl-cur td { background: rgba(251, 191, 36, 0.07); }
 .espn-fighter { color: var(--text); }
 .espn-fighter-win { color: var(--pos); font-weight: 600; }
 .espn-vs { color: var(--muted); font-size: 10px; margin: 0 5px; }
+
+/* Prediction markets (Kalshi / Polymarket) — hidden until data lands */
+#prediction-markets { display: none; }
+#prediction-markets .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+#prediction-markets .panel-title .muted { color: var(--dim); font-size: 10px; font-weight: normal; text-transform: none; letter-spacing: 0; }
+.pm-sublabel {
+  color: var(--muted); font-family: var(--mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 6px;
+}
+.pm-sublabel:first-child { margin-top: 0; }
+.pm-list { margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; }
+.pm-item { border-bottom: 1px solid var(--line-2); }
+.pm-item:last-child { border-bottom: 0; }
+.pm-link {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; padding: 5px 0; text-decoration: none; color: inherit;
+}
+.pm-link:hover .pm-side { color: var(--accent); }
+.pm-side { color: var(--text); }
+.pm-q { margin-left: 6px; }
+.pm-right { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.pm-prob { color: var(--pos); font-weight: 700; font-variant-numeric: tabular-nums; }
+.pm-vol { color: var(--dim); }
+.pm-src {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 1px 5px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted);
+}
+.pm-src-kalshi { color: var(--info); border-color: var(--info); }
+.pm-src-polymarket { color: var(--accent); border-color: var(--accent); }
+/* TSA national travel-demand readout (event + performer panels) */
+.pm-tsa { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-family: var(--mono); font-size: 12px; padding: 2px 0; }
+.pm-tsa-val { color: var(--text); font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+.pm-tsa-spark { color: var(--accent); letter-spacing: 1px; font-size: 13px; }
+.pm-tsa-delta { font-variant-numeric: tabular-nums; }
+.pm-tsa-delta.pm-up { color: var(--pos); }
+.pm-tsa-delta.pm-down { color: var(--neg); }
 
 /* Weather strip */
 #weather .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }

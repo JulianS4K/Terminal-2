@@ -149,6 +149,50 @@ def build_broker_router(
             },
         }
 
+    @router.get("/api/broker/event/{event_id}/prediction-markets")
+    def broker_event_prediction_markets(event_id: int, _=Depends(require_auth)):
+        """Kalshi + Polymarket implied-probability markets matched to this event:
+        game moneyline (matched by team + date) plus futures on the event's teams
+        (e.g. World Series / champion odds). Public data; served via the SECDEF
+        get_event_prediction_markets RPC. Degrades to empty arrays if the pipeline
+        migration is not yet applied."""
+        db = get_require_sb()()
+        empty = {"event_id": event_id, "game_markets": [], "futures": []}
+        try:
+            res = db.rpc("get_event_prediction_markets", {"p_event_id": event_id}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
+    @router.get("/api/broker/performer/{performer_id}/prediction-markets")
+    def broker_performer_prediction_markets(performer_id: int, _=Depends(require_auth)):
+        """Kalshi + Polymarket markets attributed to a performer (team): its game
+        moneylines + season/champion futures. Public data via the SECDEF
+        get_performer_prediction_markets RPC; empty when unmatched / not applied."""
+        db = get_require_sb()()
+        empty = {"performer_id": performer_id, "markets": []}
+        try:
+            res = db.rpc("get_performer_prediction_markets", {"p_performer_id": performer_id}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
+    @router.get("/api/broker/macro/{series_id}")
+    def broker_macro_series(series_id: str, limit: int = 90, _=Depends(require_auth)):
+        """Recent observations for one macro series (TSA_THROUGHPUT, UMCSENT, …)
+        from the anon-granted v_macro_indicators_latest view, oldest→newest for
+        direct charting. Reads the view (not the email-gated get_macro_series RPC)
+        so the service-role terminal client can serve it."""
+        db = get_require_sb()()
+        lim = max(1, min(int(limit), 600))
+        rows = (db.table("v_macro_indicators_latest")
+                  .select("observation_date, value")
+                  .eq("series_id", series_id)
+                  .order("observation_date", desc=True)
+                  .limit(lim).execute().data) or []
+        rows = list(reversed(rows))
+        return {"series_id": series_id, "points": rows, "count": len(rows)}
+
     @router.get("/api/broker/event/{event_id}/substitutions")
     def broker_event_substitutions(
         event_id: int,
