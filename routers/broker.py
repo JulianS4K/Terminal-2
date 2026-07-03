@@ -269,6 +269,23 @@ def build_broker_router(
         except Exception as e:
             return {**empty, "error": str(e)}
 
+    @router.get("/api/broker/performer/{performer_id}/injury-getin")
+    def broker_performer_injury_getin(performer_id: int, _=Depends(require_auth)):
+        """ESPN injury price-impact for a team performer: currently-out players +
+        the team's avg game get-in during each out-window — the sports mirror of
+        the Broadway cast panel. Same generic participant contract (kind='espn')
+        so it reuses window.CastPanel. Served via the get_performer_injury_getin
+        SECDEF RPC; degrades to applicable=false for a non-team performer / no
+        current injuries / unapplied pipeline (like prediction-markets)."""
+        db = get_require_sb()()
+        empty = {"performer_id": performer_id, "applicable": False, "kind": "espn",
+                 "metric": "get_in_usd", "subject": None, "participants": []}
+        try:
+            res = db.rpc("get_performer_injury_getin", {"p_performer_id": performer_id}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
     @router.get("/api/broker/performer/{performer_id}/prediction-markets")
     def broker_performer_prediction_markets(performer_id: int, _=Depends(require_auth)):
         """Kalshi + Polymarket markets attributed to a performer (team): its game

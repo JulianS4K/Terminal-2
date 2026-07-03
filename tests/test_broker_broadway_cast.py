@@ -176,3 +176,36 @@ def test_performer_broadway_cast_error_degrades(client, monkeypatch):
     body = client.get("/api/broker/performer/9/broadway-cast").json()
     assert body["performer_id"] == 9 and body["applicable"] is False
     assert "does not exist" in body["error"]
+
+
+# ---------- /api/broker/performer/{id}/injury-getin (ESPN, RPC passthrough) ----------
+
+def test_injury_getin_passthrough(client, monkeypatch):
+    payload = {
+        "performer_id": 15544, "applicable": True, "kind": "espn", "metric": "get_in_usd",
+        "subject": {"slug": "13", "title": "Texas Rangers"},
+        "participants": [{"name": "Jack Leiter", "role": "SP", "measured": True, "avg_getin": 22.93}],
+    }
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"get_performer_injury_getin": payload}))
+    body = client.get("/api/broker/performer/15544/injury-getin").json()
+    assert body == payload
+    assert body["participants"][0]["name"] == "Jack Leiter"
+
+
+def test_injury_getin_absent_rpc_empty(client, monkeypatch):
+    # FakeSupabase default for an unknown rpc is [] (not a dict) -> empty shape.
+    _use_db(monkeypatch, FakeSupabase())
+    body = client.get("/api/broker/performer/7/injury-getin").json()
+    assert body == {"performer_id": 7, "applicable": False, "kind": "espn",
+                    "metric": "get_in_usd", "subject": None, "participants": []}
+
+
+def test_injury_getin_error_degrades(client, monkeypatch):
+    class _Boom(FakeSupabase):
+        def rpc(self, name, params=None):
+            raise RuntimeError("function get_performer_injury_getin does not exist")
+
+    _use_db(monkeypatch, _Boom())
+    body = client.get("/api/broker/performer/9/injury-getin").json()
+    assert body["performer_id"] == 9 and body["applicable"] is False
+    assert "does not exist" in body["error"]

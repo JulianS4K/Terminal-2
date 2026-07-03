@@ -120,6 +120,8 @@
     loadPerformerPredictionMarkets(performerId).catch(e => console.error('perf-pm', e));
     // Broadway cast get-in — reveals the Cast tab only for a show-as-performer.
     loadPerfCast(performerId).catch(e => console.error('perf-cast', e));
+    // ESPN injury price-impact — reveals the Injuries tab only for a team.
+    loadPerfInjury(performerId).catch(e => console.error('perf-injury', e));
 
     Promise.all([
       T.api(`/api/broker/performer/${performerId}/assets`).catch(e => ({ __err: e })),
@@ -167,6 +169,7 @@
     upcoming:   'paneUpcoming',
     blindspots: 'paneBlindspots',
     cast:       'panePerfCast',
+    injury:     'panePerfInjury',
     futures:    'panePerfFutures',
     espn:       'paneEspn',
     alerts:     'panePerfAlerts',
@@ -191,6 +194,26 @@
     const ttl = document.getElementById('perfCastTitle');
     if (ttl && data.subject) ttl.textContent = `CAST — get-in by lead · ${data.subject.title}`;
     window.CastPanel.render(document.getElementById('perfCastBody'), data);
+  }
+
+  // ESPN injury price-impact — reveals the Injuries tab ONLY for a team with
+  // current injuries. Same window.CastPanel, kind='espn'. Fire-and-forget.
+  async function loadPerfInjury(performerId) {
+    let data;
+    try { data = await T.api(`/api/broker/performer/${performerId}/injury-getin`); }
+    catch (_) { return; }
+    const parts = (data && data.participants) || [];
+    if (!data || !data.applicable || !parts.length) return;  // not a team / no injuries
+    const btn = document.getElementById('perfInjuryTab');
+    if (btn) { btn.hidden = false; btn.style.removeProperty('display'); }
+    const cnt = document.getElementById('tabCountPerfInjury');
+    if (cnt) cnt.textContent = String(parts.length);
+    const priced = parts.filter(p => p.measured).length;
+    const meta = document.getElementById('perfInjuryMeta');
+    if (meta) meta.textContent = `${parts.length} out · ${priced} with priced games`;
+    const ttl = document.getElementById('perfInjuryTitle');
+    if (ttl && data.subject) ttl.textContent = `INJURIES — team get-in while out · ${data.subject.title}`;
+    window.CastPanel.render(document.getElementById('perfInjuryBody'), data);
   }
 
   function activateTab(tabId) {
