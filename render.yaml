@@ -91,6 +91,14 @@ services:
         sync: false
       - key: GITHUB_API_TOKEN
         sync: false
+      # open-notebook subsystem (routers/open_notebook.py). Optional — CRUD +
+      # text search work without them; chat/transform/RAG need ANTHROPIC, and
+      # embeddings/TTS/STT need OPENAI. Absent → the UI shows "provider key
+      # missing" and those features no-op cleanly.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       # Non-secret targets — plain IaC values (target repo for workflow_dispatch).
       - key: GITHUB_OWNER_NAME
         value: JulianS4K
