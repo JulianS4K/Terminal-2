@@ -106,6 +106,9 @@
     T.setStatus(`Loading performer ${performerId}…`);
     // Eager-load ESPN for form strip (non-blocking)
     loadEspnContext(performerId).catch(e => console.error('espn-eager', e));
+    // Prediction markets (Kalshi/Polymarket) for this team + national TSA macro;
+    // fire-and-forget, hides itself when there's nothing to show.
+    loadPerformerPredictionMarkets(performerId).catch(e => console.error('perf-pm', e));
 
     Promise.all([
       T.api(`/api/broker/performer/${performerId}/assets`).catch(e => ({ __err: e })),
@@ -714,6 +717,93 @@
       tb.appendChild(tr);
     });
     body.appendChild(tbl);
+  }
+
+  // ---------- Prediction markets (Kalshi/Polymarket) + TSA macro ----------
+  // Panel below PORTFOLIO ROLLUP. Markets attributed to this performer (team):
+  // its game moneylines + season/champion futures, from
+  // /api/broker/performer/{id}/prediction-markets. Plus the national TSA
+  // travel-demand readout (shared with the event page).
+  async function loadPerformerPredictionMarkets(performerId) {
+    const [d, tsa] = await Promise.all([
+      T.api(`/api/broker/performer/${performerId}/prediction-markets`).catch(() => null),
+      T.api('/api/broker/macro/TSA_THROUGHPUT?limit=120').catch(() => null),
+    ]);
+    renderPerformerPredictionMarkets(d, tsa);
+  }
+
+  function ppmPct(x) {
+    const n = Number(x);
+    return isFinite(n) ? (n * 100).toFixed(0) + '%' : '—';
+  }
+  function ppmFmtM(n) {
+    n = Number(n);
+    if (!isFinite(n)) return '—';
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'k';
+    return String(Math.round(n));
+  }
+  function ppmSpark(vals) {
+    const bars = '▁▂▃▄▅▆▇█';
+    const xs = vals.filter(v => isFinite(v));
+    if (xs.length < 2) return '';
+    const mn = Math.min(...xs), mx = Math.max(...xs), rng = (mx - mn) || 1;
+    return xs.map(v => bars[Math.min(7, Math.max(0, Math.round((v - mn) / rng * 7)))]).join('');
+  }
+  function ppmTsaBlock(points) {
+    const pts = (Array.isArray(points) ? points : []).filter(p => p && p.value != null);
+    if (pts.length < 2) return '';
+    const vals = pts.map(p => Number(p.value));
+    const latest = vals[vals.length - 1];
+    const prior = vals[Math.max(0, vals.length - 1 - 28)];
+    const pct = prior ? ((latest - prior) / prior * 100) : 0;
+    const cls = pct >= 0 ? 'pm-up' : 'pm-down';
+    const arrow = pct >= 0 ? '▲' : '▼';
+    const day = escapeHtml(String(pts[pts.length - 1].observation_date || '').slice(0, 10));
+    return '<div class="pm-sublabel">NATIONAL TRAVEL DEMAND — TSA</div>' +
+      `<div class="pm-tsa"><span class="pm-tsa-val">${ppmFmtM(latest)}</span>` +
+      `<span class="pm-tsa-lbl muted small">passengers/day (${day})</span>` +
+      `<span class="pm-tsa-spark">${escapeHtml(ppmSpark(vals.slice(-28)))}</span>` +
+      `<span class="pm-tsa-delta ${cls}">${arrow} ${Math.abs(pct).toFixed(1)}% vs 4wk</span></div>`;
+  }
+  function ppmRow(m) {
+    const label = escapeHtml(m.subtitle || m.question || m.title || '');
+    const date = m.event_date ? `<span class="pm-q muted small">${escapeHtml(String(m.event_date))}</span>` : '';
+    const px = ppmPct(m.yes_price != null ? m.yes_price : m.last_price);
+    const src = (m.source || '').toLowerCase();
+    const srcLabel = src === 'kalshi' ? 'Kalshi' : src === 'polymarket' ? 'Polymarket' : escapeHtml(m.source || '?');
+    const href = m.url ? ` href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer"` : '';
+    return `<li class="pm-item"><a class="pm-link"${href}>` +
+      `<span class="pm-side">${label}</span>${date}` +
+      `<span class="pm-right"><span class="pm-prob">${px}</span>` +
+      `<span class="pm-src pm-src-${escapeHtml(src)}">${srcLabel}</span></span></a></li>`;
+  }
+  function renderPerformerPredictionMarkets(d, tsa) {
+    const section = document.getElementById('perf-prediction-markets');
+    const body = document.getElementById('perfPmBody');
+    const subtitle = document.getElementById('perfPmSubtitle');
+    if (!section || !body) return;
+    const markets = (d && Array.isArray(d.markets)) ? d.markets : [];
+    const games = markets.filter(m => m.market_type === 'game');
+    const futures = markets.filter(m => m.market_type !== 'game');
+    const tsaHtml = ppmTsaBlock(tsa && tsa.points);
+    if (!games.length && !futures.length && !tsaHtml) { section.hidden = true; return; }
+    section.hidden = false;
+    if (subtitle) {
+      const srcs = Array.from(new Set(markets.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+      subtitle.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : 'national travel-demand macro';
+    }
+    let html = '';
+    if (games.length) {
+      html += '<div class="pm-sublabel">UPCOMING GAMES — MONEYLINE</div>';
+      html += '<ul class="pm-list">' + games.map(ppmRow).join('') + '</ul>';
+    }
+    if (futures.length) {
+      html += '<div class="pm-sublabel">FUTURES</div>';
+      html += '<ul class="pm-list">' + futures.map(ppmRow).join('') + '</ul>';
+    }
+    html += tsaHtml;
+    body.innerHTML = html;
   }
 
   // ---------- ESPN Context (lazy-loaded tab) ----------

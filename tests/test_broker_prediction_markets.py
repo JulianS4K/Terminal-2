@@ -79,6 +79,39 @@ def test_prediction_markets_rpc_error_degrades(client, monkeypatch):
     assert "does not exist" in body["error"]
 
 
+# ---------- /api/broker/performer/{id}/prediction-markets ----------
+
+def test_performer_prediction_markets_passthrough(client, monkeypatch):
+    payload = {
+        "performer_id": 15544,
+        "markets": [
+            {"source": "kalshi", "market_type": "game", "subtitle": "Texas", "yes_price": 0.57},
+            {"source": "polymarket", "market_type": "futures", "subtitle": "Texas Rangers", "yes_price": 0.021},
+        ],
+    }
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"get_performer_prediction_markets": payload}))
+    body = client.get("/api/broker/performer/15544/prediction-markets").json()
+    assert body == payload
+    assert len(body["markets"]) == 2
+
+
+def test_performer_prediction_markets_absent_rpc_empty(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    body = client.get("/api/broker/performer/1/prediction-markets").json()
+    assert body == {"performer_id": 1, "markets": []}
+
+
+def test_performer_prediction_markets_error_degrades(client, monkeypatch):
+    class _Boom(FakeSupabase):
+        def rpc(self, name, params=None):
+            raise RuntimeError("function get_performer_prediction_markets does not exist")
+
+    _use_db(monkeypatch, _Boom())
+    body = client.get("/api/broker/performer/2/prediction-markets").json()
+    assert body["performer_id"] == 2 and body["markets"] == []
+    assert "does not exist" in body["error"]
+
+
 # ---------- /api/broker/macro/{series_id} ----------
 
 def test_macro_series_reverses_to_oldest_first(client, monkeypatch):

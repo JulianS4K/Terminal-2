@@ -1408,6 +1408,13 @@ tr.wl-cur td { background: rgba(251, 191, 36, 0.07); }
 }
 .pm-src-kalshi { color: var(--info); border-color: var(--info); }
 .pm-src-polymarket { color: var(--accent); border-color: var(--accent); }
+/* TSA national travel-demand readout (event + performer panels) */
+.pm-tsa { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-family: var(--mono); font-size: 12px; padding: 2px 0; }
+.pm-tsa-val { color: var(--text); font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+.pm-tsa-spark { color: var(--accent); letter-spacing: 1px; font-size: 13px; }
+.pm-tsa-delta { font-variant-numeric: tabular-nums; }
+.pm-tsa-delta.pm-up { color: var(--pos); }
+.pm-tsa-delta.pm-down { color: var(--neg); }
 
 /* Weather strip */
 #weather .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
