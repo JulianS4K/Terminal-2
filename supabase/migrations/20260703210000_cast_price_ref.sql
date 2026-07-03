@@ -1,3 +1,4 @@
+-- Migration 20260703210000 · level:data-collection · lane:A1 · writes:cast_price_ref · reads:event_metrics,events,performer_metadata,broadway_show_ref · pre:none
 -- Cast price reference: one row per team/show with home + away median price.
 -- SEPARATE from performer_metadata / EVO performer tables by design — this is a
 -- pricing-anchor rollup (road-draw value), not a catalog. Consumed by the pricing
