@@ -61,8 +61,11 @@
     const countsEl = document.getElementById('perfIndexCounts');
     const counts = d.counts || {};
     const leagues = d.leagues || {};
+    // Directory columns, in order. Broadway is a category whose "teams" are
+    // shows (link to the event Cast tab); WNBA joined the sports leagues.
+    const LEAGUE_ORDER = ['NFL','NBA','MLB','MLS','WNBA','Broadway'];
     if (countsEl) {
-      const parts = ['NFL','NBA','MLB','MLS']
+      const parts = LEAGUE_ORDER
         .filter(l => counts[l])
         .map(l => `${l} ${counts[l]}`);
       if (counts.total) parts.push(`· ${counts.total} total`);
@@ -71,8 +74,9 @@
     body.innerHTML = '';
     const grid = document.createElement('div');
     grid.className = 'entity-index-grid';
-    ['NFL','NBA','MLB','MLS'].forEach(league => {
+    LEAGUE_ORDER.forEach(league => {
       const teams = leagues[league] || [];
+      if (!teams.length) return;
       const col = document.createElement('div');
       col.className = 'entity-index-col';
       col.innerHTML = `<div class="entity-index-col-hdr">${league} <span class="muted small">(${teams.length})</span></div>`;
@@ -81,7 +85,12 @@
       teams.forEach(t => {
         const li = document.createElement('li');
         const upcoming = t.events_count_next_90d != null ? `<span class="entity-idx-count">${t.events_count_next_90d}</span>` : '';
-        li.innerHTML = `<a href="performer.html?performer=${t.tevo_performer_id}">
+        // Teams link to their performer page; Broadway shows (no performer id)
+        // link to a representative event so its Cast tab renders.
+        const href = t.tevo_performer_id
+          ? `performer.html?performer=${t.tevo_performer_id}`
+          : (t.sample_event_id ? `event.html?event=${t.sample_event_id}` : '#');
+        li.innerHTML = `<a href="${href}">
             <span class="entity-idx-name">${escapeHtml(t.display_name || t.performer_name || '—')}</span>
             ${t.abbreviation ? `<span class="muted small">${escapeHtml(t.abbreviation)}</span>` : ''}
             ${upcoming}
