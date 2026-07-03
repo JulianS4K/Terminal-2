@@ -85,18 +85,32 @@ def generate_episode(db, episode_id: str, *, job_id: str | None = None) -> dict:
 
         # Stage 3 — TTS per turn, concatenated. Voice is keyed on the SPEAKER's
         # stable position (not the turn index) so each speaker keeps one voice.
-        speaker_order = {n: i for i, n in enumerate(speakers)}
-        audio = bytearray()
-        for turn in transcript:
-            text = (turn.get("text") or "").strip()
-            if not text:
-                continue
-            sp_name = turn.get("speaker") or ""
-            voice = _voice_for(sp_profile, sp_name, speaker_order.get(sp_name, 0))
-            audio.extend(providers.tts(text, voice=voice))
+        # TTS needs OpenAI (Claude has no speech synthesis, and the shared
+        # platform key is Anthropic-only). If no TTS provider is configured, the
+        # episode still succeeds as TRANSCRIPT-ONLY — the script is written and
+        # saved; only the audio is skipped. A missing key must not fail the job.
+        try:
+            speaker_order = {n: i for i, n in enumerate(speakers)}
+            audio = bytearray()
+            for turn in transcript:
+                text = (turn.get("text") or "").strip()
+                if not text:
+                    continue
+                sp_name = turn.get("speaker") or ""
+                voice = _voice_for(sp_profile, sp_name, speaker_order.get(sp_name, 0))
+                audio.extend(providers.tts(text, voice=voice))
+            audio_url = _upload_audio(db, episode_id, bytes(audio))
+        except providers.ProviderError:
+            repo.update_episode(db, episode_id, {
+                "status": "done", "audio_url": None,
+                "error": "Transcript ready. Audio skipped — no TTS provider "
+                         "(set OPENAI_API_KEY to generate narration).",
+            })
+            if job_id:
+                repo.update_job(db, job_id, {"status": "done"})
+            return repo.get_episode(db, episode_id) or {}
 
-        audio_url = _upload_audio(db, episode_id, bytes(audio))
-        repo.update_episode(db, episode_id, {"status": "done", "audio_url": audio_url})
+        repo.update_episode(db, episode_id, {"status": "done", "audio_url": audio_url, "error": None})
         if job_id:
             repo.update_job(db, job_id, {"status": "done"})
         return repo.get_episode(db, episode_id) or {}

@@ -78,6 +78,16 @@ pre-deduped so the raw sales firehose is never read.
   embedding model's dimension requires a follow-up migration.
 - Podcast audio needs a **public** Storage bucket named per `ONB_AUDIO_BUCKET`.
 
+## Graceful degradation without OpenAI
+The subsystem is fully usable on a Claude key alone. Where OpenAI would add a
+capability, the feature degrades instead of failing: **Ask** falls back to
+full-text retrieval (no embeddings), and **podcast** generation produces the
+outline + transcript with Claude and finishes the episode as **transcript-only**
+(`status='done'`, `audio_url` null, an informational note in `error`) when no TTS
+provider (`OPENAI_API_KEY`) is configured — the script is written and shown in the
+NOTEBOOK tab; only the narration audio is skipped. Set `OPENAI_API_KEY` to add
+vector search, TTS narration, and audio transcription.
+
 ## Deferred (stubbed with clear errors)
 Video / office / YouTube extraction and the multi-provider matrix — a `video`/
 `office`/`youtube` source records an explicit error status rather than silently
