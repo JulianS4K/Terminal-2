@@ -14,7 +14,7 @@
   const API_BASE = T.API_BASE || '';
   const setStatus = T.setStatus || function (m) { const el = document.getElementById('status'); if (el) el.textContent = m; };
 
-  const state = { notebooks: [], current: null, session: null, transforms: [], config: null };
+  const state = { notebooks: [], current: null, session: null, transforms: [], config: null, selectedPerformer: null };
 
   // ---------- fetch helpers ----------
   function authHeaders() { return (T.getAuthHeader ? T.getAuthHeader() : {}); }
@@ -142,7 +142,8 @@
       <div class="nb-card">
         <div class="nb-form">
           <div class="nb-row">
-            <select class="nb-in" id="srcKind" style="max-width:140px">
+            <select class="nb-in" id="srcKind" style="max-width:160px">
+              <option value="performer">Performer (SQL)</option>
               <option value="text">Text</option>
               <option value="url">URL</option>
               <option value="pdf">PDF</option>
@@ -166,9 +167,64 @@
   function renderSourceInput() {
     const kind = el('srcKind').value;
     const box = el('srcInput');
-    if (kind === 'text') box.innerHTML = '<textarea class="nb-in" id="srcText" placeholder="Paste text…"></textarea>';
-    else if (kind === 'url') box.innerHTML = '<input class="nb-in" id="srcUrl" placeholder="https://example.com/article" />';
-    else box.innerHTML = '<input type="file" id="srcFile" accept="application/pdf" class="nb-in" />';
+    state.selectedPerformer = null;
+    if (kind === 'performer') {
+      box.innerHTML = `
+        <div class="nb-perf-wrap">
+          <input class="nb-in" id="srcPerformer" placeholder="Search performers (EVO)…" autocomplete="off" spellcheck="false" />
+          <div class="nb-perf-suggest" id="srcPerfSuggest" hidden></div>
+        </div>
+        <div class="nb-note" id="srcPerfPick">Type a performer name, then pick a match from EVO search.</div>`;
+      wirePerformerSearch();
+    } else if (kind === 'text') {
+      box.innerHTML = '<textarea class="nb-in" id="srcText" placeholder="Paste text…"></textarea>';
+    } else if (kind === 'url') {
+      box.innerHTML = '<input class="nb-in" id="srcUrl" placeholder="https://example.com/article" />';
+    } else {
+      box.innerHTML = '<input type="file" id="srcFile" accept="application/pdf" class="nb-in" />';
+    }
+  }
+
+  // Typeahead over the EVO/TEvo performer search (/api/performers?q=). Picking a
+  // result captures its tevo_performer_id so the source is added by id (no
+  // server-side name guessing).
+  function wirePerformerSearch() {
+    const input = el('srcPerformer');
+    const sugg = el('srcPerfSuggest');
+    const pick = el('srcPerfPick');
+    let debounce = 0;
+    input.addEventListener('input', () => {
+      state.selectedPerformer = null;
+      pick.textContent = 'Type a performer name, then pick a match from EVO search.';
+      clearTimeout(debounce);
+      const q = input.value.trim();
+      if (q.length < 2) { sugg.hidden = true; sugg.innerHTML = ''; return; }
+      debounce = setTimeout(() => runPerformerSearch(q, sugg, input, pick), 250);
+    });
+    document.addEventListener('click', (e) => {
+      if (!sugg.contains(e.target) && e.target !== input) { sugg.hidden = true; }
+    });
+  }
+
+  async function runPerformerSearch(q, sugg, input, pick) {
+    sugg.hidden = false;
+    sugg.innerHTML = '<div class="nb-perf-row muted">searching EVO…</div>';
+    try {
+      const data = await apiFetch('/api/performers?fuzzy=true&q=' + encodeURIComponent(q));
+      const results = (data && data.performers) || [];
+      if (!results.length) { sugg.innerHTML = '<div class="nb-perf-row muted">no EVO matches</div>'; return; }
+      sugg.innerHTML = results.slice(0, 12).map(p => {
+        const cat = (p.category && (p.category.name || (p.category.parent && p.category.parent.name))) || '';
+        return `<div class="nb-perf-row" data-id="${esc(p.id)}" data-name="${esc(p.name)}">
+          <span>${esc(p.name)}</span><span class="muted small">${esc(cat)}</span></div>`;
+      }).join('');
+      sugg.querySelectorAll('.nb-perf-row[data-id]').forEach(row => row.addEventListener('click', () => {
+        state.selectedPerformer = { id: Number(row.dataset.id), name: row.dataset.name };
+        input.value = row.dataset.name;
+        pick.innerHTML = `Selected: <b>${esc(row.dataset.name)}</b> <span class="muted">(EVO id ${esc(row.dataset.id)})</span>`;
+        sugg.hidden = true;
+      }));
+    } catch (e) { sugg.innerHTML = `<div class="nb-perf-row muted">${esc(e.message)}</div>`; }
   }
 
   async function addSource() {
@@ -176,7 +232,16 @@
     const title = el('srcTitle').value.trim() || null;
     const body = { kind, title };
     try {
-      if (kind === 'text') {
+      if (kind === 'performer') {
+        if (state.selectedPerformer) {
+          body.performer_id = state.selectedPerformer.id;
+          body.performer_name = state.selectedPerformer.name;
+        } else {
+          // no pick from the EVO dropdown — fall back to resolving the typed text
+          body.performer_name = el('srcPerformer').value.trim();
+          if (!body.performer_name) return setStatus('search and pick a performer', 'err');
+        }
+      } else if (kind === 'text') {
         body.text = el('srcText').value;
         if (!body.text.trim()) return setStatus('text required', 'err');
       } else if (kind === 'url') {

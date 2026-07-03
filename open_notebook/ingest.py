@@ -49,7 +49,15 @@ def _extract_performer(asset: dict, db) -> tuple[str, str | None]:
         raise IngestError("performer source requires a db client")
     pid = asset.get("performer_id")
     if pid is None:
-        raise IngestError("performer source requires performer_id")
+        # resolve by name (the default UI path) so a source can be added with just
+        # a performer name from Supabase.
+        pname = (asset.get("performer_name") or "").strip()
+        if not pname:
+            raise IngestError("performer source requires performer_id or performer_name")
+        resolved = performers.resolve_performer(db, name=pname)
+        if not resolved:
+            raise IngestError(f"performer not found: {pname}")
+        pid = resolved["id"]
     name, text = performers.build_performer_digest(db, int(pid),
                                                    performer_name=asset.get("performer_name"))
     if not text:

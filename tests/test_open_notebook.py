@@ -1151,6 +1151,12 @@ def test_extract_performer(perf_db, monkeypatch):
         onb_ingest._extract_performer({}, perf_db)  # no performer_id
     text, title = onb_ingest._extract_performer({"performer_id": 100}, perf_db)
     assert title == "New York Yankees" and text
+    # resolve by name (default UI path)
+    text2, title2 = onb_ingest._extract_performer({"performer_name": "New York Yankees"}, perf_db)
+    assert title2 == "New York Yankees" and text2
+    # name that resolves to nothing → IngestError
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_performer({"performer_name": "Nonexistent Act"}, perf_db)
     # empty digest → IngestError
     monkeypatch.setattr(onb_performers, "build_performer_digest", lambda *a, **k: ("N", ""))
     with pytest.raises(onb_ingest.IngestError):

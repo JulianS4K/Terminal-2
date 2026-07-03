@@ -453,9 +453,10 @@ def _build_asset(body: dict) -> dict:
         return {"kind": "pdf", "data": data, "title": body.get("title") or body.get("filename")}
     if kind == "performer":
         pid = body.get("performer_id")
-        if pid is None:
-            raise HTTPException(400, "performer_id required for a performer source")
-        return {"kind": "performer", "performer_id": pid, "performer_name": body.get("performer_name")}
+        pname = (body.get("performer_name") or "").strip()
+        if pid is None and not pname:
+            raise HTTPException(400, "performer_id or performer_name required for a performer source")
+        return {"kind": "performer", "performer_id": pid, "performer_name": pname or None}
     raise HTTPException(400, "kind must be one of: text, url, pdf, performer")
 
 
