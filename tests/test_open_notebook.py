@@ -561,6 +561,31 @@ def test_podcast_upload_failure(monkeypatch):
     assert repo.get_episode(fake, ep["id"])["status"] == "error"
 
 
+def test_podcast_transcript_only_without_tts(fake, monkeypatch):
+    """No TTS provider (Claude-key-only) → episode succeeds as transcript-only
+    instead of erroring: status 'done', no audio_url, informational note, and
+    the transcript is persisted."""
+    monkeypatch.setattr(onb_providers, "chat", smart_chat)
+    monkeypatch.setattr(onb_providers, "tts",
+                        lambda *a, **k: (_ for _ in ()).throw(ProviderError("no tts")))
+    # with job_id → the job is also marked done
+    ep = repo.create_episode(fake, {"name": "e", "episode_profile": {"num_segments": 1},
+                                    "speaker_profile": {"speakers": [{"name": "Alex"}]},
+                                    "content": "c", "status": "queued"})
+    job = repo.create_job(fake, kind="podcast", ref_id=ep["id"])
+    out = onb_podcasts.generate_episode(fake, ep["id"], job_id=job["id"])
+    assert out["status"] == "done" and out.get("audio_url") is None
+    assert "Audio skipped" in (out.get("error") or "")
+    assert repo.get_job(fake, job["id"])["status"] == "done"
+    assert repo.get_episode(fake, ep["id"])["transcript"]
+    # without job_id → still transcript-only done (covers the no-job branch)
+    ep2 = repo.create_episode(fake, {"name": "e2", "episode_profile": {"num_segments": 1},
+                                     "speaker_profile": {"speakers": [{"name": "Alex"}]},
+                                     "content": "c", "status": "queued"})
+    out2 = onb_podcasts.generate_episode(fake, ep2["id"])
+    assert out2["status"] == "done" and out2.get("audio_url") is None
+
+
 def test_build_podcast_content_budget(fake):
     nb = repo.create_notebook(fake, name="n")
     empty = repo.create_source(fake, title="empty", asset={}, status="done", full_text="")

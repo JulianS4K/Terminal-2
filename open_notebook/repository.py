@@ -254,7 +254,7 @@ def create_speaker_profile(db, payload: dict) -> dict:
 
 def list_episodes(db) -> list[dict]:
     return _rows(db.table("onb_episodes").select(
-        "id,notebook_id,name,status,audio_url,error,created_at,updated_at").order(
+        "id,notebook_id,name,status,audio_url,error,content,created_at,updated_at").order(
         "created_at", desc=True).execute())
 
 
