@@ -22,6 +22,7 @@ import SalesChart from '../components/SalesChart';
 import ScanReport from '../components/ScanReport';
 import WaitlistPanel from '../components/WaitlistPanel';
 import AnnouncementsPanel from '../components/AnnouncementsPanel';
+import TierPricingPanel from '../components/TierPricingPanel';
 import { formatCurrency } from '../lib/utils';
 
 interface TierStat {
@@ -259,6 +260,12 @@ export default function OrganizerEventReport() {
           <h2 className="text-sm font-bold text-slate-700 mb-3 mt-2">Door scans</h2>
           <ScanReport eventId={eventId!} totalSold={totalSold} />
         </div>
+
+        {/* Scheduled pricing — time-based price steps per tier (owner/manager). */}
+        <TierPricingPanel
+          event={event}
+          canManage={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+        />
 
         {/* Waitlist — demand captured after sell-out; release spots to notify. */}
         <WaitlistPanel eventId={eventId!} />

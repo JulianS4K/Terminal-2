@@ -20,6 +20,7 @@ import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
 import SaveEventButton from '../components/SaveEventButton';
+import { effectiveTierPrice, nextPriceStep } from '../lib/pricing';
 import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
 import { claimFreeAddons } from '../lib/addons';
 import VoucherField from '../components/VoucherField';
@@ -196,8 +197,13 @@ export default function EventDetails() {
   
   const calculateFinalPrice = () => {
     if (!event) return 0;
-    let basePrice = selectedTier ? selectedTier.price : event.price;
-    
+    // Scheduled pricing: the selected tier's price is its current effective
+    // price (latest active step), not the flat base — so early-bird / timed
+    // price steps are reflected in the checkout total.
+    let basePrice = selectedTier
+      ? effectiveTierPrice(selectedTier.price, selectedTier.priceSchedule)
+      : event.price;
+
     if (appliedDiscount) {
       if (appliedDiscount.type === 'percentage') {
         basePrice = basePrice * (1 - appliedDiscount.value / 100);
@@ -624,6 +630,19 @@ export default function EventDetails() {
                 <div className="mb-8">
                     <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-2">Price</p>
                     <p className="text-6xl font-black text-brand-primary tracking-tighter italic">{formatCurrency(priceToDisplay * quantity, event.currency)}</p>
+                    {selectedTier && (() => {
+                      // Scheduled-pricing urgency nudge: surface the next upward
+                      // step so buyers see "price rises to $X on <date>".
+                      const cur = effectiveTierPrice(selectedTier.price, selectedTier.priceSchedule);
+                      const next = nextPriceStep(selectedTier.priceSchedule);
+                      if (!next || next.price <= cur) return null;
+                      return (
+                        <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-brand-accent italic">
+                          ⏱ Price rises to {formatCurrency(next.price, event.currency)} on{' '}
+                          {formatInTz(new Date(next.startsAt), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </p>
+                      );
+                    })()}
                 </div>
 
                 <div className="mb-10">
@@ -668,7 +687,7 @@ export default function EventDetails() {
                          
                          <div className="flex justify-between items-center w-full mb-1">
                             <p className="font-black text-white text-lg uppercase tracking-tighter italic">{tier.name}</p>
-                            <p className="font-black text-brand-primary text-lg tracking-tighter italic">{formatCurrency(tier.price, event.currency)}</p>
+                            <p className="font-black text-brand-primary text-lg tracking-tighter italic">{formatCurrency(effectiveTierPrice(tier.price, tier.priceSchedule), event.currency)}</p>
                          </div>
                          
                          <p className="text-[10px] text-white/50 font-medium mb-4 uppercase tracking-tighter">{tier.description}</p>

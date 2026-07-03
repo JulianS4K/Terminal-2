@@ -233,6 +233,11 @@ export interface Event {
     // as the event itself is published.
     salesStart?: Timestamp | null;
     salesEnd?: Timestamp | null;
+    // Scheduled (time-based) pricing. `price` above is the opening price;
+    // each step says "on/after startsAt, the price becomes this". The
+    // effective price is the latest already-active step (lib/pricing.ts).
+    // Models early-bird → regular → last-minute. Empty/undefined = flat price.
+    priceSchedule?: { startsAt: string; price: number }[];
   }[];
   // Promo code metadata. The redemption *count* lives in the
   // events/{id}/promoUses/{code} sub-collection so it can be

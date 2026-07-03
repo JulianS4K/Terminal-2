@@ -44,6 +44,69 @@ lock, ScanReport field rename).
   with setup hints until env vars set. APPLE + GOOGLE buttons on
   TicketDetail.
 
+## Competitor gap backlog (TM · AXS · SeatGeek · OpenDate — 2026-07-03)
+
+Feature-parity gaps from a scan of Ticketmaster, AXS, SeatGeek, and
+OpenDate against what Bridge ships today, ranked by impact for our
+indie-primary + secondary-market positioning. `[ ]` = not started,
+`[~]` = partial/scaffolded, `[x]` = shipped.
+
+### Seller side (organizer)
+- `[x]` **Scheduled / dynamic tier pricing** (early-bird → regular →
+  last-minute time steps). *(TM, SeatGeek.)* Shipped v1: `price_schedule`
+  on tiers (mig `20260703122000`), read-time effective price
+  (`lib/pricing.ts`), `TierPricingPanel` editor on the event report,
+  live price + "price rises on…" nudge on EventDetails. **Follow-up:**
+  sold-%-based steps; server-side charge enforcement lands with
+  exos-checkout (must recompute effective price server-side).
+- `[ ]` **Reserved seating maps** — visual section/row/seat chart
+  builder + per-seat pricing + buyer seat picker + ADA/accessible
+  seats. *(TM, AXS, SeatGeek — table stakes.)* We only have a free-text
+  `seatingManifest`. Largest single build; unblocks ADA + per-seat price.
+- `[ ]` **Marketing automation + CRM** — segmented email/SMS/push
+  campaigns to followers / past attendees / waitlist, **abandoned-cart
+  recovery**, audience segments. *(OpenDate's moat; TM, SeatGeek.)*
+  Reuses `exos_mail` + `exos_org_follows` + ticket history. Highest
+  revenue leverage after resale.
+- `[ ]` **Timed-entry / time-slot / recurring events** — capacity per
+  slot; daily/recurring admissions. *(Most modern platforms.)* We're
+  single-date only.
+- `[ ]` **Season packages / memberships / multi-event bundles.** *(TM,
+  AXS, SeatGeek.)* Single-event only today.
+- `[ ]` **Box office / POS** — in-person sale, card reader, cash,
+  physical ticket stock printing. *(OpenDate, AXS venues.)* Online-only.
+- `[ ]` **Booking + artist settlement** — holds/offers calendar, deal
+  terms, payout/settlement accounting. *(OpenDate signature.)*
+- `[ ]` **Auto pre-event reminders** (T-1d / T-1h). Manual announcement
+  shipped; needs a scheduled send (cron/drainer) to auto-fire.
+- `[ ]` **Group sales / comp allocations** workflow. *(TM, AXS.)*
+- `[ ]` **RFID / hardware access control + entry zones.** *(Enterprise
+  venues.)* We have phone-camera scan only.
+
+### Buyer side (fan)
+- `[ ]` **Fan-to-fan resale / face-value exchange** — priced resale,
+  barcode void+reissue to buyer, payout routing, price caps. *(TM Face
+  Value Exchange, AXS Official Resale, SeatGeek marketplace.)* **#1
+  strategic gap** — it *is* our secondary-market thesis, and the
+  reissue-on-transfer + `channelSource` + Automatiq schema are already
+  here. We only do free transfers today. **Recommended next build.**
+- `[ ]` **Ticket insurance / refund protection.** *(TM, AXS, SeatGeek
+  via XCover / Cover Genius.)* Add-on revenue; mostly a partner wire-up.
+- `[ ]` **Installment / BNPL payment plans** (Affirm / Klarna /
+  Afterpay). *(SeatGeek.)* Conversion on higher-priced tiers.
+- `[ ]` **Smart queue / virtual waiting room + Verified Fan** (fair
+  high-demand onsales). *(TM, AXS.)* Our waitlist is post-sellout only.
+- `[ ]` **Deal Score / price transparency + personalized discovery.**
+  *(SeatGeek.)* Basic discovery only today.
+- `[ ]` **Event-day experience hub** (directions, food-to-seat, merch,
+  rideshare, in-app upgrades — SeatGeek **Rally**). We stop at ticket +
+  add-ons.
+- `[~]` **Native Apple / Google Wallet passes.** *(TM, AXS, SeatGeek.)*
+  Browser-only `WalletPass` today; native `.pkpass` / Google Wallet
+  scaffolds still on the rebuild queue.
+- `[ ]` **Self-service upgrades + gift cards / gifting.** *(TM,
+  SeatGeek.)* Upgrades depend on the seat-map work.
+
 ## To Do (post-rebuild — borrowed from hi.events + pretix research)
 
 The most public open-source alternatives are hi.events (Laravel +
@@ -169,6 +232,14 @@ indie-cap + secondary-market positioning.
 
 ## Done
 
+- **Scheduled / dynamic tier pricing (seller).** `price_schedule` jsonb
+  on `exos_ticket_tiers` (mig `20260703122000`) — ordered
+  `{startsAt, price}` time steps; effective price computed at read time
+  (`lib/pricing.ts`), exposed through the security-invoker
+  `exos_public_tiers` view (+ anon column grant). `TierPricingPanel`
+  editor on OrganizerEventReport (owner/manager); EventDetails shows the
+  live effective price + a "price rises to $X on <date>" urgency nudge.
+  Own primary inventory — not a RULE-2 upstream reprice.
 - **Buyer saved events (wishlist).** `exos_event_saves` table (private
   per-user, RLS `user_id = auth.uid()`, no counter → plain RLS-gated
   writes). Heart toggle on EventDetails (`SaveEventButton`), a "Saved
