@@ -164,6 +164,78 @@ def build_broker_router(
             return {**empty, "error": str(e)}
         return res if isinstance(res, dict) else empty
 
+    @router.get("/api/broker/event/{event_id}/broadway-cast")
+    def broker_event_broadway_cast(event_id: int, _=Depends(require_auth)):
+        """Broadway 'who's playing the lead' + get-in price per performer for the
+        show at this event's venue. Venue-anchored resolution (like broadway_show_ref):
+        each Broadway house runs one show at a time. Returns a GENERIC
+        participant-getin contract — {kind, subject, metric, participants[]} — so
+        ESPN athletes can later feed the SAME panel/renderer under kind='espn'.
+
+        Full lead roster (broadway_cast_run) merged with priced aggregates
+        (v_broadway_performer_getin): a lead with no price coverage comes back
+        measured=false ('awaiting coverage') rather than dropped. applicable=false
+        when the event isn't a tracked Broadway show or the cast pipeline isn't
+        applied yet (degrades like the prediction-markets route)."""
+        db = get_require_sb()()
+        empty = {"event_id": event_id, "applicable": False, "kind": "broadway",
+                 "metric": "get_in_usd", "subject": None, "participants": []}
+        try:
+            ev = (db.table("events").select("id,name,venue_name")
+                    .eq("id", event_id).limit(1).execute().data or [])
+            if not ev:
+                return empty
+            venue = (ev[0].get("venue_name") or "").lower()
+            name = (ev[0].get("name") or "").lower()
+            refs = (db.table("broadway_show_ref")
+                      .select("show_slug,title,venue_name_pattern,event_name_pattern")
+                      .execute().data or [])
+            slug = title = None
+            for r in refs:
+                vp = (r.get("venue_name_pattern") or "").strip("%").lower()
+                if not vp or vp not in venue:
+                    continue
+                ep = (r.get("event_name_pattern") or "").strip("%").lower()
+                if ep and ep not in name:  # optional name guard for shared venues
+                    continue
+                slug, title = r["show_slug"], r.get("title")
+                break
+            if not slug:
+                return empty
+            runs = (db.table("broadway_cast_run")
+                      .select("performer_name,role,engagement_seq,run_start,run_end,"
+                              "is_final_confirmed,confidence,source_name")
+                      .eq("show_slug", slug).order("run_end").execute().data or [])
+            priced = (db.table("v_broadway_performer_getin")
+                        .select("*").eq("show_slug", slug).execute().data or [])
+            pmap = {(p.get("performer_name"), p.get("engagement_seq")): p for p in priced}
+            participants = []
+            for r in runs:
+                p = pmap.get((r.get("performer_name"), r.get("engagement_seq"))) or {}
+                participants.append({
+                    "name": r.get("performer_name"),
+                    "role": r.get("role"),
+                    "window_start": r.get("run_start"),
+                    "window_end": r.get("run_end"),
+                    "is_final_confirmed": r.get("is_final_confirmed"),
+                    "confidence": r.get("confidence"),
+                    "source": r.get("source_name"),
+                    "measured": bool(p),
+                    "avg_getin": p.get("avg_getin"),
+                    "median_getin": p.get("median_getin"),
+                    "min_getin": p.get("min_getin"),
+                    "max_getin": p.get("max_getin"),
+                    "closing_getin": p.get("closing_night_getin"),
+                    "perfs_priced": p.get("perfs_priced"),
+                    "snapshot_rows": p.get("snapshot_rows"),
+                })
+            return {"event_id": event_id, "applicable": bool(participants),
+                    "kind": "broadway", "metric": "get_in_usd",
+                    "subject": {"slug": slug, "title": title},
+                    "participants": participants}
+        except Exception as e:
+            return {**empty, "error": str(e)}
+
     @router.get("/api/broker/performer/{performer_id}/prediction-markets")
     def broker_performer_prediction_markets(performer_id: int, _=Depends(require_auth)):
         """Kalshi + Polymarket markets attributed to a performer (team): its game
