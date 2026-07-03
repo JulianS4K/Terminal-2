@@ -1,4 +1,9 @@
-// Supabase Edge Function: notebook-llm (v1)
+// Supabase Edge Function: notebook-llm (v2)
+//
+// v2: auth checks the bearer JWT's `role` claim == "service_role" instead of
+//     string-matching the raw key (the v1 equality check 401'd whenever the
+//     function's injected SUPABASE_SERVICE_ROLE_KEY differed byte-for-byte from
+//     the caller's copy — e.g. after a key rotation).
 //
 // Generic, SERVER-ONLY Claude Messages proxy for the open-notebook subsystem.
 // It exists so the notebook's chat / transformations / RAG-synthesis can reach
@@ -39,6 +44,25 @@ async function resolveKey(db: any): Promise<string | null> {
   return Deno.env.get("ANTHROPIC_API_KEY") ?? Deno.env.get("LLM_API_KEY") ?? null;
 }
 
+// Decode a bearer JWT's payload (signature already verified by the gateway when
+// verify_jwt=true) and return its `role` claim. Used to require a service-role
+// caller without string-matching the key value (which is brittle across key
+// rotation / differing env copies).
+function bearerRole(authHeader: string): string | null {
+  const m = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  const parts = m[1].trim().split(".");
+  if (parts.length !== 3) return null;
+  try {
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const payload = JSON.parse(atob(b64));
+    return typeof payload?.role === "string" ? payload.role : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function callAnthropic(apiKey: string, payload: any, attempt = 0): Promise<Response> {
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -58,14 +82,16 @@ async function callAnthropic(apiKey: string, payload: any, attempt = 0): Promise
 Deno.serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405);
 
-  // Server-only guard: require the service-role bearer. Only the trusted proxy
-  // (which holds SERVICE_ROLE_KEY) may drive this generic LLM proxy — it must
-  // never be reachable from a browser/anon caller (it would let anyone burn
-  // Anthropic cost with an arbitrary system prompt).
+  // Server-only guard: require a SERVICE-ROLE bearer. Only the trusted proxy
+  // (which holds the service-role key) may drive this generic LLM proxy — it
+  // must never be reachable from a browser/anon caller (that would let anyone
+  // burn Anthropic cost with an arbitrary system prompt). verify_jwt=true has
+  // already validated the signature; we check the decoded `role` claim rather
+  // than string-matching the key (robust to rotation / differing env copies).
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const auth = req.headers.get("Authorization") ?? "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (!serviceRole || bearer !== serviceRole) return jsonResponse({ error: "unauthorized" }, 401);
+  if (bearerRole(req.headers.get("Authorization") ?? "") !== "service_role") {
+    return jsonResponse({ error: "unauthorized" }, 401);
+  }
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceRole);
   const apiKey = await resolveKey(db);
