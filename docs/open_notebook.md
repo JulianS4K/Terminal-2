@@ -23,10 +23,20 @@ context; and generate multi-speaker **podcasts** (outline → transcript → TTS
 - **Providers** — Anthropic for chat / transformations / RAG synthesis; OpenAI for
   embeddings / TTS / STT. Key-gated and lazily imported (`open_notebook/providers.py`);
   absent keys degrade gracefully. **Claude has no embeddings endpoint**, so with only
-  `ANTHROPIC_API_KEY` the subsystem still works end-to-end: ingest saves + text-indexes
+  a Claude key the subsystem still works end-to-end: ingest saves + text-indexes
   sources (embedding is best-effort), **Ask** falls back to Postgres full-text retrieval
   (Claude still writes the answer), and **Chat** uses context-stuffing. OpenAI adds vector
   search, TTS podcasts, and audio transcription on top.
+- **Claude without a per-service key** — if `ANTHROPIC_API_KEY` is unset but Supabase
+  is configured (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, which the Python service
+  already has), chat/transform/RAG route through the `notebook-llm` Supabase **edge
+  function**, which reuses the platform's shared Anthropic key (the same secret the retail
+  `chat` function uses — `settings.anthropic_api_key`, env `ANTHROPIC_API_KEY`/`LLM_API_KEY`).
+  Same proxy pattern as `routers/retail_chat.py`: the trusted FastAPI service calls it with
+  the service-role bearer (the edge function rejects any other caller). The edge path is
+  non-streaming (the SSE endpoint emits one chunk) and defaults to `ONB_EDGE_CHAT_MODEL`
+  (`claude-haiku-4-5-20251001`); the direct-key path uses `ONB_CHAT_MODEL`. `provider_status()`
+  reports `chat_transport` = `anthropic` | `edge` | `none`.
 - **Backend** — `open_notebook/` package (config, providers, repository, ingest,
   transformations, search, ask, chat, podcasts, prompts), fronted by
   `routers/open_notebook.py` (`/api/notebook/*`) mounted in `server.py`. Ingest and
@@ -52,6 +62,10 @@ pre-deduped so the raw sales firehose is never read.
 ## Config / env
 - `ONB_ENABLED` (default `true`) — feature flag; `false` makes `/api/notebook/*` 404.
 - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` — optional; enable the AI features.
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` — when
+  `ANTHROPIC_API_KEY` is unset, these route chat/transform/RAG through the
+  `notebook-llm` edge function (shared platform key). `ONB_EDGE_CHAT_MODEL`
+  (default `claude-haiku-4-5-20251001`) is the model used on that path.
 - `ONB_CHAT_MODEL`, `ONB_EMBED_MODEL` (dim `ONB_EMBED_DIM`, default 1536),
   `ONB_STT_MODEL`, `ONB_TTS_MODEL`, `ONB_CHUNK_SIZE`/`ONB_CHUNK_OVERLAP`,
   `ONB_AUDIO_BUCKET` (default `onb-audio`, a public Supabase Storage bucket for

@@ -888,6 +888,8 @@ def test_search_unit(fake, monkeypatch):
 # ============================================================ providers unit
 def test_providers_missing_keys(monkeypatch):
     monkeypatch.setattr(onb_config, "ANTHROPIC_API_KEY", "")
+    # No per-service key AND no edge fallback → chat/transform truly unavailable.
+    monkeypatch.setattr(onb_config, "SUPABASE_SERVICE_ROLE_KEY", "")
     with pytest.raises(ProviderError):
         onb_providers.chat([{"role": "user", "content": "hi"}])
     with pytest.raises(ProviderError):
@@ -1013,6 +1015,117 @@ def test_real_provider_client_constructors(monkeypatch):
     monkeypatch.setattr(onb_config, "OPENAI_API_KEY", "k")
     assert onb_providers._anthropic_client() is not None
     assert onb_providers._openai_client() is not None
+
+
+# ---- edge-function chat fallback (shared platform Anthropic key) ----
+class _FakeEdgeResp:
+    def __init__(self, status_code, payload, *, raises_json=False):
+        self.status_code = status_code
+        self._payload = payload
+        self._raises_json = raises_json
+
+    def json(self):
+        if self._raises_json:
+            raise ValueError("bad json")
+        return self._payload
+
+
+def test_edge_chat_available_and_status(monkeypatch):
+    monkeypatch.setattr(onb_config, "SUPABASE_URL", "http://sb")
+    monkeypatch.setattr(onb_config, "SUPABASE_SERVICE_ROLE_KEY", "svc")
+
+    # anthropic key present → transport 'anthropic', direct-key model
+    monkeypatch.setattr(onb_config, "ANTHROPIC_API_KEY", "k")
+    assert onb_config.edge_chat_available() is True
+    st = onb_config.provider_status()
+    assert st["chat"] is True and st["chat_transport"] == "anthropic"
+    assert st["chat_model"] == onb_config.ONB_CHAT_MODEL
+
+    # no per-service key but edge available → transport 'edge', edge model
+    monkeypatch.setattr(onb_config, "ANTHROPIC_API_KEY", "")
+    st = onb_config.provider_status()
+    assert st["chat"] is True and st["chat_transport"] == "edge"
+    assert st["chat_model"] == onb_config.ONB_EDGE_CHAT_MODEL
+
+    # neither key nor edge → transport 'none', chat unavailable
+    monkeypatch.setattr(onb_config, "SUPABASE_SERVICE_ROLE_KEY", "")
+    assert onb_config.edge_chat_available() is False
+    st = onb_config.provider_status()
+    assert st["chat"] is False and st["chat_transport"] == "none"
+    assert st["chat_model"] == onb_config.ONB_CHAT_MODEL
+
+
+def test_edge_chat_success_routes_from_chat(monkeypatch):
+    import requests
+    monkeypatch.setattr(onb_config, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(onb_config, "SUPABASE_URL", "http://sb/")  # trailing slash trimmed
+    monkeypatch.setattr(onb_config, "SUPABASE_SERVICE_ROLE_KEY", "svc")
+    monkeypatch.setattr(onb_config, "SUPABASE_ANON_KEY", "anon")
+    captured = {}
+
+    def _post(url, headers=None, json=None, timeout=None):
+        captured.update(url=url, headers=headers, json=json)
+        return _FakeEdgeResp(200, {"text": "edge-answer"})
+    monkeypatch.setattr(requests, "post", _post)
+
+    assert onb_providers.chat([{"role": "user", "content": "hi"}], system="s") == "edge-answer"
+    assert captured["url"] == "http://sb/functions/v1/notebook-llm"
+    assert captured["headers"]["Authorization"] == "Bearer svc"
+    assert captured["headers"]["apikey"] == "anon"
+    assert captured["json"]["model"] == onb_config.ONB_EDGE_CHAT_MODEL
+    assert captured["json"]["system"] == "s"
+    # streaming path emits the whole completion as a single chunk
+    assert list(onb_providers.chat_stream([{"role": "user", "content": "hi"}])) == ["edge-answer"]
+
+
+def test_edge_chat_apikey_and_model_fallbacks(monkeypatch):
+    import requests
+    monkeypatch.setattr(onb_config, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(onb_config, "SUPABASE_URL", "http://sb")
+    monkeypatch.setattr(onb_config, "SUPABASE_SERVICE_ROLE_KEY", "svc")
+    monkeypatch.setattr(onb_config, "SUPABASE_ANON_KEY", "")  # no anon → apikey = service role
+    captured = {}
+
+    def _post(url, headers=None, json=None, timeout=None):
+        captured.update(headers=headers, json=json)
+        return _FakeEdgeResp(200, {"text": "ok"})
+    monkeypatch.setattr(requests, "post", _post)
+
+    # explicit model honored; no system → key omitted from payload
+    assert onb_providers.chat([{"role": "user", "content": "hi"}], model="claude-x") == "ok"
+    assert captured["headers"]["apikey"] == "svc"
+    assert captured["json"]["model"] == "claude-x"
+    assert "system" not in captured["json"]
+
+
+def test_edge_chat_error_and_empty_paths(monkeypatch):
+    import requests
+    monkeypatch.setattr(onb_config, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(onb_config, "SUPABASE_URL", "http://sb")
+    monkeypatch.setattr(onb_config, "SUPABASE_SERVICE_ROLE_KEY", "svc")
+    msg = [{"role": "user", "content": "hi"}]
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("refused")))
+    with pytest.raises(ProviderError):
+        onb_providers.chat(msg)
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _FakeEdgeResp(200, None, raises_json=True))
+    with pytest.raises(ProviderError):
+        onb_providers.chat(msg)
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _FakeEdgeResp(503, {"error": "nope"}))
+    with pytest.raises(ProviderError):
+        onb_providers.chat(msg)
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _FakeEdgeResp(500, "plain"))  # non-dict error body
+    with pytest.raises(ProviderError):
+        onb_providers.chat(msg)
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _FakeEdgeResp(200, {}))  # dict, no text → ""
+    assert onb_providers.chat(msg) == ""
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _FakeEdgeResp(200, ["x"]))  # non-dict body → ""
+    assert onb_providers.chat(msg) == ""
 
 
 # ============================================================ repository extras
