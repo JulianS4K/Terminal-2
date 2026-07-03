@@ -9,6 +9,7 @@ POSTing a source / podcast exercises the pipelines end-to-end against the fake D
 """
 from __future__ import annotations
 
+import datetime as _dt
 import os
 import sys
 import uuid
@@ -107,6 +108,14 @@ class _Query:
     def contains(self, col, vals):
         self._filters.append(("contains", col, list(vals))); return self
 
+    def filter(self, col, op, val):
+        if op == "cs":  # array-contains: "{123}" → membership check
+            vals = [v for v in str(val).strip("{}").split(",") if v]
+            self._filters.append(("contains_str", col, vals))
+        else:
+            self._filters.append((op, col, val))
+        return self
+
     def order(self, col, desc=False):
         self._order = (col, desc); return self
 
@@ -126,6 +135,10 @@ class _Query:
             if op == "contains":
                 v = row.get(col) or []
                 if not all(x in v for x in val):
+                    return False
+            if op == "contains_str":
+                rv = [str(x) for x in (row.get(col) or [])]
+                if not all(x in rv for x in val):
                     return False
         return True
 
@@ -329,11 +342,15 @@ def test_source_url_and_pdf_asset_builders(client, stub_providers, monkeypatch):
     nid = nb["id"]
     # url bad scheme
     assert client.post(f"/api/notebook/notebooks/{nid}/sources", json={"kind": "url", "url": "ftp://x"}).status_code == 400
-    # patch requests for the url ingest
+    # patch requests + SSRF guard for the url ingest
     import requests
+    monkeypatch.setattr(onb_ingest, "_assert_public_url", lambda url: None)
 
     class _Resp:
         text = "<html><head><title>Doc</title></head><body><p>Hello world body text</p><script>x</script></body></html>"
+        is_redirect = False
+        is_permanent_redirect = False
+        headers = {}
         def raise_for_status(self):
             return None
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
@@ -578,30 +595,89 @@ def test_extract_text_variants(monkeypatch):
         onb_ingest.extract_text({"kind": "mystery"})
 
 
-def test_extract_url(monkeypatch):
-    import requests
-    with pytest.raises(onb_ingest.IngestError):
-        onb_ingest._extract_url("ftp://x")
-
+def _resp(text="<html><title>Ti</title><body><p>Some text here</p></body></html>",
+          redirect=False, location=None):
     class _R:
-        text = "<html><title>Ti</title><body><p>Some text here</p></body></html>"
+        is_redirect = redirect
+        is_permanent_redirect = False
+        headers = {"Location": location} if location is not None else {}
+        def __init__(self):
+            self.text = text
         def raise_for_status(self):
             return None
-    monkeypatch.setattr(requests, "get", lambda *a, **k: _R())
+    return _R()
+
+
+def test_assert_public_url(monkeypatch):
+    import socket
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._assert_public_url("ftp://x")           # bad scheme
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._assert_public_url("http://")            # no host
+    # resolve failure
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: (_ for _ in ()).throw(OSError("dns")))
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._assert_public_url("https://x.com")
+    # private IP → refuse
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("169.254.169.254", 0))])
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._assert_public_url("http://metadata")
+    # public IP → ok
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))])
+    onb_ingest._assert_public_url("https://x.com")
+
+
+def test_extract_url(monkeypatch):
+    import requests
+    monkeypatch.setattr(onb_ingest, "_assert_public_url", lambda url: None)  # skip DNS in unit test
+
+    # a redirect hop then a 200
+    calls = {"n": 0}
+    def _get(url, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _resp(redirect=True, location="https://x.com/final")
+        return _resp()
+    monkeypatch.setattr(requests, "get", _get)
     text, title = onb_ingest._extract_url("https://x.com")
     assert "Some text" in text and title == "Ti"
 
-    def _fail(*a, **k):
-        raise RuntimeError("net")
-    monkeypatch.setattr(requests, "get", _fail)
+    # redirect with no Location → break, body is empty → "no extractable text"
+    monkeypatch.setattr(requests, "get",
+                        lambda *a, **k: _resp(redirect=True, location=None, text="<html><body></body></html>"))
     with pytest.raises(onb_ingest.IngestError):
         onb_ingest._extract_url("https://x.com")
 
-    class _Empty:
-        text = "<html><body></body></html>"
+    # too many redirects
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _resp(redirect=True, location="https://x.com/loop"))
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_url("https://x.com")
+
+    # fetch raises
+    monkeypatch.setattr(requests, "get", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("net")))
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_url("https://x.com")
+
+    # empty body
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _resp(text="<html><body></body></html>"))
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_url("https://x.com")
+
+    # non-2xx → raise_for_status raises → IngestError
+    class _Bad:
+        is_redirect = False
+        is_permanent_redirect = False
+        headers = {}
+        text = ""
         def raise_for_status(self):
-            return None
-    monkeypatch.setattr(requests, "get", lambda *a, **k: _Empty())
+            raise RuntimeError("404")
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Bad())
+    with pytest.raises(onb_ingest.IngestError):
+        onb_ingest._extract_url("https://x.com")
+
+    # SSRF guard rejection propagates
+    monkeypatch.setattr(onb_ingest, "_assert_public_url",
+                        lambda url: (_ for _ in ()).throw(onb_ingest.IngestError("private")))
     with pytest.raises(onb_ingest.IngestError):
         onb_ingest._extract_url("https://x.com")
 
@@ -922,6 +998,8 @@ def test_repository_listing_branches(fake):
     # note update allowed filter
     note = repo.create_note(fake, title="a", content="b")
     assert repo.update_note(fake, note["id"], {"content": "c", "bogus": 1})["content"] == "c"
+    # note update with only disallowed keys → returns current row (empty-patch guard)
+    assert repo.update_note(fake, note["id"], {"bogus": 1})["id"] == note["id"]
     # unlink source
     nb = repo.create_notebook(fake, name="nb")
     s = repo.create_source(fake, title="x", asset={}, status="done")
@@ -1046,7 +1124,24 @@ def test_performer_helpers():
     assert onb_performers._fmt_price(50) == "$50"
     assert onb_performers._fmt_price("bad") == "n/a"
     assert onb_performers._safe(lambda: 1 / 0, "fallback") == "fallback"
-    assert onb_performers._now_iso()
+    # _is_upcoming: tz-aware future kept, past dropped, naive attached-UTC, unparseable kept
+    future = "2099-01-01T12:00:00-05:00"
+    past = "2000-01-01T12:00:00-05:00"
+    now = _dt.datetime.now(_dt.timezone.utc)
+    assert onb_performers._is_upcoming(future, now) is True
+    assert onb_performers._is_upcoming(past, now) is False
+    assert onb_performers._is_upcoming("2099-01-01T12:00:00", now) is True  # naive → UTC
+    assert onb_performers._is_upcoming("not-a-date", now) is True           # unparseable → keep
+    assert onb_performers._is_upcoming(None, now) is False
+
+
+def test_digest_kv_allow_deny():
+    # allowed aggregate columns emitted; sensitive/unknown columns dropped
+    row = {"performer_id": 1, "home_rev": 100, "owned_margin": 42,
+           "cost_basis": 9, "internal_flag": "x", "median_price": 50}
+    out = onb_performers._digest_kv(row)
+    assert "home_rev=100" in out and "median_price=50" in out
+    assert "margin" not in out and "cost_basis" not in out and "internal_flag" not in out
 
 
 def test_extract_performer(perf_db, monkeypatch):

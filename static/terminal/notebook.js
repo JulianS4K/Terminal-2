@@ -352,7 +352,7 @@
     try {
       const r = await apiFetch('/api/notebook/search/ask', { method: 'POST', body: { question: q, notebook_id: state.current.id } });
       const passages = (r.passages || []).map(p =>
-        `<div class="nb-passage">[${p.index}] <span class="nb-badge">${esc(p.kind || '')}</span> ${esc((p.content || '').slice(0, 300))}${(p.content || '').length > 300 ? '…' : ''}</div>`).join('');
+        `<div class="nb-passage">[${esc(p.index)}] <span class="nb-badge">${esc(p.kind || '')}</span> ${esc((p.content || '').slice(0, 300))}${(p.content || '').length > 300 ? '…' : ''}</div>`).join('');
       setHTML('askOut', `
         <div class="nb-card"><div class="t">Answer</div>
           <div class="bd" style="white-space:pre-wrap;color:var(--text);font-size:13px;margin-top:6px">${esc(r.answer || '')}</div></div>
@@ -391,7 +391,7 @@
   }
 
   function renderMsg(m) {
-    return `<div class="nb-msg ${m.role === 'user' ? 'user' : ''}"><div class="who">${m.role}</div><div class="bd">${esc(m.content)}</div></div>`;
+    return `<div class="nb-msg ${m.role === 'user' ? 'user' : ''}"><div class="who">${esc(m.role)}</div><div class="bd">${esc(m.content)}</div></div>`;
   }
 
   async function sendChat() {

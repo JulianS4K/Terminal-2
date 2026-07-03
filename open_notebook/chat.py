@@ -57,10 +57,15 @@ def _history(db, session_id: str) -> list[dict]:
 def stream_reply(db, *, session_id: str, notebook_id: str, user_message: str) -> Iterator[str]:
     """Persist the user turn, stream the assistant reply, persist it at the end.
     Yields text deltas."""
-    repo.add_chat_message(db, session_id=session_id, role="user", content=user_message)
     context = build_context(db, notebook_id)
     system = prompts.chat_system_with_context(context)
-    messages = _history(db, session_id)
+    # Build the outgoing message list in memory — do NOT persist the user turn
+    # yet. Persisting the user turn before the model call risks an orphaned user
+    # message (provider error / mid-stream failure / client disconnect) that leaves
+    # the session with two consecutive user turns → the Anthropic API rejects
+    # non-alternating roles and every later turn 503s. Persist BOTH turns only
+    # after the stream completes successfully.
+    messages = _history(db, session_id) + [{"role": "user", "content": user_message}]
 
     # Obtain the provider stream eagerly so a missing-key/unavailable ProviderError
     # surfaces here (→ 503 before streaming starts) rather than mid-SSE.
@@ -71,6 +76,7 @@ def stream_reply(db, *, session_id: str, notebook_id: str, user_message: str) ->
         for delta in stream:
             collected.append(delta)
             yield delta
+        repo.add_chat_message(db, session_id=session_id, role="user", content=user_message)
         repo.add_chat_message(db, session_id=session_id, role="assistant",
                               content="".join(collected))
 
@@ -78,11 +84,14 @@ def stream_reply(db, *, session_id: str, notebook_id: str, user_message: str) ->
 
 
 def reply(db, *, session_id: str, notebook_id: str, user_message: str) -> str:
-    """Non-streaming variant (used by tests / clients that don't want SSE)."""
-    repo.add_chat_message(db, session_id=session_id, role="user", content=user_message)
+    """Non-streaming variant (used by tests / clients that don't want SSE).
+
+    Persists both turns only after a successful completion — see stream_reply for
+    why the user turn is not persisted up front."""
     context = build_context(db, notebook_id)
     system = prompts.chat_system_with_context(context)
-    messages = _history(db, session_id)
+    messages = _history(db, session_id) + [{"role": "user", "content": user_message}]
     answer = providers.chat(messages, system=system, max_tokens=2048)
+    repo.add_chat_message(db, session_id=session_id, role="user", content=user_message)
     repo.add_chat_message(db, session_id=session_id, role="assistant", content=answer)
     return answer

@@ -22,10 +22,12 @@ def _decompose(question: str, max_queries: int = MAX_QUERIES) -> list[str]:
         system=system, max_tokens=400, temperature=0.0,
     ).strip()
     queries = _parse_json_array(raw)
-    # Always include the original question as a fallback query.
-    if question not in queries:
-        queries.append(question)
-    return queries[:max_queries]
+    # Always include the original question as a fallback query — and keep it after
+    # the cap (appending then slicing to max_queries could drop it when the LLM
+    # already returned max_queries distinct queries).
+    if question in queries:
+        queries.remove(question)
+    return queries[: max_queries - 1] + [question]
 
 
 def _parse_json_array(raw: str) -> list[str]:

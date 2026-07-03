@@ -158,6 +158,8 @@ def create_note(db, *, title: str | None, content: str | None, summary: str | No
 def update_note(db, note_id: str, patch: dict) -> dict | None:
     allowed = {k: v for k, v in patch.items()
                if k in ("title", "content", "summary", "note_type", "embedding")}
+    if not allowed:  # avoid an empty-body PATCH (PostgREST 400); return current row
+        return _one(db.table("onb_notes").select("*").eq("id", note_id).limit(1).execute())
     return _one(db.table("onb_notes").update(allowed).eq("id", note_id).execute())
 
 
@@ -193,6 +195,8 @@ def create_transformation(db, *, name: str, prompt: str, title: str | None = Non
 def update_transformation(db, tid: str, patch: dict) -> dict | None:
     allowed = {k: v for k, v in patch.items()
                if k in ("name", "prompt", "title", "description", "apply_default")}
+    if not allowed:  # avoid an empty-body PATCH (PostgREST 400); return current row
+        return get_transformation(db, tid)
     return _one(db.table("onb_transformations").update(allowed).eq("id", tid).execute())
 
 

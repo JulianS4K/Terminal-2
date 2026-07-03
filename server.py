@@ -1228,8 +1228,9 @@ app.include_router(build_misc_router(
 # ---------- open-notebook subsystem (/api/notebook/*) ----------
 # Operator-directed port of lfnovo/open-notebook: notebooks + sources + RAG chat +
 # transformations + podcasts, on Supabase Postgres (pgvector) + Anthropic/OpenAI.
-# Self-contained (open_notebook/ package + onb_* tables); does not touch the
-# ticket data plane. Feature-flagged via ONB_ENABLED (default on).
+# Self-contained (open_notebook/ package + onb_* tables); never MUTATES the ticket
+# data plane — the per-performer digest READS a fixed set of safe sources only (no
+# secrets/PII; see open_notebook/performers.py). Feature-flagged via ONB_ENABLED.
 from routers.open_notebook import build_open_notebook_router  # noqa: E402
 
 app.include_router(build_open_notebook_router(

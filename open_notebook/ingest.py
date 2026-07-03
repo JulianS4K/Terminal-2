@@ -57,14 +57,55 @@ def _extract_performer(asset: dict, db) -> tuple[str, str | None]:
     return text, name
 
 
+def _assert_public_url(url: str) -> None:
+    """SSRF guard — refuse to fetch a private/loopback/link-local/reserved host
+    (e.g. cloud-metadata 169.254.169.254 or an internal service). Called on the
+    initial URL and re-checked on every redirect hop."""
+    import ipaddress  # noqa: PLC0415
+    import socket  # noqa: PLC0415
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise IngestError("URL must be http(s)")
+    host = parsed.hostname
+    if not host:
+        raise IngestError("invalid URL host")
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception as e:
+        raise IngestError(f"cannot resolve host: {e}") from e
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            raise IngestError("refusing to fetch a private/internal address")
+
+
 def _extract_url(url: str) -> tuple[str, str | None]:
     import requests  # noqa: PLC0415
     from bs4 import BeautifulSoup  # noqa: PLC0415
 
-    if not (url.startswith("http://") or url.startswith("https://")):
-        raise IngestError("URL must be http(s)")
+    # Follow redirects manually, re-validating each hop against the SSRF guard so a
+    # public URL can't 302 into a link-local/metadata address.
+    resp = None
+    for _ in range(6):
+        _assert_public_url(url)
+        try:
+            resp = requests.get(url, timeout=20, allow_redirects=False,
+                                headers={"User-Agent": "open-notebook/1.0"})
+        except Exception as e:
+            raise IngestError(f"fetch failed: {e}") from e
+        if resp.is_redirect or resp.is_permanent_redirect:
+            loc = resp.headers.get("Location")
+            if not loc:
+                break
+            url = requests.compat.urljoin(url, loc)
+            continue
+        break
+    else:
+        raise IngestError("too many redirects")
     try:
-        resp = requests.get(url, timeout=20, headers={"User-Agent": "open-notebook/1.0"})
         resp.raise_for_status()
     except Exception as e:
         raise IngestError(f"fetch failed: {e}") from e

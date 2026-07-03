@@ -83,13 +83,16 @@ def generate_episode(db, episode_id: str, *, job_id: str | None = None) -> dict:
             "content": _transcript_to_text(transcript),
         })
 
-        # Stage 3 — TTS per turn, concatenated
+        # Stage 3 — TTS per turn, concatenated. Voice is keyed on the SPEAKER's
+        # stable position (not the turn index) so each speaker keeps one voice.
+        speaker_order = {n: i for i, n in enumerate(speakers)}
         audio = bytearray()
-        for i, turn in enumerate(transcript):
+        for turn in transcript:
             text = (turn.get("text") or "").strip()
             if not text:
                 continue
-            voice = _voice_for(sp_profile, turn.get("speaker") or "", i)
+            sp_name = turn.get("speaker") or ""
+            voice = _voice_for(sp_profile, sp_name, speaker_order.get(sp_name, 0))
             audio.extend(providers.tts(text, voice=voice))
 
         audio_url = _upload_audio(db, episode_id, bytes(audio))

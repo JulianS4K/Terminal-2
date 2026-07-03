@@ -16,7 +16,8 @@
 --   pgvector (embeddings), tsvector/pg_trgm (text search), and join tables (edges).
 --   All objects are `onb_`-prefixed and live in `public` so the shared service-role
 --   supabase-py client (`sb`) reaches them with no schema-exposure config. This
---   subsystem is self-contained — it does NOT touch the ticket data plane.
+--   subsystem never MUTATES the ticket data plane; the per-performer digest
+--   (open_notebook/performers.py) only READS a fixed set of safe, non-sensitive sources.
 --
 -- NOTE: embedding dim 1536 = OpenAI text-embedding-3-small. If the default
 --   embedding model changes dimension, the vector columns + HNSW indexes must be

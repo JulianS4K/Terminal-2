@@ -29,10 +29,20 @@ def _rows(res) -> list[dict]:
     return getattr(res, "data", None) or []
 
 
-def _now_iso() -> str:
-    # occurs_at_local is TEXT "YYYY-MM-DDTHH:MM:SS±HH:MM"; a naive-UTC prefix
-    # compares correctly for the date/time portion (tz offsets are small vs a day).
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+def _is_upcoming(occ: str | None, now_utc: _dt.datetime) -> bool:
+    """occurs_at_local is TEXT "YYYY-MM-DDTHH:MM:SS±HH:MM" (offset varies by venue
+    tz). Parse it to a real instant and compare — a lexicographic string compare
+    against a UTC wall-clock is WRONG (a several-hour offset flips same-evening
+    events). Unparseable → keep (don't silently drop)."""
+    if not occ:
+        return False
+    try:
+        dt = _dt.datetime.fromisoformat(occ)
+    except ValueError:
+        return True
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_dt.timezone.utc)
+    return dt >= now_utc
 
 
 def _safe(fn, default):
@@ -72,18 +82,21 @@ def resolve_performer(db, *, performer_id: int | None = None, name: str | None =
 
 
 def _upcoming_events(db, pid: int) -> list[dict]:
-    now = _now_iso()
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
     cols = "id,name,occurs_at_local,venue_name,venue_location,primary_performer_name,state,performer_ids"
     primary = _safe(lambda: _rows(db.table("events").select(cols).eq("primary_performer_id", pid).execute()), [])
-    also = _safe(lambda: _rows(db.table("events").select(cols).contains("performer_ids", [pid]).execute()), [])
+    # postgrest .contains() str-joins the value with no int coercion (raises on
+    # int); use an explicit `cs.{<id>}` array-literal filter so secondary-performer
+    # (e.g. away-game) events are included, not silently dropped.
+    also = _safe(lambda: _rows(db.table("events").select(cols)
+                               .filter("performer_ids", "cs", "{%d}" % pid).execute()), [])
     seen, out = set(), []
     for e in [*primary, *also]:
         eid = e.get("id")
         if eid in seen:
             continue
         seen.add(eid)
-        occ = e.get("occurs_at_local")
-        if not occ or occ < now:
+        if not _is_upcoming(e.get("occurs_at_local"), now_utc):
             continue
         if (e.get("state") or "") in ("past", "ignored"):
             continue
@@ -109,6 +122,32 @@ def _movement_by_event(db, event_ids: list[int]) -> dict[int, dict]:
                                        "p_category": None, "p_limit": 200}).execute()), [])
     idset = set(event_ids)
     return {r["event_id"]: r for r in rows if r.get("event_id") in idset}
+
+
+# d0_perf_* views are aggregate realized-sales, but their columns aren't fixed —
+# a future column (e.g. cost-basis / owned-margin) must NOT auto-flow into the
+# digest text (embedded + shown in the UI). Emit only allowlisted aggregate
+# columns and hard-drop anything matching a sensitive token. Fail-safe: an
+# unrecognized column is omitted, not leaked.
+_D0_SAFE_TOKENS = ("rev", "median", "mean", "price", "count", "tix", "events",
+                   "home", "away", "avg", "min", "max", "p25", "p50", "p75", "p90",
+                   "section", "weighted", "visiting", "share")
+_D0_DENY_TOKENS = ("cost", "margin", "basis", "profit", "fee", "buyer",
+                   "email", "phone", "name", "secret", "owner")
+
+
+def _digest_kv(row: dict) -> str:
+    bits = []
+    for k, v in row.items():
+        kl = k.lower()
+        if kl == "performer_id":
+            continue
+        if any(d in kl for d in _D0_DENY_TOKENS):
+            continue
+        if not any(s in kl for s in _D0_SAFE_TOKENS):
+            continue
+        bits.append(f"{k}={v}")
+    return ", ".join(bits[:10])
 
 
 def _fmt_price(v) -> str:
@@ -169,13 +208,9 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
     if ha or ps:
         lines.append("## Realized-sales snapshot")
         if ha:
-            h = ha[0]
-            lines.append("- Home/away: " + ", ".join(
-                f"{k}={h[k]}" for k in list(h.keys())[:8] if k != "performer_id"))
+            lines.append("- Home/away: " + _digest_kv(ha[0]))
         if ps:
-            p = ps[0]
-            lines.append("- Price stats: " + ", ".join(
-                f"{k}={p[k]}" for k in list(p.keys())[:8] if k != "performer_id"))
+            lines.append("- Price stats: " + _digest_kv(ps[0]))
         lines.append("")
 
     # Prediction-market futures narrative (optional).

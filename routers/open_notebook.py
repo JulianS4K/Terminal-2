@@ -297,7 +297,7 @@ def build_open_notebook_router(
                 for delta in gen:
                     yield f"data: {json.dumps({'delta': delta})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
-            except ProviderError as e:
+            except Exception as e:  # noqa: BLE001 — any mid-stream failure becomes a clean SSE error frame
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
         return StreamingResponse(_sse(), media_type="text/event-stream",
