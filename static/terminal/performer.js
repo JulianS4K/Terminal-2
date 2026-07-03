@@ -21,6 +21,15 @@
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
+  // ?venue=<id> — a Broadway show's NYC house. When present, the page is scoped
+  // to that venue (NYC performances only), because the show's franchise
+  // performer (e.g. "Wicked - Musical") also covers the national tour.
+  function getVenueScope() {
+    const v = new URLSearchParams(location.search).get('venue');
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const performerId = getPerformerId();
@@ -85,11 +94,13 @@
       teams.forEach(t => {
         const li = document.createElement('li');
         const upcoming = t.events_count_next_90d != null ? `<span class="entity-idx-count">${t.events_count_next_90d}</span>` : '';
-        // Teams link to their performer page; Broadway shows (no performer id)
-        // link to a representative event so its Cast tab renders.
-        const href = t.tevo_performer_id
+        // Teams link to their performer page. Broadway shows link there too, but
+        // with &venue=<nyc house> so the page scopes to NYC (the show's franchise
+        // performer also tours). Fallback to a representative event if no id.
+        let href = t.tevo_performer_id
           ? `performer.html?performer=${t.tevo_performer_id}`
           : (t.sample_event_id ? `event.html?event=${t.sample_event_id}` : '#');
+        if (t.tevo_performer_id && t.tevo_venue_id) href += `&venue=${t.tevo_venue_id}`;
         li.innerHTML = `<a href="${href}">
             <span class="entity-idx-name">${escapeHtml(t.display_name || t.performer_name || '—')}</span>
             ${t.abbreviation ? `<span class="muted small">${escapeHtml(t.abbreviation)}</span>` : ''}
@@ -123,9 +134,22 @@
     // ESPN injury price-impact — reveals the Injuries tab only for a team.
     loadPerfInjury(performerId).catch(e => console.error('perf-injury', e));
 
+    // NYC-Broadway scope: a show's franchise performer also tours, so when a
+    // venue is pinned, load the portfolio by venue (NYC performances only) and
+    // hide the Upcoming Events tab (a multi-city tour optimizer — irrelevant to
+    // a single-house sit-down run and would surface tour cities).
+    const venueScope = getVenueScope();
+    if (venueScope) {
+      const upBtn = document.querySelector('#perfTabs .event-tab[data-tab="upcoming"]');
+      if (upBtn) { upBtn.hidden = true; upBtn.style.display = 'none'; }
+    }
+    const portfolioUrl = venueScope
+      ? `/api/portfolio?venue_id=${venueScope}`
+      : `/api/portfolio?performer_id=${performerId}`;
+
     Promise.all([
       T.api(`/api/broker/performer/${performerId}/assets`).catch(e => ({ __err: e })),
-      T.api(`/api/portfolio?performer_id=${performerId}`).catch(e => ({ __err: e })),
+      T.api(portfolioUrl).catch(e => ({ __err: e })),
     ]).then(([assets, portfolio]) => {
       const firstErr = [assets, portfolio].find(r => r && r.__err);
       if (firstErr) T.setStatus(firstErr.__err.message, 'err');
