@@ -8,11 +8,13 @@ import {
   listOutboundTransfers,
   cancelTransfer,
 } from '../lib/tickets';
-import { Ticket as TicketIcon, Calendar, ArrowRight, UserPlus, Mail } from 'lucide-react';
+import { Ticket as TicketIcon, Calendar, ArrowRight, UserPlus, Mail, Heart } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatInTz } from '../lib/datetime';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
+import { listSavedEvents } from '../lib/saves';
+import SaveEventButton from '../components/SaveEventButton';
 
 export default function MyTickets() {
   const { user } = useAuth();
@@ -24,6 +26,7 @@ export default function MyTickets() {
   const [showReceipts, setShowReceipts] = useState<string | null>(null); // eventId
   const [pendingTransfers, setPendingTransfers] = useState<Transfer[]>([]);
   const [outboundTransfers, setOutboundTransfers] = useState<Transfer[]>([]);
+  const [savedEvents, setSavedEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
 
   const handleCancelTransfer = async (transferId: string) => {
@@ -69,14 +72,16 @@ export default function MyTickets() {
         // Tickets (with event joined) + both pending-transfer directions.
         // The transfer rows carry denormalised event title/image, so no
         // ticket/event dereference is needed (the old Firestore N+1 is gone).
-        const [ticketsWithEvents, inbound, outbound] = await Promise.all([
+        const [ticketsWithEvents, inbound, outbound, saved] = await Promise.all([
           listMyTickets(),
           listInboundTransfers(),
           listOutboundTransfers(),
+          listSavedEvents(),
         ]);
         if (cancelled) return;
 
         setTickets(ticketsWithEvents);
+        setSavedEvents(saved);
 
         const grouped = ticketsWithEvents.reduce((acc, t) => {
           if (!acc[t.eventId]) acc[t.eventId] = [];
@@ -275,6 +280,50 @@ export default function MyTickets() {
                 </motion.div>
               );
             })}
+          </div>
+        )}
+
+        {/* Saved Events — the buyer wishlist. Events the user hearted from the
+            event page. Un-hearting here drops the card immediately. */}
+        {savedEvents.length > 0 && (
+          <div className="mt-24">
+            <h2 className="text-xs font-black text-brand-primary uppercase tracking-tighter italic mb-8 flex items-center">
+              <Heart className="w-3.5 h-3.5 mr-3" fill="currentColor" aria-hidden="true" />
+              Saved Events ({savedEvents.length})
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-white/10 border border-white/10">
+              {savedEvents.map((ev) => (
+                <div key={ev.id} className="bg-[#111111] group relative">
+                  <Link to={`/event/${ev.id}`} className="block h-48 relative overflow-hidden">
+                    <img
+                      src={ev.image || 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?q=80&w=600'}
+                      alt=""
+                      className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#111111] via-transparent to-transparent"></div>
+                    <div className="absolute bottom-6 left-8 right-8">
+                      <h3 className="text-white font-black text-2xl uppercase italic tracking-tighter leading-none group-hover:text-brand-primary transition-colors">{ev.title}</h3>
+                    </div>
+                  </Link>
+                  <div className="p-8 flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter italic mb-1">Date</p>
+                      <p className="text-sm font-black text-white italic uppercase tracking-tighter">
+                        {ev.date ? formatInTz(ev.date.toDate(), ev.timezone, { month: 'short', day: 'numeric', year: 'numeric' }) : 'TBA'}
+                      </p>
+                    </div>
+                    <SaveEventButton
+                      eventId={ev.id}
+                      variant="chip"
+                      initialSaved
+                      onChange={(saved) => {
+                        if (!saved) setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

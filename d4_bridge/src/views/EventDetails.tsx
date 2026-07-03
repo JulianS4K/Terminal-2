@@ -19,6 +19,7 @@ import { initOrgPixels, trackPixelEvent } from '../lib/pixels';
 import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
+import SaveEventButton from '../components/SaveEventButton';
 import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
 import { claimFreeAddons } from '../lib/addons';
 import VoucherField from '../components/VoucherField';
@@ -807,6 +808,7 @@ export default function EventDetails() {
                     <Instagram className="w-4 h-4 mr-3 text-brand-primary" />
                     Share to Instagram
                   </button>
+                  <SaveEventButton eventId={event.id} variant="row" />
                 </div>
               </div>
             </div>

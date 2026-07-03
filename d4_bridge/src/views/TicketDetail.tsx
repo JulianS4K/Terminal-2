@@ -13,6 +13,7 @@ import { downloadIcsFile } from '../lib/calendarUtils';
 import { shareEventToStory } from '../lib/poster';
 import { useToast } from '../context/ToastContext';
 import ShareModal from '../components/ShareModal';
+import OrganizerUpdates from '../components/OrganizerUpdates';
 
 export default function TicketDetail() {
   const { id } = useParams();
@@ -433,6 +434,10 @@ export default function TicketDetail() {
               <p className="text-white/40 text-[11px] leading-relaxed italic font-medium uppercase tracking-tighter">This code automatically updates every 30 seconds to prevent unauthorized use. Please present this live ticket at the entrance instead of a screenshot.</p>
            </div>
         </div>
+
+        {/* Organizer updates — the in-app counterpart to announcement emails.
+            Renders nothing until the organizer has broadcast at least one. */}
+        <OrganizerUpdates eventId={event.id} />
       </div>
 
       {/*

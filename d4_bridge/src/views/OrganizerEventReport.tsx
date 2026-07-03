@@ -21,6 +21,7 @@ import { useToast } from '../context/ToastContext';
 import SalesChart from '../components/SalesChart';
 import ScanReport from '../components/ScanReport';
 import WaitlistPanel from '../components/WaitlistPanel';
+import AnnouncementsPanel from '../components/AnnouncementsPanel';
 import { formatCurrency } from '../lib/utils';
 
 interface TierStat {
@@ -261,6 +262,15 @@ export default function OrganizerEventReport() {
 
         {/* Waitlist — demand captured after sell-out; release spots to notify. */}
         <WaitlistPanel eventId={eventId!} />
+
+        {/* Attendee updates — broadcast a message to ticket holders (email +
+            in-app). Composer is owner/manager-only; the RPC re-checks server-side.
+            Finance-capable viewers below (scanner/content can't reach this page)
+            still see the sent history read-only. */}
+        <AnnouncementsPanel
+          eventId={eventId!}
+          canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+        />
 
         {/* Tier breakdown. */}
         <Section title="By Tier" empty="No tier breakdown yet — first sale populates this." rows={tierStats.length}>

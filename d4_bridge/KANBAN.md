@@ -169,6 +169,21 @@ indie-cap + secondary-market positioning.
 
 ## Done
 
+- **Buyer saved events (wishlist).** `exos_event_saves` table (private
+  per-user, RLS `user_id = auth.uid()`, no counter → plain RLS-gated
+  writes). Heart toggle on EventDetails (`SaveEventButton`), a "Saved
+  Events" section in My Tickets that un-hearts in place. Migration
+  `20260703120000` (D4 authors; A1 applies).
+- **Organizer → attendee announcements (two-sided).** Owner/manager
+  broadcast a free-text update to non-voided ticket holders; buyers get
+  it as an email (via the existing `exos_mail` queue, new
+  `event-announcement` template) AND an in-app thread on their ticket
+  ("Updates from the organizer"). Persisted in `exos_event_announcements`
+  (staff + holder RLS read), sent via `exos_send_event_announcement()`
+  SECDEF RPC (recipients server-derived, body tag-escaped — no open
+  relay). Composer on OrganizerEventReport (`AnnouncementsPanel`);
+  read-only thread on TicketDetail (`OrganizerUpdates`). Migration
+  `20260703121000`.
 - Live deployment to Firebase Hosting at
   `gen-lang-client-0961373515.web.app`.
 - Tsconfig truncation fix (commit 6532147).
