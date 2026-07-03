@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.0.0 (2026-07-03)
+**Doc version:** v1.1.0 (2026-07-03)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -55,7 +55,19 @@ barcodes (`exos_*`), and PII (`leads`, buyer data) are never touched. One call �
 `POST /api/notebook/performers/notebook {"name": "New York Yankees"}` (or
 `{"performer_id": N}`) — resolves the performer, creates a notebook, ingests the
 digest, and it's ready for Ask/Chat/Podcast. The terminal's **+ Performer** button
-does this (defaults to New York Yankees). Landmines respected:
+does this (defaults to New York Yankees).
+
+**Wikipedia auto-enrichment** (`open_notebook/wikipedia.py`, flag `ONB_WIKI_SOURCES`,
+on by default): on performer-notebook creation, a background task attaches the
+performer's canonical Wikipedia article as a URL source, and — for a **major-sports**
+team (`entity_performer_map.espn_league` present) — the recent `<year> <team> season`
+pages too. Scope is major sports + Broadway (category names theatre/musical); other
+categories attach nothing (avoids wrong-match articles). Season titles are *searched*
+via the MediaWiki API (not string-built), so MLB "2025 New York Yankees season" and
+NBA/NHL "2024–25 … season" naming both resolve without per-league code. Broadway names
+("Hamilton") are disambiguated to the `(musical)` article first. The resolved URLs
+ingest through the normal SSRF-guarded URL pipeline; enrichment is best-effort and
+never blocks notebook creation. Landmines respected:
 `events.occurs_at_local` is TEXT (string compare for "upcoming"); `d0_*` views are
 pre-deduped so the raw sales firehose is never read.
 
@@ -66,6 +78,8 @@ pre-deduped so the raw sales firehose is never read.
   `ANTHROPIC_API_KEY` is unset, these route chat/transform/RAG through the
   `notebook-llm` edge function (shared platform key). `ONB_EDGE_CHAT_MODEL`
   (default `claude-haiku-4-5-20251001`) is the model used on that path.
+- `ONB_WIKI_SOURCES` (default `true`) — auto-attach Wikipedia sources on
+  performer-notebook creation (see *Per-performer SQL sources*).
 - `ONB_CHAT_MODEL`, `ONB_EMBED_MODEL` (dim `ONB_EMBED_DIM`, default 1536),
   `ONB_STT_MODEL`, `ONB_TTS_MODEL`, `ONB_CHUNK_SIZE`/`ONB_CHUNK_OVERLAP`,
   `ONB_AUDIO_BUCKET` (default `onb-audio`, a public Supabase Storage bucket for

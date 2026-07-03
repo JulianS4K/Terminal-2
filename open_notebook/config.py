@@ -53,6 +53,10 @@ ONB_CHUNK_OVERLAP = int(os.environ.get("ONB_CHUNK_OVERLAP", "150"))
 # Supabase Storage bucket for generated podcast audio.
 ONB_AUDIO_BUCKET = os.environ.get("ONB_AUDIO_BUCKET", "onb-audio")
 
+# Auto-attach Wikipedia sources (performer article + recent season pages for
+# sports) when a performer notebook is created. On by default.
+ONB_WIKI_SOURCES = _flag("ONB_WIKI_SOURCES", True)
+
 
 def edge_chat_available() -> bool:
     """Chat/transform/RAG can be served via the `notebook-llm` edge function
