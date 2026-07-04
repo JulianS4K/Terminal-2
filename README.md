@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by four peer bot domains — **A1** (data plane), **B1** (git/code), **C1** (docs/coordination), **D0–D4** (frontend surfaces) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.8.0 (2026-07-03; documented the repo license split — root proprietary `LICENSE` + MIT carve-out for `static/lib/`). · v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ---
 
@@ -181,4 +181,7 @@ The gate is a **ratchet** — it only moves up. Product code (`server.py`, `core
 
 ---
 
-**License**: proprietary, internal use. Code authored by Anthropic Claude under operator direction.
+**License**: proprietary, internal use — All Rights Reserved (see [`LICENSE`](LICENSE)). Code authored by Anthropic Claude under operator direction.
+
+- The repository as a whole is **proprietary / All Rights Reserved** ([`LICENSE`](LICENSE)). Broker clients, ingest pipeline, `server.py`, business logic, and data-source integrations are confidential and may not be used, copied, or redistributed.
+- **Carve-out:** [`static/lib/`](static/lib/) (the framework-agnostic **S4K** frontend utilities) is released under the **MIT License** ([`static/lib/LICENSE`](static/lib/LICENSE)). This is the only open-source portion; do not extend MIT coverage to any other path.
