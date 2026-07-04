@@ -914,6 +914,7 @@
     const standings = d.standings || null;
     const injuries  = d.injuries || [];
     const recent    = d.recent_results || [];
+    const txns      = d.transactions || [];
     const standingsHtml = !standings ? '<div class="empty">no standings snapshot</div>' : `
       <table class="espn-standings">
         <tbody>
@@ -962,11 +963,24 @@
         }).join('')}
         </tbody>
       </table>`;
+    const txnHtml = !txns.length ? '<div class="empty">no recent transactions</div>' : `
+      <table class="espn-recent">
+        <thead><tr>
+          <th>When</th><th>Move</th>
+        </tr></thead>
+        <tbody>${txns.map(t => `
+          <tr>
+            <td class="muted">${t.txn_date ? T.fmtDate(t.txn_date) : '—'}</td>
+            <td>${escapeHtml(t.description || '—')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
     body.innerHTML = `
       <div class="espn-grid">
         <div class="espn-col"><div class="espn-col-hdr">STANDINGS</div>${standingsHtml}</div>
         <div class="espn-col"><div class="espn-col-hdr">INJURY REPORT</div>${injHtml}</div>
         <div class="espn-col espn-col-wide"><div class="espn-col-hdr">RECENT — last 5</div>${recHtml}</div>
+        <div class="espn-col espn-col-wide"><div class="espn-col-hdr">TRANSACTIONS</div>${txnHtml}</div>
       </div>`;
   }
 
