@@ -133,6 +133,8 @@
     loadPerfCast(performerId).catch(e => console.error('perf-cast', e));
     // ESPN injury price-impact — reveals the Injuries tab only for a team.
     loadPerfInjury(performerId).catch(e => console.error('perf-injury', e));
+    // Roster — reveals the Roster tab only for a team with a mapped ESPN roster.
+    loadPerfRoster(performerId).catch(e => console.error('perf-roster', e));
 
     // NYC-Broadway scope: a show's franchise performer also tours, so when a
     // venue is pinned, load the portfolio by venue (NYC performances only) and
@@ -196,8 +198,40 @@
     injury:     'panePerfInjury',
     futures:    'panePerfFutures',
     espn:       'paneEspn',
+    roster:     'panePerfRoster',
     alerts:     'panePerfAlerts',
   };
+
+  // Roster — reveals the Roster tab only for a team with a mapped ESPN roster,
+  // and lists its active players; each links to the player-detail page.
+  async function loadPerfRoster(performerId) {
+    let res;
+    try { res = await window.TerminalAuth.client.rpc('get_broker_performer_roster', { p_performer_id: performerId }); }
+    catch (_) { return; }
+    const d = (res && res.data) || {};
+    if (!d.applicable) return;                        // not a team / no ESPN xref
+    const players = d.players || [];
+    if (!players.length) return;
+    const btn = document.getElementById('perfRosterTab');
+    if (btn) { btn.hidden = false; btn.style.removeProperty('display'); }
+    const cnt = document.getElementById('tabCountPerfRoster');
+    if (cnt) cnt.textContent = String(players.length);
+    const meta = document.getElementById('perfRosterMeta');
+    if (meta) meta.textContent = `${players.length} players · ${escapeHtml(d.espn_league || '')}`;
+    const lg = encodeURIComponent(d.espn_league || '');
+    const body = document.getElementById('perfRosterBody');
+    if (body) body.innerHTML = `
+      <table class="espn-recent">
+        <thead><tr><th>#</th><th>Player</th><th>Pos</th></tr></thead>
+        <tbody>${players.map(p => `
+          <tr>
+            <td class="muted">${escapeHtml(p.jersey || '')}</td>
+            <td><a href="player.html?player=${encodeURIComponent(p.espn_athlete_id)}&league=${lg}">${escapeHtml(p.full_name || '—')}</a></td>
+            <td>${escapeHtml(p.position_abbr || p.position || '—')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
 
   // Broadway "who's playing the lead" — reveals the Cast tab ONLY for a
   // show-as-performer (broadway_show_ref.tevo_performer_id). Fire-and-forget;
@@ -935,6 +969,9 @@
     const standings = d.standings || null;
     const injuries  = d.injuries || [];
     const recent    = d.recent_results || [];
+    const txns      = d.transactions || [];
+    const att       = d.attendance || null;
+    const leaders   = d.stat_leaders || [];
     const standingsHtml = !standings ? '<div class="empty">no standings snapshot</div>' : `
       <table class="espn-standings">
         <tbody>
@@ -983,11 +1020,48 @@
         }).join('')}
         </tbody>
       </table>`;
+    const txnHtml = !txns.length ? '<div class="empty">no recent transactions</div>' : `
+      <table class="espn-recent">
+        <thead><tr>
+          <th>When</th><th>Move</th>
+        </tr></thead>
+        <tbody>${txns.map(t => `
+          <tr>
+            <td class="muted">${t.txn_date ? T.fmtDate(t.txn_date) : '—'}</td>
+            <td>${escapeHtml(t.description || '—')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+    const fmtN = n => (n == null ? '—' : Number(n).toLocaleString());
+    const attHtml = !att ? '' : `
+      <div class="espn-col-hdr" style="margin-top:10px">ATTENDANCE${att.season ? ' · ' + att.season : ''}</div>
+      <table class="espn-standings">
+        <tbody>
+          <tr><td class="lbl">LEAGUE RANK</td><td>${att.rank != null ? '#' + att.rank : '—'}</td></tr>
+          <tr><td class="lbl">HOME AVG</td><td>${fmtN(att.home_avg)}</td></tr>
+          <tr><td class="lbl">HOME TOTAL</td><td>${fmtN(att.home_total)}</td></tr>
+          ${att.home_pct ? `<tr><td class="lbl">CAPACITY</td><td>${att.home_pct}%</td></tr>` : ''}
+          <tr><td class="lbl">CAPTURED</td><td class="muted small">${T.fmtDate(att.captured_at)}</td></tr>
+        </tbody>
+      </table>`;
+    const ldrHtml = !leaders.length ? '<div class="empty">no player stats</div>' : `
+      <table class="espn-recent">
+        <thead><tr><th>Player</th><th>Pos</th><th>${escapeHtml(leaders[0].stat_label || 'STAT')}</th></tr></thead>
+        <tbody>${leaders.map(p => `
+          <tr>
+            <td>${escapeHtml(p.athlete_name || '—')}</td>
+            <td>${escapeHtml(p.position || '—')}</td>
+            <td class="num">${escapeHtml(String(p.stat_display ?? '—'))}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
     body.innerHTML = `
       <div class="espn-grid">
-        <div class="espn-col"><div class="espn-col-hdr">STANDINGS</div>${standingsHtml}</div>
+        <div class="espn-col"><div class="espn-col-hdr">STANDINGS</div>${standingsHtml}${attHtml}</div>
+        <div class="espn-col"><div class="espn-col-hdr">STAT LEADERS</div>${ldrHtml}</div>
         <div class="espn-col"><div class="espn-col-hdr">INJURY REPORT</div>${injHtml}</div>
         <div class="espn-col espn-col-wide"><div class="espn-col-hdr">RECENT — last 5</div>${recHtml}</div>
+        <div class="espn-col espn-col-wide"><div class="espn-col-hdr">TRANSACTIONS</div>${txnHtml}</div>
       </div>`;
   }
 

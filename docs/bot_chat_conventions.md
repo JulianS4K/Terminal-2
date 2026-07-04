@@ -21,9 +21,9 @@ Author: C1. First version: 2026-05-15 (part of Cluster D of the audit + consolid
 
 **Casing is significant**: use uppercase letter + digit. As of 2026-05-15 the table contains drift values (`c1`, `Audit/Push`, `Terminal FE`, `canonical`) — these predate this convention and should be migrated to canonical via a one-time operator-authorized `UPDATE` in Cluster D-2.
 
-`p_level` (lower-cased descriptive label of the bot's level in the hierarchy):
-- `admin` — A1, B1, C1, S1 (the supervisor tier)
-- `data-collection` — D0–D4 (the lane tier)
+`p_level` — a **legacy DB enum** (`bot_chat_bot_level_check`), **NOT the actor hierarchy** (that was dissolved 2026-07-02 — the lane codes are ownership-map labels, not ranks; `PROJECT_BIBLE §2`). The values persist only to satisfy the constraint; they no longer denote rank or a chain of command. Historical value→lane mapping (pass whichever the constraint accepts; D0 uses `data-collection`):
+- `admin` — historically A1/B1/C1/S1
+- `data-collection` — D0–D4
 - `secondary-sales` — historical, see migration notes
 
 ## Event types (schema-enforced)

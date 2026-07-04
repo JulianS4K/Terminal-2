@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Player</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260704a" />
+</head>
+<body data-page="performer">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap player">
+
+    <!-- No id: prompt (players are reached from a team ROSTER tab or search). -->
+    <section id="player-empty" hidden>
+      <div class="empty">No player selected. Open a team's <strong>Roster</strong> tab (Performer page) or use search.</div>
+    </section>
+
+    <!-- DETAIL: hero + season stats + game log -->
+    <section id="player-hero" class="ph" hidden>
+      <div class="ph-left">
+        <img id="plHero" alt="" />
+      </div>
+      <div class="ph-right">
+        <h1 class="title" id="plName">—</h1>
+        <p class="meta">
+          <a id="plTeam" class="muted">—</a>
+          <span class="dot">·</span>
+          <span id="plPos">—</span>
+          <span class="dot">·</span>
+          <span id="plJersey">—</span>
+          <span class="dot">·</span>
+          <span id="plMeta" class="muted small">—</span>
+          <span class="dot">·</span>
+          <span id="plStatus" class="badge">—</span>
+        </p>
+      </div>
+    </section>
+
+    <section id="player-stats" hidden>
+      <div class="panel-title">SEASON STATS</div>
+      <div id="plStatsBody"><div class="empty">loading…</div></div>
+    </section>
+
+    <section id="player-games" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span>GAME LOG</span>
+        <span class="muted small" id="plGamesMeta"></span>
+      </div>
+      <div id="plGamesBody"><div class="empty">loading…</div></div>
+    </section>
+
+    <section id="player-txns" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span>TRANSACTIONS</span>
+        <span class="muted small" id="plTxnMeta"></span>
+      </div>
+      <div id="plTxnBody"></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <script src="pwa.js?v=20260702"></script>
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260704txn"></script>
+  <script src="player.js?v=20260704txn"></script>
+</body>
+</html>

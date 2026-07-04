@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Racing</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260704results" />
+</head>
+<body data-page="racing">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap racing">
+
+    <div class="race-series" id="raceSeries" role="tablist">
+      <button class="race-tab" data-series="nascar-cup">NASCAR CUP</button>
+      <button class="race-tab" data-series="nascar-xfinity">XFINITY</button>
+      <button class="race-tab" data-series="nascar-truck">TRUCK</button>
+      <button class="race-tab" data-series="f1">FORMULA 1</button>
+    </div>
+
+    <div class="race-grid">
+      <section id="race-schedule">
+        <div class="panel-title row">
+          <span>SCHEDULE</span>
+          <span class="muted small" id="raceSchedMeta"></span>
+        </div>
+        <div id="raceSchedBody"><div class="empty">loading…</div></div>
+      </section>
+
+      <section id="race-standings">
+        <div class="panel-title row">
+          <span>DRIVER STANDINGS</span>
+          <span class="muted small" id="raceStandMeta"></span>
+        </div>
+        <div id="raceStandBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
+    <section id="race-results" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span id="raceResultsTitle">RACE RESULTS</span>
+        <a href="#" class="muted small" id="raceResultsClose">✕ close</a>
+      </div>
+      <div id="raceResultsBody"><div class="empty">loading…</div></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <script src="pwa.js?v=20260702"></script>
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260704txn"></script>
+  <script src="racing.js?v=20260704results"></script>
+</body>
+</html>

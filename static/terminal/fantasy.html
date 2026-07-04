@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Fantasy</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260704racing" />
+</head>
+<body data-page="fantasy">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap fantasy">
+
+    <div class="fan-bar">
+      <div class="fan-leagues" id="fanLeagues" role="tablist"></div>
+      <div class="fan-actions">
+        <button id="fanAdvance" class="fan-btn" hidden title="Schedule + score the next week">Advance week ▸</button>
+        <select id="fanManage" class="fan-select" hidden title="Manage a team's roster"></select>
+        <select id="fanDemoLeague" class="fan-select" title="Sport for the demo league">
+          <option value="NBA">NBA</option>
+          <option value="WNBA">WNBA</option>
+          <option value="MLB">MLB</option>
+          <option value="NFL">NFL</option>
+        </select>
+        <button id="fanNewDemo" class="fan-btn">+ Demo league</button>
+      </div>
+    </div>
+
+    <section id="fan-empty" hidden>
+      <div class="empty">No fantasy leagues yet. Click <strong>+ Demo league</strong> to spin one up — it drafts real athletes by trailing form, schedules a week, and scores it.</div>
+    </section>
+
+    <div class="fan-grid" id="fan-detail" hidden>
+      <section id="fan-standings">
+        <div class="panel-title row">
+          <span>STANDINGS</span>
+          <span class="muted small" id="fanStandMeta"></span>
+        </div>
+        <div id="fanStandBody"><div class="empty">loading…</div></div>
+      </section>
+
+      <section id="fan-teams">
+        <div class="panel-title row">
+          <span>TEAMS &amp; ROSTERS</span>
+          <span class="muted small" id="fanTeamsMeta"></span>
+        </div>
+        <div id="fanTeamsBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
+    <section id="fan-freeagents" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span>FREE AGENTS <span class="muted small" id="fanFaTeam"></span></span>
+        <input type="search" id="fanFaSearch" class="fan-fa-search" placeholder="Search available players…" autocomplete="off" />
+      </div>
+      <div id="fanFaBody"><div class="empty">select a team to manage…</div></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <script src="pwa.js?v=20260702"></script>
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260704txn"></script>
+  <script src="fantasy.js?v=20260704lineup"></script>
+</body>
+</html>

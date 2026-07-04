@@ -29,6 +29,11 @@
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
+    // Sports data surfaces (ESPN pipelines). Racing = F1 + NASCAR schedule +
+    // driver standings; Fantasy = league browser over the fantasy engine.
+    { id: 'racing',    label: 'RACING',    href: 'racing.html' },
+    { id: 'fantasy',   label: 'FANTASY',   href: 'fantasy.html' },
+    { id: 'transactions', label: 'TRANSACTIONS', href: 'transactions.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
     // owned-vs-market, price distribution, top sections). Backed by
@@ -166,8 +171,10 @@
       const perfs   = d.performers  || [];
       const vens    = d.venues      || [];
       const mkt     = d.marketplace || [];
+      const rac     = d.racing      || [];
+      const fan     = d.fantasy     || [];
       flat = [];
-      if (!players.length && !evs.length && !perfs.length && !vens.length && !mkt.length) {
+      if (!players.length && !evs.length && !perfs.length && !vens.length && !mkt.length && !rac.length && !fan.length) {
         sugg.innerHTML = `<div class="ts-empty">no matches for &ldquo;${escapeHtml(d.q || '')}&rdquo;</div>`;
         return;
       }
@@ -235,6 +242,37 @@
           flat.push({ href, label: v.venue_name, kind: 'venue' });
           parts.push(`<a class="ts-row" href="${href}" data-kind="venue">
               <span class="ts-name">${escapeHtml(v.venue_name || '(unnamed)')}</span>
+              <span class="ts-meta">${escapeHtml(meta)}</span>
+            </a>`);
+        });
+        parts.push('</div>');
+      }
+      // RACING — drivers (espn_racing_standings). Link to the series' standings.
+      if (rac.length) {
+        const SER = { 'nascar-cup': 'NASCAR Cup', 'nascar-xfinity': 'Xfinity',
+                      'nascar-truck': 'Truck', 'f1': 'Formula 1' };
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">RACING</div>');
+        rac.forEach(r => {
+          const href = `racing.html?series=${encodeURIComponent(r.series)}`;
+          const meta = [SER[r.series] || r.series, r.rank ? 'P' + r.rank : '', r.points != null ? r.points + ' pts' : '']
+            .filter(Boolean).join(' · ');
+          flat.push({ href, label: r.driver_name, kind: 'racing' });
+          parts.push(`<a class="ts-row" href="${href}" data-kind="racing">
+              <span class="ts-name">${escapeHtml(r.driver_name || '(driver)')}</span>
+              <span class="ts-meta">${escapeHtml(meta)}</span>
+            </a>`);
+        });
+        parts.push('</div>');
+      }
+      // FANTASY — leagues (fantasy_leagues). Link to the fantasy tab, preselected.
+      if (fan.length) {
+        parts.push('<div class="ts-section"><div class="ts-section-lbl">FANTASY</div>');
+        fan.forEach(f => {
+          const href = `fantasy.html?league=${encodeURIComponent(f.id)}`;
+          const meta = [f.espn_league, (f.team_count != null ? f.team_count + ' teams' : '')].filter(Boolean).join(' · ');
+          flat.push({ href, label: f.name, kind: 'fantasy' });
+          parts.push(`<a class="ts-row" href="${href}" data-kind="fantasy">
+              <span class="ts-name">${escapeHtml(f.name || '(league)')}</span>
               <span class="ts-meta">${escapeHtml(meta)}</span>
             </a>`);
         });

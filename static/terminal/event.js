@@ -714,6 +714,11 @@
       // MMA/UFC events have no team-snapshot ESPN data, so renderEspn() hides the
       // panel. Lazy-load the fight card from the espn edge fn (broker proxy) and
       // render it in the same ESPN panel. Fire-and-forget; no-ops for team sports.
+      // Extras branch by kind (racing standings / team transactions+leaders);
+      // always attempt it — racing (e.g. F1) events have no team snapshot so the
+      // main ESPN payload is hidden, but the extras panel still applies.
+      loadEspnExtras(eventId).catch(e => console.error('[espn-extras]', e));
+      // MMA/UFC: the espn fn renders the full fight card on demand.
       if (!data.espn || data.espn.hidden) {
         loadEspnFightCard(eventId).catch(e => console.error('[espn-mma]', e));
       }
@@ -2607,6 +2612,70 @@
       rr.appendChild(ul);
       body.appendChild(rr);
     }
+
+    // Transactions + stat leaders (lazy — get_espn_event_extras)
+    const extras = document.createElement('div');
+    extras.id = 'espnExtras';
+    body.appendChild(extras);
+  }
+
+  // Event-level ESPN extras, branched by kind:
+  //   racing  -> driver series standings (F1 races today)
+  //   team    -> both teams' transactions + stat leaders
+  //   mma     -> handled by loadEspnFightCard (the espn fn's richer on-demand card)
+  async function loadEspnExtras(eventId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+    // renderEspn() only creates #espnExtras for team events; for racing (F1) the
+    // team payload is hidden and it early-returns, so create the host if missing.
+    let host = document.getElementById('espnExtras');
+    if (!host) {
+      const body = document.getElementById('espnBody');
+      if (!body) return;
+      host = document.createElement('div');
+      host.id = 'espnExtras';
+      body.appendChild(host);
+    }
+    let res;
+    try { res = await Auth.client.rpc('get_espn_event_extras', { p_event_id: eventId }); }
+    catch (e) { return; }
+    const d = (res && res.data) || {};
+    if (!d || d.hidden) return;
+
+    // Racing: reveal the ESPN panel (F1 events have no team snapshot) + standings.
+    if (d.kind === 'racing') {
+      const st = d.standings || [];
+      if (!st.length) return;
+      const section = document.getElementById('espn');
+      if (section) section.style.display = '';
+      const subtitle = document.getElementById('espnSubtitle');
+      if (subtitle) subtitle.textContent = `${String(d.espn_league || '').toUpperCase()} · driver standings`;
+      host.innerHTML = `<div class="espn-sublabel">DRIVER STANDINGS · ${escapeHtml(d.series || '')}</div>` +
+        '<div style="overflow-x:auto"><table class="espn-recent"><thead><tr><th>#</th><th>Driver</th><th>Pts</th><th>Wins</th></tr></thead><tbody>' +
+        st.map(r => `<tr><td class="muted">${escapeHtml(String(r.rank ?? ''))}</td>` +
+          `<td>${escapeHtml(r.driver_name || '—')} <span class="muted small">${escapeHtml(r.country || '')}</span></td>` +
+          `<td class="num">${escapeHtml(String(r.points ?? '—'))}</td>` +
+          `<td class="num">${escapeHtml(String(r.wins ?? '—'))}</td></tr>`).join('') +
+        '</tbody></table></div>';
+      return;
+    }
+    if (d.kind === 'mma') return;  // loadEspnFightCard renders the full card
+
+    const side = (label, team) => {
+      if (!team) return '';
+      const txns = (team.transactions || []).slice(0, 3);
+      const ldrs = (team.leaders || []).slice(0, 5);
+      if (!txns.length && !ldrs.length) return '';
+      const txHtml = !txns.length ? '' :
+        '<div class="espn-sublabel">TRANSACTIONS</div><ul>' +
+        txns.map(t => `<li><span class="muted">${t.txn_date ? T.fmtDate(t.txn_date) : ''}</span> ${escapeHtml(t.description || '')}</li>`).join('') + '</ul>';
+      const ldHtml = !ldrs.length ? '' :
+        `<div class="espn-sublabel">STAT LEADERS · ${escapeHtml(team.stat_label || '')}</div><ul>` +
+        ldrs.map(p => `<li><strong>${escapeHtml(p.athlete_name || '')}</strong> <span class="inj-pos">${escapeHtml(p.position || '')}</span> <span class="val">${escapeHtml(String(p.stat_display ?? ''))}</span></li>`).join('') + '</ul>';
+      return `<div class="espn-extra-col"><div class="espn-sublabel" style="opacity:.7">${escapeHtml(label)}</div>${ldHtml}${txHtml}</div>`;
+    };
+    const html = side('AWAY', d.away) + side('HOME', d.home);
+    if (html) host.innerHTML = '<div class="espn-grid">' + html + '</div>';
   }
 
   function injuryClass(sev) {
