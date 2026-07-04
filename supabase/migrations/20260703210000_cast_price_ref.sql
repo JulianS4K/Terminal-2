@@ -84,7 +84,7 @@ BEGIN
     (entity_type, entity_name, entity_key, league, tevo_performer_id,
      home_events, home_median_price, away_events, away_median_price, overall_median_price, refreshed_at)
   SELECT etype, ename, ekey, league, tevo_pid,
-         he, round(hmed,2), ae, round(amed,2), round(omed,2), now()
+         he, round(hmed::numeric,2), ae, round(amed::numeric,2), round(omed::numeric,2), now()
   FROM (SELECT * FROM team_rows UNION ALL SELECT * FROM show_rows) u
   ON CONFLICT (entity_type, entity_name) DO UPDATE SET
      entity_key=EXCLUDED.entity_key, league=EXCLUDED.league,
