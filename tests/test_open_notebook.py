@@ -1338,6 +1338,7 @@ def test_performer_digest_enrichment():
     assert "posts/24h" in text and "r/TeamX" in text
     assert "vol 1000" in text and "Make playoffs" in text  # futures with + without volume
     assert "UMCSENT" in text
+    assert "Lens: secondary-market pricing" in text  # broker-price framing leads the digest
 
 
 def test_digest_helper_branches():
@@ -1643,3 +1644,7 @@ def test_prompts_helpers():
     assert onb_prompts.ask_synthesize_user("q", ["p1", "p2"])
     assert onb_prompts.ask_decompose_user("q")
     assert "no sources" not in onb_prompts.chat_system_with_context("ctx here")
+    # broker-pricing lens is woven into the analytical prompts
+    assert "pricing" in onb_prompts.CHAT_SYSTEM.lower()
+    assert "pricing" in onb_prompts.ASK_SYNTHESIZE_SYSTEM.lower()
+    assert "market preview" in onb_prompts.podcast_outline_user("b", "c", 3).lower()

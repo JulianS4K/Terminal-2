@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.2.0 (2026-07-03)
+**Doc version:** v1.3.0 (2026-07-04)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -43,6 +43,16 @@ context; and generate multi-speaker **podcasts** (outline → transcript → TTS
   podcast generation run as FastAPI background jobs tracked in `onb_jobs`.
 - **Frontend** — the **NOTEBOOK** tab in the terminal
   (`static/terminal/notebook.{html,js}`, wired into `nav.js`), plain HTML/JS.
+
+## Analytical lens — broker pricing desk
+The subsystem reads every performer/event from a **ticket-broker pricing** point of
+view: the through-line is secondary-market price + demand (get-in, retail median,
+sell-through, volatility) and where the broker edge is (hold · list · reprice · blow
+out). Hard market signals are weighted highest; every other factor (form, injuries,
+weather, buzz, news, macro, futures) is treated as a demand driver tied back to its
+price impact. This lens lives in `open_notebook/prompts.py` (`MARKET_LENS`, woven into
+chat / ask-synthesis / podcast prompts) and in the digest ordering — the digest leads
+with a market/pricing block and a lens preamble, then lists the context inputs.
 
 ## Per-performer SQL sources
 A **performer** source kind (`open_notebook/performers.py`) assembles a rich,
