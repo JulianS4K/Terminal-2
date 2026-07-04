@@ -33,6 +33,7 @@
     // driver standings; Fantasy = league browser over the fantasy engine.
     { id: 'racing',    label: 'RACING',    href: 'racing.html' },
     { id: 'fantasy',   label: 'FANTASY',   href: 'fantasy.html' },
+    { id: 'transactions', label: 'TRANSACTIONS', href: 'transactions.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
     // owned-vs-market, price distribution, top sections). Backed by

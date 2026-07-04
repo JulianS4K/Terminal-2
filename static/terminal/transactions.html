@@ -14,43 +14,38 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — Racing</title>
+  <title>Terminal — Transactions</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260704racing" />
+  <link rel="stylesheet" href="style.css?v=20260704txn" />
 </head>
-<body data-page="racing">
+<body data-page="transactions">
 
   <header class="topbar">
     <span class="brand">TERMINAL · D0</span>
     <span id="status" class="status">Loading…</span>
   </header>
 
-  <main class="wrap racing">
+  <main class="wrap transactions">
 
-    <div class="race-series" id="raceSeries" role="tablist">
-      <button class="race-tab" data-series="nascar-cup">NASCAR CUP</button>
-      <button class="race-tab" data-series="nascar-xfinity">XFINITY</button>
-      <button class="race-tab" data-series="nascar-truck">TRUCK</button>
-      <button class="race-tab" data-series="f1">FORMULA 1</button>
+    <div class="txn-bar">
+      <div class="txn-leagues" id="txnLeagues" role="tablist">
+        <button class="txn-tab active" data-league="">ALL</button>
+        <button class="txn-tab" data-league="NBA">NBA</button>
+        <button class="txn-tab" data-league="MLB">MLB</button>
+        <button class="txn-tab" data-league="NHL">NHL</button>
+        <button class="txn-tab" data-league="NFL">NFL</button>
+        <button class="txn-tab" data-league="WNBA">WNBA</button>
+      </div>
+      <input type="search" id="txnSearch" class="txn-search" placeholder="Search team / player / move…" autocomplete="off" spellcheck="false" />
     </div>
 
-    <div class="race-grid">
-      <section id="race-schedule">
-        <div class="panel-title row">
-          <span>SCHEDULE</span>
-          <span class="muted small" id="raceSchedMeta"></span>
-        </div>
-        <div id="raceSchedBody"><div class="empty">loading…</div></div>
-      </section>
-
-      <section id="race-standings">
-        <div class="panel-title row">
-          <span>DRIVER STANDINGS</span>
-          <span class="muted small" id="raceStandMeta"></span>
-        </div>
-        <div id="raceStandBody"><div class="empty">loading…</div></div>
-      </section>
-    </div>
+    <section id="txn-panel">
+      <div class="panel-title row">
+        <span>TRANSACTIONS</span>
+        <span class="muted small" id="txnMeta"></span>
+      </div>
+      <div id="txnBody"><div class="empty">loading…</div></div>
+    </section>
 
   </main>
 
@@ -60,6 +55,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260704txn"></script>
-  <script src="racing.js?v=20260704a"></script>
+  <script src="transactions.js?v=20260704a"></script>
 </body>
 </html>

@@ -2552,3 +2552,34 @@ body[data-page="login"] {
 .fan-player.starter .fan-slot { color: var(--pos); }
 .fan-player .fan-pname { font-weight: 600; }
 @media (max-width: 860px) { .fan-grid { grid-template-columns: 1fr; } }
+
+/* ---------- TRANSACTIONS page (TRANSACTIONS nav tab) ---------- */
+.wrap.transactions { padding: 14px; }
+.txn-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.txn-leagues { display: flex; flex-wrap: wrap; gap: 6px; }
+.txn-tab {
+  font-family: var(--mono); font-size: 11px; padding: 5px 12px; cursor: pointer;
+  background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 3px;
+}
+.txn-tab:hover { color: var(--text); border-color: var(--dim); }
+.txn-tab.active { color: var(--accent); border-color: var(--accent); background: var(--panel-2); font-weight: 700; }
+.txn-search {
+  flex: 1 1 220px; max-width: 320px; padding: 5px 10px;
+  font-family: var(--mono); font-size: 12px;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
+}
+#txn-panel { border: 1px solid var(--line); border-radius: 4px; padding: 10px; background: var(--panel); }
+.txn-row { padding: 8px 4px; border-bottom: 1px solid var(--line-2); }
+.txn-row:last-child { border-bottom: 0; }
+.txn-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; flex-wrap: wrap; }
+.txn-date { font-family: var(--mono); font-size: 10px; min-width: 48px; }
+.txn-team { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--text); text-decoration: none; }
+a.txn-team:hover { color: var(--accent); text-decoration: underline; }
+.txn-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.txn-players { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.txn-player {
+  display: inline-flex; align-items: center; gap: 4px; text-decoration: none;
+  font-family: var(--mono); font-size: 10px; padding: 2px 6px;
+  border: 1px solid var(--line-2); border-radius: 3px; color: var(--text);
+}
+.txn-player:hover { border-color: var(--accent); color: var(--accent); }

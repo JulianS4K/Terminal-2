@@ -52,6 +52,33 @@
     renderHero(d, league);
     renderSeasonStats(d.season_stats || {});
     renderGameLog(d.recent_games || [], league);
+    loadPlayerTxns(id, league);
+  }
+
+  // Recent ESPN transactions mentioning this player (name-matched, league-scoped)
+  // — see get_espn_player_transactions. Best-effort: silent if none/unsupported.
+  async function loadPlayerTxns(id, league) {
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_espn_player_transactions',
+      { p_athlete_id: id, p_league: league, p_limit: 20 });
+    if (res.error) return;   // block is additive; don't disrupt the page on error
+    const rows = res.data || [];
+    if (!rows.length) return;
+    document.getElementById('player-txns').removeAttribute('hidden');
+    const meta = document.getElementById('plTxnMeta');
+    if (meta) meta.textContent = `${rows.length} move${rows.length === 1 ? '' : 's'}`;
+    document.getElementById('plTxnBody').innerHTML = rows.map(r => {
+      const team = r.tevo_performer_id != null
+        ? `<a class="txn-team" href="performer.html?performer=${encodeURIComponent(r.tevo_performer_id)}">${escapeHtml(r.team || '—')}</a>`
+        : `<span class="txn-team">${escapeHtml(r.team || '—')}</span>`;
+      return `<div class="txn-row">
+        <div class="txn-row-head">
+          <span class="txn-date muted">${r.txn_date ? T.fmtDate(r.txn_date) : '—'}</span>
+          ${team}
+        </div>
+        <div class="txn-desc">${escapeHtml(r.description || '')}</div>
+      </div>`;
+    }).join('');
   }
 
   function renderHero(d, league) {
