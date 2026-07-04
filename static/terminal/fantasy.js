@@ -113,9 +113,10 @@
     body.innerHTML = teams.map(t => {
       const roster = (t.roster || []).map(p => {
         const href = `player.html?player=${encodeURIComponent(p.espn_athlete_id)}&league=${encodeURIComponent(lg)}`;
-        const starter = p.slot === 'starter';
+        const starter = p.slot !== 'bench';
+        const slotLabel = starter ? p.slot : 'BN';
         return `<a class="fan-player ${starter ? 'starter' : 'bench'}" href="${href}">
-          <span class="fan-slot">${starter ? 'ST' : 'BN'}</span>
+          <span class="fan-slot">${escapeHtml(slotLabel)}</span>
           <span class="fan-pname">${escapeHtml(p.name || p.espn_athlete_id)}</span>
           <span class="muted small">${escapeHtml(p.position || '')}</span>
         </a>`;
