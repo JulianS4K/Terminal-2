@@ -129,16 +129,22 @@
     body.innerHTML = teams.map(t => {
       const managing = t.id === manageTeamId;
       const roster = (t.roster || []).map(p => {
-        const href = `player.html?player=${encodeURIComponent(p.espn_athlete_id)}&league=${encodeURIComponent(lg)}`;
+        const id = p.espn_athlete_id;
+        const href = `player.html?player=${encodeURIComponent(id)}&league=${encodeURIComponent(lg)}`;
         const starter = p.slot !== 'bench';
         const slotLabel = starter ? p.slot : 'BN';
-        const drop = managing
-          ? `<button class="fan-drop" data-drop="${escapeHtml(p.espn_athlete_id)}" title="Drop">✕</button>` : '';
+        let ctrls = '';
+        if (managing) {
+          const toggle = starter
+            ? `<button class="fan-lineup" data-bench="${escapeHtml(id)}" title="Move to bench">↓</button>`
+            : `<button class="fan-lineup" data-start="${escapeHtml(id)}" title="Move to starting lineup">↑</button>`;
+          ctrls = toggle + `<button class="fan-drop" data-drop="${escapeHtml(id)}" title="Drop">✕</button>`;
+        }
         return `<span class="fan-player-wrap"><a class="fan-player ${starter ? 'starter' : 'bench'}" href="${href}">
           <span class="fan-slot">${escapeHtml(slotLabel)}</span>
-          <span class="fan-pname">${escapeHtml(p.name || p.espn_athlete_id)}</span>
+          <span class="fan-pname">${escapeHtml(p.name || id)}</span>
           <span class="muted small">${escapeHtml(p.position || '')}</span>
-        </a>${drop}</span>`;
+        </a>${ctrls}</span>`;
       }).join('');
       return `<div class="fan-team${managing ? ' managing' : ''}">
         <div class="fan-team-head">
@@ -148,9 +154,29 @@
         <div class="fan-roster">${roster || '<span class="muted small">empty roster</span>'}</div>
       </div>`;
     }).join('');
-    // Wire drop buttons for the managed team.
+    // Wire manage controls for the managed team.
     body.querySelectorAll('.fan-drop').forEach(b =>
       b.addEventListener('click', () => rosterMove('drop', b.dataset.drop)));
+    body.querySelectorAll('.fan-lineup[data-start]').forEach(b =>
+      b.addEventListener('click', () => lineupMove('start', b.dataset.start)));
+    body.querySelectorAll('.fan-lineup[data-bench]').forEach(b =>
+      b.addEventListener('click', () => lineupMove('bench', b.dataset.bench)));
+  }
+
+  async function lineupMove(action, athleteId) {
+    if (manageTeamId == null) return;
+    const fn = action === 'start' ? 'fantasy_start_player' : 'fantasy_bench_player';
+    T.setStatus(action === 'start' ? 'Starting…' : 'Benching…');
+    const res = await auth().client.rpc(fn, { p_team_id: manageTeamId, p_athlete_id: athleteId });
+    if (res.error) { T.setStatus(res.error.message, 'err'); return; }
+    const d = res.data || {};
+    if (d.ok === false) {
+      T.setStatus(d.error === 'no_open_slot'
+        ? `No open ${d.position || ''} slot — bench a starter first` : ('Move failed: ' + (d.error || 'unknown')), 'err');
+      return;
+    }
+    T.setStatus(action === 'start' ? `Started (${d.slot})` : 'Benched', 'ok');
+    await loadLeague(selectedId);
   }
 
   // ---- roster management (add/drop free agents) ----

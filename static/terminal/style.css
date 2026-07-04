@@ -2561,6 +2561,11 @@ body[data-page="login"] {
   padding: 1px 5px;
 }
 .fan-drop:hover { border-color: var(--neg); background: var(--neg); color: var(--bg); }
+.fan-lineup {
+  margin-left: 2px; cursor: pointer; font-family: var(--mono); font-size: 10px; line-height: 1;
+  color: var(--accent); background: transparent; border: 1px solid var(--line-2); border-radius: 3px; padding: 1px 5px;
+}
+.fan-lineup:hover { border-color: var(--accent); background: var(--accent); color: var(--bg); }
 #fan-freeagents { border: 1px solid var(--line); border-radius: 4px; padding: 10px; background: var(--panel); }
 .fan-fa-search {
   font-family: var(--mono); font-size: 11px; padding: 3px 8px; max-width: 220px;
