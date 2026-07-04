@@ -54,6 +54,18 @@
   // Allow only http(s); anything else collapses to a dead '#'.
   const safeHref = window.TermRender.safeHref;
 
+  // Ticker rows now carry INTERNAL relative links for mapped items
+  // (performer.html?…, player.html?…) alongside external http(s) article URLs.
+  // Internal links open same-tab (stay in the terminal); external open new-tab.
+  // The strict pattern (a `<page>.html` with a query of safe chars) is itself
+  // the injection guard for the relative branch — no scheme can slip through.
+  const INTERNAL_RE = /^[\w-]+\.html(?:\?[\w=&%.-]+)?$/i;
+  function linkAttrs(url) {
+    const u = (url || '').trim();
+    if (INTERNAL_RE.test(u)) return { href: u, ext: false };
+    return { href: safeHref(u), ext: true };
+  }
+
   function relTime(iso) {
     if (!iso) return '';
     const ms = Date.now() - new Date(iso).getTime();
@@ -205,10 +217,11 @@
     }
     const slice = items.slice(0, REEL_MAX);
     const itemHtml = slice.map(it => {
-      const href = safeHref(it.url);
+      const { href, ext } = linkAttrs(it.url);
+      const tgt = ext ? ' target="_blank" rel="noopener noreferrer"' : '';
       const sub = hasSub(it)
         ? `<span class="news-src">${esc(it.team)}</span>` : '';
-      return `<a class="news-reel-item" href="${href}" target="_blank" rel="noopener noreferrer">`
+      return `<a class="news-reel-item" href="${esc(href)}"${tgt}>`
            + badge(it)
            + `<span class="news-reel-head">${esc(it.headline || '')}</span>`
            + sub
@@ -226,11 +239,12 @@
     if (!list) return;
     if (!items.length) { list.innerHTML = ''; return; }
     const rows = items.slice(0, LIST_MAX).map(it => {
-      const href = safeHref(it.url);
+      const { href, ext } = linkAttrs(it.url);
+      const tgt = ext ? ' target="_blank" rel="noopener noreferrer"' : '';
       return `<div class="news-row">`
            + `<span class="news-time">${esc(relTime(it.published_at))}</span>`
            + badge(it)
-           + `<span class="news-head"><a href="${href}" target="_blank" rel="noopener noreferrer">${esc(it.headline || '')}</a></span>`
+           + `<span class="news-head"><a href="${esc(href)}"${tgt}>${esc(it.headline || '')}</a></span>`
            + `<span class="news-src">${esc(srcLabel(it))}</span>`
            + `</div>`;
     }).join('');
