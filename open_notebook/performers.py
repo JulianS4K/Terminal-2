@@ -394,18 +394,17 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
         lines.append(meta)
     lines.append("")
 
-    lines += _sec_wikipedia(db, performer_id)
-    lines += _sec_team_form(db, team_id)
-    lines += _sec_recent_results(db, performer_id)
-    lines += _sec_injuries(db, team_id)
-    lines += _sec_roster(db, performer_id)
-    lines += _sec_schedule(db, performer_id)
+    lines.append("_Lens: secondary-market pricing. Every factor below is a demand / price "
+                 "signal — read it for how it moves get-in, retail median, sell-through, "
+                 "volatility, and broker edge (hold · list · reprice · blow out)._")
+    lines.append("")
 
     events = _upcoming_events(db, performer_id)
     ids = [e["id"] for e in events]
     prices = _price_by_event(db, ids)
     movers = _movement_by_event(db, ids)
 
+    # ---- Market & pricing (lead — this is what we're pricing) ----
     lines.append(f"## Upcoming events ({len(events)})")
     if not events:
         lines.append("_No upcoming events on record._")
@@ -427,10 +426,7 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
         lines.append(f"- {head}" + (f" — {', '.join(detail)}" if detail else ""))
     lines.append("")
 
-    lines += _sec_weather(db, events)
-    lines += _sec_sentiment(db, events)
-    lines += _sec_reddit(db, performer_id)
-    lines += _sec_news(db, team_id)
+    lines += _sec_sentiment(db, events)        # demand velocity
     lines += _sec_hot_sections(db, performer_id)
 
     # Realized-sales color (D0 perf views) — best-effort, may be empty.
@@ -460,6 +456,16 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
                          f"({f.get('source')}: {price}{tail})")
         lines.append("")
 
+    # ---- Demand & context inputs (weigh each against price) ----
+    lines += _sec_weather(db, events)
+    lines += _sec_team_form(db, team_id)
+    lines += _sec_recent_results(db, performer_id)
+    lines += _sec_injuries(db, team_id)
+    lines += _sec_schedule(db, performer_id)
+    lines += _sec_reddit(db, performer_id)
+    lines += _sec_news(db, team_id)
+    lines += _sec_wikipedia(db, performer_id)
+    lines += _sec_roster(db, performer_id)
     lines += _sec_macro(db)
 
     return name, "\n".join(lines).strip()
