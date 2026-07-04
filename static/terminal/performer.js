@@ -643,6 +643,10 @@
   }
 
   // Minimal CSP-safe inline sparkline (no external libs). Skips null gaps.
+  // Line + soft gradient area fill + a dot on the latest point; all currentColor
+  // (styled via .pdm-spark). The unique gradient id keeps the three sparklines on
+  // one card from sharing a <defs>.
+  let _pdmSparkSeq = 0;
   function sparkline(series, w, h) {
     w = w || 240; h = h || 40;
     const pts = series.map((v, i) => [i, v]).filter((p) => p[1] !== null);
@@ -653,11 +657,20 @@
     const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
     const pad = 3;
     const proj = (x, y) => [pad + (x - minX) / spanX * (w - 2 * pad), h - pad - (y - minY) / spanY * (h - 2 * pad)];
-    const dPath = pts.map((p, i) => { const [px, py] = proj(p[0], p[1]); return (i ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1); }).join(' ');
-    const lastP = pts[pts.length - 1];
-    const [lx, ly] = proj(lastP[0], lastP[1]);
+    const P = pts.map((p) => proj(p[0], p[1]));
+    const dLine = P.map(([px, py], i) => (i ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1)).join(' ');
+    const dArea = `M${P[0][0].toFixed(1)} ${h - pad} `
+      + P.map(([px, py]) => 'L' + px.toFixed(1) + ' ' + py.toFixed(1)).join(' ')
+      + ` L${P[P.length - 1][0].toFixed(1)} ${h - pad} Z`;
+    const [lx, ly] = P[P.length - 1];
+    const gid = 'pdmspk' + (_pdmSparkSeq++);
     return `<svg class="pdm-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="trend">`
-      + `<path d="${dPath}"/><circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2"/></svg>`;
+      + `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">`
+      + `<stop offset="0" stop-color="currentColor" stop-opacity="0.24"/>`
+      + `<stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>`
+      + `<path class="spark-area" d="${dArea}" fill="url(#${gid})"/>`
+      + `<path class="spark-line" d="${dLine}"/>`
+      + `<circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2"/></svg>`;
   }
 
   function dayLabel(d) {

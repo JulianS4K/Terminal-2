@@ -618,18 +618,30 @@
   }
 
   // Minimal inline-SVG sparkline of the median-price series (no chart lib needed).
+  // Line + a soft gradient area fill beneath it, all currentColor (styled via
+  // .sg-spark) so it stays CSP-safe and theme-driven. The unique gradient id keeps
+  // multiple sparklines on one page from sharing a <defs>.
+  let _sgSparkSeq = 0;
   function sgSparkline(vals) {
     if (!vals || vals.length < 2) return '';
     const w = 600, h = 72, pad = 4;
     const min = Math.min(...vals), max = Math.max(...vals);
     const span = (max - min) || 1;
-    const pts = vals.map((v, i) => {
-      const x = pad + (i / (vals.length - 1)) * (w - 2 * pad);
-      const y = h - pad - ((v - min) / span) * (h - 2 * pad);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
+    const xy = vals.map((v, i) => [
+      pad + (i / (vals.length - 1)) * (w - 2 * pad),
+      h - pad - ((v - min) / span) * (h - 2 * pad),
+    ]);
+    const line = xy.map(([x, y], i) => (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ');
+    const area = `M${xy[0][0].toFixed(1)} ${h - pad} ` +
+      xy.map(([x, y]) => 'L' + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ') +
+      ` L${xy[xy.length - 1][0].toFixed(1)} ${h - pad} Z`;
+    const gid = 'sgspk' + (_sgSparkSeq++);
     return `<svg class="sg-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="median price trend">` +
-      `<polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${pts}" /></svg>`;
+      `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0" stop-color="currentColor" stop-opacity="0.22"/>` +
+      `<stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>` +
+      `<path class="spark-area" d="${area}" fill="url(#${gid})" />` +
+      `<path class="spark-line" d="${line}" /></svg>`;
   }
 
   async function wireSgTrackButton(sgId) {
@@ -1808,8 +1820,12 @@
       const v = (s.tipProjected || s.projected)[idx];
       if (v == null) return;
       const fmt = chartKey === 'price' ? '$' + Math.round(v) : Math.round(v).toString();
+      // Swatch mirrors the line's dash so it matches the legend + names the source.
+      const sw = s.dash
+        ? `background:repeating-linear-gradient(90deg,${s.color} 0 3px,transparent 3px 5px)`
+        : `background:${s.color}`;
       rows.push(
-        `<div class="tt-row"><i style="background:${s.color}"></i>` +
+        `<div class="tt-row"><i style="${sw}"></i>` +
         `<span class="tt-label">${escapeHtml(s.label)}</span>` +
         `<span class="tt-val">${fmt}</span></div>`
       );

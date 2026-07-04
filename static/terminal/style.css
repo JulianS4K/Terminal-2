@@ -131,6 +131,8 @@ main.wrap section { min-width: 0; }
 }
 /* SeatGeek-mode event page — price chart + sparkline */
 .sg-spark { display: block; width: 100%; height: 72px; color: var(--accent); margin: 8px 0 12px; }
+.sg-spark .spark-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.sg-spark .spark-area { stroke: none; }
 .wc-chart { width: 100%; min-height: 240px; margin: 8px 0 12px; }
 table.wc-daily { width: 100%; }
 
@@ -327,10 +329,10 @@ table.wc-daily { width: 100%; }
   line-height: 1.4;
 }
 .chart-tooltip .tt-row i {
-  width: 10px; height: 2px; flex: 0 0 auto;
+  width: 12px; height: 3px; flex: 0 0 auto; border-radius: 1.5px;
 }
 .chart-tooltip .tt-label { flex: 1 1 auto; color: var(--muted); }
-.chart-tooltip .tt-val   { flex: 0 0 auto; color: #f5f5f5; font-weight: 500; }
+.chart-tooltip .tt-val   { flex: 0 0 auto; color: #f5f5f5; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* Chart annotation overlay (mig 20260519150000) — sibling DOM layer for
    hover tooltips over canvas-drawn marker dots. Pointer events restricted
@@ -930,6 +932,7 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   font-size: 15px;
   font-weight: 700;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 .kpi-strip-cell .kpi-val .kpi-sg {
   margin-left: 6px;
@@ -1178,6 +1181,15 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono);
   min-height: 88px;
+  position: relative;
+  transition: background 120ms ease;
+}
+/* Scannability: the cell under the cursor lifts, and a hairline accent marks it
+   so the eye can walk the grid without losing its place. */
+.kpi-cell:hover { background: var(--panel-2); }
+.kpi-cell:hover::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--accent);
 }
 .kpi-cell .kpi-lbl {
   font-size: 10px;
@@ -1190,6 +1202,8 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   font-weight: 700;
   color: var(--text);
   line-height: 1.1;
+  letter-spacing: -0.3px;          /* tighten large numerals */
+  font-variant-numeric: tabular-nums;
 }
 .kpi-cell .kpi-val.pos  { color: var(--pos); }
 .kpi-cell .kpi-val.warn { color: var(--warn); }
@@ -1202,9 +1216,18 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   font-size: 11px;
   color: var(--info);
   letter-spacing: 0.2px;
+  font-variant-numeric: tabular-nums;
 }
-.kpi-cell .kpi-sg.pos { color: var(--pos); }
-.kpi-cell .kpi-sg.neg { color: var(--neg); }
+/* A signed SG delta reads as a chip so pos/neg registers pre-attentively. */
+.kpi-cell .kpi-sg.pos,
+.kpi-cell .kpi-sg.neg {
+  align-self: flex-start;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.kpi-cell .kpi-sg.pos { color: var(--pos); background: rgba(74, 222, 128, 0.12); }
+.kpi-cell .kpi-sg.neg { color: var(--neg); background: rgba(239, 68, 68, 0.12); }
 
 /* Chart controls (range selector + legend group inside each chart's title) */
 .chart-section .chart-controls {
