@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Transactions</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260704txn" />
+  <link rel="stylesheet" href="style.css?v=20260704type" />
 </head>
 <body data-page="transactions">
 
@@ -36,6 +36,9 @@
         <button class="txn-tab" data-league="NFL">NFL</button>
         <button class="txn-tab" data-league="WNBA">WNBA</button>
       </div>
+      <select id="txnType" class="txn-type-filter" title="Filter by move type">
+        <option value="">All types</option>
+      </select>
       <input type="search" id="txnSearch" class="txn-search" placeholder="Search team / player / move…" autocomplete="off" spellcheck="false" />
     </div>
 
@@ -55,6 +58,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260704txn"></script>
-  <script src="transactions.js?v=20260704a"></script>
+  <script src="transactions.js?v=20260704type"></script>
 </body>
 </html>

@@ -2595,6 +2595,19 @@ body[data-page="login"] {
   font-family: var(--mono); font-size: 12px;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
 }
+.txn-type-filter {
+  font-family: var(--mono); font-size: 11px; padding: 4px 8px;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
+}
+.txn-mtype {
+  font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .4px;
+  padding: 1px 5px; border-radius: 3px; border: 1px solid var(--dim); color: var(--muted);
+}
+.txn-mtype-SIGN, .txn-mtype-RE-SIGN { border-color: var(--pos); color: var(--pos); }
+.txn-mtype-WAIVE, .txn-mtype-RELEASE, .txn-mtype-DFA { border-color: var(--neg); color: var(--neg); }
+.txn-mtype-TRADE, .txn-mtype-CLAIM { border-color: var(--accent); color: var(--accent); }
+.txn-mtype-IL { border-color: var(--warn); color: var(--warn); }
+.txn-mtype-ACTIVATE, .txn-mtype-RECALL, .txn-mtype-PROMOTE { border-color: var(--info); color: var(--info); }
 #txn-panel { border: 1px solid var(--line); border-radius: 4px; padding: 10px; background: var(--panel); }
 .txn-row { padding: 8px 4px; border-bottom: 1px solid var(--line-2); }
 .txn-row:last-child { border-bottom: 0; }
