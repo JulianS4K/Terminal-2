@@ -232,6 +232,23 @@ indie-cap + secondary-market positioning.
 
 ## Done
 
+- **Prod apply — the five D4 migrations are LIVE + verified (2026-07-04).**
+  `20260703120000`–`20260703124000` (saves · announcements · tier price
+  schedule · announcement retract · reschedule) applied to prod
+  (`hzrizjeaxlqcxfrtczpq`). Verified against actual schema objects, not
+  the ledger — prod stamps migrations by MCP `apply_migration` timestamp,
+  so repo filename version-keys never match; confirmed via `to_regclass`
+  / `pg_policy` / column + grant introspection that every table, column,
+  RPC, RLS policy, view option (`security_invoker`), and mail-allowlist
+  value is present and matches. Security advisor clean for these surfaces
+  (only the by-design "authenticated can execute SECDEF" WARN on the two
+  RPCs — gate is inside the function body). Code merged to `main` via
+  PR #777 (squash `85da7b7`).
+  - `[ ]` **Follow-up (D4 · ops):** confirm the `exos_mail` drainer is
+    configured + running (`RESEND_API_KEY` + `EXOS_MAIL_FROM`) — the
+    schema is verified but email *delivery* for announcements + reschedule
+    notices rides that drainer. In-app notices, saved events, and pricing
+    display don't depend on it and are fully functional.
 - **Reschedule events (seller → buyer).** First-class postpone/move
   action, distinct from a silent EditEvent field change: updates the
   event timing, logs old→new (`exos_event_reschedules`, staff + holder
