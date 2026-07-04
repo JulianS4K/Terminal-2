@@ -4,7 +4,7 @@ Loaded automatically by Claude Code on every session in this repo. Applies to **
 
 **Current priorities live at the top of `KANBAN.md`, period.** This file and the bibles hold slow-moving invariants; fast-moving focus (what's active/paused/next) is KANBAN's job — never encode priority or lane status into a versioned governance doc (it is guaranteed to go stale).
 
-> **Doc version:** v2.5.0 (2026-07-03) — A1-as-gatekeeper language retired: prod-DB apply + Render writes are Applier actions run **per-task by any session under operator direction**, not centralized on A1 (the A1/B1/D0 codes are naming conventions for surface ownership, not a chain of command — the hierarchy stays dissolved). Push protocol + §2.1 Applier/Builder rows updated. · v2.4.0 (2026-07-02) — tier-2 lane consolidation (KANBAN C1-OPS-3): C1 folded into B1 (docs = Auditor work), D2 folded into D0 (both broker); six lanes now (substrate A1·B1 + products D0·D1·D3·D4). · v2.3.0 (2026-07-02) — §4 Render access restated under the 3-principal model (`PROJECT_BIBLE §2.1`); D0 "workspace-wide Render parity" retired; added the priority-lives-in-KANBAN rule up top; actor hierarchy dissolved (A1/B1/C1/D0–D4 now flat lane identifiers, not ranks — `PROJECT_BIBLE §2`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.5.0 (2026-07-03) — A1-as-gatekeeper language retired: prod-DB apply + Render writes are **Applier** actions run per-task by any session under operator direction, not centralized on A1 (A1/B1/D0 codes are naming conventions for surface ownership, not a chain of command — the hierarchy stays dissolved). · v2.4.0 (2026-07-02) — tier-2 lane consolidation (KANBAN C1-OPS-3): C1 folded into B1 (docs = Auditor work), D2 folded into D0 (both broker); six lanes now (substrate A1·B1 + products D0·D1·D3·D4). · v2.3.0 (2026-07-02) — §4 Render access restated under the 3-principal model (`PROJECT_BIBLE §2.1`); D0 "workspace-wide Render parity" retired; added the priority-lives-in-KANBAN rule up top; actor hierarchy dissolved (A1/B1/C1/D0–D4 now flat lane identifiers, not ranks — `PROJECT_BIBLE §2`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ## 🔖 READ PROJECT_BIBLE.md FIRST (token discipline)
 
@@ -89,7 +89,7 @@ Render MCP tools (`mcp__render__*`) follow the **three-principal permission mode
 
 **Render reads are open to every session** (`list_*`/logs/metrics — monitoring is universal, no per-call ask).
 
-**Render writes are an Applier action** (`PROJECT_BIBLE §2.1`): deploys, service config, provisioning/deletion, workspace-level operations (`create_web_service`, `create_postgres`, `create_static_site`, `create_cron_job`, `select_workspace`), ownership changes. Today only A1 sessions act as Applier on Render. A session that owns a Render service's *surface* (D0/D1/D2 per §2.7) authors its `render*.yaml` IaC as a **Builder**, but the runtime write is applied through the Applier principal — not standing per-bot authority. Any standing deviation is a dated row in `PROJECT_BIBLE §2.2`.
+**Render writes are an Applier action** (`PROJECT_BIBLE §2.1`): deploys, service config, provisioning/deletion, workspace-level operations (`create_web_service`, `create_postgres`, `create_static_site`, `create_cron_job`, `select_workspace`), ownership changes. The Applier action is taken **per-task by any session under operator direction** — not centralized on a lane. A session that owns a Render service's *surface* (D0/D1/D2 per §2.7) authors its `render*.yaml` IaC as a **Builder**, but the runtime write is applied through the Applier principal — not standing per-bot authority. Any standing deviation is a dated row in `PROJECT_BIBLE §2.2`.
 
 **Standing rules:**
 - Read ops always OK (no per-call ask).
@@ -130,8 +130,8 @@ If your work needs to touch another lane's surface:
 
 ## Push protocol *(reorg 2026-06-17)*
 
-- **Push to `main` is per-task/per-agent, not bot-tier-gated.** Each task is pushed by the session it's delegated to, after green CI. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `PROJECT_BIBLE.md §2.3`.)
-- **Prod-DB apply is operator/session-run, not lane-gated** — the A1/B1/D0 codes are naming conventions for *surface ownership*, not a chain of command (the actor hierarchy is dissolved, `PROJECT_BIBLE §2`). Any session may apply its own reviewed migration to prod under operator direction; there is no A1 gatekeeper. Author the migration file, get it reviewed + CI-green, then apply. (Git push ≠ DB apply — both are per-task, neither centralized on a lane.)
+- **Push to `main` is per-task/per-agent, not bot-tier-gated.** Each task is pushed by the session it's delegated to, after green CI; `main` is maintained per-task, with no sole-pusher lane. (Supersedes the prior "A1 sole pusher" immutable rule, operator directive 2026-06-17. See `PROJECT_BIBLE.md §2.3`.)
+- **Prod-DB apply is per-task/session-run, not lane-gated** — any session may apply its own reviewed, CI-green migration to prod under operator direction; **there is no A1 gatekeeper**. The A1/B1/D0 codes are naming conventions for *surface ownership*, not a chain of command (the actor hierarchy is dissolved, `PROJECT_BIBLE §2`). Author the migration file, get it reviewed + CI-green, then apply. (Git push ≠ DB apply — both are per-task, neither centralized on a lane.)
 - Open a PR per task; CI must be green before merge.
 
 ## When in doubt

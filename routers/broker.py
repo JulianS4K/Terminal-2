@@ -1,11 +1,12 @@
-"""Broker terminal routes (D0 surface) — the SIMPLE, helper-free subset.
+"""Broker terminal routes (D0 surface) — the full /api/broker/* + /api/portfolio surface.
 
-Slice 11 of the app.py decomposition (BR-CODE-1). Only the trivially-decoupled
-broker routes move here for now: /leagues (static), /performer/{id}/assets (one
-table read), /event/{id}/espn (server-side edge-fn proxy). The helper-heavy
-broker routes (overview / movers / chart-data / zones / …) stay in app.py until
-their shared helpers (_bulk_event_context / _compute_movers / _delta / …) are
-extracted to core/.
+Began as slice 11 of the app.py→routers/ decomposition (BR-CODE-1) with only the
+trivially-decoupled routes (/leagues, /performer/{id}/assets, /event/{id}/espn).
+The helper-heavy routes (overview / movers / chart-data / section-zones / zones /
+substitutions / …) have since been folded in, once their shared helpers were
+extracted to core/ (core/movers, core/broker_helpers, core/substitutions,
+core/helpers). app.py itself was renamed server.py (2026-06-26); this module is
+now the complete broker route surface, not a helper-free subset.
 
 Factory takes getters for the live require_sb + the SUPABASE url/key (so the
 espn route's monkeypatch tests keep working) + require_auth + the static
@@ -60,6 +61,35 @@ def _batch_fallback_zones(db, pairs: list[tuple]) -> dict[tuple, str | None]:
     return out
 
 
+def _broadway_participants(db, slug: str) -> list:
+    """Full lead roster for a Broadway show (broadway_cast_run) merged with priced
+    aggregates (v_broadway_performer_getin): uncovered leads come back
+    measured=false ('awaiting coverage'). Shared by the event- and
+    performer-scoped Broadway cast routes so both feed the same panel/renderer."""
+    runs = (db.table("broadway_cast_run")
+              .select("performer_name,role,engagement_seq,run_start,run_end,"
+                      "is_final_confirmed,confidence,source_name")
+              .eq("show_slug", slug).order("run_end").execute().data or [])
+    priced = (db.table("v_broadway_performer_getin")
+                .select("*").eq("show_slug", slug).execute().data or [])
+    pmap = {(p.get("performer_name"), p.get("engagement_seq")): p for p in priced}
+    out = []
+    for r in runs:
+        p = pmap.get((r.get("performer_name"), r.get("engagement_seq"))) or {}
+        out.append({
+            "name": r.get("performer_name"), "role": r.get("role"),
+            "window_start": r.get("run_start"), "window_end": r.get("run_end"),
+            "is_final_confirmed": r.get("is_final_confirmed"),
+            "confidence": r.get("confidence"), "source": r.get("source_name"),
+            "measured": bool(p),
+            "avg_getin": p.get("avg_getin"), "median_getin": p.get("median_getin"),
+            "min_getin": p.get("min_getin"), "max_getin": p.get("max_getin"),
+            "closing_getin": p.get("closing_night_getin"),
+            "perfs_priced": p.get("perfs_priced"), "snapshot_rows": p.get("snapshot_rows"),
+        })
+    return out
+
+
 def build_broker_router(
     get_require_sb: Callable[[], Callable],
     require_auth: Callable,
@@ -99,7 +129,14 @@ def build_broker_router(
                          "logo_default_url, logo_dark_url, logo_scoreboard_url, logo_4k_primary_url, logo_secondary_url, "
                          "espn_team_url, espn_roster_url, espn_schedule_url, espn_fetched_at")
                  .eq("performer_id", performer_id).limit(1).execute().data or [])
-        return row[0] if row else {"performer_id": performer_id, "logo_default_url": None}
+        if row:
+            return row[0]
+        # Non-ESPN performer (e.g. a Broadway show): no metadata row. Fall back to
+        # the performer's name from its events so the hero still renders a title.
+        ev = (db.table("events").select("primary_performer_name")
+                .eq("primary_performer_id", performer_id).limit(1).execute().data or [])
+        nm = ev[0].get("primary_performer_name") if ev else None
+        return {"performer_id": performer_id, "name": nm, "logo_default_url": None}
 
     @router.get("/api/broker/event/{event_id}/espn")
     def broker_event_espn(event_id: int, _=Depends(require_auth)):
@@ -148,6 +185,136 @@ def build_broker_router(
                 "espn_team":       {"last_pull_at": last_team_at,     "cadence_seconds": 60 * 60 * 24},
             },
         }
+
+    @router.get("/api/broker/event/{event_id}/prediction-markets")
+    def broker_event_prediction_markets(event_id: int, _=Depends(require_auth)):
+        """Kalshi + Polymarket implied-probability markets matched to this event:
+        game moneyline (matched by team + date) plus futures on the event's teams
+        (e.g. World Series / champion odds). Public data; served via the SECDEF
+        get_event_prediction_markets RPC. Degrades to empty arrays if the pipeline
+        migration is not yet applied."""
+        db = get_require_sb()()
+        empty = {"event_id": event_id, "game_markets": [], "futures": []}
+        try:
+            res = db.rpc("get_event_prediction_markets", {"p_event_id": event_id}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
+    @router.get("/api/broker/event/{event_id}/broadway-cast")
+    def broker_event_broadway_cast(event_id: int, _=Depends(require_auth)):
+        """Broadway 'who's playing the lead' + get-in price per performer for the
+        show at this event's venue. Venue-anchored resolution (like broadway_show_ref):
+        each Broadway house runs one show at a time. Returns a GENERIC
+        participant-getin contract — {kind, subject, metric, participants[]} — so
+        ESPN athletes can later feed the SAME panel/renderer under kind='espn'.
+
+        Full lead roster (broadway_cast_run) merged with priced aggregates
+        (v_broadway_performer_getin): a lead with no price coverage comes back
+        measured=false ('awaiting coverage') rather than dropped. applicable=false
+        when the event isn't a tracked Broadway show or the cast pipeline isn't
+        applied yet (degrades like the prediction-markets route)."""
+        db = get_require_sb()()
+        empty = {"event_id": event_id, "applicable": False, "kind": "broadway",
+                 "metric": "get_in_usd", "subject": None, "participants": []}
+        try:
+            ev = (db.table("events").select("id,name,venue_name")
+                    .eq("id", event_id).limit(1).execute().data or [])
+            if not ev:
+                return empty
+            venue = (ev[0].get("venue_name") or "").lower()
+            name = (ev[0].get("name") or "").lower()
+            refs = (db.table("broadway_show_ref")
+                      .select("show_slug,title,venue_name_pattern,event_name_pattern")
+                      .execute().data or [])
+            slug = title = None
+            for r in refs:
+                vp = (r.get("venue_name_pattern") or "").strip("%").lower()
+                if not vp or vp not in venue:
+                    continue
+                ep = (r.get("event_name_pattern") or "").strip("%").lower()
+                if ep and ep not in name:  # optional name guard for shared venues
+                    continue
+                slug, title = r["show_slug"], r.get("title")
+                break
+            if not slug:
+                return empty
+            participants = _broadway_participants(db, slug)
+            return {"event_id": event_id, "applicable": bool(participants),
+                    "kind": "broadway", "metric": "get_in_usd",
+                    "subject": {"slug": slug, "title": title},
+                    "participants": participants}
+        except Exception as e:
+            return {**empty, "error": str(e)}
+
+    @router.get("/api/broker/performer/{performer_id}/broadway-cast")
+    def broker_performer_broadway_cast(performer_id: int, _=Depends(require_auth)):
+        """Broadway cast get-in for a SHOW-as-performer (resolved via
+        broadway_show_ref.tevo_performer_id). Same generic participant contract as
+        the event route, so the performer page reuses the same Cast panel.
+        applicable=false for a non-Broadway performer / unapplied pipeline."""
+        db = get_require_sb()()
+        empty = {"performer_id": performer_id, "applicable": False, "kind": "broadway",
+                 "metric": "get_in_usd", "subject": None, "participants": []}
+        try:
+            ref = (db.table("broadway_show_ref").select("show_slug,title")
+                     .eq("tevo_performer_id", performer_id).limit(1).execute().data or [])
+            if not ref:
+                return empty
+            slug, title = ref[0]["show_slug"], ref[0].get("title")
+            participants = _broadway_participants(db, slug)
+            return {"performer_id": performer_id, "applicable": bool(participants),
+                    "kind": "broadway", "metric": "get_in_usd",
+                    "subject": {"slug": slug, "title": title},
+                    "participants": participants}
+        except Exception as e:
+            return {**empty, "error": str(e)}
+
+    @router.get("/api/broker/performer/{performer_id}/injury-getin")
+    def broker_performer_injury_getin(performer_id: int, _=Depends(require_auth)):
+        """ESPN injury price-impact for a team performer: currently-out players +
+        the team's avg game get-in during each out-window — the sports mirror of
+        the Broadway cast panel. Same generic participant contract (kind='espn')
+        so it reuses window.CastPanel. Served via the get_performer_injury_getin
+        SECDEF RPC; degrades to applicable=false for a non-team performer / no
+        current injuries / unapplied pipeline (like prediction-markets)."""
+        db = get_require_sb()()
+        empty = {"performer_id": performer_id, "applicable": False, "kind": "espn",
+                 "metric": "get_in_usd", "subject": None, "participants": []}
+        try:
+            res = db.rpc("get_performer_injury_getin", {"p_performer_id": performer_id}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
+    @router.get("/api/broker/performer/{performer_id}/prediction-markets")
+    def broker_performer_prediction_markets(performer_id: int, _=Depends(require_auth)):
+        """Kalshi + Polymarket markets attributed to a performer (team): its game
+        moneylines + season/champion futures. Public data via the SECDEF
+        get_performer_prediction_markets RPC; empty when unmatched / not applied."""
+        db = get_require_sb()()
+        empty = {"performer_id": performer_id, "markets": []}
+        try:
+            res = db.rpc("get_performer_prediction_markets", {"p_performer_id": performer_id}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
+    @router.get("/api/broker/macro/{series_id}")
+    def broker_macro_series(series_id: str, limit: int = 90, _=Depends(require_auth)):
+        """Recent observations for one macro series (TSA_THROUGHPUT, UMCSENT, …)
+        from the anon-granted v_macro_indicators_latest view, oldest→newest for
+        direct charting. Reads the view (not the email-gated get_macro_series RPC)
+        so the service-role terminal client can serve it."""
+        db = get_require_sb()()
+        lim = max(1, min(int(limit), 600))
+        rows = (db.table("v_macro_indicators_latest")
+                  .select("observation_date, value")
+                  .eq("series_id", series_id)
+                  .order("observation_date", desc=True)
+                  .limit(lim).execute().data) or []
+        rows = list(reversed(rows))
+        return {"series_id": series_id, "points": rows, "count": len(rows)}
 
     @router.get("/api/broker/event/{event_id}/substitutions")
     def broker_event_substitutions(

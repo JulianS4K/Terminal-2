@@ -6,11 +6,26 @@ import { Calendar, MapPin, Search } from 'lucide-react';
 import { motion } from 'motion/react';
 import { formatInTz } from '../lib/datetime';
 import { formatCurrency } from '../lib/utils';
+import { effectiveTierPrice } from '../lib/pricing';
+import { listSavedEventIds } from '../lib/saves';
+import { useAuth } from '../context/AuthContext';
+import SaveEventButton from '../components/SaveEventButton';
+
+/** Lowest effective (schedule-aware) price across an event's tiers. */
+function eventFromPrice(event: Event): number {
+  const tiers = event.ticketTiers;
+  if (tiers && tiers.length > 0) {
+    return Math.min(...tiers.map((t) => effectiveTierPrice(t.price, t.priceSchedule)));
+  }
+  return event.price;
+}
 
 export default function Home() {
+  const { user } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
 
   // Client-side fuzzy filter — hits the in-memory event set so it
   // stays sub-millisecond even with a few hundred events. We filter
@@ -44,6 +59,22 @@ export default function Home() {
     }
     fetchEvents();
   }, []);
+
+  // Which of these events the signed-in user has already saved — fetched once
+  // so the per-card hearts render controlled (no N per-card queries).
+  useEffect(() => {
+    if (!user) {
+      setSavedIds(new Set());
+      return undefined;
+    }
+    let alive = true;
+    listSavedEventIds().then((ids) => {
+      if (alive) setSavedIds(ids);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [user]);
 
   return (
     <div className="bg-[#000000] min-h-screen">
@@ -117,6 +148,23 @@ export default function Home() {
                   key={event.id}
                   className="primary-card flex flex-col h-[520px] group relative overflow-hidden"
                 >
+                  {/* Save-from-discovery. Sibling of the Link (not nested) so the
+                      heart toggles without navigating; signed-out opens auth. */}
+                  <div className="absolute top-4 right-4 z-20">
+                    <SaveEventButton
+                      eventId={event.id}
+                      variant="chip"
+                      initialSaved={savedIds.has(event.id)}
+                      onChange={(saved) =>
+                        setSavedIds((prev) => {
+                          const next = new Set(prev);
+                          if (saved) next.add(event.id);
+                          else next.delete(event.id);
+                          return next;
+                        })
+                      }
+                    />
+                  </div>
                   <Link to={`/event/${event.id}`} className="flex-shrink-0 relative overflow-hidden">
                     <div className="aspect-[3/4] relative">
                       <img 
@@ -161,9 +209,9 @@ export default function Home() {
                       <div>
                         {event.ticketTiers && event.ticketTiers.length > 0 ? (
                           <div className="flex flex-col">
-                            <span className="text-[10px] font-black text-white/30 uppercase tracking-tighter leading-none mb-1">Price</span>
+                            <span className="text-[10px] font-black text-white/30 uppercase tracking-tighter leading-none mb-1">From</span>
                             <span className="font-black text-2xl text-brand-primary tracking-tighter">
-                              {formatCurrency(Math.min(...event.ticketTiers.map(t => t.price)))}
+                              {formatCurrency(eventFromPrice(event))}
                             </span>
                           </div>
                         ) : (

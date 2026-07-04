@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Performer</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260702f" />
+  <link rel="stylesheet" href="style.css?v=20260703a" />
   <style>
     .trip-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
     .trip-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted, #9aa); text-transform: uppercase; letter-spacing: .04em; }
@@ -89,7 +89,7 @@
     <!-- INDEX MODE: 4-league directory shown when no ?performer=<id> in URL. -->
     <section id="perf-index" hidden>
       <div class="panel-title row">
-        <span>PERFORMERS — NFL · NBA · MLB · MLS</span>
+        <span>PERFORMERS — directory</span>
         <span class="muted small" id="perfIndexCounts"></span>
       </div>
       <div id="perfIndexBody"><div class="empty">loading…</div></div>
@@ -117,6 +117,9 @@
       <button class="event-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
       <button class="event-tab" data-tab="upcoming"   role="tab" aria-selected="false">Upcoming Events <span class="tab-count" id="tabCountUpcoming"></span></button>
       <button class="event-tab" data-tab="blindspots" role="tab" aria-selected="false">Blind Spots <span class="tab-count" id="tabCountBlindspots"></span></button>
+      <button class="event-tab" data-tab="cast" role="tab" aria-selected="false" id="perfCastTab" hidden style="display:none">Cast <span class="tab-count" id="tabCountPerfCast"></span></button>
+      <button class="event-tab" data-tab="injury" role="tab" aria-selected="false" id="perfInjuryTab" hidden style="display:none">Injuries <span class="tab-count" id="tabCountPerfInjury"></span></button>
+      <button class="event-tab" data-tab="futures"    role="tab" aria-selected="false">Futures <span class="tab-count" id="tabCountFutures"></span></button>
       <button class="event-tab" data-tab="espn"       role="tab" aria-selected="false">ESPN Context</button>
       <button class="event-tab" data-tab="alerts"     role="tab" aria-selected="false">🔔 Alerts</button>
     </nav>
@@ -133,6 +136,17 @@
           <div class="ru-cell"><span class="ru-num" id="ruRetailMedAvg">—</span><span class="ru-lbl">retail median (wt)</span></div>
           <div class="ru-cell"><span class="ru-num" id="ruEventsWithOwned">—</span><span class="ru-lbl">events with position</span></div>
         </div>
+      </section>
+
+      <!-- Kalshi/Polymarket prediction markets attributed to this performer's team:
+           its upcoming-game moneylines (this panel). Season/champion futures live
+           on the Futures tab. Populated by loadPerformerPredictionMarkets. -->
+      <section id="perf-prediction-markets" hidden>
+        <div class="panel-title row">
+          <span>PREDICTION MARKETS</span>
+          <span class="muted small" id="perfPmSubtitle"></span>
+        </div>
+        <div id="perfPmBody"></div>
       </section>
 
       <!-- Cross-event metrics rolled up daily across ALL of this performer's events
@@ -228,6 +242,47 @@
       </section>
     </div>
 
+    <!-- Cast pane — Broadway "who's playing the lead" + get-in by lead. Revealed
+         only for a Broadway show-as-performer (see loadPerfCast in performer.js). -->
+    <div class="tab-pane" id="panePerfCast" role="tabpanel" hidden>
+      <section id="perf-cast-getin">
+        <div class="panel-title row">
+          <span id="perfCastTitle">CAST — get-in price by lead</span>
+          <span class="muted small" id="perfCastMeta"></span>
+        </div>
+        <div id="perfCastBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
+    <!-- Injuries pane — ESPN injury price-impact. Revealed only for a team with
+         current injuries (see loadPerfInjury in performer.js). Same panel as Cast. -->
+    <div class="tab-pane" id="panePerfInjury" role="tabpanel" hidden>
+      <section id="perf-injury-getin">
+        <div class="panel-title row">
+          <span id="perfInjuryTitle">INJURIES — team get-in while out</span>
+          <span class="muted small" id="perfInjuryMeta"></span>
+        </div>
+        <div id="perfInjuryBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
+    <!-- Futures pane — season/championship odds on this performer (team). Relocated
+         here from the individual event page's "FUTURES — TEAMS IN THIS EVENT" block.
+         Populated by renderPerformerFutures off the same prediction-markets pull. -->
+    <div class="tab-pane" id="panePerfFutures" role="tabpanel" hidden>
+      <section id="perf-futures">
+        <div class="panel-title row">
+          <span>FUTURES — SEASON &amp; CHAMPIONSHIP ODDS</span>
+          <span class="muted small" id="perfFuturesMeta"></span>
+        </div>
+        <div class="muted small" style="margin-bottom: 8px;">
+          Kalshi / Polymarket season and championship markets attributed to this performer's team.
+          Prices are implied probability.
+        </div>
+        <div id="perfFuturesBody"><div class="empty">no futures markets for this performer</div></div>
+      </section>
+    </div>
+
     <!-- ESPN Context pane (lazy-loaded on tab click) -->
     <div class="tab-pane" id="paneEspn" role="tabpanel" hidden>
       <section id="perf-context">
@@ -253,6 +308,7 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260623a"></script>
   <script src="alerts.js?v=20260608"></script>
-  <script src="performer.js?v=20260608"></script>
+  <script src="lib/cast-panel.js?v=20260703b"></script>
+  <script src="performer.js?v=20260703pm7"></script>
 </body>
 </html>

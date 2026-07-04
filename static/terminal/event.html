@@ -20,7 +20,7 @@
        style.css so its var() refs resolve (same as index.html). Without it the
        event page renders on a white background. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260702f" />
+  <link rel="stylesheet" href="style.css?v=20260703b" />
 </head>
 <body data-page="event">
 
@@ -84,6 +84,7 @@
       <button class="event-tab" data-tab="seatdata-sales" role="tab" aria-selected="false">SeatData Sales <span class="tab-count" id="tabCountSeatdataSales"></span></button>
       <button class="event-tab" data-tab="axs-sections" role="tab" aria-selected="false">AXS Box Office <span class="tab-count" id="tabCountAxsSections"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
+      <button class="event-tab" data-tab="cast" role="tab" aria-selected="false" id="tabBtnCast" hidden style="display:none">Cast <span class="tab-count" id="tabCountCast"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
@@ -233,6 +234,14 @@
            (.dual-src.cols-2) inside, then appends the omitted-sources footnote
            full-width. TD dropped (no split-density backing). -->
       <div id="splitsBody"></div>
+    </section>
+
+    <section id="prediction-markets">
+      <div class="panel-title row">
+        <span>PREDICTION MARKETS</span>
+        <span class="muted small" id="pmSubtitle"></span>
+      </div>
+      <div id="pmBody"></div>
     </section>
 
     <section id="espn">
@@ -414,6 +423,19 @@
       </section>
     </div>
 
+    <!-- Cast tab — Broadway "who's playing the lead" + get-in price by performer.
+         Revealed only for tracked Broadway events (see loadCastTab in event.js).
+         Generic participant-getin renderer so ESPN players can feed it later. -->
+    <div class="tab-pane" id="paneCast" role="tabpanel" hidden>
+      <section id="cast-getin">
+        <div class="panel-title row">
+          <span id="castTitle">CAST — get-in price by lead</span>
+          <span class="muted small" id="castMeta"></span>
+        </div>
+        <div id="castBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
     <!-- "Our Orders" merged tab — fires 3 parallel RPCs on first activate -->
     <div class="tab-pane" id="paneAlerts" role="tabpanel" hidden>
       <section id="alerts-this-event">
@@ -524,6 +546,7 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260623a"></script>
   <script src="alerts.js?v=20260608"></script>
-  <script src="event.js?v=20260702wc"></script>
+  <script src="lib/cast-panel.js?v=20260703b"></script>
+  <script src="event.js?v=20260703pm6"></script>
 </body>
 </html>

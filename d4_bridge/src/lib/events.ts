@@ -32,6 +32,7 @@ function mapTier(t: any): Tier {
     visibility: (t.visibility ?? 'public') as Tier['visibility'],
     salesStart: t.sales_start ? toTs(t.sales_start) : null,
     salesEnd: t.sales_end ? toTs(t.sales_end) : null,
+    priceSchedule: Array.isArray(t.price_schedule) ? t.price_schedule : undefined,
   };
 }
 
@@ -72,6 +73,7 @@ export function mapEvent(row: any, tiers?: any[], discounts?: any[]): Event {
     genres: row.genres ?? undefined,
     subgenres: row.subgenres ?? undefined,
     performers: row.performer_names ?? undefined,
+    artistLinks: Array.isArray(row.artist_links) && row.artist_links.length ? row.artist_links : undefined,
     timing: row.starts_at
       ? {
           doorsOpen: row.doors_at ? toTs(row.doors_at) : undefined,
@@ -172,6 +174,7 @@ export interface TierInput {
   salesStart?: string | null;
   salesEnd?: string | null;
   sortOrder?: number;
+  priceSchedule?: { startsAt: string; price: number }[];
 }
 
 export interface DiscountInput {
@@ -200,6 +203,9 @@ export interface EventInput {
   venueAddress?: Record<string, unknown>;
   primaryPerformerName?: string;
   performerNames?: string[];
+  // Per-artist link rows (mig 20260703130000). Kept as-is (jsonb) — the editor
+  // shape (src/types ArtistLink) is exactly what the column stores.
+  artistLinks?: import('../types').ArtistLink[];
   eventType?: string;
   category?: string;
   genres?: string[];
@@ -218,6 +224,7 @@ const EVENT_COL: Array<[keyof EventInput, string]> = [
   ['startsAt', 'starts_at'], ['doorsAt', 'doors_at'], ['endsAt', 'ends_at'], ['occursAtLocal', 'occurs_at_local'],
   ['timezone', 'timezone'], ['currency', 'currency'], ['venueName', 'venue_name'], ['venueLocation', 'venue_location'],
   ['venueAddress', 'venue_address'], ['primaryPerformerName', 'primary_performer_name'], ['performerNames', 'performer_names'],
+  ['artistLinks', 'artist_links'],
   ['eventType', 'event_type'], ['category', 'category'], ['genres', 'genres'], ['subgenres', 'subgenres'],
   ['imageUrl', 'image_url'], ['totalTickets', 'total_tickets'], ['branding', 'branding'], ['exclusivity', 'exclusivity'],
   ['purchaseLimits', 'purchase_limits'], ['distributionNetworks', 'distribution_networks'],
@@ -235,6 +242,7 @@ function tierInsertRow(eventId: string, t: TierInput, idx: number) {
     sales_start: t.salesStart ?? null,
     sales_end: t.salesEnd ?? null,
     sort_order: t.sortOrder ?? idx,
+    price_schedule: t.priceSchedule ?? [],
   };
 }
 
@@ -359,6 +367,7 @@ export async function updateTier(tierId: string, patch: Partial<TierInput>): Pro
   if (patch.salesStart !== undefined) row.sales_start = patch.salesStart;
   if (patch.salesEnd !== undefined) row.sales_end = patch.salesEnd;
   if (patch.sortOrder !== undefined) row.sort_order = patch.sortOrder;
+  if (patch.priceSchedule !== undefined) row.price_schedule = patch.priceSchedule;
   if (Object.keys(row).length === 0) return;
   const { error } = await supabase.from('exos_ticket_tiers').update(row).eq('id', tierId);
   if (error) throw error;

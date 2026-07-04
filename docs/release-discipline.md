@@ -82,7 +82,7 @@ The header tells future-you and the next agent what the migration was for, what 
 
 ## 4. Apply-then-codify discipline
 
-Reality on Terminal-2: A1 applies migrations via MCP `apply_migration` first, then codifies as a file in `supabase/migrations/`. This is faster than file-first + remote-apply for solo work, BUT it creates a drift window. Mitigations:
+Reality on Terminal-2: a session applies its migration via MCP `apply_migration` first, then codifies as a file in `supabase/migrations/`. This is faster than file-first + remote-apply for solo work, BUT it creates a drift window. Mitigations:
 
 1. **Apply + codify within the same conversation turn.** Never end a session with prod ahead of repo.
 2. **Every applied migration gets a corresponding file before the session-ending commit.** Run `git diff supabase/migrations/` against a fresh `mcp list_migrations` to confirm parity.

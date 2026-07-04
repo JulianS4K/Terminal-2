@@ -5,6 +5,8 @@ import { getPublicEvent, getEventForEdit } from '../lib/events';
 import { mintTickets, claimFreeTickets } from '../lib/tickets';
 import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
+import ArtistLinks from '../components/ArtistLinks';
+import { linksForArtist } from '../lib/artistLinks';
 import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
 import { Calendar, MapPin, Ticket, ShieldCheck, Share2, ArrowLeft, CheckCircle2, Copy, Send, Instagram, Minus, Plus, Tag } from 'lucide-react';
@@ -19,6 +21,8 @@ import { initOrgPixels, trackPixelEvent } from '../lib/pixels';
 import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
+import SaveEventButton from '../components/SaveEventButton';
+import { effectiveTierPrice, nextPriceStep } from '../lib/pricing';
 import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
 import { claimFreeAddons } from '../lib/addons';
 import VoucherField from '../components/VoucherField';
@@ -195,8 +199,13 @@ export default function EventDetails() {
   
   const calculateFinalPrice = () => {
     if (!event) return 0;
-    let basePrice = selectedTier ? selectedTier.price : event.price;
-    
+    // Scheduled pricing: the selected tier's price is its current effective
+    // price (latest active step), not the flat base — so early-bird / timed
+    // price steps are reflected in the checkout total.
+    let basePrice = selectedTier
+      ? effectiveTierPrice(selectedTier.price, selectedTier.priceSchedule)
+      : event.price;
+
     if (appliedDiscount) {
       if (appliedDiscount.type === 'percentage') {
         basePrice = basePrice * (1 - appliedDiscount.value / 100);
@@ -563,18 +572,24 @@ export default function EventDetails() {
               {event.performers && event.performers.length > 0 ? (
                 <div className="p-8 bg-[#111111] sm:col-span-2">
                   <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-3">Performers</p>
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-                    <p className="font-black text-3xl uppercase tracking-tighter italic text-white">
-                      {event.performers[0]}
-                    </p>
-                    {event.performers.slice(1).map((name) => (
-                      <p
-                        key={name}
-                        className="font-black text-lg uppercase tracking-tighter italic text-white/60"
-                      >
-                        {name}
-                      </p>
-                    ))}
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-3">
+                    {event.performers.map((name, i) => {
+                      const links = linksForArtist(name, event.artistLinks);
+                      return (
+                        <span key={name} className="inline-flex items-center gap-2">
+                          <span
+                            className={
+                              i === 0
+                                ? 'font-black text-3xl uppercase tracking-tighter italic text-white'
+                                : 'font-black text-lg uppercase tracking-tighter italic text-white/60'
+                            }
+                          >
+                            {name}
+                          </span>
+                          {links ? <ArtistLinks artist={links} /> : null}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -623,6 +638,19 @@ export default function EventDetails() {
                 <div className="mb-8">
                     <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-2">Price</p>
                     <p className="text-6xl font-black text-brand-primary tracking-tighter italic">{formatCurrency(priceToDisplay * quantity, event.currency)}</p>
+                    {selectedTier && (() => {
+                      // Scheduled-pricing urgency nudge: surface the next upward
+                      // step so buyers see "price rises to $X on <date>".
+                      const cur = effectiveTierPrice(selectedTier.price, selectedTier.priceSchedule);
+                      const next = nextPriceStep(selectedTier.priceSchedule);
+                      if (!next || next.price <= cur) return null;
+                      return (
+                        <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-brand-accent italic">
+                          ⏱ Price rises to {formatCurrency(next.price, event.currency)} on{' '}
+                          {formatInTz(new Date(next.startsAt), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </p>
+                      );
+                    })()}
                 </div>
 
                 <div className="mb-10">
@@ -667,7 +695,18 @@ export default function EventDetails() {
                          
                          <div className="flex justify-between items-center w-full mb-1">
                             <p className="font-black text-white text-lg uppercase tracking-tighter italic">{tier.name}</p>
-                            <p className="font-black text-brand-primary text-lg tracking-tighter italic">{formatCurrency(tier.price, event.currency)}</p>
+                            {(() => {
+                              const eff = effectiveTierPrice(tier.price, tier.priceSchedule);
+                              const markedDown = eff < tier.price;
+                              return (
+                                <p className="font-black text-brand-primary text-lg tracking-tighter italic">
+                                  {markedDown && (
+                                    <span className="text-white/30 line-through mr-2 text-sm">{formatCurrency(tier.price, event.currency)}</span>
+                                  )}
+                                  {formatCurrency(eff, event.currency)}
+                                </p>
+                              );
+                            })()}
                          </div>
                          
                          <p className="text-[10px] text-white/50 font-medium mb-4 uppercase tracking-tighter">{tier.description}</p>
@@ -807,6 +846,7 @@ export default function EventDetails() {
                     <Instagram className="w-4 h-4 mr-3 text-brand-primary" />
                     Share to Instagram
                   </button>
+                  <SaveEventButton eventId={event.id} variant="row" />
                 </div>
               </div>
             </div>

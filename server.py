@@ -1225,6 +1225,20 @@ app.include_router(build_misc_router(
 ))
 
 
+# ---------- open-notebook subsystem (/api/notebook/*) ----------
+# Operator-directed port of lfnovo/open-notebook: notebooks + sources + RAG chat +
+# transformations + podcasts, on Supabase Postgres (pgvector) + Anthropic/OpenAI.
+# Self-contained (open_notebook/ package + onb_* tables); never MUTATES the ticket
+# data plane — the per-performer digest READS a fixed set of safe sources only (no
+# secrets/PII; see open_notebook/performers.py). Feature-flagged via ONB_ENABLED.
+from routers.open_notebook import build_open_notebook_router  # noqa: E402
+
+app.include_router(build_open_notebook_router(
+    get_require_sb=lambda: require_sb,
+    require_auth=require_auth,
+))
+
+
 
 # ---------- Store (MVP) ----------
 # Public-facing storefront over the brokerage's owned TEvo inventory. Read-only,

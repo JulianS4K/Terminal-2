@@ -117,8 +117,19 @@ def test_leagues_returns_static_list(client):
 def test_performer_assets_empty_fallback(client, monkeypatch):
     _use_db(monkeypatch, FakeSupabase(table_data={"performer_metadata": []}))
     body = client.get("/api/broker/performer/999/assets").json()
-    # No row => deterministic fallback shape keyed on the requested id.
-    assert body == {"performer_id": 999, "logo_default_url": None}
+    # No metadata row AND no events => name None, deterministic shape.
+    assert body == {"performer_id": 999, "name": None, "logo_default_url": None}
+
+
+def test_performer_assets_name_fallback_from_events(client, monkeypatch):
+    # Non-ESPN performer (e.g. a Broadway show): name falls back to the event's
+    # primary_performer_name so the hero still renders a title.
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "performer_metadata": [],
+        "events": [{"primary_performer_name": "Oh Mary!"}],
+    }))
+    body = client.get("/api/broker/performer/103169/assets").json()
+    assert body == {"performer_id": 103169, "name": "Oh Mary!", "logo_default_url": None}
 
 
 def test_performer_assets_returns_row(client, monkeypatch):

@@ -21,6 +21,15 @@
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
+  // ?venue=<id> — a Broadway show's NYC house. When present, the page is scoped
+  // to that venue (NYC performances only), because the show's franchise
+  // performer (e.g. "Wicked - Musical") also covers the national tour.
+  function getVenueScope() {
+    const v = new URLSearchParams(location.search).get('venue');
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const performerId = getPerformerId();
@@ -61,8 +70,11 @@
     const countsEl = document.getElementById('perfIndexCounts');
     const counts = d.counts || {};
     const leagues = d.leagues || {};
+    // Directory columns, in order. Broadway is a category whose "teams" are
+    // shows (link to the event Cast tab); WNBA joined the sports leagues.
+    const LEAGUE_ORDER = ['NFL','NBA','MLB','MLS','WNBA','Broadway'];
     if (countsEl) {
-      const parts = ['NFL','NBA','MLB','MLS']
+      const parts = LEAGUE_ORDER
         .filter(l => counts[l])
         .map(l => `${l} ${counts[l]}`);
       if (counts.total) parts.push(`· ${counts.total} total`);
@@ -71,8 +83,9 @@
     body.innerHTML = '';
     const grid = document.createElement('div');
     grid.className = 'entity-index-grid';
-    ['NFL','NBA','MLB','MLS'].forEach(league => {
+    LEAGUE_ORDER.forEach(league => {
       const teams = leagues[league] || [];
+      if (!teams.length) return;
       const col = document.createElement('div');
       col.className = 'entity-index-col';
       col.innerHTML = `<div class="entity-index-col-hdr">${league} <span class="muted small">(${teams.length})</span></div>`;
@@ -81,7 +94,14 @@
       teams.forEach(t => {
         const li = document.createElement('li');
         const upcoming = t.events_count_next_90d != null ? `<span class="entity-idx-count">${t.events_count_next_90d}</span>` : '';
-        li.innerHTML = `<a href="performer.html?performer=${t.tevo_performer_id}">
+        // Teams link to their performer page. Broadway shows link there too, but
+        // with &venue=<nyc house> so the page scopes to NYC (the show's franchise
+        // performer also tours). Fallback to a representative event if no id.
+        let href = t.tevo_performer_id
+          ? `performer.html?performer=${t.tevo_performer_id}`
+          : (t.sample_event_id ? `event.html?event=${t.sample_event_id}` : '#');
+        if (t.tevo_performer_id && t.tevo_venue_id) href += `&venue=${t.tevo_venue_id}`;
+        li.innerHTML = `<a href="${href}">
             <span class="entity-idx-name">${escapeHtml(t.display_name || t.performer_name || '—')}</span>
             ${t.abbreviation ? `<span class="muted small">${escapeHtml(t.abbreviation)}</span>` : ''}
             ${upcoming}
@@ -106,10 +126,30 @@
     T.setStatus(`Loading performer ${performerId}…`);
     // Eager-load ESPN for form strip (non-blocking)
     loadEspnContext(performerId).catch(e => console.error('espn-eager', e));
+    // Prediction markets (Kalshi/Polymarket) for this team; fire-and-forget,
+    // hides itself when there's nothing to show.
+    loadPerformerPredictionMarkets(performerId).catch(e => console.error('perf-pm', e));
+    // Broadway cast get-in — reveals the Cast tab only for a show-as-performer.
+    loadPerfCast(performerId).catch(e => console.error('perf-cast', e));
+    // ESPN injury price-impact — reveals the Injuries tab only for a team.
+    loadPerfInjury(performerId).catch(e => console.error('perf-injury', e));
+
+    // NYC-Broadway scope: a show's franchise performer also tours, so when a
+    // venue is pinned, load the portfolio by venue (NYC performances only) and
+    // hide the Upcoming Events tab (a multi-city tour optimizer — irrelevant to
+    // a single-house sit-down run and would surface tour cities).
+    const venueScope = getVenueScope();
+    if (venueScope) {
+      const upBtn = document.querySelector('#perfTabs .event-tab[data-tab="upcoming"]');
+      if (upBtn) { upBtn.hidden = true; upBtn.style.display = 'none'; }
+    }
+    const portfolioUrl = venueScope
+      ? `/api/portfolio?venue_id=${venueScope}`
+      : `/api/portfolio?performer_id=${performerId}`;
 
     Promise.all([
       T.api(`/api/broker/performer/${performerId}/assets`).catch(e => ({ __err: e })),
-      T.api(`/api/portfolio?performer_id=${performerId}`).catch(e => ({ __err: e })),
+      T.api(portfolioUrl).catch(e => ({ __err: e })),
     ]).then(([assets, portfolio]) => {
       const firstErr = [assets, portfolio].find(r => r && r.__err);
       if (firstErr) T.setStatus(firstErr.__err.message, 'err');
@@ -152,9 +192,53 @@
     overview:   'paneOverview',
     upcoming:   'paneUpcoming',
     blindspots: 'paneBlindspots',
+    cast:       'panePerfCast',
+    injury:     'panePerfInjury',
+    futures:    'panePerfFutures',
     espn:       'paneEspn',
     alerts:     'panePerfAlerts',
   };
+
+  // Broadway "who's playing the lead" — reveals the Cast tab ONLY for a
+  // show-as-performer (broadway_show_ref.tevo_performer_id). Fire-and-forget;
+  // hidden for teams. Shares window.CastPanel with the event page.
+  async function loadPerfCast(performerId) {
+    let data;
+    try { data = await T.api(`/api/broker/performer/${performerId}/broadway-cast`); }
+    catch (_) { return; }
+    const parts = (data && data.participants) || [];
+    if (!data || !data.applicable || !parts.length) return;  // not a Broadway show
+    const btn = document.getElementById('perfCastTab');
+    if (btn) { btn.hidden = false; btn.style.removeProperty('display'); }
+    const cnt = document.getElementById('tabCountPerfCast');
+    if (cnt) cnt.textContent = String(parts.length);
+    const priced = parts.filter(p => p.measured).length;
+    const meta = document.getElementById('perfCastMeta');
+    if (meta) meta.textContent = `${parts.length} leads · ${priced} priced`;
+    const ttl = document.getElementById('perfCastTitle');
+    if (ttl && data.subject) ttl.textContent = `CAST — get-in by lead · ${data.subject.title}`;
+    window.CastPanel.render(document.getElementById('perfCastBody'), data);
+  }
+
+  // ESPN injury price-impact — reveals the Injuries tab ONLY for a team with
+  // current injuries. Same window.CastPanel, kind='espn'. Fire-and-forget.
+  async function loadPerfInjury(performerId) {
+    let data;
+    try { data = await T.api(`/api/broker/performer/${performerId}/injury-getin`); }
+    catch (_) { return; }
+    const parts = (data && data.participants) || [];
+    if (!data || !data.applicable || !parts.length) return;  // not a team / no injuries
+    const btn = document.getElementById('perfInjuryTab');
+    if (btn) { btn.hidden = false; btn.style.removeProperty('display'); }
+    const cnt = document.getElementById('tabCountPerfInjury');
+    if (cnt) cnt.textContent = String(parts.length);
+    const priced = parts.filter(p => p.measured).length;
+    const meta = document.getElementById('perfInjuryMeta');
+    if (meta) meta.textContent = `${parts.length} out · ${priced} with priced games`;
+    const ttl = document.getElementById('perfInjuryTitle');
+    if (ttl && data.subject) ttl.textContent = `INJURIES — team get-in while out · ${data.subject.title}`;
+    window.CastPanel.render(document.getElementById('perfInjuryBody'), data);
+  }
 
   function activateTab(tabId) {
     document.querySelectorAll('#perfTabs .event-tab').forEach(b => {
@@ -714,6 +798,83 @@
       tb.appendChild(tr);
     });
     body.appendChild(tbl);
+  }
+
+  // ---------- Prediction markets (Kalshi/Polymarket) ----------
+  // Panel below PORTFOLIO ROLLUP. Markets attributed to this performer (team):
+  // its game moneylines (this panel) + season/champion futures (Futures tab),
+  // from /api/broker/performer/{id}/prediction-markets.
+  async function loadPerformerPredictionMarkets(performerId) {
+    const d = await T.api(`/api/broker/performer/${performerId}/prediction-markets`).catch(() => null);
+    renderPerformerPredictionMarkets(d);
+  }
+
+  function ppmPct(x) {
+    const n = Number(x);
+    return isFinite(n) ? (n * 100).toFixed(0) + '%' : '—';
+  }
+  function ppmRow(m) {
+    const label = escapeHtml(m.subtitle || m.question || m.title || '');
+    const date = m.event_date ? `<span class="pm-q muted small">${escapeHtml(String(m.event_date))}</span>` : '';
+    const px = ppmPct(m.yes_price != null ? m.yes_price : m.last_price);
+    const src = (m.source || '').toLowerCase();
+    const srcLabel = src === 'kalshi' ? 'Kalshi' : src === 'polymarket' ? 'Polymarket' : escapeHtml(m.source || '?');
+    const href = m.url ? ` href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer"` : '';
+    return `<li class="pm-item"><a class="pm-link"${href}>` +
+      `<span class="pm-side">${label}</span>${date}` +
+      `<span class="pm-right"><span class="pm-prob">${px}</span>` +
+      `<span class="pm-src pm-src-${escapeHtml(src)}">${srcLabel}</span></span></a></li>`;
+  }
+  function renderPerformerPredictionMarkets(d) {
+    const section = document.getElementById('perf-prediction-markets');
+    const body = document.getElementById('perfPmBody');
+    const subtitle = document.getElementById('perfPmSubtitle');
+    const markets = (d && Array.isArray(d.markets)) ? d.markets : [];
+    // A market is a real "upcoming game" only if it's tagged game AND its date is
+    // near-term. Some Polymarket season markets (win totals, division) carry a
+    // gameStartTime that mislabels them market_type='game' with a season-far/past
+    // date — those belong under Futures, not "Upcoming games".
+    const nowMs = Date.now();
+    const isUpcomingGame = (m) => {
+      if (m.market_type !== 'game' || !m.event_date) return false;
+      const t = new Date(m.event_date + 'T00:00:00Z').getTime();
+      return isFinite(t) && (t - nowMs) > -2 * 864e5 && (t - nowMs) < 10 * 864e5;
+    };
+    const games = markets.filter(isUpcomingGame);
+    const futures = markets.filter(m => !isUpcomingGame(m));
+    // Futures now live on their own Futures tab (relocated from both this overview
+    // panel and the individual event page). Render them there; this panel keeps
+    // only upcoming-game moneylines.
+    renderPerformerFutures(futures);
+    if (!section || !body) return;
+    if (!games.length) { section.hidden = true; return; }
+    section.hidden = false;
+    if (subtitle) {
+      const srcs = Array.from(new Set(games.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+      subtitle.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : '';
+    }
+    let html = '';
+    html += '<div class="pm-sublabel">UPCOMING GAMES — MONEYLINE</div>';
+    html += '<ul class="pm-list">' + games.map(ppmRow).join('') + '</ul>';
+    body.innerHTML = html;
+  }
+
+  // Futures tab — season/championship odds on this performer's team. Fed the
+  // non-game bucket from the same prediction-markets pull as the overview panel.
+  function renderPerformerFutures(futures) {
+    const body = document.getElementById('perfFuturesBody');
+    const meta = document.getElementById('perfFuturesMeta');
+    const tabCount = document.getElementById('tabCountFutures');
+    if (tabCount) tabCount.textContent = futures.length ? String(futures.length) : '';
+    if (!body) return;
+    if (!futures.length) {
+      body.innerHTML = '<div class="empty">no season / championship futures for this performer</div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    const srcs = Array.from(new Set(futures.map(m => (m.source || '').toLowerCase()).filter(Boolean)));
+    if (meta) meta.textContent = srcs.length ? ('implied probability · ' + srcs.join(' + ')) : '';
+    body.innerHTML = '<ul class="pm-list">' + futures.map(ppmRow).join('') + '</ul>';
   }
 
   // ---------- ESPN Context (lazy-loaded tab) ----------

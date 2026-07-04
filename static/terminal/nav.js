@@ -38,6 +38,10 @@
     // (full market on the terminal; owned-EVO-only on the storefront). Talks
     // to /api/retail-chat → the `chat` edge fn. Wired 2026-06-19.
     { id: 'retail-chat', label: 'RETAIL CHAT', href: 'retail-chat.html' },
+    // Notebook — open-notebook port: notebooks, sources (text/URL/PDF), RAG
+    // ask + chat over your sources, transformations, and podcast generation.
+    // Backed by /api/notebook/* (open_notebook/ package + onb_* tables).
+    { id: 'notebook', label: 'NOTEBOOK', href: 'notebook.html' },
     // Discovery — TEvo blindspot (broker selling, we own 0) + returning
     // performers/venues. Companion to Movers; same nav grouping for the
     // "what to watch" surface. Wired 2026-05-19 (PR A1 blindspot stack).
