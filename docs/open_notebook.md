@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.3.0 (2026-07-04)
+**Doc version:** v1.4.0 (2026-07-04)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -71,6 +71,11 @@ Sources folded in (all already ingested by the platform — no external API call
 - **Events + pricing** — upcoming slate (`events`), price snapshots
   (`latest_event_metrics`), 7-day movement (`get_event_movers_v2`), realized-sales
   color (`d0_perf_*`) + hot sections (`d0_perf_top5_sections`).
+- **Primary vs secondary (broker edge)** — per event, AXS **primary** (face) get-in
+  vs best secondary + precomputed flip margin/signal (`v_event_primary_vs_secondary`),
+  and a SeatGeek cross-market secondary read (`seatgeek_event_metrics`). (Ticketmaster
+  face-value has no standalone priced table — it flows via SeatData's `sd_tm_event_id`;
+  AXS is the live primary feed.)
 - **Per-event context** — game-day weather w/ climatology fallback
   (`v_event_weather_with_fallback`), demand velocity (`event_sentiment`).
 - **Buzz / markets / macro** — Reddit pulse + notable posts (`v_performer_reddit_pulse`,

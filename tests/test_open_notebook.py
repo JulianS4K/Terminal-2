@@ -1320,6 +1320,11 @@ def _rich_perf_db():
     db.store["d0_perf_top5_sections"] = [{"performer_id": 100, "section": "200", "tickets": 40,
         "revenue": 8000, "rank_by_revenue": 1}]
     db.store["v_macro_indicators_latest"] = [{"series_id": "UMCSENT", "value": 70.1, "observation_date": "2099-06-01"}]
+    db.store["v_event_primary_vs_secondary"] = [{"tevo_event_id": 1, "axs_primary_getin": 45,
+        "axs_primary_median": 90, "axs_primary_qty": 200, "best_secondary_getin": 60,
+        "flip_margin_pct": 33.3, "signal": "primary_cheaper"}]
+    db.store["seatgeek_event_metrics"] = [{"tevo_event_id": 1, "listings_all_min": 55,
+        "listings_all_median": 110, "sold_price_median": 95, "fill_rate": 0.42, "captured_at": "2099-08-30"}]
     return db
 
 
@@ -1339,6 +1344,9 @@ def test_performer_digest_enrichment():
     assert "vol 1000" in text and "Make playoffs" in text  # futures with + without volume
     assert "UMCSENT" in text
     assert "Lens: secondary-market pricing" in text  # broker-price framing leads the digest
+    assert "Primary vs secondary" in text and "AXS primary get-in $45" in text
+    assert "flip +33%" in text and "[primary_cheaper]" in text
+    assert "SeatGeek secondary" in text and "sold-median $95" in text
 
 
 def test_digest_helper_branches():
@@ -1392,6 +1400,23 @@ def test_digest_helper_branches():
          "opp_performer_name": "Z", "is_rivalry": False}]
     sch = "\n".join(P._sec_schedule(dbs, 5))
     assert "Z" in sch and "(rivalry)" not in sch
+
+    # flip: no-signal (bits only), missing-row skipped, no-bits skipped; empty → []
+    dbf = FakeSB(); dbf.store["v_event_primary_vs_secondary"] = [
+        {"tevo_event_id": 30, "axs_primary_getin": 40, "best_secondary_getin": 55, "flip_margin_pct": 10},
+        {"tevo_event_id": 32}]
+    fl = "\n".join(P._sec_flip(dbf, [{"id": 30, "name": "A"}, {"id": 31, "name": "NoRow"},
+                                     {"id": 32, "name": "Bare"}]))
+    assert "A:" in fl and "[" not in fl and "NoRow" not in fl and "Bare" not in fl
+    assert P._sec_flip(FakeSB(), []) == []
+
+    # sg secondary: partial bits (min only), missing-row skipped, no-bits skipped
+    dbg = FakeSB(); dbg.store["seatgeek_event_metrics"] = [
+        {"tevo_event_id": 40, "listings_all_min": 55, "captured_at": "1"},
+        {"tevo_event_id": 42, "captured_at": "1"}]
+    sg = "\n".join(P._sec_sg_secondary(dbg, [{"id": 40, "name": "E"}, {"id": 41, "name": "NoRow"},
+                                             {"id": 42, "name": "Bare"}]))
+    assert "E:" in sg and "get-in $55" in sg and "NoRow" not in sg and "Bare" not in sg
 
 
 def test_digest_realized_sales_partial():
