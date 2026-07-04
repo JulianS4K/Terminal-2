@@ -2488,3 +2488,67 @@ body[data-page="login"] {
 .sales .role-block { border: 1px solid var(--line); border-radius: 4px; padding: 8px; background: var(--panel); }
 .sales .role-block .panel-title.small { margin: 0 0 6px; }
 .sales .panel-title.small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 12px 0 6px; }
+
+/* ---------- RACING page (RACING nav tab) ---------- */
+.wrap.racing { padding: 14px; }
+.race-series { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.race-tab {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .4px;
+  padding: 5px 12px; cursor: pointer;
+  background: var(--panel); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 3px;
+}
+.race-tab:hover { color: var(--text); border-color: var(--dim); }
+.race-tab.active { color: var(--accent); border-color: var(--accent); background: var(--panel-2); font-weight: 700; }
+.race-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; align-items: start; }
+.race-grid > section { border: 1px solid var(--line); border-radius: 4px; padding: 10px; background: var(--panel); }
+.race-tbl tbody tr.race-done td { color: var(--dim); }
+.race-badge {
+  font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .5px;
+  padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor;
+}
+.race-badge.done { color: var(--dim); }
+.race-badge.live { color: var(--pos); }
+.race-badge.sched { color: var(--info); }
+@media (max-width: 860px) { .race-grid { grid-template-columns: 1fr; } }
+
+/* ---------- FANTASY page (FANTASY nav tab) ---------- */
+.wrap.fantasy { padding: 14px; }
+.fan-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.fan-leagues { display: flex; flex-wrap: wrap; gap: 6px; }
+.fan-league-tab {
+  font-family: var(--mono); font-size: 11px; padding: 5px 12px; cursor: pointer;
+  background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 3px;
+}
+.fan-league-tab:hover { color: var(--text); border-color: var(--dim); }
+.fan-league-tab.active { color: var(--accent); border-color: var(--accent); background: var(--panel-2); font-weight: 700; }
+.fan-actions { display: flex; gap: 6px; align-items: center; }
+.fan-select {
+  font-family: var(--mono); font-size: 11px; padding: 4px 8px;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
+}
+.fan-btn {
+  font-family: var(--mono); font-size: 11px; padding: 5px 12px; cursor: pointer;
+  background: var(--panel-2); color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
+}
+.fan-btn:hover { background: var(--accent); color: var(--bg); }
+.fan-btn:disabled { opacity: .5; cursor: default; }
+.fan-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; align-items: start; }
+.fan-grid > section { border: 1px solid var(--line); border-radius: 4px; padding: 10px; background: var(--panel); }
+.fan-team { border-bottom: 1px solid var(--line-2); padding: 8px 0; }
+.fan-team:last-child { border-bottom: 0; }
+.fan-team-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.fan-team-name { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--text); }
+.fan-pts { font-family: var(--mono); font-size: 11px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.fan-roster { display: flex; flex-wrap: wrap; gap: 4px; }
+.fan-player {
+  display: inline-flex; align-items: center; gap: 5px; text-decoration: none;
+  font-family: var(--mono); font-size: 10px; padding: 2px 6px;
+  border: 1px solid var(--line-2); border-radius: 3px; color: var(--muted);
+}
+.fan-player:hover { border-color: var(--dim); color: var(--text); }
+.fan-player.starter { color: var(--text); border-color: var(--line); }
+.fan-player .fan-slot { font-size: 8px; font-weight: 700; color: var(--dim); }
+.fan-player.starter .fan-slot { color: var(--pos); }
+.fan-player .fan-pname { font-weight: 600; }
+@media (max-width: 860px) { .fan-grid { grid-template-columns: 1fr; } }

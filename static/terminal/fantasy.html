@@ -14,44 +14,59 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — Retail Chat</title>
+  <title>Terminal — Fantasy</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260702f" />
-  <style>
-    /* Page layout: let the chat panel fill the viewport under the topbar. */
-    body[data-page="retail-chat"] { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
-    main.wrap.retail-chat { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; padding:12px 16px; }
-    .rc-intro { color:var(--muted,#737373); font-size:12px; margin:0 0 10px; }
-    .rc-intro b { color:var(--text,#e5e5e5); font-weight:600; }
-    #retailChat { flex:1 1 auto; min-height:0;
-      --rchat-bg:var(--bg,#0a0a0a); --rchat-panel:var(--panel,#141414);
-      --rchat-line:var(--line,#2a2a2a); --rchat-text:var(--text,#e5e5e5);
-      --rchat-muted:var(--muted,#737373); --rchat-accent:var(--accent,#fbbf24);
-      --rchat-sans:var(--sans); }
-  </style>
+  <link rel="stylesheet" href="style.css?v=20260704racing" />
 </head>
-<body data-page="retail-chat">
+<body data-page="fantasy">
 
   <header class="topbar">
     <span class="brand">TERMINAL · D0</span>
     <span id="status" class="status">Loading…</span>
   </header>
 
-  <main class="wrap retail-chat">
-    <p class="rc-intro">
-      <b>Retail chat</b> — ask about prices and availability in plain English.
-      This desk view spans the <b>full market</b> (all listings), not just owned inventory.
-    </p>
-    <div id="retailChat"></div>
+  <main class="wrap fantasy">
+
+    <div class="fan-bar">
+      <div class="fan-leagues" id="fanLeagues" role="tablist"></div>
+      <div class="fan-actions">
+        <select id="fanDemoLeague" class="fan-select" title="Sport for the demo league">
+          <option value="NBA">NBA</option>
+        </select>
+        <button id="fanNewDemo" class="fan-btn">+ Demo league</button>
+      </div>
+    </div>
+
+    <section id="fan-empty" hidden>
+      <div class="empty">No fantasy leagues yet. Click <strong>+ Demo league</strong> to spin one up — it drafts real athletes by trailing form, schedules a week, and scores it.</div>
+    </section>
+
+    <div class="fan-grid" id="fan-detail" hidden>
+      <section id="fan-standings">
+        <div class="panel-title row">
+          <span>STANDINGS</span>
+          <span class="muted small" id="fanStandMeta"></span>
+        </div>
+        <div id="fanStandBody"><div class="empty">loading…</div></div>
+      </section>
+
+      <section id="fan-teams">
+        <div class="panel-title row">
+          <span>TEAMS &amp; ROSTERS</span>
+          <span class="muted small" id="fanTeamsMeta"></span>
+        </div>
+        <div id="fanTeamsBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
   </main>
 
   <script src="lib/supabase.js"></script>
   <script src="lib/render.js"></script>
-  <!-- Cache-busting: bump ?v= on any first-party asset change. -->
+  <script src="pwa.js?v=20260702"></script>
   <script src="auth.js?v=20260608"></script>
-  <script src="app.js?v=20260619"></script>
+  <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260704racing"></script>
-  <script src="/static/shared/retail-chat-widget.js?v=20260619"></script>
-  <script src="retail-chat.js?v=20260619"></script>
+  <script src="fantasy.js?v=20260704a"></script>
 </body>
 </html>
