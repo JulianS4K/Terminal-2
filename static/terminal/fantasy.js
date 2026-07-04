@@ -31,7 +31,9 @@
       return;
     }
     document.getElementById('fanNewDemo').addEventListener('click', createDemo);
-    return loadLeagues();
+    document.getElementById('fanAdvance').addEventListener('click', advanceWeek);
+    const pref = Number(new URLSearchParams(location.search).get('league')) || null;
+    return loadLeagues(pref);
   }
 
   async function loadLeagues(preferId) {
@@ -69,6 +71,7 @@
   async function loadLeague(id) {
     selectedId = id;
     markActive();
+    document.getElementById('fanAdvance').removeAttribute('hidden');
     document.getElementById('fan-detail').removeAttribute('hidden');
     document.getElementById('fanStandBody').innerHTML = '<div class="empty">loading…</div>';
     document.getElementById('fanTeamsBody').innerHTML = '<div class="empty">loading…</div>';
@@ -142,6 +145,24 @@
     if (d.ok === false) { T.setStatus('Demo failed: ' + (d.error || 'unknown'), 'err'); return; }
     T.setStatus(`Demo league built — ${d.drafted} drafted`, 'ok');
     return loadLeagues(d.league_id);
+  }
+
+  async function advanceWeek() {
+    if (!selectedId) return;
+    const btn = document.getElementById('fanAdvance');
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = 'Scoring…';
+    T.setStatus('Scheduling + scoring next week…');
+    const res = await auth().client.rpc('fantasy_advance_week', { p_league_id: selectedId });
+    btn.disabled = false;
+    btn.textContent = prev;
+    if (res.error) { T.setStatus(res.error.message, 'err'); return; }
+    const d = res.data || {};
+    if (d.ok === false) { T.setStatus('Advance failed: ' + (d.error || 'unknown'), 'err'); return; }
+    if (d.done) { T.setStatus('Season complete — no more game data', 'ok'); return; }
+    T.setStatus(`Week ${d.week} scored (${d.matchups} matchups)`, 'ok');
+    return loadLeague(selectedId);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
