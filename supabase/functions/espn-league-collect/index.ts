@@ -7,6 +7,7 @@
 //   ?scope=transactions  -> league roster-move ledger (append-only, deduped)
 //   ?scope=attendance    -> per-team season attendance (change-only snapshots)
 //   ?scope=stats         -> full-roster player stats (current-season snapshot)
+//   ?scope=gamelog       -> per-game box-score lines (batched staleness rotation)
 //
 // Source endpoints (verified live 2026-07-04 from Supabase pg_net):
 //   transactions: site.api.espn.com/apis/site/v2/sports/{sport}/{league}/transactions
@@ -359,13 +360,85 @@ async function collectStats(db: any, state: TxnState) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Player game logs — per-game box-score lines for the terminal player page +
+// fantasy scoring. Batched, staleness-rotating worker: each invocation processes
+// the N least-recently-synced active athletes (espn_gamelog_next_batch) across
+// the 4 requested leagues, so a frequent cron rotates through the full roster.
+// ---------------------------------------------------------------------------
+
+const GAMELOG_LEAGUES = ["MLB", "NBA", "NFL", "WNBA"];
+const LEAGUE_SLUG: Record<string, string> = {
+  MLB: "baseball/mlb", NBA: "basketball/nba", WNBA: "basketball/wnba", NFL: "football/nfl",
+};
+
+async function collectGamelog(db: any, state: TxnState, limit: number) {
+  const { data: batch } = await db.rpc("espn_gamelog_next_batch", { p_leagues: GAMELOG_LEAGUES, p_limit: limit });
+  let athletes = 0, games = 0;
+  for (const a of (batch ?? []) as any[]) {
+    const slug = LEAGUE_SLUG[a.espn_league];
+    if (!slug) continue;
+    athletes++;
+    let data: any;
+    try { data = await getWeb(`/apis/common/v3/sports/${slug}/athletes/${a.espn_athlete_id}/gamelog`, {}); }
+    catch (_) {
+      // 404 / no gamelog — write a marker so staleness advances (skip next pass).
+      await db.from("espn_player_gamelog").upsert([{ espn_athlete_id: String(a.espn_athlete_id), espn_league: a.espn_league, espn_event_id: "none", athlete_name: a.full_name ?? null, updated_at: new Date().toISOString(), meta: { empty: true } }], { onConflict: "espn_athlete_id,espn_league,espn_event_id" });
+      await sleep(50);
+      continue;
+    }
+    const labels = (data.labels ?? []) as string[];
+    const evMeta = data.events ?? {};
+    const rows: any[] = [];
+    for (const st of (data.seasonTypes ?? []) as any[]) {
+      for (const cat of (st.categories ?? []) as any[]) {
+        for (const g of (cat.events ?? []) as any[]) {
+          const eid = String(g.eventId);
+          const m = evMeta[eid] ?? {};
+          const stats: Record<string, string> = {};
+          const statsNum: Record<string, number> = {};
+          (g.stats ?? []).forEach((v: any, i: number) => {
+            const lbl = labels[i];
+            if (!lbl) return;
+            stats[lbl] = String(v);
+            if (/^-?[0-9]+(\.[0-9]+)?$/.test(String(v))) statsNum[lbl] = Number(v);
+          });
+          rows.push({
+            espn_athlete_id: String(a.espn_athlete_id), espn_league: a.espn_league, espn_event_id: eid,
+            game_date: m.gameDate ?? null, season_type: st.displayName ?? null,
+            opponent_abbr: m.opponent?.abbreviation ?? null, home_away: m.atVs ?? null,
+            result: m.gameResult ?? null, score: m.score ?? null,
+            team_abbr: m.team?.abbreviation ?? null, athlete_name: a.full_name ?? null,
+            stats, stats_num: statsNum, content_hash: await sha256hex(JSON.stringify(g.stats ?? [])),
+            updated_at: new Date().toISOString(), meta: { espn_slug: slug },
+          });
+        }
+      }
+    }
+    if (rows.length) {
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const { error } = await db.from("espn_player_gamelog").upsert(chunk, { onConflict: "espn_athlete_id,espn_league,espn_event_id" });
+        if (error) { state.errors++; state.log.push(`gl upsert ${a.espn_athlete_id}: ${error.message}`); } else games += chunk.length;
+      }
+    } else {
+      await db.from("espn_player_gamelog").upsert([{ espn_athlete_id: String(a.espn_athlete_id), espn_league: a.espn_league, espn_event_id: "none", athlete_name: a.full_name ?? null, updated_at: new Date().toISOString(), meta: { empty: true } }], { onConflict: "espn_athlete_id,espn_league,espn_event_id" });
+    }
+    await sleep(60);
+  }
+  state.transactions_inserted += games;
+  state.leagues_processed = athletes;
+  state.log.push(`gamelog: ${athletes} athletes, ${games} game rows`);
+}
+
 Deno.serve(async (req) => {
   const authErr = requireCronSecret(req);
   if (authErr) return authErr;
 
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope") ?? "transactions";
-  const valid = ["transactions", "attendance", "stats"];
+  const glLimit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? "100"), 400));
+  const valid = ["transactions", "attendance", "stats", "gamelog"];
   if (!valid.includes(scope)) {
     return new Response(JSON.stringify({ error: `unknown scope: ${scope}`, valid }), { status: 400 });
   }
@@ -383,6 +456,7 @@ Deno.serve(async (req) => {
     if (scope === "transactions") await collectTransactions(db, state);
     else if (scope === "attendance") await collectAttendance(db, state);
     else if (scope === "stats") await collectStats(db, state);
+    else if (scope === "gamelog") await collectGamelog(db, state, glLimit);
   } catch (e) {
     state.errors++;
     state.log.push(`fatal: ${(e as Error).message}`);
