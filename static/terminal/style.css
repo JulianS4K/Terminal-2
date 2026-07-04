@@ -221,7 +221,7 @@ table.wc-daily { width: 100%; }
 .chart-section .legend .legend-item:hover { opacity: 1 !important; text-decoration: underline; text-decoration-style: dotted; }
 .chart-section .legend .legend-anno { cursor: default; }
 .chart-section .legend i {
-  width: 10px; height: 2px; display: inline-block;
+  width: 16px; height: 3px; display: inline-block; border-radius: 1.5px;
 }
 .chart-section .legend .legend-sep {
   color: var(--line-2); padding: 0 4px;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 S4Kent. Licensed under the MIT License (see static/lib/LICENSE).
+//
 // S4K — canonical cross-surface frontend lib (window.S4K).
 //
 // Coding-recommendation #4: escapeHtml existed 5×, a scheme-safe href builder

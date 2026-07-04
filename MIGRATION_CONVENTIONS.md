@@ -4,7 +4,7 @@
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
-> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Push to `main` is per-task** (A1 + B1 jointly maintain `main`, reorg 2026-06-17 — supersedes "A1 sole pusher"); **prod-DB apply stays centralized on A1.** See [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
+> **Roster note (2026-05-28):** the "lane" names below (audit lane, canonical, storefront, broadway) predate the current bot roster. **Push to `main` is per-task** (no sole-pusher lane, reorg 2026-06-17 — supersedes "A1 sole pusher"); **prod-DB apply is per-task by any session under operator direction — no A1 gate.** See [`PROJECT_BIBLE.md §2`](PROJECT_BIBLE.md) for the canonical roster + push matrix. The migration *mechanics* in this doc remain current; only the lane→bot naming is historical.
 
 ---
 

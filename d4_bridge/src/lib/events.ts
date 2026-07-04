@@ -32,6 +32,7 @@ function mapTier(t: any): Tier {
     visibility: (t.visibility ?? 'public') as Tier['visibility'],
     salesStart: t.sales_start ? toTs(t.sales_start) : null,
     salesEnd: t.sales_end ? toTs(t.sales_end) : null,
+    priceSchedule: Array.isArray(t.price_schedule) ? t.price_schedule : undefined,
   };
 }
 
@@ -172,6 +173,7 @@ export interface TierInput {
   salesStart?: string | null;
   salesEnd?: string | null;
   sortOrder?: number;
+  priceSchedule?: { startsAt: string; price: number }[];
 }
 
 export interface DiscountInput {
@@ -235,6 +237,7 @@ function tierInsertRow(eventId: string, t: TierInput, idx: number) {
     sales_start: t.salesStart ?? null,
     sales_end: t.salesEnd ?? null,
     sort_order: t.sortOrder ?? idx,
+    price_schedule: t.priceSchedule ?? [],
   };
 }
 
@@ -359,6 +362,7 @@ export async function updateTier(tierId: string, patch: Partial<TierInput>): Pro
   if (patch.salesStart !== undefined) row.sales_start = patch.salesStart;
   if (patch.salesEnd !== undefined) row.sales_end = patch.salesEnd;
   if (patch.sortOrder !== undefined) row.sort_order = patch.sortOrder;
+  if (patch.priceSchedule !== undefined) row.price_schedule = patch.priceSchedule;
   if (Object.keys(row).length === 0) return;
   const { error } = await supabase.from('exos_ticket_tiers').update(row).eq('id', tierId);
   if (error) throw error;

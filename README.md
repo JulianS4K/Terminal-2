@@ -2,7 +2,7 @@
 
 Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by six peer bot lanes — a platform substrate (**A1** data plane · **B1** build/guards/docs governance) plus products (**D0** terminal · **D1** store · **D3** broadway · **D4** Exos/Bridge) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.8.0 (2026-07-03; drift fixes — intro + reading-order now reflect the six-lane model (C1→B1, D2→D0); repo-layout: `server.py` route list corrected (+`/api/admin/scheduler-watchdog/status`), `*_client.py` count 9→10 (+`bandsintown`)). · v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.9.0 (2026-07-03; merged #778 drift fixes — intro + reading-order reflect the six-lane model; repo-layout: `server.py` route list corrected, `*_client.py` count 9→10 (+`bandsintown`)) · v2.8.0 (2026-07-03; documented the repo license split — root proprietary `LICENSE` + MIT carve-out for `static/lib/`). · v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ---
 
@@ -173,7 +173,7 @@ The gate is a **ratchet** — it only moves up. Product code (`server.py`, `core
 - **Cross-source IDs never line up — resolve through the AQ mapper hub** → `PROJECT_BIBLE.md §0` (one-pager) · `PROJECT_BIBLE.md §5` (full architecture)
 - **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3` + `§7`
 - **Migration filename/header/apply rules** → `MIGRATION_CONVENTIONS.md`
-- **Who can push / per-lane scope / who owns each tool** → `PROJECT_BIBLE.md §2` (push to `main` is per-task; A1 + B1 maintain it; prod-DB apply centralized on A1)
+- **Who can push / per-lane scope / who owns each tool** → `PROJECT_BIBLE.md §2` (push to `main` is per-task, no sole-pusher lane; prod-DB apply is per-task by any session under operator direction — no A1 gate)
 - **What exists before you build something new** (tables · views · crons · edge fns · vault) → `RESOURCES_BIBLE.md`
 - **Where each lane is headed** (north-star + endgame per lane) → `docs/d_tier_goals.md`
 - **Edge functions that mutate or burn paid APIs: platform `verify_jwt` is NOT sufficient** → `PROJECT_BIBLE.md §1` rule 7 (`requireCronSecret` pattern)
@@ -183,4 +183,7 @@ The gate is a **ratchet** — it only moves up. Product code (`server.py`, `core
 
 ---
 
-**License**: proprietary, internal use. Code authored by Anthropic Claude under operator direction.
+**License**: proprietary, internal use — All Rights Reserved (see [`LICENSE`](LICENSE)). Code authored by Anthropic Claude under operator direction.
+
+- The repository as a whole is **proprietary / All Rights Reserved** ([`LICENSE`](LICENSE)). Broker clients, ingest pipeline, `server.py`, business logic, and data-source integrations are confidential and may not be used, copied, or redistributed.
+- **Carve-out:** [`static/lib/`](static/lib/) (the framework-agnostic **S4K** frontend utilities) is released under the **MIT License** ([`static/lib/LICENSE`](static/lib/LICENSE)). This is the only open-source portion; do not extend MIT coverage to any other path.

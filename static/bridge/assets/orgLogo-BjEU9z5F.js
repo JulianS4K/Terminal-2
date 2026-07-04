@@ -1,0 +1,1 @@
+import{r as e}from"./storage-DfW9MTIa.js";var t=2*1024*1024,n=/^image\/(png|jpe?g|webp|svg\+xml)$/;async function r(r,i){if(!n.test(i.type))throw Error(`Logo must be a PNG, JPG, WebP, or SVG.`);if(i.size>t)throw Error(`Logo must be under ${t/1024/1024} MB.`);let{url:a}=await e(r,i);return a}export{r as t};
