@@ -6,7 +6,7 @@
 // Routes (via ?scope= query param):
 //   ?scope=transactions  -> league roster-move ledger (append-only, deduped)
 //   ?scope=attendance    -> per-team season attendance (change-only snapshots)
-//   [stats scope added in a later slice]
+//   ?scope=stats         -> full-roster player stats (current-season snapshot)
 //
 // Source endpoints (verified live 2026-07-04 from Supabase pg_net):
 //   transactions: site.api.espn.com/apis/site/v2/sports/{sport}/{league}/transactions
@@ -269,13 +269,103 @@ async function collectAttendance(db: any, state: TxnState) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Player stats — full-roster byathlete, paginated, bulk-upserted into
+// espn_player_stats (current-season snapshot). site.web.api.espn.com host.
+// Categories are sport-specific: MLB pulls batting + pitching (one category per
+// call); NBA/WNBA pull the default set (general/offensive/defensive) merged.
+// ---------------------------------------------------------------------------
+
+const WEB_HOST = "site.web.api.espn.com";
+async function getWeb(path: string, query: Record<string, string>) {
+  const url = new URL(`https://${WEB_HOST}${path}`);
+  for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+  const r = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error(`ESPN ${r.status} on ${url.pathname}`);
+  return r.json();
+}
+
+// { espn_slug: [{ apiCategory, storeCategory }] }. apiCategory '' => no ?category=
+// param (basketball default). storeCategory is the row's `category` label.
+const STATS_CONFIG: Record<string, { apiCategory: string; storeCategory: string }[]> = {
+  "baseball/mlb":   [{ apiCategory: "batting", storeCategory: "batting" }, { apiCategory: "pitching", storeCategory: "pitching" }],
+  "basketball/nba":  [{ apiCategory: "", storeCategory: "general" }],
+  "basketball/wnba": [{ apiCategory: "", storeCategory: "general" }],
+};
+const STATS_MAX_PAGES = 40;
+
+async function collectStats(db: any, state: TxnState) {
+  const leagues = await distinctLeagues(db);
+  const thisYear = new Date().getUTCFullYear();
+  for (const l of leagues) {
+    const cfg = STATS_CONFIG[l.espn_slug];
+    if (!cfg) continue;
+    state.leagues_processed++;
+    for (const { apiCategory, storeCategory } of cfg) {
+      let page = 1, pages = 1, upserted = 0;
+      do {
+        const q: Record<string, string> = {
+          region: "us", lang: "en", contentorigin: "espn",
+          isqualified: "false", page: String(page), limit: "50",
+        };
+        if (apiCategory) q.category = apiCategory;
+        let data: any;
+        try { data = await getWeb(`/apis/common/v3/sports/${l.espn_slug}/statistics/byathlete`, q); }
+        catch (e) { state.errors++; state.log.push(`stats ${l.espn_slug}/${storeCategory} p${page} FAIL: ${(e as Error).message}`); break; }
+        pages = Math.min(data.pagination?.pages ?? 1, STATS_MAX_PAGES);
+        const season = data.season?.year ?? data.requestedSeason?.year ?? thisYear;
+        const catDefs = (data.categories ?? []) as any[];
+        const rows: any[] = [];
+        for (const entry of (data.athletes ?? []) as any[]) {
+          const a = entry.athlete;
+          if (!a?.id) continue;
+          const stats: Record<string, string> = {};
+          const statsNum: Record<string, number> = {};
+          for (const ac of (entry.categories ?? []) as any[]) {
+            const def = catDefs.find((d) => d.name === ac.name) ?? catDefs[0];
+            const names = def?.names ?? [];
+            (ac.totals ?? []).forEach((v: any, i: number) => { if (names[i]) stats[names[i]] = String(v); });
+            (ac.values ?? []).forEach((v: any, i: number) => { if (names[i] && typeof v === "number") statsNum[names[i]] = v; });
+          }
+          // ESPN occasionally serves "-" in the display `totals` for a stat whose
+          // numeric `value` is real (e.g. HR leaders showing "-"). stats_num is
+          // authoritative — backfill a dash/blank display from the numeric.
+          for (const k of Object.keys(statsNum)) {
+            const d = stats[k];
+            if (d === undefined || d === "-" || d === "--" || d === "") stats[k] = String(statsNum[k]);
+          }
+          const hash = await sha256hex(JSON.stringify(statsNum));
+          rows.push({
+            espn_athlete_id: String(a.id), espn_league: l.espn_league, category: storeCategory,
+            season, athlete_name: a.displayName ?? null,
+            position: a.position?.abbreviation ?? a.position?.name ?? null,
+            team_abbr: entry.team?.abbreviation ?? a.teamShortName ?? null,
+            stats, stats_num: statsNum, content_hash: hash,
+            updated_at: new Date().toISOString(), meta: { espn_slug: l.espn_slug },
+          });
+        }
+        if (rows.length) {
+          const { error } = await db.from("espn_player_stats")
+            .upsert(rows, { onConflict: "espn_athlete_id,espn_league,category" });
+          if (error) { state.errors++; state.log.push(`stats upsert ${l.espn_slug}/${storeCategory} p${page}: ${error.message}`); }
+          else upserted += rows.length;
+        }
+        page++;
+        await sleep(90);
+      } while (page <= pages);
+      state.transactions_inserted += upserted;
+      state.log.push(`stats ${l.espn_slug}/${storeCategory}: ${upserted} athletes, ${pages} pages`);
+    }
+  }
+}
+
 Deno.serve(async (req) => {
   const authErr = requireCronSecret(req);
   if (authErr) return authErr;
 
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope") ?? "transactions";
-  const valid = ["transactions", "attendance"];
+  const valid = ["transactions", "attendance", "stats"];
   if (!valid.includes(scope)) {
     return new Response(JSON.stringify({ error: `unknown scope: ${scope}`, valid }), { status: 400 });
   }
@@ -292,6 +382,7 @@ Deno.serve(async (req) => {
   try {
     if (scope === "transactions") await collectTransactions(db, state);
     else if (scope === "attendance") await collectAttendance(db, state);
+    else if (scope === "stats") await collectStats(db, state);
   } catch (e) {
     state.errors++;
     state.log.push(`fatal: ${(e as Error).message}`);
