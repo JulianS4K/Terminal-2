@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260703140000 — Exos (Bridge / D4): reconcile exos_mail template allowlist
+-- Migration 20260703150000 — Exos (Bridge / D4): reconcile exos_mail template allowlist
 --
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  exos_mail (constraint: exos_mail_template_check → complete union)
