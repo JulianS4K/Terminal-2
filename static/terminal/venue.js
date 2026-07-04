@@ -130,6 +130,7 @@
     safe('events', () => renderEvents(d.events));
     safe('owned',  () => renderOwned(d.events, d.aggregate));
     safe('sg',     () => renderSg(d.sg_activity));
+    safe('espnAtt', () => renderVenueAttendance(d.espn_attendance));
     // Stash events and auto-load Market Carpet (default view)
     _vTabState.venueEvents   = d.events || [];
     _vTabState.venueAggregate = d.aggregate || {};
@@ -389,6 +390,33 @@
         <div class="kpi-strip-cell"><span class="kpi-lbl">GMV 24H</span><span class="kpi-val">${sg.gmv_24h ? '$' + T.fmtNum(Math.round(+sg.gmv_24h)) : '—'}</span></div>
         <div class="kpi-strip-cell"><span class="kpi-lbl">ACTIVE EVENTS</span><span class="kpi-val">${T.fmtNum(sg.distinct_events_with_sales)}</span></div>
       </div>`;
+  }
+
+  // ---------- ESPN attendance for the venue's resident team(s) ----------
+  function renderVenueAttendance(att) {
+    const body = document.getElementById('vEspnAttBody');
+    const meta = document.getElementById('vEspnAttMeta');
+    if (!body) return;
+    const rows = Array.isArray(att) ? att : [];
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no ESPN attendance for this venue</div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    if (meta) meta.textContent = `${rows.length} team${rows.length > 1 ? 's' : ''}`;
+    body.innerHTML = `
+      <table class="espn-recent">
+        <thead><tr><th>Team</th><th>Season</th><th>Rank</th><th>Home Avg</th><th>Home Total</th></tr></thead>
+        <tbody>${rows.map(a => `
+          <tr>
+            <td>${escapeHtml(a.team_name || '—')} <span class="muted small">${escapeHtml(a.espn_league || '')}</span></td>
+            <td>${a.season || '—'}</td>
+            <td>${a.rank != null ? '#' + a.rank : '—'}</td>
+            <td class="num">${a.home_avg ? T.fmtNum(a.home_avg) : '—'}</td>
+            <td class="num">${a.home_total ? T.fmtNum(a.home_total) : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
   }
 
   // ---------- Market Carpet — venue as stock ticker ----------
