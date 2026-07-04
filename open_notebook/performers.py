@@ -345,6 +345,57 @@ def _sec_sentiment(db, events: list[dict], n: int = 5) -> list[str]:
     return ["## Demand velocity"] + out + [""] if out else []
 
 
+def _sec_flip(db, events: list[dict], n: int = 8) -> list[str]:
+    """Primary (AXS face) vs best secondary get-in + flip margin/signal per event —
+    the core broker edge (`v_event_primary_vs_secondary`, precomputed)."""
+    out: list[str] = []
+    for e in events[:n]:
+        row = _safe(lambda e=e: _rows(db.table("v_event_primary_vs_secondary")
+                    .select("axs_primary_getin,axs_primary_median,axs_primary_qty,"
+                            "best_secondary_getin,flip_margin_pct,signal")
+                    .eq("tevo_event_id", e["id"]).limit(1).execute()), [])
+        if not row:
+            continue
+        r = row[0]
+        bits = []
+        if r.get("axs_primary_getin") is not None:
+            bits.append(f"AXS primary get-in {_fmt_price(r['axs_primary_getin'])}")
+        if r.get("best_secondary_getin") is not None:
+            bits.append(f"best secondary {_fmt_price(r['best_secondary_getin'])}")
+        if r.get("flip_margin_pct") is not None:
+            bits.append(f"flip {float(r['flip_margin_pct']):+.0f}%")
+        if r.get("signal"):
+            bits.append(f"[{r['signal']}]")
+        if bits:
+            out.append(f"- {e.get('name', '')}: " + ", ".join(bits))
+    return ["## Primary vs secondary (flip signal)"] + out + [""] if out else []
+
+
+def _sec_sg_secondary(db, events: list[dict], n: int = 8) -> list[str]:
+    """SeatGeek secondary read per event (`seatgeek_event_metrics`) — a second
+    marketplace reference beyond the EVO/TEvo get-in."""
+    out: list[str] = []
+    for e in events[:n]:
+        row = _safe(lambda e=e: _rows(db.table("seatgeek_event_metrics")
+                    .select("listings_all_min,listings_all_median,sold_price_median,fill_rate,captured_at")
+                    .eq("tevo_event_id", e["id"]).order("captured_at", desc=True).limit(1).execute()), [])
+        if not row:
+            continue
+        r = row[0]
+        bits = []
+        if r.get("listings_all_min") is not None:
+            bits.append(f"get-in {_fmt_price(r['listings_all_min'])}")
+        if r.get("listings_all_median") is not None:
+            bits.append(f"median {_fmt_price(r['listings_all_median'])}")
+        if r.get("sold_price_median") is not None:
+            bits.append(f"sold-median {_fmt_price(r['sold_price_median'])}")
+        if r.get("fill_rate") is not None:
+            bits.append(f"fill {r['fill_rate']}")
+        if bits:
+            out.append(f"- {e.get('name', '')}: " + ", ".join(bits))
+    return ["## SeatGeek secondary"] + out + [""] if out else []
+
+
 def _sec_hot_sections(db, performer_id: int, n: int = 5) -> list[str]:
     rows = _safe(lambda: _rows(db.table("d0_perf_top5_sections")
                                .select("section,tickets,revenue,rank_by_revenue")
@@ -426,6 +477,8 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
         lines.append(f"- {head}" + (f" — {', '.join(detail)}" if detail else ""))
     lines.append("")
 
+    lines += _sec_flip(db, events)             # primary (AXS) vs secondary + flip edge
+    lines += _sec_sg_secondary(db, events)     # SeatGeek cross-market reference
     lines += _sec_sentiment(db, events)        # demand velocity
     lines += _sec_hot_sections(db, performer_id)
 
