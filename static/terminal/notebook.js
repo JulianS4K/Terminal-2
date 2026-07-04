@@ -286,7 +286,7 @@
               <button class="nb-btn danger" data-act="del" data-id="${esc(s.id)}">Delete</button>
             </div>
           </div>
-          ${s.error ? `<div class="m" style="color:#f87171">${esc(s.error)}</div>` : ''}
+          ${s.error ? `<div class="m" style="color:var(--neg)">${esc(s.error)}</div>` : ''}
           ${s.full_text ? `<div class="m">${esc(s.full_text.slice(0, 220))}${s.full_text.length > 220 ? '…' : ''}</div>` : ''}
           <div class="nb-insights" id="ins-${esc(s.id)}"></div>
         </div>`).join('');
@@ -568,7 +568,7 @@
             <div class="t">${esc(e.name)} <span class="nb-badge ${esc(e.status)}">${esc(e.status)}</span></div>
             <button class="nb-btn danger" data-delep="${esc(e.id)}">Delete</button>
           </div>
-          ${e.error ? `<div class="m" style="color:${e.status === 'done' ? '#fbbf24' : '#f87171'}">${esc(e.error)}</div>` : ''}
+          ${e.error ? `<div class="m" style="color:${e.status === 'done' ? 'var(--accent)' : 'var(--neg)'}">${esc(e.error)}</div>` : ''}
           ${e.audio_url ? `<audio controls preload="none" style="width:100%;margin-top:8px" src="${esc(e.audio_url)}"></audio>` : ''}
           ${e.status === 'done' && e.content ? `<pre class="nb-transcript" style="white-space:pre-wrap;margin-top:8px;max-height:260px;overflow:auto;font-size:12px;line-height:1.5">${esc(e.content)}</pre>` : ''}
         </div>`).join('') : '<div class="nb-empty">No episodes yet.</div>';
