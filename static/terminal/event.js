@@ -1533,15 +1533,29 @@
     }
   }
 
-  // Y-axis range — always 10% above the maximum value currently in view.
+  // Y-axis range — FIT the data in view (padded), not anchored at $0.
   //
-  // `initMax` is supplied by uPlot already scoped to (a) only the series on THIS
-  // scale and (b) only the points inside the current x-window, so the top tracks
-  // the on-screen data as the time range changes or prices climb toward the
-  // event — no line is ever clipped, and a single spike just lifts the top.
+  // `initMin`/`initMax` are supplied by uPlot already scoped to (a) only the
+  // series on THIS scale and (b) only the points inside the current x-window, so
+  // the band tracks the on-screen data as the time range or price level shifts.
+  //
+  // Prior behaviour returned [0, max*1.1] — a zero baseline. For a price line that
+  // lives at, say, $250±6 that flattened the whole series against the top and made
+  // its real movement invisible (a broker chart wants the swing, not the distance
+  // to $0). Now we pad 8% around the in-view span, keep a floor on the span so a
+  // near-flat series doesn't zoom into noise, and never dip below 0 for all-positive
+  // (price) data — while still allowing a genuine negative range through.
   function robustYRange(u, initMin, initMax) {
-    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
-    return [0, mx > 0 ? mx * 1.1 : 1];
+    if (initMax == null || !isFinite(initMax) || initMin == null || !isFinite(initMin)) {
+      return [0, 1];  // no data in view — neutral finite range
+    }
+    var span = initMax - initMin;
+    if (span <= 0) span = Math.abs(initMax) || 1;   // flat series → synthesise a span so it centres
+    var pad = span * 0.08;
+    var lo = initMin - pad;
+    var hi = initMax + pad;
+    if (initMin >= 0 && lo < 0) lo = 0;              // all-positive (price) data never crosses below 0
+    return [lo, hi];
   }
 
   // Count-axis range — for the inventory pane's integer count scales (left 'y'
