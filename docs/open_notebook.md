@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.1.0 (2026-07-03)
+**Doc version:** v1.2.0 (2026-07-03)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -45,13 +45,31 @@ context; and generate multi-speaker **podcasts** (outline → transcript → TTS
   (`static/terminal/notebook.{html,js}`, wired into `nav.js`), plain HTML/JS.
 
 ## Per-performer SQL sources
-A **performer** source kind (`open_notebook/performers.py`) assembles a
-non-sensitive digest for one performer from the ticket data plane — identity
-(`entity_performer_map`), upcoming events (`events`), price snapshots
-(`latest_event_metrics`), 7-day movement (`get_event_movers_v2`), realized-sales
-color (`d0_perf_*`), and optional futures (`get_performer_prediction_markets`).
-It reads a **fixed set of safe sources only** — secrets (`settings`/vault),
-barcodes (`exos_*`), and PII (`leads`, buyer data) are never touched. One call —
+A **performer** source kind (`open_notebook/performers.py`) assembles a rich,
+non-sensitive digest for one performer from the ticket data plane. It reads a
+**fixed set of safe sources only** — secrets (`settings`/vault), barcodes
+(`exos_*`), and PII (`leads`, buyer data) are never touched. Every section is
+best-effort (`_safe`): a missing view or empty result is skipped, never fatal.
+Sources folded in (all already ingested by the platform — no external API calls):
+
+- **Identity / meta** — `entity_performer_map`; ESPN team id via `performer_espn_team_xref`.
+- **Overview** — `performer_wikipedia` (curated extract).
+- **Sports (gated on an ESPN team id)** — team form/standings/streak (`v_espn_team_state`),
+  recent results (`v_team_recent_results`), injuries (`v_espn_injuries_current`),
+  roster (`v_team_roster_full`), 30-day schedule + rivalry (`v_team_schedule_30d`),
+  headlines (`espn_news`).
+- **Events + pricing** — upcoming slate (`events`), price snapshots
+  (`latest_event_metrics`), 7-day movement (`get_event_movers_v2`), realized-sales
+  color (`d0_perf_*`) + hot sections (`d0_perf_top5_sections`).
+- **Per-event context** — game-day weather w/ climatology fallback
+  (`v_event_weather_with_fallback`), demand velocity (`event_sentiment`).
+- **Buzz / markets / macro** — Reddit pulse + notable posts (`v_performer_reddit_pulse`,
+  `v_reddit_important_recent`), prediction-market futures / Kalshi
+  (`get_performer_prediction_markets`), and a macro backdrop (`v_macro_indicators_latest`, FRED).
+
+Podcast content budgets (`build_podcast_content`) are generous (40k total / 12k per
+source) so the full digest reaches the outline/transcript stages instead of being
+truncated to a snapshot. One call —
 `POST /api/notebook/performers/notebook {"name": "New York Yankees"}` (or
 `{"performer_id": N}`) — resolves the performer, creates a notebook, ingests the
 digest, and it's ready for Ask/Chat/Podcast. The terminal's **+ Performer** button

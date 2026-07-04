@@ -157,22 +157,249 @@ def _fmt_price(v) -> str:
         return "n/a"
 
 
+# ---------------------------------------------------------------------------
+# Enrichment sections — each reads a fixed, non-sensitive Supabase source and
+# returns markdown lines (or [] when there's nothing). All best-effort (_safe):
+# a missing view / empty result never aborts the digest. Sports sections are
+# gated on an ESPN team id; the rest apply to any performer where data exists.
+# ---------------------------------------------------------------------------
+
+def _espn_ids(db, performer_id: int, info: dict) -> tuple:
+    """(espn_team_id, espn_league) from entity_performer_map, else the xref."""
+    team, league = info.get("espn_team_id"), info.get("espn_league")
+    if team:
+        return team, league
+    xref = _safe(lambda: _rows(db.table("performer_espn_team_xref")
+                               .select("espn_team_id,espn_league")
+                               .eq("tevo_performer_id", performer_id).limit(1).execute()), [])
+    if xref:
+        return xref[0].get("espn_team_id"), xref[0].get("espn_league") or league
+    return None, league
+
+
+def _sec_wikipedia(db, performer_id: int) -> list[str]:
+    row = _safe(lambda: _rows(db.table("performer_wikipedia")
+                              .select("extract,description,is_rejected")
+                              .eq("tevo_performer_id", performer_id).limit(1).execute()), [])
+    if not row or row[0].get("is_rejected"):
+        return []
+    text = (row[0].get("extract") or row[0].get("description") or "").strip()
+    return ["## Overview (Wikipedia)", text[:1500], ""] if text else []
+
+
+def _sec_team_form(db, team_id) -> list[str]:
+    if not team_id:
+        return []
+    row = _safe(lambda: _rows(db.table("v_espn_team_state")
+                              .select("record_summary,standing_summary,streak,games_back,playoff_seed")
+                              .eq("espn_team_id", team_id).limit(1).execute()), [])
+    if not row:
+        return []
+    r = row[0]
+    bits = [r.get("record_summary"), r.get("standing_summary")]
+    if r.get("streak"):
+        bits.append(f"streak {r['streak']}")
+    if r.get("games_back") not in (None, ""):
+        bits.append(f"GB {r['games_back']}")
+    line = " · ".join(str(b) for b in bits if b)
+    return ["## Team form", f"- {line}", ""] if line else []
+
+
+def _sec_recent_results(db, performer_id: int, n: int = 8) -> list[str]:
+    rows = _safe(lambda: _rows(db.table("v_team_recent_results")
+                               .select("captured_at,result,team_score,opp_score,is_home")
+                               .eq("tevo_performer_id", performer_id)
+                               .order("captured_at", desc=True).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Recent results"]
+    for r in rows:
+        loc = "home" if r.get("is_home") else "away"
+        score = (f" {r.get('team_score')}-{r.get('opp_score')}"
+                 if r.get("team_score") is not None else "")
+        out.append(f"- {r.get('result') or '?'}{score} ({loc})")
+    out.append("")
+    return out
+
+
+def _sec_injuries(db, team_id, n: int = 15) -> list[str]:
+    if not team_id:
+        return []
+    rows = _safe(lambda: _rows(db.table("v_espn_injuries_current")
+                               .select("athlete_name,position,status,injury_type")
+                               .eq("espn_team_id", team_id).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Injuries"]
+    for r in rows:
+        typ = f", {r['injury_type']}" if r.get("injury_type") else ""
+        out.append(f"- {r.get('athlete_name', '')} ({r.get('position', '')}) — {r.get('status', '')}{typ}")
+    out.append("")
+    return out
+
+
+def _sec_roster(db, performer_id: int, n: int = 12) -> list[str]:
+    rows = _safe(lambda: _rows(db.table("v_team_roster_full")
+                               .select("full_name,position_abbr").eq("tevo_performer_id", performer_id)
+                               .limit(n).execute()), [])
+    if not rows:
+        return []
+    names = ", ".join(f"{r.get('full_name', '')} ({r.get('position_abbr', '')})" for r in rows)
+    return ["## Roster (sample)", names, ""]
+
+
+def _sec_schedule(db, performer_id: int, n: int = 15) -> list[str]:
+    rows = _safe(lambda: _rows(db.table("v_team_schedule_30d")
+                               .select("occurs_at,home_or_away,opp_performer_name,is_rivalry")
+                               .eq("tevo_performer_id", performer_id)
+                               .order("occurs_at", desc=False).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Next 30 days"]
+    for r in rows:
+        riv = " (rivalry)" if r.get("is_rivalry") else ""
+        out.append(f"- {str(r.get('occurs_at', ''))[:16]} {r.get('home_or_away') or ''} "
+                   f"{r.get('opp_performer_name') or ''}{riv}".rstrip())
+    out.append("")
+    return out
+
+
+def _sec_news(db, team_id, n: int = 8) -> list[str]:
+    if not team_id:
+        return []
+    rows = _safe(lambda: _rows(db.table("espn_news").select("headline,published_at")
+                               .eq("espn_team_id", team_id)
+                               .order("published_at", desc=True).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Recent news"]
+    for r in rows:
+        out.append(f"- {str(r.get('published_at', ''))[:10]} — {r.get('headline', '')}")
+    out.append("")
+    return out
+
+
+def _sec_reddit(db, performer_id: int, n: int = 8) -> list[str]:
+    pulse = _safe(lambda: _rows(db.table("v_performer_reddit_pulse")
+                                .select("posts_24h,posts_7d,score_24h,comments_24h")
+                                .eq("tevo_performer_id", performer_id).limit(1).execute()), [])
+    posts = _safe(lambda: _rows(db.table("v_reddit_important_recent")
+                                .select("title,subreddit,created_utc").eq("tevo_performer_id", performer_id)
+                                .order("created_utc", desc=True).limit(n).execute()), [])
+    if not pulse and not posts:
+        return []
+    out = ["## Reddit / fan buzz"]
+    if pulse:
+        p = pulse[0]
+        out.append(f"- Activity: {p.get('posts_24h', 0)} posts/24h, {p.get('posts_7d', 0)}/7d, "
+                   f"score {p.get('score_24h', 0)}, {p.get('comments_24h', 0)} comments")
+    for r in posts:
+        out.append(f"- r/{r.get('subreddit', '')}: {r.get('title', '')}")
+    out.append("")
+    return out
+
+
+def _sec_weather(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        row = _safe(lambda e=e: _rows(db.table("v_event_weather_with_fallback")
+                    .select("is_indoor,temp_f,precip_pct,wind_mph,weather_summary")
+                    .eq("tevo_event_id", e["id"]).limit(1).execute()), [])
+        if not row:
+            continue
+        r = row[0]
+        if r.get("is_indoor"):
+            desc = "indoor"
+        else:
+            bits = []
+            if r.get("temp_f") is not None:
+                bits.append(f"{round(float(r['temp_f']))}°F")
+            if r.get("weather_summary"):
+                bits.append(str(r["weather_summary"]))
+            if r.get("precip_pct") is not None:
+                bits.append(f"{round(float(r['precip_pct']))}% precip")
+            if r.get("wind_mph") is not None:
+                bits.append(f"{round(float(r['wind_mph']))}mph wind")
+            desc = ", ".join(bits)
+        if desc:
+            out.append(f"- {e.get('name', '')}: {desc}")
+    return ["## Game-day weather"] + out + [""] if out else []
+
+
+def _sec_sentiment(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        row = _safe(lambda e=e: _rows(db.table("event_sentiment")
+                    .select("sentiment_index,tix_per_hour,captured_at")
+                    .eq("event_id", e["id"]).order("captured_at", desc=True).limit(1).execute()), [])
+        if not row:
+            continue
+        r = row[0]
+        bits = []
+        if r.get("sentiment_index") is not None:
+            bits.append(f"idx {float(r['sentiment_index']):+.2f}")
+        if r.get("tix_per_hour") is not None:
+            bits.append(f"{float(r['tix_per_hour']):.1f} tix/hr")
+        if bits:
+            out.append(f"- {e.get('name', '')}: " + ", ".join(bits))
+    return ["## Demand velocity"] + out + [""] if out else []
+
+
+def _sec_hot_sections(db, performer_id: int, n: int = 5) -> list[str]:
+    rows = _safe(lambda: _rows(db.table("d0_perf_top5_sections")
+                               .select("section,tickets,revenue,rank_by_revenue")
+                               .eq("performer_id", performer_id)
+                               .order("rank_by_revenue", desc=False).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Hot sections (realized sales)"]
+    for r in rows:
+        out.append(f"- {r.get('section', '')}: {r.get('tickets', '?')} tix, {_fmt_price(r.get('revenue'))}")
+    out.append("")
+    return out
+
+
+def _sec_macro(db, n: int = 6) -> list[str]:
+    rows = _safe(lambda: _rows(db.table("v_macro_indicators_latest")
+                               .select("series_id,value,observation_date").limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Macro backdrop"]
+    for r in rows:
+        out.append(f"- {r.get('series_id', '')}: {r.get('value', '')} "
+                   f"(as of {str(r.get('observation_date', ''))[:10]})")
+    out.append("")
+    return out
+
+
 def build_performer_digest(db, performer_id: int, *, performer_name: str | None = None) -> tuple[str, str]:
-    """Return (title, text) — a non-sensitive markdown digest for one performer."""
+    """Return (title, text) — a rich, non-sensitive markdown digest for one
+    performer, assembled from a fixed set of safe Supabase sources (identity,
+    Wikipedia, ESPN team form/results/injuries/roster/schedule/news, pricing +
+    realized-sales, Reddit buzz, game-day weather, demand sentiment, prediction
+    markets, macro backdrop). Sports sections are gated on an ESPN team id."""
     ident = _safe(lambda: _rows(db.table("entity_performer_map")
                                 .select("tevo_performer_id,tevo_performer_name,genre,top_category_name,"
                                         "what_event_type,espn_team_id,espn_league")
                                 .eq("tevo_performer_id", performer_id).limit(1).execute()), [])
     info = ident[0] if ident else {}
     name = performer_name or info.get("tevo_performer_name") or f"Performer {performer_id}"
+    team_id, league = _espn_ids(db, performer_id, info)
 
     lines: list[str] = [f"# {name}", ""]
     meta_bits = [info.get("top_category_name"), info.get("what_event_type"),
-                 info.get("genre"), info.get("espn_league")]
+                 info.get("genre"), league]
     meta = " · ".join(str(b) for b in meta_bits if b)
     if meta:
         lines.append(meta)
     lines.append("")
+
+    lines += _sec_wikipedia(db, performer_id)
+    lines += _sec_team_form(db, team_id)
+    lines += _sec_recent_results(db, performer_id)
+    lines += _sec_injuries(db, team_id)
+    lines += _sec_roster(db, performer_id)
+    lines += _sec_schedule(db, performer_id)
 
     events = _upcoming_events(db, performer_id)
     ids = [e["id"] for e in events]
@@ -200,6 +427,12 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
         lines.append(f"- {head}" + (f" — {', '.join(detail)}" if detail else ""))
     lines.append("")
 
+    lines += _sec_weather(db, events)
+    lines += _sec_sentiment(db, events)
+    lines += _sec_reddit(db, performer_id)
+    lines += _sec_news(db, team_id)
+    lines += _sec_hot_sections(db, performer_id)
+
     # Realized-sales color (D0 perf views) — best-effort, may be empty.
     ha = _safe(lambda: _rows(db.table("d0_perf_home_away").select("*")
                              .eq("performer_id", performer_id).limit(1).execute()), [])
@@ -213,16 +446,21 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
             lines.append("- Price stats: " + _digest_kv(ps[0]))
         lines.append("")
 
-    # Prediction-market futures narrative (optional).
+    # Prediction-market futures narrative (Kalshi / others), deepened.
     pm_markets = _safe(lambda: db.rpc("get_performer_prediction_markets",
                                       {"p_performer_id": performer_id}).execute(), None)
     futures = (getattr(pm_markets, "data", None) or {}).get("futures") if pm_markets else None
     if futures:
         lines.append("## Futures / prediction markets")
-        for f in futures[:10]:
+        for f in futures[:15]:
+            price = f.get("last_price") or f.get("yes_price") or ""
+            vol = f.get("volume")
+            tail = f", vol {vol}" if vol else ""
             lines.append(f"- {f.get('title') or f.get('question') or ''} "
-                         f"({f.get('source')}: {f.get('last_price') or f.get('yes_price') or ''})")
+                         f"({f.get('source')}: {price}{tail})")
         lines.append("")
+
+    lines += _sec_macro(db)
 
     return name, "\n".join(lines).strip()
 
