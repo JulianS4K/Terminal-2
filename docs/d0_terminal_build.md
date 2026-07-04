@@ -34,7 +34,7 @@ There are **two data paths** out of the browser:
 
 | Path | Mechanism | Used for | Auth |
 |---|---|---|---|
-| **Path A** | REST `T.api('/api/broker/*')` → FastAPI in `app.py` | movers, event REST fallback, performer assets, portfolio | Supabase bearer token in `Authorization` header; backend verifies against Supabase |
+| **Path A** | REST `T.api('/api/broker/*')` → FastAPI in `routers/broker.py` | movers, event REST fallback, performer assets, portfolio | Supabase bearer token in `Authorization` header; backend verifies against Supabase |
 | **Path C** | Direct Supabase RPC `TerminalAuth.client.rpc('…')` / `.from('…')` | event page v3/v2, blind-spots, discovery gaps, performer/venue indexes, global search | Supabase session (RLS-gated); **anon/publishable key, public by design** |
 
 *(There is no "Path B" — the A/C labels are historical. The event page uses a **Path C → Path A waterfall**: try RPC v3, fall back to RPC v2, then fall back to 5 parallel REST calls. See §B4.)*
@@ -114,22 +114,25 @@ Plus 6 parallel enrichment loaders in `init()` (`event.js:78-86`): `loadCrossSou
 **Discovery gap-type values** (`discovery.js:8-9`, priority map `:140-144`):
 `value_gap_large` · `fill_rate_spike` · `sg_no_evo` · `td_sh_no_evo` · `td_gt_no_evo` · `td_vd_no_evo` · `td_gt_premium` · `td_vd_premium` · `td_sh_no_gt` · `evo_no_sg`
 
-## B5. Backend surface (`app.py`)
+## B5. Backend surface (`server.py` + `routers/`)
 
-`app.py` is a ~7900-line FastAPI monolith. The relevant pieces for the terminal:
+The backend is `server.py` (a ~1,800-line FastAPI **shell**) + `routers/*` (the route
+modules, `include_router`'d back after the BR-CODE-1 decomposition; `app.py` was
+renamed `server.py` on 2026-06-26 and its route handlers lifted into `routers/`).
+Route handlers live in `routers/`, not the shell. The relevant pieces for the terminal:
 
-- **Mount strategy** (order matters — static mount must be last):
-  - prefix-less `include_router(...)` documented at `app.py:7879`
-  - `app.include_router(d2_router)` in try/except (optional D2 dashboard) at `app.py:7886`
-  - `app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")` at `app.py:7940`
-- **`/api/broker/*` routes** are plain `@app.get` decorators directly in `app.py` (not a sub-router):
-  - `/api/broker/movers` (`app.py:3517`; handler `broker_movers` `:3518`; v2 helper `_broker_movers_v2` `:3486`)
-  - `/api/broker/event/{id}/overview` (`:2200`), `/chart-data` (`:3033`), `/zones` (`:2411`), `/orders` (`:4139`), `/cadences` (`:3737`)
-  - `/api/broker/performer/{id}/assets` (`:1126`)
+- **Mount strategy** (in `server.py`; order matters — static mount must be last):
+  - each route group `include_router`'d (via the `build_*_router(...)` factories)
+  - `app.include_router(d2_router)` in try/except (optional D2 dashboard)
+  - `app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")`
+- **`/api/broker/*` routes** live in `routers/broker.py` (`build_broker_router`):
+  - `/api/broker/movers` (analytics helper `_compute_movers` in `core/movers.py`)
+  - `/api/broker/event/{id}/overview`, `/chart-data`, `/zones`, `/orders`, `/cadences`
+  - `/api/broker/performer/{id}/assets`
 - **`/api/axs/*` routes** — `/api/axs/event/{id}` (latest snapshot state), `/sections` (per-section availability+pricing), `/listings` (**EVO-standard consecutive-seat blocks** from `v_axs_listings`: section/row/quantity/retail_price/type/format/splits/wheelchair + AXS-only `seat_numbers`), `/series` (price+listing time series for charts). Keyed by `tevo_event_id`; read-only from `axs_*_snapshots`. FE: **AXS Box Office** tab renders the by-section rollup **+** the grouped listings table, plus a sky-blue AXS line (legend toggle) on the median-price and listing-count charts. **Cross-source reuse:** an AXS event, once AQ-mapped to `tevo_event_id`, is a canonical TEvo event already collected by the existing TEvo+SG+TD-markets pollers — so all-marketplace data is automatic (no AXS-specific poller), surfaced via the existing cross-source panel / `get_event_all_source_listing_metrics`. Empty-state until snapshots ingest.
-- **CORS** (`app.py:450-477`): `_CORS_ORIGINS` from env `CORS_ALLOWED_ORIGINS`; **default is localhost-only** (`http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000`, `app.py:452`). Wildcards and non-concrete URLs are rejected at boot (`:459-470`). `allow_credentials=True`; methods `GET/POST/DELETE/OPTIONS`; headers `Authorization/Content-Type/X-Cron-Secret` (`:474-476`). **⚠ The CDN origin is not in the default — see §B10 gap #1.**
-- **Security headers** (`_SecurityHeadersMiddleware`, `app.py:480`): CSP `connect-src 'self' https://*.supabase.co`.
-- **Token verification** (`app.py:425-426`): backend POSTs the incoming bearer to `{SUPABASE_URL}/auth/v1/user` with the anon apikey to validate the session server-side.
+- **CORS** (`server.py`): `_CORS_ORIGINS` from env `CORS_ALLOWED_ORIGINS`; **default is localhost-only** (`http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000`). Wildcards and non-concrete URLs are rejected at boot. `allow_credentials=True`; methods `GET/POST/DELETE/OPTIONS`; headers `Authorization/Content-Type/X-Cron-Secret`. **⚠ The CDN origin is not in the default — see §B10 gap #1.**
+- **Security headers** (`_SecurityHeadersMiddleware`, `server.py`): CSP `connect-src 'self' https://*.supabase.co`.
+- **Token verification** (`core/auth.py` `require_auth`): backend POSTs the incoming bearer to `{SUPABASE_URL}/auth/v1/user` with the anon apikey to validate the session server-side.
 
 ## B6. Auth flow
 
@@ -149,16 +152,16 @@ Two services, both deploy from `branch: main`:
 | Service | IaC | Type | Build / Start | Role |
 |---|---|---|---|---|
 | `vibepass-terminal-test` | `render-d0-terminal.yaml` | `static` | build = `echo` (no build step); `publishPath: static` (widened from `static/terminal`, PR #181); rewrites e.g. `/` → `/home/index.html` | Static CDN host. Serving cross-origin is what triggers `API_BASE` Topology-3 in `app.js:36`. **⚠ The yaml header says it is "not yet the active Render config" — the Render dashboard is source of truth for this service's headers/rewrites (§B10 gap #3).** |
-| `vibepass-storefront-test` | `render.yaml` | `web` (python) | build = `pip install -r requirements.txt`; start = `uvicorn app:app --host 0.0.0.0 --port $PORT` (`render.yaml:39`); `healthCheckPath: /healthz`; plan `starter`, region `oregon` | FastAPI. Hosts D0 terminal + D1 storefront + D2 dashboard via `include_router` (testing-unified). Env: `PYTHON_VERSION=3.12.7`, `STOREFRONT_SQL_ONLY=true`, `STOREFRONT_AS_LANDING=true`, `ALLOWED_EMAIL_DOMAIN=s4kent.com`; secrets `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `CRON_SECRET` (all `sync:false`). |
+| `vibepass-storefront-test` | `render.yaml` | `web` (python) | build = `pip install -r requirements.txt`; start = `uvicorn server:app --host 0.0.0.0 --port $PORT` (`render.yaml`); `healthCheckPath: /healthz`; plan `starter`, region `oregon` | FastAPI. Hosts D0 terminal + D1 storefront + D2 dashboard via `include_router` (testing-unified). Env: `PYTHON_VERSION=3.12.7`, `STOREFRONT_SQL_ONLY=true`, `STOREFRONT_AS_LANDING=true`, `ALLOWED_EMAIL_DOMAIN=s4kent.com`; secrets `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `CRON_SECRET` (all `sync:false`). |
 
-**Static-vs-API:** the static service just publishes `static/`. The API service runs `app.py`, which *also* mounts `/static` (so the terminal is reachable same-origin on the API host too — that's the dev/test convenience). In production the CDN serves the frontend and calls the API host cross-origin (hence the CORS requirement, §B10 gap #1).
+**Static-vs-API:** the static service just publishes `static/`. The API service runs `server.py`, which *also* mounts `/static` (so the terminal is reachable same-origin on the API host too — that's the dev/test convenience). In production the CDN serves the frontend and calls the API host cross-origin (hence the CORS requirement, §B10 gap #1).
 
 ## B8. Local dev
 
-- **Run it**: `uvicorn app:app --host 0.0.0.0 --port 8000` — the same command Render uses. **There is no `if __name__ == "__main__"` / `uvicorn.run()` block in `app.py`** (verified absent), so `python app.py` does nothing — you must launch via uvicorn.
-- **Required env vars** (`app.py:213-215`): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`. The backend builds its Supabase client with the service-role key (`app.py:310`).
-- **Optional**: `AUTH_DISABLED=true` to bypass JWT verification in dev (`app.py:224`; ignored in prod `:240`); `CORS_ALLOWED_ORIGINS` (defaults to localhost — fine for same-origin dev).
-- **Static**: FastAPI mounts `/static` from `STATIC_DIR` (`app.py:7940`); the terminal is served same-origin, so `API_BASE` resolves to `''` on localhost (`app.js:32`) and no CORS config is needed locally.
+- **Run it**: `uvicorn server:app --host 0.0.0.0 --port 8000` — the same command Render uses. **There is no `if __name__ == "__main__"` / `uvicorn.run()` block in `server.py`** (verified absent), so `python server.py` does nothing — you must launch via uvicorn.
+- **Required env vars** (`core/config.py`): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`. The backend builds its Supabase client with the service-role key (`server.py` via `core/db.make_supabase_client`).
+- **Optional**: `AUTH_DISABLED=true` to bypass JWT verification in dev (`core/auth.py`; ignored in prod); `CORS_ALLOWED_ORIGINS` (defaults to localhost — fine for same-origin dev).
+- **Static**: FastAPI mounts `/static` from `STATIC_DIR` (`server.py`); the terminal is served same-origin, so `API_BASE` resolves to `''` on localhost (`app.js:32`) and no CORS config is needed locally.
 
 ## B9. Charting (uPlot)
 
@@ -171,8 +174,8 @@ Loaded **only on `event.html`** (`event.html:11` css, `:381` js). One composite 
 
 ## B10. Cold-start gaps (resolved here so you aren't blocked)
 
-1. **CORS allowlist omits the CDN origin.** Default `CORS_ALLOWED_ORIGINS` is localhost-only (`app.py:452`); `https://vibepass-terminal-test.onrender.com` is **not** included. Because the CDN serves the frontend cross-origin to the API service (`app.js:36-37`), every `/api/broker/*` call from the deployed CDN fails CORS until an operator sets `CORS_ALLOWED_ORIGINS` on `vibepass-storefront-test` to include the CDN https origin. This is a runtime-config dependency invisible from source. **Action when wiring prod:** set that env var.
-2. **No app entrypoint in `app.py`.** No `__main__`/`uvicorn.run`; run via `uvicorn app:app …` (§B8).
+1. **CORS allowlist omits the CDN origin.** Default `CORS_ALLOWED_ORIGINS` is localhost-only (`server.py`); `https://vibepass-terminal-test.onrender.com` is **not** included. Because the CDN serves the frontend cross-origin to the API service (`app.js:36-37`), every `/api/broker/*` call from the deployed CDN fails CORS until an operator sets `CORS_ALLOWED_ORIGINS` on `vibepass-storefront-test` to include the CDN https origin. This is a runtime-config dependency invisible from source. **Action when wiring prod:** set that env var.
+2. **No app entrypoint in `server.py`.** No `__main__`/`uvicorn.run`; run via `uvicorn server:app …` (§B8).
 3. **`render-d0-terminal.yaml` is not the live config** (header annotated "not yet active", `:83-87`). Treat the Render dashboard as source of truth for the static service's headers/rewrites.
 4. **`lib/supabase.js` is a 197 KB minified UMD bundle, no source map, no in-tree version string.** To reproduce auth behavior (implicit flow, `detectSessionInUrl`) a rebuild must independently pin the supabase-js version.
 5. **`tickpick_orders` / `vivid_orders` are unreachable from the frontend by design** — service_role-only, read through a SECDEF RPC (`event.js:2607`), never a direct table read. Know the RPC name to surface TP/Vivid sales.
