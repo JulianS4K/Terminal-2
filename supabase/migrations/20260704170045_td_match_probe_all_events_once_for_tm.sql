@@ -1,4 +1,4 @@
--- Migration 20260704170000 · lane:A1 (data plane — TicketsData /match TM-discovery sweep)
+-- Migration 20260704170045 · lane:A1 (data plane — TicketsData /match TM-discovery sweep)
 --   writes (DDL): sg_match_map_tick() [CREATE OR REPLACE — broaden candidate pool]
 --   reads/writes on run: same as before (td_match_queue/_results, fires /match)
 --   pre: 20260619190000 (last sg_match_map_tick body), 20260704160040 (td_gt_tm_enroll_from_match)
