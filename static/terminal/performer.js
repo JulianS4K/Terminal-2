@@ -916,6 +916,7 @@
     const recent    = d.recent_results || [];
     const txns      = d.transactions || [];
     const att       = d.attendance || null;
+    const leaders   = d.stat_leaders || [];
     const standingsHtml = !standings ? '<div class="empty">no standings snapshot</div>' : `
       <table class="espn-standings">
         <tbody>
@@ -988,9 +989,21 @@
           <tr><td class="lbl">CAPTURED</td><td class="muted small">${T.fmtDate(att.captured_at)}</td></tr>
         </tbody>
       </table>`;
+    const ldrHtml = !leaders.length ? '<div class="empty">no player stats</div>' : `
+      <table class="espn-recent">
+        <thead><tr><th>Player</th><th>Pos</th><th>${escapeHtml(leaders[0].stat_label || 'STAT')}</th></tr></thead>
+        <tbody>${leaders.map(p => `
+          <tr>
+            <td>${escapeHtml(p.athlete_name || '—')}</td>
+            <td>${escapeHtml(p.position || '—')}</td>
+            <td class="num">${escapeHtml(String(p.stat_display ?? '—'))}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
     body.innerHTML = `
       <div class="espn-grid">
         <div class="espn-col"><div class="espn-col-hdr">STANDINGS</div>${standingsHtml}${attHtml}</div>
+        <div class="espn-col"><div class="espn-col-hdr">STAT LEADERS</div>${ldrHtml}</div>
         <div class="espn-col"><div class="espn-col-hdr">INJURY REPORT</div>${injHtml}</div>
         <div class="espn-col espn-col-wide"><div class="espn-col-hdr">RECENT — last 5</div>${recHtml}</div>
         <div class="espn-col espn-col-wide"><div class="espn-col-hdr">TRANSACTIONS</div>${txnHtml}</div>
