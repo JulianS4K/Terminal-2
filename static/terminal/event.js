@@ -1911,9 +1911,11 @@
   }
 
   function severityColor(sev) {
-    if (sev === 'critical' || sev === 'high') return '#ef4444';
-    if (sev === 'medium' || sev === 'warn')   return '#f59e0b';
-    return '#60a5fa';
+    // Alert-marker colors ARE the status tokens — resolve them so a retheme carries
+    // (the axis grays above have no token equivalent and stay tuned for the canvas).
+    if (sev === 'critical' || sev === 'high') return _tok('--neg', '#ef4444');
+    if (sev === 'medium' || sev === 'warn')   return _tok('--warn', '#f59e0b');
+    return _tok('--info', '#60a5fa');
   }
 
   // ESPN annotation markers — pink "+" (injury status change) + teal "◆" (game
