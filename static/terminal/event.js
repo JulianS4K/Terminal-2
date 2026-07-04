@@ -700,6 +700,9 @@
       // render it in the same ESPN panel. Fire-and-forget; no-ops for team sports.
       if (!data.espn || data.espn.hidden) {
         loadEspnFightCard(eventId).catch(e => console.error('[espn-mma]', e));
+      } else {
+        // Team sports: append both teams' transactions + stat leaders.
+        loadEspnExtras(eventId).catch(e => console.error('[espn-extras]', e));
       }
       // Weather now lazy-loaded via loadWeatherLocalized (drops global-alert path).
       // ORDERS — ALL SOURCES panel removed (2026-06-08) — covered by the Our Orders tab.
@@ -2528,6 +2531,38 @@
       rr.appendChild(ul);
       body.appendChild(rr);
     }
+
+    // Transactions + stat leaders (lazy — get_espn_event_extras)
+    const extras = document.createElement('div');
+    extras.id = 'espnExtras';
+    body.appendChild(extras);
+  }
+
+  // Both teams' recent transactions + stat leaders, appended to the ESPN panel.
+  async function loadEspnExtras(eventId) {
+    const host = document.getElementById('espnExtras');
+    const Auth = window.TerminalAuth;
+    if (!host || !Auth || !Auth.client || !Auth.getAccessToken()) return;
+    let res;
+    try { res = await Auth.client.rpc('get_espn_event_extras', { p_event_id: eventId }); }
+    catch (e) { return; }
+    const d = (res && res.data) || {};
+    if (!d || d.hidden) return;
+    const side = (label, team) => {
+      if (!team) return '';
+      const txns = (team.transactions || []).slice(0, 3);
+      const ldrs = (team.leaders || []).slice(0, 5);
+      if (!txns.length && !ldrs.length) return '';
+      const txHtml = !txns.length ? '' :
+        '<div class="espn-sublabel">TRANSACTIONS</div><ul>' +
+        txns.map(t => `<li><span class="muted">${t.txn_date ? T.fmtDate(t.txn_date) : ''}</span> ${escapeHtml(t.description || '')}</li>`).join('') + '</ul>';
+      const ldHtml = !ldrs.length ? '' :
+        `<div class="espn-sublabel">STAT LEADERS · ${escapeHtml(team.stat_label || '')}</div><ul>` +
+        ldrs.map(p => `<li><strong>${escapeHtml(p.athlete_name || '')}</strong> <span class="inj-pos">${escapeHtml(p.position || '')}</span> <span class="val">${escapeHtml(String(p.stat_display ?? ''))}</span></li>`).join('') + '</ul>';
+      return `<div class="espn-extra-col"><div class="espn-sublabel" style="opacity:.7">${escapeHtml(label)}</div>${ldHtml}${txHtml}</div>`;
+    };
+    const html = side('AWAY', d.away) + side('HOME', d.home);
+    if (html) host.innerHTML = '<div class="espn-grid">' + html + '</div>';
   }
 
   function injuryClass(sev) {
