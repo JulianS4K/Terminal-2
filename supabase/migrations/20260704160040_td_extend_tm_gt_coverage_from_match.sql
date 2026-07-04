@@ -1,4 +1,4 @@
--- Migration 20260704160000 · lane:A1 (data plane — TicketsData TM/GT coverage)
+-- Migration 20260704160040 · lane:A1 (data plane — TicketsData TM/GT coverage)
 --   writes (DDL): td_gt_tm_enroll_from_match() [new], td_match_cron_budget_ok() [300→600];
 --                 cron 'td_gt_tm_enroll_from_match_hourly'
 --   writes on run: ticketsdata_event_xref (enroll GT/TM rows from /match urls)
