@@ -34,6 +34,10 @@
       return;
     }
     wireSeriesButtons();
+    document.getElementById('raceResultsClose').addEventListener('click', e => {
+      e.preventDefault();
+      document.getElementById('race-results').setAttribute('hidden', '');
+    });
     return loadSeries(currentSeries());
   }
 
@@ -81,9 +85,11 @@
     // returns date DESC; find the next-up race to anchor the visual divider.
     const rows = races.map(r => {
       const st = raceStatus(r);
-      return `<tr class="${r.completed ? 'race-done' : ''}">
+      const done = r.completed;
+      const attrs = done ? ` class="race-done race-click" data-event="${escapeHtml(r.espn_event_id)}" data-name="${escapeHtml(r.short_name || r.name || '')}"` : '';
+      return `<tr${attrs}>
         <td class="muted">${r.event_date ? T.fmtDate(r.event_date) : '—'}</td>
-        <td>${escapeHtml(r.short_name || r.name || '—')}</td>
+        <td>${escapeHtml(r.short_name || r.name || '—')}${done ? ' <span class="race-view">results ▸</span>' : ''}</td>
         <td>${st}</td>
         <td class="muted small">${escapeHtml(r.venue || '')}</td>
       </tr>`;
@@ -91,6 +97,28 @@
     body.innerHTML = `<div style="overflow-x:auto"><table class="espn-recent race-tbl">
       <thead><tr><th>Date</th><th>Race</th><th>Status</th><th>Track</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
+    body.querySelectorAll('tr.race-click').forEach(tr =>
+      tr.addEventListener('click', () => loadResults(tr.dataset.event, tr.dataset.name)));
+  }
+
+  async function loadResults(eventId, name) {
+    const sec = document.getElementById('race-results');
+    const bodyEl = document.getElementById('raceResultsBody');
+    document.getElementById('raceResultsTitle').textContent = (name || 'RACE') + ' — RESULTS';
+    sec.removeAttribute('hidden');
+    bodyEl.innerHTML = '<div class="empty">loading…</div>';
+    sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const res = await window.TerminalAuth.client.rpc('get_espn_racing_results', { p_event_id: eventId });
+    if (res.error) { bodyEl.innerHTML = `<div class="empty">${escapeHtml(res.error.message)}</div>`; return; }
+    const rows = (res.data || {}).results || [];
+    if (!rows.length) { bodyEl.innerHTML = '<div class="empty">no results on file</div>'; return; }
+    const trs = rows.map(r => `<tr class="${r.winner ? 'race-winner' : ''}">
+      <td class="num">${r.finish_position ?? '—'}</td>
+      <td>${escapeHtml(r.driver_name || '—')}${r.winner ? ' <span class="race-badge live">WIN</span>' : ''}</td>
+      <td class="muted small">${escapeHtml(r.country || '')}</td>
+    </tr>`).join('');
+    bodyEl.innerHTML = `<div style="overflow-x:auto"><table class="espn-recent race-tbl">
+      <thead><tr><th>Pos</th><th>Driver</th><th>Country</th></tr></thead><tbody>${trs}</tbody></table></div>`;
   }
 
   function raceStatus(r) {

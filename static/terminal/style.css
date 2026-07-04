@@ -2510,6 +2510,12 @@ body[data-page="login"] {
 .race-badge.done { color: var(--dim); }
 .race-badge.live { color: var(--pos); }
 .race-badge.sched { color: var(--info); }
+.race-tbl tbody tr.race-click { cursor: pointer; }
+.race-tbl tbody tr.race-click:hover { background: var(--panel-2); }
+.race-view { color: var(--accent); font-size: 9px; font-family: var(--mono); }
+.race-tbl tbody tr.race-winner td { color: var(--pos); font-weight: 600; }
+#race-results { border: 1px solid var(--line); border-radius: 4px; padding: 10px; background: var(--panel); }
+#raceResultsClose { text-decoration: none; }
 @media (max-width: 860px) { .race-grid { grid-template-columns: 1fr; } }
 
 /* ---------- FANTASY page (FANTASY nav tab) ---------- */

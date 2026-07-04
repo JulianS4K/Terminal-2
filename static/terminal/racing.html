@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Racing</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260704racing" />
+  <link rel="stylesheet" href="style.css?v=20260704results" />
 </head>
 <body data-page="racing">
 
@@ -52,6 +52,14 @@
       </section>
     </div>
 
+    <section id="race-results" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span id="raceResultsTitle">RACE RESULTS</span>
+        <a href="#" class="muted small" id="raceResultsClose">✕ close</a>
+      </div>
+      <div id="raceResultsBody"><div class="empty">loading…</div></div>
+    </section>
+
   </main>
 
   <script src="lib/supabase.js"></script>
@@ -60,6 +68,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260704txn"></script>
-  <script src="racing.js?v=20260704a"></script>
+  <script src="racing.js?v=20260704results"></script>
 </body>
 </html>
