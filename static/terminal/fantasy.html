@@ -31,6 +31,7 @@
       <div class="fan-leagues" id="fanLeagues" role="tablist"></div>
       <div class="fan-actions">
         <button id="fanAdvance" class="fan-btn" hidden title="Schedule + score the next week">Advance week ▸</button>
+        <select id="fanManage" class="fan-select" hidden title="Manage a team's roster"></select>
         <select id="fanDemoLeague" class="fan-select" title="Sport for the demo league">
           <option value="NBA">NBA</option>
           <option value="WNBA">WNBA</option>
@@ -63,6 +64,14 @@
       </section>
     </div>
 
+    <section id="fan-freeagents" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span>FREE AGENTS <span class="muted small" id="fanFaTeam"></span></span>
+        <input type="search" id="fanFaSearch" class="fan-fa-search" placeholder="Search available players…" autocomplete="off" />
+      </div>
+      <div id="fanFaBody"><div class="empty">select a team to manage…</div></div>
+    </section>
+
   </main>
 
   <script src="lib/supabase.js"></script>
@@ -71,6 +80,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260704txn"></script>
-  <script src="fantasy.js?v=20260704algos"></script>
+  <script src="fantasy.js?v=20260704wire"></script>
 </body>
 </html>

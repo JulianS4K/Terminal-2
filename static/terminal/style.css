@@ -2552,6 +2552,28 @@ body[data-page="login"] {
 .fan-player.starter .fan-slot { color: var(--pos); }
 .fan-player .fan-pname { font-weight: 600; }
 @media (max-width: 860px) { .fan-grid { grid-template-columns: 1fr; } }
+/* roster management */
+.fan-team.managing { outline: 1px solid var(--accent); border-radius: 4px; padding: 6px; }
+.fan-player-wrap { display: inline-flex; align-items: center; }
+.fan-drop {
+  margin-left: 2px; cursor: pointer; font-family: var(--mono); font-size: 10px;
+  color: var(--neg); background: transparent; border: 1px solid var(--line-2); border-radius: 3px;
+  padding: 1px 5px;
+}
+.fan-drop:hover { border-color: var(--neg); background: var(--neg); color: var(--bg); }
+#fan-freeagents { border: 1px solid var(--line); border-radius: 4px; padding: 10px; background: var(--panel); }
+.fan-fa-search {
+  font-family: var(--mono); font-size: 11px; padding: 3px 8px; max-width: 220px;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
+}
+.fan-fa-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px; }
+.fan-fa-row { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 2px 0; }
+.fan-fa-name { font-weight: 600; color: var(--text); }
+.fan-add {
+  cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 700; line-height: 1;
+  color: var(--pos); background: transparent; border: 1px solid var(--line-2); border-radius: 3px; padding: 1px 7px;
+}
+.fan-add:hover { border-color: var(--pos); background: var(--pos); color: var(--bg); }
 
 /* ---------- TRANSACTIONS page (TRANSACTIONS nav tab) ---------- */
 .wrap.transactions { padding: 14px; }
