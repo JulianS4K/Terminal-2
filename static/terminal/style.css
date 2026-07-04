@@ -2148,6 +2148,12 @@ body[data-page="login"] {
   border-color: rgba(74, 222, 128, .40);
   background: rgba(74, 222, 128, .10);
 }
+/* Broadway cast — marquee magenta, distinct from the sports type tags. */
+.news-badge-cast {
+  color: #e879f9;
+  border-color: rgba(232, 121, 249, .45);
+  background: rgba(232, 121, 249, .10);
+}
 
 /* ---------- TD listings table (TD Markets tab) ---------- */
 .td-listings-tbl { width: 100%; border-collapse: collapse; font-size: 0.84em; }
