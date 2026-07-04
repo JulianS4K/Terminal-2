@@ -133,6 +133,8 @@
     loadPerfCast(performerId).catch(e => console.error('perf-cast', e));
     // ESPN injury price-impact — reveals the Injuries tab only for a team.
     loadPerfInjury(performerId).catch(e => console.error('perf-injury', e));
+    // Roster — reveals the Roster tab only for a team with a mapped ESPN roster.
+    loadPerfRoster(performerId).catch(e => console.error('perf-roster', e));
 
     // NYC-Broadway scope: a show's franchise performer also tours, so when a
     // venue is pinned, load the portfolio by venue (NYC performances only) and
@@ -196,8 +198,40 @@
     injury:     'panePerfInjury',
     futures:    'panePerfFutures',
     espn:       'paneEspn',
+    roster:     'panePerfRoster',
     alerts:     'panePerfAlerts',
   };
+
+  // Roster — reveals the Roster tab only for a team with a mapped ESPN roster,
+  // and lists its active players; each links to the player-detail page.
+  async function loadPerfRoster(performerId) {
+    let res;
+    try { res = await window.TerminalAuth.client.rpc('get_broker_performer_roster', { p_performer_id: performerId }); }
+    catch (_) { return; }
+    const d = (res && res.data) || {};
+    if (!d.applicable) return;                        // not a team / no ESPN xref
+    const players = d.players || [];
+    if (!players.length) return;
+    const btn = document.getElementById('perfRosterTab');
+    if (btn) { btn.hidden = false; btn.style.removeProperty('display'); }
+    const cnt = document.getElementById('tabCountPerfRoster');
+    if (cnt) cnt.textContent = String(players.length);
+    const meta = document.getElementById('perfRosterMeta');
+    if (meta) meta.textContent = `${players.length} players · ${escapeHtml(d.espn_league || '')}`;
+    const lg = encodeURIComponent(d.espn_league || '');
+    const body = document.getElementById('perfRosterBody');
+    if (body) body.innerHTML = `
+      <table class="espn-recent">
+        <thead><tr><th>#</th><th>Player</th><th>Pos</th></tr></thead>
+        <tbody>${players.map(p => `
+          <tr>
+            <td class="muted">${escapeHtml(p.jersey || '')}</td>
+            <td><a href="player.html?player=${encodeURIComponent(p.espn_athlete_id)}&league=${lg}">${escapeHtml(p.full_name || '—')}</a></td>
+            <td>${escapeHtml(p.position_abbr || p.position || '—')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
 
   // Broadway "who's playing the lead" — reveals the Cast tab ONLY for a
   // show-as-performer (broadway_show_ref.tevo_performer_id). Fire-and-forget;

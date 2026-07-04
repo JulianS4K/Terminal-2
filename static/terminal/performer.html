@@ -121,6 +121,7 @@
       <button class="event-tab" data-tab="injury" role="tab" aria-selected="false" id="perfInjuryTab" hidden style="display:none">Injuries <span class="tab-count" id="tabCountPerfInjury"></span></button>
       <button class="event-tab" data-tab="futures"    role="tab" aria-selected="false">Futures <span class="tab-count" id="tabCountFutures"></span></button>
       <button class="event-tab" data-tab="espn"       role="tab" aria-selected="false">ESPN Context</button>
+      <button class="event-tab" data-tab="roster" role="tab" aria-selected="false" id="perfRosterTab" hidden style="display:none">Roster <span class="tab-count" id="tabCountPerfRoster"></span></button>
       <button class="event-tab" data-tab="alerts"     role="tab" aria-selected="false">🔔 Alerts</button>
     </nav>
 
@@ -294,6 +295,16 @@
       </section>
     </div>
 
+    <div class="tab-pane" id="panePerfRoster" role="tabpanel" hidden>
+      <section id="perf-roster">
+        <div class="panel-title row">
+          <span>ROSTER — players by team</span>
+          <span class="muted small" id="perfRosterMeta"></span>
+        </div>
+        <div id="perfRosterBody"><div class="empty">tap tab to load</div></div>
+      </section>
+    </div>
+
     <div class="tab-pane" id="panePerfAlerts" role="tabpanel" hidden>
       <section class="panel"><div class="alerts-root"><div class="empty">tap tab to load</div></div></section>
     </div>
@@ -309,6 +320,6 @@
   <script src="nav.js?v=20260623a"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260703pm7"></script>
+  <script src="performer.js?v=20260704roster"></script>
 </body>
 </html>
