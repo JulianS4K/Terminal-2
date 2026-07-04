@@ -184,9 +184,10 @@
   // Per-item-type tag so a score / injury / standing is distinguishable at a
   // glance when sources are mixed under "All".
   const TYPE_TAG = {
-    injury:   ['INJ', 'news-badge-inj'],
-    score:    ['SCORE', 'news-badge-score'],
-    standing: ['W-L', 'news-badge-standing'],
+    injury:      ['INJ', 'news-badge-inj'],
+    score:       ['SCORE', 'news-badge-score'],
+    standing:    ['W-L', 'news-badge-standing'],
+    transaction: ['TXN', 'news-badge-txn'],
   };
   function badge(it) {
     const lg = leagueOf(it);

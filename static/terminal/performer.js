@@ -915,6 +915,7 @@
     const injuries  = d.injuries || [];
     const recent    = d.recent_results || [];
     const txns      = d.transactions || [];
+    const att       = d.attendance || null;
     const standingsHtml = !standings ? '<div class="empty">no standings snapshot</div>' : `
       <table class="espn-standings">
         <tbody>
@@ -975,9 +976,21 @@
           </tr>`).join('')}
         </tbody>
       </table>`;
+    const fmtN = n => (n == null ? '—' : Number(n).toLocaleString());
+    const attHtml = !att ? '' : `
+      <div class="espn-col-hdr" style="margin-top:10px">ATTENDANCE${att.season ? ' · ' + att.season : ''}</div>
+      <table class="espn-standings">
+        <tbody>
+          <tr><td class="lbl">LEAGUE RANK</td><td>${att.rank != null ? '#' + att.rank : '—'}</td></tr>
+          <tr><td class="lbl">HOME AVG</td><td>${fmtN(att.home_avg)}</td></tr>
+          <tr><td class="lbl">HOME TOTAL</td><td>${fmtN(att.home_total)}</td></tr>
+          ${att.home_pct ? `<tr><td class="lbl">CAPACITY</td><td>${att.home_pct}%</td></tr>` : ''}
+          <tr><td class="lbl">CAPTURED</td><td class="muted small">${T.fmtDate(att.captured_at)}</td></tr>
+        </tbody>
+      </table>`;
     body.innerHTML = `
       <div class="espn-grid">
-        <div class="espn-col"><div class="espn-col-hdr">STANDINGS</div>${standingsHtml}</div>
+        <div class="espn-col"><div class="espn-col-hdr">STANDINGS</div>${standingsHtml}${attHtml}</div>
         <div class="espn-col"><div class="espn-col-hdr">INJURY REPORT</div>${injHtml}</div>
         <div class="espn-col espn-col-wide"><div class="espn-col-hdr">RECENT — last 5</div>${recHtml}</div>
         <div class="espn-col espn-col-wide"><div class="espn-col-hdr">TRANSACTIONS</div>${txnHtml}</div>

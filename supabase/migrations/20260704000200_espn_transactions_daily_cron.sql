@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260704000200 — ESPN transactions: poll daily
+-- Migration 20260704000200 — ESPN transactions: poll every 5 minutes
 --
 -- Touches:  cron.job (W, via cron.schedule), cron_policy (W, one row)
 -- Pre-reqs: espn-league-collect edge fn (?scope=transactions) deployed;
@@ -7,14 +7,15 @@
 --           public._cron_invoke_edge_fn(text, jsonb), public.cron_should_fire(text),
 --           public.cron_policy (all pre-existing).
 --
--- WHY: league transactions are slow-moving aggregate data (a few roster moves
---   per league per day). A daily pull with change-tolerant dedup (onConflict
---   txn_key, ignoreDuplicates) accumulates the full ledger with no duplicates.
---   06:00 UTC — offset one hour after espn-team-daily (05:00) to spread load.
+-- WHY: operator directive (2026-07-04) — transactions feed the terminal NEWS WIRE
+--   (mig 20260704020000) and must stay fresh, so poll every 5 min (was daily).
+--   One edge-fn call fetches transactions for every distinct ESPN league
+--   (~8 leagues, limit=100 each); change-tolerant dedup (onConflict txn_key,
+--   ignoreDuplicates) makes a re-poll with no new moves a cheap no-op.
 --
--- HOW: one edge-fn call fetches transactions for every distinct ESPN league
---   (~5 leagues, limit=100 each). cron_policy floor at 1380 min (23h) so a
---   once-daily cron always clears cron_should_fire()'s min-interval gate.
+-- HOW: cron_policy floor at 4 min (NOT 5) so the */5 cron always clears the
+--   cron_should_fire() min-interval gate despite tick jitter (same reasoning as
+--   espn-news-5min, mig 20260702220000). No daily cap.
 --
 -- Read-only vs upstream: ESPN is a public GET data source (RULE 2 covers broker
 --   listing/order APIs — N/A). No prod-data mutation here beyond cron/policy
@@ -25,9 +26,10 @@ INSERT INTO public.cron_policy
   (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min,
    work_check_sql, daily_max_fires, enabled, notes)
 VALUES
-  ('espn-transactions-daily', '{}'::int[], 1380, 1380, NULL, 2, true,
-   'ESPN league transactions once daily (espn-league-collect?scope=transactions). '
-   '23h floor keeps the daily cron single-firing; append-only dedup on txn_key.')
+  ('espn-transactions-5min', '{}'::int[], 4, 4, NULL, NULL, true,
+   'ESPN league transactions every 5 min (espn-league-collect?scope=transactions) '
+   'for the NEWS WIRE. 4-min floor guarantees the */5 cron clears the gate; '
+   'append-only dedup on txn_key makes no-op polls cheap.')
 ON CONFLICT (jobname) DO UPDATE SET
   peak_min_interval_min    = EXCLUDED.peak_min_interval_min,
   offpeak_min_interval_min = EXCLUDED.offpeak_min_interval_min,
@@ -37,16 +39,19 @@ ON CONFLICT (jobname) DO UPDATE SET
   notes                    = EXCLUDED.notes,
   updated_at               = now();
 
+-- Retire the earlier daily variant if present, then (re)schedule the 5-min cron.
 SELECT cron.unschedule('espn-transactions-daily')
   WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'espn-transactions-daily');
+SELECT cron.unschedule('espn-transactions-5min')
+  WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'espn-transactions-5min');
 
 SELECT cron.schedule(
-  'espn-transactions-daily',
-  '0 6 * * *',
+  'espn-transactions-5min',
+  '*/5 * * * *',
   $cron$
   DO $body$
   BEGIN
-    IF NOT public.cron_should_fire('espn-transactions-daily') THEN RETURN; END IF;
+    IF NOT public.cron_should_fire('espn-transactions-5min') THEN RETURN; END IF;
     PERFORM public._cron_invoke_edge_fn(
       'https://hzrizjeaxlqcxfrtczpq.supabase.co/functions/v1/espn-league-collect?scope=transactions',
       '{}'::jsonb);

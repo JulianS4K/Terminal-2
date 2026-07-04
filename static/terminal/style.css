@@ -2125,6 +2125,11 @@ body[data-page="login"] {
   border-color: rgba(74, 222, 128, .40);
   background: rgba(74, 222, 128, .10);
 }
+.news-badge-txn {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, .45);
+  background: rgba(251, 191, 36, .10);
+}
 
 /* ---------- TD listings table (TD Markets tab) ---------- */
 .td-listings-tbl { width: 100%; border-collapse: collapse; font-size: 0.84em; }

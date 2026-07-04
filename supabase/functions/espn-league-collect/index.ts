@@ -5,12 +5,17 @@
 //
 // Routes (via ?scope= query param):
 //   ?scope=transactions  -> league roster-move ledger (append-only, deduped)
-//   [attendance, stats scopes added in later slices]
+//   ?scope=attendance    -> per-team season attendance (change-only snapshots)
+//   [stats scope added in a later slice]
 //
 // Source endpoints (verified live 2026-07-04 from Supabase pg_net):
 //   transactions: site.api.espn.com/apis/site/v2/sports/{sport}/{league}/transactions
 //     -> { season, transactions: [{ date, description, team{ id, abbreviation,
 //        displayName } }] }
+//   attendance: www.espn.com/{league}/attendance/_/year/{Y}  (legacy HTML
+//     tablehead; parsed). The /_/year/{Y} form is required — the bare URL renders
+//     an empty page for a not-yet-started season in the offseason, so we request
+//     the current year and fall back to the previous completed season.
 //
 // League set is derived from performer_external_ids (source='espn') distinct
 // espn_slug values, so MLB/NBA/NFL (and any future ESPN league) are covered with
@@ -110,13 +115,167 @@ async function collectTransactions(db: any, state: TxnState) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Attendance — parse the legacy HTML table at
+// www.espn.com/{league}/attendance/_/year/{Y}. The league path is the last
+// segment of the espn_slug ("baseball/mlb" -> "mlb").
+// ---------------------------------------------------------------------------
+
+const WWW_HOST = "www.espn.com";
+
+async function getHtml(path: string): Promise<string> {
+  const r = await fetch(`https://${WWW_HOST}${path}`, { headers: { Accept: "text/html" } });
+  if (!r.ok) throw new Error(`ESPN ${r.status} on ${path}`);
+  return r.text();
+}
+
+const stripTags = (s: string) => s.replace(/<[^>]*>/g, "").trim();
+const numOrNull = (s: string) => {
+  const c = s.replace(/,/g, "").trim();
+  if (c === "" || c === "-" || c === "--") return null;
+  const n = Number(c);
+  return isFinite(n) ? n : null;
+};
+
+type AttRow = { espnTeamId: string; season: number } & Record<string, number | string | null>;
+
+// Build the per-column schema from the table header. Column layout varies by
+// league (MLB has PCT + no road/overall TOTAL; NFL has TOTAL everywhere + no
+// PCT), so we derive keys like "home_avg"/"road_total" from the stathead group
+// bands (Home/Road/Overall) crossed with the colhead labels (GMS/TOTAL/AVG/PCT)
+// rather than assuming fixed indices.
+function attColumnKeys(html: string): (string | null)[] {
+  const stathead = html.match(/<tr class="stathead">([\s\S]*?)<\/tr>/);
+  const section: string[] = [];
+  if (stathead) {
+    const cellRe = /<td([^>]*)>([\s\S]*?)<\/td>/g;
+    let g: RegExpExecArray | null;
+    while ((g = cellRe.exec(stathead[1])) !== null) {
+      const spanM = g[1].match(/colspan="(\d+)"/);
+      const span = spanM ? Number(spanM[1]) : 1;
+      const label = stripTags(g[2]).toLowerCase();
+      const sec = label.includes("home") ? "home"
+        : (label.includes("road") || label.includes("away")) ? "road"
+        : label.includes("overall") ? "overall" : "";
+      for (let i = 0; i < span; i++) section.push(sec);
+    }
+  }
+  const colhead = html.match(/<tr class="colhead">([\s\S]*?)<\/tr>/);
+  const keys: (string | null)[] = [];
+  if (colhead) {
+    const cRe = /<td[^>]*>([\s\S]*?)<\/td>/g;
+    let c: RegExpExecArray | null;
+    let i = 0;
+    while ((c = cRe.exec(colhead[1])) !== null) {
+      const short = stripTags(c[1]).toUpperCase();
+      const sec = section[i] || "";
+      i++;
+      if (short === "RK") { keys.push("rank"); continue; }
+      if (short === "TEAM") { keys.push("team"); continue; }
+      const metric = short === "GMS" ? "games" : short === "TOTAL" ? "total"
+        : short === "AVG" ? "avg" : short === "PCT" ? "pct" : null;
+      keys.push(metric && sec ? `${sec}_${metric}` : null);
+    }
+  }
+  return keys;
+}
+
+// Parse the legacy tablehead attendance table. Returns one row per team.
+function parseAttendance(html: string): AttRow[] {
+  const seasonM = html.match(/(\d{4})\s+Attendance/);
+  const season = seasonM ? Number(seasonM[1]) : new Date().getUTCFullYear();
+  const keys = attColumnKeys(html);
+  const out: AttRow[] = [];
+  // Row class carries the numeric team id; tolerate trailing attrs (NFL adds
+  // align="right"): "oddrow team-{sportId}-{teamId}" [ align="right" ] >.
+  const rowRe = /<tr class="(?:odd|even)row team-([\d-]+)"[^>]*>([\s\S]*?)<\/tr>/g;
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(html)) !== null) {
+    const espnTeamId = m[1].split("-").pop()!;
+    if (seen.has(espnTeamId)) continue;  // a page may render the table twice (sortable variants)
+    seen.add(espnTeamId);
+    const tds = [...m[2].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((x) => x[1]);
+    if (tds.length < 3) continue;
+    const row: AttRow = { espnTeamId, season };
+    for (let i = 0; i < tds.length; i++) {
+      const key = keys[i];
+      if (!key) continue;
+      if (key === "rank") row.rank = numOrNull(stripTags(tds[i]));
+      else if (key === "team") {
+        row.team_name = stripTags(tds[i]) || null;
+        const abbrM = tds[i].match(/\/name\/([a-z0-9]+)\//i);
+        row.team_abbr = abbrM ? abbrM[1] : null;
+      } else row[key] = numOrNull(stripTags(tds[i]));
+    }
+    // Skip All-Star / exhibition rows (no /name/{abbr}/ team link) — e.g. NBA's
+    // "Team Stars"/"World" show up in the attendance table but aren't franchises.
+    if (!row.team_abbr) continue;
+    out.push(row);
+  }
+  return out;
+}
+
+// A season is "populated" if teams have real attendance — either an AVERAGE or a
+// TOTAL. Games alone isn't enough: ESPN pre-fills a not-yet-started season with a
+// full schedule but zero attendance. (NBA is a special case: ESPN publishes home
+// TOTAL but serves AVG=0 / PCT=-- for every NBA team, so we key on total there.)
+const attHasData = (rows: AttRow[]) =>
+  rows.some((r) => (Number(r.home_avg) || 0) > 0 || (Number(r.overall_avg) || 0) > 0 || (Number(r.home_total) || 0) > 0);
+
+async function collectAttendance(db: any, state: TxnState) {
+  const leagues = await distinctLeagues(db);
+  const thisYear = new Date().getUTCFullYear();
+  state.log.push(`attendance: ${leagues.length} leagues`);
+  for (const l of leagues) {
+    const leaguePath = l.espn_slug.split("/").pop();
+    // Use the explicit /_/year/{Y} URL. Try the current season; if it's the
+    // empty offseason page, fall back to the last completed season.
+    let rows: AttRow[] = [];
+    let usedYear = thisYear;
+    try {
+      for (const y of [thisYear, thisYear - 1]) {
+        const html = await getHtml(`/${leaguePath}/attendance/_/year/${y}`);
+        const parsed = parseAttendance(html);
+        if (attHasData(parsed)) { rows = parsed; usedYear = y; break; }
+        rows = parsed; usedYear = y; // keep last attempt even if empty
+        if (attHasData(parsed)) break;
+        await sleep(120);
+      }
+    } catch (e) {
+      state.errors++;
+      state.log.push(`att ${leaguePath} FAIL: ${(e as Error).message}`);
+      continue;
+    }
+    let inserted = 0;
+    const fields = ["season", "rank", "home_games", "home_total", "home_avg", "home_pct",
+      "road_games", "road_total", "road_avg", "road_pct",
+      "overall_games", "overall_total", "overall_avg", "overall_pct"];
+    for (const r of rows) {
+      const hash = await sha256hex(fields.map((k) => (r[k] == null ? "" : String(r[k]))).join("|"));
+      const payload: Record<string, unknown> = { team_name: r.team_name ?? null, team_abbr: r.team_abbr ?? null, meta: { espn_slug: l.espn_slug } };
+      for (const k of fields) payload[k] = r[k] ?? null;
+      const { data: ret, error } = await db.rpc("upsert_espn_attendance_snapshot", {
+        p_team_id: r.espnTeamId, p_league: l.espn_league, p_hash: hash, p_payload: payload,
+      });
+      if (error) { state.errors++; state.log.push(`att upsert ${r.espnTeamId}: ${error.message}`); }
+      else if (ret?.[0]?.action === "inserted") inserted++;
+    }
+    state.leagues_processed++;
+    state.transactions_seen += rows.length;
+    state.transactions_inserted += inserted;
+    state.log.push(`att ${leaguePath} (${l.espn_league}): ${rows.length} teams, season ${usedYear}, +${inserted}`);
+    await sleep(150);
+  }
+}
+
 Deno.serve(async (req) => {
   const authErr = requireCronSecret(req);
   if (authErr) return authErr;
 
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope") ?? "transactions";
-  const valid = ["transactions"];
+  const valid = ["transactions", "attendance"];
   if (!valid.includes(scope)) {
     return new Response(JSON.stringify({ error: `unknown scope: ${scope}`, valid }), { status: 400 });
   }
@@ -132,6 +291,7 @@ Deno.serve(async (req) => {
 
   try {
     if (scope === "transactions") await collectTransactions(db, state);
+    else if (scope === "attendance") await collectAttendance(db, state);
   } catch (e) {
     state.errors++;
     state.log.push(`fatal: ${(e as Error).message}`);
