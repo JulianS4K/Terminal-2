@@ -1277,6 +1277,120 @@ def test_build_performer_digest_sparse():
     name, text = onb_performers.build_performer_digest(db, 42, performer_name="Nobody")
     assert name == "Nobody"
     assert "No upcoming events" in text
+    # every enrichment section is absent when there's no data (empty-path branches)
+    for header in ("Overview (Wikipedia)", "Team form", "Recent results", "Injuries",
+                   "Roster (sample)", "Next 30 days", "Game-day weather", "Demand velocity",
+                   "Reddit", "Recent news", "Hot sections", "Macro backdrop"):
+        assert header not in text
+
+
+def _rich_perf_db():
+    db = FakeSB(rpc={
+        "get_event_movers_v2": [{"event_id": 1, "price_delta_pct": 5.2}],
+        "get_performer_prediction_markets": {"futures": [
+            {"title": "Win title", "source": "kalshi", "last_price": 0.3, "volume": 1000},
+            {"question": "Make playoffs", "source": "kalshi", "yes_price": 0.6},  # no volume → tail ""
+        ]},
+    })
+    db.store["entity_performer_map"] = [{"tevo_performer_id": 100, "tevo_performer_name": "Team X",
+        "top_category_name": "Sports", "what_event_type": "sports", "espn_team_id": "t1", "espn_league": "MLB"}]
+    db.store["events"] = [{"id": 1, "name": "X vs Y", "occurs_at_local": "2099-09-01T19:00:00-04:00",
+        "venue_name": "Stadium", "venue_location": "City", "primary_performer_id": 100,
+        "state": "active", "performer_ids": [100]}]
+    db.store["latest_event_metrics"] = [{"event_id": 1, "getin_price": 50, "retail_median": 120, "tickets_count": 500}]
+    db.store["performer_wikipedia"] = [{"tevo_performer_id": 100, "extract": "Team X is a baseball team.", "is_rejected": False}]
+    db.store["v_espn_team_state"] = [{"espn_team_id": "t1", "record_summary": "58-40",
+        "standing_summary": "1st AL East", "streak": "W3", "games_back": 0}]
+    db.store["v_team_recent_results"] = [{"tevo_performer_id": 100, "captured_at": "2099-08-30",
+        "result": "W", "team_score": 5, "opp_score": 3, "is_home": True}]
+    db.store["v_espn_injuries_current"] = [{"espn_team_id": "t1", "athlete_name": "A B",
+        "position": "SP", "status": "Questionable", "injury_type": "hamstring"}]
+    db.store["v_team_roster_full"] = [{"tevo_performer_id": 100, "full_name": "A B", "position_abbr": "SP"}]
+    db.store["v_team_schedule_30d"] = [{"tevo_performer_id": 100, "occurs_at": "2099-09-01T19:00",
+        "home_or_away": "home", "opp_performer_name": "Y", "is_rivalry": True}]
+    db.store["espn_news"] = [{"espn_team_id": "t1", "headline": "Big trade", "published_at": "2099-08-29"}]
+    db.store["v_performer_reddit_pulse"] = [{"tevo_performer_id": 100, "posts_24h": 12, "posts_7d": 80,
+        "score_24h": 3400, "comments_24h": 900}]
+    db.store["v_reddit_important_recent"] = [{"tevo_performer_id": 100, "title": "Game thread",
+        "subreddit": "TeamX", "created_utc": 100}]
+    db.store["v_event_weather_with_fallback"] = [{"tevo_event_id": 1, "is_indoor": False,
+        "temp_f": 72.4, "precip_pct": 10, "wind_mph": 8, "weather_summary": "Clear"}]
+    db.store["event_sentiment"] = [{"event_id": 1, "sentiment_index": 0.42, "tix_per_hour": 5.1,
+        "captured_at": "2099-08-30"}]
+    db.store["d0_perf_top5_sections"] = [{"performer_id": 100, "section": "200", "tickets": 40,
+        "revenue": 8000, "rank_by_revenue": 1}]
+    db.store["v_macro_indicators_latest"] = [{"series_id": "UMCSENT", "value": 70.1, "observation_date": "2099-06-01"}]
+    return db
+
+
+def test_performer_digest_enrichment():
+    name, text = onb_performers.build_performer_digest(_rich_perf_db(), 100)
+    for header in ("Overview (Wikipedia)", "Team form", "Recent results", "Injuries",
+                   "Roster (sample)", "Next 30 days", "Game-day weather", "Demand velocity",
+                   "Reddit / fan buzz", "Recent news", "Hot sections",
+                   "Futures / prediction markets", "Macro backdrop"):
+        assert header in text, header
+    assert "58-40" in text and "streak W3" in text and "GB 0" in text
+    assert "W 5-3 (home)" in text
+    assert "hamstring" in text and "(rivalry)" in text
+    assert "72°F" in text and "Clear" in text and "10% precip" in text and "8mph wind" in text
+    assert "idx +0.42" in text and "5.1 tix/hr" in text
+    assert "posts/24h" in text and "r/TeamX" in text
+    assert "vol 1000" in text and "Make playoffs" in text  # futures with + without volume
+    assert "UMCSENT" in text
+
+
+def test_digest_helper_branches():
+    P = onb_performers
+    # _espn_ids: xref fallback + league fallthrough
+    dbx = FakeSB(); dbx.store["performer_espn_team_xref"] = [
+        {"tevo_performer_id": 5, "espn_team_id": "z9", "espn_league": "NBA"}]
+    assert P._espn_ids(dbx, 5, {}) == ("z9", "NBA")
+    dbx2 = FakeSB(); dbx2.store["performer_espn_team_xref"] = [
+        {"tevo_performer_id": 5, "espn_team_id": "z", "espn_league": None}]
+    assert P._espn_ids(dbx2, 5, {"espn_league": "MLB"}) == ("z", "MLB")
+
+    # team form: no streak/GB (line built) vs all-empty (→ [])
+    db2 = FakeSB(); db2.store["v_espn_team_state"] = [{"espn_team_id": "z9", "record_summary": "10-5"}]
+    assert "10-5" in "\n".join(P._sec_team_form(db2, "z9"))
+    db3 = FakeSB(); db3.store["v_espn_team_state"] = [{"espn_team_id": "z9"}]
+    assert P._sec_team_form(db3, "z9") == []
+
+    # recent results: away + no score
+    db4 = FakeSB(); db4.store["v_team_recent_results"] = [
+        {"tevo_performer_id": 5, "captured_at": "1", "result": "L", "is_home": False}]
+    assert "L (away)" in "\n".join(P._sec_recent_results(db4, 5))
+
+    # weather: indoor kept, missing-row skipped, outdoor-no-bits skipped
+    db5 = FakeSB(); db5.store["v_event_weather_with_fallback"] = [
+        {"tevo_event_id": 10, "is_indoor": True}, {"tevo_event_id": 12, "is_indoor": False}]
+    w = "\n".join(P._sec_weather(db5, [{"id": 10, "name": "Indoor"}, {"id": 11, "name": "NoRow"},
+                                       {"id": 12, "name": "Bare"}]))
+    assert "Indoor: indoor" in w and "NoRow" not in w and "Bare" not in w
+
+    # sentiment: no-row + no-bits → nothing
+    db6 = FakeSB(); db6.store["event_sentiment"] = [{"event_id": 20, "captured_at": "1"}]
+    assert P._sec_sentiment(db6, [{"id": 20, "name": "E"}, {"id": 21, "name": "F"}]) == []
+
+    # wikipedia: rejected / description-only / empty
+    dbw = FakeSB(); dbw.store["performer_wikipedia"] = [{"tevo_performer_id": 5, "extract": "x", "is_rejected": True}]
+    assert P._sec_wikipedia(dbw, 5) == []
+    dbw2 = FakeSB(); dbw2.store["performer_wikipedia"] = [{"tevo_performer_id": 5, "extract": None, "description": "desc only"}]
+    assert "desc only" in "\n".join(P._sec_wikipedia(dbw2, 5))
+    dbw3 = FakeSB(); dbw3.store["performer_wikipedia"] = [{"tevo_performer_id": 5, "extract": "   "}]
+    assert P._sec_wikipedia(dbw3, 5) == []
+
+    # reddit: pulse absent, posts present
+    dbr = FakeSB(); dbr.store["v_reddit_important_recent"] = [
+        {"tevo_performer_id": 5, "title": "T", "subreddit": "s", "created_utc": 1}]
+    assert "r/s: T" in "\n".join(P._sec_reddit(dbr, 5))
+
+    # schedule: non-rivalry
+    dbs = FakeSB(); dbs.store["v_team_schedule_30d"] = [
+        {"tevo_performer_id": 5, "occurs_at": "2099-01-01", "home_or_away": "away",
+         "opp_performer_name": "Z", "is_rivalry": False}]
+    sch = "\n".join(P._sec_schedule(dbs, 5))
+    assert "Z" in sch and "(rivalry)" not in sch
 
 
 def test_digest_realized_sales_partial():
