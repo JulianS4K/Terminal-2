@@ -522,10 +522,26 @@
     }
   }
 
+  // Compact $ axis formatter — keeps normal prices exact ($50…$9,999) and only
+  // abbreviates larger magnitudes ($12k, $1.5M) so a 7-digit tick can't blow out
+  // the axis gutter. Shared by the WC chart + the composite price pane.
+  function fmtMoneyAxis(x) {
+    if (x == null) return '';
+    var a = Math.abs(x);
+    if (a >= 1e6) return '$' + String((x / 1e6).toFixed(1)).replace(/\.0$/, '') + 'M';
+    if (a >= 1e4) return '$' + Math.round(x / 1e3) + 'k';
+    return '$' + Math.round(x);
+  }
+
   // Real uPlot price chart for the WC page (get-in / median / p90 daily series).
   function renderWcChart(hostId, rows) {
     const host = document.getElementById(hostId);
-    if (!host || typeof uPlot === 'undefined' || !rows || rows.length < 2) return;
+    if (!host || typeof uPlot === 'undefined') return;
+    // A single day can't draw a line — show a message instead of a blank pane.
+    if (!rows || rows.length < 2) {
+      host.innerHTML = '<div class="empty">Not enough price history yet — needs at least 2 days.</div>';
+      return;
+    }
     const asc = rows.slice().sort((a, b) => (a.snapshot_date < b.snapshot_date ? -1 : 1));
     const xs = asc.map(r => Math.floor(new Date(r.snapshot_date + 'T00:00:00Z').getTime() / 1000));
     const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
@@ -533,9 +549,15 @@
     // Floor stays below the narrowest phone pane so the canvas never exceeds its
     // container (see paneSize note) — a 320 floor overflowed a ~284px SE pane.
     const width = () => Math.max(160, host.clientWidth || 800);
+    const axisBase = { stroke: '#a3a3a3', font: '11px ui-monospace, Menlo, monospace',
+      grid: { stroke: '#262626', width: 1 }, ticks: { stroke: '#404040', size: 6 } };
     const opts = {
       width: width(), height: 240,
       scales: { x: { time: true } },
+      axes: [
+        Object.assign({}, axisBase),
+        Object.assign({}, axisBase, { values: (u, v) => v.map(fmtMoneyAxis), size: 56 }),
+      ],
       series: [
         {},
         { label: 'Get-in', stroke: SRC.sg, width: 2 },
@@ -624,33 +646,6 @@
       '</tr>').join('');
     body.innerHTML = '<table><thead><tr><th>Sold</th><th>Section</th><th>Row</th>' +
       '<th class="num">Qty</th><th class="num">Price</th></tr></thead><tbody>' + trs + '</tbody></table>';
-  }
-
-  // Minimal inline-SVG sparkline of the median-price series (no chart lib needed).
-  // Line + a soft gradient area fill beneath it, all currentColor (styled via
-  // .sg-spark) so it stays CSP-safe and theme-driven. The unique gradient id keeps
-  // multiple sparklines on one page from sharing a <defs>.
-  let _sgSparkSeq = 0;
-  function sgSparkline(vals) {
-    if (!vals || vals.length < 2) return '';
-    const w = 600, h = 72, pad = 4;
-    const min = Math.min(...vals), max = Math.max(...vals);
-    const span = (max - min) || 1;
-    const xy = vals.map((v, i) => [
-      pad + (i / (vals.length - 1)) * (w - 2 * pad),
-      h - pad - ((v - min) / span) * (h - 2 * pad),
-    ]);
-    const line = xy.map(([x, y], i) => (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ');
-    const area = `M${xy[0][0].toFixed(1)} ${h - pad} ` +
-      xy.map(([x, y]) => 'L' + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ') +
-      ` L${xy[xy.length - 1][0].toFixed(1)} ${h - pad} Z`;
-    const gid = 'sgspk' + (_sgSparkSeq++);
-    return `<svg class="sg-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="median price trend">` +
-      `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">` +
-      `<stop offset="0" stop-color="currentColor" stop-opacity="0.22"/>` +
-      `<stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>` +
-      `<path class="spark-area" d="${area}" fill="url(#${gid})" />` +
-      `<path class="spark-line" d="${line}" /></svg>`;
   }
 
   async function wireSgTrackButton(sgId) {
@@ -1473,6 +1468,13 @@
 
     _chartLastBuildPrice = { specs, xs };
 
+    // No points in view → show a message instead of a phantom $0/$1 axis.
+    if (!xs.length) {
+      host.innerHTML = '<div class="empty">No price data in this window yet.</div>';
+      _chartInstances.price = null;
+      return;
+    }
+
     const xRange = clipRangeForHours(_chartPriceHours, xs);
     const data = [xs, ...specs.map(s => s.projected)];
     const { w, h } = paneSize(host);
@@ -1493,7 +1495,7 @@
         { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
-          values: (u, v) => v.map(x => x == null ? '' : '$' + Math.round(x)),
+          values: (u, v) => v.map(fmtMoneyAxis),
           size: 56 },
       ],
       series: [
@@ -1746,6 +1748,13 @@
       }
     }
     _chartLastBuildInv = { specs, xs };
+
+    // No points in view → show a message instead of a phantom axis.
+    if (!xs.length) {
+      host.innerHTML = '<div class="empty">No inventory data in this window yet.</div>';
+      _chartInstances.inv = null;
+      return;
+    }
 
     const xRange = clipRangeForHours(_chartInvHours, xs);
     const data = [xs, ...specs.map(s => s.projected)];

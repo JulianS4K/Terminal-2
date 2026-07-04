@@ -129,10 +129,7 @@ main.wrap section { min-width: 0; }
   color: var(--muted);
   background: var(--panel-2);
 }
-/* SeatGeek-mode event page — price chart + sparkline */
-.sg-spark { display: block; width: 100%; height: 72px; color: var(--accent); margin: 8px 0 12px; }
-.sg-spark .spark-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
-.sg-spark .spark-area { stroke: none; }
+/* SeatGeek-mode event page — WC price chart host */
 .wc-chart { width: 100%; min-height: 240px; margin: 8px 0 12px; }
 table.wc-daily { width: 100%; }
 
