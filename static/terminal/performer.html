@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Performer</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260703a" />
+  <link rel="stylesheet" href="style.css?v=20260704a" />
   <style>
     .trip-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
     .trip-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted, #9aa); text-transform: uppercase; letter-spacing: .04em; }
@@ -58,9 +58,10 @@
     .pdm-trend { flex: 1 1 200px; min-width: 180px; background: var(--panel, #14141b); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 10px 12px; }
     .pdm-trend .pt-lbl { font-size: 11px; color: var(--muted, #9aa); text-transform: uppercase; letter-spacing: .04em; }
     .pdm-trend .pt-val { font-size: 18px; font-weight: 700; margin: 2px 0 6px; }
-    .pdm-spark { width: 100%; height: 40px; display: block; }
-    .pdm-spark path { fill: none; stroke: var(--accent, #4ade80); stroke-width: 1.4; }
-    .pdm-spark circle { fill: var(--accent, #4ade80); }
+    .pdm-spark { width: 100%; height: 40px; display: block; color: var(--accent, #fbbf24); }
+    .pdm-spark .spark-line { fill: none; stroke: currentColor; stroke-width: 1.4; }
+    .pdm-spark .spark-area { stroke: none; }
+    .pdm-spark circle { fill: currentColor; }
 
     /* Mobile: the trip-planner controls/rows above use fixed pixel widths that
        overflow a phone. Defined here (after style.css) so they win on equal
@@ -309,6 +310,6 @@
   <script src="nav.js?v=20260623a"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260703pm7"></script>
+  <script src="performer.js?v=20260704a"></script>
 </body>
 </html>
