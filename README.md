@@ -171,7 +171,7 @@ The gate is a **ratchet** — it only moves up. Product code (`server.py`, `core
 - **Cross-source IDs never line up — resolve through the AQ mapper hub** → `PROJECT_BIBLE.md §0` (one-pager) · `PROJECT_BIBLE.md §5` (full architecture)
 - **Column landmines + TEvo gotchas + SQL macros** → `PROJECT_BIBLE.md §3` + `§7`
 - **Migration filename/header/apply rules** → `MIGRATION_CONVENTIONS.md`
-- **Who can push / per-lane scope / who owns each tool** → `PROJECT_BIBLE.md §2` (push to `main` is per-task; A1 + B1 maintain it; prod-DB apply centralized on A1)
+- **Who can push / per-lane scope / who owns each tool** → `PROJECT_BIBLE.md §2` (push to `main` is per-task, no sole-pusher lane; prod-DB apply is per-task by any session under operator direction — no A1 gate)
 - **What exists before you build something new** (tables · views · crons · edge fns · vault) → `RESOURCES_BIBLE.md`
 - **Where each lane is headed** (north-star + endgame per lane) → `docs/d_tier_goals.md`
 - **Edge functions that mutate or burn paid APIs: platform `verify_jwt` is NOT sufficient** → `PROJECT_BIBLE.md §1` rule 7 (`requireCronSecret` pattern)
