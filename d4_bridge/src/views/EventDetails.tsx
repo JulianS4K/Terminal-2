@@ -6,6 +6,7 @@ import { mintTickets, claimFreeTickets } from '../lib/tickets';
 import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
 import ArtistLinks from '../components/ArtistLinks';
+import AddToCalendar from '../components/AddToCalendar';
 import { linksForArtist } from '../lib/artistLinks';
 import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
@@ -842,6 +843,7 @@ export default function EventDetails() {
                     <Send className="w-4 h-4 mr-3 text-brand-primary" />
                     Send via SMS
                   </button>
+                  <AddToCalendar event={event} />
                   <button onClick={handleInstagramStory} className="flex items-center hover:text-brand-primary transition-colors text-left">
                     <Instagram className="w-4 h-4 mr-3 text-brand-primary" />
                     Share to Instagram

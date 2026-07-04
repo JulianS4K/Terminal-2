@@ -8,7 +8,6 @@ import { Plus, Settings, Users, BarChart3, ChevronRight, Music, MapPin, Calendar
 import { motion } from 'motion/react';
 import { formatCurrency } from '../lib/utils';
 import { formatInTz } from '../lib/datetime';
-import { downloadIcsFile } from '../lib/calendarUtils';
 import SalesChart from '../components/SalesChart';
 
 type StatusFilter = 'all' | 'draft' | 'published' | 'cancelled';
